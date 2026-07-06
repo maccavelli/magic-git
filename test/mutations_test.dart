@@ -140,6 +140,22 @@ void main() {
       expect(content, 'hello\n');
     });
 
+    test('readFileBase64 pipes the file through base64 via a shell redirect',
+        () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'aGVsbG8=\n',
+        stderr: '',
+      );
+      final b64 = await git.readFileBase64('/repo', 'assets/logo.png');
+      expect(exec.calls.single, [
+        'sh',
+        '-c',
+        "base64 < 'assets/logo.png'",
+      ]);
+      expect(b64, 'aGVsbG8=\n');
+    });
+
     test('readFile throws GitException on a failed read', () async {
       exec.next = const SSHCommandResult(
         exitCode: 1,

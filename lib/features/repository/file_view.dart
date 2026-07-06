@@ -10,6 +10,7 @@ import '../common/context_menu.dart';
 import '../common/status_style.dart';
 import '../common/tool_icon_button.dart';
 import '../history/file_history_sheet.dart';
+import '../viewer/viewer_providers.dart';
 import 'blame_sheet.dart';
 
 /// Called when a file is chosen in the tree so the host panel can show its diff.
@@ -197,6 +198,16 @@ class _FileViewState extends ConsumerState<FileView> {
     // run against a file with no history.
     const untrackedTooltip = 'Not available for untracked files';
     _contextMenu.show(context, globalPos, [
+      // Open the file in the built-in viewer. Available for every file
+      // regardless of git status — a viewer needs no history, unlike Blame /
+      // File history below.
+      ContextMenuItem(
+        icon: CupertinoIcons.doc_text_viewfinder,
+        label: 'View File',
+        onTap: () =>
+            ref.read(openFileViewersProvider.notifier).open(repoPath, node.path),
+      ),
+      const ContextMenuDivider(),
       if (mixed) ...[
         ContextMenuItem(
           icon: CupertinoIcons.square_stack,

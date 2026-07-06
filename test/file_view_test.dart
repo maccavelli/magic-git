@@ -18,6 +18,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/repository/file_view.dart';
+import 'package:remote_magic_git/features/viewer/viewer_providers.dart';
 
 const _repo = '/srv/repo';
 
@@ -444,6 +445,63 @@ void main() {
     expect(find.text('readme.md'), findsOneWidget); // still expanded
     expect(_folderColor(tester, 'docs'), MacosColors.systemGreenColor);
   });
+
+  testWidgets(
+    'right-click offers "View File", which opens a viewer window — available '
+    'even for an untracked file (unlike Blame / File history)',
+    (tester) async {
+      final container = ProviderContainer(
+        overrides: [
+          repoStructureProvider(_repo).overrideWith((ref) async => _fixture()),
+          repoStatusOverlayProvider(_repo).overrideWith((ref) => _overlay),
+        ],
+      );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: Row(
+              children: [
+                Expanded(
+                  child: SizedBox(
+                    height: 600,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: FileView(
+                        maxWidth: 900,
+                        repoPath: _repo,
+                        onOpenFile:
+                            (_, {required staged, required untracked}) {},
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 300),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // todo.txt is untracked — Blame/File history are disabled for it, but
+      // View File is offered and enabled.
+      await tester.tap(find.text('todo.txt'), buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+      expect(find.text('View File'), findsOneWidget);
+      expect(container.read(openFileViewersProvider), isEmpty);
+
+      await tester.tap(find.text('View File'));
+      await tester.pumpAndSettle();
+
+      final open = container.read(openFileViewersProvider);
+      expect(open.length, 1);
+      expect(open.single.repoPath, _repo);
+      expect(open.single.path, 'todo.txt');
+    },
+  );
 
   group('_loadLazy repo-identity race', () {
     // A single lazy ignored directory, shared by both repos' fixtures below —

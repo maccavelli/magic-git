@@ -61,6 +61,7 @@ dependencies:
   re_highlight: ^0.0.3
   flutter_markdown_plus: ^1.0.9
   flutter_html: ^3.0.0
+  flutter_svg: ^2.3.0
 
 dev_dependencies:
   flutter_test:

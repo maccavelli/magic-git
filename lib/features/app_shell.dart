@@ -22,6 +22,8 @@ import 'settings/settings_sheet.dart';
 import 'stash/stash_view.dart';
 import 'switcher/connection_switcher.dart';
 import 'switcher/current_repo_indicator.dart';
+import 'viewer/viewer_host.dart';
+import 'viewer/viewer_providers.dart';
 
 /// Top-level window shell. Content is driven by connection state: the
 /// connection form until a session is established, then the feature panels
@@ -397,6 +399,12 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     // every non-active page back to unvisited here; each is rebuilt fresh
     // the next time it's opened.
     ref.listen(connectionProvider.select((c) => c.repoPath), (previous, next) {
+      if (next != previous) {
+        // Open file-viewer windows belong to the repo that was active when
+        // they were opened — drop them all when the active repo changes (or
+        // disconnects) rather than leaving them pointed at a gone repo.
+        ref.read(openFileViewersProvider.notifier).closeAll();
+      }
       if (next != null && next != previous) {
         setState(
           () => _visitedPages
@@ -442,7 +450,15 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
       bindings: shortcuts,
       child: Focus(
         autofocus: true,
-        child: _buildWindow(context, connection, connected),
+        // The file-viewer windows float above the whole app (sidebar +
+        // content) and survive tab switches, so they're mounted here as the
+        // top layer rather than inside any single panel.
+        child: Stack(
+          children: [
+            _buildWindow(context, connection, connected),
+            const Positioned.fill(child: ViewerHost()),
+          ],
+        ),
       ),
     );
   }

@@ -898,6 +898,26 @@ class GitService {
     return result.stdout;
   }
 
+  /// The raw bytes of [path], base64-encoded, for content that isn't text —
+  /// images the viewer renders (`Image.memory` after decoding). Piped through
+  /// `base64` (reading the file via a shell redirection, which works the same
+  /// with GNU and BSD `base64`) so binary bytes survive the executor's UTF-8
+  /// stdout decoding intact. Caller decodes the base64 (stripping the wrapping
+  /// newlines GNU `base64` inserts). Oversized output trips the executor's hard
+  /// cap and surfaces as a failure rather than spiking memory.
+  Future<String> readFileBase64(String repoPath, String path) async {
+    final script = 'base64 < ${ShellEscaper.escape(path)}';
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['sh', '-c', script],
+      retries: _readRetries,
+    );
+    if (!result.isSuccess) {
+      throw GitException('reading file bytes failed', result);
+    }
+    return result.stdout;
+  }
+
   // ---- File tree -----------------------------------------------------------
 
   /// Lists the working tree for the file-view pane. Returns the non-ignored
