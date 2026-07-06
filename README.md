@@ -18,13 +18,14 @@ A Flutter/macOS desktop app for managing **remote** Git repositories over SSH â€
 ## Development (Linux/macOS)
 
 ```sh
-cd scripts/dart/remote-magic-git
 flutter pub get
 flutter analyze
 flutter test
 ```
 
-Analyze and unit tests run on Linux; the `.app` must be built on a Mac.
+Analyze and unit tests run on any platform; the `.app` is built on a Mac via
+[`./build_macos.sh`](build_macos.sh) (use `--unsigned` if no Apple signing
+certificate is configured).
 
 ## Architecture
 

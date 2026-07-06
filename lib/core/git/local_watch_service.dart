@@ -43,9 +43,18 @@ class LocalWatchService {
     // emit — strip that prefix so `shouldTriggerWatch` sees the same shape
     // either backend produces.
     final rootWithSlash = repoPath.endsWith('/') ? repoPath : '$repoPath/';
-    String relativize(String path) => path.startsWith(rootWithSlash)
-        ? path.substring(rootWithSlash.length)
-        : path;
+    String relativize(String path) {
+      // macOS FSEvents also emits a directory-granularity event for the repo
+      // root itself, whose path is exactly `repoPath` (no trailing component).
+      // Left un-stripped it becomes an absolute path that bypasses every
+      // relative-path noise rule in `shouldTriggerWatch` and fires on every
+      // git-op churn. Map it to the empty string so that filter drops it — the
+      // real child that changed always arrives as its own specific event.
+      if (path == repoPath) return '';
+      return path.startsWith(rootWithSlash)
+          ? path.substring(rootWithSlash.length)
+          : path;
+    }
 
     void emit() {
       if (!controller.isClosed) {

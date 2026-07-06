@@ -12,6 +12,14 @@
 /// `app_providers.dart`.
 bool shouldTriggerWatch(String path) {
   if (path.isEmpty) return false;
+  // The `.git` directory reported as a directory-granularity event (path is
+  // exactly `.git` or `…/.git`, no inner component). macOS FSEvents surfaces
+  // these to the local backend where inotify/fswatch never do; the meaningful
+  // git-state changes inside it (`index`, `HEAD`, `refs/**`) arrive as their
+  // own specific paths and are handled below, so the bare directory event is
+  // pure noise — letting it through re-refreshes on every git-op lock churn,
+  // defeating the `.lock` suppression.
+  if (path == '.git' || path.endsWith('/.git')) return false;
   if (path.contains('/.git/') || path.startsWith('.git/')) {
     if (path.endsWith('.lock') ||
         path.contains('/objects/') ||
