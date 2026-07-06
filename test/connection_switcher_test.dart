@@ -1,5 +1,5 @@
 // The Connections panel's "Local Repositories" section: a header + a tile
-// per saved local repo, and the "Add Local Repository" toolbar button
+// per saved local repo, and the "Add local repository" toolbar button
 // opening the picker sheet.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -70,14 +70,13 @@ void main() {
     },
   );
 
-  testWidgets('Add Local Repository opens the picker sheet', (tester) async {
+  testWidgets('Add local repository opens the picker sheet', (tester) async {
     await _pump(tester);
-    // Assert on the sheet's unique folder-picker row rather than its title:
-    // the toolbar tooltip now carries the same "Add Local Repository" words, so
-    // the title text would be ambiguous once the sheet is open.
+    // Assert on the sheet's unique folder-picker row rather than its title,
+    // which is a separate concern from the toolbar tooltip we tap.
     expect(find.text('Choose…'), findsNothing);
 
-    await tester.tap(_byMacosTooltip('Add Local Repository'));
+    await tester.tap(_byMacosTooltip('Add local repository'));
     await tester.pumpAndSettle();
 
     expect(find.text('Choose…'), findsOneWidget);
