@@ -109,14 +109,14 @@ class ConnectionsPanel extends ConsumerWidget {
                   const Spacer(),
                   ToolIconButton(
                     icon: CupertinoIcons.add,
-                    tooltip: 'New connection',
+                    tooltip: 'Add Connection',
                     size: 16,
                     onPressed: () => _newConnection(context, ref),
                   ),
                   const SizedBox(width: 4),
                   ToolIconButton(
                     icon: CupertinoIcons.folder_badge_plus,
-                    tooltip: 'New local repository',
+                    tooltip: 'Add Local Repository',
                     size: 16,
                     onPressed: () => _newLocalRepo(context),
                   ),
