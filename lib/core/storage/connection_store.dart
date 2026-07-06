@@ -10,11 +10,13 @@ import 'saved_connection.dart';
 /// Keychain via flutter_secure_storage.
 ///
 /// When the Keychain is unavailable — e.g. an unsigned build, where every
-/// secure-storage call throws — secrets fall back to a JSON dotfile in the
-/// user's home directory, written with `0600` (owner read/write only). This is
-/// plaintext-on-disk protected only by file permissions, the same model glab
-/// and git themselves use for their credential files; it is strictly a fallback
-/// for builds that can't reach the Keychain.
+/// secure-storage call throws — secrets fall back to a JSON file under the
+/// user's config dir (`$XDG_CONFIG_HOME/magic_git/credentials.json`, or
+/// `~/.config/magic_git/credentials.json`), written with `0600` (owner
+/// read/write only) inside a `0700` directory. This is plaintext-on-disk
+/// protected only by file permissions, the same model glab and git themselves
+/// use for their credential files; it is strictly a fallback for builds that
+/// can't reach the Keychain.
 class ConnectionStore {
   static const _metaKey = 'saved_connections';
   static String _secretKey(String id) => 'conn_secret_$id'; // SSH password
@@ -51,20 +53,31 @@ class ConnectionStore {
           ),
       _dotfilePath = dotfilePath ?? _defaultDotfilePath();
 
-  /// The absolute path to the 0600 dotfile fallback, or null if no home
-  /// directory can be resolved (`HOME` and `USERPROFILE` both unset). In that
-  /// case dotfile persistence is refused outright rather than falling back to
-  /// `Directory.systemTemp` — a shared, world-writable location with a fixed,
-  /// predictable filename, which would be a worse place to land plaintext
-  /// secrets than no fallback at all. When [_dotfilePath] is null, secrets
-  /// rely on the Keychain only; if the Keychain is also unavailable, they
-  /// simply aren't persisted to disk (best-effort, matching how the rest of
-  /// this store treats storage that can't be reached — see [_chmod600]).
+  /// The absolute path to the 0600 credentials-file fallback, or null if no
+  /// config directory can be resolved (`XDG_CONFIG_HOME`, `HOME`, and
+  /// `USERPROFILE` all unset). In that case the fallback is refused outright
+  /// rather than defaulting to `Directory.systemTemp` — a shared,
+  /// world-writable location with a fixed, predictable filename, which would be
+  /// a worse place to land plaintext secrets than no fallback at all. When
+  /// [_dotfilePath] is null, secrets rely on the Keychain only; if the Keychain
+  /// is also unavailable, they simply aren't persisted to disk (best-effort,
+  /// matching how the rest of this store treats storage that can't be reached
+  /// — see [_chmod]).
+  ///
+  /// Honors the XDG base-directory spec: an explicit `XDG_CONFIG_HOME` wins,
+  /// otherwise `~/.config`, with the app owning the `magic_git/` subdirectory.
   static String? _defaultDotfilePath() {
-    final home =
-        Platform.environment['HOME'] ?? Platform.environment['USERPROFILE'];
-    if (home == null || home.isEmpty) return null;
-    return '$home/.remote_magic_git_credentials.json';
+    final env = Platform.environment;
+    final xdg = env['XDG_CONFIG_HOME'];
+    final String configHome;
+    if (xdg != null && xdg.isNotEmpty) {
+      configHome = xdg;
+    } else {
+      final home = env['HOME'] ?? env['USERPROFILE'];
+      if (home == null || home.isEmpty) return null;
+      configHome = '$home/.config';
+    }
+    return '$configHome/magic_git/credentials.json';
   }
 
   Future<List<SavedConnection>> list() async {
@@ -246,6 +259,14 @@ class ConnectionStore {
       if (await file.exists()) await file.delete();
       return;
     }
+    // Ensure the config subdirectory exists and is owner-only (0700) before
+    // landing secrets in it — under the XDG default (`~/.config/magic_git/`)
+    // the app owns this dir, so it may not exist on first save.
+    final dir = file.parent;
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+      await _chmod(dir.path, '700');
+    }
     // Write to a uniquely-named sibling temp file in the same directory,
     // chmod *that* to 0600, then atomically rename it over the target. Never
     // write straight to `path`: `writeAsString` would create the file at
@@ -257,16 +278,16 @@ class ConnectionStore {
       '$path.${pid}_${DateTime.now().microsecondsSinceEpoch}.tmp',
     );
     await tmp.writeAsString(jsonEncode(map), flush: true);
-    await _chmod600(tmp.path);
+    await _chmod(tmp.path, '600');
     await tmp.rename(file.path);
   }
 
-  /// Restrict the dotfile to owner read/write (0600). No-op on platforms
-  /// without POSIX permissions.
-  Future<void> _chmod600(String path) async {
+  /// Restrict [path] to POSIX [mode] (e.g. `600` for the secrets file, `700`
+  /// for its containing dir). No-op on platforms without POSIX permissions.
+  Future<void> _chmod(String path, String mode) async {
     if (Platform.isMacOS || Platform.isLinux) {
       try {
-        await Process.run('chmod', ['600', path]);
+        await Process.run('chmod', [mode, path]);
       } catch (_) {
         // Best effort.
       }

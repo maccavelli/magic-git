@@ -77,6 +77,33 @@ void main() {
     expect(perms, 0x180); // rw-------
   });
 
+  test('creates a missing config subdirectory (0700) on first save', () async {
+    // Mirrors the XDG default (~/.config/magic_git/): the app owns the dir and
+    // it won't exist on a fresh machine. The store must create it, not throw.
+    final nestedDir = '${tmp.path}/magic_git';
+    final nested = '$nestedDir/credentials.json';
+    expect(await Directory(nestedDir).exists(), isFalse);
+
+    final store = ConnectionStore(dotfilePath: nested);
+    await store.save(
+      const SavedConnection(
+        id: 'x',
+        label: '',
+        host: 'h',
+        port: 22,
+        username: 'u',
+        repoPath: '/r',
+      ),
+      secret: 'pw',
+    );
+
+    expect(await File(nested).exists(), isTrue);
+    expect(await store.secretFor('x'), 'pw'); // round-trips through the new dir
+    // Dir 0700 (rwx------ == 448), file 0600 (rw------- == 384).
+    expect((await Directory(nestedDir).stat()).mode & 0x1FF, 0x1C0);
+    expect((await File(nested).stat()).mode & 0x1FF, 0x180);
+  });
+
   test('delete removes secrets from the dotfile', () async {
     final store = ConnectionStore(dotfilePath: dotfile);
     await store.save(

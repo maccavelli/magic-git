@@ -15,8 +15,10 @@
 #                                 Xcode → Signing; Keychain "Save connection" works)
 #   ./build_macos.sh --unsigned   no Apple ID needed: temporarily removes the
 #                                 keychain-access-groups entitlement and builds
-#                                 ad-hoc. "Save connection" won't persist — fine
-#                                 for E2E. The entitlement file is restored after.
+#                                 ad-hoc. "Save connection" still persists — the
+#                                 Keychain is unreachable unsigned, so secrets
+#                                 fall back to ~/.config/magic_git/credentials.json
+#                                 (0600). The entitlement file is restored after.
 #   ./build_macos.sh --install    build, then replace any prior install in
 #                                 ~/Applications (removes legacy bundle names too)
 #
@@ -141,14 +143,15 @@ cd "$SCRIPT_DIR"
 if [[ "$UNSIGNED" == "1" ]]; then
   ENT="$SCRIPT_DIR/macos/Runner/Release.entitlements"
   log "Unsigned build: removing keychain-access-groups (needs a cert) and the"
-  log "app sandbox (so \$HOME is your real home for the 0600 credential dotfile)"
+  log "app sandbox (so \$HOME is your real home for the 0600 credentials file)"
   cp "$ENT" "$ENT.bak"
   # Restore the committed entitlements no matter how the script exits.
   trap 'mv -f "$ENT.bak" "$ENT" 2>/dev/null || true' EXIT
   /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "$ENT" >/dev/null 2>&1 || true
   # Without the sandbox, HOME points at the real home dir (not the app
-  # container), so the Keychain-fallback dotfile lands where you expect. Secure
-  # storage still can't reach the Keychain unsigned, so it uses the dotfile.
+  # container), so the Keychain-fallback credentials file lands where you expect
+  # (~/.config/magic_git/). Secure storage still can't reach the Keychain
+  # unsigned, so it uses that 0600 file — "Save connection" persists either way.
   /usr/libexec/PlistBuddy -c "Delete :com.apple.security.app-sandbox" "$ENT" >/dev/null 2>&1 || true
 fi
 
@@ -202,8 +205,9 @@ Install (one icon — removes legacy remote_magic_git.app AND the build-dir copy
 Do NOT use the unzip CLI or double-click the zip in Finder — both can leave
 __MACOSX/._* sidecars that show up as a second, broken icon.
 
-Note: "Save connection" (Keychain) may not work on an unsigned build. For E2E
-that's fine — just leave "Save connection" off and enter credentials each launch.
+Note: on an unsigned build the Keychain is unreachable, so "Save connection"
+persists secrets to ~/.config/magic_git/credentials.json (0600) instead. Full
+functionality is preserved; a signed build uses the Keychain automatically.
 
 To reclaim disk when finished, delete the vendored SDK:
   rm -rf "$SDK_DIR"
