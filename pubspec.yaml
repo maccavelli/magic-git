@@ -58,6 +58,9 @@ dependencies:
   # dotfile fallback for unsigned builds. 10.x uses the SPM-capable darwin
   # backend (min macOS 10.14; project target is 10.15).
   flutter_secure_storage: ^10.3.1
+  re_highlight: ^0.0.3
+  flutter_markdown_plus: ^1.0.9
+  flutter_html: ^3.0.0
 
 dev_dependencies:
   flutter_test:
