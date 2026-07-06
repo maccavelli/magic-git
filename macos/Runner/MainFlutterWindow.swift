@@ -61,6 +61,7 @@ class MainFlutterWindow: NSWindow {
     // Defer so the app's main menu (loaded from MainMenu.xib) is in place.
     DispatchQueue.main.async { [weak self] in
       self?.installViewMenuItems()
+      self?.installAboutPanelOverride()
     }
 
     super.awakeFromNib()
@@ -194,6 +195,29 @@ class MainFlutterWindow: NSWindow {
     item.state = .off
     menu.addItem(item)
     return item
+  }
+
+  /// Repoints the standard "About Magic Git" menu item (wired in MainMenu.xib to
+  /// `orderFrontStandardAboutPanel:`) at our own handler, so the About panel can
+  /// show the app's branding artwork. Deliberately does NOT set
+  /// `NSApp.applicationIconImage` — that would also change the Dock/bundle icon;
+  /// passing `.applicationIcon` as an About-panel option affects only that panel.
+  private func installAboutPanelOverride() {
+    guard let appMenu = NSApp.mainMenu?.items.first?.submenu else { return }
+    for item in appMenu.items
+    where item.action == #selector(NSApplication.orderFrontStandardAboutPanel(_:)) {
+      item.target = self
+      item.action = #selector(showAboutPanel(_:))
+    }
+  }
+
+  @objc private func showAboutPanel(_ sender: Any?) {
+    var options: [NSApplication.AboutPanelOptionKey: Any] = [:]
+    // Falls back to the default (Dock/bundle) icon if the asset is missing.
+    if let icon = NSImage(named: "AboutIcon") {
+      options[.applicationIcon] = icon
+    }
+    NSApp.orderFrontStandardAboutPanel(options: options)
   }
 
   @objc private func toggleOutputView(_ sender: Any?) {
