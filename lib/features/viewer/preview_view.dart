@@ -21,27 +21,79 @@ class MarkdownPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final brightness = MacosTheme.brightnessOf(context);
-    final cupertino = CupertinoThemeData(brightness: brightness);
-    final base = MarkdownStyleSheet.fromCupertinoTheme(cupertino);
-    final typography = MacosTheme.of(context).typography;
-    final styleSheet = base.copyWith(
-      // Give code spans/blocks the app's monospace look and a subtle fill.
-      code: typography.body.copyWith(
-        fontFamily: 'Menlo',
-        fontFamilyFallback: const ['SF Mono', 'Consolas', 'monospace'],
-        fontSize: 12.5,
-        backgroundColor: MacosColors.systemGrayColor.withValues(alpha: 0.15),
+    final dark = MacosTheme.brightnessOf(context) == Brightness.dark;
+    // Explicit, brightness-resolved colours — the built-in
+    // `MarkdownStyleSheet.fromCupertinoTheme` leaves text in unresolved
+    // dynamic colours that render near-invisible on the viewer's background,
+    // which is what made the preview look mangled.
+    final fg = dark ? const Color(0xFFE6E6EA) : const Color(0xFF1D1D1F);
+    final muted = dark ? const Color(0xFF9B9BA1) : const Color(0xFF6E6E73);
+    final link = dark ? const Color(0xFF6AB7FF) : const Color(0xFF0066CC);
+    final rule = dark ? const Color(0xFF3A3A3C) : const Color(0xFFD6D6DB);
+    final fill = MacosColors.systemGrayColor.withValues(alpha: dark ? 0.18 : 0.12);
+    final bg = dark ? const Color(0xFF1E1E1E) : const Color(0xFFFFFFFF);
+
+    // A comfortable reading base; headings step down from a clear h1.
+    final body = TextStyle(color: fg, fontSize: 14, height: 1.55);
+    TextStyle heading(double size, {Color? color}) => body.copyWith(
+      fontSize: size,
+      height: 1.25,
+      fontWeight: FontWeight.w600,
+      color: color ?? fg,
+    );
+    final mono = TextStyle(
+      fontFamily: 'Menlo',
+      fontFamilyFallback: const ['SF Mono', 'Consolas', 'monospace'],
+      fontSize: 12.5,
+      color: fg,
+    );
+
+    final styleSheet = MarkdownStyleSheet(
+      p: body,
+      a: body.copyWith(color: link),
+      h1: heading(26),
+      h2: heading(21),
+      h3: heading(17),
+      h4: heading(15),
+      h5: heading(14),
+      h6: heading(13, color: muted),
+      h1Padding: const EdgeInsets.only(top: 14, bottom: 4),
+      h2Padding: const EdgeInsets.only(top: 12, bottom: 4),
+      h3Padding: const EdgeInsets.only(top: 10, bottom: 2),
+      h4Padding: const EdgeInsets.only(top: 8),
+      h5Padding: const EdgeInsets.only(top: 6),
+      h6Padding: const EdgeInsets.only(top: 6),
+      em: body.copyWith(fontStyle: FontStyle.italic),
+      strong: body.copyWith(fontWeight: FontWeight.w700),
+      del: body.copyWith(decoration: TextDecoration.lineThrough),
+      blockquote: body.copyWith(color: muted),
+      blockquotePadding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+      blockquoteDecoration: BoxDecoration(
+        color: fill,
+        border: Border(left: BorderSide(color: rule, width: 4)),
+        borderRadius: BorderRadius.circular(4),
       ),
+      code: mono.copyWith(backgroundColor: fill),
+      codeblockPadding: const EdgeInsets.all(12),
       codeblockDecoration: BoxDecoration(
-        color: MacosColors.systemGrayColor.withValues(alpha: 0.12),
+        color: fill,
         borderRadius: BorderRadius.circular(6),
       ),
+      listBullet: body,
+      listIndent: 22,
+      blockSpacing: 12,
+      horizontalRuleDecoration: BoxDecoration(
+        border: Border(top: BorderSide(color: rule, width: 1)),
+      ),
+      tableHead: body.copyWith(fontWeight: FontWeight.w700),
+      tableBody: body,
+      tableBorder: TableBorder.all(color: rule),
+      tableCellsPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
     );
 
     return Container(
-      color: MacosColors.controlBackgroundColor.resolveFrom(context),
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+      color: bg,
+      padding: const EdgeInsets.fromLTRB(22, 18, 22, 28),
       child: Markdown(
         data: source,
         selectable: true,
