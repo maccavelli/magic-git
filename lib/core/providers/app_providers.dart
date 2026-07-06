@@ -221,15 +221,50 @@ final savedConnectionsProvider = FutureProvider<List<SavedConnection>>((ref) asy
   }
 });
 
-/// The most-recently-connected profiles (up to 3), newest first — the landing
-/// page's "Recent Connections" list. Sorted by `lastConnectedAt` (never-
-/// connected profiles sort last, keeping their stored order).
-final recentConnectionsProvider = Provider<List<SavedConnection>>((ref) {
-  final all = ref.watch(savedConnectionsProvider).value ?? const [];
-  // Pair each profile with its original stored index so the sort is stable:
-  // `List.sort` isn't guaranteed stable, and the comparator returns "equal" for
-  // any two profiles with matching (or both-null) timestamps — without the
-  // index tiebreaker, never-connected profiles could reorder arbitrarily.
+/// A landing-page "recent workspace" — either a saved SSH [RecentConnection]
+/// or a saved [RecentLocalRepo]. Unifies the two separate stores
+/// ([savedConnectionsProvider] and [savedLocalReposProvider]) so the landing
+/// card's recents menu offers both transports in one recency-ordered list.
+sealed class RecentWorkspace {
+  const RecentWorkspace();
+  String get displayName;
+  DateTime? get lastConnectedAt;
+}
+
+class RecentConnection extends RecentWorkspace {
+  final SavedConnection connection;
+  const RecentConnection(this.connection);
+  @override
+  String get displayName => connection.displayName;
+  @override
+  DateTime? get lastConnectedAt => connection.lastConnectedAt;
+}
+
+class RecentLocalRepo extends RecentWorkspace {
+  final SavedLocalRepo repo;
+  const RecentLocalRepo(this.repo);
+  @override
+  String get displayName => repo.displayName;
+  @override
+  DateTime? get lastConnectedAt => repo.lastConnectedAt;
+}
+
+/// The most-recently-used workspaces (up to 3), newest first — the landing
+/// page's "Recent Workspaces" list, merging saved SSH connections and saved
+/// local repos. Sorted by `lastConnectedAt` (never-used entries sort last,
+/// keeping their stored order; on a tie, connections precede local repos since
+/// they're appended first below).
+final recentWorkspacesProvider = Provider<List<RecentWorkspace>>((ref) {
+  final conns = ref.watch(savedConnectionsProvider).value ?? const [];
+  final locals = ref.watch(savedLocalReposProvider).value ?? const [];
+  final all = <RecentWorkspace>[
+    for (final c in conns) RecentConnection(c),
+    for (final r in locals) RecentLocalRepo(r),
+  ];
+  // Pair each entry with its original index so the sort is stable: `List.sort`
+  // isn't guaranteed stable, and the comparator returns "equal" for entries
+  // with matching (or both-null) timestamps — without the index tiebreaker,
+  // never-used entries could reorder arbitrarily.
   final indexed = [for (var i = 0; i < all.length; i++) (i, all[i])]
     ..sort((a, b) {
       final at = a.$2.lastConnectedAt;
@@ -238,7 +273,7 @@ final recentConnectionsProvider = Provider<List<SavedConnection>>((ref) {
         final byTime = bt.compareTo(at);
         if (byTime != 0) return byTime;
       } else if (at == null && bt != null) {
-        return 1; // never-connected sorts after connected
+        return 1; // never-used sorts after used
       } else if (at != null && bt == null) {
         return -1;
       }

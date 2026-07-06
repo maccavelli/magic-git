@@ -7,15 +7,20 @@ import 'package:macos_ui/macos_ui.dart';
 
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
+import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 import 'package:remote_magic_git/features/connection/connection_landing.dart';
 
 Future<void> _pump(
   WidgetTester tester, {
   List<SavedConnection> saved = const [],
+  List<SavedLocalRepo> savedLocal = const [],
 }) async {
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [savedConnectionsProvider.overrideWith((ref) => saved)],
+      overrides: [
+        savedConnectionsProvider.overrideWith((ref) => saved),
+        savedLocalReposProvider.overrideWith((ref) => savedLocal),
+      ],
       child: const MacosApp(
         debugShowCheckedModeBanner: false,
         home: ConnectionLanding(),
@@ -75,6 +80,30 @@ void main() {
     );
     expect(find.text('Recent Workspaces'), findsOneWidget);
     expect(find.text('No Recent Workspaces'), findsNothing);
+  });
+
+  testWidgets('a saved local repo appears under Recent Workspaces', (
+    tester,
+  ) async {
+    // The reported bug: only connections showed up. A saved local repo with no
+    // saved connections must both enable the pulldown and appear in it.
+    await _pump(
+      tester,
+      savedLocal: [
+        SavedLocalRepo(
+          id: 'lr',
+          label: 'My Local Repo',
+          repoPath: '/Users/me/proj',
+          lastConnectedAt: DateTime.utc(2026, 6, 1),
+        ),
+      ],
+    );
+    expect(find.text('Recent Workspaces'), findsOneWidget);
+    expect(find.text('No Recent Workspaces'), findsNothing);
+
+    await tester.tap(find.text('Recent Workspaces'));
+    await tester.pumpAndSettle();
+    expect(find.text('My Local Repo'), findsOneWidget);
   });
 
   testWidgets('Recent Workspaces drops down and dismisses on outside tap', (

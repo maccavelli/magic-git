@@ -1,7 +1,6 @@
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
-import '../../core/local/security_scoped_bookmark.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
@@ -715,29 +714,10 @@ class ConnectionsPanel extends ConsumerWidget {
       Navigator.of(context).pop();
       return;
     }
-    var path = repo.repoPath;
-    if (repo.bookmarkData.isNotEmpty) {
-      final resolved = await SecurityScopedBookmark.startAccessing(
-        repo.bookmarkData,
-      );
-      if (resolved == null) {
-        // Access could not be restored (the folder was moved/deleted, or the
-        // grant was revoked) — reuse the standard error dialog rather than
-        // silently failing or attempting a doomed connect. Keep the panel OPEN
-        // (don't pop first): popping unmounts this context, so the dialog would
-        // never show and the user would hit a silent dead-end.
-        if (context.mounted) {
-          await showErrorDialog(
-            context,
-            "Can't access this repository anymore — it may have been moved, "
-            'deleted, or its access permission revoked. Remove it and add it '
-            'again via the folder picker.',
-          );
-        }
-        return;
-      }
-      path = resolved;
-    }
+    // Keep the panel OPEN across resolution (don't pop first): a failed resolve
+    // shows an error dialog, which needs this context still mounted.
+    final path = await resolveSavedLocalRepoPath(context, repo);
+    if (path == null) return; // access could not be restored; dialog shown
     // Resolution succeeded — now dismiss the panel and open the repo.
     if (context.mounted) Navigator.of(context).pop();
     await notifier.connectLocal(

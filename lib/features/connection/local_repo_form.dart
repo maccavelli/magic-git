@@ -5,8 +5,41 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/local/security_scoped_bookmark.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_local_repo.dart';
+import '../common/actions.dart';
 import '../common/field_styles.dart';
 import '../common/tool_icon_button.dart';
+
+/// Resolves [repo]'s macOS security-scoped bookmark to a path this process can
+/// currently read, or shows an error dialog and returns null when access can't
+/// be restored (the folder was moved/deleted, or the sandbox grant revoked).
+/// Returns the stored path unchanged for a repo saved without a bookmark.
+///
+/// Shared by the landing card's Recent Workspaces menu and the connection
+/// switcher so a stale bookmark is handled identically in both. Does not
+/// connect or dismiss any UI — the caller opens via `connectLocal` and manages
+/// its own panel/sheet, and must NOT dismiss before calling this (the error
+/// dialog needs a still-mounted context).
+Future<String?> resolveSavedLocalRepoPath(
+  BuildContext context,
+  SavedLocalRepo repo,
+) async {
+  if (repo.bookmarkData.isEmpty) return repo.repoPath;
+  final resolved = await SecurityScopedBookmark.startAccessing(
+    repo.bookmarkData,
+  );
+  if (resolved == null) {
+    if (context.mounted) {
+      await showErrorDialog(
+        context,
+        "Can't access this repository anymore — it may have been moved, "
+        'deleted, or its access permission revoked. Remove it and add it '
+        'again via the folder picker.',
+      );
+    }
+    return null;
+  }
+  return resolved;
+}
 
 /// Sheet for opening a repo on this machine's own filesystem. Much simpler
 /// than [ConnectionForm]: no host/auth fields — a folder is picked through

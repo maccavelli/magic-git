@@ -2,7 +2,6 @@ import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
-import '../../core/storage/saved_connection.dart';
 import '../common/tool_icon_button.dart';
 import 'connection_form.dart';
 import 'local_repo_form.dart';
@@ -107,7 +106,7 @@ class ConnectionLanding extends ConsumerWidget {
       );
     }
 
-    final recents = ref.watch(recentConnectionsProvider);
+    final recents = ref.watch(recentWorkspacesProvider);
     final error = phase == ConnectionPhase.error ? connectionError : null;
 
     return Center(
@@ -195,7 +194,7 @@ class ConnectionLanding extends ConsumerWidget {
 /// [PushButton]); tapping it drops down a small menu of recent profiles that
 /// dismisses on any outside tap. Disabled when there are no recents.
 class _RecentConnectionsButton extends ConsumerStatefulWidget {
-  final List<SavedConnection> recents;
+  final List<RecentWorkspace> recents;
   const _RecentConnectionsButton({required this.recents});
 
   @override
@@ -250,9 +249,24 @@ class _RecentConnectionsButtonState
     Overlay.of(context).insert(_menu!);
   }
 
-  void _select(SavedConnection c) {
+  Future<void> _select(RecentWorkspace w) async {
     _removeMenu();
-    ref.read(connectionProvider.notifier).connectToSaved(c);
+    switch (w) {
+      case RecentConnection(:final connection):
+        await ref.read(connectionProvider.notifier).connectToSaved(connection);
+      case RecentLocalRepo(:final repo):
+        // Mirror the switcher's saved-local open: resolve the security-scoped
+        // bookmark (surfacing a dialog if the folder is gone) before connecting.
+        final path = await resolveSavedLocalRepoPath(context, repo);
+        if (path == null || !mounted) return;
+        await ref
+            .read(connectionProvider.notifier)
+            .connectLocal(
+              path,
+              label: repo.label.isEmpty ? null : repo.label,
+              id: repo.id,
+            );
+    }
   }
 
   Widget _menuCard(double width) {
@@ -275,8 +289,8 @@ class _RecentConnectionsButtonState
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final c in widget.recents)
-              _MenuRow(label: c.displayName, onTap: () => _select(c)),
+            for (final w in widget.recents)
+              _MenuRow(label: w.displayName, onTap: () => _select(w)),
           ],
         ),
       ),
