@@ -464,7 +464,11 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         bottom: connected
             ? const Column(
                 mainAxisSize: MainAxisSize.min,
-                children: [CurrentRepoIndicator(), ConnectionSwitcher()],
+                children: [
+                  CurrentRepoIndicator(),
+                  ConnectionSwitcher(),
+                  LogoutButton(),
+                ],
               )
             : null,
         builder: (context, scrollController) {

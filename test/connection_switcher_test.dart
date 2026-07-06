@@ -15,6 +15,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 Finder _byMacosTooltip(String message) =>
     find.byWidgetPredicate((w) => w is MacosTooltip && w.message == message);
 
+/// Records whether `disconnect()` — the Logout button's action — was invoked.
+class _FakeConnectionController extends ConnectionController {
+  bool disconnectCalled = false;
+  @override
+  ConnectionState build() => const ConnectionState();
+  @override
+  Future<void> disconnect() async => disconnectCalled = true;
+}
+
 Future<void> _pump(
   WidgetTester tester, {
   List<SavedLocalRepo> savedLocal = const [],
@@ -72,5 +81,26 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Choose…'), findsOneWidget);
+  });
+
+  testWidgets('Logout button disconnects (returns to the connection card)', (
+    tester,
+  ) async {
+    final fake = _FakeConnectionController();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [connectionProvider.overrideWith(() => fake)],
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: LogoutButton(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Logout'), findsOneWidget);
+    await tester.tap(find.text('Logout'));
+    await tester.pump();
+    expect(fake.disconnectCalled, isTrue);
   });
 }

@@ -72,6 +72,51 @@ class ConnectionSwitcher extends ConsumerWidget {
   }
 }
 
+/// Sidebar button directly beneath [ConnectionSwitcher] that ends the current
+/// session and returns to the connection card. Styled identically to the
+/// connections-manager button (same large secondary [PushButton] in a top-
+/// bordered, padded container) so the two read as one bottom nav stack.
+class LogoutButton extends ConsumerWidget {
+  const LogoutButton({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: MacosColors.separatorColor)),
+      ),
+      padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+      child: PushButton(
+        controlSize: ControlSize.large,
+        secondary: true,
+        // Returns to ConnectionLanding: disconnect() drops the session, which
+        // flips `connected` false in the shell and pins content to the card.
+        onPressed: () => ref.read(connectionProvider.notifier).disconnect(),
+        child: Row(
+          children: [
+            // White for parity with the connections-manager button's icon,
+            // which reads more clearly than the default accent tint here.
+            const MacosIcon(
+              CupertinoIcons.square_arrow_left,
+              size: 15,
+              color: MacosColors.white,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Logout',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: MacosTheme.of(context).typography.body,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// One pane of glass for connections and their repositories: each connection is
 /// a group with its repos nested beneath it. Tap a repo to connect/switch there;
 /// add/delete connections and repos inline.
