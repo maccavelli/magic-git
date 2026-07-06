@@ -1,0 +1,247 @@
+// The Repository panel's diff "pop-out": clicking Pop out relocates the diff
+// into a floating DiffPopoutWindow (hiding the inline panel); its own close
+// button returns the diff to the inline panel; its side-by-side toggle is
+// independent of the inline toggle it was seeded from.
+
+import 'dart:async';
+
+import 'package:flutter/cupertino.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:macos_ui/macos_ui.dart';
+
+import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/git/watch_event.dart';
+import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'package:remote_magic_git/features/common/split_diff_view.dart';
+import 'package:remote_magic_git/features/repository/diff_popout_window.dart';
+import 'package:remote_magic_git/features/repository/hunk_diff_view.dart';
+import 'package:remote_magic_git/features/repository/repo_status_view.dart';
+
+const _repo = '/srv/repo';
+
+const _diff =
+    'diff --git a/lib/a.dart b/lib/a.dart\n'
+    'index 111..222 100644\n'
+    '--- a/lib/a.dart\n'
+    '+++ b/lib/a.dart\n'
+    '@@ -1,2 +1,2 @@\n'
+    ' keep\n'
+    '-old\n'
+    '+new\n';
+
+class _FakeGitService extends GitService {
+  _FakeGitService() : super(SSHCommandExecutor(SSHClientManager()));
+}
+
+class _HiddenFileView extends FileViewVisibility {
+  @override
+  bool build() => false;
+}
+
+Finder _byMacosTooltip(String message) =>
+    find.byWidgetPredicate((w) => w is MacosTooltip && w.message == message);
+
+Future<void> _pump(WidgetTester tester) async {
+  final container = ProviderContainer(
+    overrides: [
+      gitServiceProvider.overrideWithValue(_FakeGitService()),
+      statusProvider(_repo).overrideWith(
+        (ref) async => GitStatus(
+          branch: const GitBranchInfo(),
+          files: const [
+            GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+          ],
+        ),
+      ),
+      pendingOpProvider(_repo).overrideWith((ref) async => PendingOp.none),
+      repoWatchProvider(_repo).overrideWith(
+        (ref) => const Stream<RepoWatchEvent>.empty(),
+      ),
+      fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
+      refsProvider(_repo).overrideWith((ref) async => const []),
+      fileDiffProvider((
+        _repo,
+        'lib/a.dart',
+        false,
+        false,
+        3,
+      )).overrideWith((ref) async => _diff),
+    ],
+  );
+  addTearDown(container.dispose);
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: const MacosApp(
+        debugShowCheckedModeBanner: false,
+        home: RepoStatusView(repoPath: _repo),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+void main() {
+  testWidgets(
+    'Pop out relocates the diff into a floating window and hides the inline '
+    'panel',
+    (tester) async {
+      await _pump(tester);
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+
+      expect(_byMacosTooltip('Close diff'), findsOneWidget);
+      expect(find.byType(DiffPopoutWindow), findsNothing);
+
+      await tester.tap(_byMacosTooltip('Open diff in a larger window'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DiffPopoutWindow), findsOneWidget);
+      expect(_byMacosTooltip('Close diff'), findsNothing);
+      expect(_byMacosTooltip('Close pop-out'), findsOneWidget);
+      // The diff itself still renders, now inside the pop-out.
+      expect(find.text('+new'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'closing the pop-out returns the diff to the inline panel',
+    (tester) async {
+      await _pump(tester);
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await tester.tap(_byMacosTooltip('Open diff in a larger window'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(_byMacosTooltip('Close pop-out'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DiffPopoutWindow), findsNothing);
+      expect(_byMacosTooltip('Close diff'), findsOneWidget);
+      expect(find.text('+new'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    "the pop-out's side-by-side toggle is independent and switches its own "
+    'rendering',
+    (tester) async {
+      await _pump(tester);
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await tester.tap(_byMacosTooltip('Open diff in a larger window'));
+      await tester.pumpAndSettle();
+
+      // Seeded from the inline panel's untouched default: unified, not split.
+      expect(find.byType(HunkDiffView), findsOneWidget);
+      expect(find.byType(SplitDiffView), findsNothing);
+
+      await tester.tap(_byMacosTooltip('Side-by-side'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(SplitDiffView), findsOneWidget);
+      expect(find.byType(HunkDiffView), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'the resize handle grows the window and clamps it to a minimum size',
+    (tester) async {
+      await _pump(tester);
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await tester.tap(_byMacosTooltip('Open diff in a larger window'));
+      await tester.pumpAndSettle();
+
+      final initial = tester.getSize(find.byType(DiffPopoutWindow));
+      final handle = find.byIcon(CupertinoIcons.arrow_up_left_arrow_down_right);
+
+      await tester.drag(handle, const Offset(80, 60));
+      await tester.pumpAndSettle();
+      final grown = tester.getSize(find.byType(DiffPopoutWindow));
+      expect(grown.width, greaterThan(initial.width));
+      expect(grown.height, greaterThan(initial.height));
+
+      // A large shrink clamps to the minimum rather than collapsing further.
+      await tester.drag(handle, const Offset(-5000, -5000));
+      await tester.pumpAndSettle();
+      final shrunk = tester.getSize(find.byType(DiffPopoutWindow));
+      expect(shrunk.width, 420);
+      expect(shrunk.height, 280);
+    },
+  );
+
+  testWidgets(
+    'selecting a different file while popped out keeps it popped out',
+    (tester) async {
+      final container = ProviderContainer(
+        overrides: [
+          gitServiceProvider.overrideWithValue(_FakeGitService()),
+          statusProvider(_repo).overrideWith(
+            (ref) async => GitStatus(
+              branch: const GitBranchInfo(),
+              files: const [
+                GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+                GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+              ],
+            ),
+          ),
+          pendingOpProvider(_repo).overrideWith((ref) async => PendingOp.none),
+          repoWatchProvider(_repo).overrideWith(
+            (ref) => const Stream<RepoWatchEvent>.empty(),
+          ),
+          fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
+          refsProvider(_repo).overrideWith((ref) async => const []),
+          fileDiffProvider((
+            _repo,
+            'lib/a.dart',
+            false,
+            false,
+            3,
+          )).overrideWith((ref) async => _diff),
+          fileDiffProvider((
+            _repo,
+            'lib/b.dart',
+            false,
+            false,
+            3,
+          )).overrideWith((ref) async => _diff),
+        ],
+      );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: RepoStatusView(repoPath: _repo),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await tester.tap(_byMacosTooltip('Open diff in a larger window'));
+      await tester.pumpAndSettle();
+      expect(find.byType(DiffPopoutWindow), findsOneWidget);
+
+      // The pop-out defaults to roughly centered, covering the file list
+      // beneath it — drag it out of the way (by its title bar) before
+      // clicking a row, exactly as a real user would need to.
+      final titleBar = tester.getTopLeft(find.byType(DiffPopoutWindow));
+      await tester.dragFrom(titleBar + const Offset(20, 10), const Offset(2000, 2000));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('lib/b.dart'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(DiffPopoutWindow), findsOneWidget);
+      expect(_byMacosTooltip('Close diff'), findsNothing);
+    },
+  );
+}

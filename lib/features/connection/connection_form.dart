@@ -1,0 +1,304 @@
+import 'package:flutter/cupertino.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:macos_ui/macos_ui.dart';
+import '../../core/providers/app_providers.dart';
+import '../../core/ssh/ssh_client_manager.dart';
+import '../../core/storage/saved_connection.dart';
+import '../common/field_styles.dart';
+import '../common/labeled_text_field.dart';
+
+/// Connection form: collects SSH details + a remote repo path and drives
+/// [ConnectionController.connect]. Profiles can be saved — metadata to
+/// shared_preferences, the password to the macOS Keychain.
+class ConnectionForm extends ConsumerStatefulWidget {
+  const ConnectionForm({super.key});
+
+  @override
+  ConsumerState<ConnectionForm> createState() => _ConnectionFormState();
+}
+
+class _ConnectionFormState extends ConsumerState<ConnectionForm> {
+  final _label = TextEditingController();
+  final _host = TextEditingController();
+  final _port = TextEditingController(text: '22');
+  final _username = TextEditingController();
+  final _password = TextEditingController();
+  final _privateKey = TextEditingController();
+  final _passphrase = TextEditingController();
+  final _repoPath = TextEditingController();
+  final _gitlabToken = TextEditingController();
+
+  bool _save = true;
+  String? _saveWarning;
+
+  // Guards the window between tapping Connect and `connect()` flipping the
+  // phase to `connecting` (which swaps the button for a spinner). The pre-connect
+  // Keychain save is awaited first, so without this a double-tap on a slow write
+  // fires two saves and two concurrent connect attempts.
+  bool _submitting = false;
+
+  @override
+  void dispose() {
+    _label.dispose();
+    _host.dispose();
+    _port.dispose();
+    _username.dispose();
+    _password.dispose();
+    _privateKey.dispose();
+    _passphrase.dispose();
+    _repoPath.dispose();
+    _gitlabToken.dispose();
+    super.dispose();
+  }
+
+  bool get _canSubmit {
+    if (_host.text.trim().isEmpty ||
+        _username.text.trim().isEmpty ||
+        _repoPath.text.trim().isEmpty) {
+      return false;
+    }
+    // A profile with no auth method at all can never authenticate — require a
+    // password or a private key before enabling Connect. A passphrase alone
+    // (with no key for it to unlock) is never sufficient by itself; it only
+    // matters when paired with a key, so it doesn't factor in here.
+    final hasAuth =
+        _password.text.isNotEmpty || _privateKey.text.trim().isNotEmpty;
+    if (!hasAuth) return false;
+    // Port must be a real TCP port; `int.tryParse` alone accepted any digit
+    // string (and _submit silently fell back to 22 for a bad one).
+    final port = int.tryParse(_port.text.trim());
+    return port != null && port >= 1 && port <= 65535;
+  }
+
+  Future<void> _submit() async {
+    if (_submitting) return;
+    setState(() => _submitting = true);
+    try {
+      await _doSubmit();
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _doSubmit() async {
+    final repoPath = _repoPath.text.trim();
+    final token = _gitlabToken.text.trim();
+    final key = _privateKey.text.trim();
+    final profile = SSHConnectionProfile(
+      host: _host.text.trim(),
+      port: int.tryParse(_port.text.trim()) ?? 22,
+      username: _username.text.trim(),
+      password: _password.text.isEmpty ? null : _password.text,
+      privateKey: key.isEmpty ? null : key,
+      passphrase: _passphrase.text.isEmpty ? null : _passphrase.text,
+    );
+
+    var repoPaths = SavedConnection.dedupePaths([repoPath]);
+    String? connectionId;
+    String? connectionLabel;
+
+    if (_save) {
+      // Reuse an existing saved profile for the same host+user (update in
+      // place) so re-connecting never piles up duplicates, and its repo list is
+      // preserved.
+      final existing = ref.read(savedConnectionsProvider).value ?? const [];
+      SavedConnection? match;
+      for (final c in existing) {
+        if (c.host == profile.host && c.username == profile.username) {
+          match = c;
+          break;
+        }
+      }
+      final id = match?.id ?? DateTime.now().microsecondsSinceEpoch.toString();
+      repoPaths = SavedConnection.dedupePaths([
+        repoPath,
+        ...?match?.allRepoPaths,
+      ]);
+      final conn = SavedConnection(
+        id: id,
+        label: _label.text.trim(),
+        host: profile.host,
+        port: profile.port,
+        username: profile.username,
+        repoPath: repoPath,
+        repoPaths: repoPaths,
+        fsmonitorPaths: match?.fsmonitorPaths ?? const [],
+        lastConnectedAt: match?.lastConnectedAt,
+      );
+      // Saving is best-effort: the Keychain is unavailable on an unsigned build
+      // (write throws), and that must never block the actual connection.
+      try {
+        final store = ref.read(connectionStoreProvider);
+        // A blank field means "leave this credential untouched" — same as the
+        // null-coalescing used to build `profile` above. Unlike `profile`,
+        // though, `ConnectionStore.save`/`_writeSecret` treats a null secret
+        // the same as an empty one (both delete the stored entry), so
+        // "untouched" for an existing profile has to mean re-supplying
+        // whatever is already stored rather than passing null/empty through.
+        final secretToSave = _password.text.isNotEmpty
+            ? _password.text
+            : (match != null ? await store.secretFor(match.id) : null);
+        final keyToSave = key.isNotEmpty
+            ? key
+            : (match != null ? await store.privateKeyFor(match.id) : null);
+        final passphraseToSave = _passphrase.text.isNotEmpty
+            ? _passphrase.text
+            : (match != null ? await store.passphraseFor(match.id) : null);
+        final tokenToSave = token.isNotEmpty
+            ? token
+            : (match != null ? await store.gitlabTokenFor(match.id) : null);
+        await store.save(
+          conn,
+          secret: secretToSave,
+          gitlabToken: tokenToSave,
+          privateKey: keyToSave,
+          passphrase: passphraseToSave,
+        );
+        if (!mounted) return;
+        ref.invalidate(savedConnectionsProvider);
+        _saveWarning = null;
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _saveWarning =
+                'Could not save connection profile — proceeding to connect '
+                'anyway. ($e)';
+          });
+        }
+      }
+      if (!mounted) return;
+      connectionId = id;
+      connectionLabel = conn.displayName;
+    }
+
+    await ref
+        .read(connectionProvider.notifier)
+        .connect(
+          profile: profile,
+          repoPath: repoPath,
+          gitlabToken: token,
+          connectionId: connectionId,
+          connectionLabel: connectionLabel,
+          repoPaths: repoPaths,
+        );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final (phase, error) = ref.watch(
+      connectionProvider.select((c) => (c.phase, c.error)),
+    );
+    final typography = MacosTheme.of(context).typography;
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 440),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _field('Host', _host, placeholder: 'gitlab.example.com'),
+              _field('Port', _port),
+              _field('Username', _username),
+              _field('Password', _password, obscure: true),
+              _field(
+                'Private key (PEM)',
+                _privateKey,
+                placeholder: 'Paste key for key-based auth (optional)',
+                maxLines: 5,
+              ),
+              _field('Key passphrase', _passphrase, obscure: true),
+              if (_passphrase.text.isNotEmpty &&
+                  _privateKey.text.trim().isEmpty) ...[
+                Text(
+                  'Passphrase requires a private key',
+                  style: typography.caption1.copyWith(
+                    color: MacosColors.systemOrangeColor,
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              _field(
+                'Repository path',
+                _repoPath,
+                placeholder: '/srv/git/my-project',
+              ),
+              _field(
+                'GitLab token',
+                _gitlabToken,
+                placeholder: 'glpat-… (optional)',
+                obscure: true,
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  MacosSwitch(
+                    value: _save,
+                    onChanged: (v) => setState(() => _save = v),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('Save connection', style: typography.body),
+                  if (_save) ...[
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: MacosTextField(
+                        controller: _label,
+                        placeholder: 'Label (optional)',
+                        decoration: kAppTextFieldDecoration,
+                        focusedDecoration: kAppTextFieldFocusedDecoration,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 20),
+              if (phase == ConnectionPhase.connecting)
+                const Center(child: ProgressCircle())
+              else
+                PushButton(
+                  controlSize: ControlSize.large,
+                  onPressed: (_canSubmit && !_submitting) ? _submit : null,
+                  child: const Text('Connect'),
+                ),
+              if (_saveWarning != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _saveWarning!,
+                  style: typography.body.copyWith(
+                    color: MacosColors.systemOrangeColor,
+                  ),
+                ),
+              ],
+              if (phase == ConnectionPhase.error && error != null) ...[
+                const SizedBox(height: 16),
+                Text(
+                  error,
+                  style: typography.body.copyWith(
+                    color: MacosColors.systemRedColor,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _field(
+    String label,
+    TextEditingController controller, {
+    String? placeholder,
+    bool obscure = false,
+    int maxLines = 1,
+  }) => LabeledTextField(
+    label: label,
+    controller: controller,
+    placeholder: placeholder,
+    obscure: obscure,
+    maxLines: maxLines,
+    onChanged: () => setState(() {}),
+  );
+}

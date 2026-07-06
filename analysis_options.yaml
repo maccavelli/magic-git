@@ -1,0 +1,28 @@
+# Static analysis configuration. Runs via `flutter analyze` / the IDE.
+# Base: flutter_lints 6 (recommended Flutter lints), hardened with the strict
+# analyzer language modes and a handful of high-signal safety lints.
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  language:
+    # Reject implicit dynamic downcasts, silent dynamic inference, and raw
+    # generic types — the highest-signal static-analysis upgrades.
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+  exclude:
+    - build/**
+
+linter:
+  rules:
+    # Safety
+    avoid_dynamic_calls: true
+    unawaited_futures: true
+    use_build_context_synchronously: true
+    cancel_subscriptions: true
+    close_sinks: true
+    # Consistency / clarity
+    prefer_const_constructors: true
+    prefer_const_declarations: true
+    prefer_final_locals: true
+    directives_ordering: true
