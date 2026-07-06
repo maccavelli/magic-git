@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
@@ -8,13 +9,16 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/utils/file_actions.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
+import '../common/context_menu.dart';
 import '../common/diff_view.dart';
 import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
 import '../common/tool_icon_button.dart';
 import '../settings/settings_sheet.dart';
+import 'blame_sheet.dart';
 import 'commit_dialog.dart';
 import 'conflict_view.dart';
 import 'diff_popout_window.dart';
@@ -25,6 +29,12 @@ import 'output_view.dart';
 /// How to proceed when a plain push would be rejected because the branch is
 /// behind its upstream.
 enum _PushChoice { pullThenPush, pushAnyway, cancel }
+
+/// Which status section a selection belongs to. A selection never spans
+/// sections (see [_RepoStatusViewState._handleRowTap]) — mixing, say, one
+/// staged and one unstaged file makes "Stage"/"Discard" ambiguous — so this
+/// single value describes every currently-selected path at once.
+enum _SectionKind { conflict, staged, unstaged, untracked }
 
 /// Live working-tree status for the connected repository. Proves the end-to-end
 /// path: SSH → `git status --porcelain=v2 -z` → isolate parse → reactive UI,
@@ -49,11 +59,43 @@ class RepoStatusView extends ConsumerStatefulWidget {
 }
 
 class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
-  // Selected file for the diff panel. Named record so field reads are
-  // self-checking (transposing staged/untracked was previously a silent bug).
-  ({String path, bool staged, bool untracked})? _selected;
-  // Selected conflicted file (takes precedence over the diff panel).
-  String? _selectedConflict;
+  // Which status section the current selection belongs to; null means
+  // nothing is selected.
+  _SectionKind? _selectionKind;
+  // Paths currently selected within _selectionKind's section. A lone path is
+  // the common case and drives the diff/conflict panel; 2+ show the
+  // multi-select summary panel instead.
+  Set<String> _selectedPaths = {};
+  // Anchor for shift-click range selection: the fixed end a range extends
+  // from, so repeated shift-clicks extend/contract from the same point
+  // rather than the last-clicked row.
+  String? _selectionAnchor;
+
+  // Single-file view of the selection — non-null only when exactly one
+  // non-conflict file is selected. Named record so field reads are
+  // self-checking (transposing staged/untracked was previously a silent
+  // bug); every call site that cares about "the one selected file" (the diff
+  // panel, keyboard shortcuts, stage/unstage bookkeeping) reads this instead
+  // of _selectedPaths directly.
+  ({String path, bool staged, bool untracked})? get _selected {
+    final kind = _selectionKind;
+    if (kind == null || kind == _SectionKind.conflict) return null;
+    if (_selectedPaths.length != 1) return null;
+    return (
+      path: _selectedPaths.single,
+      staged: kind == _SectionKind.staged,
+      untracked: kind == _SectionKind.untracked,
+    );
+  }
+
+  // Single-conflict view of the selection — non-null only when exactly one
+  // conflicted file is selected.
+  String? get _selectedConflict =>
+      _selectionKind == _SectionKind.conflict && _selectedPaths.length == 1
+      ? _selectedPaths.single
+      : null;
+
+  bool get _isMultiSelect => _selectedPaths.length > 1;
 
   // Diff-viewer ergonomics (persist across selections within a session):
   //  * split → side-by-side rendering (read-only) vs unified with staging;
@@ -84,14 +126,27 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
   // inert and any re-entrant mutation no-ops.
   bool _busy = false;
 
+  // Right-click context menu, anchored at the tap point.
+  final _contextMenu = ContextMenuOverlay();
+
   String get repoPath => widget.repoPath;
+
+  @override
+  void dispose() {
+    _contextMenu.dispose();
+    super.dispose();
+  }
 
   @override
   void didUpdateWidget(RepoStatusView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repoPath != widget.repoPath) {
-      _selected = null;
-      _selectedConflict = null;
+      // Dismiss any open right-click menu — it targets the old repo's
+      // file(s) and its actions would otherwise run against the new repo.
+      _contextMenu.remove();
+      _selectionKind = null;
+      _selectedPaths = {};
+      _selectionAnchor = null;
       _popout = false;
     }
   }
@@ -135,9 +190,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       // Flip the diff panel's staged flag immediately for the file just
       // staged, rather than leaving it pointed at the pre-stage diff key
       // until the next status refetch lands.
-      if (_selected?.path == path) {
-        setState(() => _selected = (path: path, staged: true, untracked: false));
-      }
+      _dropOrReselect(path, _SectionKind.staged);
     }
   }
 
@@ -145,10 +198,46 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     final git = ref.read(gitServiceProvider);
     if (await _guardedAction(() => git.unstage(repoPath, path))) {
       if (!mounted) return;
-      if (_selected?.path == path) {
-        setState(() => _selected = (path: path, staged: false, untracked: false));
-      }
+      _dropOrReselect(path, _SectionKind.unstaged);
     }
+  }
+
+  /// A single-file action (stage/unstage/discard icon on a row) just moved
+  /// [path] into [newKind]'s section. If [path] was the *sole* selection,
+  /// follow it there — this is what keeps the diff panel pointed at the
+  /// file's new state instead of going stale or closing. If [path] was one
+  /// of several selected files, it no longer belongs with the rest of that
+  /// selection (which is still in the old section), so just drop it rather
+  /// than guessing whether the user wants it re-homed.
+  void _dropOrReselect(String path, _SectionKind newKind) {
+    if (!_selectedPaths.contains(path)) return;
+    setState(() {
+      if (_selectedPaths.length == 1) {
+        _selectionKind = newKind;
+        _selectionAnchor = path;
+      } else {
+        _selectedPaths = {..._selectedPaths}..remove(path);
+      }
+    });
+  }
+
+  /// Removes [path] from the selection if present, with no reselection —
+  /// used when an action makes [path] disappear from the status list
+  /// entirely (e.g. a resolved conflict), so the panel doesn't keep pointing
+  /// at it until the next status refetch lands.
+  void _removeFromSelection(String path) {
+    if (!_selectedPaths.contains(path)) return;
+    setState(() {
+      _selectedPaths = {..._selectedPaths}..remove(path);
+      if (_selectedPaths.isEmpty) _selectionKind = null;
+    });
+  }
+
+  void _clearSelection() {
+    setState(() {
+      _selectionKind = null;
+      _selectedPaths = {};
+    });
   }
 
   Future<void> _stageAll() async {
@@ -420,7 +509,116 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       () => git.resolveConflict(repoPath, path, useOurs: useOurs),
     )) {
       if (!mounted) return;
-      if (_selectedConflict == path) setState(() => _selectedConflict = null);
+      _removeFromSelection(path);
+    }
+  }
+
+  Future<void> _discardStaged(String path) async {
+    final ok = await confirmAction(
+      context,
+      title: 'Discard staged changes',
+      message:
+          'Discard staged changes to "$path"? This restores it to its '
+          'last-committed state (or removes it entirely if it was never '
+          'committed). This cannot be undone.',
+      confirmLabel: 'Discard',
+    );
+    if (ok) {
+      await _run(
+        () => ref.read(gitServiceProvider).discardStaged(repoPath, path),
+      );
+    }
+  }
+
+  Future<void> _addToGitignore(String path) async {
+    await _run(() => ref.read(gitServiceProvider).addToGitignore(repoPath, path));
+  }
+
+  // ---- Bulk (multi-select) file actions -------------------------------
+  // Each calls the corresponding batch GitService method (one git invocation
+  // covering the whole selection) inside one _guardedAction/_run — same
+  // busy-gate and refresh as every single-file action. A resulting vanished
+  // path (staged/discarded/deleted/resolved away) is dropped from the
+  // selection generically by the statusProvider listener once the refresh
+  // lands, same as the single-file actions rely on — except _resolveMany,
+  // which (like _resolve) also clears immediately to avoid a stale-content
+  // flash before that refresh completes.
+
+  /// Caps a bulk confirmation's file list at [cap] entries so a 50-file
+  /// selection doesn't produce an unreadably tall dialog.
+  String _fileListSummary(List<String> paths, {int cap = 5}) {
+    final shown = paths.take(cap).map((p) => '"$p"').join(', ');
+    final extra = paths.length - cap;
+    return extra > 0 ? '$shown, and $extra more' : shown;
+  }
+
+  Future<void> _stageMany(List<String> paths) async {
+    await _run(() => ref.read(gitServiceProvider).stageMany(repoPath, paths));
+  }
+
+  Future<void> _unstageMany(List<String> paths) async {
+    await _run(() => ref.read(gitServiceProvider).unstageMany(repoPath, paths));
+  }
+
+  Future<void> _discardMany(List<String> paths) async {
+    final ok = await confirmAction(
+      context,
+      title: 'Discard changes',
+      message:
+          'Discard working-tree changes to ${_fileListSummary(paths)}? '
+          'This cannot be undone.',
+      confirmLabel: 'Discard',
+    );
+    if (!ok) return;
+    await _run(() => ref.read(gitServiceProvider).discardMany(repoPath, paths));
+  }
+
+  Future<void> _discardUntrackedMany(List<String> paths) async {
+    final ok = await confirmAction(
+      context,
+      title: 'Delete untracked files',
+      message:
+          'Permanently delete ${_fileListSummary(paths)}? This cannot be '
+          'undone.',
+      confirmLabel: 'Delete',
+    );
+    if (!ok) return;
+    await _run(
+      () => ref.read(gitServiceProvider).removeUntrackedFilesMany(repoPath, paths),
+    );
+  }
+
+  Future<void> _discardStagedMany(List<String> paths) async {
+    final ok = await confirmAction(
+      context,
+      title: 'Discard staged changes',
+      message:
+          'Discard staged changes to ${_fileListSummary(paths)}? This '
+          'cannot be undone.',
+      confirmLabel: 'Discard',
+    );
+    if (!ok) return;
+    await _run(
+      () => ref.read(gitServiceProvider).discardStagedMany(repoPath, paths),
+    );
+  }
+
+  Future<void> _addToGitignoreMany(List<String> paths) async {
+    await _run(
+      () => ref.read(gitServiceProvider).addToGitignoreMany(repoPath, paths),
+    );
+  }
+
+  Future<void> _resolveMany(List<String> paths, {required bool useOurs}) async {
+    if (await _guardedAction(
+      () => ref
+          .read(gitServiceProvider)
+          .resolveConflictMany(repoPath, paths, useOurs: useOurs),
+    )) {
+      if (!mounted) return;
+      for (final p in paths) {
+        _removeFromSelection(p);
+      }
     }
   }
 
@@ -457,7 +655,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       },
     )) {
       if (!mounted) return;
-      setState(() => _selectedConflict = null);
+      _clearSelection();
     }
   }
 
@@ -469,7 +667,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       );
     });
     // Same reasoning as _abortPending: only clear on success.
-    if (ok && mounted) setState(() => _selectedConflict = null);
+    if (ok && mounted) _clearSelection();
   }
 
   /// Banner shown while a merge/cherry-pick/revert/rebase is mid-flight (usually
@@ -541,20 +739,23 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     // doesn't keep showing stale merge-marker content indefinitely.
     ref.listen(statusProvider(repoPath), (previous, next) {
       final status = next.value;
-      final conflictPath = _selectedConflict;
-      if (conflictPath != null && status != null &&
-          !status.conflicted.any((f) => f.path == conflictPath)) {
-        setState(() => _selectedConflict = null);
-      }
-      // Symmetric to the conflict case above: if the diff-panel file left the
-      // working tree externally (committed or discarded in another terminal),
-      // its path is no longer in the file list — clear the stale selection so
-      // the panel stops requesting a diff for a file git no longer reports.
-      // Path-keyed, so unaffected by any reordering of the list.
-      final sel = _selected;
-      if (sel != null && status != null &&
-          !status.files.any((f) => f.path == sel.path)) {
-        setState(() => _selected = null);
+      final kind = _selectionKind;
+      if (status == null || kind == null) return;
+      // If a selected file left the working tree externally (committed,
+      // discarded, or a conflict resolved in another terminal), its path is
+      // no longer in the file list — drop it from the selection so the panel
+      // stops requesting a diff/conflict-content for a file git no longer
+      // reports. Applied per-path (not just "clear everything") so the rest
+      // of a multi-selection survives one member disappearing.
+      final stillPresent = kind == _SectionKind.conflict
+          ? status.conflicted.map((f) => f.path).toSet()
+          : status.files.map((f) => f.path).toSet();
+      final pruned = _selectedPaths.intersection(stillPresent);
+      if (pruned.length != _selectedPaths.length) {
+        setState(() {
+          _selectedPaths = pruned;
+          if (_selectedPaths.isEmpty) _selectionKind = null;
+        });
       }
     });
     final pending = ref.watch(pendingOpProvider(repoPath)).value;
@@ -683,8 +884,13 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     required bool untracked,
   }) {
     setState(() {
-      _selectedConflict = null;
-      _selected = (path: path, staged: staged, untracked: untracked);
+      _selectionKind = untracked
+          ? _SectionKind.untracked
+          : staged
+          ? _SectionKind.staged
+          : _SectionKind.unstaged;
+      _selectedPaths = {path};
+      _selectionAnchor = path;
     });
   }
 
@@ -735,6 +941,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     // gets its full width back instead of splitting the row with it.
     final Widget? panel = _popout
         ? null
+        : _isMultiSelect
+        ? _multiSelectPanel(context)
         : _selectedConflict != null
         ? _conflictPanel(context, _selectedConflict!)
         : _selected != null
@@ -747,6 +955,48 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
         Expanded(flex: 2, child: list),
         Container(width: 1, color: MacosColors.separatorColor),
         Expanded(flex: 3, child: panel),
+      ],
+    );
+  }
+
+  /// Shown in place of the diff/conflict panel whenever 2+ files are
+  /// selected — full multi-file diff rendering is a separate, bigger
+  /// feature; for now this just confirms the selection while bulk actions
+  /// (stage/unstage/discard N files, etc.) are reachable from the right-click
+  /// menu on the selected rows.
+  Widget _multiSelectPanel(BuildContext context) {
+    final typography = MacosTheme.of(context).typography;
+    final noun = _selectionKind == _SectionKind.conflict
+        ? 'conflicted files'
+        : 'files';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+          child: Row(
+            children: [
+              const Spacer(),
+              ToolIconButton(
+                icon: CupertinoIcons.xmark,
+                tooltip: 'Close',
+                size: 15,
+                onPressed: _clearSelection,
+              ),
+            ],
+          ),
+        ),
+        Container(height: 1, color: MacosColors.separatorColor),
+        Expanded(
+          child: Center(
+            child: Text(
+              '${_selectedPaths.length} $noun selected',
+              style: typography.body.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -786,7 +1036,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
                 icon: CupertinoIcons.xmark,
                 tooltip: 'Close',
                 size: 15,
-                onPressed: () => setState(() => _selectedConflict = null),
+                onPressed: _clearSelection,
               ),
             ],
           ),
@@ -871,7 +1121,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
                 tooltip: 'Close diff',
                 size: 15,
                 color: MacosColors.systemGrayColor,
-                onPressed: () => setState(() => _selected = null),
+                onPressed: _clearSelection,
               ),
             ],
           ),
@@ -1259,11 +1509,259 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     final rows = _statusRows(status);
     return ListView.builder(
       itemCount: rows.length,
-      itemBuilder: (context, index) => _statusRow(context, rows[index]),
+      itemBuilder: (context, index) => _statusRow(context, rows[index], rows),
     );
   }
 
-  Widget _statusRow(BuildContext context, _StatusRow row) {
+  _SectionKind _kindOfFileRow(_FileRow row) => row.conflict
+      ? _SectionKind.conflict
+      : row.staged
+      ? _SectionKind.staged
+      : row.file.isUntracked
+      ? _SectionKind.untracked
+      : _SectionKind.unstaged;
+
+  /// The contiguous run of paths (within [kind]'s section, in on-screen
+  /// order) between [anchor] and [target], inclusive of both — the result of
+  /// a shift-click range-select. Falls back to just [target] if either
+  /// endpoint isn't in the section (e.g. the anchor's file was since staged
+  /// out of an unstaged-section anchor).
+  Set<String> _rangeBetween(
+    List<_StatusRow> rows,
+    _SectionKind kind,
+    String anchor,
+    String target,
+  ) {
+    final paths = [
+      for (final r in rows)
+        if (r is _FileRow && _kindOfFileRow(r) == kind) r.file.path,
+    ];
+    final i = paths.indexOf(anchor);
+    final j = paths.indexOf(target);
+    if (i == -1 || j == -1) return {target};
+    final lo = i < j ? i : j;
+    final hi = i < j ? j : i;
+    return paths.sublist(lo, hi + 1).toSet();
+  }
+
+  /// Handles a plain click, cmd-click, or shift-click on a file/conflict row —
+  /// the macOS list-selection conventions: plain click replaces the
+  /// selection; cmd-click toggles this row in/out of it; shift-click extends
+  /// a contiguous range from the anchor. Clicking into a different section
+  /// than the current selection always replaces it — see the [_SectionKind]
+  /// doc comment for why selections don't span sections.
+  void _handleRowTap(List<_StatusRow> rows, String path, _SectionKind kind) {
+    final keys = HardwareKeyboard.instance;
+    final meta = keys.isMetaPressed;
+    final shift = keys.isShiftPressed;
+    setState(() {
+      if (meta && _selectionKind == kind) {
+        if (_selectedPaths.contains(path)) {
+          _selectedPaths = {..._selectedPaths}..remove(path);
+          if (_selectedPaths.isEmpty) _selectionKind = null;
+        } else {
+          _selectedPaths = {..._selectedPaths, path};
+        }
+        _selectionAnchor = path;
+      } else if (shift && _selectionKind == kind && _selectionAnchor != null) {
+        _selectedPaths = _rangeBetween(rows, kind, _selectionAnchor!, path);
+        // Anchor is deliberately left in place — repeated shift-clicks
+        // extend/contract from the same fixed end, matching Finder.
+      } else {
+        _selectionKind = kind;
+        _selectedPaths = {path};
+        _selectionAnchor = path;
+      }
+      // Popout only ever shows a single non-conflict file's diff; drop it
+      // once the selection no longer looks like that (a conflict, none, or
+      // several files) rather than leaving it showing a stale file.
+      if (kind == _SectionKind.conflict || _selectedPaths.length != 1) {
+        _popout = false;
+      }
+    });
+  }
+
+  String _absolutePath(String path) => '$repoPath/$path';
+
+  /// The currently-selected paths within [kind]'s section, in on-screen
+  /// (top-to-bottom) order — used both for the bulk confirm dialogs' file
+  /// list and for a stable Copy Path/Copy Relative Path ordering.
+  List<String> _orderedSelectedPaths(List<_StatusRow> rows, _SectionKind kind) {
+    final selected = _selectedPaths;
+    return [
+      for (final r in rows)
+        if (r is _FileRow &&
+            _kindOfFileRow(r) == kind &&
+            selected.contains(r.file.path))
+          r.file.path,
+    ];
+  }
+
+  /// Handles a right-click on a file/conflict row: if the click landed
+  /// outside the current selection, it collapses to just that row first —
+  /// same as Finder, the menu always acts on what ends up selected, not
+  /// whatever was selected before the click. Then shows the menu for
+  /// whichever selection results.
+  void _handleRowSecondaryTap(
+    List<_StatusRow> rows,
+    String path,
+    _SectionKind kind,
+    Offset globalPosition,
+  ) {
+    if (_selectionKind != kind || !_selectedPaths.contains(path)) {
+      setState(() {
+        _selectionKind = kind;
+        _selectedPaths = {path};
+        _selectionAnchor = path;
+        if (kind == _SectionKind.conflict) _popout = false;
+      });
+    }
+    final paths = _orderedSelectedPaths(rows, kind);
+    _contextMenu.show(context, globalPosition, _buildMenuEntries(kind, paths));
+  }
+
+  /// Builds the right-click menu for [paths] (1 or more) within [kind]'s
+  /// section: the section-specific actions (mirroring every action already
+  /// reachable via the row's icon buttons/toolbar, per-file or bulk), then a
+  /// common block (copy path/relative path, and — local connections only,
+  /// since these need this machine's own Finder/LaunchServices — reveal in
+  /// Finder and open file).
+  List<ContextMenuEntry> _buildMenuEntries(_SectionKind kind, List<String> paths) {
+    final many = paths.length > 1;
+    final n = paths.length;
+    final entries = <ContextMenuEntry>[];
+
+    switch (kind) {
+      case _SectionKind.untracked:
+        entries.addAll([
+          ContextMenuItem(
+            icon: CupertinoIcons.plus_circle,
+            label: many ? 'Stage $n Files' : 'Stage',
+            onTap: () =>
+                many ? _stageMany(paths) : _stage(paths.single),
+          ),
+          ContextMenuItem(
+            icon: CupertinoIcons.eye_slash,
+            label: many ? 'Add $n Files to .gitignore' : 'Add to .gitignore',
+            onTap: () => many
+                ? _addToGitignoreMany(paths)
+                : _addToGitignore(paths.single),
+          ),
+          ContextMenuItem(
+            icon: CupertinoIcons.trash,
+            label: many ? 'Delete $n Files' : 'Delete Untracked File',
+            onTap: () => many
+                ? _discardUntrackedMany(paths)
+                : _discardUntracked(paths.single),
+          ),
+        ]);
+      case _SectionKind.unstaged:
+        entries.addAll([
+          ContextMenuItem(
+            icon: CupertinoIcons.plus_circle,
+            label: many ? 'Stage $n Files' : 'Stage',
+            onTap: () =>
+                many ? _stageMany(paths) : _stage(paths.single),
+          ),
+          ContextMenuItem(
+            icon: CupertinoIcons.arrow_uturn_left,
+            label: many ? 'Discard Changes in $n Files' : 'Discard Changes',
+            onTap: () =>
+                many ? _discardMany(paths) : _discard(paths.single),
+          ),
+          if (!many)
+            ContextMenuItem(
+              icon: CupertinoIcons.person_crop_rectangle,
+              label: 'Blame',
+              onTap: () => showMacosSheet<void>(
+                context: context,
+                builder: (_) =>
+                    BlameSheet(repoPath: repoPath, path: paths.single),
+              ),
+            ),
+        ]);
+      case _SectionKind.staged:
+        entries.addAll([
+          ContextMenuItem(
+            icon: CupertinoIcons.minus_circle,
+            label: many ? 'Unstage $n Files' : 'Unstage',
+            onTap: () =>
+                many ? _unstageMany(paths) : _unstage(paths.single),
+          ),
+          ContextMenuItem(
+            icon: CupertinoIcons.arrow_uturn_left,
+            label: many
+                ? 'Discard Staged Changes in $n Files'
+                : 'Discard Staged Changes',
+            onTap: () => many
+                ? _discardStagedMany(paths)
+                : _discardStaged(paths.single),
+          ),
+        ]);
+      case _SectionKind.conflict:
+        entries.addAll([
+          ContextMenuItem(
+            icon: CupertinoIcons.person_crop_circle,
+            label: many ? 'Resolve $n Using Ours' : 'Resolve Using Ours',
+            onTap: () => many
+                ? _resolveMany(paths, useOurs: true)
+                : _resolve(paths.single, useOurs: true),
+          ),
+          ContextMenuItem(
+            icon: CupertinoIcons.person_crop_circle_fill,
+            label: many ? 'Resolve $n Using Theirs' : 'Resolve Using Theirs',
+            onTap: () => many
+                ? _resolveMany(paths, useOurs: false)
+                : _resolve(paths.single, useOurs: false),
+          ),
+        ]);
+    }
+
+    entries.add(const ContextMenuDivider());
+    entries.add(
+      ContextMenuItem(
+        icon: CupertinoIcons.doc_on_clipboard,
+        label: many ? 'Copy $n Relative Paths' : 'Copy Relative Path',
+        onTap: () => copyToClipboard(paths.join('\n')),
+      ),
+    );
+    entries.add(
+      ContextMenuItem(
+        icon: CupertinoIcons.doc_on_clipboard_fill,
+        label: many ? 'Copy $n Paths' : 'Copy Path',
+        onTap: () =>
+            copyToClipboard(paths.map(_absolutePath).join('\n')),
+      ),
+    );
+    // Reveal/open need this machine's own Finder/LaunchServices — meaningless
+    // (and pointed at the wrong filesystem) for an SSH-backed connection,
+    // whose files live on the remote host.
+    if (ref.read(connectionProvider).isLocal) {
+      if (!many) {
+        entries.add(
+          ContextMenuItem(
+            icon: CupertinoIcons.folder,
+            label: 'Reveal in Finder',
+            onTap: () => revealInFinder(_absolutePath(paths.single)),
+          ),
+        );
+      }
+      entries.add(
+        ContextMenuItem(
+          icon: CupertinoIcons.square_arrow_up,
+          label: many ? 'Open $n Files' : 'Open File',
+          onTap: () => openFiles(paths.map(_absolutePath).toList()),
+        ),
+      );
+    }
+    return entries;
+  }
+
+  Widget _statusRow(
+    BuildContext context,
+    _StatusRow row,
+    List<_StatusRow> rows,
+  ) {
     final typography = MacosTheme.of(context).typography;
     if (row is _HeaderRow) {
       return Padding(
@@ -1284,13 +1782,15 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     final file = row.file;
     if (row.conflict) {
       return GestureDetector(
-        onTap: () => setState(() {
-          _selectedConflict = file.path;
-          _selected = null;
-          _popout = false;
-        }),
+        onTap: () => _handleRowTap(rows, file.path, _SectionKind.conflict),
+        onSecondaryTapUp: (d) => _handleRowSecondaryTap(
+          rows,
+          file.path,
+          _SectionKind.conflict,
+          d.globalPosition,
+        ),
         child: Container(
-          color: _selectedConflict == file.path
+          color: _selectedPaths.contains(file.path)
               ? MacosColors.systemRedColor.withValues(alpha: 0.12)
               : const Color(0x00000000),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
@@ -1328,16 +1828,13 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     }
 
     final staged = row.staged;
+    final kind = _kindOfFileRow(row);
     return GestureDetector(
-      onTap: () => setState(
-        () => _selected = (
-          path: file.path,
-          staged: staged,
-          untracked: file.isUntracked,
-        ),
-      ),
+      onTap: () => _handleRowTap(rows, file.path, kind),
+      onSecondaryTapUp: (d) =>
+          _handleRowSecondaryTap(rows, file.path, kind, d.globalPosition),
       child: Container(
-        color: _selected?.path == file.path
+        color: _selectedPaths.contains(file.path)
             ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
             : const Color(0x00000000),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),

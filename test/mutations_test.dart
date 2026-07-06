@@ -129,6 +129,90 @@ void main() {
       expect(exec.calls.single, ['git', 'restore', '--', 'a.dart']);
     });
 
+    test('discardStaged restores both index and worktree from HEAD', () async {
+      await git.discardStaged('/repo', 'a.dart');
+      expect(exec.calls.single, [
+        'git',
+        'restore',
+        '--staged',
+        '--worktree',
+        '--source=HEAD',
+        '--',
+        'a.dart',
+      ]);
+    });
+
+    test('addToGitignore appends via a dedup-checked shell script', () async {
+      await git.addToGitignore('/repo', 'build/');
+      final call = exec.calls.single;
+      expect(call[0], 'sh');
+      expect(call[1], '-c');
+      final script = call[2];
+      expect(script, contains("touch \"\$f\""));
+      expect(script, contains("grep -qxF -- 'build/'"));
+      expect(script, contains("printf '%s\\n' 'build/'"));
+    });
+
+    test('stageMany/unstageMany/discardMany/removeUntrackedFilesMany/'
+        'discardStagedMany/addToGitignoreMany cover the whole list in one '
+        'invocation', () async {
+      final paths = ['a.dart', 'b.dart'];
+
+      await git.stageMany('/repo', paths);
+      expect(exec.calls.single, ['git', 'add', '--', 'a.dart', 'b.dart']);
+      exec.calls.clear();
+
+      await git.unstageMany('/repo', paths);
+      expect(exec.calls.single, [
+        'git',
+        'restore',
+        '--staged',
+        '--',
+        'a.dart',
+        'b.dart',
+      ]);
+      exec.calls.clear();
+
+      await git.discardMany('/repo', paths);
+      expect(exec.calls.single, [
+        'git',
+        'restore',
+        '--',
+        'a.dart',
+        'b.dart',
+      ]);
+      exec.calls.clear();
+
+      await git.removeUntrackedFilesMany('/repo', paths);
+      expect(exec.calls.single, [
+        'git',
+        'clean',
+        '-f',
+        '--',
+        'a.dart',
+        'b.dart',
+      ]);
+      exec.calls.clear();
+
+      await git.discardStagedMany('/repo', paths);
+      expect(exec.calls.single, [
+        'git',
+        'restore',
+        '--staged',
+        '--worktree',
+        '--source=HEAD',
+        '--',
+        'a.dart',
+        'b.dart',
+      ]);
+      exec.calls.clear();
+
+      await git.addToGitignoreMany('/repo', paths);
+      final script = exec.calls.single[2];
+      expect(script, contains("grep -qxF -- 'a.dart'"));
+      expect(script, contains("grep -qxF -- 'b.dart'"));
+    });
+
     test('diffFile applies hide-whitespace and expand-context options', () async {
       await git.diffFile(
         '/repo',
@@ -705,6 +789,27 @@ void main() {
       expect(exec.calls[0], ['git', 'checkout', '--theirs', '--', 'a.dart']);
       expect(exec.calls[1], ['git', 'add', '--', 'a.dart']);
     });
+
+    test(
+      'resolveConflictMany resolves every path with 2 invocations total',
+      () async {
+        await git.resolveConflictMany(
+          '/repo',
+          ['a.dart', 'b.dart'],
+          useOurs: true,
+        );
+        expect(exec.calls[0], [
+          'git',
+          'checkout',
+          '--ours',
+          '--',
+          'a.dart',
+          'b.dart',
+        ]);
+        expect(exec.calls[1], ['git', 'add', '--', 'a.dart', 'b.dart']);
+        expect(exec.calls, hasLength(2));
+      },
+    );
 
     test('mergeAbort', () async {
       await git.mergeAbort('/repo');

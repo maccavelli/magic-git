@@ -5,7 +5,9 @@
 
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart' hide ConnectionState;
+import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -17,6 +19,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/repository/repo_status_view.dart';
+import 'package:riverpod/misc.dart' show Override;
 
 const _repo = '/srv/repo';
 
@@ -38,6 +41,10 @@ class _FakeGitService extends GitService {
 
   final List<String> staged = [];
   final List<String> unstaged = [];
+  final List<String> discarded = [];
+  final List<String> removedUntracked = [];
+  final List<String> discardedStaged = [];
+  final List<String> gitignored = [];
   bool stageAllCalled = false;
   bool mergeAbortCalled = false;
   final List<({String path, bool useOurs})> resolved = [];
@@ -88,6 +95,68 @@ class _FakeGitService extends GitService {
   }
 
   @override
+  Future<void> discard(String repoPath, String path) async {
+    discarded.add(path);
+  }
+
+  @override
+  Future<void> removeUntrackedFile(String repoPath, String path) async {
+    removedUntracked.add(path);
+  }
+
+  @override
+  Future<void> discardStaged(String repoPath, String path) async {
+    discardedStaged.add(path);
+  }
+
+  @override
+  Future<void> addToGitignore(String repoPath, String path) async {
+    gitignored.add(path);
+  }
+
+  @override
+  Future<void> stageMany(String repoPath, List<String> paths) async {
+    staged.addAll(paths);
+  }
+
+  @override
+  Future<void> unstageMany(String repoPath, List<String> paths) async {
+    unstaged.addAll(paths);
+  }
+
+  @override
+  Future<void> discardMany(String repoPath, List<String> paths) async {
+    discarded.addAll(paths);
+  }
+
+  @override
+  Future<void> removeUntrackedFilesMany(
+    String repoPath,
+    List<String> paths,
+  ) async {
+    removedUntracked.addAll(paths);
+  }
+
+  @override
+  Future<void> discardStagedMany(String repoPath, List<String> paths) async {
+    discardedStaged.addAll(paths);
+  }
+
+  @override
+  Future<void> addToGitignoreMany(String repoPath, List<String> paths) async {
+    gitignored.addAll(paths);
+  }
+
+  @override
+  Future<void> resolveConflictMany(
+    String repoPath,
+    List<String> paths, {
+    required bool useOurs,
+  }) async {
+    resolved.addAll(paths.map((p) => (path: p, useOurs: useOurs)));
+  }
+
+  @override
   Future<PendingOp> pendingOp(String repoPath) async => pendingOp0;
 }
 
@@ -107,6 +176,15 @@ GitStatus _statusWith({
   files: [...staged, ...unstaged, ...conflicted],
 );
 
+/// A ConnectionController stuck at a fixed state, so a test can pin
+/// `isLocal` without running a real connect — see local_backend_test.dart.
+class _StubConnection extends ConnectionController {
+  final ConnectionState _state;
+  _StubConnection(this._state);
+  @override
+  ConnectionState build() => _state;
+}
+
 Future<_FakeGitService> _pump(
   WidgetTester tester, {
   required GitStatus status,
@@ -117,6 +195,16 @@ Future<_FakeGitService> _pump(
   // before rethrowing — which the test framework flags as "a Timer is still
   // pending" the moment the widget tree is torn down at the end of the test.
   List<GitRef> refs = const [],
+  // Right-click menu's Reveal-in-Finder/Open-File items are gated on this —
+  // default (remote/SSH) matches every other test here, where they must
+  // stay hidden.
+  bool isLocal = false,
+  // Same reasoning as [refs] above, but for whichever file(s) a test selects
+  // (a right-click, unlike the icon-button taps most tests here use, also
+  // selects the row and so opens the diff panel) — pass an override per
+  // selected path so its fileDiffProvider/untrackedDiffProvider read doesn't
+  // hit the fake's unconfigured executor.
+  List<Override> extraOverrides = const [],
 }) async {
   final resolved = git ?? _FakeGitService();
   final container = ProviderContainer(
@@ -129,6 +217,14 @@ Future<_FakeGitService> _pump(
       ),
       fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
       refsProvider(_repo).overrideWith((ref) async => refs),
+      connectionProvider.overrideWith(
+        () => _StubConnection(
+          ConnectionState(
+            backend: isLocal ? ConnectionBackend.local : ConnectionBackend.ssh,
+          ),
+        ),
+      ),
+      ...extraOverrides,
     ],
   );
   addTearDown(container.dispose);
@@ -580,4 +676,453 @@ void main() {
       expect(find.text('No remote detected'), findsNothing);
     },
   );
+
+  group('multi-select', () {
+    GitStatus threeUnstagedOneStaged() => _statusWith(
+      staged: const [
+        GitFileStatus(path: 'lib/d.dart', statusX: 'M', statusY: '.'),
+      ],
+      unstaged: const [
+        GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+        GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+        GitFileStatus(path: 'lib/c.dart', statusX: '.', statusY: 'M'),
+      ],
+    );
+
+    Future<void> cmdClick(WidgetTester tester, Finder finder) async {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.tap(finder);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> shiftClick(WidgetTester tester, Finder finder) async {
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.tap(finder);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('cmd-click adds a second file to the selection', (
+      tester,
+    ) async {
+      await _pump(tester, status: threeUnstagedOneStaged());
+
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await cmdClick(tester, find.text('lib/c.dart'));
+
+      expect(find.text('2 files selected'), findsOneWidget);
+    });
+
+    testWidgets('cmd-click again removes a file from the selection', (
+      tester,
+    ) async {
+      await _pump(tester, status: threeUnstagedOneStaged());
+
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await cmdClick(tester, find.text('lib/b.dart'));
+      expect(find.text('2 files selected'), findsOneWidget);
+
+      // Toggling b back off collapses to the single-file diff panel (no
+      // "files selected" summary), rather than an empty selection.
+      await cmdClick(tester, find.text('lib/b.dart'));
+      expect(find.text('files selected'), findsNothing);
+    });
+
+    testWidgets('shift-click selects the contiguous range from the anchor', (
+      tester,
+    ) async {
+      await _pump(tester, status: threeUnstagedOneStaged());
+
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await shiftClick(tester, find.text('lib/c.dart'));
+
+      expect(find.text('3 files selected'), findsOneWidget);
+    });
+
+    testWidgets('a plain click after a multi-select collapses to just that '
+        'file', (tester) async {
+      await _pump(tester, status: threeUnstagedOneStaged());
+
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await cmdClick(tester, find.text('lib/c.dart'));
+      expect(find.text('2 files selected'), findsOneWidget);
+
+      await tester.tap(find.text('lib/b.dart'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('files selected'), findsNothing);
+    });
+
+    testWidgets(
+      'clicking into a different section replaces the selection rather '
+      'than extending it',
+      (tester) async {
+        await _pump(tester, status: threeUnstagedOneStaged());
+
+        // Select two unstaged files, then cmd-click the staged file: since
+        // it's a different section, this replaces the selection with just
+        // the staged file instead of growing it to three.
+        await tester.tap(find.text('lib/a.dart'));
+        await tester.pumpAndSettle();
+        await cmdClick(tester, find.text('lib/b.dart'));
+        expect(find.text('2 files selected'), findsOneWidget);
+
+        await cmdClick(tester, find.text('lib/d.dart'));
+
+        expect(find.textContaining('files selected'), findsNothing);
+      },
+    );
+
+    testWidgets('staging a file that is part of a multi-selection drops it '
+        'from the selection rather than reselecting it', (tester) async {
+      final git = await _pump(tester, status: threeUnstagedOneStaged());
+
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await cmdClick(tester, find.text('lib/b.dart'));
+      expect(find.text('2 files selected'), findsOneWidget);
+
+      // Stage lib/a.dart via its row icon — it should drop out of the
+      // selection (it's moved to a different section), leaving lib/b.dart as
+      // the sole (now single-file) selection.
+      final aRow = find.ancestor(
+        of: find.text('lib/a.dart'),
+        matching: find.byType(GestureDetector),
+      );
+      await tester.tap(
+        find.descendant(
+          of: aRow,
+          matching: _icon(CupertinoIcons.plus_circle),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(git.staged, ['lib/a.dart']);
+      expect(find.textContaining('files selected'), findsNothing);
+    });
+  });
+
+  group('right-click context menu', () {
+    Future<void> rightClick(WidgetTester tester, Finder finder) async {
+      await tester.tap(finder, buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets(
+      'an unstaged file offers Stage/Discard Changes/Blame plus the common '
+      'copy-path items, but not Reveal/Open (not a local connection)',
+      (tester) async {
+        await _pump(
+          tester,
+          status: _statusWith(
+            unstaged: const [
+              GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+            ],
+          ),
+          extraOverrides: [
+            fileDiffProvider((
+              _repo,
+              'lib/a.dart',
+              false,
+              false,
+              3,
+            )).overrideWith((ref) async => ''),
+          ],
+        );
+
+        await rightClick(tester, find.text('lib/a.dart'));
+
+        expect(find.text('Stage'), findsOneWidget);
+        expect(find.text('Discard Changes'), findsOneWidget);
+        expect(find.text('Blame'), findsOneWidget);
+        expect(find.text('Copy Relative Path'), findsOneWidget);
+        expect(find.text('Copy Path'), findsOneWidget);
+        expect(find.text('Reveal in Finder'), findsNothing);
+        expect(find.text('Open File'), findsNothing);
+      },
+    );
+
+    testWidgets('tapping Stage in the menu calls git.stage and dismisses it', (
+      tester,
+    ) async {
+      final git = await _pump(
+        tester,
+        status: _statusWith(
+          unstaged: const [
+            GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+          ],
+        ),
+        extraOverrides: [
+          fileDiffProvider((
+            _repo,
+            'lib/a.dart',
+            false,
+            false,
+            3,
+          )).overrideWith((ref) async => ''),
+          fileDiffProvider((
+            _repo,
+            'lib/a.dart',
+            true,
+            false,
+            3,
+          )).overrideWith((ref) async => ''),
+        ],
+      );
+
+      await rightClick(tester, find.text('lib/a.dart'));
+      await tester.tap(find.text('Stage'));
+      await tester.pumpAndSettle();
+
+      expect(git.staged, ['lib/a.dart']);
+      expect(find.text('Discard Changes'), findsNothing);
+    });
+
+    testWidgets(
+      'a staged file offers Unstage/Discard Staged Changes; confirming the '
+      'latter calls git.discardStaged',
+      (tester) async {
+        final git = await _pump(
+          tester,
+          status: _statusWith(
+            staged: const [
+              GitFileStatus(path: 'lib/b.dart', statusX: 'M', statusY: '.'),
+            ],
+          ),
+          extraOverrides: [
+            fileDiffProvider((
+              _repo,
+              'lib/b.dart',
+              true,
+              false,
+              3,
+            )).overrideWith((ref) async => ''),
+          ],
+        );
+
+        await rightClick(tester, find.text('lib/b.dart'));
+        expect(find.text('Unstage'), findsOneWidget);
+        expect(find.text('Discard Staged Changes'), findsOneWidget);
+
+        await tester.tap(find.text('Discard Staged Changes'));
+        await tester.pumpAndSettle();
+        expect(git.discardedStaged, isEmpty, reason: 'not yet confirmed');
+
+        await tester.tap(find.text('Discard'));
+        await tester.pumpAndSettle();
+        expect(git.discardedStaged, ['lib/b.dart']);
+      },
+    );
+
+    testWidgets(
+      'an untracked file offers Stage/Add to .gitignore/Delete Untracked '
+      'File; Add to .gitignore calls git.addToGitignore with no confirm',
+      (tester) async {
+        final git = await _pump(
+          tester,
+          status: _statusWith(
+            unstaged: const [
+              GitFileStatus(path: 'lib/new.dart', statusX: '?', statusY: '?'),
+            ],
+          ),
+          extraOverrides: [
+            untrackedDiffProvider((
+              _repo,
+              'lib/new.dart',
+            )).overrideWith((ref) async => ''),
+          ],
+        );
+
+        await rightClick(tester, find.text('lib/new.dart'));
+        expect(find.text('Stage'), findsOneWidget);
+        expect(find.text('Add to .gitignore'), findsOneWidget);
+        expect(find.text('Delete Untracked File'), findsOneWidget);
+        // Untracked files have no committed history — Blame doesn't apply.
+        expect(find.text('Blame'), findsNothing);
+
+        await tester.tap(find.text('Add to .gitignore'));
+        await tester.pumpAndSettle();
+
+        expect(git.gitignored, ['lib/new.dart']);
+      },
+    );
+
+    testWidgets(
+      'Delete Untracked File confirms, then calls git.removeUntrackedFile',
+      (tester) async {
+        final git = await _pump(
+          tester,
+          status: _statusWith(
+            unstaged: const [
+              GitFileStatus(path: 'lib/new.dart', statusX: '?', statusY: '?'),
+            ],
+          ),
+          extraOverrides: [
+            untrackedDiffProvider((
+              _repo,
+              'lib/new.dart',
+            )).overrideWith((ref) async => ''),
+          ],
+        );
+
+        await rightClick(tester, find.text('lib/new.dart'));
+        await tester.tap(find.text('Delete Untracked File'));
+        await tester.pumpAndSettle();
+        expect(git.removedUntracked, isEmpty, reason: 'not yet confirmed');
+
+        await tester.tap(find.text('Delete'));
+        await tester.pumpAndSettle();
+        expect(git.removedUntracked, ['lib/new.dart']);
+      },
+    );
+
+    testWidgets(
+      'a conflicted file offers Resolve Using Ours/Theirs, which call '
+      'git.resolveConflict',
+      (tester) async {
+        final git = await _pump(
+          tester,
+          status: _statusWith(
+            conflicted: const [
+              GitFileStatus(path: 'lib/c.dart', statusX: 'U', statusY: 'U'),
+            ],
+          ),
+        );
+
+        await rightClick(tester, find.text('lib/c.dart'));
+        expect(find.text('Resolve Using Ours'), findsOneWidget);
+        expect(find.text('Resolve Using Theirs'), findsOneWidget);
+
+        await tester.tap(find.text('Resolve Using Theirs'));
+        await tester.pumpAndSettle();
+
+        expect(git.resolved.single, (path: 'lib/c.dart', useOurs: false));
+      },
+    );
+
+    testWidgets(
+      'right-clicking within a multi-selection shows pluralized bulk '
+      'actions covering every selected file',
+      (tester) async {
+        final git = await _pump(
+          tester,
+          status: _statusWith(
+            unstaged: const [
+              GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+              GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+            ],
+          ),
+        );
+
+        await tester.tap(find.text('lib/a.dart'));
+        await tester.pumpAndSettle();
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+        await tester.tap(find.text('lib/b.dart'));
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+        await tester.pumpAndSettle();
+        expect(find.text('2 files selected'), findsOneWidget);
+
+        // Right-clicking a row that's part of the selection keeps it intact.
+        await rightClick(tester, find.text('lib/a.dart'));
+        expect(find.text('Stage 2 Files'), findsOneWidget);
+        expect(find.text('Discard Changes in 2 Files'), findsOneWidget);
+        // A single-file-only item (Blame) doesn't apply to a bulk selection.
+        expect(find.text('Blame'), findsNothing);
+        expect(find.text('Copy 2 Relative Paths'), findsOneWidget);
+
+        await tester.tap(find.text('Stage 2 Files'));
+        await tester.pumpAndSettle();
+
+        expect(git.staged, ['lib/a.dart', 'lib/b.dart']);
+      },
+    );
+
+    testWidgets(
+      'right-clicking a file outside the current multi-selection collapses '
+      'to just that file before showing the menu',
+      (tester) async {
+        await _pump(
+          tester,
+          status: _statusWith(
+            unstaged: const [
+              GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+              GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+              GitFileStatus(path: 'lib/c.dart', statusX: '.', statusY: 'M'),
+            ],
+          ),
+          extraOverrides: [
+            fileDiffProvider((
+              _repo,
+              'lib/c.dart',
+              false,
+              false,
+              3,
+            )).overrideWith((ref) async => ''),
+          ],
+        );
+
+        await tester.tap(find.text('lib/a.dart'));
+        await tester.pumpAndSettle();
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+        await tester.tap(find.text('lib/b.dart'));
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+        await tester.pumpAndSettle();
+        expect(find.text('2 files selected'), findsOneWidget);
+
+        // lib/c.dart isn't part of the a/b selection — right-clicking it
+        // collapses to just itself rather than growing to 3.
+        await rightClick(tester, find.text('lib/c.dart'));
+
+        expect(find.text('Stage'), findsOneWidget);
+        expect(find.textContaining('Files'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'Reveal in Finder and Open File only appear for a local connection, '
+      'and Reveal is hidden once 2+ files are selected',
+      (tester) async {
+        await _pump(
+          tester,
+          isLocal: true,
+          status: _statusWith(
+            unstaged: const [
+              GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+              GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+            ],
+          ),
+          extraOverrides: [
+            fileDiffProvider((
+              _repo,
+              'lib/a.dart',
+              false,
+              false,
+              3,
+            )).overrideWith((ref) async => ''),
+          ],
+        );
+
+        await rightClick(tester, find.text('lib/a.dart'));
+        expect(find.text('Reveal in Finder'), findsOneWidget);
+        expect(find.text('Open File'), findsOneWidget);
+
+        // Dismiss, then select both and right-click within the selection.
+        await tester.tapAt(const Offset(5, 5));
+        await tester.pumpAndSettle();
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+        await tester.tap(find.text('lib/b.dart'));
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+        await tester.pumpAndSettle();
+        await rightClick(tester, find.text('lib/a.dart'));
+
+        expect(find.text('Reveal in Finder'), findsNothing);
+        expect(find.text('Open 2 Files'), findsOneWidget);
+      },
+    );
+  });
 }

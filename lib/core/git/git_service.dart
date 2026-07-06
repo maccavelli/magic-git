@@ -956,6 +956,11 @@ class GitService {
   Future<void> stage(String repoPath, String path) =>
       _runVoid(repoPath, ['git', 'add', '--', path], 'git add');
 
+  /// Stages every path in [paths] with a single `git add` invocation —
+  /// the multi-select bulk equivalent of [stage].
+  Future<void> stageMany(String repoPath, List<String> paths) =>
+      _runVoid(repoPath, ['git', 'add', '--', ...paths], 'git add');
+
   /// Applies a unified-diff [patch] via `git apply`, reading it from stdin (so it
   /// never touches argv). [cached] targets the index (staging); [reverse] applies
   /// it backwards (unstaging, or discarding a worktree hunk). Used for hunk-level
@@ -997,6 +1002,14 @@ class GitService {
     '--',
     path,
   ], 'git restore');
+
+  /// Unstages every path in [paths] with a single invocation — the
+  /// multi-select bulk equivalent of [unstage].
+  Future<void> unstageMany(String repoPath, List<String> paths) => _runVoid(
+    repoPath,
+    ['git', 'restore', '--staged', '--', ...paths],
+    'git restore',
+  );
 
   /// Commits the staged changes.
   ///
@@ -1120,6 +1133,14 @@ class GitService {
   Future<void> discard(String repoPath, String path) =>
       _runVoid(repoPath, ['git', 'restore', '--', path], 'git restore');
 
+  /// Discards working-tree changes to every path in [paths] with a single
+  /// invocation — the multi-select bulk equivalent of [discard]. Irreversible.
+  Future<void> discardMany(String repoPath, List<String> paths) => _runVoid(
+    repoPath,
+    ['git', 'restore', '--', ...paths],
+    'git restore',
+  );
+
   /// Removes a single untracked file from the working tree. Deliberately
   /// scoped to exactly [path] (`git clean -f --`, not a blanket `-fd` sweep):
   /// `git clean` already refuses to touch anything git tracks, so this can
@@ -1129,6 +1150,76 @@ class GitService {
   /// Irreversible.
   Future<void> removeUntrackedFile(String repoPath, String path) =>
       _runVoid(repoPath, ['git', 'clean', '-f', '--', path], 'git clean');
+
+  /// Removes every untracked path in [paths] with a single invocation — the
+  /// multi-select bulk equivalent of [removeUntrackedFile]. Same scoping
+  /// rationale: `git clean` still refuses to touch anything tracked, so this
+  /// can only ever delete the untracked files the caller named. Irreversible.
+  Future<void> removeUntrackedFilesMany(String repoPath, List<String> paths) =>
+      _runVoid(repoPath, ['git', 'clean', '-f', '--', ...paths], 'git clean');
+
+  /// Discards a staged path's changes entirely — both the index and working
+  /// tree are reset to HEAD's content for [path]. For a path with no HEAD
+  /// counterpart (a newly `git add`ed file that was never committed),
+  /// `--source=HEAD` has nothing to restore *to*, so git instead removes it
+  /// from both the index and the working tree — exactly "undo the staged
+  /// add" for that case, with no special-casing needed here. Irreversible.
+  Future<void> discardStaged(String repoPath, String path) => _runVoid(repoPath, [
+    'git',
+    'restore',
+    '--staged',
+    '--worktree',
+    '--source=HEAD',
+    '--',
+    path,
+  ], 'git restore');
+
+  /// Discards staged changes to every path in [paths] with a single
+  /// invocation — the multi-select bulk equivalent of [discardStaged]. Same
+  /// "no HEAD counterpart" handling applies per-path. Irreversible.
+  Future<void> discardStagedMany(String repoPath, List<String> paths) =>
+      _runVoid(repoPath, [
+        'git',
+        'restore',
+        '--staged',
+        '--worktree',
+        '--source=HEAD',
+        '--',
+        ...paths,
+      ], 'git restore');
+
+  /// Appends [path] as a new ignore pattern to the repo root's `.gitignore`,
+  /// creating the file if it doesn't exist. Not a git subcommand — this app
+  /// has no separate remote-vs-local file-editing path, so it's a small shell
+  /// script run through the same executor as every other command here, which
+  /// keeps it working identically for a local repo and an SSH one (whose
+  /// `.gitignore` lives on the remote host, not this machine). A no-op if
+  /// [path] (exact line match) is already present, so ignoring the same file
+  /// twice doesn't duplicate the line.
+  Future<void> addToGitignore(String repoPath, String path) =>
+      _runVoid(repoPath, [
+        'sh',
+        '-c',
+        _gitignoreAppendScript([path]),
+      ], 'git ignore');
+
+  /// Appends every path in [paths] to `.gitignore` with a single invocation —
+  /// the multi-select bulk equivalent of [addToGitignore]. Each path is still
+  /// deduped independently, same as the single-file version.
+  Future<void> addToGitignoreMany(String repoPath, List<String> paths) =>
+      _runVoid(repoPath, [
+        'sh',
+        '-c',
+        _gitignoreAppendScript(paths),
+      ], 'git ignore');
+
+  static String _gitignoreAppendScript(List<String> paths) {
+    final lines = paths
+        .map(ShellEscaper.escape)
+        .map((q) => 'grep -qxF -- $q "\$f" || printf \'%s\\n\' $q >> "\$f"')
+        .join('; ');
+    return 'f=.gitignore; touch "\$f"; $lines';
+  }
 
   // ---- History actions -----------------------------------------------------
 
@@ -1254,6 +1345,25 @@ class GitService {
       path,
     ], 'git checkout --ours/--theirs');
     await _runVoid(repoPath, ['git', 'add', '--', path], 'git add');
+  }
+
+  /// Resolves every conflicted path in [paths] the same way as
+  /// [resolveConflict], but with 2 invocations total (one `checkout`, one
+  /// `add` covering every path) instead of 2 per file — the multi-select
+  /// bulk equivalent.
+  Future<void> resolveConflictMany(
+    String repoPath,
+    List<String> paths, {
+    required bool useOurs,
+  }) async {
+    await _runVoid(repoPath, [
+      'git',
+      'checkout',
+      useOurs ? '--ours' : '--theirs',
+      '--',
+      ...paths,
+    ], 'git checkout --ours/--theirs');
+    await _runVoid(repoPath, ['git', 'add', '--', ...paths], 'git add');
   }
 
   /// Aborts an in-progress merge (`git merge --abort`).

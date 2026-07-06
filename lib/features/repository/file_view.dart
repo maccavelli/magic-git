@@ -6,6 +6,7 @@ import 'package:macos_window_utils/widgets/visual_effect_subview_container/visua
 import '../../core/git/repo_tree.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/utils/git_porcelain_parser.dart';
+import '../common/context_menu.dart';
 import '../common/status_style.dart';
 import '../common/tool_icon_button.dart';
 import '../history/file_history_sheet.dart';
@@ -73,7 +74,7 @@ class _FileViewState extends ConsumerState<FileView> {
   List<_Row> _rows = const [];
 
   // Right-click context menu (Blame / File history), anchored at the tap point.
-  OverlayEntry? _contextMenu;
+  final _contextMenu = ContextMenuOverlay();
 
   // Repositions the sidebar's native vibrancy view after every frame instead
   // of via macos_window_utils's own default (a raw Timer scheduled on every
@@ -98,7 +99,7 @@ class _FileViewState extends ConsumerState<FileView> {
 
   @override
   void dispose() {
-    _removeContextMenu();
+    _contextMenu.dispose();
     super.dispose();
   }
 
@@ -112,7 +113,7 @@ class _FileViewState extends ConsumerState<FileView> {
       // Dismiss any open right-click menu — it targets the old repo's file and
       // its actions (Blame / File history) would otherwise run against the new
       // repo once the maps below are reset out from under it.
-      _removeContextMenu();
+      _contextMenu.remove();
       _expanded.clear();
       _lazyChildren.clear();
       _lazyLoading.clear();
@@ -177,136 +178,65 @@ class _FileViewState extends ConsumerState<FileView> {
     );
   }
 
-  void _removeContextMenu() {
-    _contextMenu?.remove();
-    _contextMenu = null;
-  }
-
   // A file's right-click menu: Blame / File history, anchored at [globalPos].
   //
   // The tree pane is docked at the panel's right edge (see the class doc), so
   // a right-click near a file's right-hand text can sit close to the actual
   // window edge; opening the menu by simply extending rightward from there
-  // would clip it off-window. Clamp the anchor so the (fixed-width, roughly
-  // estimated height) card always stays fully on screen.
+  // would clip it off-window. ContextMenuController clamps the anchor so the
+  // card always stays fully on screen.
   void _showContextMenu(RepoNode node, Offset globalPos) {
-    _removeContextMenu();
     final s = ref.read(repoStatusOverlayProvider(repoPath)).statusFor(node.path);
     // Only a genuinely partially-staged file needs the explicit staged/
     // unstaged toggle — a plain click already shows the only relevant half
     // for every other case.
     final mixed = s != null && !s.isUntracked && s.isStaged && s.isUnstaged;
     final untracked = s?.isUntracked ?? false;
-    const cardWidth = 200.0;
-    final estimatedHeight = (mixed ? 4 : 2) * 32.0 + 8;
-    final screen = MediaQuery.of(context).size;
-    final left = (globalPos.dx + cardWidth > screen.width)
-        ? (screen.width - cardWidth).clamp(0.0, screen.width)
-        : globalPos.dx;
-    final top = (globalPos.dy + estimatedHeight > screen.height)
-        ? (screen.height - estimatedHeight).clamp(0.0, screen.height)
-        : globalPos.dy;
-    _contextMenu = OverlayEntry(
-      builder: (_) => Stack(
-        children: [
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: _removeContextMenu,
-              onSecondaryTap: _removeContextMenu,
-            ),
-          ),
-          Positioned(
-            left: left,
-            top: top,
-            child: _contextCard(node, mixed, untracked),
-          ),
-        ],
-      ),
-    );
-    Overlay.of(context).insert(_contextMenu!);
-  }
-
-  Widget _contextCard(RepoNode node, bool mixed, bool untracked) {
     // Blame has nothing to attribute and there's no history to show for a
     // file git has never committed — disable both rather than letting them
     // run against a file with no history.
     const untrackedTooltip = 'Not available for untracked files';
-    return SizedBox(
-      width: 200,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: const Color(0xFF2C2C2E),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: MacosColors.separatorColor),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x66000000),
-              blurRadius: 18,
-              offset: Offset(0, 8),
-            ),
-          ],
+    _contextMenu.show(context, globalPos, [
+      if (mixed) ...[
+        ContextMenuItem(
+          icon: CupertinoIcons.square_stack,
+          label: 'Staged changes',
+          onTap: () {
+            setState(() => _selectedPath = node.path);
+            widget.onOpenFile(node.path, staged: true, untracked: false);
+          },
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (mixed) ...[
-              _ContextRow(
-                icon: CupertinoIcons.square_stack,
-                label: 'Staged changes',
-                onTap: () {
-                  _removeContextMenu();
-                  setState(() => _selectedPath = node.path);
-                  widget.onOpenFile(node.path, staged: true, untracked: false);
-                },
-              ),
-              _ContextRow(
-                icon: CupertinoIcons.square_stack_3d_down_right,
-                label: 'Unstaged changes',
-                onTap: () {
-                  _removeContextMenu();
-                  setState(() => _selectedPath = node.path);
-                  widget.onOpenFile(
-                    node.path,
-                    staged: false,
-                    untracked: false,
-                  );
-                },
-              ),
-            ],
-            _ContextRow(
-              icon: CupertinoIcons.person_crop_rectangle,
-              label: 'Blame',
-              enabled: !untracked,
-              disabledTooltip: untrackedTooltip,
-              onTap: () {
-                _removeContextMenu();
-                showMacosSheet<void>(
-                  context: context,
-                  builder: (_) =>
-                      BlameSheet(repoPath: repoPath, path: node.path),
-                );
-              },
-            ),
-            _ContextRow(
-              icon: CupertinoIcons.clock,
-              label: 'File history',
-              enabled: !untracked,
-              disabledTooltip: untrackedTooltip,
-              onTap: () {
-                _removeContextMenu();
-                showMacosSheet<void>(
-                  context: context,
-                  builder: (_) =>
-                      FileHistorySheet(repoPath: repoPath, path: node.path),
-                );
-              },
-            ),
-          ],
+        ContextMenuItem(
+          icon: CupertinoIcons.square_stack_3d_down_right,
+          label: 'Unstaged changes',
+          onTap: () {
+            setState(() => _selectedPath = node.path);
+            widget.onOpenFile(node.path, staged: false, untracked: false);
+          },
+        ),
+      ],
+      ContextMenuItem(
+        icon: CupertinoIcons.person_crop_rectangle,
+        label: 'Blame',
+        enabled: !untracked,
+        disabledTooltip: untrackedTooltip,
+        onTap: () => showMacosSheet<void>(
+          context: context,
+          builder: (_) => BlameSheet(repoPath: repoPath, path: node.path),
         ),
       ),
-    );
+      ContextMenuItem(
+        icon: CupertinoIcons.clock,
+        label: 'File history',
+        enabled: !untracked,
+        disabledTooltip: untrackedTooltip,
+        onTap: () => showMacosSheet<void>(
+          context: context,
+          builder: (_) =>
+              FileHistorySheet(repoPath: repoPath, path: node.path),
+        ),
+      ),
+    ]);
   }
 
   Future<void> _loadLazy(String path) async {
@@ -656,8 +586,6 @@ class _FileViewState extends ConsumerState<FileView> {
     return node.isDir ? _white : _fileWhite;
   }
 
-  // (context-menu row widget is defined at file scope: [_ContextRow])
-
   /// Colored status letter (no badge) for a changed file — same color
   /// convention as the working-tree list's [GitStatusBadge].
   Widget _statusText(GitFileStatus s) {
@@ -671,71 +599,5 @@ class _FileViewState extends ConsumerState<FileView> {
         height: 1,
       ),
     );
-  }
-}
-
-/// One row of the file's right-click context menu, with a hover tint.
-///
-/// Disabled (e.g. Blame/File history for an untracked file — neither is
-/// meaningful without any commit history) rows grey out, ignore taps, and
-/// optionally explain why via [disabledTooltip].
-class _ContextRow extends StatefulWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final bool enabled;
-  final String? disabledTooltip;
-  const _ContextRow({
-    required this.icon,
-    required this.label,
-    required this.onTap,
-    this.enabled = true,
-    this.disabledTooltip,
-  });
-
-  @override
-  State<_ContextRow> createState() => _ContextRowState();
-}
-
-class _ContextRowState extends State<_ContextRow> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final enabled = widget.enabled;
-    final color = enabled ? null : MacosColors.systemGrayColor;
-    final row = MouseRegion(
-      onEnter: enabled ? (_) => setState(() => _hover = true) : null,
-      onExit: enabled ? (_) => setState(() => _hover = false) : null,
-      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
-      child: GestureDetector(
-        onTap: enabled ? widget.onTap : null,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          color: _hover && enabled
-              ? MacosColors.systemBlueColor.withValues(alpha: 0.25)
-              : const Color(0x00000000),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          child: Row(
-            children: [
-              MacosIcon(widget.icon, size: 14, color: color),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  widget.label,
-                  style: MacosTheme.of(
-                    context,
-                  ).typography.body.copyWith(color: color),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (enabled || widget.disabledTooltip == null) return row;
-    return MacosTooltip(message: widget.disabledTooltip!, child: row);
   }
 }
