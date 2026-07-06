@@ -97,7 +97,7 @@ class LogoutButton extends ConsumerWidget {
             // White for parity with the connections-manager button's icon,
             // which reads more clearly than the default accent tint here.
             const MacosIcon(
-              CupertinoIcons.square_arrow_left,
+              CupertinoIcons.square_arrow_right,
               size: 15,
               color: MacosColors.white,
             ),
