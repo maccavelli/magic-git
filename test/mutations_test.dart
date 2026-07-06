@@ -129,6 +129,29 @@ void main() {
       expect(exec.calls.single, ['git', 'restore', '--', 'a.dart']);
     });
 
+    test('readFile cats the path directly, guarded by --', () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'hello\n',
+        stderr: '',
+      );
+      final content = await git.readFile('/repo', 'lib/main.dart');
+      expect(exec.calls.single, ['cat', '--', 'lib/main.dart']);
+      expect(content, 'hello\n');
+    });
+
+    test('readFile throws GitException on a failed read', () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 1,
+        stdout: '',
+        stderr: 'cat: nope: No such file or directory',
+      );
+      await expectLater(
+        git.readFile('/repo', 'nope'),
+        throwsA(isA<GitException>()),
+      );
+    });
+
     test('discardStaged restores both index and worktree from HEAD', () async {
       await git.discardStaged('/repo', 'a.dart');
       expect(exec.calls.single, [

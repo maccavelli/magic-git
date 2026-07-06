@@ -874,6 +874,30 @@ class GitService {
     return parseBlame(stdout);
   }
 
+  /// The full working-tree contents of [path], read straight off disk (`cat`)
+  /// rather than through a git object — so it reflects exactly what is on disk
+  /// right now (tracked or not, staged or not), which is what a file viewer
+  /// wants to show. Works identically local and over SSH: the executor runs
+  /// `cat` in the repo and decodes stdout as UTF-8 with malformed bytes
+  /// replaced, so a *binary* file comes back as mangled text — callers are
+  /// expected to classify the result and refuse to render non-text (see
+  /// `FileContent.classify`). Output past the executor's hard cap surfaces as
+  /// a failure instead of ballooning memory. The `--` guards a [path] that
+  /// begins with `-` from being read as a `cat` flag. (Sibling of
+  /// [conflictFile], which reads the same way but is scoped to a conflicted
+  /// file.)
+  Future<String> readFile(String repoPath, String path) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['cat', '--', path],
+      retries: _readRetries,
+    );
+    if (!result.isSuccess) {
+      throw GitException('reading file failed', result);
+    }
+    return result.stdout;
+  }
+
   // ---- File tree -----------------------------------------------------------
 
   /// Lists the working tree for the file-view pane. Returns the non-ignored
