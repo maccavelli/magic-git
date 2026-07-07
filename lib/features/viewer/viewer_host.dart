@@ -25,6 +25,7 @@ class ViewerHost extends ConsumerWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final bounds = Size(constraints.maxWidth, constraints.maxHeight);
+        final frontId = viewers.last.id;
         return Stack(
           children: [
             for (final v in viewers)
@@ -34,6 +35,10 @@ class ViewerHost extends ConsumerWidget {
                 repoPath: v.repoPath,
                 path: v.path,
                 bounds: bounds,
+                // Front-most window owns keyboard focus, so Escape (and any
+                // shortcut) targets it — and, after the front window closes,
+                // the new front takes focus so a second Escape isn't swallowed.
+                isFront: v.id == frontId,
                 onClose: () => notifier.close(v.id),
                 onFocus: () => notifier.focus(v.id),
               ),

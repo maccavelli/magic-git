@@ -133,4 +133,25 @@ void main() {
     expect(find.text('Revert'), findsOneWidget);
     expect(find.text('Amend last commit'), findsNothing);
   });
+
+  testWidgets('the text-prompt sheet is width-capped, not window-filling', (
+    tester,
+  ) async {
+    await _pump(tester, [head, older]);
+    await tester.tap(find.text('head commit'));
+    await tester.pumpAndSettle();
+    await tester.tap(_actionsMenu);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Branch from here…'));
+    await tester.pumpAndSettle();
+
+    // The prompt is open and constrained to 440px rather than ballooning to
+    // fill the window. Its text field is wrapped by exactly one 440-wide
+    // SizedBox (distinct from the always-present history search field).
+    final capped = find.ancestor(
+      of: find.byType(MacosTextField),
+      matching: find.byWidgetPredicate((w) => w is SizedBox && w.width == 440),
+    );
+    expect(capped, findsOneWidget);
+  });
 }

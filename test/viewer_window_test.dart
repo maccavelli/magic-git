@@ -1,11 +1,15 @@
 import 'dart:convert';
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/common/tool_icon_button.dart';
 import 'package:remote_magic_git/features/viewer/file_content.dart';
 import 'package:remote_magic_git/features/viewer/image_preview.dart';
@@ -49,6 +53,21 @@ Override _content(String path, String raw) =>
     fileContentProvider((_repo, path)).overrideWith(
       (ref) => FileContent.classify(raw),
     );
+
+// A GitService whose reads always throw a given executor-level error, to
+// exercise the viewer's read-error mapping end to end.
+class _ThrowingGit extends GitService {
+  _ThrowingGit(this._error) : super(SSHCommandExecutor(SSHClientManager()));
+  final Object _error;
+  @override
+  Future<String> readFile(String repoPath, String path) async => throw _error;
+  @override
+  Future<String> readFileBase64(String repoPath, String path) async =>
+      throw _error;
+}
+
+Override _throwingGit(Object error) =>
+    gitServiceProvider.overrideWithValue(_ThrowingGit(error));
 
 // Concatenated text across RichText + selectable (EditableText) widgets.
 String _allText(WidgetTester tester) {
@@ -237,6 +256,125 @@ void main() {
     expect(find.text('Open in Default App'), findsNothing);
   });
 
+  testWidgets(
+    'opens without throwing when the host is smaller than the min window size',
+    (tester) async {
+      // A host (419x259) just below the 420x260 minimum used to make
+      // initState's `value.clamp(_minWidth, bounds.width)` throw ArgumentError
+      // (lower > upper) while building the window.
+      final container = ProviderContainer(
+        overrides: [_content('a.txt', 'hi')],
+      );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: MacosWindow(
+              child: ContentArea(
+                builder: (_, _) => Stack(
+                  children: [
+                    FileViewerWindow(
+                      id: 1,
+                      repoPath: _repo,
+                      path: 'a.txt',
+                      bounds: const Size(419, 259),
+                      isFront: true,
+                      onClose: () {},
+                      onFocus: () {},
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byType(FileViewerWindow), findsOneWidget);
+    },
+  );
+
+  testWidgets('a read timeout surfaces a clean message, not the raw error', (
+    tester,
+  ) async {
+    final container = await _pumpHost(
+      tester,
+      overrides: [_throwingGit(const SSHCommandTimeout('cat -- f.txt'))],
+    );
+    container.read(openFileViewersProvider.notifier).open(_repo, 'f.txt');
+    await tester.pumpAndSettle();
+
+    final text = _allText(tester);
+    expect(text, contains('Timed out'));
+    // The raw transport string must not leak through.
+    expect(text, isNot(contains('SSH command timed out')));
+  });
+
+  testWidgets('an over-cap read shows the size notice with open-externally', (
+    tester,
+  ) async {
+    final container = await _pumpHost(
+      tester,
+      overrides: [
+        _throwingGit(const SSHOutputExceeded('cat -- big.log')),
+        _connection(isLocal: true),
+      ],
+    );
+    container.read(openFileViewersProvider.notifier).open(_repo, 'big.log');
+    await tester.pumpAndSettle();
+
+    expect(find.text('File too large to display'), findsOneWidget);
+    expect(find.text('Open in Default App'), findsOneWidget);
+  });
+
+  testWidgets('a too-large image shows the size notice, not a raw error', (
+    tester,
+  ) async {
+    final container = await _pumpHost(
+      tester,
+      overrides: [_throwingGit(const SSHOutputExceeded('base64 < logo.png'))],
+    );
+    container.read(openFileViewersProvider.notifier).open(_repo, 'logo.png');
+    await tester.pumpAndSettle();
+
+    expect(find.text('File too large to display'), findsOneWidget);
+  });
+
+  testWidgets('Copy file contents copies the full source to the clipboard', (
+    tester,
+  ) async {
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    final container = await _pumpHost(
+      tester,
+      overrides: [_content('a.dart', 'void main() {}\n')],
+    );
+    container.read(openFileViewersProvider.notifier).open(_repo, 'a.dart');
+    await tester.pumpAndSettle();
+
+    await tester.tap(_toolButton('Copy file contents'));
+    await tester.pumpAndSettle();
+    expect(copied, ['void main() {}\n']);
+  });
+
   testWidgets('two files open two windows; reopening one does not duplicate', (
     tester,
   ) async {
@@ -256,5 +394,34 @@ void main() {
     notifier.open(_repo, 'a.txt'); // already open → focus, not duplicate
     await tester.pumpAndSettle();
     expect(find.byType(FileViewerWindow), findsNWidgets(2));
+  });
+
+  testWidgets('Escape closes the front window; a second Escape closes the next', (
+    tester,
+  ) async {
+    final container = await _pumpHost(
+      tester,
+      overrides: [_content('a.txt', 'aaa'), _content('b.txt', 'bbb')],
+    );
+    final notifier = container.read(openFileViewersProvider.notifier);
+    notifier.open(_repo, 'a.txt');
+    notifier.open(_repo, 'b.txt');
+    await tester.pumpAndSettle();
+    expect(find.byType(FileViewerWindow), findsNWidgets(2));
+
+    // Focus the front window the way a user would — a click (onPointerDown
+    // requests focus). The last window in the stack is front-most.
+    await tester.tap(find.byType(FileViewerWindow).last);
+    await tester.pumpAndSettle();
+
+    // Escape closes the front (b.txt); after it closes the new front (a.txt)
+    // must take focus so a second Escape isn't swallowed.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(FileViewerWindow), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(FileViewerWindow), findsNothing);
   });
 }

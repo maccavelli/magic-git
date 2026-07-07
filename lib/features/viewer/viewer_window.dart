@@ -30,6 +30,10 @@ class FileViewerWindow extends ConsumerStatefulWidget {
   final String repoPath;
   final String path;
   final Size bounds;
+
+  /// Whether this is the front-most (top of z-order) window. The front window
+  /// holds keyboard focus so shortcuts (Escape) target it.
+  final bool isFront;
   final VoidCallback onClose;
   final VoidCallback onFocus;
 
@@ -39,6 +43,7 @@ class FileViewerWindow extends ConsumerStatefulWidget {
     required this.repoPath,
     required this.path,
     required this.bounds,
+    required this.isFront,
     required this.onClose,
     required this.onFocus,
   });
@@ -77,20 +82,32 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
     final last = ref.read(viewerLastSizeProvider);
     _size = last != null
         ? Size(
-            last.width.clamp(_minWidth, widget.bounds.width),
-            last.height.clamp(_minHeight, widget.bounds.height),
+            _fit(last.width, _minWidth, widget.bounds.width),
+            _fit(last.height, _minHeight, widget.bounds.height),
           )
         : Size(
-            (widget.bounds.width * 0.62).clamp(_minWidth, widget.bounds.width),
-            (widget.bounds.height * 0.78).clamp(
-              _minHeight,
-              widget.bounds.height,
-            ),
+            _fit(widget.bounds.width * 0.62, _minWidth, widget.bounds.width),
+            _fit(widget.bounds.height * 0.78, _minHeight, widget.bounds.height),
           );
     _position = Offset(
       (widget.bounds.width - _size.width) / 2,
       (widget.bounds.height - _size.height) / 2,
     );
+  }
+
+  @override
+  void didUpdateWidget(FileViewerWindow old) {
+    super.didUpdateWidget(old);
+    // Promoted to front-most (the previous front closed, or another window was
+    // raised over this one and then dismissed): take keyboard focus so Escape
+    // and other shortcuts target this window rather than being swallowed.
+    // Deferred to after the frame so the focus node is fully attached (the
+    // promotion happens during the sibling's removal rebuild).
+    if (!old.isFront && widget.isFront) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focus.requestFocus();
+      });
+    }
   }
 
   @override
@@ -109,11 +126,9 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
   void _onResize(DragUpdateDetails d) {
     setState(() {
       _size = Size(
-        (_size.width + d.delta.dx).clamp(
-          _minWidth,
-          widget.bounds.width - _position.dx,
-        ),
-        (_size.height + d.delta.dy).clamp(
+        _fit(_size.width + d.delta.dx, _minWidth, widget.bounds.width - _position.dx),
+        _fit(
+          _size.height + d.delta.dy,
           _minHeight,
           widget.bounds.height - _position.dy,
         ),
@@ -121,7 +136,21 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
     });
   }
 
+  /// Clamps [v] into `[lo, hi]`, but tolerates a host smaller than the minimum
+  /// window size: when `hi <= lo` (the app window is narrower/shorter than
+  /// `_minWidth`/`_minHeight`) it returns `hi`, filling the available space,
+  /// rather than letting `num.clamp` throw on `lower > upper`.
+  double _fit(double v, double lo, double hi) =>
+      hi <= lo ? hi : v.clamp(lo, hi).toDouble();
+
   void _clamp() {
+    // Shrink an over-large window down to the host first (e.g. the app window
+    // shrank while this one was open), so it can't be stranded off-screen with
+    // its resize handle out of reach.
+    _size = Size(
+      _fit(_size.width, _minWidth, widget.bounds.width),
+      _fit(_size.height, _minHeight, widget.bounds.height),
+    );
     final maxX = (widget.bounds.width - _size.width).clamp(0.0, double.infinity);
     final maxY = (widget.bounds.height - _size.height).clamp(
       0.0,
@@ -138,12 +167,9 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
     // Keep a floating window inside the app if the whole window shrank.
     if (!_maximized) _clamp();
     final pos = _maximized ? Offset.zero : _position;
-    final size = _maximized
-        ? Size(
-            widget.bounds.width.clamp(_minWidth, double.infinity),
-            widget.bounds.height.clamp(_minHeight, double.infinity),
-          )
-        : _size;
+    // Maximized fills the host exactly — no min clamp, which would otherwise
+    // overflow the viewport when the app window is smaller than the minimum.
+    final size = _maximized ? widget.bounds : _size;
 
     final brightness = MacosTheme.brightnessOf(context);
     final background = brightness.resolve(
@@ -156,13 +182,16 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
       top: pos.dy,
       width: size.width,
       height: size.height,
-      child: Focus(
-        focusNode: _focus,
-        autofocus: true,
-        child: CallbackShortcuts(
-          bindings: {
-            const SingleActivator(LogicalKeyboardKey.escape): widget.onClose,
-          },
+      // CallbackShortcuts must be the *ancestor* of the focus node: a key event
+      // dispatches to the focused node and bubbles up its ancestors, so the
+      // Escape handler only sees it from above [_focus], not below.
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.escape): widget.onClose,
+        },
+        child: Focus(
+          focusNode: _focus,
+          autofocus: true,
           child: Listener(
             // Any interaction raises this window to the front.
             onPointerDown: (_) {
@@ -274,7 +303,17 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
             _modeToggle(context),
             const SizedBox(width: 8),
           ],
-          if (_mode == _ViewerMode.code)
+          if (_mode == _ViewerMode.code) ...[
+            // A reliable "copy the whole file" — the source view virtualizes by
+            // line, so a drag-selection + copy only captures the lines that were
+            // realized on screen; this copies the full text regardless of scroll.
+            _toggle(
+              context,
+              icon: CupertinoIcons.doc_on_clipboard,
+              tooltip: 'Copy file contents',
+              active: false,
+              onPressed: _copyContents,
+            ),
             _toggle(
               context,
               icon: CupertinoIcons.text_alignleft,
@@ -282,6 +321,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
               active: _wrap,
               onPressed: () => setState(() => _wrap = !_wrap),
             ),
+          ],
           _toggle(
             context,
             icon: _maximized
@@ -375,13 +415,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
     );
     return async.when(
       loading: () => const Center(child: ProgressCircle()),
-      error: (err, _) => _notice(
-        context,
-        icon: CupertinoIcons.exclamationmark_triangle,
-        title: 'Could not open file',
-        detail: '$err',
-        color: MacosColors.systemRedColor,
-      ),
+      error: (err, _) => _readErrorNotice(context, err, 'Could not open file'),
       data: (content) => switch (content.kind) {
         FileContentKind.tooLarge => _notice(
           context,
@@ -414,14 +448,31 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
     );
     return async.when(
       loading: () => const Center(child: ProgressCircle()),
-      error: (err, _) => _notice(
-        context,
-        icon: CupertinoIcons.exclamationmark_triangle,
-        title: 'Could not open image',
-        detail: '$err',
-        color: MacosColors.systemRedColor,
-      ),
+      error: (err, _) => _readErrorNotice(context, err, 'Could not open image'),
       data: (bytes) => ImagePreview(bytes: bytes),
+    );
+  }
+
+  /// Renders a read failure: a `tooLarge` error gets the size notice + the
+  /// (local-only) open-externally button, everything else a plain message —
+  /// both drawn from the clean [ViewerReadException] text, never a raw
+  /// transport error string.
+  Widget _readErrorNotice(BuildContext context, Object err, String title) {
+    if (err is ViewerReadException &&
+        err.kind == ViewerReadError.tooLarge) {
+      return _notice(
+        context,
+        icon: CupertinoIcons.doc_text_search,
+        title: 'File too large to display',
+        detail: '$err',
+      );
+    }
+    return _notice(
+      context,
+      icon: CupertinoIcons.exclamationmark_triangle,
+      title: title,
+      detail: '$err',
+      color: MacosColors.systemRedColor,
     );
   }
 
@@ -438,6 +489,18 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
   };
 
   String _mib(int chars) => (chars / (1024 * 1024)).toStringAsFixed(1);
+
+  /// Copies the whole file's text to the clipboard (no-op for a binary/too-large
+  /// file or one still loading). Reads the already-cached provider value rather
+  /// than re-fetching.
+  void _copyContents() {
+    final content = ref
+        .read(fileContentProvider((widget.repoPath, widget.path)))
+        .value;
+    if (content != null && content.kind == FileContentKind.text) {
+      Clipboard.setData(ClipboardData(text: content.text));
+    }
+  }
 
   /// A "reveal/open on this machine" button, shown on the fallback notices —
   /// but only for a local repo, since an SSH repo's files live on the remote

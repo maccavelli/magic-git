@@ -176,6 +176,59 @@ void main() {
   );
 
   testWidgets(
+    'builds without throwing when the content area is narrower than the min',
+    (tester) async {
+      // The pop-out lives in the content area (window minus sidebar), which can
+      // be narrower than its 420 minimum even when the whole window isn't. The
+      // size clamp used to throw ArgumentError (lower > upper) in initState.
+      final container = ProviderContainer(
+        overrides: [
+          gitServiceProvider.overrideWithValue(_FakeGitService()),
+          fileDiffProvider((
+            _repo,
+            'lib/a.dart',
+            false,
+            false,
+            3,
+          )).overrideWith((ref) async => _diff),
+        ],
+      );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: MacosWindow(
+              child: ContentArea(
+                builder: (_, _) => Stack(
+                  children: [
+                    DiffPopoutWindow(
+                      repoPath: _repo,
+                      path: 'lib/a.dart',
+                      staged: false,
+                      untracked: false,
+                      initialSplit: false,
+                      initialIgnoreWs: false,
+                      contextLines: 3,
+                      bounds: const Size(380, 300), // below the 420×280 minimum
+                      onHunkAction: (_, _, _) {},
+                      onClose: () {},
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.byType(DiffPopoutWindow), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'selecting a different file while popped out keeps it popped out',
     (tester) async {
       final container = ProviderContainer(

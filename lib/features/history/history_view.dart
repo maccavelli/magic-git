@@ -192,44 +192,53 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     final value = await showMacosSheet<String>(
       context: context,
       builder: (sheetContext) => MacosSheet(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(title, style: MacosTheme.of(sheetContext).typography.title3),
-              const SizedBox(height: 14),
-              MacosTextField(
-                controller: controller,
-                placeholder: placeholder,
-                autofocus: true,
-                decoration: kAppTextFieldDecoration,
-                focusedDecoration: kAppTextFieldFocusedDecoration,
-                onSubmitted: (v) =>
-                    Navigator.of(sheetContext).pop(v.trim().isEmpty ? null : v),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  PushButton(
-                    controlSize: ControlSize.large,
-                    secondary: true,
-                    onPressed: () => Navigator.of(sheetContext).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 10),
-                  PushButton(
-                    controlSize: ControlSize.large,
-                    onPressed: () => Navigator.of(sheetContext).pop(
-                      controller.text.trim().isEmpty ? null : controller.text,
+        // A MacosSheet has no intrinsic width — without this it fills the whole
+        // window for what is just a title + one text field + Cancel/OK.
+        child: SizedBox(
+          width: 440,
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  title,
+                  style: MacosTheme.of(sheetContext).typography.title3,
+                ),
+                const SizedBox(height: 14),
+                MacosTextField(
+                  controller: controller,
+                  placeholder: placeholder,
+                  autofocus: true,
+                  decoration: kAppTextFieldDecoration,
+                  focusedDecoration: kAppTextFieldFocusedDecoration,
+                  onSubmitted: (v) => Navigator.of(
+                    sheetContext,
+                  ).pop(v.trim().isEmpty ? null : v),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    PushButton(
+                      controlSize: ControlSize.large,
+                      secondary: true,
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      child: const Text('Cancel'),
                     ),
-                    child: const Text('OK'),
-                  ),
-                ],
-              ),
-            ],
+                    const SizedBox(width: 10),
+                    PushButton(
+                      controlSize: ControlSize.large,
+                      onPressed: () => Navigator.of(sheetContext).pop(
+                        controller.text.trim().isEmpty ? null : controller.text,
+                      ),
+                      child: const Text('OK'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -766,8 +775,8 @@ class CommitDiffSheet extends ConsumerWidget {
 
     return MacosSheet(
       child: SizedBox(
-        width: (screen.width * 0.82).clamp(600.0, 1200.0).toDouble(),
-        height: (screen.height * 0.86).clamp(400.0, 950.0).toDouble(),
+        width: (screen.width * 0.82).clamp(600.0, 1120.0).toDouble(),
+        height: (screen.height * 0.86).clamp(400.0, 880.0).toDouble(),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

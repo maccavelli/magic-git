@@ -31,7 +31,7 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
     final screen = MediaQuery.of(context).size;
     return MacosSheet(
       child: SizedBox(
-        width: (screen.width * 0.78).clamp(640.0, 1100.0).toDouble(),
+        width: (screen.width * 0.78).clamp(640.0, 1040.0).toDouble(),
         height: (screen.height * 0.82).clamp(440.0, 900.0).toDouble(),
         child: Column(
           children: [
@@ -87,9 +87,9 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
       return Center(
         child: Text(
           'No history for this file.',
-          style: MacosTheme.of(context).typography.body.copyWith(
-            color: MacosColors.systemGrayColor,
-          ),
+          style: MacosTheme.of(
+            context,
+          ).typography.body.copyWith(color: MacosColors.systemGrayColor),
         ),
       );
     }
@@ -155,9 +155,9 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
           padding: const EdgeInsets.all(16),
           child: Text(
             '$err',
-            style: MacosTheme.of(context).typography.body.copyWith(
-              color: MacosColors.systemRedColor,
-            ),
+            style: MacosTheme.of(
+              context,
+            ).typography.body.copyWith(color: MacosColors.systemRedColor),
           ),
         ),
       ),

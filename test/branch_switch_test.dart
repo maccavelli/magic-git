@@ -22,16 +22,35 @@ GitStatus _dirty() => GitStatus(
   branch: const GitBranchInfo(),
   files: const [GitFileStatus(path: 'a.dart', statusX: '.', statusY: 'M')],
 );
+// An untracked-only tree — `isClean` is false (files isn't empty), so the guard
+// fires, but a plain `git stash push` would find nothing to save.
+GitStatus _untrackedOnly() => GitStatus(
+  branch: const GitBranchInfo(),
+  files: const [GitFileStatus(path: 'new.dart', statusX: '?', statusY: '?')],
+);
 
 class _FakeGit extends GitService {
   _FakeGit(this._status) : super(SSHCommandExecutor(SSHClientManager()));
   final GitStatus Function() _status;
   int statusCalls = 0;
+  int stashCalls = 0;
+  bool? stashIncludedUntracked;
 
   @override
   Future<GitStatus> status(String repoPath) async {
     statusCalls++;
     return _status();
+  }
+
+  @override
+  Future<SSHCommandResult> stashPush(
+    String repoPath, {
+    String? message,
+    bool includeUntracked = false,
+  }) async {
+    stashCalls++;
+    stashIncludedUntracked = includeUntracked;
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
 }
 
@@ -112,6 +131,29 @@ void main() {
       expect(git.statusCalls, 1);
       expect(find.text('Uncommitted changes'), findsNothing);
       expect(result.checkoutCalls, 1);
+      expect(result.value, isTrue);
+    },
+  );
+
+  testWidgets(
+    'Stash & Switch stashes with untracked included — otherwise an '
+    'untracked-only tree stashes nothing and the changes are silently carried',
+    (tester) async {
+      final git = _FakeGit(_untrackedOnly);
+      final result = await _pumpAndTap(tester, git);
+
+      // The guard fired (untracked counts as dirty); pick "Stash & Switch".
+      expect(find.text('Uncommitted changes'), findsOneWidget);
+      await tester.tap(find.text('Stash & Switch'));
+      await tester.pumpAndSettle();
+
+      expect(git.stashCalls, 1);
+      expect(
+        git.stashIncludedUntracked,
+        isTrue,
+        reason: 'must include untracked or the stash is an empty no-op',
+      );
+      expect(result.checkoutCalls, 1, reason: 'switch proceeds after stashing');
       expect(result.value, isTrue);
     },
   );

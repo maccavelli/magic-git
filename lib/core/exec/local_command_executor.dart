@@ -98,12 +98,23 @@ class LocalCommandExecutor implements CommandExecutor {
     Process? process;
 
     Future<SSHCommandResult> spawnAndDrain() async {
-      process = await Process.start(
-        argv.first,
-        argv.skip(1).toList(),
-        workingDirectory: repoPath,
-        environment: _mergedEnv(extraEnv),
-      );
+      try {
+        process = await Process.start(
+          argv.first,
+          argv.skip(1).toList(),
+          workingDirectory: repoPath,
+          environment: _mergedEnv(extraEnv),
+        );
+      } on ProcessException catch (e) {
+        // The binary isn't on PATH, or `repoPath` doesn't exist / isn't
+        // accessible. Over SSH the same failure comes back as a non-zero exit
+        // (a missing binary is 127, a missing dir is `cd` failing), so map it
+        // to the same shape here: a clean result callers convert to a
+        // `GitException`, rather than a raw `ProcessException` that no caller
+        // catches — and that `runWithRetries` would otherwise pointlessly retry
+        // (the failure is deterministic).
+        return SSHCommandResult(exitCode: 127, stdout: '', stderr: e.message);
+      }
       final p = process!;
 
       // Always close stdin (whether or not anything was written) rather than

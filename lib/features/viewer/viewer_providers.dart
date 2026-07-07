@@ -4,7 +4,55 @@ import 'dart:ui' show Size;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/ssh/ssh_command_executor.dart';
 import 'file_content.dart';
+import 'text_decoding.dart';
+
+/// Why a file couldn't be read into the viewer, in terms the UI can act on:
+/// [tooLarge] gets the size notice + "open externally" affordance, the rest get
+/// a plain "couldn't read this" message.
+enum ViewerReadError { tooLarge, timedOut, connectionChanged, unavailable }
+
+/// A read failure translated from the executor's transport-level exceptions
+/// (`SSHCommandTimeout`/`SSHOutputExceeded`/`SSHCommandSuperseded`) and
+/// `GitException` into one clean, user-facing shape. Without this the viewer's
+/// error state would surface raw strings like `"SSH command timed out: cat --
+/// path"`.
+class ViewerReadException implements Exception {
+  final ViewerReadError kind;
+  final String message;
+  const ViewerReadException(this.kind, this.message);
+
+  @override
+  String toString() => message;
+}
+
+ViewerReadException _mapReadError(Object e) {
+  if (e is ViewerReadException) return e;
+  if (e is SSHOutputExceeded) {
+    return const ViewerReadException(
+      ViewerReadError.tooLarge,
+      'This file is too large to open in the viewer.',
+    );
+  }
+  if (e is SSHCommandTimeout) {
+    return const ViewerReadException(
+      ViewerReadError.timedOut,
+      'Timed out reading this file — check your connection and try again.',
+    );
+  }
+  if (e is SSHCommandSuperseded) {
+    return const ViewerReadException(
+      ViewerReadError.connectionChanged,
+      'The connection changed while opening this file — reopen it to try again.',
+    );
+  }
+  return const ViewerReadException(
+    ViewerReadError.unavailable,
+    "Couldn't read this file. It may have moved, or you may not have "
+    'permission to read it.',
+  );
+}
 
 /// A file's working-tree contents, read via `GitService.readFile` (a plain
 /// `cat` — identical local and over SSH) and classified into text / binary /
@@ -18,8 +66,30 @@ import 'file_content.dart';
 final fileContentProvider = FutureProvider.autoDispose
     .family<FileContent, (String, String)>((ref, key) async {
       final (repoPath, path) = key;
-      final raw = await ref.watch(gitServiceProvider).readFile(repoPath, path);
-      return FileContent.classify(raw);
+      final git = ref.watch(gitServiceProvider);
+      try {
+        final raw = await git.readFile(repoPath, path);
+        final content = FileContent.classify(raw);
+        // A UTF-16/UTF-32 text file (common from Windows tools) has interleaved
+        // NUL bytes, so the UTF-8 read misclassifies it as binary. When the
+        // decoded prefix carries the tell-tale BOM signature, re-read the raw
+        // bytes and decode with the correct codec — but only keep the result if
+        // it actually classifies as text, so a genuine binary that happened to
+        // start with those bytes stays binary.
+        if (content.kind == FileContentKind.binary &&
+            hasUtf16Or32BomSignature(raw)) {
+          final b64 = await git.readFileBase64(repoPath, path);
+          final bytes = base64.decode(b64.replaceAll(RegExp(r'\s'), ''));
+          final decoded = decodeUtf16Or32(bytes);
+          if (decoded != null) {
+            final reclassified = FileContent.classify(decoded);
+            if (reclassified.kind == FileContentKind.text) return reclassified;
+          }
+        }
+        return content;
+      } catch (e) {
+        throw _mapReadError(e);
+      }
     });
 
 /// The raw bytes of a (binary, image) file, read via `GitService.readFileBase64`
@@ -29,12 +99,19 @@ final fileContentProvider = FutureProvider.autoDispose
 final fileBytesProvider = FutureProvider.autoDispose
     .family<Uint8List, (String, String)>((ref, key) async {
       final (repoPath, path) = key;
-      final b64 = await ref
-          .watch(gitServiceProvider)
-          .readFileBase64(repoPath, path);
-      // `base64` wraps its output (GNU at 76 cols); strip all whitespace before
-      // decoding, which is otherwise strict about it.
-      return base64.decode(b64.replaceAll(RegExp(r'\s'), ''));
+      try {
+        final b64 = await ref
+            .watch(gitServiceProvider)
+            .readFileBase64(repoPath, path);
+        // `base64` wraps its output (GNU at 76 cols); strip all whitespace
+        // before decoding, which is otherwise strict about it.
+        return base64.decode(b64.replaceAll(RegExp(r'\s'), ''));
+      } catch (e) {
+        // A huge image trips the executor's output cap (base64 inflates bytes
+        // ~1.37×, so the ceiling bites sooner) — surface it as `tooLarge` so the
+        // viewer shows the size notice + open-externally, not a raw error.
+        throw _mapReadError(e);
+      }
     });
 
 /// The size of the most recently resized viewer window, so a newly opened

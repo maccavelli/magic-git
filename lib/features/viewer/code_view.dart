@@ -67,7 +67,14 @@ TextSpan lineToSpan(List<HlRun> line, CodeTheme theme, TextStyle base) {
     }
     var text = run.text;
     if (used + text.length > maxHighlightLineLength) {
-      text = text.substring(0, maxHighlightLineLength - used);
+      var cut = maxHighlightLineLength - used;
+      // Don't slice through a surrogate pair — a dangling high surrogate would
+      // render as a replacement box right before the truncation marker.
+      if (cut > 0 && cut < text.length) {
+        final unit = text.codeUnitAt(cut - 1);
+        if (unit >= 0xD800 && unit <= 0xDBFF) cut -= 1;
+      }
+      text = text.substring(0, cut);
       truncated = true;
     }
     used += text.length;
@@ -128,10 +135,27 @@ class _CodeViewState extends State<CodeView> {
   final _hCtrl = ScrollController();
 
   List<List<HlRun>> _lines = const [];
-  int _maxLineChars = 0;
+  // Index of the line with the most code units — measured for its true pixel
+  // width in `build` to size the horizontal scroll extent (so CJK/tab-heavy
+  // lines, which a char-count estimate under-measures, are fully reachable).
+  int _widestLineIndex = 0;
   // Bumped on every recompute so a slow isolate result for a superseded file
   // (the same widget reused for another path) is dropped.
   int _highlightToken = 0;
+
+  // Monospace metrics depend only on the (constant) mono font, not colour, so
+  // they're measured once and cached rather than re-laid-out on every build.
+  late final double _charW =
+      (TextPainter(
+                text: TextSpan(text: '0' * 50, style: kDiffMono),
+                textDirection: TextDirection.ltr,
+              )..layout())
+          .width /
+      50;
+  late final double _lineH = (TextPainter(
+    text: const TextSpan(text: 'Xg', style: kDiffMono),
+    textDirection: TextDirection.ltr,
+  )..layout()).height;
 
   @override
   void initState() {
@@ -170,6 +194,10 @@ class _CodeViewState extends State<CodeView> {
     } else {
       Isolate.run(() => highlightLines(text, lang)).then((lines) {
         if (mounted && token == _highlightToken) setState(() => _setLines(lines));
+      }).catchError((_) {
+        // Highlighting failed off-thread (e.g. malformed input the grammar
+        // still choked on); the plain-text render set above stays in place
+        // rather than surfacing as an unhandled async error.
       });
     }
   }
@@ -177,39 +205,26 @@ class _CodeViewState extends State<CodeView> {
   void _setLines(List<List<HlRun>> lines) {
     _lines = lines;
     var maxChars = 0;
-    for (final line in lines) {
+    var widest = 0;
+    for (var li = 0; li < lines.length; li++) {
       var n = 0;
-      for (final run in line) {
+      for (final run in lines[li]) {
         n += run.text.length;
       }
-      if (n > maxChars) maxChars = n;
+      if (n > maxChars) {
+        maxChars = n;
+        widest = li;
+      }
     }
-    _maxLineChars = maxChars;
-  }
-
-  // Monospace metrics, measured once per (fontSize) via a throwaway painter.
-  double _charWidth(TextStyle base) {
-    final tp = TextPainter(
-      text: TextSpan(text: '0' * 50, style: base),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    return tp.width / 50;
-  }
-
-  double _lineHeight(TextStyle base) {
-    final tp = TextPainter(
-      text: TextSpan(text: 'Xg', style: base),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    return tp.height;
+    _widestLineIndex = widest;
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = codeThemeFor(MacosTheme.brightnessOf(context));
     final base = kDiffMono.copyWith(color: theme.foreground);
-    final charW = _charWidth(base);
-    final lineH = _lineHeight(base);
+    final charW = _charW;
+    final lineH = _lineH;
     final gutterDigits = _lines.length.toString().length;
     final gutterW = gutterDigits * charW + 20; // digits + padding both sides
 
@@ -234,8 +249,17 @@ class _CodeViewState extends State<CodeView> {
           }
 
           // No-wrap: one synchronized horizontal scroll over content at least
-          // as wide as the longest line, so every row scrolls together.
-          final contentW = (gutterW + 8 + _maxLineChars * charW + 24)
+          // as wide as the longest line, so every row scrolls together. Measure
+          // the widest line's true pixel width (not chars × charW), so tabs and
+          // wide/CJK glyphs don't leave the tail unreachable off the right edge.
+          final widestW = _lines.isEmpty
+              ? 0.0
+              : (TextPainter(
+                  text: lineToSpan(_lines[_widestLineIndex], theme, base),
+                  textDirection: TextDirection.ltr,
+                  maxLines: 1,
+                )..layout()).width;
+          final contentW = (gutterW + 8 + widestW + 24)
               .clamp(constraints.maxWidth, double.infinity)
               .toDouble();
           return MacosScrollbar(

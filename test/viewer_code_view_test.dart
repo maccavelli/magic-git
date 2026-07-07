@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/features/viewer/code_view.dart';
 import 'package:remote_magic_git/features/viewer/file_content.dart';
+import 'package:remote_magic_git/features/viewer/syntax_highlighter.dart';
 
 Future<void> _pump(
   WidgetTester tester, {
@@ -83,5 +84,21 @@ void main() {
     await _pump(tester, text: '', languageId: 'dart');
     expect(find.text('1'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  test('lineToSpan never splits a surrogate pair at the truncation boundary', () {
+    final theme = codeThemeFor(Brightness.dark);
+    const base = TextStyle();
+    // The cut lands exactly on the emoji: 19999 ASCII chars + a 2-unit surrogate
+    // pair would slice at offset 1, mid-pair, without the guard.
+    final line = [
+      HlRun('a' * (maxHighlightLineLength - 1), null),
+      const HlRun('😀', null), // U+1F600
+    ];
+    final plain = lineToSpan(line, theme, base).toPlainText();
+    expect(plain, contains('line truncated')); // it did truncate
+    // No lone surrogate survived — every rune is a whole code point.
+    final loneSurrogate = plain.runes.any((r) => r >= 0xD800 && r <= 0xDFFF);
+    expect(loneSurrogate, isFalse);
   });
 }

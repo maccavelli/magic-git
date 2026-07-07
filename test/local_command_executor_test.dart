@@ -41,6 +41,44 @@ void main() {
     expect(result.isSuccess, isFalse);
   });
 
+  test('a missing binary is a clean 127 result, not a raw ProcessException',
+      () async {
+    // Over SSH a missing binary comes back as a non-zero exit; the local
+    // backend must present the same shape (a result callers turn into a
+    // GitException) instead of throwing an uncaught ProcessException.
+    final result = await executor.execute(
+      repoPath: tempDir.path,
+      gitArgs: ['this-binary-does-not-exist-xyz', '--version'],
+    );
+    expect(result.isSuccess, isFalse);
+    expect(result.exitCode, 127);
+    expect(result.stderr, isNotEmpty);
+  });
+
+  test('a missing working directory is a clean result, not a throw', () async {
+    final result = await executor.execute(
+      repoPath: '${tempDir.path}/no-such-subdir',
+      gitArgs: ['sh', '-c', 'pwd'],
+    );
+    expect(result.isSuccess, isFalse);
+    expect(result.exitCode, 127);
+  });
+
+  test('a deterministic spawn failure is not retried', () async {
+    // With retries requested, a missing binary must NOT spin (it returns a
+    // result now, which runWithRetries treats as success-shaped, not a throw).
+    final sw = Stopwatch()..start();
+    final result = await executor.execute(
+      repoPath: tempDir.path,
+      gitArgs: ['this-binary-does-not-exist-xyz'],
+      retries: 3,
+    );
+    sw.stop();
+    expect(result.exitCode, 127);
+    // 3 retries × 400ms backoff would be >1s; a single attempt is well under.
+    expect(sw.elapsedMilliseconds, lessThan(400));
+  });
+
   test('execute pipes stdin to the process', () async {
     final result = await executor.execute(
       repoPath: tempDir.path,

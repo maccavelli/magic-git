@@ -41,12 +41,17 @@ class WindowBoundsStore {
   static const _widthKey = 'windowBoundsWidth';
   static const _heightKey = 'windowBoundsHeight';
 
-  /// Sane floor below which a persisted size is treated as degenerate (e.g.
-  /// corrupted storage, or bounds captured from an since-unplugged external
-  /// monitor) rather than trusted — falls back to the hardcoded default
-  /// instead of launching an unusably tiny/off-screen window.
-  static const double minWidth = 480;
-  static const double minHeight = 360;
+  /// The app's minimum window size — enforced live via `windowManager`
+  /// ([kMinWindowSize] in main.dart) and reused here as the floor below which a
+  /// persisted size is treated as degenerate (corrupted storage, or bounds
+  /// captured from an since-unplugged external monitor) rather than trusted.
+  ///
+  /// Sits comfortably above every in-app floating window's own minimum (the
+  /// file viewer's 420×260, the diff pop-out's 420×280), so those never end up
+  /// wider/taller than the app window — which is what let their size clamps hit
+  /// the degenerate `lower > upper` case and the viewer title bar overflow.
+  static const double minWidth = 640;
+  static const double minHeight = 480;
 
   /// The persisted bounds as (x, y, width, height), or null when nothing is
   /// stored yet (first launch) or the stored size fails the sanity floor

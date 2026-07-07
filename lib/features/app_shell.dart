@@ -330,6 +330,12 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     ref.invalidate(pipelinesProvider(repo));
     ref.invalidate(jobsProvider);
     ref.invalidate(projectDashboardProvider(repo));
+    // Re-read any open file viewer so a manual refresh reflects on-disk edits;
+    // keyed by (repoPath, path), so the whole family is invalidated (there's no
+    // single "current" key). Cheap — a closed viewer isn't watching, and an open
+    // one costs one `cat`.
+    ref.invalidate(fileContentProvider);
+    ref.invalidate(fileBytesProvider);
   }
 
   /// Shows the non-dismissible host-key-mismatch dialog. "Cancel Connection"

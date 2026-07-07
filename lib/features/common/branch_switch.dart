@@ -61,9 +61,19 @@ Future<bool> guardedBranchSwitch(
   if (!context.mounted) return false;
 
   if (choice == _SwitchChoice.stash) {
+    // Include untracked files: `GitStatus.isClean` counts untracked entries as
+    // dirty, so the guard fires on an untracked-only tree — but a plain
+    // `git stash push` ignores untracked files, which would then "succeed"
+    // with an empty "No local changes to save" no-op, create no stash, and let
+    // the checkout carry the changes across. `--include-untracked` makes the
+    // stash actually hold everything the guard flagged.
     final stashed = await runAction(
       context,
-      () => git.stashPush(repoPath, message: 'Auto-stash before branch switch'),
+      () => git.stashPush(
+        repoPath,
+        message: 'Auto-stash before branch switch',
+        includeUntracked: true,
+      ),
     );
     if (!stashed || !context.mounted) return false;
   }

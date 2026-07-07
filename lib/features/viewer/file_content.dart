@@ -4,6 +4,8 @@
 /// content too large to show comfortably.
 library;
 
+import 'text_decoding.dart';
+
 /// What the viewer should do with a file's bytes.
 enum FileContentKind {
   /// Decodable text — shown in the source/preview views.
@@ -53,8 +55,13 @@ class FileContent {
   /// and render cost is bounded by the viewport, not the file. The ceiling
   /// instead bounds *memory*: holding the raw string plus a per-line index for
   /// a file this size is comfortable, while a data dump many times larger
-  /// belongs in a dedicated tool. Kept under the executor's own 50 MiB read
-  /// cap, which would surface as a read error before we ever get here.
+  /// belongs in a dedicated tool.
+  ///
+  /// Measured in UTF-16 code units (`String.length`), not bytes — so a CJK-heavy
+  /// UTF-8 file (3 bytes/char → 1 code unit) can be larger on disk than this
+  /// number suggests. The executor's own 50 MiB read cap counts the same code
+  /// units and would surface as a read error before an over-cap file reached
+  /// here.
   static const int maxRenderChars = 16 * 1024 * 1024;
 
   /// Above this many characters, highlighting is done on a background isolate
@@ -78,26 +85,33 @@ class FileContent {
     if (len > maxRenderChars) {
       return FileContent._(kind: FileContentKind.tooLarge, charCount: len);
     }
-    // Binary heuristic over a bounded prefix: a NUL anywhere (git's own test),
-    // or a high proportion of U+FFFD replacement chars (bytes that failed to
-    // decode as UTF-8).
+    // A NUL byte anywhere means binary (git's own test). Scan the whole string
+    // — it's already fully in memory — not just a prefix, so a binary tail
+    // after a long clean text header (an appended blob, a core dump) is still
+    // caught. `contains` is a fast native scan that stops at the first NUL.
+    if (raw.contains('\u0000')) {
+      return FileContent._(kind: FileContentKind.binary, charCount: len);
+    }
+    // The other binary signal — a high proportion of U+FFFD replacement chars
+    // (bytes that failed to decode as UTF-8) — is judged over a bounded prefix,
+    // the same order of magnitude as git's own sniff window.
     final window = len < _sniffChars ? len : _sniffChars;
     var replacements = 0;
     for (var i = 0; i < window; i++) {
-      final c = raw.codeUnitAt(i);
-      if (c == 0) {
-        return FileContent._(kind: FileContentKind.binary, charCount: len);
-      }
-      if (c == 0xFFFD) replacements++;
+      if (raw.codeUnitAt(i) == 0xFFFD) replacements++;
     }
     if (window > 0 && replacements / window > _binaryReplacementRatio) {
       return FileContent._(kind: FileContentKind.binary, charCount: len);
     }
+    // Strip a leading BOM and normalise line endings before display — a raw
+    // U+FEFF breaks Markdown heading detection and a trailing `\r` doubles
+    // wrapped row height / pollutes copied text.
+    final text = normalizeText(raw);
     return FileContent._(
       kind: FileContentKind.text,
-      text: raw,
+      text: text,
       charCount: len,
-      highlightOffMainThread: len > isolateHighlightChars,
+      highlightOffMainThread: text.length > isolateHighlightChars,
     );
   }
 

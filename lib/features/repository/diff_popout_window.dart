@@ -63,14 +63,22 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
   void initState() {
     super.initState();
     _size = Size(
-      (widget.bounds.width * 0.6).clamp(_minWidth, widget.bounds.width),
-      (widget.bounds.height * 0.75).clamp(_minHeight, widget.bounds.height),
+      _fit(widget.bounds.width * 0.6, _minWidth, widget.bounds.width),
+      _fit(widget.bounds.height * 0.75, _minHeight, widget.bounds.height),
     );
     _position = Offset(
       (widget.bounds.width - _size.width) / 2,
       (widget.bounds.height - _size.height) / 2,
     );
   }
+
+  /// Clamps [v] into `[lo, hi]`, tolerating a host smaller than the minimum
+  /// window size (`hi <= lo`) by returning `hi` rather than letting `num.clamp`
+  /// throw on `lower > upper`. The diff pop-out lives in the content area (the
+  /// window minus the sidebar), which can be narrower than [_minWidth] even when
+  /// the whole window isn't.
+  double _fit(double v, double lo, double hi) =>
+      hi <= lo ? hi : v.clamp(lo, hi).toDouble();
 
   void _clampPosition() {
     final maxX = (widget.bounds.width - _size.width).clamp(
@@ -97,11 +105,13 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
   void _onResize(DragUpdateDetails details) {
     setState(() {
       _size = Size(
-        (_size.width + details.delta.dx).clamp(
+        _fit(
+          _size.width + details.delta.dx,
           _minWidth,
           widget.bounds.width - _position.dx,
         ),
-        (_size.height + details.delta.dy).clamp(
+        _fit(
+          _size.height + details.delta.dy,
           _minHeight,
           widget.bounds.height - _position.dy,
         ),

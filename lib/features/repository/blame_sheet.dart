@@ -22,7 +22,7 @@ class BlameSheet extends ConsumerWidget {
     final screen = MediaQuery.of(context).size;
     return MacosSheet(
       child: SizedBox(
-        width: (screen.width * 0.7).clamp(560.0, 980.0).toDouble(),
+        width: (screen.width * 0.7).clamp(560.0, 880.0).toDouble(),
         height: (screen.height * 0.8).clamp(420.0, 900.0).toDouble(),
         child: Column(
           children: [
@@ -30,7 +30,10 @@ class BlameSheet extends ConsumerWidget {
               padding: const EdgeInsets.fromLTRB(16, 12, 10, 8),
               child: Row(
                 children: [
-                  const MacosIcon(CupertinoIcons.person_crop_rectangle, size: 16),
+                  const MacosIcon(
+                    CupertinoIcons.person_crop_rectangle,
+                    size: 16,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
