@@ -108,6 +108,55 @@ void main() {
         expect(calls, 1);
       },
     );
+
+    test(
+      "a retry's backoff does not head-of-line-block later queued commands",
+      () async {
+        // A serialization tail identical to the executors': every attempt
+        // links onto it, errors swallowed on the tail so a failure doesn't
+        // wedge the queue.
+        Future<void> tail = Future.value();
+        Future<SSHCommandResult> enqueue(
+          Future<SSHCommandResult> Function() attempt,
+        ) {
+          final result = tail.then((_) => attempt());
+          tail = result.then((_) {}, onError: (_) {});
+          return result;
+        }
+
+        final order = <String>[];
+
+        // Command A fails once (transient), then succeeds — with a real 100ms
+        // backoff between the two attempts.
+        var aCalls = 0;
+        final a = SSHCommandExecutor.runWithRetries(
+          () async {
+            aCalls++;
+            order.add('A#$aCalls');
+            if (aCalls == 1) throw Exception('transient');
+            return const SSHCommandResult(exitCode: 0, stdout: 'a', stderr: '');
+          },
+          1,
+          backoff: const Duration(milliseconds: 100),
+          enqueue: enqueue,
+        );
+
+        // Command B is enqueued immediately behind A's first attempt.
+        final b = enqueue(() async {
+          order.add('B');
+          return const SSHCommandResult(exitCode: 0, stdout: 'b', stderr: '');
+        });
+
+        await Future.wait([a, b]);
+
+        // A's first attempt runs and fails; the slot is released so B runs
+        // during A's backoff; A's retry re-enqueues at the back and runs last.
+        // With the backoff held inside the slot (the old behavior) B would be
+        // stuck behind the whole retry loop → ['A#1', 'A#2', 'B'].
+        expect(order, ['A#1', 'B', 'A#2']);
+        expect(aCalls, 2);
+      },
+    );
   });
 
   group('GitService opts reads (not mutations) into retry', () {

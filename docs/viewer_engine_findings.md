@@ -99,9 +99,16 @@ and window math.
   concurrency/lifecycle refactor that can destabilize; current behavior is
   correct, only large files pay it.
 - **[LOW] Retry backoff (400 ms) head-of-line-blocks the serialized queue.**
-  Deferred: moving the backoff outside the serialization slot is delicate
-  concurrency work in the core executor for a rare (transient-failure-only)
-  400 ms stall.
+  ✅ Done (2026-07-06). Each *attempt* is now enqueued separately: `execute`
+  calls `runWithRetries` with an `enqueue` hook that links one attempt onto the
+  serialization tail, and the 400 ms backoff `delay` is taken *between* those
+  enqueue calls (outside any slot). A failed read's retry-wait therefore
+  releases the queue slot and re-enqueues at the back, so it no longer stalls
+  commands queued behind it. Connection-generation pinning is preserved (`gen`
+  is captured once and held across retries, so a re-enqueued attempt still
+  refuses a newer generation). Applied identically in both executors. Regression
+  test in `retry_test.dart` asserts a command queued behind a retrying one runs
+  during the backoff (`['A#1', 'B', 'A#2']`).
 - **[LOW] Snapshot `\x02RMGSNAP\x02` separator collision** for an adversarial
   filename. Deferred: astronomically unlikely, fails safe (throws, no
   corruption), and length-prefixing is a risky rewrite of core snapshot parsing.

@@ -72,14 +72,23 @@ class LocalCommandExecutor implements CommandExecutor {
     Duration timeout = SSHCommandExecutor.defaultTimeout,
     int retries = 0,
   }) {
-    final result = _tail.then(
-      (_) => SSHCommandExecutor.runWithRetries(
-        () => _run(repoPath, gitArgs, extraEnv, stdin, timeout),
-        retries,
-      ),
+    // Each attempt is enqueued separately so the inter-retry backoff wait
+    // (taken inside runWithRetries, between enqueues) doesn't head-of-line-block
+    // other queued commands — mirrors SSHCommandExecutor.execute.
+    return SSHCommandExecutor.runWithRetries(
+      () => _run(repoPath, gitArgs, extraEnv, stdin, timeout),
+      retries,
+      enqueue: _enqueue,
     );
-    // Keep the chain alive regardless of outcome, so one failure never wedges
-    // the queue — mirrors SSHCommandExecutor.execute.
+  }
+
+  /// Links [attempt] onto the tail of the serialization chain and advances the
+  /// tail, swallowing errors on the tail so one failure never wedges the queue —
+  /// mirrors [SSHCommandExecutor]'s `_enqueue`.
+  Future<SSHCommandResult> _enqueue(
+    Future<SSHCommandResult> Function() attempt,
+  ) {
+    final result = _tail.then((_) => attempt());
     _tail = result.then((_) {}, onError: (_) {});
     return result;
   }

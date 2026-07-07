@@ -235,7 +235,10 @@ class SSHCommandExecutor implements CommandExecutor {
   /// idempotent reads — never pass it for a mutation, which could apply twice.
   /// A [SSHCommandTimeout] is never retried (an ambiguous long-running command
   /// may have had an effect), and a non-zero exit is not a throw so it isn't a
-  /// retry trigger either.
+  /// retry trigger either. Each *attempt* is a separate enqueue: the inter-try
+  /// backoff wait is taken *between* enqueues (see [runWithRetries]), so a
+  /// failed read's retry-wait never head-of-line-blocks other queued commands —
+  /// the slot is released during the wait and the retry re-enqueues at the back.
   @override
   Future<SSHCommandResult> execute({
     required String repoPath,
@@ -251,31 +254,32 @@ class SSHCommandExecutor implements CommandExecutor {
     // to a different host between now and then bumps the generation; without
     // this, `_run` would fetch `_clientManager.client` fresh at run time and
     // silently execute against the new host/session instead of refusing.
+    // Captured synchronously here (before the first enqueue) and held across
+    // every retry, so a re-enqueued attempt still refuses to run against a
+    // newer generation rather than adopting the current one.
     final gen = _clientManager.generation;
-    final result = _tail.then(
-      (_) =>
-          _runWithRetries(gen, repoPath, gitArgs, extraEnv, stdin, timeout, retries),
+    return runWithRetries(
+      () => _run(gen, repoPath, gitArgs, extraEnv, stdin, timeout),
+      retries,
+      enqueue: _enqueue,
     );
-    // Keep the chain alive regardless of whether this command succeeds, throws,
-    // or times out, so a single failure never wedges the queue.
+  }
+
+  /// Links [attempt] onto the tail of the serialization chain so it starts only
+  /// after the previous command has fully settled, then advances the tail.
+  /// Errors are swallowed *on the tail* (not on the returned future) so a single
+  /// failing command never wedges the queue for its successors. Called once per
+  /// attempt by [runWithRetries]; a retry is just another link at the back of
+  /// the (possibly since-grown) queue.
+  Future<SSHCommandResult> _enqueue(
+    Future<SSHCommandResult> Function() attempt,
+  ) {
+    final result = _tail.then((_) => attempt());
     _tail = result.then((_) {}, onError: (_) {});
     return result;
   }
 
   static const Duration _retryBackoff = Duration(milliseconds: 400);
-
-  Future<SSHCommandResult> _runWithRetries(
-    int gen,
-    String repoPath,
-    List<String> gitArgs,
-    Map<String, String>? extraEnv,
-    String? stdin,
-    Duration timeout,
-    int retries,
-  ) => runWithRetries(
-    () => _run(gen, repoPath, gitArgs, extraEnv, stdin, timeout),
-    retries,
-  );
 
   /// Runs [attempt], retrying up to [retries] times on a *transient* transport
   /// error with [backoff] between tries. An [SSHCommandTimeout] is never retried
@@ -287,15 +291,27 @@ class SSHCommandExecutor implements CommandExecutor {
   /// implementation (not just tests) — `LocalCommandExecutor` reuses this
   /// directly rather than duplicating retry logic that has no SSH-specific
   /// behavior in its body.
+  ///
+  /// [enqueue], if given, wraps each individual attempt — it links the attempt
+  /// onto the executor's serialization chain and returns its result. The point
+  /// is that the [backoff] `delay` sits *between* two separate [enqueue] calls,
+  /// not inside one, so the queue slot is released for the duration of the wait
+  /// and the retry re-enqueues at the back: a failed command's retry-wait can
+  /// never head-of-line-block other commands already queued behind it. When
+  /// omitted (tests, or a caller that doesn't serialize), each attempt runs
+  /// directly with identical retry semantics.
   static Future<SSHCommandResult> runWithRetries(
     Future<SSHCommandResult> Function() attempt,
     int retries, {
     Duration backoff = _retryBackoff,
+    Future<SSHCommandResult> Function(Future<SSHCommandResult> Function())?
+    enqueue,
   }) async {
+    final run = enqueue ?? (a) => a();
     var n = 0;
     while (true) {
       try {
-        return await attempt();
+        return await run(attempt);
       } on SSHCommandTimeout {
         rethrow;
       } on SSHCommandSuperseded {
