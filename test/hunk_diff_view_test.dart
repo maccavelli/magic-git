@@ -1,6 +1,7 @@
 // HunkDiffView: worktree diffs offer Stage/Discard per hunk, index (staged)
 // diffs offer Unstage, and tapping a button hands back the parsed file + hunk.
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -87,6 +88,59 @@ void main() {
     expect(captured!.$3, HunkAction.stage);
     expect(captured!.$2.header, '@@ -1,2 +1,2 @@');
     expect(captured!.$1.header.first, 'diff --git a/a.dart b/a.dart');
+  });
+
+  testWidgets('clicking a hunk header focuses it; ⌥↓ moves the cursor and '
+      '⌘⇧K stages the focused hunk', (tester) async {
+    const twoHunks =
+        'diff --git a/a.dart b/a.dart\n'
+        'index 1..2 100644\n'
+        '--- a/a.dart\n'
+        '+++ b/a.dart\n'
+        '@@ -1,2 +1,2 @@\n'
+        ' keep\n'
+        '-old\n'
+        '+new\n'
+        '@@ -10,2 +10,2 @@\n'
+        ' keep2\n'
+        '-old2\n'
+        '+new2\n';
+    (DiffFile, DiffHunk, HunkAction)? captured;
+    await tester.pumpWidget(
+      MacosApp(
+        debugShowCheckedModeBanner: false,
+        home: MacosWindow(
+          child: ContentArea(
+            builder: (_, _) => HunkDiffView(
+              diff: twoHunks,
+              staged: false,
+              onAction: (f, h, a) => captured = (f, h, a),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Focus the first hunk, then ⌥↓ to the second.
+    await tester.tap(find.text('@@ -1,2 +1,2 @@'));
+    await tester.pumpAndSettle();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+    await tester.pumpAndSettle();
+
+    // ⌘⇧K stages the focused (second) hunk.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyK);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+
+    expect(captured, isNotNull);
+    expect(captured!.$3, HunkAction.stage);
+    expect(captured!.$2.header, '@@ -10,2 +10,2 @@');
   });
 
   testWidgets('a large multi-thousand-line diff still parses and renders '

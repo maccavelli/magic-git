@@ -1,8 +1,10 @@
 import 'dart:isolate';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/unified_diff.dart';
 import '../common/diff_view.dart';
+import '../common/list_keyboard_nav.dart';
 
 /// What a per-hunk button does, given whether the index or worktree diff is
 /// shown.
@@ -34,7 +36,11 @@ class HunkDiffView extends StatefulWidget {
 /// discard actions).
 class _HeaderItem {
   final DiffHunk hunk;
-  const _HeaderItem(this.hunk);
+
+  /// Index of this hunk within its file — the cursor value keyboard hunk
+  /// navigation (⌥↑/↓) walks, and what a header carries so a click can focus it.
+  final int index;
+  const _HeaderItem(this.hunk, this.index);
 }
 
 /// A single hunk body line. [isFirst]/[isLast] mark its position within the
@@ -55,8 +61,9 @@ class _LineItem {
 /// on-screen items instead of every line of every hunk up front.
 List<Object> _buildItems(DiffFile file) {
   final items = <Object>[];
-  for (final hunk in file.hunks) {
-    items.add(_HeaderItem(hunk));
+  for (var h = 0; h < file.hunks.length; h++) {
+    final hunk = file.hunks[h];
+    items.add(_HeaderItem(hunk, h));
     for (var i = 0; i < hunk.lines.length; i++) {
       items.add(
         _LineItem(
@@ -118,10 +125,76 @@ class _HunkDiffViewState extends State<HunkDiffView> {
   /// `diff`) can't clobber state after this widget has moved on.
   int _requestId = 0;
 
+  // Keyboard hunk navigation: click a hunk header to focus it, then ⌥↑/↓ walk
+  // the cursor and ⌘⇧K stages (or unstages) the focused hunk. Kept on the diff's
+  // own focus node — not the keymap — so it engages only when the diff is
+  // focused, and never fights text selection on the diff lines.
+  final FocusNode _hunkFocus = FocusNode(debugLabel: 'hunk-nav');
+  final ScrollController _scroll = ScrollController();
+  final Map<int, GlobalKey> _headerKeys = {};
+  int _focusedHunk = -1;
+
   @override
   void initState() {
     super.initState();
     _startLoad(widget.diff, initial: true);
+  }
+
+  @override
+  void dispose() {
+    _hunkFocus.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  GlobalKey _headerKeyFor(int index) =>
+      _headerKeys.putIfAbsent(index, GlobalKey.new);
+
+  void _focusHunk(int index) {
+    _hunkFocus.requestFocus();
+    setState(() => _focusedHunk = index);
+    ensureRowVisible(_headerKeyFor(index), alignment: 0.15);
+  }
+
+  void _moveHunk(int dir) {
+    final count = _file?.hunks.length ?? 0;
+    if (count == 0) return;
+    _focusHunk(stepSelection(_focusedHunk, dir, count));
+  }
+
+  void _actOnFocusedHunk() {
+    final file = _file;
+    if (file == null || _focusedHunk < 0 || _focusedHunk >= file.hunks.length) {
+      return;
+    }
+    widget.onAction(
+      file,
+      file.hunks[_focusedHunk],
+      widget.staged ? HunkAction.unstage : HunkAction.stage,
+    );
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is KeyUpEvent) return KeyEventResult.ignored;
+    final keys = HardwareKeyboard.instance;
+    // ⌥↑/↓ move the hunk cursor; ⌘⇧K stages/unstages the focused hunk.
+    if (keys.isAltPressed && !keys.isMetaPressed) {
+      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+        _moveHunk(1);
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+        _moveHunk(-1);
+        return KeyEventResult.handled;
+      }
+    }
+    if (event.logicalKey == LogicalKeyboardKey.keyK &&
+        keys.isMetaPressed &&
+        keys.isShiftPressed) {
+      _actOnFocusedHunk();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   @override
@@ -180,24 +253,38 @@ class _HunkDiffViewState extends State<HunkDiffView> {
 
     final defaultColor =
         MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
-    return Scrollbar(
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: _items.length,
-        itemBuilder: (context, i) {
-          final item = _items[i];
-          if (item is _HeaderItem) {
-            return _header(file, item.hunk);
-          }
-          return _line(item as _LineItem, defaultColor);
-        },
+    return Focus(
+      focusNode: _hunkFocus,
+      onKeyEvent: _onKey,
+      child: Scrollbar(
+        controller: _scroll,
+        child: ListView.builder(
+          controller: _scroll,
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          itemCount: _items.length,
+          itemBuilder: (context, i) {
+            final item = _items[i];
+            if (item is _HeaderItem) {
+              return _header(file, item.hunk, item.index);
+            }
+            return _line(item as _LineItem, defaultColor);
+          },
+        ),
       ),
     );
   }
 
-  Widget _header(DiffFile file, DiffHunk hunk) {
-    return Container(
-      color: MacosColors.systemGrayColor.withValues(alpha: 0.10),
+  Widget _header(DiffFile file, DiffHunk hunk, int index) {
+    final focused = _focusedHunk == index;
+    return GestureDetector(
+      key: _headerKeyFor(index),
+      // Click a header to focus its hunk for keyboard nav; the Stage/Unstage/
+      // Discard buttons inside keep their own taps.
+      onTap: () => _focusHunk(index),
+      child: Container(
+      color: focused
+          ? MacosColors.systemBlueColor.withValues(alpha: 0.22)
+          : MacosColors.systemGrayColor.withValues(alpha: 0.10),
       padding: const EdgeInsets.fromLTRB(12, 4, 6, 4),
       child: Row(
         children: [
@@ -226,6 +313,7 @@ class _HunkDiffViewState extends State<HunkDiffView> {
             ),
           ],
         ],
+      ),
       ),
     );
   }
