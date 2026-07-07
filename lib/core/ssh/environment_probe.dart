@@ -21,11 +21,17 @@ class RemoteEnvironment {
   /// discovery (for display in Settings).
   final Set<String> overridden;
 
+  /// Binary name → detected version as a clean `x.y.z` string, for every tool
+  /// whose `--version` output parsed. Absent when the tool wasn't found, or was
+  /// found but printed nothing version-shaped (e.g. some inotifywait builds).
+  final Map<String, String> versions;
+
   const RemoteEnvironment({
     required this.os,
     required this.path,
     required this.found,
     this.overridden = const {},
+    this.versions = const {},
   });
 
   static const RemoteEnvironment empty = RemoteEnvironment(
@@ -36,6 +42,9 @@ class RemoteEnvironment {
 
   bool has(String bin) => found.containsKey(bin);
   String? pathOf(String bin) => found[bin];
+
+  /// Detected `x.y.z` version for [bin], or null if unknown.
+  String? versionOf(String bin) => versions[bin];
 
   /// Human label for the detected OS.
   String get osLabel => switch (os) {
@@ -49,6 +58,7 @@ class RemoteEnvironment {
 const List<String> kOverridableBinaries = [
   'git',
   'glab',
+  'gh',
   'fswatch',
   'inotifywait',
 ];
@@ -77,12 +87,13 @@ class EnvironmentResolver {
     if (!result.isSuccess) {
       // Probe failed (e.g. odd shell) — fall back to overrides only so the user
       // can still point at the binaries manually.
-      return _fromParts('unknown', '', const {}, overrides);
+      return _fromParts('unknown', '', const {}, const {}, overrides);
     }
 
     var os = 'unknown';
     var aug = '';
     final discovered = <String, String>{};
+    final versions = <String, String>{};
     for (final line in result.stdout.split('\n')) {
       if (line.startsWith('OS=')) {
         final raw = line.substring(3).trim();
@@ -101,15 +112,37 @@ class EnvironmentResolver {
           final p = rest.substring(eq + 1).trim();
           if (p.isNotEmpty) discovered[name] = p;
         }
+      } else if (line.startsWith('VER=')) {
+        // VER=<name>=<raw first line of `<bin> --version`>. Extract a clean
+        // x.y.z; skip anything without a version-shaped token.
+        final rest = line.substring(4);
+        final eq = rest.indexOf('=');
+        if (eq > 0) {
+          final name = rest.substring(0, eq);
+          final v = _parseVersion(rest.substring(eq + 1));
+          if (v != null) versions[name] = v;
+        }
       }
     }
-    return _fromParts(os, aug, discovered, overrides);
+    return _fromParts(os, aug, discovered, versions, overrides);
   }
+
+  /// Pulls the first `X.Y[.Z]` token out of arbitrary `--version` output and
+  /// normalizes it to `X.Y.Z` (missing patch → 0). Returns null if none.
+  static String? _parseVersion(String raw) {
+    final m = _versionPattern.firstMatch(raw);
+    if (m == null) return null;
+    final patch = m.group(3) ?? '0';
+    return '${m.group(1)}.${m.group(2)}.$patch';
+  }
+
+  static final RegExp _versionPattern = RegExp(r'(\d+)\.(\d+)(?:\.(\d+))?');
 
   RemoteEnvironment _fromParts(
     String os,
     String aug,
     Map<String, String> discovered,
+    Map<String, String> versions,
     Map<String, String> overrides,
   ) {
     // Clean overrides (drop blanks) and merge over discovery — overrides win.
@@ -139,6 +172,12 @@ class EnvironmentResolver {
       path: path,
       found: found,
       overridden: ov.keys.toSet(),
+      // Only report versions for tools we actually resolved (an override may
+      // point somewhere the probe didn't version-check).
+      versions: {
+        for (final e in versions.entries)
+          if (found.containsKey(e.key)) e.key: e.value,
+      },
     );
   }
 
@@ -159,9 +198,13 @@ class EnvironmentResolver {
     return p.substring(0, i);
   }
 
-  // POSIX sh probe. Emits `OS=`, `PATH=` (augmented), and `BIN=<name>=<path>`
-  // lines. Common user dirs and the login shell's PATH come before system dirs,
-  // so `command -v` resolves user-installed tools first.
+  // POSIX sh probe. Emits `OS=`, `PATH=` (augmented), `BIN=<name>=<path>`, and
+  // (for each found tool) `VER=<name>=<first line of `<bin> --version`>` lines.
+  // Common user dirs and the login shell's PATH come before system dirs, so
+  // `command -v` resolves user-installed tools first. Versions are only queried
+  // for tools that resolved, so a missing binary is never spawned (which would
+  // just 127) — the `--version` call is `2>&1` because some tools (notably
+  // inotifywait) print their banner to stderr.
   static const String _probeScript =
       'os=\$(uname -s 2>/dev/null || echo unknown); '
       // Prefer the user's login shell (sources their profile, e.g. Homebrew's
@@ -175,8 +218,12 @@ class EnvironmentResolver {
       'aug="\$c:\$lp:\$PATH:/usr/bin:/bin:/usr/sbin:/sbin"; '
       'echo "OS=\$os"; '
       'echo "PATH=\$aug"; '
-      'for b in git glab fswatch inotifywait stdbuf; do '
+      'for b in git glab gh fswatch inotifywait stdbuf; do '
       'p=\$(PATH="\$aug" command -v "\$b" 2>/dev/null || true); '
       'echo "BIN=\$b=\$p"; '
+      'if [ -n "\$p" ]; then '
+      'v=\$(PATH="\$aug" "\$b" --version 2>&1 | head -n1 || true); '
+      'echo "VER=\$b=\$v"; '
+      'fi; '
       'done';
 }

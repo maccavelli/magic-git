@@ -142,15 +142,24 @@ void main() {
     await controller.connect(profile: macProfile, repoPath: '/repo');
 
     expect(container.read(connectionProvider).phase, ConnectionPhase.connected);
-    // Env is reset before validate, and configured only after the probe.
+    // Order matters: reset the old env, probe + configure the new host, THEN
+    // validate — so validateRepoPath's `git` runs against the augmented PATH
+    // (a Homebrew-only or missing git surfaces honestly, not as a misleading
+    // "not a git repository").
     expect(
-      spy.events.indexOf('reset') < spy.events.indexOf('validate'),
+      spy.events.indexOf('reset') < spy.events.indexOf('probe'),
       isTrue,
-      reason: 'reset must precede validateRepoPath',
+      reason: 'reset must precede the environment probe',
     );
     expect(
-      spy.events.indexOf('validate') < spy.events.indexOf('probe'),
+      spy.events.indexOf('probe') < spy.events.indexOf('validate'),
       isTrue,
+      reason: 'the environment must be resolved before validateRepoPath',
+    );
+    expect(
+      spy.events.indexOf('configure') < spy.events.indexOf('validate'),
+      isTrue,
+      reason: 'the executor must be configured before the first git command',
     );
     expect(spy.lastConfiguredPath, contains('/opt/homebrew/bin'));
 

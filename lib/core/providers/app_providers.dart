@@ -739,14 +739,18 @@ class ConnectionController extends Notifier<ConnectionState> {
       // superseded client down).
       if (attempt != _attempt || !ref.mounted) return;
 
-      await ref.read(gitServiceProvider).validateRepoPath(repoPath);
+      // Detect the remote OS and resolve external binaries FIRST, augmenting
+      // the exec-channel PATH so user-installed tools (e.g. Homebrew's
+      // git/glab/fswatch in /opt/homebrew/bin) are found. Doing this before
+      // validateRepoPath matters: the validation runs `git`, and a git that
+      // lives only on a common user path (or a genuinely missing git) would
+      // otherwise fail here as a misleading "not a git repository". Best-effort:
+      // on probe failure we fall back to bare-name lookup against the inherited
+      // PATH, and validateRepoPath still surfaces a real problem.
+      await _resolveEnvironment(repoPath, attempt: attempt);
       if (attempt != _attempt || !ref.mounted) return;
 
-      // Detect the remote OS and resolve external binaries, augmenting the
-      // exec-channel PATH so user-installed tools (e.g. Homebrew's glab/fswatch
-      // in /opt/homebrew/bin) are found. Best-effort: on failure we fall back to
-      // bare-name lookup against the inherited PATH.
-      await _resolveEnvironment(repoPath, attempt: attempt);
+      await ref.read(gitServiceProvider).validateRepoPath(repoPath);
       if (attempt != _attempt || !ref.mounted) return;
 
       // Apply per-repo fsmonitor tuning for every opted-in repo (all on this
@@ -892,6 +896,13 @@ class ConnectionController extends Notifier<ConnectionState> {
       connectionLabel: label,
     );
     try {
+      // Resolve the environment FIRST so the augmented PATH / absolute git path
+      // is in place before any git runs. A Finder-launched app inherits a bare
+      // PATH; without this, a Homebrew-only git (/opt/homebrew/bin) would make
+      // the validations below fail as a misleading "not a git repository".
+      await _resolveEnvironment(repoPath, attempt: attempt);
+      if (attempt != _attempt || !ref.mounted) return;
+
       // Doubles as "is this actually a git repo" validation — a folder that
       // isn't fails here with a clear GitException rather than silently
       // landing in the connected shell with nothing to show.
@@ -903,9 +914,6 @@ class ConnectionController extends Notifier<ConnectionState> {
       // outside it now, with a clear message, rather than a raw permission error
       // on the first real read.
       await ref.read(gitServiceProvider).validateLocalRepoRoot(repoPath);
-      if (attempt != _attempt || !ref.mounted) return;
-
-      await _resolveEnvironment(repoPath, attempt: attempt);
       if (attempt != _attempt || !ref.mounted) return;
 
       bool? fsmonitorEnabled;

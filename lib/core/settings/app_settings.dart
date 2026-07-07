@@ -34,8 +34,8 @@ class AppSettings {
   final int autoFetchMinutes;
 
   /// Optional absolute-path overrides for external binaries, keyed by tool name
-  /// (`git`, `glab`, `fswatch`, `inotifywait`). Empty = auto-discover. These win
-  /// over discovery when resolving the remote environment.
+  /// (`git`, `glab`, `gh`, `fswatch`, `inotifywait`). Empty = auto-discover.
+  /// These win over discovery when resolving the remote environment.
   final Map<String, String> binaryOverrides;
 
   const AppSettings({
@@ -95,6 +95,7 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   static const List<String> overridableBinaries = [
     'git',
     'glab',
+    'gh',
     'fswatch',
     'inotifywait',
   ];

@@ -43,6 +43,35 @@ void main() {
     expect(env.path, '/opt/homebrew/bin:/usr/bin:/bin');
   });
 
+  test('parses tool versions from VER lines, normalizing to x.y.z', () async {
+    const out =
+        'OS=Darwin\n'
+        'PATH=/usr/bin:/bin\n'
+        'BIN=git=/usr/bin/git\n'
+        'VER=git=git version 2.39.3 (Apple Git-145)\n'
+        'BIN=glab=/opt/homebrew/bin/glab\n'
+        'VER=glab=glab 1.40.0\n'
+        'BIN=gh=/opt/homebrew/bin/gh\n'
+        'VER=gh=gh version 2.62 (2024-01-01)\n'; // no patch → .0
+    final env = await EnvironmentResolver(_FakeExecutor(out)).resolve('/repo');
+
+    expect(env.versionOf('git'), '2.39.3');
+    expect(env.versionOf('glab'), '1.40.0');
+    expect(env.versionOf('gh'), '2.62.0');
+  });
+
+  test('a version with no parseable token is simply absent', () async {
+    const out =
+        'OS=Linux\n'
+        'PATH=/usr/bin:/bin\n'
+        'BIN=inotifywait=/usr/bin/inotifywait\n'
+        'VER=inotifywait=inotifywait: unrecognized option\n';
+    final env = await EnvironmentResolver(_FakeExecutor(out)).resolve('/repo');
+
+    expect(env.has('inotifywait'), isTrue);
+    expect(env.versionOf('inotifywait'), isNull);
+  });
+
   test('overrides win over discovery and prepend their dir to PATH', () async {
     const out =
         'OS=Linux\n'

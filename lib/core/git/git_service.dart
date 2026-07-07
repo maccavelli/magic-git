@@ -385,10 +385,23 @@ class GitService {
       timeout: const Duration(seconds: 20),
       retries: _readRetries,
     );
+    // A missing `git` comes back as 127 (the shell's "command not found", or
+    // the local backend's ProcessException mapped to the same). Surface that
+    // honestly instead of the misleading "not a git repository" — the repo
+    // path may be perfectly valid; git simply isn't on the host's PATH.
+    if (result.exitCode == 127) {
+      throw GitException(_gitNotFoundMessage, result);
+    }
     if (!result.isSuccess || result.stdout.trim() != 'true') {
       throw GitException('not a git repository: $repoPath', result);
     }
   }
+
+  /// Shown when a `git` invocation exits 127 (binary not found). Points the
+  /// user at the two ways to fix it.
+  static const String _gitNotFoundMessage =
+      'git was not found on the host. Install git, or set its path in '
+      'Settings → External tools.';
 
   /// Extra validation for the **local** backend only (never the SSH path, where
   /// opening a subdirectory of a repo is perfectly valid): confirms the picked
@@ -1767,6 +1780,11 @@ class GitService {
       retries: retries,
     );
     if (!result.isSuccess) {
+      // 127 means git itself wasn't found (argv[0] is always `git` here), not
+      // that this particular command failed — say so clearly.
+      if (result.exitCode == 127) {
+        throw GitException(_gitNotFoundMessage, result);
+      }
       throw GitException('$label failed', result);
     }
     return result;

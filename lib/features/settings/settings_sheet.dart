@@ -7,12 +7,14 @@ import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/settings/tool_catalog.dart';
 import '../../core/ssh/environment_probe.dart';
 import '../../core/storage/known_hosts_store.dart';
 import '../common/actions.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/tool_icon_button.dart';
+import 'environment_health_sheet.dart';
 import 'keyboard_mappings_sheet.dart';
 
 /// Preferences sheet: command timeouts, committer identity, default sync
@@ -363,10 +365,83 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _section(context, 'External tools', detected),
+        _healthSummaryRow(context, env),
+        const SizedBox(height: 12),
         for (final bin in AppSettingsNotifier.overridableBinaries)
           _binaryRow(context, bin, env),
       ],
     );
+  }
+
+  /// A one-line health summary plus a button into the full diagnostics panel.
+  Widget _healthSummaryRow(BuildContext context, RemoteEnvironment env) {
+    final typography = MacosTheme.of(context).typography;
+    final (text, color) = _healthSummary(env);
+    return Row(
+      children: [
+        Expanded(
+          child: Text(text, style: typography.body.copyWith(color: color)),
+        ),
+        PushButton(
+          controlSize: ControlSize.small,
+          secondary: true,
+          onPressed: () => showMacosSheet<void>(
+            context: context,
+            builder: (_) =>
+                const EscapeDismissible(child: EnvironmentHealthSheet()),
+          ),
+          child: const Text('Check environment…'),
+        ),
+      ],
+    );
+  }
+
+  /// Summarizes tool health into a single actionable line. Order of concern:
+  /// a missing required tool, then a missing feature tool, then an outdated
+  /// one, else all good.
+  (String, Color) _healthSummary(RemoteEnvironment env) {
+    if (env.os == 'unknown') {
+      return (
+        'Connect to a repository to check installed tools.',
+        MacosColors.systemGrayColor,
+      );
+    }
+    final relevant = kToolCatalog.where((t) => t.relevantOn(env.os));
+    ToolSpec? missingEssential, missingFeature, outdated;
+    for (final spec in relevant) {
+      if (!env.has(spec.bin)) {
+        if (spec.tier == ToolTier.essential) {
+          missingEssential ??= spec;
+        } else if (spec.tier == ToolTier.feature) {
+          missingFeature ??= spec;
+        }
+        continue;
+      }
+      final vStr = env.versionOf(spec.bin);
+      final v = vStr == null ? null : ToolVersion.parse(vStr);
+      if (spec.minVersion != null && v != null && v < spec.minVersion!) {
+        outdated ??= spec;
+      }
+    }
+    if (missingEssential != null) {
+      return (
+        '${missingEssential.bin} is not installed — required.',
+        MacosColors.systemRedColor,
+      );
+    }
+    if (missingFeature != null) {
+      return (
+        '${missingFeature.bin} is not installed — some features unavailable.',
+        MacosColors.systemOrangeColor,
+      );
+    }
+    if (outdated != null) {
+      return (
+        '${outdated.bin} is out of date.',
+        MacosColors.systemOrangeColor,
+      );
+    }
+    return ('All tools detected.', MacosColors.systemGreenColor);
   }
 
   Widget _binaryRow(BuildContext context, String bin, RemoteEnvironment env) {
