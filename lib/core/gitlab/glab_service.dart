@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import '../ssh/ssh_command_executor.dart';
+import '../utils/bounded_tail.dart';
 import 'models.dart';
 
 /// Thrown when a `glab` invocation fails. Because glab exit codes are known to
@@ -554,7 +555,12 @@ query($path: ID!) {
       var sawStdout = false;
       var outDone = false;
       var errDone = false;
-      final errBuf = StringBuffer();
+      // Retains only the last [_kTraceStderrTailChars] of stderr, not the whole
+      // stream: `finish` needs merely a short tail (to tell a stdout-less
+      // failure apart and quote a one-line error), and a long-running job that
+      // streams progress to stderr for hours would otherwise grow this without
+      // bound.
+      final errBuf = BoundedTail(_kTraceStderrTailChars);
 
       void finish() {
         if (!outDone || !errDone || controller.isClosed) return;
@@ -787,3 +793,7 @@ query($path: ID!) {
     }
   }
 }
+
+/// How much of a job trace's stderr to retain — enough for the failure
+/// heuristic and a quoted one-line error, far short of an entire chatty job.
+const int _kTraceStderrTailChars = 16 * 1024;

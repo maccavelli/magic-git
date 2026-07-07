@@ -1,3 +1,4 @@
+import 'dart:isolate';
 import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/unified_diff.dart';
@@ -69,16 +70,58 @@ List<Object> _buildItems(DiffFile file) {
   return items;
 }
 
+/// The parsed [DiffFile] (kept so hunk-action callbacks can reference it) plus
+/// its flattened render items — both produced in one pass so the whole parse
+/// can move to a background isolate for huge diffs (see [_parseAndBuild]).
+class _ParsedDiff {
+  final DiffFile? file;
+  final List<Object> items;
+  const _ParsedDiff(this.file, this.items);
+}
+
+/// Parses [diff] and flattens it in a single call — the unit of work handed to
+/// `Isolate.run` above [_HunkDiffViewState._isolateLineThreshold].
+_ParsedDiff _parseAndBuild(String diff) {
+  final file = parseUnifiedDiff(diff);
+  if (file == null) return const _ParsedDiff(null, []);
+  return _ParsedDiff(file, _buildItems(file));
+}
+
+/// Test hook: exercises the exact parse+flatten payload that the render path
+/// runs (inline for small diffs, on a background isolate for huge ones),
+/// exposing plain counts so a test can assert correctness without a real
+/// isolate — `Isolate.run` can't be driven inside flutter_test's custom zone.
+@visibleForTesting
+({int items, int hunks, bool parsed}) debugParseHunkDiff(String diff) {
+  final parsed = _parseAndBuild(diff);
+  return (
+    items: parsed.items.length,
+    hunks: parsed.file?.hunks.length ?? 0,
+    parsed: parsed.file != null,
+  );
+}
+
 class _HunkDiffViewState extends State<HunkDiffView> {
+  // Below this line count, parse + flatten runs inline: an isolate spawn's own
+  // overhead would dwarf the work for the vast majority of diffs, and this
+  // keeps the common case free of spawn latency. Only a genuinely huge patch —
+  // a regenerated lockfile / minified bundle diff, tens of thousands of lines —
+  // crosses this and moves the parse off the UI thread so selecting it can't
+  // jank a frame. Mirrors [SplitDiffView]'s identical guard.
+  static const _isolateLineThreshold = 20000;
+
   DiffFile? _file;
   List<Object> _items = const [];
+  bool _loading = false;
+
+  /// Bumped on every load so a stale isolate result (superseded by a newer
+  /// `diff`) can't clobber state after this widget has moved on.
+  int _requestId = 0;
 
   @override
   void initState() {
     super.initState();
-    _file = parseUnifiedDiff(widget.diff);
-    final file = _file;
-    if (file != null) _items = _buildItems(file);
+    _startLoad(widget.diff, initial: true);
   }
 
   @override
@@ -88,14 +131,50 @@ class _HunkDiffViewState extends State<HunkDiffView> {
     // providers hand back the same String instance across unrelated
     // rebuilds, so this skips reparsing when nothing actually changed.
     if (oldWidget.diff != widget.diff) {
-      _file = parseUnifiedDiff(widget.diff);
-      final file = _file;
-      _items = file == null ? const [] : _buildItems(file);
+      _startLoad(widget.diff, initial: false);
     }
+  }
+
+  int _lineCount(String s) => '\n'.allMatches(s).length + 1;
+
+  void _startLoad(String diff, {required bool initial}) {
+    final requestId = ++_requestId;
+    if (_lineCount(diff) <= _isolateLineThreshold) {
+      final parsed = _parseAndBuild(diff);
+      // During initState (initial), the imminent first build reads the fields
+      // directly — no setState needed (and it isn't allowed yet).
+      if (initial) {
+        _file = parsed.file;
+        _items = parsed.items;
+        _loading = false;
+      } else {
+        setState(() {
+          _file = parsed.file;
+          _items = parsed.items;
+          _loading = false;
+        });
+      }
+      return;
+    }
+
+    if (initial) {
+      _loading = true;
+    } else {
+      setState(() => _loading = true);
+    }
+    Isolate.run(() => _parseAndBuild(diff)).then((parsed) {
+      if (!mounted || requestId != _requestId) return;
+      setState(() {
+        _file = parsed.file;
+        _items = parsed.items;
+        _loading = false;
+      });
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_loading) return const Center(child: ProgressCircle());
     final file = _file;
     if (file == null) return DiffView(diff: widget.diff);
 

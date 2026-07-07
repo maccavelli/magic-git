@@ -129,6 +129,17 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
   // Right-click context menu, anchored at the tap point.
   final _contextMenu = ContextMenuOverlay();
 
+  // Memoized status-row model. `_statusRows` allocates a header/file row per
+  // changed file across every section, and this widget setState()s constantly
+  // (each selection tap, the _busy toggle wrapping every git op, each diff
+  // toggle). Riverpod hands back the *same* GitStatus instance until
+  // statusProvider is invalidated, so the derivation is cached on that identity
+  // and rebuilt only when the status actually changes — not on every frame. For
+  // a large working tree this turns a per-interaction N-object re-derivation
+  // into a cheap identity check.
+  GitStatus? _rowsForStatus;
+  List<_StatusRow> _rows = const [];
+
   String get repoPath => widget.repoPath;
 
   @override
@@ -1440,6 +1451,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       branch != null && branch.hasUpstream && branch.behind > 0;
 
   List<_StatusRow> _statusRows(GitStatus status) {
+    if (identical(status, _rowsForStatus)) return _rows;
     final rows = <_StatusRow>[];
     void addSection(
       String title,
@@ -1469,6 +1481,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     // the discard action to _discardUntracked (delete) instead of _discard
     // (restore) for these rows, since there's no tracked history to restore.
     addSection('Untracked', status.untracked, staged: false, discardable: true);
+    _rowsForStatus = status;
+    _rows = rows;
     return rows;
   }
 

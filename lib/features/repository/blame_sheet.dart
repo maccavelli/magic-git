@@ -77,9 +77,39 @@ class BlameSheet extends ConsumerWidget {
   }
 }
 
-class _BlameBody extends StatelessWidget {
+class _BlameBody extends StatefulWidget {
   final List<BlameLine> lines;
   const _BlameBody({required this.lines});
+
+  @override
+  State<_BlameBody> createState() => _BlameBodyState();
+}
+
+class _BlameBodyState extends State<_BlameBody> {
+  // Group consecutive lines from the same commit so the gutter only prints the
+  // commit info at the start of each run (like Fork/Tower). Precomputed once
+  // rather than tracked via a closure-captured "previous hash" mutated inside
+  // itemBuilder — a lazy ListView.builder doesn't guarantee its itemBuilder
+  // runs in strict forward index order (backward scroll / relayout can revisit
+  // indices out of sequence), which would corrupt a visit-order-dependent
+  // running value. This is a pure function of [lines] and its own index, and —
+  // since it allocates a full-length list — is computed once per `lines`
+  // instance here rather than regenerated on every rebuild.
+  late List<bool> _showMeta = _computeShowMeta(widget.lines);
+
+  static List<bool> _computeShowMeta(List<BlameLine> lines) =>
+      List<bool>.generate(
+        lines.length,
+        (i) => i == 0 || lines[i].hash != lines[i - 1].hash,
+      );
+
+  @override
+  void didUpdateWidget(_BlameBody old) {
+    super.didUpdateWidget(old);
+    if (!identical(old.lines, widget.lines)) {
+      _showMeta = _computeShowMeta(widget.lines);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -88,18 +118,8 @@ class _BlameBody extends StatelessWidget {
       color: MacosColors.systemGrayColor,
       fontFeatures: const [],
     );
-    // Group consecutive lines from the same commit so the gutter only prints the
-    // commit info at the start of each run (like Fork/Tower). Precomputed once
-    // here rather than tracked via a closure-captured "previous hash" mutated
-    // inside itemBuilder — a lazy ListView.builder doesn't guarantee its
-    // itemBuilder runs in strict forward index order (backward scroll /
-    // relayout can revisit indices out of sequence), which would corrupt a
-    // visit-order-dependent running value. This is a pure function of [lines]
-    // and its own index instead.
-    final showMeta = List<bool>.generate(
-      lines.length,
-      (i) => i == 0 || lines[i].hash != lines[i - 1].hash,
-    );
+    final lines = widget.lines;
+    final showMeta = _showMeta;
     return Scrollbar(
       child: SelectionArea(
         child: ListView.builder(

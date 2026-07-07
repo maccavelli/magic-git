@@ -127,6 +127,43 @@ void main() {
     expect(find.text(' context line 0'), findsOneWidget);
   });
 
+  // The parse+flatten payload that the render path runs — inline for small
+  // diffs, on a background isolate above _isolateLineThreshold. Tested directly
+  // (not through the widget) because Isolate.run can't be driven inside
+  // flutter_test's custom zone; this covers the code that moved off-thread.
+  group('parse+flatten payload (debugParseHunkDiff)', () {
+    test('flattens a small diff into a header + one item per body line', () {
+      final r = debugParseHunkDiff(_diff);
+      expect(r.parsed, isTrue);
+      expect(r.hunks, 1);
+      // 1 header + 3 body lines (' keep', '-old', '+new').
+      expect(r.items, 4);
+    });
+
+    test('builds correctly at huge scale (isolate-path input)', () {
+      final buffer = StringBuffer()
+        ..write('diff --git a/huge.txt b/huge.txt\n')
+        ..write('index 1..2 100644\n')
+        ..write('--- a/huge.txt\n')
+        ..write('+++ b/huge.txt\n')
+        ..write('@@ -1,25000 +1,25000 @@\n');
+      for (var i = 0; i < 25000; i++) {
+        buffer.write(' ctx $i\n');
+      }
+      final r = debugParseHunkDiff(buffer.toString());
+      expect(r.parsed, isTrue);
+      expect(r.hunks, 1);
+      // 1 header + 25000 body lines.
+      expect(r.items, 25001);
+    });
+
+    test('reports no parse for a hunkless (binary) diff', () {
+      final r = debugParseHunkDiff('Binary files a.png and b.png differ\n');
+      expect(r.parsed, isFalse);
+      expect(r.items, 0);
+    });
+  });
+
   testWidgets(
     'does not reparse when the diff object is unchanged across an unrelated '
     'rebuild',
