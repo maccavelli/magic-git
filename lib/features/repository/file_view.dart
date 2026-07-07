@@ -8,6 +8,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
 import '../common/context_menu.dart';
+import '../common/escape_dismissible.dart';
 import '../common/status_style.dart';
 import '../common/tool_icon_button.dart';
 import '../history/file_history_sheet.dart';
@@ -238,7 +239,9 @@ class _FileViewState extends ConsumerState<FileView> {
         disabledTooltip: untrackedTooltip,
         onTap: () => showMacosSheet<void>(
           context: context,
-          builder: (_) => BlameSheet(repoPath: repoPath, path: node.path),
+          builder: (_) => EscapeDismissible(
+            child: BlameSheet(repoPath: repoPath, path: node.path),
+          ),
         ),
       ),
       ContextMenuItem(
@@ -248,8 +251,9 @@ class _FileViewState extends ConsumerState<FileView> {
         disabledTooltip: untrackedTooltip,
         onTap: () => showMacosSheet<void>(
           context: context,
-          builder: (_) =>
-              FileHistorySheet(repoPath: repoPath, path: node.path),
+          builder: (_) => EscapeDismissible(
+            child: FileHistorySheet(repoPath: repoPath, path: node.path),
+          ),
         ),
       ),
       const ContextMenuDivider(),

@@ -14,6 +14,7 @@ import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
+import '../common/escape_dismissible.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
@@ -1475,7 +1476,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
             tooltip: 'Settings',
             onPressed: () => showMacosSheet<void>(
               context: context,
-              builder: (_) => const SettingsSheet(),
+              builder: (_) => const EscapeDismissible(child: SettingsSheet()),
             ),
           ),
           const SizedBox(width: 6),
@@ -1796,8 +1797,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
               label: 'Blame',
               onTap: () => showMacosSheet<void>(
                 context: context,
-                builder: (_) =>
-                    BlameSheet(repoPath: repoPath, path: paths.single),
+                builder: (_) => EscapeDismissible(
+                  child: BlameSheet(repoPath: repoPath, path: paths.single),
+                ),
               ),
             ),
         ]);

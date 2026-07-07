@@ -10,6 +10,7 @@ import '../../core/settings/keymap.dart';
 import '../../core/ssh/environment_probe.dart';
 import '../../core/storage/known_hosts_store.dart';
 import '../common/actions.dart';
+import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/tool_icon_button.dart';
 import 'keyboard_mappings_sheet.dart';
@@ -257,7 +258,8 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
           secondary: true,
           onPressed: () => showMacosSheet<void>(
             context: context,
-            builder: (_) => const KeyboardMappingsSheet(),
+            builder: (_) =>
+                const EscapeDismissible(child: KeyboardMappingsSheet()),
           ),
           child: const Text('Customize…'),
         ),

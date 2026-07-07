@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
+import '../common/escape_dismissible.dart';
 import '../common/tool_icon_button.dart';
 import 'connection_form.dart';
 import 'local_repo_form.dart';
@@ -16,14 +17,14 @@ class ConnectionLanding extends ConsumerWidget {
   void _openNewConnection(BuildContext context) {
     showMacosSheet<void>(
       context: context,
-      builder: (_) => const NewConnectionSheet(),
+      builder: (_) => const EscapeDismissible(child: NewConnectionSheet()),
     );
   }
 
   void _openNewLocalRepo(BuildContext context) {
     showMacosSheet<void>(
       context: context,
-      builder: (_) => const NewLocalRepoSheet(),
+      builder: (_) => const EscapeDismissible(child: NewLocalRepoSheet()),
     );
   }
 

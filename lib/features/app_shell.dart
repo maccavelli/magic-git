@@ -14,6 +14,7 @@ import 'branches/branches_view.dart';
 import 'common/branch_switch.dart';
 import 'common/command_palette.dart';
 import 'common/diff_view.dart' show kDiffMono;
+import 'common/escape_dismissible.dart';
 import 'common/sidebar_branding.dart';
 import 'connection/connection_landing.dart';
 import 'gitlab/gitlab_panel.dart';
@@ -291,7 +292,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
   void _openSettings(BuildContext context) {
     showMacosSheet<void>(
       context: context,
-      builder: (_) => const SettingsSheet(),
+      builder: (_) => const EscapeDismissible(child: SettingsSheet()),
     );
   }
 
@@ -305,7 +306,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
   void _openConnections(BuildContext context) {
     showMacosSheet<void>(
       context: context,
-      builder: (_) => const ConnectionsPanel(),
+      builder: (_) => const EscapeDismissible(child: ConnectionsPanel()),
     );
   }
 

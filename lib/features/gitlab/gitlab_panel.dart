@@ -7,6 +7,7 @@ import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/branch_switch.dart';
+import '../common/escape_dismissible.dart';
 import '../common/tool_icon_button.dart';
 import 'create_mr_sheet.dart';
 import 'pipeline_jobs_view.dart';
@@ -559,7 +560,8 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   void _createMr() {
     showMacosSheet<void>(
       context: context,
-      builder: (_) => CreateMrSheet(repoPath: repoPath),
+      builder: (_) =>
+          EscapeDismissible(child: CreateMrSheet(repoPath: repoPath)),
     );
   }
 

@@ -10,6 +10,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/diff_view.dart';
+import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/tool_icon_button.dart';
@@ -261,7 +262,8 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     final controller = TextEditingController(text: initial);
     final value = await showMacosSheet<String>(
       context: context,
-      builder: (sheetContext) => MacosSheet(
+      builder: (sheetContext) => EscapeDismissible(
+        child: MacosSheet(
         // A MacosSheet has no intrinsic width — without this it fills the whole
         // window for what is just a title + one text field + Cancel/OK.
         child: SizedBox(
@@ -311,6 +313,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
             ),
           ),
         ),
+      ),
       ),
     );
     controller.dispose();
@@ -465,10 +468,12 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     try {
       await showMacosSheet<void>(
         context: context,
-        builder: (_) => RebaseSheet(
-          repoPath: repoPath,
-          onto: commit.parents.first,
-          commits: included,
+        builder: (_) => EscapeDismissible(
+          child: RebaseSheet(
+            repoPath: repoPath,
+            onto: commit.parents.first,
+            commits: included,
+          ),
         ),
       );
     } finally {
@@ -762,8 +767,9 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
             size: 15,
             onPressed: () => showMacosSheet<void>(
               context: context,
-              builder: (_) =>
-                  CommitDiffSheet(repoPath: widget.repoPath, hash: hash),
+              builder: (_) => EscapeDismissible(
+                child: CommitDiffSheet(repoPath: widget.repoPath, hash: hash),
+              ),
             ),
           ),
           const SizedBox(width: 2),

@@ -6,6 +6,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/storage/saved_local_repo.dart';
 import '../common/actions.dart';
+import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/tool_icon_button.dart';
 import '../connection/local_repo_form.dart';
@@ -53,7 +54,7 @@ class ConnectionSwitcher extends ConsumerWidget {
         secondary: true,
         onPressed: () => showMacosSheet<void>(
           context: context,
-          builder: (_) => const ConnectionsPanel(),
+          builder: (_) => const EscapeDismissible(child: ConnectionsPanel()),
         ),
         child: Row(
           children: [
@@ -709,7 +710,7 @@ class ConnectionsPanel extends ConsumerWidget {
   ) async {
     final result = await showMacosSheet<(String, bool)>(
       context: context,
-      builder: (_) => const AddRepositorySheet(),
+      builder: (_) => const EscapeDismissible(child: AddRepositorySheet()),
     );
     if (result == null || !context.mounted) return;
     final (path, fsmonitor) = result;
@@ -746,7 +747,7 @@ class ConnectionsPanel extends ConsumerWidget {
     Navigator.of(context).pop();
     showMacosSheet<void>(
       context: context,
-      builder: (_) => const NewLocalRepoSheet(),
+      builder: (_) => const EscapeDismissible(child: NewLocalRepoSheet()),
     );
   }
 
