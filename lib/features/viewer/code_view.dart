@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show SelectionArea;
+import 'package:flutter/services.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:re_highlight/styles/atom-one-dark.dart';
 import 'package:re_highlight/styles/github.dart';
@@ -130,11 +131,16 @@ class CodeView extends StatefulWidget {
   /// Word wrap. When false (default), long lines scroll horizontally.
   final bool wrap;
 
+  /// Ticks to open (or re-focus) the in-file find bar — the viewer bumps this
+  /// on ⌘F. Null when find isn't offered (e.g. a rendered preview).
+  final Listenable? findSignal;
+
   const CodeView({
     super.key,
     required this.content,
     required this.languageId,
     this.wrap = false,
+    this.findSignal,
   });
 
   @override
@@ -144,6 +150,15 @@ class CodeView extends StatefulWidget {
 class _CodeViewState extends State<CodeView> {
   final _vCtrl = ScrollController();
   final _hCtrl = ScrollController();
+
+  // In-file find (⌘F): a bar above the source with match navigation. Matches
+  // are whole lines that contain the query (case-insensitive) — simple, and the
+  // useful "jump between the lines mentioning X" behaviour.
+  final _findCtrl = TextEditingController();
+  final _findFocus = FocusNode();
+  bool _findOpen = false;
+  List<int> _matchLines = const [];
+  int _matchIdx = -1;
 
   HighlightedLines _doc = const HighlightedLines([], []);
   // Index of the line with the most code units — measured for its true pixel
@@ -171,23 +186,87 @@ class _CodeViewState extends State<CodeView> {
   @override
   void initState() {
     super.initState();
+    widget.findSignal?.addListener(_openFind);
     _recompute();
   }
 
   @override
   void didUpdateWidget(CodeView old) {
     super.didUpdateWidget(old);
+    if (old.findSignal != widget.findSignal) {
+      old.findSignal?.removeListener(_openFind);
+      widget.findSignal?.addListener(_openFind);
+    }
     if (old.content.text != widget.content.text ||
         old.languageId != widget.languageId) {
       _recompute();
+      // The file changed under an open find bar — re-run the query against it.
+      if (_findOpen) _recomputeMatches(_findCtrl.text);
     }
   }
 
   @override
   void dispose() {
+    widget.findSignal?.removeListener(_openFind);
+    _findCtrl.dispose();
+    _findFocus.dispose();
     _vCtrl.dispose();
     _hCtrl.dispose();
     super.dispose();
+  }
+
+  // ---- Find ----------------------------------------------------------------
+
+  void _openFind() {
+    setState(() => _findOpen = true);
+    _findFocus.requestFocus();
+    // Select any existing query so typing replaces it, matching a browser's ⌘F.
+    _findCtrl.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: _findCtrl.text.length,
+    );
+    if (_findCtrl.text.isNotEmpty) _recomputeMatches(_findCtrl.text);
+  }
+
+  void _closeFind() {
+    setState(() {
+      _findOpen = false;
+      _matchLines = const [];
+      _matchIdx = -1;
+    });
+  }
+
+  void _recomputeMatches(String query) {
+    final q = query.toLowerCase();
+    final matches = <int>[];
+    if (q.isNotEmpty) {
+      for (var i = 0; i < _doc.lines.length; i++) {
+        if (_doc.lines[i].text.toLowerCase().contains(q)) matches.add(i);
+      }
+    }
+    setState(() {
+      _matchLines = matches;
+      _matchIdx = matches.isEmpty ? -1 : 0;
+    });
+    _scrollToMatch();
+  }
+
+  // Dart's `%` returns a non-negative result for a positive divisor, so this
+  // wraps correctly in both directions.
+  void _step(int dir) {
+    if (_matchLines.isEmpty) return;
+    setState(() => _matchIdx = (_matchIdx + dir) % _matchLines.length);
+    _scrollToMatch();
+  }
+
+  void _scrollToMatch() {
+    if (_matchIdx < 0 || !_vCtrl.hasClients) return;
+    // Line offset is exact in the default no-wrap mode (fixed itemExtent); in
+    // wrap mode it's approximate, which is fine for "bring it into view".
+    final line = _matchLines[_matchIdx];
+    final max = _vCtrl.position.maxScrollExtent;
+    final offset = (line * _lineH - _lineH * 3).clamp(0.0, max).toDouble();
+    _vCtrl.jumpTo(offset);
   }
 
   void _recompute() {
@@ -239,9 +318,16 @@ class _CodeViewState extends State<CodeView> {
     final gutterDigits = _doc.length.toString().length;
     final gutterW = gutterDigits * charW + 20; // digits + padding both sides
 
+    final currentMatch = _matchIdx >= 0 ? _matchLines[_matchIdx] : -1;
+
     return ColoredBox(
       color: theme.background,
-      child: LayoutBuilder(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_findOpen) _findBar(context, theme),
+          Expanded(
+            child: LayoutBuilder(
         builder: (context, constraints) {
           final list = ListView.builder(
             controller: _vCtrl,
@@ -252,7 +338,7 @@ class _CodeViewState extends State<CodeView> {
             padding: const EdgeInsets.symmetric(vertical: 6),
             itemCount: _doc.length,
             itemBuilder: (context, i) =>
-                _row(i, base, theme, gutterW, lineH),
+                _row(i, base, theme, gutterW, lineH, i == currentMatch),
           );
 
           if (widget.wrap) {
@@ -290,6 +376,75 @@ class _CodeViewState extends State<CodeView> {
             ),
           );
         },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _findBar(BuildContext context, CodeTheme theme) {
+    final total = _matchLines.length;
+    final counter = _findCtrl.text.isEmpty
+        ? ''
+        : total == 0
+        ? 'No results'
+        : '${_matchIdx + 1} of $total';
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(LogicalKeyboardKey.enter): () => _step(1),
+        const SingleActivator(LogicalKeyboardKey.enter, shift: true): () =>
+            _step(-1),
+        const SingleActivator(LogicalKeyboardKey.escape): _closeFind,
+      },
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+        decoration: BoxDecoration(
+          color: theme.background,
+          border: const Border(
+            bottom: BorderSide(color: MacosColors.separatorColor),
+          ),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: MacosTextField(
+                controller: _findCtrl,
+                focusNode: _findFocus,
+                placeholder: 'Find in file',
+                onChanged: _recomputeMatches,
+                onSubmitted: (_) => _step(1),
+              ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 72,
+              child: Text(
+                counter,
+                style: MacosTheme.of(context).typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+                textAlign: TextAlign.right,
+              ),
+            ),
+            const SizedBox(width: 4),
+            MacosIconButton(
+              icon: const MacosIcon(CupertinoIcons.chevron_up, size: 14),
+              boxConstraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+              onPressed: total == 0 ? null : () => _step(-1),
+            ),
+            MacosIconButton(
+              icon: const MacosIcon(CupertinoIcons.chevron_down, size: 14),
+              boxConstraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+              onPressed: total == 0 ? null : () => _step(1),
+            ),
+            MacosIconButton(
+              icon: const MacosIcon(CupertinoIcons.xmark, size: 14),
+              boxConstraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+              onPressed: _closeFind,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -300,11 +455,16 @@ class _CodeViewState extends State<CodeView> {
     CodeTheme theme,
     double gutterW,
     double lineH,
+    bool isCurrentMatch,
   ) {
     final gutterStyle = base.copyWith(
       color: theme.foreground.withValues(alpha: 0.4),
     );
-    return Row(
+    return ColoredBox(
+      color: isCurrentMatch
+          ? MacosColors.systemYellowColor.withValues(alpha: 0.28)
+          : const Color(0x00000000),
+      child: Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         // Line numbers are chrome, not content — exclude them from selection
@@ -331,6 +491,7 @@ class _CodeViewState extends State<CodeView> {
           ),
         ),
       ],
+      ),
     );
   }
 }

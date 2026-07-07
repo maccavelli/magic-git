@@ -89,7 +89,11 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
     _focus.requestFocus();
   }
 
-  Future<void> _commit() async {
+  /// Commits the reviewed/edited message. When [push] is set (Commit & Push,
+  /// ⌘⇧↩) the sheet pops with `true` so the caller runs its own push right
+  /// after — the panel owns the logged/guarded push path, so it isn't
+  /// reimplemented here.
+  Future<void> _commit({bool push = false}) async {
     final message = _message.text.trim();
     if (message.isEmpty) return;
     setState(() => _committing = true);
@@ -109,9 +113,14 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
       // Best-effort — refreshes ahead/behind right away instead of leaving it
       // to the next manual/auto fetch. Routed through the connection
       // controller (not this dialog's own `ref`) since it outlives the sheet
-      // we're about to close.
-      unawaited(ref.read(connectionProvider.notifier).fetchInBackground(repoPath));
-      if (context.mounted) Navigator.of(context).pop();
+      // we're about to close. Skipped when we're about to push (which advances
+      // the remote and refreshes anyway).
+      if (!push) {
+        unawaited(
+          ref.read(connectionProvider.notifier).fetchInBackground(repoPath),
+        );
+      }
+      if (context.mounted) Navigator.of(context).pop(push);
     }
   }
 
@@ -126,7 +135,8 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
     return CallbackShortcuts(
       bindings: {
         ...resolveShortcuts(keymap, {
-          'commit.confirm': canAccept ? _commit : null,
+          'commit.confirm': canAccept ? () => _commit() : null,
+          'commit.confirmAndPush': canAccept ? () => _commit(push: true) : null,
         }),
         // Escape cancels the dialog (matching the Cancel button), except while a
         // commit is already in flight — don't yank the sheet out mid-commit.
@@ -252,7 +262,14 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
           ],
           PushButton(
             controlSize: ControlSize.large,
-            onPressed: canAccept ? _commit : null,
+            secondary: true,
+            onPressed: canAccept ? () => _commit(push: true) : null,
+            child: const Text('Commit & Push'),
+          ),
+          const SizedBox(width: 8),
+          PushButton(
+            controlSize: ControlSize.large,
+            onPressed: canAccept ? () => _commit() : null,
             child: const Text('Accept'),
           ),
         ],

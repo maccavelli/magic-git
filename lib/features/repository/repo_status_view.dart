@@ -267,12 +267,18 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     await _guardedAction(() => git.stageAll(repoPath));
   }
 
-  void _openCommitDialog(int stagedCount) {
-    showMacosSheet<void>(
+  Future<void> _openCommitDialog(int stagedCount) async {
+    // The dialog pops with `true` when the user chose Commit & Push (⌘⇧↩), so
+    // the push runs here — after the sheet closes — through the panel's own
+    // logged/​guarded push path rather than being reimplemented in the dialog.
+    final andPush = await showMacosSheet<bool>(
       context: context,
       builder: (_) =>
           CommitDialog(repoPath: repoPath, stagedCount: stagedCount),
     );
+    if (andPush == true && mounted) {
+      await _push(followTags: ref.read(appSettingsProvider).pushFollowTags);
+    }
   }
 
   /// Runs a mutating git op behind the [_busy] gate: no-ops if another mutation

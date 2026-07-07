@@ -165,6 +165,12 @@ final List<KeymapAction> kKeymapActions = [
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.slash, meta: true)],
   ),
   KeymapAction(
+    id: 'global.commandPalette',
+    label: 'Command Palette',
+    category: KeymapCategory.global,
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyK, meta: true)],
+  ),
+  KeymapAction(
     id: 'global.panel1',
     label: 'Switch to Repository',
     category: KeymapCategory.global,
@@ -320,6 +326,14 @@ final List<KeymapAction> kKeymapActions = [
     category: KeymapCategory.commit,
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.enter, meta: true)],
   ),
+  KeymapAction(
+    id: 'commit.confirmAndPush',
+    label: 'Commit and push',
+    category: KeymapCategory.commit,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.enter, meta: true, shift: true),
+    ],
+  ),
   // History — scoped to the History panel; most require a selected commit.
   KeymapAction(
     id: 'history.copySha',
@@ -450,6 +464,12 @@ final List<KeymapAction> kKeymapActions = [
     label: 'Toggle word wrap',
     category: KeymapCategory.viewer,
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyZ, alt: true)],
+  ),
+  KeymapAction(
+    id: 'viewer.find',
+    label: 'Find in file',
+    category: KeymapCategory.viewer,
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyF, meta: true)],
   ),
 ];
 

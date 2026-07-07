@@ -11,6 +11,8 @@ import '../core/providers/app_providers.dart';
 import '../core/settings/keymap.dart';
 import '../core/ssh/host_key_prompt.dart';
 import 'branches/branches_view.dart';
+import 'common/branch_switch.dart';
+import 'common/command_palette.dart';
 import 'common/diff_view.dart' show kDiffMono;
 import 'common/sidebar_branding.dart';
 import 'connection/connection_landing.dart';
@@ -300,6 +302,45 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     );
   }
 
+  void _openConnections(BuildContext context) {
+    showMacosSheet<void>(
+      context: context,
+      builder: (_) => const ConnectionsPanel(),
+    );
+  }
+
+  void _openPalette(BuildContext context) {
+    final repoPath = ref.read(connectionProvider).repoPath;
+    if (repoPath == null) return;
+    showMacosSheet<void>(
+      context: context,
+      builder: (_) => CommandPalette(
+        repoPath: repoPath,
+        onGoToPanel: _selectPage,
+        onRefresh: _refresh,
+        onOpenSettings: () => _openSettings(context),
+        onOpenShortcuts: () => _openShortcuts(context),
+        onOpenConnections: () => _openConnections(context),
+        onCheckoutBranch: (branch) => _checkoutBranch(context, repoPath, branch),
+      ),
+    );
+  }
+
+  Future<void> _checkoutBranch(
+    BuildContext context,
+    String repoPath,
+    String branch,
+  ) async {
+    final git = ref.read(gitServiceProvider);
+    await guardedBranchSwitch(
+      context,
+      ref,
+      repoPath,
+      () => git.checkout(repoPath, branch),
+    );
+    _refresh();
+  }
+
   /// ⌘R: refresh every repo-scoped provider for the active repo. Invalidating a
   /// provider that isn't currently mounted is a harmless no-op, so one handler
   /// covers whichever page is showing.
@@ -453,6 +494,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
       'global.refresh': _refresh,
       'global.openSettings': () => _openSettings(context),
       'global.showShortcuts': () => _openShortcuts(context),
+      'global.commandPalette': connected ? () => _openPalette(context) : null,
       'global.panel1': connected ? () => _selectPage(0) : null,
       'global.panel2': connected ? () => _selectPage(1) : null,
       'global.panel3': connected ? () => _selectPage(2) : null,

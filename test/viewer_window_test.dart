@@ -425,6 +425,44 @@ void main() {
     expect(find.byType(FileViewerWindow), findsNothing);
   });
 
+  testWidgets('⌘F opens in-file find, counts matches, Enter steps through', (
+    tester,
+  ) async {
+    final container = await _pumpHost(
+      tester,
+      overrides: [
+        _content('a.txt', 'alpha\nbeta needle\ngamma\ndelta needle\nzeta\n'),
+      ],
+    );
+    container.read(openFileViewersProvider.notifier).open(_repo, 'a.txt');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byType(FileViewerWindow));
+    await tester.pumpAndSettle();
+
+    // No find bar until ⌘F.
+    final findField = find.byWidgetPredicate(
+      (w) => w is MacosTextField && w.placeholder == 'Find in file',
+    );
+    expect(findField, findsNothing);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyF);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyF);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+    expect(findField, findsOneWidget);
+
+    await tester.enterText(findField, 'needle');
+    await tester.pumpAndSettle();
+    expect(find.text('1 of 2'), findsOneWidget);
+
+    // Enter advances to the next matching line.
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+    expect(find.text('2 of 2'), findsOneWidget);
+  });
+
   testWidgets('⌘W closes the front viewer window', (tester) async {
     final container = await _pumpHost(
       tester,

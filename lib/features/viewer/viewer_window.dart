@@ -58,6 +58,8 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
   static const _minHeight = 260.0;
 
   final _focus = FocusNode();
+  // Bumped on ⌘F to open/re-focus the CodeView's in-file find bar.
+  final _findSignal = ValueNotifier<int>(0);
   late Offset _position;
   late Size _size;
   bool _maximized = false;
@@ -114,6 +116,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
   @override
   void dispose() {
     _focus.dispose();
+    _findSignal.dispose();
     super.dispose();
   }
 
@@ -198,6 +201,9 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
                 : null,
             'viewer.wordWrap': _mode == _ViewerMode.code
                 ? () => setState(() => _wrap = !_wrap)
+                : null,
+            'viewer.find': _mode == _ViewerMode.code
+                ? () => _findSignal.value++
                 : null,
           }),
         },
@@ -449,6 +455,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
                   content: content,
                   languageId: _type.languageId,
                   wrap: _wrap,
+                  findSignal: _findSignal,
                 ),
       },
     );

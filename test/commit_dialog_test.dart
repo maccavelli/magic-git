@@ -111,4 +111,45 @@ void main() {
     expect(git.committed, 'feat: add widget');
     expect(git.fetchCalls, 1);
   });
+
+  testWidgets('Commit & Push commits and pops true so the caller pushes', (
+    tester,
+  ) async {
+    final git = _FakeGit('feat: add widget');
+    bool? result;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [gitServiceProvider.overrideWithValue(git)],
+        child: MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: Builder(
+            builder: (context) => Center(
+              child: PushButton(
+                controlSize: ControlSize.large,
+                child: const Text('open'),
+                onPressed: () async {
+                  result = await showMacosSheet<bool>(
+                    context: context,
+                    builder: (_) =>
+                        const CommitDialog(repoPath: '/srv/repo', stagedCount: 2),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Commit & Push'));
+    await tester.pumpAndSettle();
+
+    expect(git.committed, 'feat: add widget');
+    // Pops `true` → the panel runs the push. And no background fetch here (the
+    // push advances/refreshes the remote itself).
+    expect(result, isTrue);
+    expect(git.fetchCalls, 0);
+  });
 }
