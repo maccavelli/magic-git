@@ -321,6 +321,22 @@ final List<KeymapAction> kKeymapActions = [
     ],
   ),
   KeymapAction(
+    id: 'branches.merge',
+    label: 'Merge selected branch into current',
+    category: KeymapCategory.branches,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyM, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'branches.delete',
+    label: 'Delete selected branch',
+    category: KeymapCategory.branches,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.backspace, meta: true),
+    ],
+  ),
+  KeymapAction(
     id: 'commit.confirm',
     label: 'Confirm commit',
     category: KeymapCategory.commit,

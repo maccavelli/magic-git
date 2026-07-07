@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
@@ -8,6 +9,7 @@ import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/branch_switch.dart';
 import '../common/field_styles.dart';
+import '../common/list_keyboard_nav.dart';
 import '../common/tool_icon_button.dart';
 
 /// Source-control pane: local branches (checkout/delete/create), remote-tracking
@@ -43,6 +45,16 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
   // under the user (e.g. checking out a different branch mid-delete).
   bool _busy = false;
 
+  // Keyboard navigation of the local-branch list: a click selects a branch
+  // (highlight) and focuses the list; ↑/↓ then walk the selection, Enter checks
+  // it out, and ⌘⇧M / ⌘⌫ merge / delete it. Checkout also has its own row
+  // button so the mouse-only path doesn't depend on the keyboard.
+  String? _selectedBranch;
+  List<GitRef> _locals = const [];
+  final FocusNode _branchFocus = FocusNode(debugLabel: 'branch-list');
+  final ScrollController _branchScroll = ScrollController();
+  final Map<String, GlobalKey> _branchRowKeys = {};
+
   String get repoPath => widget.repoPath;
 
   @override
@@ -51,7 +63,71 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
     _newBranchFocus.dispose();
     _newTag.dispose();
     _newTagFocus.dispose();
+    _branchFocus.dispose();
+    _branchScroll.dispose();
     super.dispose();
+  }
+
+  GlobalKey _branchRowKeyFor(String shortName) =>
+      _branchRowKeys.putIfAbsent(shortName, GlobalKey.new);
+
+  GitRef? get _selectedRef {
+    final name = _selectedBranch;
+    if (name == null) return null;
+    for (final b in _locals) {
+      if (b.shortName == name) return b;
+    }
+    return null;
+  }
+
+  // A non-current branch is selected — merge/delete apply (merging or deleting
+  // the branch you're on is nonsensical / rejected by git).
+  bool get _canActOnSelection {
+    final sel = _selectedRef;
+    return sel != null && !sel.isHead;
+  }
+
+  void _selectBranch(String shortName) {
+    _branchFocus.requestFocus();
+    setState(() => _selectedBranch = shortName);
+    ensureRowVisible(_branchRowKeyFor(shortName));
+  }
+
+  void _moveBranchSelection(int dir) {
+    if (_locals.isEmpty) return;
+    var current = -1;
+    if (_selectedBranch != null) {
+      for (var i = 0; i < _locals.length; i++) {
+        if (_locals[i].shortName == _selectedBranch) {
+          current = i;
+          break;
+        }
+      }
+    }
+    final next = stepSelection(current, dir, _locals.length);
+    _selectBranch(_locals[next].shortName);
+  }
+
+  KeyEventResult _onBranchKey(FocusNode node, KeyEvent event) {
+    if (event is KeyUpEvent || !widget.isActive || _busy) {
+      return KeyEventResult.ignored;
+    }
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowDown:
+        _moveBranchSelection(1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        _moveBranchSelection(-1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.numpadEnter:
+        final sel = _selectedRef;
+        if (sel != null && !sel.isHead) {
+          _checkout(ref.read(gitServiceProvider), sel.shortName);
+        }
+        return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   void _refresh() {
@@ -146,6 +222,14 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
           ? resolveShortcuts(keymap, {
               'branches.newBranch': () => _newBranchFocus.requestFocus(),
               'branches.createTag': () => _newTagFocus.requestFocus(),
+              // Only bound with a non-current branch selected — otherwise they
+              // fall through, matching the rest of the app's precondition gates.
+              'branches.merge': _canActOnSelection
+                  ? () => _mergeBranch(git, _selectedBranch!, MergeMode.normal)
+                  : null,
+              'branches.delete': _canActOnSelection
+                  ? () => _deleteBranch(git, _selectedBranch!)
+                  : null,
             })
           : const <ShortcutActivator, VoidCallback>{},
       child: refsAsync.when(
@@ -155,6 +239,8 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
           final locals = refs.where((r) => r.isLocalBranch).toList();
           final remotes = refs.where((r) => r.isRemote).toList();
           final tags = refs.where((r) => r.isTag).toList();
+          // Cache for the arrow-key handler (which runs outside build).
+          _locals = locals;
           // A flat descriptor list, not built Widgets — ListView.builder below
           // only ever constructs the handful currently on-screen, so this stays
           // cheap even for a repo with hundreds of branches/tags.
@@ -168,17 +254,22 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
             const _CreateTagRow(),
             for (final t in tags) _TagRefRow(t),
           ];
-          return ListView.builder(
-            itemCount: rows.length,
-            itemBuilder: (context, i) => switch (rows[i]) {
-              _CreateBranchRow() => _createBranchBar(git),
-              _CreateTagRow() => _createTagBar(git),
-              _HeaderRow(:final title) => _sectionHeader(context, title),
-              _BranchRow(:final branch, :final remote) => remote
-                  ? _remoteRow(context, git, branch)
-                  : _localRow(context, git, branch),
-              _TagRefRow(:final tag) => _tagRow(context, git, tag),
-            },
+          return Focus(
+            focusNode: _branchFocus,
+            onKeyEvent: _onBranchKey,
+            child: ListView.builder(
+              controller: _branchScroll,
+              itemCount: rows.length,
+              itemBuilder: (context, i) => switch (rows[i]) {
+                _CreateBranchRow() => _createBranchBar(git),
+                _CreateTagRow() => _createTagBar(git),
+                _HeaderRow(:final title) => _sectionHeader(context, title),
+                _BranchRow(:final branch, :final remote) => remote
+                    ? _remoteRow(context, git, branch)
+                    : _localRow(context, git, branch),
+                _TagRefRow(:final tag) => _tagRow(context, git, tag),
+              },
+            ),
           );
         },
       ),
@@ -227,13 +318,19 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
 
   Widget _localRow(BuildContext context, GitService git, GitRef branch) {
     final typography = MacosTheme.of(context).typography;
-    return GestureDetector(
-      onTap: branch.isHead || _busy
-          ? null
-          : () => _checkout(git, branch.shortName),
+    final selected = _selectedBranch == branch.shortName;
+    // A single click selects (so ↑/↓, Enter, ⌘⇧M and ⌘⌫ target it); checkout is
+    // its own button (below) and Enter, so selecting can't accidentally switch
+    // branches. The current branch keeps its green tint.
+    return KeyedSubtree(
+      key: _branchRowKeyFor(branch.shortName),
+      child: GestureDetector(
+      onTap: () => _selectBranch(branch.shortName),
       child: Container(
         color: branch.isHead
             ? MacosColors.systemGreenColor.withValues(alpha: 0.12)
+            : selected
+            ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
             : const Color(0x00000000),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
         child: Row(
@@ -266,6 +363,13 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
                 ),
               ),
             if (!branch.isHead) ...[
+              const SizedBox(width: 4),
+              ToolIconButton(
+                icon: CupertinoIcons.square_arrow_down,
+                tooltip: 'Checkout branch',
+                size: 15,
+                onPressed: _busy ? null : () => _checkout(git, branch.shortName),
+              ),
               const SizedBox(width: 4),
               MacosPulldownButton(
                 icon: CupertinoIcons.arrow_merge,
@@ -300,6 +404,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
             ],
           ],
         ),
+      ),
       ),
     );
   }

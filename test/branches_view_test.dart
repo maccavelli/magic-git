@@ -174,9 +174,13 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      final checkoutIcon = find.byWidgetPredicate(
-        (w) => w is MacosIcon && w.icon == CupertinoIcons.square_arrow_down,
-      );
+      // Local and remote rows both expose a checkout affordance now; target the
+      // first (the local branch's) and tap it twice.
+      final checkoutIcon = find
+          .byWidgetPredicate(
+            (w) => w is MacosIcon && w.icon == CupertinoIcons.square_arrow_down,
+          )
+          .first;
       await tester.tap(checkoutIcon);
       await tester.pump();
       await tester.tap(checkoutIcon); // fired while the first is still gated

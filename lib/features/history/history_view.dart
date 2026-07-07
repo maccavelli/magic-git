@@ -11,6 +11,7 @@ import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/diff_view.dart';
 import '../common/field_styles.dart';
+import '../common/list_keyboard_nav.dart';
 import '../common/tool_icon_button.dart';
 import 'commit_graph_view.dart';
 import 'rebase_sheet.dart';
@@ -56,6 +57,13 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
   // toggle. When either is active the panel uses [logSearchProvider].
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
+
+  // Keyboard navigation of the commit list: the list takes focus on a row tap,
+  // then ↑/↓ walk _selectedHash through the commits, scrolling each into view.
+  final FocusNode _commitFocus = FocusNode(debugLabel: 'commit-list');
+  final ScrollController _commitScroll = ScrollController();
+  final Map<String, GlobalKey> _commitRowKeys = {};
+
   String _grep = '';
   bool _allBranches = false;
   Timer? _searchDebounce;
@@ -65,7 +73,44 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     _searchDebounce?.cancel();
     _searchController.dispose();
     _searchFocus.dispose();
+    _commitFocus.dispose();
+    _commitScroll.dispose();
     super.dispose();
+  }
+
+  GlobalKey _commitRowKeyFor(String hash) =>
+      _commitRowKeys.putIfAbsent(hash, GlobalKey.new);
+
+  void _moveCommitSelection(int dir) {
+    final commits = _lastCommits;
+    if (commits == null || commits.isEmpty) return;
+    var current = -1;
+    if (_selectedHash != null) {
+      for (var i = 0; i < commits.length; i++) {
+        if (commits[i].hash == _selectedHash) {
+          current = i;
+          break;
+        }
+      }
+    }
+    final next = stepSelection(current, dir, commits.length);
+    setState(() => _selectedHash = commits[next].hash);
+    ensureRowVisible(_commitRowKeyFor(commits[next].hash));
+  }
+
+  KeyEventResult _onCommitKey(FocusNode node, KeyEvent event) {
+    if (event is KeyUpEvent || !widget.isActive || _busy) {
+      return KeyEventResult.ignored;
+    }
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowDown:
+        _moveCommitSelection(1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        _moveCommitSelection(-1);
+        return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   /// The [GitCommit] for [_selectedHash] in the currently-displayed list, or
@@ -580,14 +625,22 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
         ? graphWidth / (laneCount + 0.5)
         : kLaneWidth;
 
-    return ListView.builder(
+    return Focus(
+      focusNode: _commitFocus,
+      onKeyEvent: _onCommitKey,
+      child: ListView.builder(
+      controller: _commitScroll,
       itemCount: graph.rows.length,
       itemBuilder: (context, index) {
         final row = graph.rows[index];
         final commit = row.commit;
         final selected = commit.hash == _selectedHash;
         return GestureDetector(
-          onTap: () => setState(() => _selectedHash = commit.hash),
+          key: _commitRowKeyFor(commit.hash),
+          onTap: () {
+            _commitFocus.requestFocus();
+            setState(() => _selectedHash = commit.hash);
+          },
           child: Container(
             color: selected
                 ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
@@ -653,6 +706,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
           ),
         );
       },
+      ),
     );
   }
 

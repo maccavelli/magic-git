@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
@@ -7,6 +8,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/diff_view.dart';
+import '../common/list_keyboard_nav.dart';
 import '../common/tool_icon_button.dart';
 
 /// The **Stashes** namespace — stash management lifted out of the Branches pane
@@ -43,7 +45,55 @@ class _StashViewState extends ConsumerState<StashView> {
   // removed an earlier entry. While set, the toolbar/menu items go inert.
   bool _busy = false;
 
+  // Keyboard navigation of the stash list: the list takes focus on a card tap,
+  // then ↑/↓ walk _selected through the stashes (⌥⌘A/⌥⌘P/⌘⌫ then act on it).
+  final FocusNode _stashFocus = FocusNode(debugLabel: 'stash-list');
+  final ScrollController _stashScroll = ScrollController();
+  final Map<int, GlobalKey> _stashRowKeys = {};
+
   String get repoPath => widget.repoPath;
+
+  @override
+  void dispose() {
+    _stashFocus.dispose();
+    _stashScroll.dispose();
+    super.dispose();
+  }
+
+  GlobalKey _stashRowKeyFor(int index) =>
+      _stashRowKeys.putIfAbsent(index, GlobalKey.new);
+
+  void _moveStashSelection(int dir) {
+    final stashes = ref.read(stashesProvider(repoPath)).value ?? const [];
+    if (stashes.isEmpty) return;
+    var current = -1;
+    if (_selected != null) {
+      for (var i = 0; i < stashes.length; i++) {
+        if (stashes[i].index == _selected) {
+          current = i;
+          break;
+        }
+      }
+    }
+    final next = stepSelection(current, dir, stashes.length);
+    setState(() => _selected = stashes[next].index);
+    ensureRowVisible(_stashRowKeyFor(stashes[next].index));
+  }
+
+  KeyEventResult _onStashKey(FocusNode node, KeyEvent event) {
+    if (event is KeyUpEvent || !widget.isActive || _busy) {
+      return KeyEventResult.ignored;
+    }
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowDown:
+        _moveStashSelection(1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        _moveStashSelection(-1);
+        return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
 
   @override
   void didUpdateWidget(StashView oldWidget) {
@@ -176,14 +226,19 @@ class _StashViewState extends ConsumerState<StashView> {
                 children: [
                   SizedBox(
                     width: 360,
-                    child: ListView.builder(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      itemCount: stashes.length,
-                      itemBuilder: (context, i) => _stashCard(
-                        context,
-                        git,
-                        stashes[i],
-                        stashes[i].index == selected,
+                    child: Focus(
+                      focusNode: _stashFocus,
+                      onKeyEvent: _onStashKey,
+                      child: ListView.builder(
+                        controller: _stashScroll,
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        itemCount: stashes.length,
+                        itemBuilder: (context, i) => _stashCard(
+                          context,
+                          git,
+                          stashes[i],
+                          stashes[i].index == selected,
+                        ),
                       ),
                     ),
                   ),
@@ -347,7 +402,11 @@ class _StashViewState extends ConsumerState<StashView> {
   ) {
     final typography = MacosTheme.of(context).typography;
     return GestureDetector(
-      onTap: () => setState(() => _selected = stash.index),
+      key: _stashRowKeyFor(stash.index),
+      onTap: () {
+        _stashFocus.requestFocus();
+        setState(() => _selected = stash.index);
+      },
       child: Container(
         color: selected
             ? MacosColors.systemBlueColor.withValues(alpha: 0.15)

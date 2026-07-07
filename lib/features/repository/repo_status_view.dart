@@ -14,6 +14,7 @@ import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
+import '../common/list_keyboard_nav.dart';
 import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
 import '../common/tool_icon_button.dart';
@@ -129,6 +130,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
   // Right-click context menu, anchored at the tap point.
   final _contextMenu = ContextMenuOverlay();
 
+  // Keyboard navigation of the file list: the list takes focus on a row tap,
+  // after which ↑/↓ walk the single selection through the file rows (Space then
+  // stages it — see the keymap wiring). Per-row GlobalKeys let the selected row
+  // scroll into view.
+  final _listFocus = FocusNode(debugLabel: 'status-file-list');
+  final _listScroll = ScrollController();
+  final Map<String, GlobalKey> _rowKeys = {};
+
   // Memoized status-row model. `_statusRows` allocates a header/file row per
   // changed file across every section, and this widget setState()s constantly
   // (each selection tap, the _busy toggle wrapping every git op, each diff
@@ -145,7 +154,59 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
   @override
   void dispose() {
     _contextMenu.dispose();
+    _listFocus.dispose();
+    _listScroll.dispose();
     super.dispose();
+  }
+
+  GlobalKey _rowKeyFor(String path, _SectionKind kind) =>
+      _rowKeys.putIfAbsent('${kind.name}:$path', GlobalKey.new);
+
+  /// Walks the single selection [dir] rows through the flattened file rows
+  /// (headers skipped), across all sections, and scrolls it into view. With
+  /// nothing selected, Down lands on the first file row and Up on the last.
+  void _moveFileSelection(int dir) {
+    final fileRows = <_FileRow>[
+      for (final r in _rows)
+        if (r is _FileRow) r,
+    ];
+    if (fileRows.isEmpty) return;
+    var current = -1;
+    if (_selectedPaths.length == 1 && _selectionKind != null) {
+      final path = _selectedPaths.single;
+      for (var i = 0; i < fileRows.length; i++) {
+        if (fileRows[i].file.path == path &&
+            _kindOfFileRow(fileRows[i]) == _selectionKind) {
+          current = i;
+          break;
+        }
+      }
+    }
+    final next = stepSelection(current, dir, fileRows.length);
+    final row = fileRows[next];
+    final kind = _kindOfFileRow(row);
+    setState(() {
+      _selectionKind = kind;
+      _selectedPaths = {row.file.path};
+      _selectionAnchor = row.file.path;
+      _popout = false;
+    });
+    ensureRowVisible(_rowKeyFor(row.file.path, kind));
+  }
+
+  KeyEventResult _onListKey(FocusNode node, KeyEvent event) {
+    if (event is KeyUpEvent || !widget.isActive || _busy) {
+      return KeyEventResult.ignored;
+    }
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowDown:
+        _moveFileSelection(1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        _moveFileSelection(-1);
+        return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   @override
@@ -1562,9 +1623,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     }
 
     final rows = _statusRows(status);
-    return ListView.builder(
-      itemCount: rows.length,
-      itemBuilder: (context, index) => _statusRow(context, rows[index], rows),
+    return Focus(
+      focusNode: _listFocus,
+      onKeyEvent: _onListKey,
+      child: ListView.builder(
+        controller: _listScroll,
+        itemCount: rows.length,
+        itemBuilder: (context, index) => _statusRow(context, rows[index], rows),
+      ),
     );
   }
 
@@ -1836,8 +1902,13 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     row as _FileRow;
     final file = row.file;
     if (row.conflict) {
-      return GestureDetector(
-        onTap: () => _handleRowTap(rows, file.path, _SectionKind.conflict),
+      return KeyedSubtree(
+        key: _rowKeyFor(file.path, _SectionKind.conflict),
+        child: GestureDetector(
+        onTap: () {
+          _listFocus.requestFocus();
+          _handleRowTap(rows, file.path, _SectionKind.conflict);
+        },
         onSecondaryTapUp: (d) => _handleRowSecondaryTap(
           rows,
           file.path,
@@ -1879,13 +1950,19 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
             ],
           ),
         ),
+        ),
       );
     }
 
     final staged = row.staged;
     final kind = _kindOfFileRow(row);
-    return GestureDetector(
-      onTap: () => _handleRowTap(rows, file.path, kind),
+    return KeyedSubtree(
+      key: _rowKeyFor(file.path, kind),
+      child: GestureDetector(
+      onTap: () {
+        _listFocus.requestFocus();
+        _handleRowTap(rows, file.path, kind);
+      },
       onSecondaryTapUp: (d) =>
           _handleRowSecondaryTap(rows, file.path, kind, d.globalPosition),
       child: Container(
@@ -1940,6 +2017,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
             ),
           ],
         ),
+      ),
       ),
     );
   }
