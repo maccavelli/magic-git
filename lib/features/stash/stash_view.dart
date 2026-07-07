@@ -4,6 +4,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/diff_view.dart';
 import '../common/tool_icon_button.dart';
@@ -19,7 +20,12 @@ import '../common/tool_icon_button.dart';
 class StashView extends ConsumerStatefulWidget {
   final String repoPath;
 
-  const StashView({super.key, required this.repoPath});
+  /// Whether the Stashes panel is the visible one — its apply/pop/drop
+  /// shortcuts install only while active (the shell keeps it mounted in an
+  /// IndexedStack otherwise).
+  final bool isActive;
+
+  const StashView({super.key, required this.repoPath, this.isActive = true});
 
   @override
   ConsumerState<StashView> createState() => _StashViewState();
@@ -56,6 +62,24 @@ class _StashViewState extends ConsumerState<StashView> {
     // Stash push/pop mutate the working tree, so the status pane must refresh.
     ref.invalidate(statusProvider(repoPath));
   }
+
+  // Apply/pop a specific stash — shared by the per-card icon buttons and the
+  // apply/pop keyboard shortcuts so both take the identical logged path.
+  Future<void> _apply(GitService git, GitStash stash) => _runLogged(
+    'git stash apply ${stash.ref}',
+    (log) async => log.logResult(
+      'git stash apply ${stash.ref}',
+      await git.stashApply(repoPath, stash.index),
+    ),
+  );
+
+  Future<void> _pop(GitService git, GitStash stash) => _runLogged(
+    'git stash pop ${stash.ref}',
+    (log) async => log.logResult(
+      'git stash pop ${stash.ref}',
+      await git.stashPop(repoPath, stash.index),
+    ),
+  );
 
   /// Runs a stash mutation, logging the command's output to the output view —
   /// stash pop/apply can conflict just like a merge, so the actual git output
@@ -104,8 +128,34 @@ class _StashViewState extends ConsumerState<StashView> {
     final stashesAsync = ref.watch(stashesProvider(repoPath));
     final git = ref.read(gitServiceProvider);
     final count = stashesAsync.value?.length ?? 0;
+    final keymap = ref.watch(keymapProvider);
 
-    return Column(
+    // The selected stash (if any) in the current list — apply/pop/drop act on it.
+    GitStash? selEntry;
+    if (_selected != null) {
+      for (final s in stashesAsync.value ?? const <GitStash>[]) {
+        if (s.index == _selected) {
+          selEntry = s;
+          break;
+        }
+      }
+    }
+
+    return CallbackShortcuts(
+      bindings: widget.isActive && !_busy
+          ? resolveShortcuts(keymap, {
+              'stashes.apply': selEntry == null
+                  ? null
+                  : () => _apply(git, selEntry!),
+              'stashes.pop': selEntry == null
+                  ? null
+                  : () => _pop(git, selEntry!),
+              'stashes.drop': selEntry == null
+                  ? null
+                  : () => _dropStash(context, git, selEntry!),
+            })
+          : const <ShortcutActivator, VoidCallback>{},
+      child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _header(context, git, count),
@@ -145,6 +195,7 @@ class _StashViewState extends ConsumerState<StashView> {
           ),
         ),
       ],
+      ),
     );
   }
 
@@ -363,29 +414,13 @@ class _StashViewState extends ConsumerState<StashView> {
               icon: CupertinoIcons.tray_arrow_up,
               tooltip: 'Apply stash (keep in list)',
               size: 15,
-              onPressed: _busy
-                  ? null
-                  : () => _runLogged(
-                      'git stash apply ${stash.ref}',
-                      (log) async => log.logResult(
-                        'git stash apply ${stash.ref}',
-                        await git.stashApply(repoPath, stash.index),
-                      ),
-                    ),
+              onPressed: _busy ? null : () => _apply(git, stash),
             ),
             ToolIconButton(
               icon: CupertinoIcons.arrow_up_bin,
               tooltip: 'Pop stash (apply & remove)',
               size: 15,
-              onPressed: _busy
-                  ? null
-                  : () => _runLogged(
-                      'git stash pop ${stash.ref}',
-                      (log) async => log.logResult(
-                        'git stash pop ${stash.ref}',
-                        await git.stashPop(repoPath, stash.index),
-                      ),
-                    ),
+              onPressed: _busy ? null : () => _pop(git, stash),
             ),
             ToolIconButton(
               icon: CupertinoIcons.trash,

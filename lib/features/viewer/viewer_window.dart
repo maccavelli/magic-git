@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/keymap.dart';
 import '../../core/utils/file_actions.dart';
 import '../common/tool_icon_button.dart';
 import 'code_view.dart';
@@ -183,11 +184,22 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
       width: size.width,
       height: size.height,
       // CallbackShortcuts must be the *ancestor* of the focus node: a key event
-      // dispatches to the focused node and bubbles up its ancestors, so the
-      // Escape handler only sees it from above [_focus], not below.
+      // dispatches to the focused node and bubbles up its ancestors, so these
+      // handlers only see it from above [_focus], not below. Escape-to-close is
+      // kept as a fixed binding (the universal dismiss key) on top of the
+      // remappable viewer shortcuts.
       child: CallbackShortcuts(
         bindings: {
           const SingleActivator(LogicalKeyboardKey.escape): widget.onClose,
+          ...resolveShortcuts(ref.watch(keymapProvider), {
+            'viewer.close': widget.onClose,
+            'viewer.copyContents': _mode == _ViewerMode.code
+                ? _copyContents
+                : null,
+            'viewer.wordWrap': _mode == _ViewerMode.code
+                ? () => setState(() => _wrap = !_wrap)
+                : null,
+          }),
         },
         child: Focus(
           focusNode: _focus,

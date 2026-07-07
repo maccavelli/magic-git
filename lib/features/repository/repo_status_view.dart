@@ -812,6 +812,24 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
             'repository.pull': () =>
                 _pull(ref.read(appSettingsProvider).defaultPullMode),
             'repository.stash': _stashPush,
+            'repository.sync': _sync,
+            'repository.forcePush': () => _push(force: PushForce.withLease),
+            'repository.stageAll':
+                status != null &&
+                    (status.unstaged.isNotEmpty || status.untracked.isNotEmpty)
+                ? _stageAll
+                : null,
+            // Diff-view toggles: only meaningful while a file's diff is showing,
+            // so they fall through (null) when nothing is selected.
+            'repository.toggleSplitDiff': selected == null
+                ? null
+                : () => setState(() => _diffSplit = !_diffSplit),
+            'repository.toggleIgnoreWhitespace': selected == null
+                ? null
+                : () => setState(() => _diffIgnoreWs = !_diffIgnoreWs),
+            'repository.toggleExpandContext': selected == null
+                ? null
+                : () => setState(() => _diffExpandContext = !_diffExpandContext),
             'repository.toggleStage': selected == null
                 ? null
                 : () => selected.staged

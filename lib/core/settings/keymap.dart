@@ -115,7 +115,11 @@ enum KeymapCategory {
   global('Global'),
   repository('Repository'),
   branches('Branches'),
-  commit('Commit Message');
+  commit('Commit Message'),
+  history('History'),
+  stashes('Stashes'),
+  gitlab('GitLab'),
+  viewer('File Viewer');
 
   final String label;
   const KeymapCategory(this.label);
@@ -153,6 +157,12 @@ final List<KeymapAction> kKeymapActions = [
     label: 'Open Settings',
     category: KeymapCategory.global,
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.comma, meta: true)],
+  ),
+  KeymapAction(
+    id: 'global.showShortcuts',
+    label: 'Show Keyboard Shortcuts',
+    category: KeymapCategory.global,
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.slash, meta: true)],
   ),
   KeymapAction(
     id: 'global.panel1',
@@ -223,6 +233,54 @@ final List<KeymapAction> kKeymapActions = [
     ],
   ),
   KeymapAction(
+    id: 'repository.sync',
+    label: 'Sync (pull, then push)',
+    category: KeymapCategory.repository,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyY, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'repository.stageAll',
+    label: 'Stage all changes',
+    category: KeymapCategory.repository,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyA, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'repository.forcePush',
+    label: 'Force push (with lease)',
+    category: KeymapCategory.repository,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyU, meta: true, control: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'repository.toggleSplitDiff',
+    label: 'Toggle side-by-side diff',
+    category: KeymapCategory.repository,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyS, meta: true, alt: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'repository.toggleIgnoreWhitespace',
+    label: 'Toggle ignore whitespace in diff',
+    category: KeymapCategory.repository,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyW, meta: true, alt: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'repository.toggleExpandContext',
+    label: 'Toggle expanded diff context',
+    category: KeymapCategory.repository,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyX, meta: true, alt: true),
+    ],
+  ),
+  KeymapAction(
     id: 'repository.toggleStage',
     label: 'Toggle stage for selected file',
     category: KeymapCategory.repository,
@@ -249,10 +307,149 @@ final List<KeymapAction> kKeymapActions = [
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyB, meta: true)],
   ),
   KeymapAction(
+    id: 'branches.createTag',
+    label: 'Focus new tag field',
+    category: KeymapCategory.branches,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyT, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
     id: 'commit.confirm',
     label: 'Confirm commit',
     category: KeymapCategory.commit,
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.enter, meta: true)],
+  ),
+  // History — scoped to the History panel; most require a selected commit.
+  KeymapAction(
+    id: 'history.copySha',
+    label: 'Copy commit SHA',
+    category: KeymapCategory.history,
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyC, meta: true)],
+  ),
+  KeymapAction(
+    id: 'history.checkout',
+    label: 'Checkout selected commit',
+    category: KeymapCategory.history,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyB, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'history.branchFrom',
+    label: 'Branch from selected commit',
+    category: KeymapCategory.history,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyN, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'history.cherryPick',
+    label: 'Cherry-pick selected commit',
+    category: KeymapCategory.history,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyC, meta: true, alt: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'history.rebaseFrom',
+    label: 'Interactive rebase from selected commit',
+    category: KeymapCategory.history,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyR, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'history.amend',
+    label: 'Amend last commit',
+    category: KeymapCategory.history,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.enter, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'history.filter',
+    label: 'Filter commits',
+    category: KeymapCategory.history,
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyF, meta: true)],
+  ),
+  // Stashes — scoped to the Stashes panel; require a selected stash.
+  KeymapAction(
+    id: 'stashes.apply',
+    label: 'Apply selected stash',
+    category: KeymapCategory.stashes,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyA, meta: true, alt: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'stashes.pop',
+    label: 'Pop selected stash',
+    category: KeymapCategory.stashes,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyP, meta: true, alt: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'stashes.drop',
+    label: 'Drop selected stash',
+    category: KeymapCategory.stashes,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.backspace, meta: true),
+    ],
+  ),
+  // GitLab — scoped to the GitLab panel; approve/merge require a selected MR,
+  // retry a selected pipeline.
+  KeymapAction(
+    id: 'gitlab.newMr',
+    label: 'New merge request',
+    category: KeymapCategory.gitlab,
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyN, meta: true)],
+  ),
+  KeymapAction(
+    id: 'gitlab.approve',
+    label: 'Approve selected merge request',
+    category: KeymapCategory.gitlab,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyA, meta: true, alt: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'gitlab.merge',
+    label: 'Merge selected merge request',
+    category: KeymapCategory.gitlab,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyM, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'gitlab.retry',
+    label: 'Retry selected pipeline',
+    category: KeymapCategory.gitlab,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyR, meta: true, alt: true),
+    ],
+  ),
+  // File Viewer — scoped to the front-most viewer window.
+  KeymapAction(
+    id: 'viewer.close',
+    label: 'Close viewer window',
+    category: KeymapCategory.viewer,
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyW, meta: true)],
+  ),
+  KeymapAction(
+    id: 'viewer.copyContents',
+    label: 'Copy file contents',
+    category: KeymapCategory.viewer,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyC, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'viewer.wordWrap',
+    label: 'Toggle word wrap',
+    category: KeymapCategory.viewer,
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyZ, alt: true)],
   ),
 ];
 

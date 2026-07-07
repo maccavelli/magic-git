@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
@@ -123,9 +124,16 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
     final keymap = ref.watch(keymapProvider);
 
     return CallbackShortcuts(
-      bindings: resolveShortcuts(keymap, {
-        'commit.confirm': canAccept ? _commit : null,
-      }),
+      bindings: {
+        ...resolveShortcuts(keymap, {
+          'commit.confirm': canAccept ? _commit : null,
+        }),
+        // Escape cancels the dialog (matching the Cancel button), except while a
+        // commit is already in flight — don't yank the sheet out mid-commit.
+        if (!_committing)
+          const SingleActivator(LogicalKeyboardKey.escape): () =>
+              Navigator.of(context).pop(),
+      },
       child: MacosSheet(
         // Width and height both track content: IntrinsicWidth sizes to the
         // widest child (mainly the text field's current longest line, per

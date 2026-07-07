@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/gitlab/models.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/branch_switch.dart';
@@ -149,13 +150,29 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     // CI status.
     final pipeByRef = _pipeByRefFor(pipelines.value ?? const <Pipeline>[]);
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SizedBox(width: 360, child: _leftPane(mrs, pipelines, pipeByRef)),
-        Container(width: 1, color: MacosColors.separatorColor),
-        Expanded(child: _mainPane(mrs, pipelines)),
-      ],
+    final keymap = ref.watch(keymapProvider);
+    final mrIid = _selectedMrIid;
+    final pipelineId = _selectedPipelineId;
+
+    return CallbackShortcuts(
+      bindings: widget.isActive
+          ? resolveShortcuts(keymap, {
+              'gitlab.newMr': _createMr,
+              'gitlab.approve': mrIid == null ? null : () => _approve(mrIid),
+              'gitlab.merge': mrIid == null ? null : () => _merge(mrIid),
+              'gitlab.retry': pipelineId == null
+                  ? null
+                  : () => _retry(pipelineId),
+            })
+          : const <ShortcutActivator, VoidCallback>{},
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          SizedBox(width: 360, child: _leftPane(mrs, pipelines, pipeByRef)),
+          Container(width: 1, color: MacosColors.separatorColor),
+          Expanded(child: _mainPane(mrs, pipelines)),
+        ],
+      ),
     );
   }
 

@@ -18,6 +18,7 @@ import 'gitlab/gitlab_panel.dart';
 import 'gitlab/project_panel.dart';
 import 'history/history_view.dart';
 import 'repository/repo_status_view.dart';
+import 'settings/keyboard_shortcuts_sheet.dart';
 import 'settings/settings_sheet.dart';
 import 'stash/stash_view.dart';
 import 'switcher/connection_switcher.dart';
@@ -292,6 +293,13 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     );
   }
 
+  void _openShortcuts(BuildContext context) {
+    showMacosSheet<void>(
+      context: context,
+      builder: (_) => const KeyboardShortcutsSheet(),
+    );
+  }
+
   /// ⌘R: refresh every repo-scoped provider for the active repo. Invalidating a
   /// provider that isn't currently mounted is a harmless no-op, so one handler
   /// covers whichever page is showing.
@@ -444,6 +452,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     final shortcuts = resolveShortcuts(keymap, {
       'global.refresh': _refresh,
       'global.openSettings': () => _openSettings(context),
+      'global.showShortcuts': () => _openShortcuts(context),
       'global.panel1': connected ? () => _selectPage(0) : null,
       'global.panel2': connected ? () => _selectPage(1) : null,
       'global.panel3': connected ? () => _selectPage(2) : null,
@@ -563,13 +572,13 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
                     )
                   : const SizedBox.shrink(),
               _visitedPages.contains(1)
-                  ? HistoryView(repoPath: repoPath)
+                  ? HistoryView(repoPath: repoPath, isActive: _pageIndex == 1)
                   : const SizedBox.shrink(),
               _visitedPages.contains(2)
                   ? BranchesView(repoPath: repoPath, isActive: _pageIndex == 2)
                   : const SizedBox.shrink(),
               _visitedPages.contains(3)
-                  ? StashView(repoPath: repoPath)
+                  ? StashView(repoPath: repoPath, isActive: _pageIndex == 3)
                   : const SizedBox.shrink(),
               _visitedPages.contains(4)
                   ? GitLabPanel(repoPath: repoPath, isActive: _pageIndex == 4)

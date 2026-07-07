@@ -225,6 +225,79 @@ void main() {
       expect(conflicts.map((a) => a.id), contains('global.refresh'));
     });
 
+    test('no shipped default binding conflicts within an overlapping scope', () {
+      // Guards every default in kKeymapActions (not just the ones added in a
+      // given change): if two actions in the same category — or any action and
+      // a global one — share a default binding, conflictsFor surfaces it, and
+      // this fails with the offending pair. Runs against the pristine default
+      // keymap, so it's a pure check of the shipped defaults.
+      SharedPreferences.setMockInitialValues({});
+      final c = ProviderContainer();
+      addTearDown(c.dispose);
+      final notifier = c.read(keymapProvider.notifier);
+      for (final action in kKeymapActions) {
+        for (final binding in action.defaultBindings) {
+          final conflicts = notifier.conflictsFor(action.id, binding);
+          expect(
+            conflicts,
+            isEmpty,
+            reason:
+                '${action.id} default ${binding.label} collides with '
+                '${conflicts.map((a) => a.id).join(', ')}',
+          );
+        }
+      }
+    });
+
+    test('every action id is unique', () {
+      final ids = kKeymapActions.map((a) => a.id).toList();
+      expect(ids.toSet().length, ids.length);
+    });
+
+    test('the expanded action set ships the expected new defaults', () {
+      KeyBinding only(String id) => kKeymapActionsById[id]!.defaultBindings.single;
+      expect(
+        only('global.showShortcuts'),
+        KeyBinding.fromKey(LogicalKeyboardKey.slash, meta: true),
+      );
+      expect(
+        only('repository.sync'),
+        KeyBinding.fromKey(LogicalKeyboardKey.keyY, meta: true, shift: true),
+      );
+      expect(
+        only('repository.forcePush'),
+        KeyBinding.fromKey(LogicalKeyboardKey.keyU, meta: true, control: true),
+      );
+      expect(
+        only('history.copySha'),
+        KeyBinding.fromKey(LogicalKeyboardKey.keyC, meta: true),
+      );
+      expect(
+        only('stashes.drop'),
+        KeyBinding.fromKey(LogicalKeyboardKey.backspace, meta: true),
+      );
+      expect(
+        only('gitlab.merge'),
+        KeyBinding.fromKey(LogicalKeyboardKey.keyM, meta: true, shift: true),
+      );
+      expect(
+        only('viewer.wordWrap'),
+        KeyBinding.fromKey(LogicalKeyboardKey.keyZ, alt: true),
+      );
+      // The new categories are represented so the mappings/cheat-sheet sheets
+      // render a section for each.
+      final categories = kKeymapActions.map((a) => a.category).toSet();
+      expect(
+        categories.containsAll([
+          KeymapCategory.history,
+          KeymapCategory.stashes,
+          KeymapCategory.gitlab,
+          KeymapCategory.viewer,
+        ]),
+        isTrue,
+      );
+    });
+
     test('conflictsFor ignores non-overlapping scopes', () {
       SharedPreferences.setMockInitialValues({});
       final c = ProviderContainer();

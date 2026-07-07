@@ -17,7 +17,9 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
+import 'package:remote_magic_git/features/history/history_view.dart';
 import 'package:remote_magic_git/features/repository/commit_dialog.dart';
+import 'package:remote_magic_git/features/stash/stash_view.dart';
 import 'package:remote_magic_git/features/repository/repo_status_view.dart';
 
 const _repo = '/srv/repo';
@@ -34,6 +36,7 @@ VoidCallback? _bindingFor(
   bool meta = false,
   bool shift = false,
   bool control = false,
+  bool alt = false,
 }) {
   for (final element in find.byType(CallbackShortcuts).evaluate()) {
     final widget = element.widget as CallbackShortcuts;
@@ -43,7 +46,8 @@ VoidCallback? _bindingFor(
           activator.trigger == key &&
           activator.meta == meta &&
           activator.shift == shift &&
-          activator.control == control) {
+          activator.control == control &&
+          activator.alt == alt) {
         return entry.value;
       }
     }
@@ -52,10 +56,13 @@ VoidCallback? _bindingFor(
 }
 
 class _FakeGit extends GitService {
-  _FakeGit() : super(SSHCommandExecutor(SSHClientManager()));
+  _FakeGit({this.commits = const []})
+    : super(SSHCommandExecutor(SSHClientManager()));
   final List<String> staged = [];
   final List<String> unstaged = [];
+  final List<GitCommit> commits;
   String? committed;
+  bool stageAllCalled = false;
 
   @override
   Future<void> stage(String repoPath, String path) async => staged.add(path);
@@ -65,13 +72,48 @@ class _FakeGit extends GitService {
       unstaged.add(path);
 
   @override
+  Future<void> stageAll(String repoPath) async => stageAllCalled = true;
+
+  @override
   Future<String?> generateCommitMessage(String repoPath) async => null;
 
   @override
   Future<void> commit(String repoPath, {String? message}) async {
     committed = message;
   }
+
+  // ---- History-panel support ------------------------------------------
+  @override
+  Future<List<GitCommit>> log(
+    String repoPath, {
+    String revision = 'HEAD',
+    int maxCount = 200,
+    String? grep,
+    String? author,
+    String? since,
+    String? until,
+    String? path,
+    bool all = false,
+    bool follow = false,
+  }) async => commits;
+
+  @override
+  Future<List<GitRef>> refs(String repoPath) async => const [];
+
+  @override
+  Future<String> showCommit(String repoPath, String hash, {String? path}) async =>
+      'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
 }
+
+GitCommit _commit(String hash, String subject) => GitCommit(
+  hash: hash,
+  shortHash: hash.substring(0, 7),
+  authorName: 'Dev',
+  authorEmail: 'd@e',
+  date: '2026-07-04T10:00',
+  parents: const [],
+  subject: subject,
+);
 
 class _HiddenFileView extends FileViewVisibility {
   @override
@@ -229,6 +271,183 @@ void main() {
         shift: true,
       );
       expect(discard, isNotNull);
+    });
+
+    testWidgets('⌘⇧A stages all when there are unstaged changes', (
+      tester,
+    ) async {
+      final git = await pump(tester);
+      final stageAll = _bindingFor(
+        tester,
+        LogicalKeyboardKey.keyA,
+        meta: true,
+        shift: true,
+      );
+      expect(stageAll, isNotNull);
+      stageAll!();
+      await tester.pumpAndSettle();
+      expect(git.stageAllCalled, isTrue);
+    });
+
+    testWidgets('⌘⇧Y (sync) is wired on the active repository panel', (
+      tester,
+    ) async {
+      await pump(tester);
+      expect(
+        _bindingFor(tester, LogicalKeyboardKey.keyY, meta: true, shift: true),
+        isNotNull,
+      );
+    });
+
+    testWidgets(
+      'the ⌥⌘S side-by-side diff toggle only binds once a file is selected',
+      (tester) async {
+        await pump(tester);
+        // No diff on screen yet → the toggle falls through (unbound).
+        expect(
+          _bindingFor(tester, LogicalKeyboardKey.keyS, meta: true, alt: true),
+          isNull,
+        );
+
+        await tester.tap(find.text('lib/a.dart'));
+        await tester.pumpAndSettle();
+
+        expect(
+          _bindingFor(tester, LogicalKeyboardKey.keyS, meta: true, alt: true),
+          isNotNull,
+        );
+      },
+    );
+  });
+
+  group('history panel', () {
+    Future<void> pump(
+      WidgetTester tester,
+      List<GitCommit> commits, {
+      bool isActive = true,
+    }) async {
+      final container = ProviderContainer(
+        overrides: [
+          gitServiceProvider.overrideWithValue(_FakeGit(commits: commits)),
+        ],
+      );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: HistoryView(repoPath: _repo, isActive: isActive),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('⌘C copies the SHA of the selected commit (and is unbound '
+        'with no selection)', (tester) async {
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = (call.arguments as Map)['text'] as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      final head = _commit('aaaaaaa1111111', 'head commit');
+      await pump(tester, [head]);
+
+      // Nothing selected → copy-SHA falls through.
+      expect(_bindingFor(tester, LogicalKeyboardKey.keyC, meta: true), isNull);
+
+      await tester.tap(find.text('head commit'));
+      await tester.pumpAndSettle();
+
+      final copy = _bindingFor(tester, LogicalKeyboardKey.keyC, meta: true);
+      expect(copy, isNotNull);
+      copy!();
+      await tester.pumpAndSettle();
+      expect(copied, head.hash);
+    });
+
+    testWidgets('⌘F (filter commits) is bound while the panel is active', (
+      tester,
+    ) async {
+      await pump(tester, [_commit('aaaaaaa1111111', 'c')]);
+      expect(_bindingFor(tester, LogicalKeyboardKey.keyF, meta: true), isNotNull);
+    });
+
+    testWidgets('a backgrounded History panel registers no shortcuts', (
+      tester,
+    ) async {
+      await pump(tester, [_commit('aaaaaaa1111111', 'c')], isActive: false);
+      expect(_bindingFor(tester, LogicalKeyboardKey.keyF, meta: true), isNull);
+    });
+  });
+
+  group('stashes panel', () {
+    Future<void> pump(
+      WidgetTester tester,
+      List<GitStash> stashes, {
+      bool isActive = true,
+    }) async {
+      final container = ProviderContainer(
+        overrides: [
+          gitServiceProvider.overrideWithValue(_FakeGit()),
+          stashesProvider(_repo).overrideWith((ref) async => stashes),
+        ],
+      );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: SizedBox(
+              width: 1000,
+              height: 700,
+              child: StashView(repoPath: _repo, isActive: isActive),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('⌥⌘A (apply) binds only once a stash is selected', (
+      tester,
+    ) async {
+      await pump(tester, const [
+        GitStash(
+          index: 0,
+          branch: 'main',
+          message: 'WIP on main: tweak parser',
+          relativeDate: '2 hours ago',
+        ),
+      ]);
+
+      // Nothing selected → apply falls through.
+      expect(
+        _bindingFor(tester, LogicalKeyboardKey.keyA, meta: true, alt: true),
+        isNull,
+      );
+
+      await tester.tap(find.textContaining('tweak parser'));
+      await tester.pumpAndSettle();
+
+      expect(
+        _bindingFor(tester, LogicalKeyboardKey.keyA, meta: true, alt: true),
+        isNotNull,
+      );
     });
   });
 

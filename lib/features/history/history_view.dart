@@ -7,6 +7,7 @@ import '../../core/git/commit_graph.dart';
 import '../../core/git/git_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/diff_view.dart';
 import '../common/field_styles.dart';
@@ -20,7 +21,16 @@ import 'ref_chip.dart';
 class HistoryView extends ConsumerStatefulWidget {
   final String repoPath;
 
-  const HistoryView({super.key, required this.repoPath});
+  /// Whether the History panel is the visible one. Scoped keyboard shortcuts
+  /// (copy SHA, checkout, rebase, …) install only while active, so they don't
+  /// fire from a background page kept mounted in the shell's IndexedStack.
+  final bool isActive;
+
+  const HistoryView({
+    super.key,
+    required this.repoPath,
+    this.isActive = true,
+  });
 
   @override
   ConsumerState<HistoryView> createState() => _HistoryViewState();
@@ -45,6 +55,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
   // History search/filter: a debounced message filter and an all-branches
   // toggle. When either is active the panel uses [logSearchProvider].
   final TextEditingController _searchController = TextEditingController();
+  final FocusNode _searchFocus = FocusNode();
   String _grep = '';
   bool _allBranches = false;
   Timer? _searchDebounce;
@@ -53,7 +64,21 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
   void dispose() {
     _searchDebounce?.cancel();
     _searchController.dispose();
+    _searchFocus.dispose();
     super.dispose();
+  }
+
+  /// The [GitCommit] for [_selectedHash] in the currently-displayed list, or
+  /// null if nothing is selected (or the selection scrolled out of a filtered
+  /// list). Needed by cherry-pick/rebase, which act on the commit object rather
+  /// than a bare hash.
+  GitCommit? _selectedCommit() {
+    final hash = _selectedHash;
+    if (hash == null) return null;
+    for (final c in _lastCommits ?? const <GitCommit>[]) {
+      if (c.hash == hash) return c;
+    }
+    return null;
   }
 
   void _onSearchChanged(String value) {
@@ -431,7 +456,34 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
       ref.watch(refsProvider(widget.repoPath)).value ?? const [],
     );
 
-    return Row(
+    final keymap = ref.watch(keymapProvider);
+    final selectedHash = _selectedHash;
+    final selectedCommit = _selectedCommit();
+    final hasCommits = _lastCommits?.isNotEmpty ?? false;
+
+    return CallbackShortcuts(
+      bindings: widget.isActive && !_busy
+          ? resolveShortcuts(keymap, {
+              'history.copySha': selectedHash == null
+                  ? null
+                  : () => _copySha(selectedHash),
+              'history.checkout': selectedHash == null
+                  ? null
+                  : () => _actCheckout(selectedHash),
+              'history.branchFrom': selectedHash == null
+                  ? null
+                  : () => _actBranchFrom(selectedHash),
+              'history.cherryPick': selectedCommit == null
+                  ? null
+                  : () => _actCherryPick(selectedCommit),
+              'history.rebaseFrom': selectedCommit == null
+                  ? null
+                  : () => _actRebaseFrom(selectedCommit),
+              'history.amend': hasCommits ? _actAmend : null,
+              'history.filter': () => _searchFocus.requestFocus(),
+            })
+          : const <ShortcutActivator, VoidCallback>{},
+      child: Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SizedBox(
@@ -471,6 +523,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
               : _commitDiff(context, _selectedHash!),
         ),
       ],
+      ),
     );
   }
 
@@ -482,6 +535,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
           Expanded(
             child: MacosTextField(
               controller: _searchController,
+              focusNode: _searchFocus,
               placeholder: 'Filter commits by message…',
               decoration: kAppTextFieldDecoration,
               focusedDecoration: kAppTextFieldFocusedDecoration,

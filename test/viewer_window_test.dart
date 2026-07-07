@@ -424,4 +424,25 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(FileViewerWindow), findsNothing);
   });
+
+  testWidgets('⌘W closes the front viewer window', (tester) async {
+    final container = await _pumpHost(
+      tester,
+      overrides: [_content('a.txt', 'aaa')],
+    );
+    container.read(openFileViewersProvider.notifier).open(_repo, 'a.txt');
+    await tester.pumpAndSettle();
+    expect(find.byType(FileViewerWindow), findsOneWidget);
+
+    await tester.tap(find.byType(FileViewerWindow));
+    await tester.pumpAndSettle();
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyW);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyW);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(FileViewerWindow), findsNothing);
+  });
 }

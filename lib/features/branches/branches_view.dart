@@ -34,6 +34,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
   final _newBranch = TextEditingController();
   final _newBranchFocus = FocusNode();
   final _newTag = TextEditingController();
+  final _newTagFocus = FocusNode();
 
   // Guards against a double-tap (or a mis-click during a confirm dialog's
   // dismiss animation) firing two concurrent mutations against the same repo
@@ -49,6 +50,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
     _newBranch.dispose();
     _newBranchFocus.dispose();
     _newTag.dispose();
+    _newTagFocus.dispose();
     super.dispose();
   }
 
@@ -143,6 +145,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
       bindings: widget.isActive
           ? resolveShortcuts(keymap, {
               'branches.newBranch': () => _newBranchFocus.requestFocus(),
+              'branches.createTag': () => _newTagFocus.requestFocus(),
             })
           : const <ShortcutActivator, VoidCallback>{},
       child: refsAsync.when(
@@ -403,6 +406,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
           Expanded(
             child: MacosTextField(
               controller: _newTag,
+              focusNode: _newTagFocus,
               placeholder: 'New tag at HEAD',
               decoration: kAppTextFieldDecoration,
               focusedDecoration: kAppTextFieldFocusedDecoration,
