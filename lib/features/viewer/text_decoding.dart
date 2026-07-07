@@ -1,12 +1,14 @@
 /// Text-normalisation and non-UTF-8 decoding helpers for the file viewer.
 ///
 /// The read path (`GitService.readFile`) decodes stdout as UTF-8 with malformed
-/// bytes replaced, which is right for the common case but leaves three rough
+/// bytes replaced, which is right for the common case but leaves four rough
 /// edges the viewer has to smooth over: a byte-order mark sitting at the front
-/// of the text, Windows/classic-Mac line endings, and files that aren't UTF-8
-/// at all (UTF-16/UTF-32). These helpers handle all three.
+/// of the text, Windows/classic-Mac line endings, files that aren't UTF-8 at all
+/// (UTF-16/UTF-32), and single-byte legacy charsets (Latin-1 / Windows-1252)
+/// whose high bytes fail the UTF-8 decode. These helpers handle all four.
 library;
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 /// Normalises decoded text for display: strips a leading UTF-8 BOM and collapses
@@ -106,4 +108,106 @@ String _decode32(Uint8List bytes, int start, {required bool littleEndian}) {
     );
   }
   return String.fromCharCodes(points);
+}
+
+/// Whether [raw] — a file already decoded as UTF-8-with-replacement — looks like
+/// a single-byte encoding (Latin-1 / Windows-1252) that was mis-decoded, and so
+/// is worth re-reading and decoding with [decodeLatin1] rather than shown as
+/// mojibake.
+///
+/// True only when every non-ASCII code unit is a `U+FFFD` replacement (the UTF-8
+/// decode salvaged no real multi-byte character), at least one such replacement
+/// is present, and there are no stray C0 control bytes (tab/newline/CR aside).
+/// The "no real high char survived" rule is the safety catch: a file that is
+/// genuinely (mostly) UTF-8 — including one with real accents plus a lone
+/// corrupt byte — keeps a valid high char in its decode, so it fails this test
+/// and is left as its correct UTF-8 reading rather than wholesale re-decoded
+/// (which would mangle every real multi-byte sequence). Genuine binary is
+/// excluded too: it is saturated with C0 control bytes.
+///
+/// A single-byte file whose high bytes happen to form a valid UTF-8 sequence (so
+/// a real char survives) is deliberately *not* caught — a rare coincidence where
+/// keeping the UTF-8 reading is the safe choice. And a file that merely contains
+/// a literal `U+FFFD` glyph passes this test but is spared by the caller's
+/// [isValidUtf8] check (its bytes decode cleanly, so its UTF-8 reading is right).
+bool looksLikeLatin1Misdecode(String raw) {
+  // Fast path: no replacement char means nothing failed to decode — the text is
+  // already clean UTF-8 (or ASCII), so there is nothing to re-decode.
+  if (!raw.contains('\uFFFD')) return false;
+  var sawReplacement = false;
+  for (var i = 0; i < raw.length; i++) {
+    final u = raw.codeUnitAt(i);
+    if (u == 0xFFFD) {
+      sawReplacement = true;
+      continue;
+    }
+    // A real non-ASCII char survived the decode → not a pure single-byte
+    // mis-decode; leave the file as its (correct) UTF-8 interpretation.
+    if (u > 0x7F) return false;
+    // A stray C0 control (NUL et al.; tab/newline/CR excepted) is a binary
+    // signal, not single-byte text.
+    if (u < 0x20 && u != 0x09 && u != 0x0A && u != 0x0D) return false;
+  }
+  return sawReplacement;
+}
+
+/// Whether [bytes] are valid UTF-8 (strict — no replacement). Used to spare a
+/// file that only *looked* mis-decoded because it legitimately contains a
+/// `U+FFFD` glyph (encoded as the valid bytes `EF BF BD`): its UTF-8 reading is
+/// already correct and must not be re-decoded as a single-byte charset.
+bool isValidUtf8(Uint8List bytes) {
+  try {
+    utf8.decode(bytes);
+    return true;
+  } on FormatException {
+    return false;
+  }
+}
+
+/// How much of a candidate single-byte decode to scan for the control-char
+/// sanity check, and the fraction of control code points tolerated before the
+/// bytes are judged binary rather than text.
+const int _latinSniffChars = 8000;
+const double _latinControlRatio = 0.02;
+
+/// Windows-1252 mappings for bytes `0x80`–`0x9F` — the only range where it
+/// differs from Latin-1 (it fills the C1 slots with printable punctuation: smart
+/// quotes, dashes, the euro sign, …). The five slots left undefined by the
+/// standard (`0x81 0x8D 0x8F 0x90 0x9D`) map to the raw byte value, i.e. a C1
+/// control that the decode's own control-ratio guard notices if such bytes turn
+/// out to be common (a sign the content was binary after all).
+const List<int> _cp1252High = [
+  0x20AC, 0x81, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, // 80-87
+  0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x8D, 0x017D, 0x8F, //   88-8F
+  0x90, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, // 90-97
+  0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x9D, 0x017E, 0x0178, // 98-9F
+];
+
+/// Decodes [bytes] as Windows-1252 (a superset of ISO-8859-1 / Latin-1),
+/// returning the text — or null when the result doesn't look like text (too many
+/// control code points, meaning the bytes were binary after all, not a legacy
+/// single-byte charset). Every byte maps to a code point, so unlike UTF-8 there
+/// is never a decode failure; the control-ratio check is the only rejection.
+///
+/// Whether it's worth calling this at all is decided upstream by
+/// [looksLikeLatin1Misdecode] (plus an [isValidUtf8] guard); this is just the
+/// decode and a final sanity check.
+String? decodeLatin1(Uint8List bytes) {
+  final buf = StringBuffer();
+  for (final b in bytes) {
+    buf.writeCharCode(b < 0x80 || b > 0x9F ? b : _cp1252High[b - 0x80]);
+  }
+  final s = buf.toString();
+  final window = s.length < _latinSniffChars ? s.length : _latinSniffChars;
+  if (window == 0) return null;
+  var controls = 0;
+  for (var i = 0; i < window; i++) {
+    final u = s.codeUnitAt(i);
+    final isControl =
+        (u < 0x20 && u != 0x09 && u != 0x0A && u != 0x0D) ||
+        (u >= 0x7F && u <= 0x9F);
+    if (isControl) controls++;
+  }
+  if (controls / window > _latinControlRatio) return null;
+  return s;
 }

@@ -38,13 +38,24 @@ and window math.
 - **[MED] Open viewers never refetched.** `_refresh` (⌘R) now invalidates the
   `fileContent`/`fileBytes` families, so a manual refresh reflects on-disk edits.
 
-### Deferred from Phase 2
+### Phase 2 follow-up — done (2026-07-06)
 
 - **[MED] No charset fallback for single-byte non-UTF-8 (Latin-1 / Win-1252).**
-  Deferred: unlike the UTF-16 case (a definitive BOM signal), detecting Latin-1
-  from a UTF-8-decoded string is fuzzy — it risks a wrong re-decode or an extra
-  round-trip for any file with a stray replacement char. Wants a proper charset
-  sniff before it's worth doing.
+  ✅ Done. Was deferred because detecting Latin-1 from a UTF-8-decoded string is
+  fuzzy; the fix is the "proper charset sniff" that deferral asked for.
+  `looksLikeLatin1Misdecode(raw)` triggers the fallback only when the UTF-8
+  decode is ASCII + `U+FFFD` replacements with **no real high char salvaged and
+  no stray C0 controls** — so a genuinely-UTF-8 file (even one with real accents
+  plus a lone corrupt byte) is left as its correct reading, and binary (control-
+  saturated) is excluded. Only then are the bytes re-read; an `isValidUtf8`
+  guard spares a file that merely contains a literal `U+FFFD` glyph, and
+  `decodeLatin1` decodes Windows-1252 (Latin-1 superset — smart quotes, dashes,
+  euro) with a final control-ratio sanity check, kept only if it reclassifies as
+  text. The `!contains('�')` fast path means normal files pay no extra
+  round-trip. Handles both the dense case (classified binary → recovered) and
+  the sparse case (classified text → mojibake repaired). 18 tests across
+  `viewer_text_decoding_test.dart` (helpers) and `viewer_latin1_fallback_test.dart`
+  (provider end-to-end).
 
 ## Phase 3 — rendering fidelity — done (2026-07-06)
 

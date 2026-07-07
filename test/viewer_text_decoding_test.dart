@@ -103,4 +103,80 @@ void main() {
       expect(decodeUtf16Or32(b([0xFF, 0xFE, 0x48, 0x00, 0x69])), 'H');
     });
   });
+
+  group('looksLikeLatin1Misdecode', () {
+    test('flags a Latin-1 file (accent byte became a replacement)', () {
+      // "café\n" in Latin-1: 63 61 66 E9 0A — 0xE9 is invalid UTF-8 alone.
+      final raw = asUtf8Read([0x63, 0x61, 0x66, 0xE9, 0x0A]);
+      expect(looksLikeLatin1Misdecode(raw), isTrue);
+    });
+
+    test('flags a Windows-1252 file (smart-quote byte became a replacement)', () {
+      // "it's" with a 0x92 curly apostrophe: 69 74 92 73.
+      final raw = asUtf8Read([0x69, 0x74, 0x92, 0x73]);
+      expect(looksLikeLatin1Misdecode(raw), isTrue);
+    });
+
+    test('does not flag clean ASCII', () {
+      expect(looksLikeLatin1Misdecode('plain ascii\n'), isFalse);
+    });
+
+    test('does not flag valid UTF-8 with real accents (no replacement)', () {
+      // "café" as proper UTF-8 → decodes to a real é, no replacement char.
+      final raw = asUtf8Read([0x63, 0x61, 0x66, 0xC3, 0xA9]);
+      expect(looksLikeLatin1Misdecode(raw), isFalse);
+    });
+
+    test('does not flag a mostly-UTF-8 file with one corrupt byte', () {
+      // A real é (C3 A9) survives alongside a lone bad byte (E9) → a valid high
+      // char remains, so re-decoding would mangle it. Leave it as UTF-8.
+      final raw = asUtf8Read([0x63, 0xC3, 0xA9, 0x20, 0xE9, 0x0A]);
+      expect(looksLikeLatin1Misdecode(raw), isFalse);
+    });
+
+    test('does not flag binary (stray C0 control bytes present)', () {
+      // A NUL/other C0 control alongside replacements is a binary signal.
+      final raw = asUtf8Read([0x41, 0x00, 0xE9, 0x01, 0xFF]);
+      expect(looksLikeLatin1Misdecode(raw), isFalse);
+    });
+  });
+
+  group('isValidUtf8', () {
+    Uint8List b(List<int> v) => Uint8List.fromList(v);
+
+    test('true for valid UTF-8 bytes', () {
+      expect(isValidUtf8(b([0x63, 0x61, 0x66, 0xC3, 0xA9])), isTrue);
+    });
+
+    test('true for a legitimately-encoded U+FFFD glyph (EF BF BD)', () {
+      expect(isValidUtf8(b([0x61, 0xEF, 0xBF, 0xBD])), isTrue);
+    });
+
+    test('false for a lone high byte (Latin-1)', () {
+      expect(isValidUtf8(b([0x63, 0x61, 0x66, 0xE9])), isFalse);
+    });
+  });
+
+  group('decodeLatin1', () {
+    Uint8List b(List<int> v) => Uint8List.fromList(v);
+
+    test('decodes Latin-1 high bytes to their code points', () {
+      expect(decodeLatin1(b([0x63, 0x61, 0x66, 0xE9, 0x0A])), 'café\n');
+    });
+
+    test('decodes Windows-1252 punctuation, not Latin-1 C1 controls', () {
+      // 0x92 → U+2019 (right single quote) in cp1252, not U+0092.
+      expect(decodeLatin1(b([0x69, 0x74, 0x92, 0x73])), 'it’s');
+    });
+
+    test('maps the euro sign (0x80 → U+20AC)', () {
+      expect(decodeLatin1(b([0x80])), '€');
+    });
+
+    test('returns null for control-saturated (binary) bytes', () {
+      // Mostly C0 control bytes → too many controls to be single-byte text.
+      final bytes = b(List<int>.generate(100, (i) => i.isEven ? 0x01 : 0xE9));
+      expect(decodeLatin1(bytes), isNull);
+    });
+  });
 }

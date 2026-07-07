@@ -86,6 +86,27 @@ final fileContentProvider = FutureProvider.autoDispose
             if (reclassified.kind == FileContentKind.text) return reclassified;
           }
         }
+        // A single-byte legacy charset (Latin-1 / Windows-1252, common from
+        // older Windows tooling) carries no BOM and no NUL, so its high bytes
+        // just fail the UTF-8 decode and surface as replacement chars —
+        // classified binary when accents are dense, shown as mojibake when
+        // sparse. When the decode looks like exactly that (ASCII + replacements,
+        // no real char salvaged), re-read the bytes and decode as Windows-1252,
+        // keeping the result only if it lands as text. The [isValidUtf8] guard
+        // spares a file that merely contains a literal U+FFFD glyph: its bytes
+        // decode cleanly, so its UTF-8 reading is already correct.
+        if (content.kind != FileContentKind.tooLarge &&
+            looksLikeLatin1Misdecode(raw)) {
+          final b64 = await git.readFileBase64(repoPath, path);
+          final bytes = base64.decode(b64.replaceAll(RegExp(r'\s'), ''));
+          if (!isValidUtf8(bytes)) {
+            final decoded = decodeLatin1(bytes);
+            if (decoded != null) {
+              final reclassified = FileContent.classify(decoded);
+              if (reclassified.kind == FileContentKind.text) return reclassified;
+            }
+          }
+        }
         return content;
       } catch (e) {
         throw _mapReadError(e);
