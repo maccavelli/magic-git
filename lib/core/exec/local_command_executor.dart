@@ -138,19 +138,23 @@ class LocalCommandExecutor implements CommandExecutor {
       await p.stdin.close();
 
       // `allowMalformed: true` so non-UTF-8 bytes (binary content, non-UTF-8
-      // filenames/authors) are replaced rather than throwing. Each stream is
-      // bounded by [SSHCommandExecutor.collectBounded] so an unexpectedly
-      // enormous output aborts with [SSHOutputExceeded] instead of buffering
-      // unbounded toward an OOM — the same reasoning applies locally as over
-      // SSH, since a huge diff/log/`cat` is just as capable of ballooning
-      // memory regardless of transport.
+      // filenames/authors) are replaced rather than throwing. A single
+      // [OutputByteBudget] charges the raw bytes of stdout+stderr *before*
+      // decoding, so an unexpectedly enormous output aborts with
+      // [SSHOutputExceeded] — bounded by real byte size (combined across both
+      // streams) instead of buffering unbounded toward an OOM. The same
+      // reasoning applies locally as over SSH: a huge diff/log/`cat` is just as
+      // capable of ballooning memory regardless of transport.
       final label = gitArgs.join(' ');
+      final budget = OutputByteBudget();
       final stdoutFuture = SSHCommandExecutor.collectBounded(
-        p.stdout.transform(const Utf8Decoder(allowMalformed: true)),
+        SSHCommandExecutor.boundedBytes(p.stdout, budget, label)
+            .transform(const Utf8Decoder(allowMalformed: true)),
         label,
       );
       final stderrFuture = SSHCommandExecutor.collectBounded(
-        p.stderr.transform(const Utf8Decoder(allowMalformed: true)),
+        SSHCommandExecutor.boundedBytes(p.stderr, budget, label)
+            .transform(const Utf8Decoder(allowMalformed: true)),
         label,
       );
 

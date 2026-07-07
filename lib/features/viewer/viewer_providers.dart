@@ -79,7 +79,7 @@ final fileContentProvider = FutureProvider.autoDispose
         if (content.kind == FileContentKind.binary &&
             hasUtf16Or32BomSignature(raw)) {
           final b64 = await git.readFileBase64(repoPath, path);
-          final bytes = base64.decode(b64.replaceAll(RegExp(r'\s'), ''));
+          final bytes = base64.decode(b64);
           final decoded = decodeUtf16Or32(bytes);
           if (decoded != null) {
             final reclassified = FileContent.classify(decoded);
@@ -98,7 +98,7 @@ final fileContentProvider = FutureProvider.autoDispose
         if (content.kind != FileContentKind.tooLarge &&
             looksLikeLatin1Misdecode(raw)) {
           final b64 = await git.readFileBase64(repoPath, path);
-          final bytes = base64.decode(b64.replaceAll(RegExp(r'\s'), ''));
+          final bytes = base64.decode(b64);
           if (!isValidUtf8(bytes)) {
             final decoded = decodeLatin1(bytes);
             if (decoded != null) {
@@ -124,9 +124,10 @@ final fileBytesProvider = FutureProvider.autoDispose
         final b64 = await ref
             .watch(gitServiceProvider)
             .readFileBase64(repoPath, path);
-        // `base64` wraps its output (GNU at 76 cols); strip all whitespace
-        // before decoding, which is otherwise strict about it.
-        return base64.decode(b64.replaceAll(RegExp(r'\s'), ''));
+        // `readFileBase64` already strips the wrapping newlines remote-side, so
+        // the output is decode-ready — no second whitespace-stripped copy of the
+        // large base64 string is allocated here.
+        return base64.decode(b64);
       } catch (e) {
         // A huge image trips the executor's output cap (base64 inflates bytes
         // ~1.37×, so the ceiling bites sooner) — surface it as `tooLarge` so the

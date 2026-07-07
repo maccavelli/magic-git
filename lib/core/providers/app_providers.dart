@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:riverpod/misc.dart' show KeepAliveLink;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../exec/local_command_executor.dart';
 import '../git/git_service.dart';
@@ -26,6 +25,7 @@ import '../storage/local_repo_store.dart';
 import '../storage/saved_connection.dart';
 import '../storage/saved_local_repo.dart';
 import '../utils/git_porcelain_parser.dart';
+import 'keep_alive_lru.dart';
 
 /// Persists the main window's last position/size across launches, using the
 /// same `SharedPreferences` key-naming/read-write convention as
@@ -1457,55 +1457,22 @@ final logSearchProvider = FutureProvider.autoDispose
           );
     });
 
-/// Bounds a `ref.keepAlive()`'d autoDispose family provider's cache to the
-/// most recently touched [capacity] keys, closing the rest's [KeepAliveLink]s
-/// so they're free to autoDispose in least-recently-used order. Used by the
-/// diff/blame/file-history families below: over SSH, reopening a file/commit
-/// you just closed re-fetching from scratch is the literal opposite of using
-/// memory for speed, but caching forever would grow unbounded across a long
-/// session — this caps it instead.
-class _KeepAliveLru<K> {
-  final int capacity;
-  final _order = <K>[]; // least-recently-used first
-  final _links = <K, KeepAliveLink>{};
-
-  _KeepAliveLru(this.capacity);
-
-  void touch(K key, KeepAliveLink link) {
-    _links.remove(key)?.close();
-    _order.remove(key);
-    _order.add(key);
-    _links[key] = link;
-    while (_order.length > capacity) {
-      _links.remove(_order.removeAt(0))?.close();
-    }
-  }
-
-  /// Releases every held link. Called alongside `ref.invalidate` in
-  /// [ConnectionController._invalidateRepoState] so a stale connection's
-  /// entries don't linger in this bookkeeping (harmless — they'd just occupy
-  /// capacity until evicted — but there's no reason to let them).
-  void clear() {
-    for (final link in _links.values) {
-      link.close();
-    }
-    _links.clear();
-    _order.clear();
-  }
-}
-
-final _fileLogLru = _KeepAliveLru<(String, String)>(24);
-final _blameLru = _KeepAliveLru<(String, String)>(24);
-final _fileDiffLru = _KeepAliveLru<(String, String, bool, bool, int)>(24);
-final _commitDiffLru = _KeepAliveLru<(String, String)>(24);
-final _commitFileDiffLru = _KeepAliveLru<(String, String, String)>(24);
-final _conflictFileLru = _KeepAliveLru<(String, String)>(24);
-final _untrackedDiffLru = _KeepAliveLru<(String, String)>(24);
+// The bounded keep-alive LRU backing the diff/blame/file-history caches lives in
+// keep_alive_lru.dart (extracted so it's unit-testable). String-valued caches
+// additionally report payload size via `reportSize` for byte-budget eviction;
+// the list-valued ones (fileLog/blame) rely on the count cap alone.
+final _fileLogLru = KeepAliveLru<(String, String)>(24);
+final _blameLru = KeepAliveLru<(String, String)>(24);
+final _fileDiffLru = KeepAliveLru<(String, String, bool, bool, int)>(24);
+final _commitDiffLru = KeepAliveLru<(String, String)>(24);
+final _commitFileDiffLru = KeepAliveLru<(String, String, String)>(24);
+final _conflictFileLru = KeepAliveLru<(String, String)>(24);
+final _untrackedDiffLru = KeepAliveLru<(String, String)>(24);
 
 /// Commits that touched a single file, newest first, following renames — the
 /// "file history" view. Keyed by (repoPath, path). Kept alive (bounded LRU)
 /// so reopening a file's history doesn't re-fetch over SSH — see
-/// [_KeepAliveLru].
+/// [KeepAliveLru].
 final fileLogProvider = FutureProvider.autoDispose
     .family<List<GitCommit>, (String, String)>((ref, key) {
       _fileLogLru.touch(key, ref.keepAlive());
@@ -1516,7 +1483,7 @@ final fileLogProvider = FutureProvider.autoDispose
     });
 
 /// Line-by-line blame for a file. Keyed by (repoPath, path). Kept alive
-/// (bounded LRU) — see [_KeepAliveLru].
+/// (bounded LRU) — see [KeepAliveLru].
 final blameProvider = FutureProvider.autoDispose
     .family<List<BlameLine>, (String, String)>((ref, key) {
       _blameLru.touch(key, ref.keepAlive());
@@ -1553,54 +1520,76 @@ final fileDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, bool, bool, int)>((ref, key) {
       _fileDiffLru.touch(key, ref.keepAlive());
       final (repoPath, path, staged, ignoreWhitespace, context) = key;
-      return ref.watch(gitServiceProvider).diffFile(
+      final future = ref.watch(gitServiceProvider).diffFile(
         repoPath,
         path: path,
         staged: staged,
         ignoreWhitespace: ignoreWhitespace,
         context: context,
       );
+      future.then((d) => _fileDiffLru.reportSize(key, d.length), onError: (_) {});
+      return future;
     });
 
 /// Full patch for a commit. Keyed by (repoPath, hash). Kept alive (bounded
-/// LRU) — see [_KeepAliveLru].
+/// LRU) — see [KeepAliveLru].
 final commitDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       _commitDiffLru.touch(key, ref.keepAlive());
       final (repoPath, hash) = key;
-      return ref.watch(gitServiceProvider).showCommit(repoPath, hash);
+      final future = ref.watch(gitServiceProvider).showCommit(repoPath, hash);
+      future.then(
+        (d) => _commitDiffLru.reportSize(key, d.length),
+        onError: (_) {},
+      );
+      return future;
     });
 
 /// A commit's patch scoped to a single file. Keyed by (repoPath, hash, path)
 /// — used by the file-history view so selecting a commit fetches only the
 /// file being inspected, not every file that commit touched. Kept alive
-/// (bounded LRU) — see [_KeepAliveLru].
+/// (bounded LRU) — see [KeepAliveLru].
 final commitFileDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, String)>((ref, key) {
       _commitFileDiffLru.touch(key, ref.keepAlive());
       final (repoPath, hash, path) = key;
-      return ref
+      final future = ref
           .watch(gitServiceProvider)
           .showCommit(repoPath, hash, path: path);
+      future.then(
+        (d) => _commitFileDiffLru.reportSize(key, d.length),
+        onError: (_) {},
+      );
+      return future;
     });
 
 /// The conflicted working-tree file (with merge markers). Keyed by
-/// (repoPath, path). Kept alive (bounded LRU) — see [_KeepAliveLru].
+/// (repoPath, path). Kept alive (bounded LRU) — see [KeepAliveLru].
 final conflictFileProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       _conflictFileLru.touch(key, ref.keepAlive());
       final (repoPath, path) = key;
-      return ref.watch(gitServiceProvider).conflictFile(repoPath, path);
+      final future = ref.watch(gitServiceProvider).conflictFile(repoPath, path);
+      future.then(
+        (d) => _conflictFileLru.reportSize(key, d.length),
+        onError: (_) {},
+      );
+      return future;
     });
 
 /// An untracked file's contents rendered as an all-additions diff, so new files
 /// display their content (a plain `git diff` shows nothing for them). Keyed by
-/// (repoPath, path). Kept alive (bounded LRU) — see [_KeepAliveLru].
+/// (repoPath, path). Kept alive (bounded LRU) — see [KeepAliveLru].
 final untrackedDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       _untrackedDiffLru.touch(key, ref.keepAlive());
       final (repoPath, path) = key;
-      return ref.watch(gitServiceProvider).diffUntracked(repoPath, path);
+      final future = ref.watch(gitServiceProvider).diffUntracked(repoPath, path);
+      future.then(
+        (d) => _untrackedDiffLru.reportSize(key, d.length),
+        onError: (_) {},
+      );
+      return future;
     });
 
 /// Open merge requests for the connected project.

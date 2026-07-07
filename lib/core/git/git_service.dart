@@ -902,11 +902,14 @@ class GitService {
   /// images the viewer renders (`Image.memory` after decoding). Piped through
   /// `base64` (reading the file via a shell redirection, which works the same
   /// with GNU and BSD `base64`) so binary bytes survive the executor's UTF-8
-  /// stdout decoding intact. Caller decodes the base64 (stripping the wrapping
-  /// newlines GNU `base64` inserts). Oversized output trips the executor's hard
-  /// cap and surfaces as a failure rather than spiking memory.
+  /// stdout decoding intact. The wrapping newlines GNU `base64` inserts are
+  /// stripped **remote-side** with `tr -d '\r\n'`, so the caller can
+  /// `base64.decode` the result directly instead of allocating a second
+  /// full-size whitespace-stripped copy of the (already ~1.37×-inflated) string
+  /// on the client. Oversized output trips the executor's hard cap and surfaces
+  /// as a failure rather than spiking memory.
   Future<String> readFileBase64(String repoPath, String path) async {
-    final script = 'base64 < ${ShellEscaper.escape(path)}';
+    final script = "base64 < ${ShellEscaper.escape(path)} | tr -d '\\r\\n'";
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['sh', '-c', script],

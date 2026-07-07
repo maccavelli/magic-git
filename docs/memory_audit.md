@@ -57,7 +57,7 @@ spinner while loading. Apply the same to `DiffView` (`diff_view.dart:60`, the
 commit/stash/file-history renderer — same class of unguarded main-thread
 `LineSplitter().convert`).
 
-### C. Binary/fallback reads hold 3–6 large copies of the file at once *(HIGH transient)*
+### C. Binary/fallback reads hold 3–6 large copies of the file at once *(HIGH transient)* — ✅ done (Tier 2)
 `lib/core/git/git_service.dart:909` returns `base64` output *with* GNU's wrapping
 newlines; `lib/features/viewer/viewer_providers.dart:82,101` then does
 `b64.replaceAll(RegExp(r'\s'), '')`, allocating a **second** full ~1.37× copy via
@@ -92,9 +92,17 @@ identity) instead of per rebuild.
 
 ---
 
-## Tier 2 — worthwhile, moderate effort
+## Tier 2 — worthwhile, moderate effort — ✅ F, G, C done (2026-07-07); H deferred
 
-### F. Diff/blame/blob LRUs are count-capped (24), not byte-capped *(MED)*
+C (base64 double-copy), F (byte-aware LRU), G (byte-based executor cap) implemented
+with tests; 560 tests pass, analyze clean. `KeepAliveLru` extracted to
+`lib/core/providers/keep_alive_lru.dart` and `OutputByteBudget`/`boundedBytes`
+added to the executor, both unit-tested. H (bytes-first fallback read that avoids
+holding `raw` + a second read) is the remaining piece — a larger read-path
+refactor left for a focused pass; C already removed its worst copy (the client
+whitespace-strip).
+
+### F. Diff/blame/blob LRUs are count-capped (24), not byte-capped *(MED)* — ✅ done
 `lib/core/providers/app_providers.dart:1479,1497-1503` — seven `_KeepAliveLru`
 caches pin the entire fetched string/list for 24 keys each, with **no per-entry
 size limit and no total-byte ceiling** (`while (_order.length > capacity)`). Key
@@ -106,7 +114,7 @@ generated-file commits pins up to 24 multi-MB `git show` patches in
 (a few MB/family) and/or refuse `keepAlive()` for an entry over a per-entry
 threshold (let one huge diff autoDispose; re-fetching it is cheap vs. pinning it).
 
-### G. The 50 MiB executor cap is char-based, per-stream, and doubles on `toString()` *(MED)*
+### G. The 50 MiB executor cap is char-based, per-stream, and doubles on `toString()` *(MED)* — ✅ done (byte-based + shared budget; toString doubling accepted)
 `lib/core/ssh/ssh_command_executor.dart:185,346,352` — `collectBounded` counts
 UTF-16 code units, not bytes, so a CJK-heavy file (~3 bytes/unit) can be ~150 MB
 on disk under a "50 MiB" cap, while non-Latin content forces TwoByteString so
@@ -115,7 +123,7 @@ on disk under a "50 MiB" cap, while non-Latin content forces TwoByteString so
 byte length *before* UTF-8 decode, with a single shared byte budget across
 stdout+stderr, so the cap maps to real memory/wire size.
 
-### H. Latin-1/UTF-16 fallback should read bytes once and drop `raw` *(MED)*
+### H. Latin-1/UTF-16 fallback should read bytes once and drop `raw` *(MED)* — deferred (see Tier 2 header)
 Same site as Finding C — beyond the newline copy, the fallback does a full second
 read (`readFileBase64`) for a file it already read as text, holding both. **Fix:**
 fetch bytes once and decode locally under the candidate codec; release `raw`

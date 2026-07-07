@@ -140,20 +140,22 @@ void main() {
       expect(content, 'hello\n');
     });
 
-    test('readFileBase64 pipes the file through base64 via a shell redirect',
-        () async {
+    test('readFileBase64 pipes the file through base64, stripping newlines '
+        'remote-side', () async {
       exec.next = const SSHCommandResult(
         exitCode: 0,
-        stdout: 'aGVsbG8=\n',
+        stdout: 'aGVsbG8=',
         stderr: '',
       );
       final b64 = await git.readFileBase64('/repo', 'assets/logo.png');
+      // The `tr -d '\r\n'` strips base64's wrapping newlines on the remote, so
+      // the caller can decode directly without a client-side whitespace copy.
       expect(exec.calls.single, [
         'sh',
         '-c',
-        "base64 < 'assets/logo.png'",
+        "base64 < 'assets/logo.png' | tr -d '\\r\\n'",
       ]);
-      expect(b64, 'aGVsbG8=\n');
+      expect(b64, 'aGVsbG8=');
     });
 
     test('readFile throws GitException on a failed read', () async {

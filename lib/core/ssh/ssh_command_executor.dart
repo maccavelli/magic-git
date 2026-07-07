@@ -62,6 +62,27 @@ class SSHOutputExceeded implements Exception {
       'SSH command output exceeded the maximum buffer size: $command';
 }
 
+/// A mutable byte budget shared across one command's stdout and stderr, so their
+/// *combined* buffered output — not each stream independently — is what the cap
+/// bounds. [charge] is called per raw byte chunk before decoding; the first
+/// charge that pushes the running total over [limit] throws [SSHOutputExceeded].
+/// Single-threaded by construction (both streams drain on the same isolate), so
+/// the shared counter needs no synchronization.
+class OutputByteBudget {
+  OutputByteBudget([this.limit = SSHCommandExecutor.maxCommandOutputBytes]);
+
+  final int limit;
+  int _used = 0;
+
+  /// Total bytes charged so far — for tests/diagnostics.
+  int get used => _used;
+
+  void charge(int bytes, String command) {
+    _used += bytes;
+    if (_used > limit) throw SSHOutputExceeded(command);
+  }
+}
+
 /// A live handle to a long-running command (e.g. `fswatch`, a CI job trace,
 /// or `git log --follow`) whose output is consumed incrementally.
 ///
@@ -173,15 +194,15 @@ class SSHCommandExecutor implements CommandExecutor {
   /// callers can override per command.
   static const Duration defaultTimeout = Duration(seconds: 60);
 
-  /// Ceiling on the number of decoded characters a single request/response
-  /// command's stdout — or stderr — may accumulate before it is aborted with
-  /// [SSHOutputExceeded]. Such commands buffer their entire output in memory as
-  /// one String, previously bounded only by [defaultTimeout], so a huge
-  /// diff/log/`cat` of a big blob could spike memory. 50 MiB is far above any
-  /// legitimate status/log/diff this UI issues, so normal-sized output is
-  /// completely unaffected. The streaming path ([executeStream] /
-  /// [SSHStreamHandle]) is exempt: it hands callers the raw stream and never
-  /// materializes it here.
+  /// Post-decode backstop on the number of decoded characters a single
+  /// request/response stream may accumulate. The *primary* ceiling is now
+  /// [maxCommandOutputBytes], charged on raw bytes before decoding and shared
+  /// across stdout+stderr (see [OutputByteBudget]); since UTF-8 bytes ≥ code
+  /// units, the byte budget trips first for any content, so this char cap only
+  /// backs it up. Such commands buffer their entire output in memory as one
+  /// String, so without a bound a huge diff/log/`cat` of a big blob could spike
+  /// memory. The streaming path ([executeStream] / [SSHStreamHandle]) is exempt:
+  /// it hands callers the raw stream and never materializes it here.
   static const int maxCommandOutputChars = 50 * 1024 * 1024;
 
   /// Tail of the serialization chain. Every command links onto this future so
@@ -352,6 +373,32 @@ class SSHCommandExecutor implements CommandExecutor {
     return buffer.toString();
   }
 
+  /// Primary in-memory output ceiling, counted in **raw bytes** (pre-decode) so
+  /// it maps to real wire/disk/memory size regardless of encoding — unlike
+  /// [maxCommandOutputChars] (UTF-16 code units), under which CJK-heavy output
+  /// could be ~3× this many bytes on the wire yet count as far fewer "chars",
+  /// and any non-Latin1 content doubles the resident `String` size. A single
+  /// budget is shared across a command's stdout+stderr (see [OutputByteBudget]),
+  /// bounding their *combined* size. 50 MiB is far above any status/log/diff this
+  /// UI issues; [collectBounded]'s char cap remains as a post-decode backstop.
+  static const int maxCommandOutputBytes = 50 * 1024 * 1024;
+
+  /// Passes a raw byte stream through unchanged while charging each chunk's
+  /// length against [budget] *before* UTF-8 decoding, aborting with
+  /// [SSHOutputExceeded] the moment the budget is exceeded. Inserted ahead of the
+  /// decoder in both executors' drain paths so the ceiling is byte-based and a
+  /// single [budget] shared between stdout and stderr bounds their combined size.
+  static Stream<List<int>> boundedBytes(
+    Stream<List<int>> bytes,
+    OutputByteBudget budget,
+    String command,
+  ) async* {
+    await for (final chunk in bytes) {
+      budget.charge(chunk.length, command);
+      yield chunk;
+    }
+  }
+
   /// Merges the resolved PATH and [extraEnv] over the formatter's default
   /// prelude (later entries win).
   Map<String, String> _mergedEnv(Map<String, String>? extraEnv) => {
@@ -403,24 +450,27 @@ class SSHCommandExecutor implements CommandExecutor {
       // Drain both streams; they close when the process exits.
       // `allowMalformed: true` so non-UTF-8 bytes (binary content, non-UTF-8
       // filenames/authors) are replaced rather than throwing and leaking the
-      // session past this function's own error handling. Each is bounded by
-      // [collectBounded] so an unexpectedly enormous output aborts with
-      // [SSHOutputExceeded] instead of buffering unbounded toward an OOM.
+      // session past this function's own error handling. A single
+      // [OutputByteBudget] charges the raw bytes of stdout+stderr *before*
+      // decoding, so an unexpectedly enormous output aborts with
+      // [SSHOutputExceeded] — bounded by real byte size (combined across both
+      // streams) instead of buffering unbounded toward an OOM.
       final label = gitArgs.join(' ');
+      final budget = OutputByteBudget();
       final stdoutFuture = collectBounded(
-        s.stdout.cast<List<int>>().transform(
+        boundedBytes(s.stdout.cast<List<int>>(), budget, label).transform(
           const Utf8Decoder(allowMalformed: true),
         ),
         label,
       );
       final stderrFuture = collectBounded(
-        s.stderr.cast<List<int>>().transform(
+        boundedBytes(s.stderr.cast<List<int>>(), budget, label).transform(
           const Utf8Decoder(allowMalformed: true),
         ),
         label,
       );
 
-      // eagerError: as soon as either stream crosses maxCommandOutputChars,
+      // eagerError: as soon as either stream crosses the byte budget,
       // fail this call immediately rather than blocking on the *other*
       // stream too — which, for a remote process whose stdout we just
       // stopped draining, may never close on its own (the process can be
