@@ -126,19 +126,29 @@ Widget _choiceButton<T>(
 
 /// Confirms an outward-facing action (e.g. approving an MR, retrying a
 /// pipeline). Returns true only if the user explicitly confirms.
+///
+/// [cancelLabel] renames the dismiss button (default "Cancel"). Set
+/// [destructive] for an irreversible delete: the header icon becomes a red
+/// trash can instead of the neutral blue question mark.
 Future<bool> confirmAction(
   BuildContext context, {
   required String title,
   required String message,
   String confirmLabel = 'Confirm',
+  String cancelLabel = 'Cancel',
+  bool destructive = false,
 }) async {
   final result = await showMacosAlertDialog<bool>(
     context: context,
     builder: (context) => MacosAlertDialog(
-      appIcon: const MacosIcon(
-        CupertinoIcons.question_circle,
+      appIcon: MacosIcon(
+        destructive
+            ? CupertinoIcons.trash
+            : CupertinoIcons.question_circle,
         size: 56,
-        color: MacosColors.systemBlueColor,
+        color: destructive
+            ? MacosColors.systemRedColor
+            : MacosColors.systemBlueColor,
       ),
       title: Text(title),
       message: Text(message, textAlign: TextAlign.center),
@@ -151,7 +161,7 @@ Future<bool> confirmAction(
         controlSize: ControlSize.large,
         secondary: true,
         onPressed: () => Navigator.of(context).pop(false),
-        child: const Text('Cancel'),
+        child: Text(cancelLabel),
       ),
     ),
   );

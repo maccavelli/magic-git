@@ -503,6 +503,173 @@ void main() {
     },
   );
 
+  group('right-click gitignore / delete', () {
+    // A file-tree fixture whose `build/` dir is git-ignored, so the
+    // "Add to .gitignore" visibility rule (hidden for already-ignored files)
+    // can be exercised alongside a plain, not-ignored file.
+    RepoNode fixtureWithIgnored() => const RepoNode(
+      name: '',
+      path: '',
+      isDir: true,
+      children: [
+        RepoNode(name: 'todo.txt', path: 'todo.txt', isDir: false),
+        RepoNode(
+          name: 'build',
+          path: 'build',
+          isDir: true,
+          ignored: true,
+          children: [
+            RepoNode(
+              name: 'out.o',
+              path: 'build/out.o',
+              isDir: false,
+              ignored: true,
+            ),
+          ],
+        ),
+      ],
+    );
+
+    Future<ProviderContainer> pumpWithGit(
+      WidgetTester tester,
+      _RecordingGit git,
+    ) async {
+      final container = ProviderContainer(
+        overrides: [
+          gitServiceProvider.overrideWithValue(git),
+          repoStructureProvider(
+            _repo,
+          ).overrideWith((ref) async => fixtureWithIgnored()),
+          repoStatusOverlayProvider(_repo).overrideWith((ref) => _overlay),
+        ],
+      );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: MacosApp(
+            debugShowCheckedModeBanner: false,
+            // A trailing spacer reserves room for the menu to open rightward,
+            // same as the "View File" test above.
+            home: Row(
+              children: [
+                Expanded(
+                  child: SizedBox(
+                    height: 600,
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: FileView(
+                        maxWidth: 900,
+                        repoPath: _repo,
+                        onOpenFile:
+                            (_, {required staged, required untracked}) {},
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 300),
+              ],
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      return container;
+    }
+
+    testWidgets('"Add to .gitignore" appends the file via GitService', (
+      tester,
+    ) async {
+      final git = _RecordingGit();
+      await pumpWithGit(tester, git);
+
+      await tester.tap(find.text('todo.txt'), buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+      expect(find.text('Add to .gitignore'), findsOneWidget);
+
+      await tester.tap(find.text('Add to .gitignore'));
+      await tester.pumpAndSettle();
+      expect(git.ignored, [(_repo, 'todo.txt')]);
+    });
+
+    testWidgets('"Add to .gitignore" is hidden for an already-ignored file', (
+      tester,
+    ) async {
+      final git = _RecordingGit();
+      await pumpWithGit(tester, git);
+
+      // build/ is ignored and expands lazily; its ignored child out.o must not
+      // offer to re-ignore itself.
+      await tester.tap(find.text('build'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('out.o'), buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Delete File'), findsOneWidget);
+      expect(find.text('Add to .gitignore'), findsNothing);
+    });
+
+    testWidgets(
+      'Delete File shows the permanent-delete confirmation; "No" cancels',
+      (tester) async {
+        final git = _RecordingGit();
+        await pumpWithGit(tester, git);
+
+        await tester.tap(find.text('todo.txt'), buttons: kSecondaryMouseButton);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Delete File'));
+        await tester.pumpAndSettle();
+
+        // The exact confirmation copy the user asked for.
+        expect(
+          find.text(
+            'Are you sure you want to delete "todo.txt"? '
+            'This action is permanent!',
+          ),
+          findsOneWidget,
+        );
+        expect(find.text('Yes'), findsOneWidget);
+        expect(find.text('No'), findsOneWidget);
+
+        await tester.tap(find.text('No'));
+        await tester.pumpAndSettle();
+        expect(git.deleted, isEmpty);
+      },
+    );
+
+    testWidgets('Delete File → "Yes" deletes the file via GitService', (
+      tester,
+    ) async {
+      final git = _RecordingGit();
+      await pumpWithGit(tester, git);
+
+      await tester.tap(find.text('todo.txt'), buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete File'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Yes'));
+      await tester.pumpAndSettle();
+      expect(git.deleted, [(_repo, 'todo.txt')]);
+    });
+
+    testWidgets('the Delete File row is tinted red', (tester) async {
+      final git = _RecordingGit();
+      await pumpWithGit(tester, git);
+
+      await tester.tap(find.text('todo.txt'), buttons: kSecondaryMouseButton);
+      await tester.pumpAndSettle();
+
+      // The trash icon shares its row with the "Delete File" label; find the
+      // MacosIcon that is the trash can and assert its red tint.
+      final trash = tester.widgetList<MacosIcon>(find.byType(MacosIcon)).where(
+        (i) => i.icon == CupertinoIcons.trash,
+      );
+      expect(trash, isNotEmpty);
+      expect(trash.every((i) => i.color == MacosColors.systemRedColor), isTrue);
+    });
+  });
+
   group('_loadLazy repo-identity race', () {
     // A single lazy ignored directory, shared by both repos' fixtures below —
     // the collision that used to let a slower repo's response overwrite a
@@ -614,6 +781,22 @@ void main() {
       },
     );
   });
+}
+
+/// Records the right-click mutation calls (add-to-.gitignore / delete) without
+/// touching SSH, so the menu wiring can be asserted in isolation.
+class _RecordingGit extends GitService {
+  _RecordingGit() : super(SSHCommandExecutor(SSHClientManager()));
+  final List<(String, String)> ignored = [];
+  final List<(String, String)> deleted = [];
+
+  @override
+  Future<void> addToGitignore(String repoPath, String path) async =>
+      ignored.add((repoPath, path));
+
+  @override
+  Future<void> deleteFile(String repoPath, String path) async =>
+      deleted.add((repoPath, path));
 }
 
 /// listIgnoredChildren resolves via a per-repoPath gate the test controls,

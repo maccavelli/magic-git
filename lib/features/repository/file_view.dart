@@ -6,6 +6,7 @@ import 'package:macos_window_utils/widgets/visual_effect_subview_container/visua
 import '../../core/git/repo_tree.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/utils/git_porcelain_parser.dart';
+import '../common/actions.dart';
 import '../common/context_menu.dart';
 import '../common/status_style.dart';
 import '../common/tool_icon_button.dart';
@@ -76,6 +77,10 @@ class _FileViewState extends ConsumerState<FileView> {
 
   // Right-click context menu (Blame / File history), anchored at the tap point.
   final _contextMenu = ContextMenuOverlay();
+
+  // Serializes right-click mutations (add-to-.gitignore / delete) so two can't
+  // race on `.git/index.lock`; see _runMutation.
+  bool _busy = false;
 
   // Repositions the sidebar's native vibrancy view after every frame instead
   // of via macos_window_utils's own default (a raw Timer scheduled on every
@@ -247,7 +252,70 @@ class _FileViewState extends ConsumerState<FileView> {
               FileHistorySheet(repoPath: repoPath, path: node.path),
         ),
       ),
+      const ContextMenuDivider(),
+      // Already-ignored files have nothing to add — git would just dedupe the
+      // line — so the action is offered only for a not-yet-ignored file.
+      if (!node.ignored)
+        ContextMenuItem(
+          icon: CupertinoIcons.eye_slash,
+          label: 'Add to .gitignore',
+          onTap: () => _addToGitignore(node.path),
+        ),
+      ContextMenuItem(
+        icon: CupertinoIcons.trash,
+        iconColor: MacosColors.systemRedColor,
+        label: 'Delete File',
+        onTap: () => _deleteFile(node),
+      ),
     ]);
+  }
+
+  // Guards a mutation behind [_busy] (so a second right-click action can't
+  // race the first on `.git/index.lock`), surfaces any failure in the standard
+  // error dialog, and refreshes the tree/overlay afterward regardless of
+  // outcome — mirroring RepoStatusView's own `_guardedAction`/`_run`.
+  Future<void> _runMutation(Future<void> Function() op) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await runAction(context, op);
+    } finally {
+      if (mounted) {
+        // Mark this moment so the watcher's own follow-up tick for this
+        // mutation is recognized as redundant (same suppression RepoStatusView
+        // relies on), then invalidate: statusProvider drives the overlay and,
+        // via its structure signature, the tree; repoStructureProvider is
+        // invalidated too so a deleted file leaves the tree immediately.
+        ref.read(ownMutationTrackerProvider).mark(repoPath);
+        ref.invalidate(statusProvider(repoPath));
+        ref.invalidate(repoStructureProvider(repoPath));
+        setState(() => _busy = false);
+      }
+    }
+  }
+
+  Future<void> _addToGitignore(String path) =>
+      _runMutation(() => ref.read(gitServiceProvider).addToGitignore(repoPath, path));
+
+  Future<void> _deleteFile(RepoNode node) async {
+    final ok = await confirmAction(
+      context,
+      title: 'Delete file',
+      message: 'Are you sure you want to delete "${node.name}"? '
+          'This action is permanent!',
+      confirmLabel: 'Yes',
+      cancelLabel: 'No',
+      destructive: true,
+    );
+    if (!ok) return;
+    // Drop a stale selection highlight if the file being removed is the one
+    // currently open in the diff panel.
+    if (_selectedPath == node.path) {
+      setState(() => _selectedPath = null);
+    }
+    await _runMutation(
+      () => ref.read(gitServiceProvider).deleteFile(repoPath, node.path),
+    );
   }
 
   Future<void> _loadLazy(String path) async {

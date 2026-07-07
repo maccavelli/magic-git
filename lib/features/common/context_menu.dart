@@ -16,12 +16,17 @@ class ContextMenuItem extends ContextMenuEntry {
   final VoidCallback onTap;
   final bool enabled;
   final String? disabledTooltip;
+  /// Tints the leading icon (e.g. a red trash can for a destructive action).
+  /// Only the icon is tinted, not the label. Ignored while the row is disabled
+  /// — a greyed-out row's uniform grey takes precedence.
+  final Color? iconColor;
   const ContextMenuItem({
     required this.icon,
     required this.label,
     required this.onTap,
     this.enabled = true,
     this.disabledTooltip,
+    this.iconColor,
   });
 }
 
@@ -146,6 +151,7 @@ class _ContextMenuCard extends StatelessWidget {
                   label: e.label,
                   enabled: e.enabled,
                   disabledTooltip: e.disabledTooltip,
+                  iconColor: e.iconColor,
                   // Dismiss first, then act — matches a click on a native
                   // menu item, and lets item callbacks freely rebuild the
                   // widget that showed this menu without it fighting a still
@@ -169,12 +175,14 @@ class _ContextMenuRow extends StatefulWidget {
   final VoidCallback onTap;
   final bool enabled;
   final String? disabledTooltip;
+  final Color? iconColor;
   const _ContextMenuRow({
     required this.icon,
     required this.label,
     required this.onTap,
     this.enabled = true,
     this.disabledTooltip,
+    this.iconColor,
   });
 
   @override
@@ -188,6 +196,9 @@ class _ContextMenuRowState extends State<_ContextMenuRow> {
   Widget build(BuildContext context) {
     final enabled = widget.enabled;
     final color = enabled ? null : MacosColors.systemGrayColor;
+    // A disabled row greys everything uniformly; an enabled row lets an
+    // explicit iconColor (e.g. a red trash can) tint just the icon.
+    final iconColor = enabled ? widget.iconColor : color;
     final row = MouseRegion(
       onEnter: enabled ? (_) => setState(() => _hover = true) : null,
       onExit: enabled ? (_) => setState(() => _hover = false) : null,
@@ -202,7 +213,7 @@ class _ContextMenuRowState extends State<_ContextMenuRow> {
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
           child: Row(
             children: [
-              MacosIcon(widget.icon, size: 14, color: color),
+              MacosIcon(widget.icon, size: 14, color: iconColor),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(

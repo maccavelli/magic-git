@@ -1205,6 +1205,19 @@ class GitService {
   Future<void> removeUntrackedFilesMany(String repoPath, List<String> paths) =>
       _runVoid(repoPath, ['git', 'clean', '-f', '--', ...paths], 'git clean');
 
+  /// Permanently deletes [path] from the working tree with `rm -f`, regardless
+  /// of whether git tracks it. Unlike [removeUntrackedFile] (`git clean`, which
+  /// refuses to touch anything tracked), this is the file-tree pane's generic
+  /// delete: that pane lists every file — tracked, untracked, and ignored — so
+  /// its delete has to work on all of them. For a tracked file this removes the
+  /// working-tree copy (git then reports it as deleted; the committed history
+  /// still holds it, recoverable via `git restore`); for an untracked or
+  /// ignored file it is gone for good. `-f` so a read-only or already-missing
+  /// file doesn't error out. `--` guards a leading-`-` path, matching how every
+  /// other path argument in this file is hardened.
+  Future<void> deleteFile(String repoPath, String path) =>
+      _runVoid(repoPath, ['rm', '-f', '--', path], 'rm');
+
   /// Discards a staged path's changes entirely — both the index and working
   /// tree are reset to HEAD's content for [path]. For a path with no HEAD
   /// counterpart (a newly `git add`ed file that was never committed),

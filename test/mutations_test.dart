@@ -129,6 +129,20 @@ void main() {
       expect(exec.calls.single, ['git', 'restore', '--', 'a.dart']);
     });
 
+    test('deleteFile removes any path via rm -f, guarded by --', () async {
+      // Unlike removeUntrackedFile (git clean, which refuses tracked files),
+      // this is the file-tree pane's generic delete and must work on tracked
+      // files too — hence a plain rm.
+      await git.deleteFile('/repo', 'lib/main.dart');
+      expect(exec.calls.single, ['rm', '-f', '--', 'lib/main.dart']);
+    });
+
+    test('deleteFile keeps a leading-dash path out of rm option parsing',
+        () async {
+      await git.deleteFile('/repo', '-weird.txt');
+      expect(exec.calls.single, ['rm', '-f', '--', '-weird.txt']);
+    });
+
     test('readFile cats the path directly, guarded by --', () async {
       exec.next = const SSHCommandResult(
         exitCode: 0,
