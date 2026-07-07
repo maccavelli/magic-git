@@ -23,6 +23,7 @@ import 'history/history_view.dart';
 import 'repository/repo_status_view.dart';
 import 'settings/keyboard_shortcuts_sheet.dart';
 import 'settings/settings_sheet.dart';
+import 'settings/tool_health_banner.dart';
 import 'stash/stash_view.dart';
 import 'switcher/connection_switcher.dart';
 import 'switcher/current_repo_indicator.dart';
@@ -322,7 +323,8 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         onOpenSettings: () => _openSettings(context),
         onOpenShortcuts: () => _openShortcuts(context),
         onOpenConnections: () => _openConnections(context),
-        onCheckoutBranch: (branch) => _checkoutBranch(context, repoPath, branch),
+        onCheckoutBranch: (branch) =>
+            _checkoutBranch(context, repoPath, branch),
       ),
     );
   }
@@ -605,34 +607,43 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
           // guards instead of tearing it down and re-fetching from scratch
           // every time. Unvisited pages stay a cheap placeholder — and never
           // trigger their panel's provider fetches — until first opened.
-          return IndexedStack(
-            index: _pageIndex,
+          // A missing-tool banner sits above every page (zero-height when the
+          // host is healthy) so a gap in the environment is visible wherever
+          // the user is, not just in Settings.
+          return Column(
             children: [
-              _visitedPages.contains(0)
-                  ? RepoStatusView(
-                      repoPath: repoPath,
-                      isActive: _pageIndex == 0,
-                    )
-                  : const SizedBox.shrink(),
-              _visitedPages.contains(1)
-                  ? HistoryView(repoPath: repoPath, isActive: _pageIndex == 1)
-                  : const SizedBox.shrink(),
-              _visitedPages.contains(2)
-                  ? BranchesView(repoPath: repoPath, isActive: _pageIndex == 2)
-                  : const SizedBox.shrink(),
-              _visitedPages.contains(3)
-                  ? StashView(repoPath: repoPath, isActive: _pageIndex == 3)
-                  : const SizedBox.shrink(),
-              _visitedPages.contains(4)
-                  ? GitLabPanel(repoPath: repoPath, isActive: _pageIndex == 4)
-                  : const SizedBox.shrink(),
-              _visitedPages.contains(5)
-                  ? ProjectPanel(repoPath: repoPath)
-                  : const SizedBox.shrink(),
+              const ToolHealthBanner(),
+              Expanded(child: _pages(repoPath)),
             ],
           );
         },
       ),
+    );
+  }
+
+  Widget _pages(String repoPath) {
+    return IndexedStack(
+      index: _pageIndex,
+      children: [
+        _visitedPages.contains(0)
+            ? RepoStatusView(repoPath: repoPath, isActive: _pageIndex == 0)
+            : const SizedBox.shrink(),
+        _visitedPages.contains(1)
+            ? HistoryView(repoPath: repoPath, isActive: _pageIndex == 1)
+            : const SizedBox.shrink(),
+        _visitedPages.contains(2)
+            ? BranchesView(repoPath: repoPath, isActive: _pageIndex == 2)
+            : const SizedBox.shrink(),
+        _visitedPages.contains(3)
+            ? StashView(repoPath: repoPath, isActive: _pageIndex == 3)
+            : const SizedBox.shrink(),
+        _visitedPages.contains(4)
+            ? GitLabPanel(repoPath: repoPath, isActive: _pageIndex == 4)
+            : const SizedBox.shrink(),
+        _visitedPages.contains(5)
+            ? ProjectPanel(repoPath: repoPath)
+            : const SizedBox.shrink(),
+      ],
     );
   }
 }

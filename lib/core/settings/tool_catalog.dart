@@ -7,6 +7,8 @@
 /// hard-coded strings across probing and UI.
 library;
 
+import '../ssh/environment_probe.dart';
+
 /// A parsed `major.minor.patch` version, for comparing a detected tool version
 /// against a minimum. Tolerant: a missing minor/patch is treated as 0, and any
 /// trailing build metadata (e.g. "2.39.3 (Apple Git-145)") is ignored by the
@@ -113,7 +115,8 @@ class ToolSpec {
   /// Whether this tool is relevant on [os] ('macos' | 'linux' | 'unknown').
   /// When the OS isn't yet known (disconnected), everything is relevant so the
   /// panel can still describe the full toolset.
-  bool relevantOn(String os) => onlyOs == null || os == 'unknown' || onlyOs == os;
+  bool relevantOn(String os) =>
+      onlyOs == null || os == 'unknown' || onlyOs == os;
 }
 
 /// The tools Magic Git shells out to. Order is display order in the doctor
@@ -122,7 +125,8 @@ const List<ToolSpec> kToolCatalog = [
   ToolSpec(
     bin: 'git',
     tier: ToolTier.essential,
-    purpose: 'Every repository operation — status, diff, commit, history, sync.',
+    purpose:
+        'Every repository operation — status, diff, commit, history, sync.',
     // The app uses `--end-of-options` throughout, added in git 2.24.
     minVersion: ToolVersion(2, 24, 0),
     docsUrl: 'https://git-scm.com/downloads',
@@ -142,7 +146,8 @@ const List<ToolSpec> kToolCatalog = [
   ToolSpec(
     bin: 'fswatch',
     tier: ToolTier.optional,
-    purpose: 'Live refresh on file changes (macOS remote hosts). Falls back to '
+    purpose:
+        'Live refresh on file changes (macOS remote hosts). Falls back to '
         'polling when absent.',
     onlyOs: 'macos',
     docsUrl: 'https://github.com/emcrisostomo/fswatch',
@@ -150,7 +155,8 @@ const List<ToolSpec> kToolCatalog = [
   ToolSpec(
     bin: 'inotifywait',
     tier: ToolTier.optional,
-    purpose: 'Live refresh on file changes (Linux remote hosts). Falls back to '
+    purpose:
+        'Live refresh on file changes (Linux remote hosts). Falls back to '
         'polling when absent.',
     onlyOs: 'linux',
     docsUrl: 'https://github.com/inotify-tools/inotify-tools',
@@ -182,7 +188,8 @@ List<InstallHint> installHints(String bin, String os) {
   // Unknown host: offer the most universal guidance (Homebrew works on macOS
   // and Linux) plus a pointer to the docs.
   return [
-    if (bin != 'inotifywait') InstallHint('Homebrew (macOS/Linux)', 'brew install $bin'),
+    if (bin != 'inotifywait')
+      InstallHint('Homebrew (macOS/Linux)', 'brew install $bin'),
   ];
 }
 
@@ -197,6 +204,67 @@ List<InstallHint> _macHints(String bin) => switch (bin) {
   // inotifywait is Linux-only; nothing to install on macOS.
   _ => const [],
 };
+
+/// How serious the overall tool situation is, for a one-line summary.
+enum ToolHealthLevel { ok, warning, error }
+
+/// A single-line summary of tool health for the current host, shared by the
+/// Settings summary line and the main-window banner so both read identically.
+class ToolHealthReport {
+  final ToolHealthLevel level;
+  final String message;
+  const ToolHealthReport(this.level, this.message);
+}
+
+/// Distills [env] into one actionable line. Order of concern: disconnected →
+/// ok (nothing to check yet), a missing required tool → error, a missing
+/// feature tool → warning, an outdated tool → warning, else ok. Only relevant
+/// tools for the detected OS are considered (a Linux host is never faulted for
+/// lacking macOS's fswatch).
+ToolHealthReport summarizeToolHealth(RemoteEnvironment env) {
+  if (env.os == 'unknown') {
+    return const ToolHealthReport(
+      ToolHealthLevel.ok,
+      'Connect to a repository to check installed tools.',
+    );
+  }
+  final relevant = kToolCatalog.where((t) => t.relevantOn(env.os));
+  ToolSpec? missingEssential, missingFeature, outdated;
+  for (final spec in relevant) {
+    if (!env.has(spec.bin)) {
+      if (spec.tier == ToolTier.essential) {
+        missingEssential ??= spec;
+      } else if (spec.tier == ToolTier.feature) {
+        missingFeature ??= spec;
+      }
+      continue;
+    }
+    final vStr = env.versionOf(spec.bin);
+    final v = vStr == null ? null : ToolVersion.parse(vStr);
+    if (spec.minVersion != null && v != null && v < spec.minVersion!) {
+      outdated ??= spec;
+    }
+  }
+  if (missingEssential != null) {
+    return ToolHealthReport(
+      ToolHealthLevel.error,
+      '${missingEssential.bin} is not installed — required.',
+    );
+  }
+  if (missingFeature != null) {
+    return ToolHealthReport(
+      ToolHealthLevel.warning,
+      '${missingFeature.bin} is not installed — some features unavailable.',
+    );
+  }
+  if (outdated != null) {
+    return ToolHealthReport(
+      ToolHealthLevel.warning,
+      '${outdated.bin} is out of date.',
+    );
+  }
+  return const ToolHealthReport(ToolHealthLevel.ok, 'All tools detected.');
+}
 
 List<InstallHint> _linuxHints(String bin) => switch (bin) {
   'git' => const [

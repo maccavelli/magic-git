@@ -91,12 +91,10 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
     final notifier = ref.read(appSettingsProvider.notifier);
     // Clamp up to the floor before building the Duration (a blank field parses
     // to null and leaves the value unchanged) so a persisted timeout is never 0.
-    Duration? floored(int? secs) =>
-        secs == null ? null : Duration(seconds: secs < _minTimeoutSecs ? _minTimeoutSecs : secs);
-    await notifier.setTimeouts(
-      network: floored(n),
-      commit: floored(c),
-    );
+    Duration? floored(int? secs) => secs == null
+        ? null
+        : Duration(seconds: secs < _minTimeoutSecs ? _minTimeoutSecs : secs);
+    await notifier.setTimeouts(network: floored(n), commit: floored(c));
     await notifier.setPreferences(
       committerName: _name.text,
       committerEmail: _email.text,
@@ -141,27 +139,36 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
               ),
               const SizedBox(height: 18),
 
-              _section(context, 'Command timeouts',
-                  'How long a command may run before it is considered hung and '
-                  'killed. Raise these if a legitimately slow push or commit is '
-                  'being cut off.'),
+              _section(
+                context,
+                'Command timeouts',
+                'How long a command may run before it is considered hung and '
+                    'killed. Raise these if a legitimately slow push or commit is '
+                    'being cut off.',
+              ),
               _fieldRow('Network (fetch/pull/push), seconds', _network),
               const SizedBox(height: 10),
               _fieldRow('Commit, seconds', _commit),
 
               const SizedBox(height: 20),
-              _section(context, 'Committer identity',
-                  'Applied to every commit as name/email, so commits are '
-                  'authored correctly regardless of the remote host. Leave blank '
-                  'to use the remote repository\'s own git config.'),
+              _section(
+                context,
+                'Committer identity',
+                'Applied to every commit as name/email, so commits are '
+                    'authored correctly regardless of the remote host. Leave blank '
+                    'to use the remote repository\'s own git config.',
+              ),
               _textRow('Name', _name, 'e.g. Jane Developer'),
               const SizedBox(height: 10),
               _textRow('Email', _email, 'e.g. jane@example.com'),
 
               const SizedBox(height: 20),
-              _section(context, 'Default sync behavior',
-                  'What the plain Pull and Sync buttons do, and whether a plain '
-                  'Push also pushes tags.'),
+              _section(
+                context,
+                'Default sync behavior',
+                'What the plain Pull and Sync buttons do, and whether a plain '
+                    'Push also pushes tags.',
+              ),
               _rowLabelled(
                 'Pull / Sync uses',
                 MacosPulldownButton(
@@ -185,9 +192,12 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
               ),
 
               const SizedBox(height: 20),
-              _section(context, 'Background auto-fetch',
-                  'Periodically fetch the active repository so ahead/behind '
-                  'counts and remote branches stay current.'),
+              _section(
+                context,
+                'Background auto-fetch',
+                'Periodically fetch the active repository so ahead/behind '
+                    'counts and remote branches stay current.',
+              ),
               _rowLabelled(
                 'Auto-fetch',
                 MacosPulldownButton(
@@ -206,9 +216,12 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
               _knownHostsSection(context),
 
               const SizedBox(height: 20),
-              _section(context, 'Keyboard Mappings',
-                  'Shortcuts for common actions across the app. Customize to '
-                  'replace or add bindings.'),
+              _section(
+                context,
+                'Keyboard Mappings',
+                'Shortcuts for common actions across the app. Customize to '
+                    'replace or add bindings.',
+              ),
               _keymapSummaryRow(context),
 
               const SizedBox(height: 20),
@@ -243,7 +256,12 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
     final keymap = ref.watch(keymapProvider);
     final total = kKeymapActions.length;
     final customized = kKeymapActions
-        .where((a) => !listEquals(keymap[a.id] ?? const <KeyBinding>[], a.defaultBindings))
+        .where(
+          (a) => !listEquals(
+            keymap[a.id] ?? const <KeyBinding>[],
+            a.defaultBindings,
+          ),
+        )
         .length;
     return Row(
       children: [
@@ -396,52 +414,20 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
     );
   }
 
-  /// Summarizes tool health into a single actionable line. Order of concern:
-  /// a missing required tool, then a missing feature tool, then an outdated
-  /// one, else all good.
+  /// One-line tool-health summary. Delegates the analysis to the shared
+  /// [summarizeToolHealth] (also used by the main-window banner) and just picks
+  /// a color — green when connected and all good, gray when disconnected.
   (String, Color) _healthSummary(RemoteEnvironment env) {
-    if (env.os == 'unknown') {
-      return (
-        'Connect to a repository to check installed tools.',
-        MacosColors.systemGrayColor,
-      );
-    }
-    final relevant = kToolCatalog.where((t) => t.relevantOn(env.os));
-    ToolSpec? missingEssential, missingFeature, outdated;
-    for (final spec in relevant) {
-      if (!env.has(spec.bin)) {
-        if (spec.tier == ToolTier.essential) {
-          missingEssential ??= spec;
-        } else if (spec.tier == ToolTier.feature) {
-          missingFeature ??= spec;
-        }
-        continue;
-      }
-      final vStr = env.versionOf(spec.bin);
-      final v = vStr == null ? null : ToolVersion.parse(vStr);
-      if (spec.minVersion != null && v != null && v < spec.minVersion!) {
-        outdated ??= spec;
-      }
-    }
-    if (missingEssential != null) {
-      return (
-        '${missingEssential.bin} is not installed — required.',
-        MacosColors.systemRedColor,
-      );
-    }
-    if (missingFeature != null) {
-      return (
-        '${missingFeature.bin} is not installed — some features unavailable.',
-        MacosColors.systemOrangeColor,
-      );
-    }
-    if (outdated != null) {
-      return (
-        '${outdated.bin} is out of date.',
-        MacosColors.systemOrangeColor,
-      );
-    }
-    return ('All tools detected.', MacosColors.systemGreenColor);
+    final report = summarizeToolHealth(env);
+    final color = switch (report.level) {
+      ToolHealthLevel.error => MacosColors.systemRedColor,
+      ToolHealthLevel.warning => MacosColors.systemOrangeColor,
+      ToolHealthLevel.ok =>
+        env.os == 'unknown'
+            ? MacosColors.systemGrayColor
+            : MacosColors.systemGreenColor,
+    };
+    return (report.message, color);
   }
 
   Widget _binaryRow(BuildContext context, String bin, RemoteEnvironment env) {
@@ -449,19 +435,25 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
     final resolved = env.pathOf(bin);
     final overridden = env.overridden.contains(bin);
     final (statusText, statusColor) = switch ((resolved, overridden)) {
-      (final p?, true) when p.isNotEmpty => ('override', MacosColors.systemBlueColor),
-      (final p?, false) when p.isNotEmpty => ('found', MacosColors.systemGreenColor),
-      _ when env.os != 'unknown' => ('not found', MacosColors.systemOrangeColor),
+      (final p?, true) when p.isNotEmpty => (
+        'override',
+        MacosColors.systemBlueColor,
+      ),
+      (final p?, false) when p.isNotEmpty => (
+        'found',
+        MacosColors.systemGreenColor,
+      ),
+      _ when env.os != 'unknown' => (
+        'not found',
+        MacosColors.systemOrangeColor,
+      ),
       _ => ('', MacosColors.systemGrayColor),
     };
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
-          SizedBox(
-            width: 84,
-            child: Text(bin, style: typography.body),
-          ),
+          SizedBox(width: 84, child: Text(bin, style: typography.body)),
           const SizedBox(width: 8),
           Expanded(
             child: MacosTextField(
@@ -545,10 +537,7 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
     final typography = MacosTheme.of(context).typography;
     return Row(
       children: [
-        SizedBox(
-          width: 60,
-          child: Text(label, style: typography.body),
-        ),
+        SizedBox(width: 60, child: Text(label, style: typography.body)),
         const SizedBox(width: 12),
         Expanded(
           child: MacosTextField(
