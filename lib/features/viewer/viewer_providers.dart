@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:ui' show Size;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/ssh/ssh_command_executor.dart';
 import 'file_content.dart';
@@ -63,55 +64,76 @@ ViewerReadException _mapReadError(Object e) {
 /// reopen costs one cheap `cat`. The `FutureProvider` still memoizes the
 /// classification for as long as a window keeps it watched, so rebuilds don't
 /// re-scan.
+/// Which byte-level re-decode (if any) the UTF-8 read of a file suggests trying.
+enum _Fallback { none, utf16, latin1 }
+
 final fileContentProvider = FutureProvider.autoDispose
     .family<FileContent, (String, String)>((ref, key) async {
       final (repoPath, path) = key;
       final git = ref.watch(gitServiceProvider);
       try {
-        final raw = await git.readFile(repoPath, path);
-        final content = FileContent.classify(raw);
-        // A UTF-16/UTF-32 text file (common from Windows tools) has interleaved
-        // NUL bytes, so the UTF-8 read misclassifies it as binary. When the
-        // decoded prefix carries the tell-tale BOM signature, re-read the raw
-        // bytes and decode with the correct codec — but only keep the result if
-        // it actually classifies as text, so a genuine binary that happened to
-        // start with those bytes stays binary.
-        if (content.kind == FileContentKind.binary &&
-            hasUtf16Or32BomSignature(raw)) {
-          final b64 = await git.readFileBase64(repoPath, path);
-          final bytes = base64.decode(b64);
-          final decoded = decodeUtf16Or32(bytes);
-          if (decoded != null) {
-            final reclassified = FileContent.classify(decoded);
-            if (reclassified.kind == FileContentKind.text) return reclassified;
+        // Decide, from the UTF-8 read alone, whether a byte-level re-decode is
+        // worth trying — capturing only a cheap enum so `raw` (a full copy of
+        // the file) can be released before the byte read + decode, rather than
+        // pinned across it.
+        final _Fallback fallback;
+        final FileContent content;
+        {
+          final raw = await git.readFile(repoPath, path);
+          content = FileContent.classify(raw);
+          // A UTF-16/UTF-32 text file (common from Windows tools) has
+          // interleaved NUL bytes, so the UTF-8 read misclassifies it as binary;
+          // its decoded prefix carries the tell-tale BOM signature. A single-byte
+          // legacy charset (Latin-1 / Windows-1252) instead has no BOM/NUL and
+          // its high bytes just fail the UTF-8 decode into replacement chars.
+          if (content.kind == FileContentKind.binary &&
+              hasUtf16Or32BomSignature(raw)) {
+            fallback = _Fallback.utf16;
+          } else if (content.kind != FileContentKind.tooLarge &&
+              looksLikeLatin1Misdecode(raw)) {
+            fallback = _Fallback.latin1;
+          } else {
+            fallback = _Fallback.none;
           }
-        }
-        // A single-byte legacy charset (Latin-1 / Windows-1252, common from
-        // older Windows tooling) carries no BOM and no NUL, so its high bytes
-        // just fail the UTF-8 decode and surface as replacement chars —
-        // classified binary when accents are dense, shown as mojibake when
-        // sparse. When the decode looks like exactly that (ASCII + replacements,
-        // no real char salvaged), re-read the bytes and decode as Windows-1252,
-        // keeping the result only if it lands as text. The [isValidUtf8] guard
-        // spares a file that merely contains a literal U+FFFD glyph: its bytes
-        // decode cleanly, so its UTF-8 reading is already correct.
-        if (content.kind != FileContentKind.tooLarge &&
-            looksLikeLatin1Misdecode(raw)) {
-          final b64 = await git.readFileBase64(repoPath, path);
-          final bytes = base64.decode(b64);
-          if (!isValidUtf8(bytes)) {
-            final decoded = decodeLatin1(bytes);
-            if (decoded != null) {
-              final reclassified = FileContent.classify(decoded);
-              if (reclassified.kind == FileContentKind.text) return reclassified;
-            }
-          }
+        } // `raw` out of scope here — freed before the byte read below.
+
+        if (fallback != _Fallback.none) {
+          final recovered = await _recodeFromBytes(git, repoPath, path, fallback);
+          if (recovered != null) return recovered;
         }
         return content;
       } catch (e) {
         throw _mapReadError(e);
       }
     });
+
+/// Re-reads [path]'s raw bytes once and decodes them under the codec [fallback]
+/// selected from the UTF-8 read, returning the reclassified content only if it
+/// lands as text (so a genuine binary that merely tripped the signal stays
+/// binary), else null. Kept as a separate function so it doesn't close over the
+/// original UTF-8 `raw` string, which the caller has already released.
+Future<FileContent?> _recodeFromBytes(
+  GitService git,
+  String repoPath,
+  String path,
+  _Fallback fallback,
+) async {
+  final bytes = base64.decode(await git.readFileBase64(repoPath, path));
+  final String? decoded;
+  switch (fallback) {
+    case _Fallback.utf16:
+      decoded = decodeUtf16Or32(bytes);
+    case _Fallback.latin1:
+      // The isValidUtf8 guard spares a file that merely contains a literal
+      // U+FFFD glyph: its bytes decode cleanly, so its UTF-8 reading is right.
+      decoded = isValidUtf8(bytes) ? null : decodeLatin1(bytes);
+    case _Fallback.none:
+      decoded = null;
+  }
+  if (decoded == null) return null;
+  final reclassified = FileContent.classify(decoded);
+  return reclassified.kind == FileContentKind.text ? reclassified : null;
+}
 
 /// The raw bytes of a (binary, image) file, read via `GitService.readFileBase64`
 /// and decoded. Keyed by (repoPath, path). Used by the viewer's image preview;

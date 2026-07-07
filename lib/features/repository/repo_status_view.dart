@@ -160,6 +160,17 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       _selectionAnchor = null;
       _popout = false;
     }
+    // The watch listener skips refetching status while this page is hidden (see
+    // build). Re-sync once when it becomes visible again so nothing missed while
+    // away is left stale — cheaper than the per-tick background fetches the gate
+    // avoids, and it makes the gate safe in both event-driven and polling modes.
+    // Deferred past this frame: invalidating synchronously in didUpdateWidget
+    // (which runs during build) would mark the provider scope dirty mid-build.
+    if (!oldWidget.isActive && widget.isActive) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) ref.invalidate(statusProvider(repoPath));
+      });
+    }
   }
 
   void _refresh() {
@@ -728,6 +739,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     ref.listen(repoWatchProvider(repoPath), (previous, next) {
       final event = next.value;
       if (event == null) return;
+      // While this page is hidden (another tab is up) don't fire a `git status`
+      // round-trip on every tick — in polling mode that's a fetch every few
+      // seconds against a repo the user isn't looking at. Keep the subscription
+      // (so the watcher stays alive) but skip the refetch; didUpdateWidget
+      // re-syncs once when the page becomes visible again.
+      if (!widget.isActive) return;
       // Nearly every mutating action touches `.git/index`/HEAD/refs, so the
       // watcher fires shortly after this app's own explicit, immediate
       // _refresh() already invalidated status for the same change — skip

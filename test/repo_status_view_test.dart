@@ -474,6 +474,68 @@ void main() {
   );
 
   testWidgets(
+    'while hidden, a watch tick does not refetch status; becoming visible '
+    're-syncs once',
+    (tester) async {
+      final git = _FakeGitService();
+      final watchController = StreamController<RepoWatchEvent>.broadcast();
+      addTearDown(watchController.close);
+      var statusFetches = 0;
+      final container = ProviderContainer(
+        overrides: [
+          gitServiceProvider.overrideWithValue(git),
+          statusProvider(_repo).overrideWith((ref) async {
+            statusFetches++;
+            return _statusWith(
+              unstaged: const [
+                GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+              ],
+            );
+          }),
+          pendingOpProvider(_repo).overrideWith((ref) async => git.pendingOp0),
+          repoWatchProvider(_repo).overrideWith((ref) => watchController.stream),
+          fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
+          refsProvider(_repo).overrideWith((ref) async => const []),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      Widget host(bool active) => UncontrolledProviderScope(
+        container: container,
+        child: MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: RepoStatusView(repoPath: _repo, isActive: active),
+        ),
+      );
+
+      // Start hidden (another tab is up).
+      await tester.pumpWidget(host(false));
+      await tester.pumpAndSettle();
+      expect(statusFetches, 1, reason: 'initial build still fetches once');
+
+      // A polling tick while hidden must NOT trigger a background refetch — even
+      // one well outside the own-mutation suppression window.
+      watchController.add(
+        RepoWatchEvent(
+          at: DateTime.now().add(const Duration(seconds: 10)),
+          mode: WatchMode.polling,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        statusFetches,
+        1,
+        reason: 'hidden page skips the watch-driven refetch',
+      );
+
+      // Becoming visible re-syncs exactly once so nothing is left stale.
+      await tester.pumpWidget(host(true));
+      await tester.pumpAndSettle();
+      expect(statusFetches, 2, reason: 'became active → a single re-sync');
+    },
+  );
+
+  testWidgets(
     'Push flips green when ahead; Pull and Sync stay at their default color',
     (tester) async {
       final git = _FakeGitService();

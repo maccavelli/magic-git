@@ -123,7 +123,12 @@ on disk under a "50 MiB" cap, while non-Latin content forces TwoByteString so
 byte length *before* UTF-8 decode, with a single shared byte budget across
 stdout+stderr, so the cap maps to real memory/wire size.
 
-### H. Latin-1/UTF-16 fallback should read bytes once and drop `raw` *(MED)* — deferred (see Tier 2 header)
+### H. Latin-1/UTF-16 fallback should read bytes once and drop `raw` *(MED)* — ✅ done
+The fallback now captures only a cheap `_Fallback` enum decided from `raw`, lets
+`raw` go out of scope, then reads the bytes once in a separate `_recodeFromBytes`
+helper that doesn't close over it — so the text read isn't pinned across the byte
+read + decode. The two fallback branches (UTF-16 / Latin-1) are deduped into that
+one helper.
 Same site as Finding C — beyond the newline copy, the fallback does a full second
 read (`readFileBase64`) for a file it already read as text, holding both. **Fix:**
 fetch bytes once and decode locally under the candidate codec; release `raw`
@@ -169,7 +174,16 @@ isolate copy-back payload.
 
 ---
 
-## Tier 4 — low / accepted residuals
+## Tier 4 — low / accepted residuals — ✅ actioned the worthwhile ones (2026-07-07)
+
+Done: single-pass `normalizeText` (keeps the zero-copy clean-LF fast path) +
+presized `Uint16List`/`Uint32List` decoders; `StashView` switched to
+`ListView.builder`; the status watcher now skips its refetch while the page is
+hidden and re-syncs once on becoming visible (post-frame). Intentionally left as
+accepted residuals: `repoStructureProvider` re-isolate on pane reopen (retaining
+a large tree is a worse trade than the occasional rebuild), `OutputLogNotifier`
+transient split (executor already bounds output), and the `readFile` 16–50 MiB
+transport-then-reject (rare, and a size pre-check adds a round trip).
 
 - **`normalizeText` / decode allocations** (`text_decoding.dart:29,84,96`): chained
   `replaceAll` + `substring` copy a CRLF/BOM file once; growable `List<int>` in

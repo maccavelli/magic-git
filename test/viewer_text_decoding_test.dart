@@ -35,6 +35,15 @@ void main() {
     test('is a no-op for clean LF text', () {
       expect(normalizeText('already\nclean\n'), 'already\nclean\n');
     });
+
+    test('returns the identical instance (zero-copy) for clean LF text', () {
+      const s = 'no carriage returns\nand no leading bom\n';
+      expect(identical(normalizeText(s), s), isTrue);
+    });
+
+    test('empty string is returned unchanged', () {
+      expect(normalizeText(''), '');
+    });
   });
 
   group('BOM signature detection', () {

@@ -126,12 +126,15 @@ class _StashViewState extends ConsumerState<StashView> {
                 children: [
                   SizedBox(
                     width: 360,
-                    child: ListView(
+                    child: ListView.builder(
                       padding: const EdgeInsets.symmetric(vertical: 6),
-                      children: [
-                        for (final s in stashes)
-                          _stashCard(context, git, s, s.index == selected),
-                      ],
+                      itemCount: stashes.length,
+                      itemBuilder: (context, i) => _stashCard(
+                        context,
+                        git,
+                        stashes[i],
+                        stashes[i].index == selected,
+                      ),
                     ),
                   ),
                   Container(width: 1, color: MacosColors.separatorColor),

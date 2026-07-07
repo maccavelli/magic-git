@@ -21,12 +21,26 @@ import 'dart:typed_data';
 /// break) and pollutes copied text; a classic-Mac `\r`-only file would collapse
 /// to a single line entirely.
 String normalizeText(String s) {
-  var out = s;
-  if (out.isNotEmpty && out.codeUnitAt(0) == 0xFEFF) {
-    out = out.substring(1);
+  if (s.isEmpty) return s;
+  final hasBom = s.codeUnitAt(0) == 0xFEFF;
+  // Zero-copy fast path for the overwhelmingly common Unix-LF-without-BOM file:
+  // one native scan for a CR, and if there's none (and no BOM) return `s`
+  // unchanged rather than the two chained `replaceAll`s + `substring` a rewrite
+  // would allocate.
+  if (!hasBom && !s.contains('\r')) return s;
+  final buf = StringBuffer();
+  for (var i = hasBom ? 1 : 0; i < s.length; i++) {
+    final u = s.codeUnitAt(i);
+    if (u == 0x0D) {
+      // CR (classic Mac) or CRLF (Windows) → a single LF; skip a following LF so
+      // CRLF collapses to one, not two.
+      buf.writeCharCode(0x0A);
+      if (i + 1 < s.length && s.codeUnitAt(i + 1) == 0x0A) i++;
+    } else {
+      buf.writeCharCode(u);
+    }
   }
-  // `\r\n` first, then any surviving lone `\r`, so neither pass double-counts.
-  return out.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+  return buf.toString();
 }
 
 /// The tell-tale prefix a UTF-16/UTF-32 BOM leaves once the file has been
@@ -81,31 +95,31 @@ String? decodeUtf16Or32(Uint8List bytes) {
 }
 
 String _decode16(Uint8List bytes, int start, {required bool littleEndian}) {
-  final units = <int>[];
+  // Presized to the exact code-unit count (one per byte pair) rather than a
+  // growable List<int> that reallocates by doubling and boxes its elements.
+  final units = Uint16List((bytes.length - start) >> 1);
+  var j = 0;
   for (var i = start; i + 1 < bytes.length; i += 2) {
-    units.add(
-      littleEndian
-          ? bytes[i] | (bytes[i + 1] << 8)
-          : (bytes[i] << 8) | bytes[i + 1],
-    );
+    units[j++] = littleEndian
+        ? bytes[i] | (bytes[i + 1] << 8)
+        : (bytes[i] << 8) | bytes[i + 1];
   }
   return String.fromCharCodes(units);
 }
 
 String _decode32(Uint8List bytes, int start, {required bool littleEndian}) {
-  final points = <int>[];
+  final points = Uint32List((bytes.length - start) >> 2);
+  var j = 0;
   for (var i = start; i + 3 < bytes.length; i += 4) {
-    points.add(
-      littleEndian
-          ? bytes[i] |
-                (bytes[i + 1] << 8) |
-                (bytes[i + 2] << 16) |
-                (bytes[i + 3] << 24)
-          : (bytes[i] << 24) |
-                (bytes[i + 1] << 16) |
-                (bytes[i + 2] << 8) |
-                bytes[i + 3],
-    );
+    points[j++] = littleEndian
+        ? bytes[i] |
+              (bytes[i + 1] << 8) |
+              (bytes[i + 2] << 16) |
+              (bytes[i + 3] << 24)
+        : (bytes[i] << 24) |
+              (bytes[i + 1] << 16) |
+              (bytes[i + 2] << 8) |
+              bytes[i + 3];
   }
   return String.fromCharCodes(points);
 }
@@ -193,11 +207,14 @@ const List<int> _cp1252High = [
 /// [looksLikeLatin1Misdecode] (plus an [isValidUtf8] guard); this is just the
 /// decode and a final sanity check.
 String? decodeLatin1(Uint8List bytes) {
-  final buf = StringBuffer();
-  for (final b in bytes) {
-    buf.writeCharCode(b < 0x80 || b > 0x9F ? b : _cp1252High[b - 0x80]);
+  // Each byte maps to exactly one BMP code unit (cp1252 tops out at U+20AC), so
+  // presize a Uint16List rather than growing a StringBuffer char by char.
+  final units = Uint16List(bytes.length);
+  for (var i = 0; i < bytes.length; i++) {
+    final b = bytes[i];
+    units[i] = b < 0x80 || b > 0x9F ? b : _cp1252High[b - 0x80];
   }
-  final s = buf.toString();
+  final s = String.fromCharCodes(units);
   final window = s.length < _latinSniffChars ? s.length : _latinSniffChars;
   if (window == 0) return null;
   var controls = 0;
