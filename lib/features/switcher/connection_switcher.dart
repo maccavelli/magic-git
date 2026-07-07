@@ -22,8 +22,10 @@ class ConnectionSwitcher extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final (isConnected, host, connectionLabel) = ref.watch(
-      connectionProvider.select((c) => (c.isConnected, c.host, c.connectionLabel)),
+    final (isConnected, isLocal, host, connectionLabel) = ref.watch(
+      connectionProvider.select(
+        (c) => (c.isConnected, c.isLocal, c.host, c.connectionLabel),
+      ),
     );
     final saved = ref.watch(savedConnectionsProvider).value ?? const [];
     final savedLocal = ref.watch(savedLocalReposProvider).value ?? const [];
@@ -31,9 +33,15 @@ class ConnectionSwitcher extends ConsumerWidget {
       return const SizedBox.shrink();
     }
 
-    // `host` is SSH-only (null for a local session) — fall back to the
-    // connection's label (set for both backends) before the generic default.
-    final label = isConnected ? (host ?? connectionLabel ?? 'Connected') : 'Connections';
+    // For a remote session show the server (`host`). For a local one, show
+    // "Local" rather than the connection label — the label is the repo name,
+    // which is already displayed above this button (in CurrentRepoIndicator), so
+    // repeating it here is redundant.
+    final label = !isConnected
+        ? 'Connections'
+        : isLocal
+        ? 'Local'
+        : (host ?? connectionLabel ?? 'Connected');
 
     return Container(
       decoration: const BoxDecoration(

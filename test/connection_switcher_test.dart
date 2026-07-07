@@ -24,6 +24,14 @@ class _FakeConnectionController extends ConnectionController {
   Future<void> disconnect() async => disconnectCalled = true;
 }
 
+/// Pins a fixed connection state so the switcher button's label can be checked.
+class _StubConnection extends ConnectionController {
+  _StubConnection(this._state);
+  final ConnectionState _state;
+  @override
+  ConnectionState build() => _state;
+}
+
 Future<void> _pump(
   WidgetTester tester, {
   List<SavedLocalRepo> savedLocal = const [],
@@ -80,6 +88,57 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Choose…'), findsOneWidget);
+  });
+
+  Future<void> pumpSwitcher(WidgetTester tester, ConnectionState state) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          connectionProvider.overrideWith(() => _StubConnection(state)),
+          savedConnectionsProvider.overrideWith((ref) async => const []),
+          savedLocalReposProvider.overrideWith((ref) async => const []),
+        ],
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: ConnectionSwitcher(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('switcher button shows the server host for an SSH session', (
+    tester,
+  ) async {
+    await pumpSwitcher(
+      tester,
+      const ConnectionState(
+        phase: ConnectionPhase.connected,
+        backend: ConnectionBackend.ssh,
+        host: 'build01.example.com',
+        connectionLabel: 'my-repo',
+      ),
+    );
+    expect(find.text('build01.example.com'), findsOneWidget);
+    // The repo/connection label is not shown on the button for SSH.
+    expect(find.text('my-repo'), findsNothing);
+  });
+
+  testWidgets('switcher button shows "Local" for a local session, not the '
+      'repo name', (tester) async {
+    await pumpSwitcher(
+      tester,
+      const ConnectionState(
+        phase: ConnectionPhase.connected,
+        backend: ConnectionBackend.local,
+        connectionLabel: 'my-local-repo',
+      ),
+    );
+    expect(find.text('Local'), findsOneWidget);
+    // The repo name is shown above the button (CurrentRepoIndicator), so
+    // repeating it on the button would be redundant.
+    expect(find.text('my-local-repo'), findsNothing);
   });
 
   testWidgets('Logout button disconnects (returns to the connection card)', (
