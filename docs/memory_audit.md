@@ -131,9 +131,18 @@ first.
 
 ---
 
-## Tier 3 — higher-leverage perf refactors (evaluate before committing)
+## Tier 3 — higher-leverage perf refactors — ✅ DONE (2026-07-07)
 
-### I. Long-lived syntax-highlight worker isolate *(HIGH leverage, concurrency refactor)*
+Both implemented with tests; 567 tests pass, analyze clean. I: a persistent
+shared worker isolate (`lib/features/viewer/highlight_worker.dart`) registers the
+grammars once and services every large-file highlight, replacing the per-file
+`Isolate.run` that re-registered all 39 grammars each time; small files still
+highlight inline. J: the span model is now `HighlightedLines` — per-line backing
+String + `Int32List` run-start/scope-id arrays + an interned scope table — so a
+viewer retains ~1xN instead of ~9xN, run substrings are cut lazily at paint, and
+the compact form is what crosses the isolate boundary.
+
+### I. Long-lived syntax-highlight worker isolate *(HIGH leverage, concurrency refactor)* — ✅ done
 `lib/features/viewer/code_view.dart:195` spawns a **fresh** `Isolate.run` per file;
 in the new isolate `_engine` starts null so `registerLanguages` rebuilds all **39**
 grammars every open (`syntax_highlighter.dart:113`), and the source is copied in +
@@ -148,7 +157,7 @@ when no `CodeView` is open. Tradeoff: a small fixed resident grammar heap vs.
 today's per-file rebuild + manual port/crash-recovery lifecycle.
 *(Previously logged as deferred in `viewer_engine_findings.md`; this quantifies it.)*
 
-### J. Compact highlighted-span representation *(MED-HIGH, retained-memory)*
+### J. Compact highlighted-span representation *(MED-HIGH, retained-memory)* — ✅ done
 `code_view.dart:137` retains `List<List<HlRun>>` for the whole file while the
 window is open; each `HlRun` (`syntax_highlighter.dart:55`) is a heap object with
 its own substring `String`. Dense source fragments into many short runs (~5

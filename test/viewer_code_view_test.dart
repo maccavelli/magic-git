@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -90,12 +92,15 @@ void main() {
     final theme = codeThemeFor(Brightness.dark);
     const base = TextStyle();
     // The cut lands exactly on the emoji: 19999 ASCII chars + a 2-unit surrogate
-    // pair would slice at offset 1, mid-pair, without the guard.
-    final line = [
-      HlRun('a' * (maxHighlightLineLength - 1), null),
-      const HlRun('😀', null), // U+1F600
-    ];
-    final plain = lineToSpan(line, theme, base).toPlainText();
+    // pair would slice at offset 1, mid-pair, without the guard. Two runs: the
+    // ASCII prefix, then the emoji.
+    final text = 'a' * (maxHighlightLineLength - 1) + '😀'; // U+1F600
+    final line = HighlightedLine(
+      text,
+      Int32List.fromList([0, maxHighlightLineLength - 1, text.length]),
+      Int32List.fromList([-1, -1]),
+    );
+    final plain = lineToSpan(line, const <String?>[], theme, base).toPlainText();
     expect(plain, contains('line truncated')); // it did truncate
     // No lone surrogate survived — every rune is a whole code point.
     final loneSurrogate = plain.runes.any((r) => r >= 0xD800 && r <= 0xDFFF);

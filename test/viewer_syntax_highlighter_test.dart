@@ -1,63 +1,99 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/features/viewer/syntax_highlighter.dart';
 
-// Total text of a line, re-joined from its runs.
-String _lineText(List<HlRun> line) => line.map((r) => r.text).join();
+// The source text of a highlighted document, re-joined from its lines.
+String _source(HighlightedLines doc) => doc.lines.map((l) => l.text).join('\n');
+
+// Whether every run in the document is un-scoped (plain text).
+bool _allPlain(HighlightedLines doc) => doc.lines.every(
+      (l) => l.runScopeIds.every((id) => id < 0),
+    );
 
 void main() {
-  group('plainLines', () {
-    test('splits on newlines: N newlines -> N+1 lines, each one plain run', () {
-      final lines = plainLines('a\nbb\nccc');
-      expect(lines.length, 3);
-      expect(_lineText(lines[0]), 'a');
-      expect(_lineText(lines[1]), 'bb');
-      expect(_lineText(lines[2]), 'ccc');
-      // Every run is un-scoped in plain text.
-      expect(lines.expand((l) => l).every((r) => r.scope == null), isTrue);
+  group('plainDoc', () {
+    test('splits on newlines: N newlines -> N+1 lines, each plain', () {
+      final doc = plainDoc('a\nbb\nccc');
+      expect(doc.length, 3);
+      expect(doc.lines[0].text, 'a');
+      expect(doc.lines[1].text, 'bb');
+      expect(doc.lines[2].text, 'ccc');
+      expect(_allPlain(doc), isTrue);
     });
 
     test('a trailing newline yields a final empty line', () {
-      final lines = plainLines('a\n');
-      expect(lines.length, 2);
-      expect(lines[1], isEmpty);
+      final doc = plainDoc('a\n');
+      expect(doc.length, 2);
+      expect(doc.lines[1].text, '');
+      expect(doc.lines[1].runCount, 0);
     });
 
     test('empty input is a single empty line', () {
-      expect(plainLines(''), [<HlRun>[]]);
+      final doc = plainDoc('');
+      expect(doc.length, 1);
+      expect(doc.lines[0].text, '');
+      expect(doc.lines[0].runCount, 0);
     });
   });
 
-  group('highlightLines', () {
+  group('highlightDoc', () {
     test('supported language produces at least one scoped run', () {
-      final lines = highlightLines('class Foo {}\n', 'dart');
-      final scopes = lines.expand((l) => l).map((r) => r.scope).toSet();
-      // `class` is a keyword — some run must carry a non-null scope.
-      expect(scopes.any((s) => s != null), isTrue);
+      final doc = highlightDoc('class Foo {}\n', 'dart');
+      // `class` is a keyword — some run must carry a real (non-negative) scope.
+      final scoped = doc.lines
+          .expand((l) => l.runScopeIds)
+          .where((id) => id >= 0);
+      expect(scoped, isNotEmpty);
       // Round-trips the source exactly (highlighting never drops characters).
-      expect(lines.map(_lineText).join('\n'), 'class Foo {}\n');
+      expect(_source(doc), 'class Foo {}\n');
+    });
+
+    test('interned scope ids resolve to real highlight.js scope names', () {
+      final doc = highlightDoc('class Foo {}\n', 'dart');
+      final names = <String?>{};
+      for (final line in doc.lines) {
+        for (final id in line.runScopeIds) {
+          names.add(doc.scopeName(id));
+        }
+      }
+      // At least one resolved scope name (e.g. 'keyword') is present.
+      expect(names.where((n) => n != null), isNotEmpty);
     });
 
     test('preserves line structure while highlighting', () {
       const src = 'import "a";\nvoid main() {}\n';
-      final lines = highlightLines(src, 'dart');
-      expect(lines.length, 3); // two lines + trailing empty
-      expect(lines.map(_lineText).join('\n'), src);
+      final doc = highlightDoc(src, 'dart');
+      expect(doc.length, 3); // two lines + trailing empty
+      expect(_source(doc), src);
     });
 
     test('unknown language falls back to plain (no scopes)', () {
-      final lines = highlightLines('anything at all\n', 'no-such-lang');
-      expect(lines.expand((l) => l).every((r) => r.scope == null), isTrue);
+      expect(_allPlain(highlightDoc('anything at all\n', 'no-such-lang')), isTrue);
     });
 
     test('null language is plain text', () {
-      final lines = highlightLines('plain\ntext', null);
-      expect(lines.expand((l) => l).every((r) => r.scope == null), isTrue);
+      expect(_allPlain(highlightDoc('plain\ntext', null)), isTrue);
     });
 
     test('a line over the length cap forces the whole file to plain', () {
       final longLine = 'a' * (maxHighlightLineLength + 1);
-      final lines = highlightLines('class Foo {}\n$longLine', 'dart');
-      expect(lines.expand((l) => l).every((r) => r.scope == null), isTrue);
+      final doc = highlightDoc('class Foo {}\n$longLine', 'dart');
+      expect(_allPlain(doc), isTrue);
+    });
+
+    test('run boundaries tile the line text exactly', () {
+      final doc = highlightDoc('final x = 1;\n', 'dart');
+      for (final line in doc.lines) {
+        // runStarts has one terminal entry == text length; runs are contiguous
+        // and cover the whole line.
+        expect(line.runStarts.first, 0);
+        expect(line.runStarts.last, line.text.length);
+        expect(line.runStarts.length, line.runCount + 1);
+        final rebuilt = StringBuffer();
+        for (var k = 0; k < line.runCount; k++) {
+          rebuilt.write(line.text.substring(line.runStarts[k], line.runStarts[k + 1]));
+        }
+        expect(rebuilt.toString(), line.text);
+      }
     });
   });
 

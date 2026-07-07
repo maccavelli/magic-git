@@ -1,5 +1,3 @@
-import 'dart:isolate';
-
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show SelectionArea;
 import 'package:macos_ui/macos_ui.dart';
@@ -7,6 +5,7 @@ import 'package:re_highlight/styles/atom-one-dark.dart';
 import 'package:re_highlight/styles/github.dart';
 import '../common/diff_view.dart' show kDiffMono;
 import 'file_content.dart';
+import 'highlight_worker.dart';
 import 'syntax_highlighter.dart';
 
 /// A resolved code colour theme: highlight.js scope → [TextStyle], plus the
@@ -50,38 +49,50 @@ CodeTheme codeThemeFor(Brightness brightness) => brightness == Brightness.dark
         fallbackFg: const Color(0xFF24292E),
       );
 
-/// Builds the [TextSpan] for one highlighted line, resolving each run's scope
-/// to a [TextStyle] merged over [base] (so the mono font/size survive and only
-/// colour/weight/italic come from the theme). Guards against a pathological
+/// Builds the [TextSpan] for one highlighted [line], resolving each run's scope
+/// (via the document's interned [scopes] table) to a [TextStyle] merged over
+/// [base] — so the mono font/size survive and only colour/weight/italic come
+/// from the theme. Run substrings are cut from the line's backing text lazily
+/// here, at paint, only for on-screen lines. Guards against a pathological
 /// single line by truncating the rendered text at [maxHighlightLineLength] —
 /// the underlying file is untouched (open it externally for the full line).
-TextSpan lineToSpan(List<HlRun> line, CodeTheme theme, TextStyle base) {
-  if (line.isEmpty) return TextSpan(text: '', style: base);
+TextSpan lineToSpan(
+  HighlightedLine line,
+  List<String?> scopes,
+  CodeTheme theme,
+  TextStyle base,
+) {
+  final text = line.text;
+  if (text.isEmpty) return TextSpan(text: '', style: base);
+  final starts = line.runStarts;
+  final scopeIds = line.runScopeIds;
   final children = <TextSpan>[];
   var used = 0;
   var truncated = false;
-  for (final run in line) {
+  for (var k = 0; k < scopeIds.length; k++) {
     if (used >= maxHighlightLineLength) {
       truncated = true;
       break;
     }
-    var text = run.text;
-    if (used + text.length > maxHighlightLineLength) {
+    final runStart = starts[k];
+    var runEnd = starts[k + 1];
+    if (used + (runEnd - runStart) > maxHighlightLineLength) {
       var cut = maxHighlightLineLength - used;
       // Don't slice through a surrogate pair — a dangling high surrogate would
       // render as a replacement box right before the truncation marker.
-      if (cut > 0 && cut < text.length) {
-        final unit = text.codeUnitAt(cut - 1);
+      if (cut > 0 && cut < runEnd - runStart) {
+        final unit = text.codeUnitAt(runStart + cut - 1);
         if (unit >= 0xD800 && unit <= 0xDBFF) cut -= 1;
       }
-      text = text.substring(0, cut);
+      runEnd = runStart + cut;
       truncated = true;
     }
-    used += text.length;
+    used += runEnd - runStart;
+    final scope = scopeIds[k] < 0 ? null : scopes[scopeIds[k]];
     children.add(
       TextSpan(
-        text: text,
-        style: run.scope == null ? base : base.merge(theme.styles[run.scope!]),
+        text: text.substring(runStart, runEnd),
+        style: scope == null ? base : base.merge(theme.styles[scope]),
       ),
     );
   }
@@ -134,7 +145,7 @@ class _CodeViewState extends State<CodeView> {
   final _vCtrl = ScrollController();
   final _hCtrl = ScrollController();
 
-  List<List<HlRun>> _lines = const [];
+  HighlightedLines _doc = const HighlightedLines([], []);
   // Index of the line with the most code units — measured for its true pixel
   // width in `build` to size the horizontal scroll extent (so CJK/tab-heavy
   // lines, which a char-count estimate under-measures, are fully reachable).
@@ -185,32 +196,32 @@ class _CodeViewState extends State<CodeView> {
     final token = ++_highlightToken;
 
     // Instant first paint as plain text; colour arrives synchronously (small)
-    // or from an isolate (large).
-    _setLines(plainLines(text));
+    // or from the shared worker isolate (large).
+    _setDoc(plainDoc(text));
     if (!isLanguageSupported(lang)) return;
 
     if (!widget.content.highlightOffMainThread) {
-      _setLines(highlightLines(text, lang));
+      _setDoc(highlightDoc(text, lang));
     } else {
-      Isolate.run(() => highlightLines(text, lang)).then((lines) {
-        if (mounted && token == _highlightToken) setState(() => _setLines(lines));
+      // Large file: highlight on the shared, long-lived worker isolate (grammars
+      // registered once, not per file) rather than spawning a fresh isolate each
+      // time. The token guard drops a result superseded by a newer file.
+      highlightWorker.highlight(text, lang).then((doc) {
+        if (mounted && token == _highlightToken) setState(() => _setDoc(doc));
       }).catchError((_) {
         // Highlighting failed off-thread (e.g. malformed input the grammar
-        // still choked on); the plain-text render set above stays in place
-        // rather than surfacing as an unhandled async error.
+        // still choked on, or the worker died); the plain-text render set above
+        // stays in place rather than surfacing as an unhandled async error.
       });
     }
   }
 
-  void _setLines(List<List<HlRun>> lines) {
-    _lines = lines;
+  void _setDoc(HighlightedLines doc) {
+    _doc = doc;
     var maxChars = 0;
     var widest = 0;
-    for (var li = 0; li < lines.length; li++) {
-      var n = 0;
-      for (final run in lines[li]) {
-        n += run.text.length;
-      }
+    for (var li = 0; li < doc.lines.length; li++) {
+      final n = doc.lines[li].text.length;
       if (n > maxChars) {
         maxChars = n;
         widest = li;
@@ -225,7 +236,7 @@ class _CodeViewState extends State<CodeView> {
     final base = kDiffMono.copyWith(color: theme.foreground);
     final charW = _charW;
     final lineH = _lineH;
-    final gutterDigits = _lines.length.toString().length;
+    final gutterDigits = _doc.length.toString().length;
     final gutterW = gutterDigits * charW + 20; // digits + padding both sides
 
     return ColoredBox(
@@ -239,7 +250,7 @@ class _CodeViewState extends State<CodeView> {
             // wrapped line spans several, so extent must be measured then.
             itemExtent: widget.wrap ? null : lineH,
             padding: const EdgeInsets.symmetric(vertical: 6),
-            itemCount: _lines.length,
+            itemCount: _doc.length,
             itemBuilder: (context, i) =>
                 _row(i, base, theme, gutterW, lineH),
           );
@@ -252,10 +263,15 @@ class _CodeViewState extends State<CodeView> {
           // as wide as the longest line, so every row scrolls together. Measure
           // the widest line's true pixel width (not chars × charW), so tabs and
           // wide/CJK glyphs don't leave the tail unreachable off the right edge.
-          final widestW = _lines.isEmpty
+          final widestW = _doc.lines.isEmpty
               ? 0.0
               : (TextPainter(
-                  text: lineToSpan(_lines[_widestLineIndex], theme, base),
+                  text: lineToSpan(
+                    _doc.lines[_widestLineIndex],
+                    _doc.scopes,
+                    theme,
+                    base,
+                  ),
                   textDirection: TextDirection.ltr,
                   maxLines: 1,
                 )..layout()).width;
@@ -309,7 +325,7 @@ class _CodeViewState extends State<CodeView> {
         ),
         Expanded(
           child: Text.rich(
-            lineToSpan(_lines[i], theme, base),
+            lineToSpan(_doc.lines[i], _doc.scopes, theme, base),
             softWrap: widget.wrap,
             overflow: widget.wrap ? TextOverflow.clip : TextOverflow.visible,
           ),

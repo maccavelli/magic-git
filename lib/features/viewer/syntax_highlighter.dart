@@ -2,12 +2,15 @@
 /// (a Dart port of highlight.js).
 ///
 /// The public surface here is deliberately **Flutter-free and isolate-safe**:
-/// [highlightLines] turns source into a list of lines, each a list of
-/// [HlRun]s (`text` + theme `scope`). No `TextStyle`/`Color` appears, so the
-/// whole computation — the expensive part — can be handed to `Isolate.run`
-/// for large files (see `CodeView`), and only the cheap scope→`TextStyle`
-/// resolution happens on the UI thread (in `code_view.dart`).
+/// [highlightDoc] turns source into a compact [HighlightedLines] (per-line
+/// backing text + run layout as typed arrays + interned scope names). No
+/// `TextStyle`/`Color` appears, so the whole computation — the expensive part —
+/// can run on the shared highlight worker isolate for large files (see
+/// `highlight_worker.dart`), and only the cheap scope→`TextStyle` resolution
+/// happens on the UI thread (in `code_view.dart`).
 library;
+
+import 'dart:typed_data';
 
 import 'package:re_highlight/languages/bash.dart';
 import 'package:re_highlight/languages/c.dart';
@@ -49,13 +52,116 @@ import 'package:re_highlight/languages/yaml.dart';
 import 'package:re_highlight/re_highlight.dart';
 
 /// A styled run of source text: the substring [text] and the highlight.js
-/// theme [scope] (e.g. `keyword`, `string`, `comment`) that colours it, or
-/// null for un-scoped text. Kept to plain fields (String + String?) so a
-/// `List<List<HlRun>>` is trivially sendable across an isolate boundary.
+/// theme [scope] (e.g. `keyword`, `string`, `comment`) that colours it, or null
+/// for un-scoped text. An internal intermediate emitted by the renderer before
+/// runs are packed into the compact [HighlightedLines].
 class HlRun {
   final String text;
   final String? scope;
   const HlRun(this.text, this.scope);
+}
+
+/// A syntax-highlighted document in a compact, isolate-cheap form.
+///
+/// The naive shape — one `List<HlRun>` per line — is a swarm of per-run
+/// substring Strings and heap objects (roughly 8×N bytes of overhead for an
+/// N-char file) retained for as long as a viewer window is open. Here each line
+/// keeps a single backing String plus its run layout as parallel typed arrays,
+/// and scope names are interned to small integer ids, so the retained cost
+/// collapses to ~1×N plus a few typed arrays. Run substrings are materialized
+/// lazily at paint, only for on-screen lines. Fully sendable across an isolate
+/// boundary (Strings + typed data + ints), so the highlight worker returns it
+/// directly.
+class HighlightedLines {
+  /// Interned scope names; a run's scope id indexes this list (or -1 = unscoped).
+  final List<String?> scopes;
+  final List<HighlightedLine> lines;
+  const HighlightedLines(this.scopes, this.lines);
+
+  int get length => lines.length;
+
+  /// The scope name for a run's [scopeId], or null when unscoped (-1).
+  String? scopeName(int scopeId) => scopeId < 0 ? null : scopes[scopeId];
+}
+
+/// One highlighted line: the full line [text] (no newline) plus its runs as
+/// parallel arrays. For run `k`, its slice of [text] is
+/// `[runStarts[k], runStarts[k + 1])` — so [runStarts] has one extra terminal
+/// entry equal to `text.length` — and its scope is `runScopeIds[k]`, an index
+/// into [HighlightedLines.scopes] (or -1 for unscoped).
+class HighlightedLine {
+  final String text;
+  final Int32List runStarts;
+  final Int32List runScopeIds;
+  const HighlightedLine(this.text, this.runStarts, this.runScopeIds);
+
+  int get runCount => runScopeIds.length;
+}
+
+/// Packs the renderer's flat runs into per-line [HighlightedLine]s, interning
+/// scope names as it goes.
+class _DocBuilder {
+  final _scopeIds = <String, int>{};
+  final _scopes = <String?>[];
+  final _lines = <HighlightedLine>[];
+
+  final _lineBuf = StringBuffer();
+  var _lineLen = 0;
+  List<int> _starts = <int>[0];
+  List<int> _scopeOfRun = <int>[];
+
+  int _intern(String? scope) {
+    if (scope == null) return -1;
+    return _scopeIds.putIfAbsent(scope, () {
+      _scopes.add(scope);
+      return _scopes.length - 1;
+    });
+  }
+
+  void _addRun(String text, String? scope) {
+    if (text.isEmpty) return;
+    _lineBuf.write(text);
+    _lineLen += text.length;
+    _starts.add(_lineLen);
+    _scopeOfRun.add(_intern(scope));
+  }
+
+  void _endLine() {
+    _lines.add(
+      HighlightedLine(
+        _lineBuf.toString(),
+        Int32List.fromList(_starts),
+        Int32List.fromList(_scopeOfRun),
+      ),
+    );
+    _lineBuf.clear();
+    _lineLen = 0;
+    _starts = <int>[0];
+    _scopeOfRun = <int>[];
+  }
+
+  /// Adds [text] under [scope], breaking it on `\n` into the current and
+  /// subsequent lines (N newlines → N+1 lines; a trailing newline yields a final
+  /// empty line — how a text editor counts lines). Uses `indexOf` rather than
+  /// `split` so it doesn't allocate an intermediate parts list.
+  void feed(String text, String? scope) {
+    var start = 0;
+    while (true) {
+      final nl = text.indexOf('\n', start);
+      if (nl < 0) {
+        _addRun(text.substring(start), scope);
+        return;
+      }
+      _addRun(text.substring(start, nl), scope);
+      _endLine();
+      start = nl + 1;
+    }
+  }
+
+  HighlightedLines finish() {
+    _endLine();
+    return HighlightedLines(_scopes, _lines);
+  }
 }
 
 /// Individual lines longer than this are not highlighted (their whole file
@@ -118,15 +224,15 @@ Highlight get _highlight => _engine ??= (Highlight()
 bool isLanguageSupported(String? languageId) =>
     languageId != null && _languageModes.containsKey(languageId);
 
-/// Highlights [code] as [languageId], returning one entry per line (split on
-/// `\n`), each a list of styled [HlRun]s. Falls back to a single un-scoped run
-/// per line — i.e. [plainLines] — when the language is unknown, or when any
-/// single line is too long to tokenize safely ([maxHighlightLineLength]).
+/// Highlights [code] as [languageId] into the compact [HighlightedLines] (one
+/// entry per line, split on `\n`). Falls back to plain — i.e. [plainDoc] — when
+/// the language is unknown, or when any single line is too long to tokenize
+/// safely ([maxHighlightLineLength]).
 ///
-/// Pure and Flutter-free: safe to call inside `Isolate.run`.
-List<List<HlRun>> highlightLines(String code, String? languageId) {
+/// Pure and Flutter-free: safe to run on the highlight worker isolate.
+HighlightedLines highlightDoc(String code, String? languageId) {
   if (!isLanguageSupported(languageId) || _hasOverlongLine(code)) {
-    return plainLines(code);
+    return plainDoc(code);
   }
   final result = _highlight.highlight(
     code: code,
@@ -135,13 +241,17 @@ List<List<HlRun>> highlightLines(String code, String? languageId) {
   );
   final renderer = _ScopeRunRenderer();
   result.render(renderer);
-  return _splitIntoLines(renderer.runs);
+  final builder = _DocBuilder();
+  for (final run in renderer.runs) {
+    builder.feed(run.text, run.scope);
+  }
+  return builder.finish();
 }
 
-/// The un-highlighted form: every line as a single un-scoped run. Shared by
-/// the plain-text path and used as the instant first render before an
-/// off-thread highlight completes.
-List<List<HlRun>> plainLines(String code) => _splitIntoLines([HlRun(code, null)]);
+/// The un-highlighted form: every line as a single un-scoped run. Shared by the
+/// plain-text path and used as the instant first render before an off-thread
+/// highlight completes.
+HighlightedLines plainDoc(String code) => (_DocBuilder()..feed(code, null)).finish();
 
 bool _hasOverlongLine(String code) {
   var lineStart = 0;
@@ -152,26 +262,6 @@ bool _hasOverlongLine(String code) {
     }
   }
   return code.length - lineStart > maxHighlightLineLength;
-}
-
-/// Splits a flat run list into per-line run lists, breaking runs on `\n`. N
-/// newlines yield N+1 lines (a trailing newline produces a final empty line),
-/// matching how a text editor counts lines.
-List<List<HlRun>> _splitIntoLines(List<HlRun> runs) {
-  final lines = <List<HlRun>>[];
-  var current = <HlRun>[];
-  for (final run in runs) {
-    final parts = run.text.split('\n');
-    for (var i = 0; i < parts.length; i++) {
-      if (i > 0) {
-        lines.add(current);
-        current = <HlRun>[];
-      }
-      if (parts[i].isNotEmpty) current.add(HlRun(parts[i], run.scope));
-    }
-  }
-  lines.add(current);
-  return lines;
 }
 
 /// Collapses `re_highlight`'s token tree into a flat run list, tagging each
