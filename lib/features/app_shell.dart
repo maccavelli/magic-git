@@ -215,6 +215,15 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
   /// `setOutputViewChecked` so the menu item's checkmark stays in sync.
   static const _menuChannel = MethodChannel('magicgit/menu');
 
+  /// Debounces persisting the window's bounds while it's moved/resized. Saving
+  /// continuously (rather than only in [onWindowClose]) is what makes the
+  /// restore reliable: ⌘Q terminates the app without firing a window-close
+  /// event, and even on a normal close the single final write can be lost to
+  /// the process dying before it flushes to disk. By the time the user quits,
+  /// the last position/size is already persisted. See WindowBoundsStore and
+  /// main.dart's restore.
+  Timer? _boundsSaveTimer;
+
   @override
   void initState() {
     super.initState();
@@ -241,8 +250,36 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     // Detach the native menu handler so a late `toggleOutputView`/`toggleFileView`
     // from Swift can't invoke `_handleMenuCall` (and touch a disposed `ref`).
     _menuChannel.setMethodCallHandler(null);
+    _boundsSaveTimer?.cancel();
     windowManager.removeListener(this);
     super.dispose();
+  }
+
+  @override
+  void onWindowMoved() => _persistBoundsSoon();
+
+  @override
+  void onWindowResized() => _persistBoundsSoon();
+
+  /// Persist the window's current bounds shortly after it settles. Debounced so
+  /// a drag/resize that emits a burst of events writes once, not on every tick.
+  void _persistBoundsSoon() {
+    _boundsSaveTimer?.cancel();
+    _boundsSaveTimer = Timer(const Duration(milliseconds: 400), () async {
+      // A minimized or full-screen frame isn't where the user wants the window
+      // to reopen, so don't persist those transient bounds.
+      if (await windowManager.isMinimized() ||
+          await windowManager.isFullScreen()) {
+        return;
+      }
+      final bounds = await windowManager.getBounds();
+      await WindowBoundsStore.save(
+        bounds.left,
+        bounds.top,
+        bounds.width,
+        bounds.height,
+      );
+    });
   }
 
   @override
