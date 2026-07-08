@@ -47,13 +47,6 @@ dependencies:
   macos_window_utils: ^1.9.1
   window_manager: ^0.5.1
 
-  # Enumerate connected displays so a persisted window position can be validated
-  # against the *current* monitor layout on launch — a window saved on an
-  # since-unplugged/rearranged external display is re-centered instead of being
-  # restored off-screen. (Already present transitively via window_manager;
-  # declared directly because we use it directly.)
-  screen_retriever: ^0.2.0
-
   # Native folder picker for local repositories — a Finder pick is what
   # grants the sandbox access in the first place, not just a UX nicety.
   file_selector: ^1.0.3

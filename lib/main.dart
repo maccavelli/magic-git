@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
-import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 import 'core/providers/app_providers.dart';
 import 'core/theme/app_theme.dart';
@@ -33,35 +32,7 @@ void main() async {
   // previous clean close (see WindowBoundsStore / AppShell.onWindowClose).
   // Falls back to the hardcoded default + centering on first launch, or if
   // the persisted size failed WindowBoundsStore's sanity floor.
-  var savedBounds = await WindowBoundsStore.load();
-
-  // Guard the multi-monitor restore: only trust the saved *position* if it
-  // still lands on a currently-connected display. If that monitor was
-  // unplugged or the displays were rearranged, restoring the old coordinates
-  // makes the window open off-screen — which is what caused it to flash onto
-  // the vanished display (blinking other apps there) before snapping back to
-  // the main one. In that case we drop the whole saved rect and re-center at
-  // the default size, which always fits the primary display.
-  if (savedBounds != null) {
-    try {
-      final displays = await screenRetriever.getAllDisplays();
-      final frames = [
-        for (final d in displays)
-          Rect.fromLTWH(
-            (d.visiblePosition ?? Offset.zero).dx,
-            (d.visiblePosition ?? Offset.zero).dy,
-            (d.visibleSize ?? d.size).width,
-            (d.visibleSize ?? d.size).height,
-          ),
-      ];
-      if (!WindowBoundsStore.boundsOnDisplay(savedBounds, frames)) {
-        savedBounds = null;
-      }
-    } catch (_) {
-      // Couldn't enumerate displays — trust the saved bounds rather than
-      // second-guessing a good position on a probe failure.
-    }
-  }
+  final savedBounds = await WindowBoundsStore.load();
 
   final windowOptions = WindowOptions(
     size: savedBounds != null
@@ -83,7 +54,15 @@ void main() async {
     if (savedBounds != null) {
       // Place position + size atomically *before* the first show, so the
       // window is realized directly on its target display instead of being
-      // created on the main display and then moved (the visible flash).
+      // created on the main display and then moved — that two-step move was the
+      // visible flash (and the blinking of other apps on the target monitor).
+      //
+      // No display-list validation here on purpose: when the saved monitor is
+      // still connected this lands the window right back on it, and when it's
+      // gone AppKit's own `constrainFrameRect:toScreen:` pulls the frame onto a
+      // visible display (keeping the title bar reachable) as part of this single
+      // hidden placement — so the unplugged case degrades to "opens on the main
+      // display" with no flash, no off-screen/invisible window.
       await windowManager.setBounds(
         Rect.fromLTWH(
           savedBounds.$1,
