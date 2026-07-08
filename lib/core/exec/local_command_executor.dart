@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import '../ssh/command_formatter.dart';
 import '../ssh/ssh_command_executor.dart';
 
@@ -43,6 +44,13 @@ class LocalCommandExecutor implements CommandExecutor {
   void resetEnvironment() {
     _envPath = null;
     _binaryPaths = const {};
+  }
+
+  /// Writes [bytes] to [remotePath] on this machine's own filesystem — the
+  /// local-backend equivalent of the SSH SFTP upload.
+  @override
+  Future<void> uploadBytes(String remotePath, Uint8List bytes) async {
+    await File(remotePath).writeAsBytes(bytes);
   }
 
   Map<String, String> _mergedEnv(Map<String, String>? extraEnv) => {

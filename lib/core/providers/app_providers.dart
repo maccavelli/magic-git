@@ -15,6 +15,7 @@ import '../gitlab/models.dart';
 import '../local/security_scoped_bookmark.dart';
 import '../output/output_log.dart';
 import '../settings/app_settings.dart';
+import '../settings/install_service.dart';
 import '../ssh/environment_probe.dart';
 import '../ssh/host_key_prompt.dart';
 import '../ssh/ssh_client_manager.dart';
@@ -161,6 +162,10 @@ final gitServiceProvider = Provider<GitService>((ref) {
 
 final glabServiceProvider = Provider<GlabService>((ref) {
   return GlabService(ref.watch(activeExecutorProvider));
+});
+
+final installServiceProvider = Provider<InstallService>((ref) {
+  return InstallService(ref.watch(activeExecutorProvider));
 });
 
 final remoteWatchServiceProvider = Provider<RemoteWatchService>((ref) {

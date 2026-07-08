@@ -176,6 +176,12 @@ abstract class CommandExecutor {
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
   });
 
+  /// Uploads [bytes] to [remotePath] on the host: the SSH backend streams over
+  /// SFTP, the local backend writes to the filesystem. Used by guided install's
+  /// file sideload (an air-gapped host that can't download for itself). Throws
+  /// on failure.
+  Future<void> uploadBytes(String remotePath, Uint8List bytes);
+
   /// Applies a resolved environment (augmented PATH + resolved binary
   /// locations) so commands find user-installed tools. See
   /// [SSHCommandExecutor.configureEnvironment].
@@ -237,6 +243,29 @@ class SSHCommandExecutor implements CommandExecutor {
   void resetEnvironment() {
     _envPath = null;
     _binaryPaths = const {};
+  }
+
+  /// Streams [bytes] to [remotePath] over SFTP on the active session. Not on the
+  /// serialized command queue — it's a distinct SFTP channel, so it coexists
+  /// with in-flight git commands.
+  @override
+  Future<void> uploadBytes(String remotePath, Uint8List bytes) async {
+    final client = _clientManager.client;
+    if (client == null) {
+      throw StateError('cannot upload: no active SSH connection');
+    }
+    final sftp = await client.sftp();
+    final file = await sftp.open(
+      remotePath,
+      mode: SftpFileOpenMode.create |
+          SftpFileOpenMode.write |
+          SftpFileOpenMode.truncate,
+    );
+    try {
+      await file.write(Stream<Uint8List>.value(bytes)).done;
+    } finally {
+      await file.close();
+    }
   }
 
   /// Executes a command over the active SSH session.

@@ -1,10 +1,14 @@
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/install_planner.dart';
 import '../../core/settings/tool_catalog.dart';
 import '../../core/ssh/environment_probe.dart';
+import '../common/actions.dart';
 import '../common/tool_icon_button.dart';
 
 /// The health state of one tool for the current host.
@@ -18,11 +22,51 @@ class _ToolStatus {
 
 /// "Doctor" panel: for each external tool Magic Git uses, shows whether it's
 /// present on the connected host, its version against the minimum we rely on,
-/// and — when something's missing or outdated — copy-pasteable, platform-aware
-/// install commands. Read-only: it never runs anything on the host; the user
-/// runs the commands themselves. Re-check re-probes the live connection.
-class EnvironmentHealthSheet extends ConsumerWidget {
+/// and — when something's missing — either a one-click install (when a safe,
+/// non-interactive command exists on this host) or copy-pasteable, platform-
+/// aware commands to run manually. Re-check re-probes the live connection.
+class EnvironmentHealthSheet extends ConsumerStatefulWidget {
   const EnvironmentHealthSheet({super.key});
+
+  @override
+  ConsumerState<EnvironmentHealthSheet> createState() =>
+      _EnvironmentHealthSheetState();
+}
+
+class _EnvironmentHealthSheetState
+    extends ConsumerState<EnvironmentHealthSheet> {
+  /// What the host can install for us without prompts. Null until probed (or
+  /// when disconnected); a null value simply hides the one-click affordance and
+  /// leaves copy-paste guidance in place.
+  HostCapabilities? _caps;
+
+  /// The tool whose install is currently running, so its button shows progress
+  /// and the others are disabled (installs serialize on the executor anyway).
+  String? _runningBin;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _probeCaps());
+  }
+
+  Future<void> _probeCaps() async {
+    final conn = ref.read(connectionProvider);
+    if (!conn.isConnected || conn.repoPath == null) return;
+    try {
+      final caps = await ref
+          .read(installServiceProvider)
+          .probeCapabilities(conn.repoPath!);
+      if (mounted) setState(() => _caps = caps);
+    } catch (_) {
+      // Best-effort: leave _caps null and fall back to copy-paste guidance.
+    }
+  }
+
+  Future<void> _recheck() async {
+    await ref.read(connectionProvider.notifier).reprobeBinaries();
+    await _probeCaps();
+  }
 
   static _ToolStatus _statusFor(ToolSpec spec, RemoteEnvironment env) {
     if (env.os == 'unknown') return const _ToolStatus(_Health.unknown);
@@ -38,8 +82,99 @@ class EnvironmentHealthSheet extends ConsumerWidget {
     return _ToolStatus(_Health.ok, version: v?.display);
   }
 
+  Future<void> _install(ToolSpec spec, InstallCommand plan) async {
+    final ok = await confirmAction(
+      context,
+      title: 'Install ${spec.bin}?',
+      message:
+          '${plan.describe}\n\n'
+          'This runs on the host; output appears in the Output view.',
+      confirmLabel: 'Install',
+    );
+    if (!ok || !mounted) return;
+
+    final conn = ref.read(connectionProvider);
+    final repoPath = conn.repoPath;
+    if (repoPath == null) return;
+    final log = ref.read(outputLogProvider.notifier);
+    log.setVisible(true);
+
+    setState(() => _runningBin = spec.bin);
+    try {
+      final result = await ref
+          .read(installServiceProvider)
+          .run(repoPath, plan.command);
+      log.logResult(plan.describe, result);
+      if (result.isSuccess) {
+        await ref.read(connectionProvider.notifier).reprobeBinaries();
+        await _probeCaps();
+      }
+    } catch (e) {
+      log.logError(plan.describe, e.toString());
+    } finally {
+      if (mounted) setState(() => _runningBin = null);
+    }
+  }
+
+  /// Sideload flow: pick a binary/tarball from this machine, confirm, upload it
+  /// to the host and install into ~/.local/bin. For air-gapped hosts that can't
+  /// download for themselves.
+  Future<void> _sideload(ToolSpec spec) async {
+    final file = await openFile(
+      acceptedTypeGroups: const [
+        XTypeGroup(label: 'Binary or .tar.gz'),
+      ],
+    );
+    if (file == null || !mounted) return;
+    final bytes = await file.readAsBytes();
+    final name = file.name;
+
+    final ok = await confirmAction(
+      context,
+      title: 'Install ${spec.bin} from file?',
+      message:
+          'Upload "$name" (${_fmtSize(bytes.length)}) to the host and install '
+          'it to ~/.local/bin.\n\n'
+          'Output appears in the Output view.',
+      confirmLabel: 'Install',
+    );
+    if (!ok || !mounted) return;
+
+    final repoPath = ref.read(connectionProvider).repoPath;
+    if (repoPath == null) return;
+    final log = ref.read(outputLogProvider.notifier);
+    log.setVisible(true);
+
+    setState(() => _runningBin = spec.bin);
+    try {
+      final result = await ref.read(installServiceProvider).sideload(
+        repoPath: repoPath,
+        bin: spec.bin,
+        bytes: bytes,
+        filename: name,
+      );
+      log.logResult('sideload ${spec.bin} ($name)', result);
+      if (result.isSuccess) {
+        await ref.read(connectionProvider.notifier).reprobeBinaries();
+        await _probeCaps();
+      }
+    } catch (e) {
+      log.logError('sideload ${spec.bin}', e.toString());
+    } finally {
+      if (mounted) setState(() => _runningBin = null);
+    }
+  }
+
+  static String _fmtSize(int bytes) {
+    if (bytes >= 1024 * 1024) {
+      return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+    }
+    if (bytes >= 1024) return '${(bytes / 1024).round()} KB';
+    return '$bytes B';
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
     final env = ref.watch(binaryEnvironmentProvider);
     final connected = ref.watch(connectionProvider).isConnected;
@@ -60,7 +195,9 @@ class EnvironmentHealthSheet extends ConsumerWidget {
                   Text('Environment health', style: typography.title2),
                   const Spacer(),
                   Text(
-                    env.os == 'unknown' ? 'Not connected' : 'Host: ${env.osLabel}',
+                    env.os == 'unknown'
+                        ? 'Not connected'
+                        : 'Host: ${env.osLabel}',
                     style: typography.caption1.copyWith(
                       color: MacosColors.systemGrayColor,
                     ),
@@ -86,7 +223,13 @@ class EnvironmentHealthSheet extends ConsumerWidget {
                         ),
                       ),
                     for (final spec in tools)
-                      _toolCard(context, spec, _statusFor(spec, env), env.os),
+                      _toolCard(
+                        context,
+                        spec,
+                        _statusFor(spec, env),
+                        env.os,
+                        connected,
+                      ),
                     const SizedBox(height: 4),
                     Text(
                       'File watchers (fswatch / inotifywait) are optional — '
@@ -109,10 +252,8 @@ class EnvironmentHealthSheet extends ConsumerWidget {
                   PushButton(
                     controlSize: ControlSize.large,
                     secondary: true,
-                    onPressed: connected
-                        ? () => ref
-                              .read(connectionProvider.notifier)
-                              .reprobeBinaries()
+                    onPressed: connected && _runningBin == null
+                        ? _recheck
                         : null,
                     child: const Text('Re-check'),
                   ),
@@ -136,14 +277,24 @@ class EnvironmentHealthSheet extends ConsumerWidget {
     ToolSpec spec,
     _ToolStatus status,
     String os,
+    bool connected,
   ) {
     final typography = MacosTheme.of(context).typography;
     final (badge, color) = _badge(spec, status);
-    // Install/upgrade guidance is shown only when there's action to take, to
-    // keep healthy tools quiet.
-    final showHints =
+    // Guidance is shown only when there's action to take, to keep healthy
+    // tools quiet.
+    final needsAction =
         status.health == _Health.missing || status.health == _Health.outdated;
-    final hints = showHints ? installHints(spec.bin, os) : const <InstallHint>[];
+    final hints = needsAction
+        ? installHints(spec.bin, os)
+        : const <InstallHint>[];
+
+    // One-click install is offered only for a *missing* tool (upgrades are
+    // messier and stay copy-paste), and only once we know the host can do it
+    // without prompting.
+    final plan = (status.health == _Health.missing && _caps != null)
+        ? planInstall(spec.bin, os, _caps!)
+        : null;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -181,7 +332,92 @@ class EnvironmentHealthSheet extends ConsumerWidget {
               color: MacosColors.systemGrayColor,
             ),
           ),
+          if (plan != null) _installAffordance(context, spec, plan),
+          if (status.health == _Health.missing &&
+              connected &&
+              os == 'linux' &&
+              canSideload(spec.bin))
+            _sideloadRow(context, spec),
           for (final hint in hints) _hintRow(context, hint),
+        ],
+      ),
+    );
+  }
+
+  /// The one-click install row (when runnable) or the manual-only reason.
+  Widget _installAffordance(
+    BuildContext context,
+    ToolSpec spec,
+    InstallAction plan,
+  ) {
+    final typography = MacosTheme.of(context).typography;
+    if (plan is InstallManual) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Text(
+          plan.reason,
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemGrayColor,
+          ),
+        ),
+      );
+    }
+    final cmd = plan as InstallCommand;
+    final running = _runningBin == spec.bin;
+    final busy = _runningBin != null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        children: [
+          PushButton(
+            controlSize: ControlSize.regular,
+            onPressed: busy ? null : () => _install(spec, cmd),
+            child: running
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: ProgressCircle(radius: 7),
+                  )
+                : Text('Install with ${cmd.label}'),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Runs: ${cmd.describe}',
+              overflow: TextOverflow.ellipsis,
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Air-gapped fallback: upload a binary/tarball from this machine.
+  Widget _sideloadRow(BuildContext context, ToolSpec spec) {
+    final typography = MacosTheme.of(context).typography;
+    final busy = _runningBin != null;
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Row(
+        children: [
+          PushButton(
+            controlSize: ControlSize.regular,
+            secondary: true,
+            onPressed: busy ? null : () => _sideload(spec),
+            child: const Text('Install from file…'),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'No network on the host? ${sideloadAssetHint(spec.bin, _caps?.arch ?? '')}',
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -248,7 +484,9 @@ class EnvironmentHealthSheet extends ConsumerWidget {
       ),
       child: Text(
         tier.label,
-        style: MacosTheme.of(context).typography.caption2.copyWith(color: color),
+        style: MacosTheme.of(
+          context,
+        ).typography.caption2.copyWith(color: color),
       ),
     );
   }

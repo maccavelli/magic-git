@@ -1,0 +1,150 @@
+// Tests for guided-install planning: which tools can be installed with no
+// interaction on a given host, and when we must fall back to copy-paste.
+
+import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_magic_git/core/settings/install_planner.dart';
+
+void main() {
+  group('macOS', () {
+    test('Homebrew present → runnable brew install for each tool', () {
+      const caps = HostCapabilities(hasBrew: true);
+      for (final bin in ['git', 'glab', 'gh', 'fswatch']) {
+        final action = planInstall(bin, 'macos', caps);
+        expect(action, isA<InstallCommand>());
+        expect((action as InstallCommand).command, 'brew install $bin');
+        expect(action.label, 'Homebrew');
+      }
+    });
+
+    test('no Homebrew → manual with the no-brew reason', () {
+      final action = planInstall('glab', 'macos', const HostCapabilities());
+      expect(action, isA<InstallManual>());
+      expect((action as InstallManual).reason, kNoBrewReason);
+    });
+  });
+
+  group('Linux without passwordless sudo', () {
+    // Package managers all need root; a static-binary tool can still go
+    // rootless.
+    const caps = HostCapabilities(hasApt: true, hasDnf: true, hasSnap: true);
+
+    test('git and inotifywait fall back to manual (need sudo)', () {
+      for (final bin in ['git', 'inotifywait']) {
+        final action = planInstall(bin, 'linux', caps);
+        expect((action as InstallManual).reason, kNeedsSudoReason, reason: bin);
+      }
+    });
+
+    test('gh and glab use a rootless, checksum-verified download', () {
+      for (final bin in ['gh', 'glab']) {
+        final action = planInstall(bin, 'linux', caps);
+        final cmd = action as InstallCommand;
+        expect(cmd.label, 'download (~/.local/bin)', reason: bin);
+        expect(cmd.command, contains('sha256sum -c'), reason: bin);
+        expect(cmd.command, contains(r'$HOME/.local/bin'), reason: bin);
+        expect(cmd.summary, isNotNull, reason: bin);
+      }
+    });
+  });
+
+  group('Linux with passwordless sudo + apt', () {
+    const caps = HostCapabilities(hasApt: true, passwordlessSudo: true);
+
+    test('git → apt-get install', () {
+      expect((planInstall('git', 'linux', caps) as InstallCommand).command,
+          'sudo -n apt-get install -y git');
+    });
+
+    test('inotifywait → inotify-tools', () {
+      expect(
+          (planInstall('inotifywait', 'linux', caps) as InstallCommand).command,
+          'sudo -n apt-get install -y inotify-tools');
+    });
+
+    test('gh has no one-line apt install → rootless download', () {
+      final cmd = planInstall('gh', 'linux', caps) as InstallCommand;
+      expect(cmd.label, 'download (~/.local/bin)');
+    });
+
+    test('glab has no apt path → rootless download', () {
+      final cmd = planInstall('glab', 'linux', caps) as InstallCommand;
+      expect(cmd.label, 'download (~/.local/bin)');
+    });
+  });
+
+  group('Linux with passwordless sudo + dnf', () {
+    const caps = HostCapabilities(hasDnf: true, passwordlessSudo: true);
+
+    test('git / gh / glab install directly', () {
+      expect((planInstall('git', 'linux', caps) as InstallCommand).command,
+          'sudo -n dnf install -y git');
+      expect((planInstall('gh', 'linux', caps) as InstallCommand).command,
+          'sudo -n dnf install -y gh');
+      expect((planInstall('glab', 'linux', caps) as InstallCommand).command,
+          'sudo -n dnf install -y glab');
+    });
+
+    test('inotifywait pulls in EPEL alongside inotify-tools', () {
+      expect(
+          (planInstall('inotifywait', 'linux', caps) as InstallCommand).command,
+          'sudo -n dnf install -y epel-release inotify-tools');
+    });
+  });
+
+  group('Linux with passwordless sudo + snap only', () {
+    const caps = HostCapabilities(hasSnap: true, passwordlessSudo: true);
+
+    test('glab → snap install', () {
+      expect((planInstall('glab', 'linux', caps) as InstallCommand).command,
+          'sudo -n snap install glab');
+    });
+
+    test('git → manual (snap has no path here)', () {
+      expect((planInstall('git', 'linux', caps) as InstallManual).reason,
+          kNoPackageManagerReason);
+    });
+  });
+
+  test('unknown OS is always manual', () {
+    expect(
+      planInstall(
+        'git',
+        'unknown',
+        const HostCapabilities(passwordlessSudo: true),
+      ),
+      isA<InstallManual>(),
+    );
+  });
+
+  group('rootless install scripts', () {
+    test('gh script hits the right release + checksums URLs and verifies', () {
+      final s = rootlessInstallScript('gh');
+      expect(s, contains('api.github.com/repos/cli/cli/releases/latest'));
+      expect(s, contains(r'gh_${ver}_linux_${arch}.tar.gz'));
+      expect(s, contains(r'gh_${ver}_checksums.txt'));
+      expect(s, contains('sha256sum -c -')); // checksum verified before install
+      expect(s, contains(r'"$HOME/.local/bin/gh"'));
+      // arch mapping is present.
+      expect(s, contains('x86_64|amd64'));
+      expect(s, contains('aarch64|arm64'));
+    });
+
+    test('glab script hits the GitLab release + checksums URLs', () {
+      final s = rootlessInstallScript('glab');
+      expect(
+        s,
+        contains('gitlab.com/api/v4/projects/gitlab-org%2Fcli/releases'),
+      );
+      expect(s, contains(r'glab_${ver}_linux_${arch}.tar.gz'));
+      expect(s, contains(r'releases/${tag}/downloads'));
+      expect(s, contains('checksums.txt'));
+      expect(s, contains('sha256sum -c -'));
+      expect(s, contains(r'"$HOME/.local/bin/glab"'));
+    });
+
+    test('a non-static tool has no rootless script', () {
+      expect(() => rootlessInstallScript('git'), throwsArgumentError);
+      expect(kRootlessTools, {'gh', 'glab'});
+    });
+  });
+}
