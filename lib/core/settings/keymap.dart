@@ -119,6 +119,7 @@ enum KeymapCategory {
   history('History'),
   stashes('Stashes'),
   gitlab('GitLab'),
+  github('GitHub'),
   viewer('File Viewer');
 
   final String label;
@@ -196,7 +197,7 @@ final List<KeymapAction> kKeymapActions = [
   ),
   KeymapAction(
     id: 'global.panel5',
-    label: 'Switch to GitLab',
+    label: 'Switch to Forge',
     category: KeymapCategory.global,
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.digit5, meta: true)],
   ),
@@ -456,6 +457,40 @@ final List<KeymapAction> kKeymapActions = [
     id: 'gitlab.retry',
     label: 'Retry selected pipeline',
     category: KeymapCategory.gitlab,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyR, meta: true, alt: true),
+    ],
+  ),
+  // GitHub — scoped to the GitHub (Forge) panel; approve/merge require a
+  // selected pull request, re-run a selected workflow run. Shares default
+  // bindings with the GitLab actions above, which is safe: they're in separate
+  // (non-global) categories, so only one forge panel is ever active per repo.
+  KeymapAction(
+    id: 'github.newPr',
+    label: 'New pull request',
+    category: KeymapCategory.github,
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyN, meta: true)],
+  ),
+  KeymapAction(
+    id: 'github.approve',
+    label: 'Approve selected pull request',
+    category: KeymapCategory.github,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyA, meta: true, alt: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'github.merge',
+    label: 'Merge selected pull request',
+    category: KeymapCategory.github,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyM, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'github.rerun',
+    label: 'Re-run selected workflow run',
+    category: KeymapCategory.github,
     defaultBindings: [
       KeyBinding.fromKey(LogicalKeyboardKey.keyR, meta: true, alt: true),
     ],

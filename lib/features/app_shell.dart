@@ -17,8 +17,8 @@ import 'common/diff_view.dart' show kDiffMono;
 import 'common/escape_dismissible.dart';
 import 'common/sidebar_branding.dart';
 import 'connection/connection_landing.dart';
-import 'gitlab/gitlab_panel.dart';
-import 'gitlab/project_panel.dart';
+import 'forge/forge_panel.dart';
+import 'forge/forge_project_panel.dart';
 import 'history/history_view.dart';
 import 'repository/repo_status_view.dart';
 import 'settings/keyboard_shortcuts_sheet.dart';
@@ -32,7 +32,8 @@ import 'viewer/viewer_providers.dart';
 
 /// Top-level window shell. Content is driven by connection state: the
 /// connection form until a session is established, then the feature panels
-/// (Status, History, Branches, GitLab, Project) selected from the sidebar.
+/// (Status, History, Branches, Stashes, Forge, Project) selected from the
+/// sidebar.
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
@@ -490,7 +491,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     // switches for the *same* repo, but must not silently carry a previous
     // repo's selections/scroll position/in-flight guards into a newly
     // switched-to repo — the active tab already guards against this itself
-    // (e.g. GitLabPanel.didUpdateWidget), but the other five don't, so drop
+    // (e.g. the Forge panel's didUpdateWidget), but the other five don't, so drop
     // every non-active page back to unvisited here; each is rebuilt fresh
     // the next time it's opened.
     ref.listen(connectionProvider.select((c) => c.repoPath), (previous, next) {
@@ -610,7 +611,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
               ),
               SidebarItem(
                 leading: MacosIcon(CupertinoIcons.cloud),
-                label: Text('GitLab'),
+                label: Text('Forge'),
               ),
               SidebarItem(
                 leading: MacosIcon(CupertinoIcons.cube_box),
@@ -675,10 +676,10 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
             ? StashView(repoPath: repoPath, isActive: _pageIndex == 3)
             : const SizedBox.shrink(),
         _visitedPages.contains(4)
-            ? GitLabPanel(repoPath: repoPath, isActive: _pageIndex == 4)
+            ? ForgePanel(repoPath: repoPath, isActive: _pageIndex == 4)
             : const SizedBox.shrink(),
         _visitedPages.contains(5)
-            ? ProjectPanel(repoPath: repoPath)
+            ? ForgeProjectPanel(repoPath: repoPath)
             : const SizedBox.shrink(),
       ],
     );

@@ -1,0 +1,76 @@
+// Verifies the Forge tab dispatcher routes to the right panel/notice based on
+// the detected forge, so a GitHub repo gets the GitHub panel, a GitLab repo the
+// (unchanged) GitLab panel, and unrecognized/remoteless repos a clear notice.
+
+import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/core/forge/forge.dart';
+import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/features/forge/forge_panel.dart';
+
+const _repo = '/repo';
+
+final _remoteRefs = [
+  const GitRef(
+    name: 'refs/remotes/origin/main',
+    oid: 'deadbeef',
+    isHead: false,
+    subject: '',
+  ),
+];
+
+Future<void> _pumpForge(WidgetTester tester, Forge forge) async {
+  final container = ProviderContainer(
+    overrides: [
+      forgeProvider(_repo).overrideWith((ref) async => forge),
+      // Keep the underlying forge panels from hitting a real executor.
+      refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+      pullRequestsProvider(_repo).overrideWith((ref) async => const []),
+      workflowRunsProvider(_repo).overrideWith((ref) async => const []),
+      mergeRequestsProvider(_repo).overrideWith((ref) async => const []),
+      pipelinesProvider(_repo).overrideWith((ref) async => const []),
+    ],
+  );
+  addTearDown(container.dispose);
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: const MacosApp(
+        debugShowCheckedModeBanner: false,
+        home: SizedBox(
+          width: 1100,
+          height: 720,
+          child: ForgePanel(repoPath: _repo),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+void main() {
+  testWidgets('github → the GitHub panel', (tester) async {
+    await _pumpForge(tester, Forge.github);
+    expect(find.text('Pull Requests'), findsOneWidget);
+    expect(find.text('Merge Requests'), findsNothing);
+  });
+
+  testWidgets('gitlab → the (unchanged) GitLab panel', (tester) async {
+    await _pumpForge(tester, Forge.gitlab);
+    expect(find.text('Merge Requests'), findsOneWidget);
+    expect(find.text('Pull Requests'), findsNothing);
+  });
+
+  testWidgets('none → the no-remote notice', (tester) async {
+    await _pumpForge(tester, Forge.none);
+    expect(find.text('No remote detected'), findsOneWidget);
+  });
+
+  testWidgets('unknown → the unsupported-forge notice', (tester) async {
+    await _pumpForge(tester, Forge.unknown);
+    expect(find.text('Unsupported forge'), findsOneWidget);
+  });
+}

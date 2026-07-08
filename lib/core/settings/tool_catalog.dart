@@ -140,7 +140,11 @@ const List<ToolSpec> kToolCatalog = [
   ToolSpec(
     bin: 'gh',
     tier: ToolTier.feature,
-    purpose: 'GitHub: pull requests and checks (support coming soon).',
+    purpose: 'GitHub: pull requests, workflow runs, issues, releases.',
+    // The GitHub panels rely on `gh pr list --json` / `gh run list --json`,
+    // which need a reasonably modern gh (the `--json` flags landed in the 2.x
+    // line). 2.0 is a conservative floor.
+    minVersion: ToolVersion(2, 0, 0),
     docsUrl: 'https://cli.github.com/',
   ),
   ToolSpec(

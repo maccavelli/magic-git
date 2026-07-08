@@ -55,11 +55,11 @@ class LocalCommandExecutor implements CommandExecutor {
 
   Map<String, String> _mergedEnv(Map<String, String>? extraEnv) => {
     ...CommandFormatter.defaultEnv,
-    // Neutralize ambient glab-auth env vars inherited from the launching shell
-    // (Process.start defaults includeParentEnvironment: true) — the local
-    // equivalent of the SSH path's `unset` prelude. Placed before extraEnv so a
-    // caller that legitimately supplies a token still overrides.
-    ...CommandFormatter.neutralizedGlabTokens,
+    // Neutralize ambient forge-auth env vars (glab + gh) inherited from the
+    // launching shell (Process.start defaults includeParentEnvironment: true) —
+    // the local equivalent of the SSH path's `unset` prelude. Placed before
+    // extraEnv so a caller that legitimately supplies a token still overrides.
+    ...CommandFormatter.neutralizedForgeTokens,
     'PATH': ?_envPath,
     ...?extraEnv,
   };

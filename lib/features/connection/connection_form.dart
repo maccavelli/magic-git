@@ -27,6 +27,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
   final _passphrase = TextEditingController();
   final _repoPath = TextEditingController();
   final _gitlabToken = TextEditingController();
+  final _githubToken = TextEditingController();
 
   bool _save = true;
   String? _saveWarning;
@@ -48,6 +49,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
     _passphrase.dispose();
     _repoPath.dispose();
     _gitlabToken.dispose();
+    _githubToken.dispose();
     super.dispose();
   }
 
@@ -83,6 +85,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
   Future<void> _doSubmit() async {
     final repoPath = _repoPath.text.trim();
     final token = _gitlabToken.text.trim();
+    final ghToken = _githubToken.text.trim();
     final key = _privateKey.text.trim();
     final profile = SSHConnectionProfile(
       host: _host.text.trim(),
@@ -147,10 +150,14 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
         final tokenToSave = token.isNotEmpty
             ? token
             : (match != null ? await store.gitlabTokenFor(match.id) : null);
+        final ghTokenToSave = ghToken.isNotEmpty
+            ? ghToken
+            : (match != null ? await store.githubTokenFor(match.id) : null);
         await store.save(
           conn,
           secret: secretToSave,
           gitlabToken: tokenToSave,
+          githubToken: ghTokenToSave,
           privateKey: keyToSave,
           passphrase: passphraseToSave,
         );
@@ -177,6 +184,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
           profile: profile,
           repoPath: repoPath,
           gitlabToken: token,
+          githubToken: ghToken,
           connectionId: connectionId,
           connectionLabel: connectionLabel,
           repoPaths: repoPaths,
@@ -229,6 +237,12 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
                 'GitLab token',
                 _gitlabToken,
                 placeholder: 'glpat-… (optional)',
+                obscure: true,
+              ),
+              _field(
+                'GitHub token',
+                _githubToken,
+                placeholder: 'ghp_… / github_pat_… (optional)',
                 obscure: true,
               ),
               const SizedBox(height: 8),

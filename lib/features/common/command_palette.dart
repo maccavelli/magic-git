@@ -100,7 +100,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
       (1, CupertinoIcons.clock, 'History'),
       (2, CupertinoIcons.arrow_branch, 'Branches'),
       (3, CupertinoIcons.tray_2, 'Stashes'),
-      (4, CupertinoIcons.cloud, 'GitLab'),
+      (4, CupertinoIcons.cloud, 'Forge'),
       (5, CupertinoIcons.cube_box, 'Project'),
     ];
 

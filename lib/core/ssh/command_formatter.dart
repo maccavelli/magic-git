@@ -22,27 +22,35 @@ class CommandFormatter {
     'GIT_OPTIONAL_LOCKS': '0',
   };
 
-  /// glab treats these env vars as taking precedence over its own stored
-  /// `glab auth` credentials. Unset (not just left unexported) before every
-  /// command — git and glab alike — so that if the remote shell's login
-  /// profile or PAM environment ever ambiently sets one of these, every glab
-  /// call doesn't silently authenticate as a different identity with no
-  /// error (the exit code stays 0 either way). Harmless for plain git
-  /// commands, which never read these vars.
-  static const String _unsetAmbientGlabEnv =
-      'unset GITLAB_TOKEN GITLAB_ACCESS_TOKEN OAUTH_TOKEN; ';
+  /// Both forge CLIs treat these env vars as taking precedence over their own
+  /// stored credentials: `glab` reads `GITLAB_TOKEN`/`GITLAB_ACCESS_TOKEN`/
+  /// `OAUTH_TOKEN`, and `gh` reads `GH_TOKEN`/`GITHUB_TOKEN` (github.com) plus
+  /// `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` (Enterprise). Unset (not
+  /// just left unexported) before every command — git, glab, and gh alike — so
+  /// that if the remote shell's login profile or PAM environment ever ambiently
+  /// sets one of these, a forge call doesn't silently authenticate as a
+  /// different identity with no error (the exit code stays 0 either way).
+  /// Harmless for plain git commands, which never read these vars.
+  static const String _unsetAmbientForgeTokens =
+      'unset GITLAB_TOKEN GITLAB_ACCESS_TOKEN OAUTH_TOKEN '
+      'GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; ';
 
-  /// The same three ambient glab-auth vars as [_unsetAmbientGlabEnv], expressed
+  /// The same ambient forge-auth vars as [_unsetAmbientForgeTokens], expressed
   /// as an environment map with empty values — for the local backend, which
   /// sets process environment directly via `Process.start` (no shell, so no
-  /// `unset` prelude to emit). glab treats an empty value identically to unset,
-  /// so this reproduces the SSH path's guarantee: a `GITLAB_TOKEN` (etc.) in the
-  /// launching shell's environment can't silently override the stored `glab
-  /// auth` credential. Harmless for plain git, which never reads these.
-  static const Map<String, String> neutralizedGlabTokens = {
+  /// `unset` prelude to emit). Both CLIs treat an empty value identically to
+  /// unset, so this reproduces the SSH path's guarantee: a `GITLAB_TOKEN` /
+  /// `GH_TOKEN` (etc.) in the launching shell's environment can't silently
+  /// override the stored `glab auth` / `gh auth` credential. Harmless for plain
+  /// git, which never reads these.
+  static const Map<String, String> neutralizedForgeTokens = {
     'GITLAB_TOKEN': '',
     'GITLAB_ACCESS_TOKEN': '',
     'OAUTH_TOKEN': '',
+    'GH_TOKEN': '',
+    'GITHUB_TOKEN': '',
+    'GH_ENTERPRISE_TOKEN': '',
+    'GITHUB_ENTERPRISE_TOKEN': '',
   };
 
   /// Compiles an environment prelude, directory switch, and invocation into a
@@ -90,6 +98,6 @@ class CommandFormatter {
             }
             return '${e.key}=${ShellEscaper.escape(e.value)}';
           }).join(' ')}; ';
-    return '$_unsetAmbientGlabEnv$prelude$cd && exec $escapedArgs';
+    return '$_unsetAmbientForgeTokens$prelude$cd && exec $escapedArgs';
   }
 }

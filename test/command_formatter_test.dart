@@ -34,7 +34,7 @@ void main() {
       expect(cmd, isNot(contains('export')));
     });
 
-    test('always unsets the ambient glab-credential env vars first', () {
+    test('always unsets the ambient forge-credential env vars first', () {
       final cmd = CommandFormatter.format(
         repoPath: '/r',
         gitArgs: ['git', 'fetch'],
@@ -42,7 +42,10 @@ void main() {
       );
       expect(
         cmd,
-        startsWith('unset GITLAB_TOKEN GITLAB_ACCESS_TOKEN OAUTH_TOKEN; '),
+        startsWith(
+          'unset GITLAB_TOKEN GITLAB_ACCESS_TOKEN OAUTH_TOKEN '
+          'GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; ',
+        ),
       );
     });
 

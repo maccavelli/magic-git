@@ -34,6 +34,13 @@ void main() {
       scrollable: find.byType(Scrollable).first,
     );
     expect(find.text('File Viewer'), findsOneWidget);
+    // Keep scrolling to the section's first action — with more categories above
+    // it, the header can land at the fold with its rows still unbuilt.
+    await tester.scrollUntilVisible(
+      find.text('Close viewer window'),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
     expect(find.text('Close viewer window'), findsOneWidget);
   });
 }

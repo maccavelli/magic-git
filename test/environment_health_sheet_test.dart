@@ -3,7 +3,6 @@
 // missing.
 
 import 'package:desktop_drop/desktop_drop.dart';
-import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';

@@ -6,8 +6,8 @@ import 'async_write_queue.dart';
 import 'saved_connection.dart';
 
 /// Persists connection profiles: non-secret metadata in shared_preferences,
-/// secrets (SSH password/passphrase/private key, GitLab token) in the macOS
-/// Keychain via flutter_secure_storage.
+/// secrets (SSH password/passphrase/private key, GitLab token, GitHub token) in
+/// the macOS Keychain via flutter_secure_storage.
 ///
 /// When the Keychain is unavailable — e.g. an unsigned build, where every
 /// secure-storage call throws — secrets fall back to a JSON file under the
@@ -20,7 +20,8 @@ import 'saved_connection.dart';
 class ConnectionStore {
   static const _metaKey = 'saved_connections';
   static String _secretKey(String id) => 'conn_secret_$id'; // SSH password
-  static String _tokenKey(String id) => 'conn_gltoken_$id';
+  static String _tokenKey(String id) => 'conn_gltoken_$id'; // GitLab token
+  static String _ghTokenKey(String id) => 'conn_ghtoken_$id'; // GitHub token
   static String _keyKey(String id) => 'conn_key_$id'; // private key PEM
   static String _passphraseKey(String id) => 'conn_pass_$id'; // key passphrase
 
@@ -119,6 +120,7 @@ class ConnectionStore {
     SavedConnection conn, {
     String? secret,
     String? gitlabToken,
+    String? githubToken,
     String? privateKey,
     String? passphrase,
   }) async {
@@ -130,6 +132,7 @@ class ConnectionStore {
     await Future.wait([
       _writeSecret(_secretKey(conn.id), secret),
       _writeSecret(_tokenKey(conn.id), gitlabToken),
+      _writeSecret(_ghTokenKey(conn.id), githubToken),
       _writeSecret(_keyKey(conn.id), privateKey),
       _writeSecret(_passphraseKey(conn.id), passphrase),
     ]);
@@ -160,6 +163,7 @@ class ConnectionStore {
 
   Future<String?> secretFor(String id) => _readSecret(_secretKey(id));
   Future<String?> gitlabTokenFor(String id) => _readSecret(_tokenKey(id));
+  Future<String?> githubTokenFor(String id) => _readSecret(_ghTokenKey(id));
   Future<String?> privateKeyFor(String id) => _readSecret(_keyKey(id));
   Future<String?> passphraseFor(String id) => _readSecret(_passphraseKey(id));
 
@@ -170,6 +174,7 @@ class ConnectionStore {
     });
     await _deleteSecret(_secretKey(id));
     await _deleteSecret(_tokenKey(id));
+    await _deleteSecret(_ghTokenKey(id));
     await _deleteSecret(_keyKey(id));
     await _deleteSecret(_passphraseKey(id));
   }

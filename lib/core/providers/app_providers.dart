@@ -5,11 +5,14 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../exec/local_command_executor.dart';
+import '../forge/forge.dart';
 import '../git/git_service.dart';
 import '../git/local_watch_service.dart';
 import '../git/remote_watch_service.dart';
 import '../git/repo_tree.dart';
 import '../git/watch_event.dart';
+import '../github/gh_service.dart';
+import '../github/models.dart';
 import '../gitlab/glab_service.dart';
 import '../gitlab/models.dart';
 import '../local/security_scoped_bookmark.dart';
@@ -162,6 +165,12 @@ final gitServiceProvider = Provider<GitService>((ref) {
 
 final glabServiceProvider = Provider<GlabService>((ref) {
   return GlabService(ref.watch(activeExecutorProvider));
+});
+
+/// GitHub counterpart to [glabServiceProvider]; same executor seam, so it works
+/// over both SSH and local backends unchanged.
+final ghServiceProvider = Provider<GhService>((ref) {
+  return GhService(ref.watch(activeExecutorProvider));
 });
 
 final installServiceProvider = Provider<InstallService>((ref) {
@@ -407,6 +416,7 @@ class ConnectionController extends Notifier<ConnectionState> {
   SSHConnectionProfile? _lastProfile;
   String? _lastRepoPath;
   String? _lastGitlabToken;
+  String? _lastGithubToken;
   String? _lastConnectionId;
   String? _lastConnectionLabel;
   List<String>? _lastRepoPaths;
@@ -560,6 +570,15 @@ class ConnectionController extends Notifier<ConnectionState> {
     ref.invalidate(jobsProvider);
     ref.invalidate(jobTraceProvider);
     ref.invalidate(projectDashboardProvider);
+    // Forge detection + GitHub providers — same rationale as the GitLab set:
+    // a repo switch / reconnect must never serve the previous repo's forge
+    // classification or cross-host PR/run/issue data.
+    ref.invalidate(forgeProvider);
+    ref.invalidate(pullRequestsProvider);
+    ref.invalidate(workflowRunsProvider);
+    ref.invalidate(runJobsProvider);
+    ref.invalidate(runJobLogProvider);
+    ref.invalidate(githubProjectDashboardProvider);
   }
 
   /// The executor for [state]'s current backend, read directly off `state`
@@ -656,6 +675,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     required SSHConnectionProfile profile,
     required String repoPath,
     String? gitlabToken,
+    String? githubToken,
     String? connectionId,
     String? connectionLabel,
     List<String>? repoPaths,
@@ -690,6 +710,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     _lastProfile = profile;
     _lastRepoPath = repoPath;
     _lastGitlabToken = gitlabToken;
+    _lastGithubToken = githubToken;
     _lastConnectionId = connectionId;
     _lastConnectionLabel = connectionLabel;
     _lastRepoPaths = repoPaths;
@@ -792,6 +813,19 @@ class ConnectionController extends Notifier<ConnectionState> {
           warning =
               'GitLab token login failed — GitLab panels may not work until '
               'the remote is authenticated. ($e)';
+        }
+        if (attempt != _attempt || !ref.mounted) return;
+      }
+      if (githubToken != null && githubToken.isNotEmpty) {
+        try {
+          await ref
+              .read(ghServiceProvider)
+              .loginWithToken(repoPath, githubToken);
+        } catch (e) {
+          final msg =
+              'GitHub token login failed — GitHub panels may not work until '
+              'the remote is authenticated. ($e)';
+          warning = warning == null ? msg : '$warning\n$msg';
         }
         if (attempt != _attempt || !ref.mounted) return;
       }
@@ -975,20 +1009,22 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// [repoPath] when given, otherwise the connection's default repo.
   Future<void> connectToSaved(SavedConnection conn, {String? repoPath}) async {
     final store = ref.read(connectionStoreProvider);
-    String? secret, token, key, passphrase;
+    String? secret, token, ghToken, key, passphrase;
     try {
-      // Read all four secrets concurrently — they're independent Keychain
-      // lookups, so serializing them just adds latency to every connect.
+      // Read all secrets concurrently — they're independent Keychain lookups,
+      // so serializing them just adds latency to every connect.
       final secrets = await Future.wait([
         store.secretFor(conn.id),
         store.gitlabTokenFor(conn.id),
+        store.githubTokenFor(conn.id),
         store.privateKeyFor(conn.id),
         store.passphraseFor(conn.id),
       ]);
       secret = secrets[0];
       token = secrets[1];
-      key = secrets[2];
-      passphrase = secrets[3];
+      ghToken = secrets[2];
+      key = secrets[3];
+      passphrase = secrets[4];
     } catch (_) {
       // Secrets unavailable (e.g. unsigned build without a dotfile) — the
       // connection may still succeed via agent/other auth, or fail cleanly.
@@ -1005,6 +1041,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       ),
       repoPath: repoPath ?? conn.repoPath,
       gitlabToken: token,
+      githubToken: ghToken,
       connectionId: conn.id,
       connectionLabel: conn.displayName,
       repoPaths: conn.allRepoPaths,
@@ -1117,6 +1154,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       profile: profile,
       repoPath: repoPath,
       gitlabToken: _lastGitlabToken,
+      githubToken: _lastGithubToken,
       connectionId: _lastConnectionId,
       connectionLabel: _lastConnectionLabel,
       repoPaths: _lastRepoPaths,
@@ -1637,4 +1675,88 @@ final jobTraceProvider = StreamProvider.autoDispose
 final projectDashboardProvider = FutureProvider.autoDispose
     .family<ProjectDashboard, String>((ref, repoPath) {
       return ref.watch(glabServiceProvider).projectDashboard(repoPath);
+    });
+
+// ---- Forge detection + GitHub providers ------------------------------------
+
+/// The forge (GitHub/GitLab) the repo's `origin` remote points at — decides
+/// which forge panel/service the "Forge" and "Project" tabs drive. Detects by
+/// hostname first; for an unrecognized self-hosted host (a custom-domain GitHub
+/// Enterprise / GitLab instance) it falls back to whichever CLI reports being
+/// authenticated to that host. Returns [Forge.none] when the repo has no
+/// origin remote at all.
+final forgeProvider = FutureProvider.autoDispose.family<Forge, String>((
+  ref,
+  repoPath,
+) async {
+  final executor = ref.watch(activeExecutorProvider);
+  final remote = await executor.execute(
+    repoPath: repoPath,
+    gitArgs: ['git', 'remote', 'get-url', 'origin'],
+    timeout: const Duration(seconds: 20),
+  );
+  if (!remote.isSuccess) return Forge.none;
+  final url = remote.stdout.trim();
+  final byHost = forgeFromRemoteUrl(url);
+  if (byHost != Forge.unknown) return byHost;
+
+  // Unrecognized (self-hosted) host: ask the CLIs which hosts they're logged
+  // in to. `gh auth status` / `glab auth status` print their configured hosts;
+  // their exit codes are unreliable, so scan the combined stdout+stderr text.
+  final host = forgeHostFromRemoteUrl(url);
+  if (host == null) return Forge.unknown;
+  try {
+    final gh = await executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['gh', 'auth', 'status'],
+      timeout: const Duration(seconds: 20),
+    );
+    if ('${gh.stdout}\n${gh.stderr}'.contains(host)) return Forge.github;
+    final glab = await executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['glab', 'auth', 'status'],
+      timeout: const Duration(seconds: 20),
+    );
+    if ('${glab.stdout}\n${glab.stderr}'.contains(host)) return Forge.gitlab;
+  } catch (_) {
+    // A missing CLI / timeout during the probe just leaves it unclassified.
+  }
+  return Forge.unknown;
+});
+
+/// Open pull requests for the connected GitHub repo.
+final pullRequestsProvider = FutureProvider.autoDispose
+    .family<List<PullRequest>, String>((ref, repoPath) {
+      return ref.watch(ghServiceProvider).pullRequests(repoPath);
+    });
+
+/// Recent GitHub Actions workflow runs for the connected repo.
+final workflowRunsProvider = FutureProvider.autoDispose
+    .family<List<WorkflowRun>, String>((ref, repoPath) {
+      return ref.watch(ghServiceProvider).workflowRuns(repoPath);
+    });
+
+/// Live jobs of a workflow run, keyed by (repoPath, runId). Polls until the run
+/// completes (GitHub exposes no live log stream); auto-disposed so the poll
+/// stops when the view closes.
+final runJobsProvider = StreamProvider.autoDispose
+    .family<List<GhJob>, (String, int)>((ref, key) {
+      final (repoPath, runId) = key;
+      return ref.watch(ghServiceProvider).runJobsStream(repoPath, runId);
+    });
+
+/// A completed job's log, keyed by (repoPath, jobId). GitHub only serves logs
+/// once a job finishes; an in-progress job surfaces as an error the view shows
+/// as a "logs available when the job completes" placeholder.
+final runJobLogProvider = FutureProvider.autoDispose
+    .family<String, (String, int)>((ref, key) {
+      final (repoPath, jobId) = key;
+      return ref.watch(ghServiceProvider).runJobLog(repoPath, jobId);
+    });
+
+/// GitHub repository overview (issues, labels, milestones, releases) in one
+/// GraphQL hop.
+final githubProjectDashboardProvider = FutureProvider.autoDispose
+    .family<GhProjectDashboard, String>((ref, repoPath) {
+      return ref.watch(ghServiceProvider).projectDashboard(repoPath);
     });
