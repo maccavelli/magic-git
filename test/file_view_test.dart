@@ -145,6 +145,20 @@ Future<void> _pump(
 Iterable<MacosIcon> _icons(WidgetTester tester) =>
     tester.widgetList<MacosIcon>(find.byType(MacosIcon));
 
+/// The background color of a file/folder row's tile — transparent unless the
+/// row is selected/highlighted.
+Color? _tileColor(WidgetTester tester, String path) {
+  final container = tester.widget<Container>(
+    find
+        .descendant(
+          of: find.byKey(ValueKey(path)),
+          matching: find.byType(Container),
+        )
+        .first,
+  );
+  return container.color;
+}
+
 Color? _folderColor(WidgetTester tester, String path) {
   // Scope to the row's keyed tile, then pick the folder icon (not the chevron).
   final tile = find.byKey(ValueKey(path));
@@ -500,6 +514,33 @@ void main() {
       expect(open.length, 1);
       expect(open.single.repoPath, _repo);
       expect(open.single.path, 'todo.txt');
+    },
+  );
+
+  testWidgets(
+    'right-click highlights the file, so the menu target is unambiguous',
+    (tester) async {
+      await _pump(
+        tester,
+        onOpenFile: (_, {required staged, required untracked}) {},
+      );
+
+      // Untouched, the row is not highlighted.
+      expect(_tileColor(tester, 'lib/main.dart'), const Color(0x00000000));
+
+      // Right-clicking selects it (like a left-click, like Finder) while the
+      // menu is open.
+      await tester.tap(
+        find.text('main.dart'),
+        buttons: kSecondaryMouseButton,
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('View File'), findsOneWidget); // menu is open
+      expect(
+        _tileColor(tester, 'lib/main.dart'),
+        MacosColors.systemBlueColor.withValues(alpha: 0.15),
+      );
     },
   );
 

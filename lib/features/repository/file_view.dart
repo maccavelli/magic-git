@@ -193,6 +193,9 @@ class _FileViewState extends ConsumerState<FileView> {
   // would clip it off-window. ContextMenuController clamps the anchor so the
   // card always stays fully on screen.
   void _showContextMenu(RepoNode node, Offset globalPos) {
+    // Highlight the right-clicked file (like a left-click, and like Finder) so
+    // it's clear which file the menu's actions will target.
+    setState(() => _selectedPath = node.path);
     final s = ref.read(repoStatusOverlayProvider(repoPath)).statusFor(node.path);
     // Only a genuinely partially-staged file needs the explicit staged/
     // unstaged toggle — a plain click already shows the only relevant half
@@ -218,18 +221,14 @@ class _FileViewState extends ConsumerState<FileView> {
         ContextMenuItem(
           icon: CupertinoIcons.square_stack,
           label: 'Staged changes',
-          onTap: () {
-            setState(() => _selectedPath = node.path);
-            widget.onOpenFile(node.path, staged: true, untracked: false);
-          },
+          onTap: () =>
+              widget.onOpenFile(node.path, staged: true, untracked: false),
         ),
         ContextMenuItem(
           icon: CupertinoIcons.square_stack_3d_down_right,
           label: 'Unstaged changes',
-          onTap: () {
-            setState(() => _selectedPath = node.path);
-            widget.onOpenFile(node.path, staged: false, untracked: false);
-          },
+          onTap: () =>
+              widget.onOpenFile(node.path, staged: false, untracked: false),
         ),
       ],
       ContextMenuItem(
