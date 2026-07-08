@@ -17,6 +17,16 @@ class MainFlutterWindow: NSWindow {
   private var activeScopedURLs: [String: URL] = [:]
 
   override func awakeFromNib() {
+    // Start fully transparent so nothing paints at the default (main-display)
+    // launch position. Flutter repositions the window onto its saved monitor
+    // while it's invisible, then reveals it via window_manager's setOpacity(1)
+    // (see main.dart) — so the window appears already on the correct screen
+    // with no flash on the main display, and no other apps there "blinking".
+    // NB: this keeps the window "visible at launch" (unlike hiding it, which
+    // left it never showing) so window_manager's normal show/position lifecycle
+    // still works — we only mask the pixels until it's in the right place.
+    self.alphaValue = 0
+
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
     self.contentViewController = flutterViewController

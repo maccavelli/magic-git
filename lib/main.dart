@@ -74,6 +74,11 @@ void main() async {
     }
     await windowManager.show();
     await windowManager.focus();
+    // The native window launches fully transparent (MainFlutterWindow) so its
+    // default main-display position never paints; now that it's been placed on
+    // the correct monitor and shown, reveal it. This is what keeps other apps
+    // on the main screen from blinking as the window is positioned.
+    await windowManager.setOpacity(1);
   });
 
   // Enable macOS window vibrancy
