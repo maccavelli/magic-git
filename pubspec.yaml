@@ -51,6 +51,11 @@ dependencies:
   # grants the sandbox access in the first place, not just a UX nicety.
   file_selector: ^1.0.3
 
+  # Drag-and-drop of OS files into the app (e.g. drop a tool tarball onto the
+  # doctor panel to sideload it). A Finder drop counts as user-selection, so
+  # it's covered by the same user-selected file entitlement — no new grant.
+  desktop_drop: ^0.6.0
+
   # Storage
   shared_preferences: ^2.3.2
 

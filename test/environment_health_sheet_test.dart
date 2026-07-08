@@ -2,6 +2,7 @@
 // status from the resolved environment and shows install hints for what's
 // missing.
 
+import 'package:desktop_drop/desktop_drop.dart';
 import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -175,5 +176,41 @@ void main() {
     expect(find.text('Install from file…'), findsWidgets);
     // …and the guidance names the host's detected architecture.
     expect(find.textContaining('linux_arm64'), findsWidgets);
+    // …plus a drop zone (one DropTarget per sideloadable tool) inviting a drag.
+    expect(find.byType(DropTarget), findsNWidgets(2)); // gh + glab
+    expect(find.textContaining('Drag a file here'), findsWidgets);
+  });
+
+  testWidgets('sideload also works on macOS, with each tool\'s macOS asset '
+      'naming (gh: macOS/.zip, glab: darwin/.tar.gz)', (tester) async {
+    final fake = _FakeInstall(const HostCapabilities(arch: 'arm64'));
+    const env = RemoteEnvironment(
+      os: 'macos',
+      path: '/usr/bin',
+      found: {'git': '/usr/bin/git'},
+      versions: {'git': '2.39.3'},
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          binaryEnvironmentProvider.overrideWith(() => _FixedEnv(env)),
+          connectionProvider.overrideWith(() => _ConnectedConn()),
+          installServiceProvider.overrideWithValue(fake),
+        ],
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: EnvironmentHealthSheet(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Both static tools offer the drop/sideload affordance on macOS too.
+    expect(find.byType(DropTarget), findsNWidgets(2)); // gh + glab
+    expect(find.text('Install from file…'), findsWidgets);
+    // Guidance names the macOS-specific artifacts, not Linux ones.
+    expect(find.textContaining('gh_*_macOS_arm64.zip'), findsOneWidget);
+    expect(find.textContaining('glab_*_darwin_arm64.tar.gz'), findsOneWidget);
+    expect(find.textContaining('linux_'), findsNothing);
   });
 }

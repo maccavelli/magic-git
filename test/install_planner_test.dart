@@ -156,14 +156,27 @@ void main() {
       expect(canSideload('inotifywait'), isFalse);
     });
 
-    test('asset hint names the exact arch when known', () {
-      expect(sideloadAssetHint('glab', 'arm64'), contains('glab_*_linux_arm64'));
-      expect(sideloadAssetHint('gh', 'amd64'), contains('gh_*_linux_amd64'));
+    test('asset hint names the exact linux arch + extension when known', () {
+      expect(sideloadAssetHint('glab', 'linux', 'arm64'),
+          contains('glab_*_linux_arm64.tar.gz'));
+      expect(sideloadAssetHint('gh', 'linux', 'amd64'),
+          contains('gh_*_linux_amd64.tar.gz'));
       // Unknown arch degrades gracefully.
-      expect(
-        sideloadAssetHint('gh', ''),
-        contains('your host architecture'),
-      );
+      expect(sideloadAssetHint('gh', 'linux', ''), contains('for your host'));
+    });
+
+    test('asset hint uses each tool\'s macOS naming (gh: macOS/.zip, '
+        'glab: darwin/.tar.gz)', () {
+      // gh ships macOS builds as macOS_*.zip …
+      expect(sideloadAssetHint('gh', 'macos', 'arm64'),
+          contains('gh_*_macOS_arm64.zip'));
+      expect(sideloadAssetHint('gh', 'macos', 'amd64'),
+          contains('gh_*_macOS_amd64.zip'));
+      // … glab ships them as darwin_*.tar.gz.
+      expect(sideloadAssetHint('glab', 'macos', 'arm64'),
+          contains('glab_*_darwin_arm64.tar.gz'));
+      expect(sideloadAssetHint('glab', 'macos', 'amd64'),
+          contains('glab_*_darwin_amd64.tar.gz'));
     });
 
     test('releases URL is provided for the static tools', () {
@@ -176,8 +189,10 @@ void main() {
       // Filename/paths arrive as $SL_FILE/$SL_BIN/$SL_TMP, never interpolated.
       expect(kSideloadScript, contains(r'"${SL_FILE:?}"'));
       expect(kSideloadScript, contains(r'"$HOME/.local/bin/$SL_BIN"'));
-      expect(kSideloadScript, contains('*.tar.gz|*.tgz')); // handles archives
-      expect(kSideloadScript, contains('--version')); // arch sanity check
+      expect(kSideloadScript, contains('*.tar.gz|*.tgz')); // handles tarballs
+      expect(kSideloadScript, contains('*.zip')); // and gh/macOS zips
+      expect(kSideloadScript, contains('unzip'));
+      expect(kSideloadScript, contains('--version')); // OS/arch sanity check
       // No positional interpolation of a filename anywhere.
       expect(kSideloadScript, isNot(contains(r'$1')));
     });

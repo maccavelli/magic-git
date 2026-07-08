@@ -239,12 +239,31 @@ String releasesUrl(String bin) => switch (bin) {
   _ => '',
 };
 
+/// The release-asset OS token and archive extension for [bin] on [os], per each
+/// project's own naming convention: gh ships macOS builds as `macOS_*.zip`,
+/// glab ships them as `darwin_*.tar.gz`, and both ship Linux as `linux_*.tar.gz`.
+({String osToken, String ext}) _assetShape(String bin, String os) {
+  if (os == 'macos') {
+    return bin == 'gh'
+        ? (osToken: 'macOS', ext: 'zip')
+        : (osToken: 'darwin', ext: 'tar.gz'); // glab
+  }
+  return (osToken: 'linux', ext: 'tar.gz');
+}
+
 /// One-line guidance naming the exact artifact to download for a sideload of
-/// [bin] onto a host of [arch] ('amd64'|'arm64'|'' if unknown).
-String sideloadAssetHint(String bin, String arch) {
-  final a = arch.isEmpty ? 'your host architecture' : 'linux_$arch';
-  return 'On a machine with internet, download ${bin}_*_$a.tar.gz '
-      '(or the raw $bin binary), then choose it here.';
+/// [bin] onto a host running [os] ('linux'|'macos') on [arch]
+/// ('amd64'|'arm64'|'' if unknown).
+String sideloadAssetHint(String bin, String os, String arch) {
+  final shape = _assetShape(bin, os);
+  if (arch.isEmpty) {
+    return 'On a machine with internet, download the $bin archive for your host '
+        '(${shape.osToken}, .${shape.ext}) — or the raw $bin binary — then '
+        'choose it here.';
+  }
+  return 'On a machine with internet, download '
+      '${bin}_*_${shape.osToken}_$arch.${shape.ext} (or the raw $bin binary), '
+      'then choose it here.';
 }
 
 /// A self-contained POSIX-sh script that installs an already-uploaded artifact
@@ -253,13 +272,14 @@ String sideloadAssetHint(String bin, String arch) {
 /// shell: `SL_FILE` (absolute path to the uploaded file), `SL_BIN` (target
 /// tool name), `SL_TMP` (the temp dir to extract into and then remove).
 ///
-/// It handles both a `.tar.gz`/`.tgz` archive (extract, locate the binary) and
-/// a raw binary (used as-is), installs it 0755, cleans up, and finally runs
-/// `<tool> --version` as an architecture sanity check — the most likely sideload
-/// mistake is grabbing the wrong CPU/OS build, and a bare install would leave a
-/// silently non-working binary otherwise. SSH transport already guarantees the
-/// upload's integrity (the channel is MAC-protected), so no separate checksum
-/// step is needed here.
+/// It handles a `.tar.gz`/`.tgz` archive (Linux + glab/macOS), a `.zip` archive
+/// (gh/macOS ships zips), and a raw binary (used as-is): it extracts, locates
+/// the binary by name, installs it 0755, cleans up, and finally runs
+/// `<tool> --version` as an OS/architecture sanity check — the most likely
+/// sideload mistake is grabbing the wrong CPU/OS build, and a bare install would
+/// leave a silently non-working binary otherwise. SSH transport already
+/// guarantees the upload's integrity (the channel is MAC-protected), so no
+/// separate checksum step is needed here.
 const String kSideloadScript = r'''
 set -eu
 : "${SL_FILE:?}" "${SL_BIN:?}" "${SL_TMP:?}"
@@ -267,6 +287,11 @@ mkdir -p "$HOME/.local/bin"
 case "$SL_FILE" in
   *.tar.gz|*.tgz)
     tar -xzf "$SL_FILE" -C "$SL_TMP"
+    src=$(find "$SL_TMP" -type f -name "$SL_BIN" | head -n1)
+    ;;
+  *.zip)
+    command -v unzip >/dev/null 2>&1 || { echo "unzip is needed to expand $SL_BIN's .zip but isn't installed on the host" >&2; exit 1; }
+    unzip -q "$SL_FILE" -d "$SL_TMP"
     src=$(find "$SL_TMP" -type f -name "$SL_BIN" | head -n1)
     ;;
   *)
@@ -279,7 +304,7 @@ rm -rf "$SL_TMP"
 if "$HOME/.local/bin/$SL_BIN" --version >/dev/null 2>&1; then
   echo "Installed $SL_BIN to $HOME/.local/bin/$SL_BIN"
 else
-  echo "Installed to ~/.local/bin/$SL_BIN, but it did not run — you may have chosen the wrong OS/architecture for this Linux host." >&2
+  echo "Installed to ~/.local/bin/$SL_BIN, but it did not run — you may have chosen the wrong OS/architecture build for this host." >&2
   exit 1
 fi
 ''';
