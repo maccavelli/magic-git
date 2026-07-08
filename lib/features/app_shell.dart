@@ -310,6 +310,15 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         ref.read(outputLogProvider.notifier).toggle();
       case 'toggleFileView':
         ref.read(fileViewVisibleProvider.notifier).toggle();
+      case 'syncMenuState':
+        // The native side asks for this once its menu items are installed, so
+        // the checkmarks are correct even if our startup push (below) raced the
+        // item creation and was dropped.
+        _syncMenuState(
+          'setOutputViewChecked',
+          ref.read(outputLogProvider).visible,
+        );
+        _syncMenuState('setFileViewChecked', ref.read(fileViewVisibleProvider));
     }
     return null;
   }

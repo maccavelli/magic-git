@@ -185,6 +185,14 @@ class MainFlutterWindow: NSWindow {
     self.showFileItem = addToggleItem(
       to: viewMenu, title: "Show File View", key: "e",
       action: #selector(toggleFileView(_:)), separatorBefore: false)
+
+    // The items now exist, so pull the current checkbox states from Flutter.
+    // Flutter also pushes them once at startup, but that push races this
+    // (async-deferred) install and is dropped if it lands while showOutputItem
+    // /showFileItem are still nil — which left the checkmarks off even though
+    // both views default to on. Requesting here guarantees the items exist
+    // before Flutter answers, so the marks are correct from the first frame.
+    menuChannel?.invokeMethod("syncMenuState", arguments: nil)
   }
 
   // Adds (or reuses, if awakeFromNib runs twice) a checkable ⇧⌘<key> item
