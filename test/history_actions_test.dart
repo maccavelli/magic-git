@@ -11,6 +11,8 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/history/commit_graph_view.dart'
+    show kGraphRowHeight;
 import 'package:remote_magic_git/features/history/history_view.dart';
 
 class _FakeGit extends GitService {
@@ -80,6 +82,18 @@ void main() {
     await _pump(tester, [head, older]);
     expect(find.text('Select a commit'), findsOneWidget);
     expect(_actionsMenu, findsNothing);
+  });
+
+  testWidgets('the commit graph lays out rows at a fixed itemExtent', (
+    tester,
+  ) async {
+    await _pump(tester, [head, older]);
+    // Rows are all kGraphRowHeight, so the graph list pins that as its
+    // itemExtent — the list can skip per-row layout for its scroll math.
+    final extents = tester
+        .widgetList<ListView>(find.byType(ListView))
+        .map((l) => l.itemExtent);
+    expect(extents, contains(kGraphRowHeight));
   });
 
   testWidgets('HEAD commit offers Amend', (tester) async {

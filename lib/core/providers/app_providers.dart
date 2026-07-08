@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:isolate';
 import 'dart:typed_data';
+import 'dart:ui' show Rect;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../exec/local_command_executor.dart';
@@ -73,6 +74,40 @@ class WindowBoundsStore {
     }
     if (width < minWidth || height < minHeight) return null;
     return (x, y, width, height);
+  }
+
+  /// The minimum overlap, in logical pixels on each axis, between the saved
+  /// window rect and a connected display for the position to be considered
+  /// usable. Below this the window would be all-but-off-screen — its monitor
+  /// was unplugged or the displays were rearranged since it was saved — so the
+  /// caller drops the position and re-centers on the primary display rather
+  /// than restoring the window somewhere unreachable (the multi-monitor
+  /// "opens off the old display, then snaps to main" bug).
+  static const double minOnscreen = 64;
+
+  /// Whether the window at [bounds] (x, y, width, height) still lands usefully
+  /// on one of [displayFrames] — each a currently-connected display's frame in
+  /// the same global coordinate space window_manager uses (the primary
+  /// display's top-left is the origin). A window qualifies when it overlaps some
+  /// display by at least [minOnscreen] px on *both* axes: enough of it — and its
+  /// title bar — is reachable to grab and move.
+  ///
+  /// With an empty [displayFrames] (the display list couldn't be read) this
+  /// returns true, so a probe failure never throws away an otherwise-good saved
+  /// position.
+  static bool boundsOnDisplay(
+    (double, double, double, double) bounds,
+    List<Rect> displayFrames,
+  ) {
+    if (displayFrames.isEmpty) return true;
+    final window = Rect.fromLTWH(bounds.$1, bounds.$2, bounds.$3, bounds.$4);
+    for (final display in displayFrames) {
+      final overlap = window.intersect(display);
+      if (overlap.width >= minOnscreen && overlap.height >= minOnscreen) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /// Persists the window's current bounds. Best-effort: a failure to persist

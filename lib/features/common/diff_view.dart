@@ -11,6 +11,13 @@ const kDiffMono = TextStyle(
   height: 1.35,
 );
 
+/// The exact rendered height of one diff line — [kDiffMono]'s fontSize × its
+/// line-height. Every line in the flat [DiffView] is a single, non-wrapping
+/// monospace line, so pinning this as a uniform `itemExtent` lets the list skip
+/// per-line layout for its scroll math (O(1) jump-scroll on large patches)
+/// without changing the layout, since it equals each line's intrinsic height.
+const double kDiffLineExtent = 12 * 1.35; // = 16.2
+
 /// Per-line syntax color for a unified-diff line, shared by [DiffView] and the
 /// hunk-staging view.
 ///
@@ -88,6 +95,7 @@ class _DiffViewState extends State<DiffView> {
     return Scrollbar(
       child: ListView.builder(
         padding: const EdgeInsets.all(12),
+        itemExtent: kDiffLineExtent,
         itemCount: _lines.length,
         itemBuilder: (context, index) {
           final line = _lines[index];

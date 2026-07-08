@@ -635,6 +635,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
       onKeyEvent: _onCommitKey,
       child: ListView.builder(
       controller: _commitScroll,
+      itemExtent: kGraphRowHeight,
       itemCount: graph.rows.length,
       itemBuilder: (context, index) {
         final row = graph.rows[index];

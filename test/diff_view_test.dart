@@ -47,4 +47,29 @@ void main() {
       expect(diffLineColor('', _default), _default);
     });
   });
+
+  group('DiffView widget', () {
+    testWidgets('lays out lines at a fixed itemExtent for O(1) scroll', (
+      tester,
+    ) async {
+      const diff = '@@ -1,2 +1,2 @@\n-old line\n+new line\n context';
+      await tester.pumpWidget(
+        const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: SizedBox(
+            width: 400,
+            height: 300,
+            child: DiffView(diff: diff),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // The uniform extent equals a single mono line's intrinsic height, so
+      // it's a pure scroll-perf win with no layout change.
+      final list = tester.widget<ListView>(find.byType(ListView));
+      expect(list.itemExtent, kDiffLineExtent);
+      expect(find.text('+new line'), findsOneWidget);
+    });
+  });
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 import 'core/providers/app_providers.dart';
 import 'core/theme/app_theme.dart';
@@ -32,7 +33,35 @@ void main() async {
   // previous clean close (see WindowBoundsStore / AppShell.onWindowClose).
   // Falls back to the hardcoded default + centering on first launch, or if
   // the persisted size failed WindowBoundsStore's sanity floor.
-  final savedBounds = await WindowBoundsStore.load();
+  var savedBounds = await WindowBoundsStore.load();
+
+  // Guard the multi-monitor restore: only trust the saved *position* if it
+  // still lands on a currently-connected display. If that monitor was
+  // unplugged or the displays were rearranged, restoring the old coordinates
+  // makes the window open off-screen — which is what caused it to flash onto
+  // the vanished display (blinking other apps there) before snapping back to
+  // the main one. In that case we drop the whole saved rect and re-center at
+  // the default size, which always fits the primary display.
+  if (savedBounds != null) {
+    try {
+      final displays = await screenRetriever.getAllDisplays();
+      final frames = [
+        for (final d in displays)
+          Rect.fromLTWH(
+            (d.visiblePosition ?? Offset.zero).dx,
+            (d.visiblePosition ?? Offset.zero).dy,
+            (d.visibleSize ?? d.size).width,
+            (d.visibleSize ?? d.size).height,
+          ),
+      ];
+      if (!WindowBoundsStore.boundsOnDisplay(savedBounds, frames)) {
+        savedBounds = null;
+      }
+    } catch (_) {
+      // Couldn't enumerate displays — trust the saved bounds rather than
+      // second-guessing a good position on a probe failure.
+    }
+  }
 
   final windowOptions = WindowOptions(
     size: savedBounds != null
@@ -52,7 +81,17 @@ void main() async {
     // live constraint regardless of the restored size.
     await windowManager.setMinimumSize(kMinWindowSize);
     if (savedBounds != null) {
-      await windowManager.setPosition(Offset(savedBounds.$1, savedBounds.$2));
+      // Place position + size atomically *before* the first show, so the
+      // window is realized directly on its target display instead of being
+      // created on the main display and then moved (the visible flash).
+      await windowManager.setBounds(
+        Rect.fromLTWH(
+          savedBounds.$1,
+          savedBounds.$2,
+          savedBounds.$3,
+          savedBounds.$4,
+        ),
+      );
     }
     await windowManager.show();
     await windowManager.focus();
