@@ -39,7 +39,7 @@ void main() {
       for (final bin in ['gh', 'glab']) {
         final action = planInstall(bin, 'linux', caps);
         final cmd = action as InstallCommand;
-        expect(cmd.label, 'download (~/.local/bin)', reason: bin);
+        expect(cmd.label, 'download', reason: bin);
         expect(cmd.command, contains('sha256sum -c'), reason: bin);
         expect(cmd.command, contains(r'$HOME/.local/bin'), reason: bin);
         expect(cmd.summary, isNotNull, reason: bin);
@@ -63,12 +63,12 @@ void main() {
 
     test('gh has no one-line apt install → rootless download', () {
       final cmd = planInstall('gh', 'linux', caps) as InstallCommand;
-      expect(cmd.label, 'download (~/.local/bin)');
+      expect(cmd.label, 'download');
     });
 
     test('glab has no apt path → rootless download', () {
       final cmd = planInstall('glab', 'linux', caps) as InstallCommand;
-      expect(cmd.label, 'download (~/.local/bin)');
+      expect(cmd.label, 'download');
     });
   });
 
@@ -145,6 +145,41 @@ void main() {
     test('a non-static tool has no rootless script', () {
       expect(() => rootlessInstallScript('git'), throwsArgumentError);
       expect(kRootlessTools, {'gh', 'glab'});
+    });
+  });
+
+  group('sideload', () {
+    test('only the static-binary tools can be sideloaded', () {
+      expect(canSideload('gh'), isTrue);
+      expect(canSideload('glab'), isTrue);
+      expect(canSideload('git'), isFalse);
+      expect(canSideload('inotifywait'), isFalse);
+    });
+
+    test('asset hint names the exact arch when known', () {
+      expect(sideloadAssetHint('glab', 'arm64'), contains('glab_*_linux_arm64'));
+      expect(sideloadAssetHint('gh', 'amd64'), contains('gh_*_linux_amd64'));
+      // Unknown arch degrades gracefully.
+      expect(
+        sideloadAssetHint('gh', ''),
+        contains('your host architecture'),
+      );
+    });
+
+    test('releases URL is provided for the static tools', () {
+      expect(releasesUrl('gh'), contains('github.com/cli/cli/releases'));
+      expect(releasesUrl('glab'), contains('gitlab.com/gitlab-org/cli'));
+    });
+
+    test('the install script takes inputs via env (no shell injection) and '
+        'verifies the binary runs', () {
+      // Filename/paths arrive as $SL_FILE/$SL_BIN/$SL_TMP, never interpolated.
+      expect(kSideloadScript, contains(r'"${SL_FILE:?}"'));
+      expect(kSideloadScript, contains(r'"$HOME/.local/bin/$SL_BIN"'));
+      expect(kSideloadScript, contains('*.tar.gz|*.tgz')); // handles archives
+      expect(kSideloadScript, contains('--version')); // arch sanity check
+      // No positional interpolation of a filename anywhere.
+      expect(kSideloadScript, isNot(contains(r'$1')));
     });
   });
 }

@@ -257,7 +257,8 @@ class SSHCommandExecutor implements CommandExecutor {
     final sftp = await client.sftp();
     final file = await sftp.open(
       remotePath,
-      mode: SftpFileOpenMode.create |
+      mode:
+          SftpFileOpenMode.create |
           SftpFileOpenMode.write |
           SftpFileOpenMode.truncate,
     );
@@ -487,15 +488,19 @@ class SSHCommandExecutor implements CommandExecutor {
       final label = gitArgs.join(' ');
       final budget = OutputByteBudget();
       final stdoutFuture = collectBounded(
-        boundedBytes(s.stdout.cast<List<int>>(), budget, label).transform(
-          const Utf8Decoder(allowMalformed: true),
-        ),
+        boundedBytes(
+          s.stdout.cast<List<int>>(),
+          budget,
+          label,
+        ).transform(const Utf8Decoder(allowMalformed: true)),
         label,
       );
       final stderrFuture = collectBounded(
-        boundedBytes(s.stderr.cast<List<int>>(), budget, label).transform(
-          const Utf8Decoder(allowMalformed: true),
-        ),
+        boundedBytes(
+          s.stderr.cast<List<int>>(),
+          budget,
+          label,
+        ).transform(const Utf8Decoder(allowMalformed: true)),
         label,
       );
 

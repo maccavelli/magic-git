@@ -121,13 +121,12 @@ class _EnvironmentHealthSheetState
   /// download for themselves.
   Future<void> _sideload(ToolSpec spec) async {
     final file = await openFile(
-      acceptedTypeGroups: const [
-        XTypeGroup(label: 'Binary or .tar.gz'),
-      ],
+      acceptedTypeGroups: const [XTypeGroup(label: 'Binary or .tar.gz')],
     );
     if (file == null || !mounted) return;
     final bytes = await file.readAsBytes();
     final name = file.name;
+    if (!mounted) return;
 
     final ok = await confirmAction(
       context,
@@ -147,12 +146,14 @@ class _EnvironmentHealthSheetState
 
     setState(() => _runningBin = spec.bin);
     try {
-      final result = await ref.read(installServiceProvider).sideload(
-        repoPath: repoPath,
-        bin: spec.bin,
-        bytes: bytes,
-        filename: name,
-      );
+      final result = await ref
+          .read(installServiceProvider)
+          .sideload(
+            repoPath: repoPath,
+            bin: spec.bin,
+            bytes: bytes,
+            filename: name,
+          );
       log.logResult('sideload ${spec.bin} ($name)', result);
       if (result.isSuccess) {
         await ref.read(connectionProvider.notifier).reprobeBinaries();

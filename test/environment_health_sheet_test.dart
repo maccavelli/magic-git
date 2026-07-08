@@ -145,4 +145,35 @@ void main() {
 
     expect(fake.ran, contains('brew install glab'));
   });
+
+  testWidgets('offers sideload for glab/gh on a connected Linux host', (
+    tester,
+  ) async {
+    final fake = _FakeInstall(const HostCapabilities(arch: 'arm64'));
+    const env = RemoteEnvironment(
+      os: 'linux',
+      path: '/usr/bin',
+      found: {'git': '/usr/bin/git'},
+      versions: {'git': '2.39.3'},
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          binaryEnvironmentProvider.overrideWith(() => _FixedEnv(env)),
+          connectionProvider.overrideWith(() => _ConnectedConn()),
+          installServiceProvider.overrideWithValue(fake),
+        ],
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: EnvironmentHealthSheet(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // glab and gh (the static-binary tools) each offer a file sideload…
+    expect(find.text('Install from file…'), findsWidgets);
+    // …and the guidance names the host's detected architecture.
+    expect(find.textContaining('linux_arm64'), findsWidgets);
+  });
 }

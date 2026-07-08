@@ -168,7 +168,7 @@ const Set<String> kRootlessTools = {'gh', 'glab'};
 
 /// Builds the rootless-download [InstallCommand] for [bin].
 InstallCommand _rootless(String bin) => InstallCommand(
-  'download (~/.local/bin)',
+  'download',
   rootlessInstallScript(bin),
   summary:
       'Download the official $bin binary, verify its SHA-256 checksum, and '

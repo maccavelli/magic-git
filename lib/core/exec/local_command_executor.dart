@@ -156,13 +156,19 @@ class LocalCommandExecutor implements CommandExecutor {
       final label = gitArgs.join(' ');
       final budget = OutputByteBudget();
       final stdoutFuture = SSHCommandExecutor.collectBounded(
-        SSHCommandExecutor.boundedBytes(p.stdout, budget, label)
-            .transform(const Utf8Decoder(allowMalformed: true)),
+        SSHCommandExecutor.boundedBytes(
+          p.stdout,
+          budget,
+          label,
+        ).transform(const Utf8Decoder(allowMalformed: true)),
         label,
       );
       final stderrFuture = SSHCommandExecutor.collectBounded(
-        SSHCommandExecutor.boundedBytes(p.stderr, budget, label)
-            .transform(const Utf8Decoder(allowMalformed: true)),
+        SSHCommandExecutor.boundedBytes(
+          p.stderr,
+          budget,
+          label,
+        ).transform(const Utf8Decoder(allowMalformed: true)),
         label,
       );
 
