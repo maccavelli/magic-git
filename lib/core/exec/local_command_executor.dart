@@ -31,6 +31,10 @@ class LocalCommandExecutor implements CommandExecutor {
   /// shell-string involved.
   Map<String, String> _binaryPaths = const {};
 
+  /// Ambient forge-token env vars to neutralize (see
+  /// [CommandExecutor.setForgeTokenNeutralization]). Empty by default.
+  List<String> _neutralizeTokens = const [];
+
   @override
   void configureEnvironment({
     String? path,
@@ -41,9 +45,15 @@ class LocalCommandExecutor implements CommandExecutor {
   }
 
   @override
+  void setForgeTokenNeutralization(Iterable<String> vars) {
+    _neutralizeTokens = List.unmodifiable(vars);
+  }
+
+  @override
   void resetEnvironment() {
     _envPath = null;
     _binaryPaths = const {};
+    _neutralizeTokens = const [];
   }
 
   /// Writes [bytes] to [remotePath] on this machine's own filesystem — the
@@ -55,11 +65,12 @@ class LocalCommandExecutor implements CommandExecutor {
 
   Map<String, String> _mergedEnv(Map<String, String>? extraEnv) => {
     ...CommandFormatter.defaultEnv,
-    // Neutralize ambient forge-auth env vars (glab + gh) inherited from the
-    // launching shell (Process.start defaults includeParentEnvironment: true) —
-    // the local equivalent of the SSH path's `unset` prelude. Placed before
-    // extraEnv so a caller that legitimately supplies a token still overrides.
-    ...CommandFormatter.neutralizedForgeTokens,
+    // Neutralize the ambient forge-auth env vars this connection opted into
+    // (empty values — both CLIs treat that as unset) — the local equivalent of
+    // the SSH path's `unset` prelude. Only the forges whose token this
+    // connection supplied are here (see setForgeTokenNeutralization); placed
+    // before extraEnv so a caller that legitimately supplies a token overrides.
+    for (final v in _neutralizeTokens) v: '',
     'PATH': ?_envPath,
     ...?extraEnv,
   };

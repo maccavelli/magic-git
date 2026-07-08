@@ -187,6 +187,13 @@ abstract class CommandExecutor {
   /// [SSHCommandExecutor.configureEnvironment].
   void configureEnvironment({String? path, Map<String, String> binaries});
 
+  /// Sets the ambient env var names to neutralize before every command (a
+  /// forge's token vars — [CommandFormatter.gitlabTokenVars]/[githubTokenVars] —
+  /// when this connection supplied that forge's token, so Magic Git's managed
+  /// identity wins over any ambient token). Empty leaves the remote's own
+  /// `gh`/`glab` auth untouched. Cleared by [resetEnvironment].
+  void setForgeTokenNeutralization(Iterable<String> vars);
+
   /// Forgets any resolved environment. See
   /// [SSHCommandExecutor.resetEnvironment].
   void resetEnvironment();
@@ -224,6 +231,10 @@ class SSHCommandExecutor implements CommandExecutor {
   /// the exact binary is used (see [CommandFormatter.format]).
   Map<String, String> _binaryPaths = const {};
 
+  /// Ambient env vars to `unset` before every command (see
+  /// [CommandExecutor.setForgeTokenNeutralization]). Empty by default.
+  List<String> _neutralizeTokens = const [];
+
   SSHCommandExecutor(this._clientManager);
 
   /// Applies the per-connection resolved environment (see [EnvironmentResolver]):
@@ -237,12 +248,18 @@ class SSHCommandExecutor implements CommandExecutor {
     _binaryPaths = binaries;
   }
 
+  @override
+  void setForgeTokenNeutralization(Iterable<String> vars) {
+    _neutralizeTokens = List.unmodifiable(vars);
+  }
+
   /// Forgets any resolved environment (on disconnect), reverting to bare-name
   /// invocation against the inherited PATH.
   @override
   void resetEnvironment() {
     _envPath = null;
     _binaryPaths = const {};
+    _neutralizeTokens = const [];
   }
 
   /// Streams [bytes] to [remotePath] over SFTP on the active session. Not on the
@@ -461,6 +478,7 @@ class SSHCommandExecutor implements CommandExecutor {
       gitArgs: gitArgs,
       env: _mergedEnv(extraEnv),
       binaryPaths: _binaryPaths,
+      neutralizeEnv: _neutralizeTokens,
     );
 
     // The session is assigned as soon as the channel opens, so a timeout that
@@ -594,6 +612,7 @@ class SSHCommandExecutor implements CommandExecutor {
       gitArgs: gitArgs,
       env: _mergedEnv(extraEnv),
       binaryPaths: _binaryPaths,
+      neutralizeEnv: _neutralizeTokens,
     );
 
     final attempt = client.execute(command);

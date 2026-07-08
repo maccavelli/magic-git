@@ -120,6 +120,9 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
   Future<void> _submit() async {
     setState(() => _submitting = true);
     final gh = ref.read(ghServiceProvider);
+    final git = ref.read(gitServiceProvider);
+    final head = _head.text.trim();
+    final base = _base.text.trim();
     final milestones =
         ref
             .read(githubProjectDashboardProvider(widget.repoPath))
@@ -133,12 +136,22 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
         break;
       }
     }
-    final ok = await runAction(
-      context,
-      () => gh.createPullRequest(
+    final ok = await runAction(context, () async {
+      // `gh pr create --head` assumes the branch already exists on the remote —
+      // unlike `glab mr create`, which pushes the source branch implicitly. So
+      // push it first (`-u` sets upstream); an already-pushed branch is a no-op
+      // ("Everything up-to-date"), and a non-fast-forward push surfaces its own
+      // error rather than a confusing "No commits between…" from the API.
+      await git.push(
         widget.repoPath,
-        head: _head.text.trim(),
-        base: _base.text.trim(),
+        remote: 'origin',
+        branch: head,
+        setUpstream: true,
+      );
+      await gh.createPullRequest(
+        widget.repoPath,
+        head: head,
+        base: base,
         title: _title.text.trim(),
         body: _body.text.trim(),
         draft: _draft,
@@ -146,12 +159,16 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
         assignees: _csv(_assignees),
         labels: _labels.toList(),
         milestone: milestoneTitle,
-      ),
-    );
+      );
+    });
     if (!mounted) return;
     setState(() => _submitting = false);
     if (ok) {
       ref.invalidate(pullRequestsProvider(widget.repoPath));
+      // The push set upstream / advanced the remote branch — refresh the
+      // working-tree views so ahead/behind and refs reflect it.
+      ref.invalidate(statusProvider(widget.repoPath));
+      ref.invalidate(refsProvider(widget.repoPath));
       if (context.mounted) Navigator.of(context).pop();
     }
   }

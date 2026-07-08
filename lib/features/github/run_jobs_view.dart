@@ -100,8 +100,11 @@ class _RunJobsViewState extends ConsumerState<RunJobsView> {
         ),
       );
     }
-    // GitHub only serves logs once a job completes.
-    if (job != null && job.status != 'completed') {
+    // GitHub only serves logs once a job completes. Also treat a not-yet-known
+    // job (still loading, or dropped from the list after a re-run changed job
+    // ids) as "not ready" rather than fetching a log for it — `gh run view
+    // --log` would just error for a running/unknown job.
+    if (job == null || job.status != 'completed') {
       return Container(
         color: const Color(0xFF1E1E1E),
         alignment: Alignment.center,

@@ -34,17 +34,28 @@ void main() {
       expect(cmd, isNot(contains('export')));
     });
 
-    test('always unsets the ambient forge-credential env vars first', () {
-      final cmd = CommandFormatter.format(
+    test('unsets only the neutralizeEnv vars, first, and nothing when empty', () {
+      // No neutralization requested → no `unset` prelude, leaving the remote's
+      // own gh/glab auth untouched (the no-token-supplied case).
+      final bare = CommandFormatter.format(
         repoPath: '/r',
         gitArgs: ['git', 'fetch'],
         env: {},
       );
+      expect(bare, isNot(contains('unset ')));
+
+      // A forge token was supplied → its vars are unset before anything else.
+      final neutralized = CommandFormatter.format(
+        repoPath: '/r',
+        gitArgs: ['git', 'fetch'],
+        env: {},
+        neutralizeEnv: CommandFormatter.githubTokenVars,
+      );
       expect(
-        cmd,
+        neutralized,
         startsWith(
-          'unset GITLAB_TOKEN GITLAB_ACCESS_TOKEN OAUTH_TOKEN '
-          'GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; ',
+          'unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN '
+          'GITHUB_ENTERPRISE_TOKEN; ',
         ),
       );
     });

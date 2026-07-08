@@ -19,6 +19,7 @@ import '../local/security_scoped_bookmark.dart';
 import '../output/output_log.dart';
 import '../settings/app_settings.dart';
 import '../settings/install_service.dart';
+import '../ssh/command_formatter.dart';
 import '../ssh/environment_probe.dart';
 import '../ssh/host_key_prompt.dart';
 import '../ssh/ssh_client_manager.dart';
@@ -602,6 +603,17 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// a Finder-launched GUI app's inherited PATH is often as bare as an SSH
   /// exec channel's (e.g. missing a Homebrew `/opt/homebrew/bin`), and
   /// [EnvironmentResolver]'s probe script has no SSH-specific logic.
+  /// The ambient forge-token env vars to neutralize for the current session: a
+  /// forge's vars only when this connection supplied that forge's token, so
+  /// Magic Git's managed identity wins over any ambient token. A connection
+  /// that supplied no token neutralizes nothing, leaving the remote's own
+  /// `gh`/`glab` auth (a stored credential or an ambient token — the CLI's own
+  /// default) untouched. See [CommandFormatter].
+  List<String> _forgeTokenVarsToNeutralize() => [
+    if ((_lastGitlabToken ?? '').isNotEmpty) ...CommandFormatter.gitlabTokenVars,
+    if ((_lastGithubToken ?? '').isNotEmpty) ...CommandFormatter.githubTokenVars,
+  ];
+
   Future<void> _resolveEnvironment(String repoPath, {int? attempt}) async {
     try {
       final overrides = ref.read(appSettingsProvider).binaryOverrides;
@@ -617,6 +629,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       // attempt (reprobeBinaries, run while connected) is always current.
       if (attempt != null && attempt != _attempt) return;
       executor.configureEnvironment(path: env.path, binaries: env.found);
+      executor.setForgeTokenNeutralization(_forgeTokenVarsToNeutralize());
       ref.read(binaryEnvironmentProvider.notifier).set(env);
     } catch (e) {
       // Same supersession check as the success path above: a probe left
@@ -903,6 +916,12 @@ class ConnectionController extends Notifier<ConnectionState> {
     // `reconnect()` to act on later.
     _lastProfile = null;
     _lastRepoPath = null;
+    // A local session carries no forge token (connectLocal has no token
+    // params), so it must not inherit a prior SSH session's neutralization
+    // decision — clear them, so _forgeTokenVarsToNeutralize() leaves this
+    // machine's own gh/glab auth untouched.
+    _lastGitlabToken = null;
+    _lastGithubToken = null;
     // Release the *previous* session's transport before starting the new one —
     // the switcher lets the user jump straight here with no explicit disconnect.
     if (state.isLocal) {
