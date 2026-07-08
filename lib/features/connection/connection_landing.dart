@@ -208,6 +208,7 @@ class _RecentConnectionsButtonState
   final LayerLink _link = LayerLink();
   final GlobalKey _buttonKey = GlobalKey();
   OverlayEntry? _menu;
+  VoidCallback? _escDisposer;
 
   @override
   void dispose() {
@@ -216,6 +217,8 @@ class _RecentConnectionsButtonState
   }
 
   void _removeMenu() {
+    _escDisposer?.call();
+    _escDisposer = null;
     _menu?.remove();
     _menu = null;
   }
@@ -248,6 +251,12 @@ class _RecentConnectionsButtonState
       ),
     );
     Overlay.of(context).insert(_menu!);
+    // Escape closes the dropdown (like an outside tap), consuming the key.
+    _escDisposer = EscapeDismissRegistry.register(() {
+      if (_menu == null) return false;
+      _removeMenu();
+      return true;
+    });
   }
 
   Future<void> _select(RecentWorkspace w) async {

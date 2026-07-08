@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
+import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/tool_icon_button.dart';
 
@@ -47,8 +48,27 @@ class _KeyboardMappingsSheetState
   String? _recordingActionId;
   int? _recordingSlot;
 
+  // Deregisters this sheet's Escape interceptor (see [_interceptEscape]).
+  VoidCallback? _escInterceptorDisposer;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // While recording, Escape must cancel recording — not dismiss the whole
+    // sheet. Claim it at the registry level so the (focus-independent) Escape
+    // dismiss defers to us; registered once, kept for the sheet's lifetime.
+    _escInterceptorDisposer ??= EscapeInterceptor.of(context, _interceptEscape);
+  }
+
+  bool _interceptEscape() {
+    if (_recordingActionId == null) return false;
+    _cancelRecording();
+    return true;
+  }
+
   @override
   void dispose() {
+    _escInterceptorDisposer?.call();
     _search.dispose();
     _captureFocus.dispose();
     super.dispose();

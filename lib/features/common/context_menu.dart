@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'escape_dismissible.dart';
 
 /// One entry in a [ContextMenuOverlay]-shown menu: either an actionable
 /// [ContextMenuItem] or a visual [ContextMenuDivider] between groups.
@@ -43,11 +44,14 @@ class ContextMenuDivider extends ContextMenuEntry {
 /// `onSecondaryTapUp`, and call [dispose] from the State's own `dispose()`.
 class ContextMenuOverlay {
   OverlayEntry? _entry;
+  VoidCallback? _escDisposer;
 
   bool get isShowing => _entry != null;
 
   /// Dismisses the menu if one is showing. Safe to call when none is.
   void remove() {
+    _escDisposer?.call();
+    _escDisposer = null;
     _entry?.remove();
     _entry = null;
   }
@@ -105,6 +109,13 @@ class ContextMenuOverlay {
       ),
     );
     overlay.insert(_entry!);
+    // Escape closes the menu (like an outside click), and consumes the key so
+    // it doesn't also dismiss a sheet/dialog behind the menu.
+    _escDisposer = EscapeDismissRegistry.register(() {
+      if (_entry == null) return false;
+      remove();
+      return true;
+    });
   }
 }
 

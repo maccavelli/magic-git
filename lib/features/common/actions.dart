@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show Dialog;
 import 'package:macos_ui/macos_ui.dart';
+import 'escape_dismissible.dart';
 
 /// Runs a mutating [action], surfacing any failure in a macOS error dialog.
 /// Returns true on success — callers use this to decide whether to refresh.
@@ -22,18 +23,20 @@ Future<bool> runAction(
 Future<void> showErrorDialog(BuildContext context, String message) {
   return showMacosAlertDialog<void>(
     context: context,
-    builder: (context) => MacosAlertDialog(
-      appIcon: const MacosIcon(
-        CupertinoIcons.exclamationmark_triangle,
-        size: 56,
-        color: MacosColors.systemRedColor,
-      ),
-      title: const Text('Error'),
-      message: Text(message, textAlign: TextAlign.center),
-      primaryButton: PushButton(
-        controlSize: ControlSize.large,
-        onPressed: () => Navigator.of(context).pop(),
-        child: const Text('OK'),
+    builder: (context) => EscapeDismissible(
+      child: MacosAlertDialog(
+        appIcon: const MacosIcon(
+          CupertinoIcons.exclamationmark_triangle,
+          size: 56,
+          color: MacosColors.systemRedColor,
+        ),
+        title: const Text('Error'),
+        message: Text(message, textAlign: TextAlign.center),
+        primaryButton: PushButton(
+          controlSize: ControlSize.large,
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('OK'),
+        ),
       ),
     ),
   );
@@ -59,45 +62,49 @@ Future<T?> chooseAction<T>(
     builder: (context) {
       final theme = MacosTheme.of(context);
       final brightness = MacosTheme.brightnessOf(context);
-      return Dialog(
-        backgroundColor: brightness.resolve(
-          CupertinoColors.systemGrey6.color,
-          MacosColors.controlBackgroundColor.darkColor,
-        ),
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(12)),
-        ),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 260),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const MacosIcon(
-                  CupertinoIcons.question_circle,
-                  size: 56,
-                  color: MacosColors.systemBlueColor,
-                ),
-                const SizedBox(height: 16),
-                DefaultTextStyle(
-                  style: theme.typography.headline,
-                  textAlign: TextAlign.center,
-                  child: Text(title),
-                ),
-                const SizedBox(height: 10),
-                DefaultTextStyle(
-                  style: theme.typography.body,
-                  textAlign: TextAlign.center,
-                  child: Text(message),
-                ),
-                const SizedBox(height: 18),
-                _choiceButton(context, primaryLabel, primaryValue, true),
-                for (final (label, value) in secondary) ...[
-                  const SizedBox(height: 8),
-                  _choiceButton(context, label, value, false),
+      // Escape pops with a null result, which callers treat as "dismissed" —
+      // the safe, no-op outcome for a guardrail choice.
+      return EscapeDismissible(
+        child: Dialog(
+          backgroundColor: brightness.resolve(
+            CupertinoColors.systemGrey6.color,
+            MacosColors.controlBackgroundColor.darkColor,
+          ),
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(12)),
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 260),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const MacosIcon(
+                    CupertinoIcons.question_circle,
+                    size: 56,
+                    color: MacosColors.systemBlueColor,
+                  ),
+                  const SizedBox(height: 16),
+                  DefaultTextStyle(
+                    style: theme.typography.headline,
+                    textAlign: TextAlign.center,
+                    child: Text(title),
+                  ),
+                  const SizedBox(height: 10),
+                  DefaultTextStyle(
+                    style: theme.typography.body,
+                    textAlign: TextAlign.center,
+                    child: Text(message),
+                  ),
+                  const SizedBox(height: 18),
+                  _choiceButton(context, primaryLabel, primaryValue, true),
+                  for (final (label, value) in secondary) ...[
+                    const SizedBox(height: 8),
+                    _choiceButton(context, label, value, false),
+                  ],
                 ],
-              ],
+              ),
             ),
           ),
         ),
@@ -140,28 +147,31 @@ Future<bool> confirmAction(
 }) async {
   final result = await showMacosAlertDialog<bool>(
     context: context,
-    builder: (context) => MacosAlertDialog(
-      appIcon: MacosIcon(
-        destructive
-            ? CupertinoIcons.trash
-            : CupertinoIcons.question_circle,
-        size: 56,
-        color: destructive
-            ? MacosColors.systemRedColor
-            : MacosColors.systemBlueColor,
-      ),
-      title: Text(title),
-      message: Text(message, textAlign: TextAlign.center),
-      primaryButton: PushButton(
-        controlSize: ControlSize.large,
-        onPressed: () => Navigator.of(context).pop(true),
-        child: Text(confirmLabel),
-      ),
-      secondaryButton: PushButton(
-        controlSize: ControlSize.large,
-        secondary: true,
-        onPressed: () => Navigator.of(context).pop(false),
-        child: Text(cancelLabel),
+    // Escape pops with a null result → `?? false` below → treated as Cancel.
+    builder: (context) => EscapeDismissible(
+      child: MacosAlertDialog(
+        appIcon: MacosIcon(
+          destructive
+              ? CupertinoIcons.trash
+              : CupertinoIcons.question_circle,
+          size: 56,
+          color: destructive
+              ? MacosColors.systemRedColor
+              : MacosColors.systemBlueColor,
+        ),
+        title: Text(title),
+        message: Text(message, textAlign: TextAlign.center),
+        primaryButton: PushButton(
+          controlSize: ControlSize.large,
+          onPressed: () => Navigator.of(context).pop(true),
+          child: Text(confirmLabel),
+        ),
+        secondaryButton: PushButton(
+          controlSize: ControlSize.large,
+          secondary: true,
+          onPressed: () => Navigator.of(context).pop(false),
+          child: Text(cancelLabel),
+        ),
       ),
     ),
   );
