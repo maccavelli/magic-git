@@ -262,9 +262,8 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
           ],
           PushButton(
             controlSize: ControlSize.large,
-            secondary: true,
             onPressed: canAccept ? () => _commit(push: true) : null,
-            child: const Text('Commit & Push'),
+            child: const Text('Accept + Push'),
           ),
           const SizedBox(width: 8),
           PushButton(

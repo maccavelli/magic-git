@@ -112,7 +112,7 @@ void main() {
     expect(git.fetchCalls, 1);
   });
 
-  testWidgets('Commit & Push commits and pops true so the caller pushes', (
+  testWidgets('Accept + Push commits and pops true so the caller pushes', (
     tester,
   ) async {
     final git = _FakeGit('feat: add widget');
@@ -143,7 +143,7 @@ void main() {
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Commit & Push'));
+    await tester.tap(find.text('Accept + Push'));
     await tester.pumpAndSettle();
 
     expect(git.committed, 'feat: add widget');
