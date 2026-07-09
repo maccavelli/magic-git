@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import '../forge/forge_repo_summary.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../utils/bounded_tail.dart';
 import 'models.dart';
@@ -85,8 +86,26 @@ class GlabService {
         remote,
       );
     }
+    await loginWithTokenHost(cwd: repoPath, host: host, token: trimmed);
+  }
+
+  /// [loginWithToken] against an explicit [host] — the repo-less variant used
+  /// by the clone/create flows, where there is no origin remote to derive the
+  /// host from yet. Same security contract: the token travels over stdin only.
+  Future<void> loginWithTokenHost({
+    String cwd = '.',
+    required String host,
+    required String token,
+  }) async {
+    final trimmed = token.trim();
+    if (trimmed.isEmpty) {
+      throw const GlabException(
+        'glab auth login: refusing a blank token',
+        SSHCommandResult(exitCode: -1, stdout: '', stderr: ''),
+      );
+    }
     final result = await _executor.execute(
-      repoPath: repoPath,
+      repoPath: cwd,
       gitArgs: ['glab', 'auth', 'login', '--hostname', host, '--stdin'],
       stdin: trimmed,
       timeout: const Duration(seconds: 30),
@@ -98,6 +117,86 @@ class GlabService {
       throw GlabException('glab auth login failed', result);
     }
   }
+
+  /// The authenticated user's projects on [host], most recent activity first —
+  /// the clone sheet's browse list. Routed through the `glab api` passthrough
+  /// (stable JSON + the `-i` HTTP-status hardening this service already uses
+  /// for reads) rather than `glab repo list`, whose output contract has
+  /// drifted across glab versions. Runs from [cwd]; no repo needed.
+  Future<List<ForgeRepoSummary>> listRepos({
+    String cwd = '.',
+    String host = 'gitlab.com',
+    int perPage = 100,
+  }) async {
+    final decoded = await _runJson(
+      cwd,
+      [
+        'glab',
+        'api',
+        'projects?membership=true&order_by=last_activity_at&sort=desc'
+            '&simple=true&per_page=$perPage',
+        '--method',
+        'GET',
+        '-i',
+      ],
+      'glab repo list',
+      expectHeaders: true,
+      extraEnv: hostEnv(host),
+    );
+    return _mapList(
+      decoded,
+      ForgeRepoSummary.fromGlabJson,
+      label: 'glab repo list',
+    );
+  }
+
+  /// Creates [name] on [host] from *inside* a freshly-`git init`-ed repo at
+  /// [repoPath] — glab's documented remote-wiring path (it adds `origin`
+  /// pointing at the new project). The create sheet's GitLab mode inits first,
+  /// then calls this; on failure the local repo is kept and the error surfaces
+  /// as a warning (never delete the user's new repo over a forge hiccup).
+  Future<void> createRepoInExisting({
+    required String repoPath,
+    required String name,
+    required bool private,
+    String description = '',
+    String host = 'gitlab.com',
+    Duration timeout = const Duration(minutes: 3),
+  }) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: [
+        'glab',
+        'repo',
+        'create',
+        name,
+        private ? '--private' : '--public',
+        if (description.isNotEmpty) ...['--description', description],
+      ],
+      lane: ExecLane.sync,
+      timeout: timeout,
+      extraEnv: hostEnv(host),
+    );
+    if (!result.isSuccess) {
+      throw GlabException('glab repo create failed', result);
+    }
+  }
+
+  /// argv for a streamed clone of [pathWithNamespace] into [dirName] (run with
+  /// the parent directory as the working dir). `-- --progress` forces git's
+  /// progress output, which is otherwise suppressed off-tty.
+  static List<String> cloneArgv({
+    required String pathWithNamespace,
+    required String dirName,
+  }) => ['glab', 'repo', 'clone', pathWithNamespace, dirName, '--', '--progress'];
+
+  /// Host selector for non-default instances; null for gitlab.com. Exports
+  /// both `GITLAB_HOST` (current glab) and `GITLAB_URI` (older releases) —
+  /// both ride the formatter's validated export prelude, and the stale one is
+  /// ignored by whichever glab is installed.
+  static Map<String, String>? hostEnv(String host) => host == 'gitlab.com'
+      ? null
+      : {'GITLAB_HOST': host, 'GITLAB_URI': host};
 
   /// Extracts the host from a git remote URL. Handles scp-like
   /// (`git@host:group/repo.git`), `ssh://`, and `https://`/`http://` forms.
@@ -785,11 +884,13 @@ query($path: ID!) {
     String label, {
     bool expectHeaders = false,
     ExecLane lane = ExecLane.read,
+    Map<String, String>? extraEnv,
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: args,
       lane: lane,
+      extraEnv: extraEnv,
     );
     if (!result.isSuccess) {
       throw GlabException('$label failed', result);

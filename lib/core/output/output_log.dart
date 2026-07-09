@@ -102,6 +102,31 @@ class OutputLogNotifier extends Notifier<OutputLogState> {
     ]);
   }
 
+  /// Begins a live, incrementally-updated transcript for a long-running
+  /// command (a streamed `git clone --progress`): logs the `$ <command>`
+  /// header now and returns a session whose [OutputStreamSession.append] feeds
+  /// decoded chunks as they arrive. The batch APIs above log only finished
+  /// results; this is the streaming counterpart the output view tails live.
+  OutputStreamSession startStream(String command) {
+    _add([OutputLine('\$ $command', OutputLineKind.command)]);
+    return OutputStreamSession._(this);
+  }
+
+  /// Removes [transient] if it is still identically the last line (the
+  /// session's in-place progress line), then appends [incoming] through the
+  /// usual cap logic. The identity check is what makes streaming safe under
+  /// interleaving: if another logger appended in between, the transient is no
+  /// longer last and simply stays as a historical line.
+  void _upsertStream(OutputLine? transient, List<OutputLine> incoming) {
+    final lines = state.lines;
+    if (transient != null &&
+        lines.isNotEmpty &&
+        identical(lines.last, transient)) {
+      state = state.copyWith(lines: lines.sublist(0, lines.length - 1));
+    }
+    _add(incoming);
+  }
+
   /// Logs the files affected by an operation (from `git diff --name-status`
   /// lines) under a header, one per line, color-coded by change kind. No-op for
   /// an empty list.
@@ -132,6 +157,97 @@ class OutputLogNotifier extends Notifier<OutputLogState> {
       _ => OutputLineKind.stdout,
     };
     return OutputLine('  ${code.padRight(2)} $path', kind);
+  }
+}
+
+/// A live command's incremental writer into the output log, created by
+/// [OutputLogNotifier.startStream].
+///
+/// Feed decoded stdout/stderr chunks through [append]; fully terminated lines
+/// are appended permanently, while the trailing partial line — with `\r`
+/// progress frames (`Receiving objects:  42% …`) collapsed to the text after
+/// the last `\r` — renders as a single transient line that is rewritten in
+/// place on each chunk. stdout and stderr keep separate partial buffers (they
+/// are independent streams whose chunks interleave mid-line); the transient
+/// line always shows the most recently active one. Finish with exactly one
+/// [close] (or [fail] for a pre-exit error); the session is inert afterwards.
+class OutputStreamSession {
+  OutputStreamSession._(this._notifier);
+
+  final OutputLogNotifier _notifier;
+
+  /// Un-terminated tail per kind, raw (may still contain `\r` frames).
+  final Map<OutputLineKind, String> _partials = {};
+
+  /// The transient line object currently at the end of the log (if any) —
+  /// matched by identity in [OutputLogNotifier._upsertStream].
+  OutputLine? _transient;
+
+  bool _closed = false;
+
+  void append(String chunk, OutputLineKind kind) {
+    if (_closed || chunk.isEmpty) return;
+    final combined =
+        (_partials[kind] ?? '') + chunk.replaceAll('\r\n', '\n');
+    final segments = combined.split('\n');
+    _partials[kind] = segments.removeLast();
+
+    final finalized = [
+      for (final line in segments) OutputLine(_collapseCr(line), kind),
+    ];
+    final partialText = _collapseCr(_partials[kind]!);
+    final next = partialText.isEmpty ? null : OutputLine(partialText, kind);
+    _notifier._upsertStream(_transient, [...finalized, ?next]);
+    _transient = next;
+  }
+
+  /// Finalizes the transcript: flushes any partial lines, then appends the
+  /// status line — `✓ completed` for exit 0, `✗ exited with code N`, or
+  /// `✗ terminated` when the process died without an exit code (cancelled).
+  void close({int? exitCode}) {
+    if (_closed) return;
+    _closed = true;
+    _notifier._upsertStream(_transient, [
+      ..._flushPartials(),
+      OutputLine(
+        exitCode == 0
+            ? '✓ completed'
+            : exitCode == null
+            ? '✗ terminated'
+            : '✗ exited with code $exitCode',
+        exitCode == 0 ? OutputLineKind.success : OutputLineKind.error,
+      ),
+    ]);
+    _transient = null;
+  }
+
+  /// Finalizes the transcript for a failure that happened before the command
+  /// could exit (channel open failure, superseded connection, …).
+  void fail(String message) {
+    if (_closed) return;
+    _closed = true;
+    _notifier._upsertStream(_transient, [
+      ..._flushPartials(),
+      ...OutputLogNotifier._split(message, OutputLineKind.error),
+    ]);
+    _transient = null;
+  }
+
+  List<OutputLine> _flushPartials() {
+    final flushed = <OutputLine>[];
+    for (final kind in OutputLineKind.values) {
+      final text = _collapseCr(_partials[kind] ?? '');
+      if (text.isNotEmpty) flushed.add(OutputLine(text, kind));
+    }
+    _partials.clear();
+    return flushed;
+  }
+
+  /// A `\r`-carrying segment shows only what a terminal would after the last
+  /// carriage return — the final progress frame.
+  static String _collapseCr(String line) {
+    final i = line.lastIndexOf('\r');
+    return i < 0 ? line : line.substring(i + 1);
   }
 }
 

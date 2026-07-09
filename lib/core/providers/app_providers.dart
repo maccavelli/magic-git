@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../exec/local_command_executor.dart';
 import '../forge/forge.dart';
 import '../git/git_service.dart';
+import '../git/host_fs_service.dart';
 import '../git/local_watch_service.dart';
 import '../git/remote_watch_service.dart';
 import '../git/repo_tree.dart';
@@ -172,6 +173,14 @@ final glabServiceProvider = Provider<GlabService>((ref) {
 /// over both SSH and local backends unchanged.
 final ghServiceProvider = Provider<GhService>((ref) {
   return GhService(ref.watch(activeExecutorProvider));
+});
+
+/// Plain host filesystem primitives (home dir, directory listing, path
+/// probing, mkdir, the guarded clone-cleanup delete) — used by the clone/
+/// create flows and the remote directory browser. Same executor seam as the
+/// services above.
+final hostFsServiceProvider = Provider<HostFsService>((ref) {
+  return HostFsService(ref.watch(activeExecutorProvider));
 });
 
 final installServiceProvider = Provider<InstallService>((ref) {

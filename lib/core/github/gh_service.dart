@@ -1,5 +1,6 @@
 import 'dart:convert';
 import '../forge/forge.dart';
+import '../forge/forge_repo_summary.dart';
 import '../ssh/ssh_command_executor.dart';
 import 'models.dart';
 
@@ -75,8 +76,26 @@ class GhService {
         remote,
       );
     }
+    await loginWithTokenHost(cwd: repoPath, host: host, token: trimmed);
+  }
+
+  /// [loginWithToken] against an explicit [host] — the repo-less variant used
+  /// by the clone/create flows, where there is no origin remote to derive the
+  /// host from yet. Same security contract: the token travels over stdin only.
+  Future<void> loginWithTokenHost({
+    String cwd = '.',
+    required String host,
+    required String token,
+  }) async {
+    final trimmed = token.trim();
+    if (trimmed.isEmpty) {
+      throw const GhException(
+        'gh auth login: refusing a blank token',
+        SSHCommandResult(exitCode: -1, stdout: '', stderr: ''),
+      );
+    }
     final result = await _executor.execute(
-      repoPath: repoPath,
+      repoPath: cwd,
       gitArgs: ['gh', 'auth', 'login', '--hostname', host, '--with-token'],
       stdin: trimmed,
       timeout: const Duration(seconds: 30),
@@ -88,6 +107,84 @@ class GhService {
       throw GhException('gh auth login failed', result);
     }
   }
+
+  /// The authenticated user's repositories on [host], newest activity first —
+  /// the clone sheet's browse list. Runs from [cwd] (an existing directory;
+  /// no repo needed). Non-default hosts are selected via `GH_HOST`, gh's
+  /// documented host env var (`gh repo list` has no `--hostname` flag).
+  Future<List<ForgeRepoSummary>> listRepos({
+    String cwd = '.',
+    String host = 'github.com',
+    int limit = 100,
+  }) async {
+    final decoded = await _runJson(
+      cwd,
+      [
+        'gh',
+        'repo',
+        'list',
+        '--json',
+        'nameWithOwner,description,isPrivate,url,sshUrl,updatedAt',
+        '--limit',
+        '$limit',
+      ],
+      'gh repo list',
+      extraEnv: hostEnv(host),
+    );
+    return _mapList(
+      decoded,
+      ForgeRepoSummary.fromGhJson,
+      label: 'gh repo list',
+    );
+  }
+
+  /// Creates [name] on [host] and (by default) clones it into `cwd/name` with
+  /// `origin` wired — the create sheet's forge-first GitHub mode. The forge's
+  /// default branch governs the new repo (README-initialized repos are born on
+  /// it), which is why the UI disables the initial-branch field in this mode.
+  Future<void> createRepo({
+    required String cwd,
+    required String name,
+    required bool private,
+    String description = '',
+    String host = 'github.com',
+    bool addReadme = false,
+    bool clone = true,
+    Duration timeout = const Duration(minutes: 3),
+  }) async {
+    final result = await _executor.execute(
+      repoPath: cwd,
+      gitArgs: [
+        'gh',
+        'repo',
+        'create',
+        name,
+        private ? '--private' : '--public',
+        if (description.isNotEmpty) ...['--description', description],
+        if (addReadme) '--add-readme',
+        if (clone) '--clone',
+      ],
+      lane: ExecLane.sync,
+      timeout: timeout,
+      extraEnv: hostEnv(host),
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh repo create failed', result);
+    }
+  }
+
+  /// argv for a streamed clone of [slug] into [dirName] (run with the parent
+  /// directory as the working dir). `-- --progress` forces git's progress
+  /// output, which is otherwise suppressed off-tty.
+  static List<String> cloneArgv({
+    required String slug,
+    required String dirName,
+  }) => ['gh', 'repo', 'clone', slug, dirName, '--', '--progress'];
+
+  /// `GH_HOST` selector for non-default hosts; null (no extra env) for
+  /// github.com so the common case matches gh's own defaults exactly.
+  static Map<String, String>? hostEnv(String host) =>
+      host == 'github.com' ? null : {'GH_HOST': host};
 
   /// Owner/repo (`owner`, `name`) from a git remote URL — GitHub paths are
   /// always `owner/repo`. Returns null when the URL can't be parsed. Used for
@@ -501,11 +598,13 @@ query($owner: String!, $name: String!) {
     List<String> args,
     String label, {
     ExecLane lane = ExecLane.read,
+    Map<String, String>? extraEnv,
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: args,
       lane: lane,
+      extraEnv: extraEnv,
     );
     if (!result.isSuccess) {
       throw GhException('$label failed', result);
