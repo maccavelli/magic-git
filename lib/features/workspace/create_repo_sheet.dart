@@ -18,25 +18,39 @@ import 'workspace_registration.dart';
 import 'workspace_targets.dart';
 import 'workspace_widgets.dart';
 
-/// Create a new repository — plain `git init`, or forge-backed (created on
-/// GitHub/GitLab with `origin` wired) — on the connected SSH host or this Mac.
+/// What `origin` should point at when the repo is created — a first-class,
+/// always-visible choice (not an opt-in extra), because a repo without a
+/// remote is rarely what the user wants.
+enum _RemoteMode { none, github, gitlab, customUrl }
+
+/// Create a new repository — plain `git init`, forge-backed (created on
+/// GitHub/GitLab with `origin` wired), or pointed at an existing remote URL —
+/// on the connected SSH host or this Mac.
 ///
 /// Same two modes as the clone sheet: [CreateRepositorySheet.connected]
 /// targets the active workspace; [CreateRepositorySheet.landing] adds the
 /// destination picker (This Mac, or a saved SSH connection provisioned on
 /// demand).
 ///
-/// Mechanisms (one per forge):
-///  * none    — one-shot `git init -b <branch> -- <name>` in the parent.
-///  * GitHub  — forge-first `gh repo create … --clone`: creates the repo on
-///    the forge, clones it into the parent, and wires `origin` in a single
+/// Mechanisms (one per [_RemoteMode]):
+///  * None       — one-shot `git init -b <branch> -- <name>` in the parent.
+///  * GitHub     — forge-first `gh repo create … --clone`: creates the repo
+///    on the forge, clones it into the parent, and wires `origin` in a single
 ///    non-interactive command. The forge's default branch governs, so the
 ///    initial-branch field is disabled in this mode.
-///  * GitLab  — init-then-create: `git init` first, then `glab repo create`
+///  * GitLab     — init-then-create: `git init` first, then `glab repo create`
 ///    run *inside* the new repo (its documented origin-wiring path), keeping
 ///    the user's chosen initial branch authoritative. If the forge step
 ///    fails, the local repo is kept and registered with a warning — never
 ///    deleted over a forge hiccup.
+///  * Custom URL — init-then-wire: `git init`, then `git remote add origin
+///    &lt;url&gt;` — no forge CLI involved, for repos already created on a
+///    forge's web UI, bare repos on an SSH host, or any other pre-existing
+///    remote.
+///
+/// Every mode that promises a remote is verified after the fact: `git remote
+/// get-url origin` must print a URL from inside the new repo, otherwise the
+/// sheet stays open with a warning (the repo itself is kept and registered).
 class CreateRepositorySheet extends ConsumerStatefulWidget {
   final bool landing;
   const CreateRepositorySheet.connected({super.key}) : landing = false;
@@ -53,9 +67,9 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   final _parent = TextEditingController();
   final _host = TextEditingController(text: 'github.com');
   final _description = TextEditingController();
+  final _remoteUrl = TextEditingController();
 
-  bool _onForge = false;
-  Forge _forge = Forge.github;
+  _RemoteMode _remote = _RemoteMode.none;
   bool _private = true;
   bool _addReadme = false;
 
@@ -104,6 +118,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     _parent.dispose();
     _host.dispose();
     _description.dispose();
+    _remoteUrl.dispose();
     _localLabel.dispose();
     super.dispose();
   }
@@ -128,10 +143,16 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
 
   bool get _isLocalTarget => _target == WorkspaceTarget.localMac;
 
-  bool get _branchEditable => !(_onForge && _forge == Forge.github);
+  bool get _onForge =>
+      _remote == _RemoteMode.github || _remote == _RemoteMode.gitlab;
+
+  Forge get _forge =>
+      _remote == _RemoteMode.gitlab ? Forge.gitlab : Forge.github;
+
+  bool get _branchEditable => _remote != _RemoteMode.github;
 
   String get _defaultHost =>
-      _forge == Forge.gitlab ? 'gitlab.com' : 'github.com';
+      _remote == _RemoteMode.gitlab ? 'gitlab.com' : 'github.com';
 
   Future<void> _onDestChanged(String? connectionId) async {
     await _resetProvisioning();
@@ -193,6 +214,9 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     if (_submitting || _completedWarning != null) return false;
     if (!HostFsService.isValidRepoDirName(_name.text.trim())) return false;
     if (_branchEditable && _branch.text.trim().isEmpty) return false;
+    if (_remote == _RemoteMode.customUrl && _remoteUrl.text.trim().isEmpty) {
+      return false;
+    }
     if (_isLocalTarget) return _pickedParent != null;
     return _parent.text.trim().startsWith('/');
   }
@@ -247,7 +271,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       }
 
       String? warning;
-      if (_onForge && _forge == Forge.github) {
+      if (_remote == _RemoteMode.github) {
         // Forge-first: one command creates + clones + wires origin.
         final label = 'gh repo create $name';
         try {
@@ -286,7 +310,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         }
         if (!mounted) return;
 
-        if (_onForge && _forge == Forge.gitlab) {
+        if (_remote == _RemoteMode.gitlab) {
           // Step 2: create on GitLab from inside the new repo (wires origin).
           // A failure keeps the local repo — registered below with a warning.
           final label = 'glab repo create $name';
@@ -306,6 +330,39 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
                 '(${e.result.stderr.trim().isEmpty ? e : e.result.stderr.trim()})';
           }
           if (!mounted) return;
+        } else if (_remote == _RemoteMode.customUrl) {
+          // Step 2: point origin at the user-supplied URL — plain git, no
+          // forge CLI. Same keep-the-repo policy as the GitLab step.
+          final url = _remoteUrl.text.trim();
+          final label = 'git remote add origin $url';
+          final result = await executor.execute(
+            repoPath: dest,
+            gitArgs: ['git', 'remote', 'add', 'origin', url],
+            lane: ExecLane.exclusive,
+            retries: 0,
+          );
+          log.logResult(label, result);
+          if (!result.isSuccess) {
+            warning =
+                'The repository was created locally, but configuring the '
+                '"origin" remote failed. '
+                '(${result.stderr.trim().isEmpty ? 'git remote add exited with code ${result.exitCode}' : result.stderr.trim()})';
+          }
+          if (!mounted) return;
+        }
+      }
+
+      // --- Post-create verification --------------------------------------
+      // Every mode that promises an origin must actually show one: don't
+      // trust the forge CLI's (or our own) remote wiring blindly.
+      if (warning == null && _remote != _RemoteMode.none) {
+        final failure = await _verifyOrigin(executor, log, dest);
+        if (!mounted) return;
+        if (failure != null) {
+          warning =
+              'The repository was created, but no "origin" remote is '
+              'configured — add one manually (git remote add origin <url>). '
+              '($failure)';
         }
       }
 
@@ -322,6 +379,32 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       if (mounted) setState(() => _error = '$e');
     } finally {
       if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  /// Confirms `origin` resolves inside [dest] — `git remote get-url origin`
+  /// exits 0 and prints a URL. Returns null on success, else a short
+  /// human-readable failure detail. Never throws (verification must not turn
+  /// a created repo into an error).
+  Future<String?> _verifyOrigin(
+    CommandExecutor executor,
+    OutputLogNotifier log,
+    String dest,
+  ) async {
+    const label = 'git remote get-url origin';
+    try {
+      final result = await executor.execute(
+        repoPath: dest,
+        gitArgs: ['git', 'remote', 'get-url', 'origin'],
+        lane: ExecLane.read,
+        retries: 0,
+      );
+      log.logResult(label, result);
+      if (result.isSuccess && result.stdout.trim().isNotEmpty) return null;
+      final err = result.stderr.trim();
+      return err.isEmpty ? '$label exited with code ${result.exitCode}' : err;
+    } catch (e) {
+      return '$e';
     }
   }
 
@@ -436,7 +519,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
                       else
                         _sshDestination(typography),
                       const SizedBox(height: 14),
-                      _forgeSection(typography),
+                      _remoteSection(typography),
                     ],
                   ),
                 ),
@@ -628,25 +711,42 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     );
   }
 
-  Widget _forgeSection(MacosTypography typography) {
+  Widget _remoteSection(MacosTypography typography) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        WorkspaceToggleRow(
-          on: _onForge,
-          onTap: () => setState(() => _onForge = !_onForge),
-          onIcon: CupertinoIcons.cloud_upload_fill,
-          offIcon: CupertinoIcons.cloud_upload,
-          label: 'Also create on GitHub / GitLab (wires origin)',
+        Text('Remote', style: typography.caption1),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            _remoteButton('None', _RemoteMode.none),
+            const SizedBox(width: 6),
+            _remoteButton('GitHub', _RemoteMode.github),
+            const SizedBox(width: 6),
+            _remoteButton('GitLab', _RemoteMode.gitlab),
+            const SizedBox(width: 6),
+            _remoteButton('Custom URL', _RemoteMode.customUrl),
+          ],
         ),
+        if (_remote == _RemoteMode.customUrl) ...[
+          const SizedBox(height: 8),
+          Text(
+            'Existing remote to wire as origin',
+            style: typography.caption1,
+          ),
+          const SizedBox(height: 4),
+          MacosTextField(
+            controller: _remoteUrl,
+            placeholder: 'git@host:owner/repo.git or https://…',
+            decoration: kAppTextFieldDecoration,
+            focusedDecoration: kAppTextFieldFocusedDecoration,
+            onChanged: (_) => setState(() {}),
+          ),
+        ],
         if (_onForge) ...[
           const SizedBox(height: 10),
           Row(
             children: [
-              _forgeButton('GitHub', Forge.github),
-              const SizedBox(width: 6),
-              _forgeButton('GitLab', Forge.gitlab),
-              const SizedBox(width: 12),
               MacosPopupButton<bool>(
                 value: _private,
                 onChanged: (v) => setState(() => _private = v ?? true),
@@ -674,7 +774,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
           ),
-          if (_forge == Forge.github) ...[
+          if (_remote == _RemoteMode.github) ...[
             const SizedBox(height: 8),
             WorkspaceToggleRow(
               on: _addReadme,
@@ -689,13 +789,13 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     );
   }
 
-  Widget _forgeButton(String label, Forge forge) {
-    final active = _forge == forge;
+  Widget _remoteButton(String label, _RemoteMode mode) {
+    final active = _remote == mode;
     return PushButton(
       controlSize: ControlSize.regular,
       secondary: !active,
       onPressed: () => setState(() {
-        _forge = forge;
+        _remote = mode;
         final h = _host.text.trim();
         if (h.isEmpty || h == 'github.com' || h == 'gitlab.com') {
           _host.text = _defaultHost;

@@ -1,7 +1,8 @@
 // CreateRepositorySheet: submit gating, plain git init argv + registration,
-// the GitHub forge-first mechanism (branch field disabled, gh argv), and the
+// the GitHub forge-first mechanism (branch field disabled, gh argv), the
 // GitLab init-then-create path where a forge failure still registers the
-// local repo with a warning.
+// local repo with a warning, the custom-URL mode (init + git remote add),
+// and the post-create origin verification shared by all remote modes.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -163,20 +164,14 @@ void main() {
   });
 
   testWidgets(
-    'GitHub mode disables the branch field and uses gh repo create --clone',
+    'GitHub mode disables the branch field, uses gh repo create --clone, '
+    'and verifies origin afterwards',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await tester.enterText(_nameField(), 'new-proj');
       await tester.pumpAndSettle();
 
-      // Enable the forge section (GitHub is the default forge).
-      await tester.tap(
-        find.byWidgetPredicate(
-          (w) =>
-              w is MacosTooltip &&
-              w.message.startsWith('Also create on GitHub'),
-        ),
-      );
+      await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
       await tester.pumpAndSettle();
 
       final branchField = tester.widget<MacosTextField>(
@@ -187,17 +182,20 @@ void main() {
       expect(branchField.enabled, isFalse, reason: 'forge default governs');
 
       exec.results.add(_ok('absent')); // probe
+      exec.results.add(_ok('')); // gh repo create
+      exec.results.add(_ok('git@github.com:me/new-proj.git\n')); // verify
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
-      expect(exec.calls.last, [
-        'gh',
-        'repo',
-        'create',
-        'new-proj',
-        '--private',
-        '--clone',
-      ]);
+      expect(
+        exec.calls.map((c) => c.join(' ')),
+        contains('gh repo create new-proj --private --clone'),
+      );
+      expect(
+        exec.calls.last,
+        ['git', 'remote', 'get-url', 'origin'],
+        reason: 'origin is verified after the forge create',
+      );
       expect(stub.repoPathsSet, ['/srv/new-proj']);
       expect(find.byType(CreateRepositorySheet), findsNothing);
     },
@@ -211,14 +209,6 @@ void main() {
       await tester.enterText(_nameField(), 'new-proj');
       await tester.pumpAndSettle();
 
-      await tester.tap(
-        find.byWidgetPredicate(
-          (w) =>
-              w is MacosTooltip &&
-              w.message.startsWith('Also create on GitHub'),
-        ),
-      );
-      await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(PushButton, 'GitLab'));
       await tester.pumpAndSettle();
 
@@ -238,6 +228,11 @@ void main() {
         exec.calls.map((c) => c.take(2).join(' ')),
         containsAllInOrder(['git init', 'glab repo']),
       );
+      expect(
+        exec.calls.map((c) => c.join(' ')),
+        isNot(contains('git remote get-url origin')),
+        reason: 'a failed publish already warns — no redundant verification',
+      );
       expect(stub.repoPathsSet, ['/srv/new-proj'],
           reason: 'local repo registered despite forge failure');
       expect(find.byType(CreateRepositorySheet), findsOneWidget,
@@ -247,6 +242,86 @@ void main() {
       await tester.tap(find.widgetWithText(PushButton, 'Close'));
       await tester.pumpAndSettle();
       expect(find.byType(CreateRepositorySheet), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'Custom URL mode gates on a URL, then inits, wires origin, and verifies',
+    (tester) async {
+      final (stub, exec, _) = await _pumpConnected(tester);
+      await tester.enterText(_nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(PushButton, 'Custom URL'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<PushButton>(_createButton()).onPressed,
+        isNull,
+        reason: 'no URL entered yet',
+      );
+
+      const url = 'https://gitlab.example.com/me/new-proj.git';
+      await tester.enterText(
+        find.byWidgetPredicate(
+          (w) =>
+              w is MacosTextField &&
+              (w.placeholder?.startsWith('git@host:') ?? false),
+        ),
+        url,
+      );
+      await tester.pumpAndSettle();
+
+      exec.results.add(_ok('absent')); // probe
+      exec.results.add(_ok('')); // git init
+      exec.results.add(_ok('')); // git remote add
+      exec.results.add(_ok('$url\n')); // verify
+      await tester.tap(_createButton());
+      await tester.pumpAndSettle();
+
+      expect(
+        exec.calls,
+        containsAllInOrder([
+          ['git', 'init', '-b', 'main', '--', 'new-proj'],
+          ['git', 'remote', 'add', 'origin', url],
+          ['git', 'remote', 'get-url', 'origin'],
+        ]),
+      );
+      expect(stub.repoPathsSet, ['/srv/new-proj']);
+      expect(find.byType(CreateRepositorySheet), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'a create whose origin verification fails still registers the repo but '
+    'stays open with a warning',
+    (tester) async {
+      final (stub, exec, _) = await _pumpConnected(tester);
+      await tester.enterText(_nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.pumpAndSettle();
+
+      exec.results.add(_ok('absent')); // probe
+      exec.results.add(_ok('')); // gh repo create
+      exec.results.add(
+        const SSHCommandResult(
+          exitCode: 2,
+          stdout: '',
+          stderr: "error: No such remote 'origin'",
+        ),
+      ); // verify fails
+      await tester.tap(_createButton());
+      await tester.pumpAndSettle();
+
+      expect(stub.repoPathsSet, ['/srv/new-proj'],
+          reason: 'repo is kept and registered');
+      expect(find.byType(CreateRepositorySheet), findsOneWidget,
+          reason: 'stays open to show the warning');
+      expect(
+        find.textContaining('no "origin" remote is configured'),
+        findsOneWidget,
+      );
     },
   );
 }
