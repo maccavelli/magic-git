@@ -1,3 +1,6 @@
+import 'package:flutter/foundation.dart';
+
+import 'shell_escaper.dart';
 import 'ssh_command_executor.dart';
 
 /// The remote host's OS and resolved external-binary locations, discovered once
@@ -46,6 +49,21 @@ class RemoteEnvironment {
   /// Detected `x.y.z` version for [bin], or null if unknown.
   String? versionOf(String bin) => versions[bin];
 
+  /// This environment with [versions] merged in (restricted to tools that
+  /// actually resolved) — versions arrive from a separate background probe
+  /// after connect, not from the connect-time discovery pass.
+  RemoteEnvironment withVersions(Map<String, String> versions) =>
+      RemoteEnvironment(
+        os: os,
+        path: path,
+        found: found,
+        overridden: overridden,
+        versions: {
+          for (final e in versions.entries)
+            if (found.containsKey(e.key)) e.key: e.value,
+        },
+      );
+
   /// Human label for the detected OS.
   String get osLabel => switch (os) {
     'macos' => 'macOS',
@@ -74,6 +92,12 @@ class EnvironmentResolver {
   /// the login shell's PATH ahead of system dirs), and `command -v` each binary
   /// under it. [overrides] (binary → absolute path) win over discovery, and
   /// their directories are prepended to the PATH.
+  ///
+  /// Deliberately does NOT version-check the discovered tools: this call sits
+  /// on the connect critical path, and `--version` across the whole catalog
+  /// spawns up to seven extra processes — two of which (`gh`, `glab`) run
+  /// update checks that can block on the network. Versions come from
+  /// [probeVersions], run in the background once the session is already up.
   Future<RemoteEnvironment> resolve(
     String repoPath, {
     Map<String, String> overrides = const {},
@@ -94,7 +118,6 @@ class EnvironmentResolver {
     var os = 'unknown';
     var aug = '';
     final discovered = <String, String>{};
-    final versions = <String, String>{};
     for (final line in result.stdout.split('\n')) {
       if (line.startsWith('OS=')) {
         final raw = line.substring(3).trim();
@@ -113,19 +136,56 @@ class EnvironmentResolver {
           final p = rest.substring(eq + 1).trim();
           if (p.isNotEmpty) discovered[name] = p;
         }
-      } else if (line.startsWith('VER=')) {
-        // VER=<name>=<raw first line of `<bin> --version`>. Extract a clean
-        // x.y.z; skip anything without a version-shaped token.
-        final rest = line.substring(4);
-        final eq = rest.indexOf('=');
-        if (eq > 0) {
-          final name = rest.substring(0, eq);
-          final v = _parseVersion(rest.substring(eq + 1));
-          if (v != null) versions[name] = v;
-        }
       }
     }
-    return _fromParts(os, aug, discovered, versions, overrides);
+    return _fromParts(os, aug, discovered, const {}, overrides);
+  }
+
+  /// Version-checks the given resolved binaries (name → absolute path) in one
+  /// round trip, returning name → clean `x.y.z` for every tool whose
+  /// `--version` output parsed. Run *after* connect, off the critical path:
+  /// this spawns one process per tool, and `gh`/`glab` may otherwise stall on
+  /// their update checks — suppressed here (and app-wide via
+  /// [CommandFormatter.defaultEnv]) with their no-update-check env vars.
+  Future<Map<String, String>> probeVersions(
+    Map<String, String> binaries, {
+    String repoPath = '.',
+  }) async {
+    if (binaries.isEmpty) return const {};
+    final script = StringBuffer(
+      // Belt-and-braces with defaultEnv: never let a version banner become a
+      // network wait, even for an executor that doesn't carry defaultEnv.
+      'export GH_NO_UPDATE_NOTIFIER=1 GLAB_CHECK_UPDATE=false; ',
+    );
+    binaries.forEach((name, path) {
+      // Names come from the fixed probe catalog (shell-safe by construction);
+      // paths are discovered/user-supplied and must be escaped.
+      script.write(
+        'v=\$(${ShellEscaper.escape(path)} --version 2>&1 | head -n1 || true); '
+        'echo "VER=$name=\$v"; ',
+      );
+    });
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['sh', '-c', script.toString()],
+      timeout: const Duration(seconds: 20),
+      lane: ExecLane.read,
+    );
+    if (!result.isSuccess) return const {};
+    final versions = <String, String>{};
+    for (final line in result.stdout.split('\n')) {
+      if (!line.startsWith('VER=')) continue;
+      // VER=<name>=<raw first line of `<bin> --version`>. Extract a clean
+      // x.y.z; skip anything without a version-shaped token.
+      final rest = line.substring(4);
+      final eq = rest.indexOf('=');
+      if (eq > 0) {
+        final name = rest.substring(0, eq);
+        final v = _parseVersion(rest.substring(eq + 1));
+        if (v != null) versions[name] = v;
+      }
+    }
+    return versions;
   }
 
   /// Pulls the first `X.Y[.Z]` token out of arbitrary `--version` output and
@@ -199,13 +259,17 @@ class EnvironmentResolver {
     return p.substring(0, i);
   }
 
-  // POSIX sh probe. Emits `OS=`, `PATH=` (augmented), `BIN=<name>=<path>`, and
-  // (for each found tool) `VER=<name>=<first line of `<bin> --version`>` lines.
-  // Common user dirs and the login shell's PATH come before system dirs, so
-  // `command -v` resolves user-installed tools first. Versions are only queried
-  // for tools that resolved, so a missing binary is never spawned (which would
-  // just 127) — the `--version` call is `2>&1` because some tools (notably
-  // inotifywait) print their banner to stderr.
+  /// The connect-time probe script — exposed so tests can pin its contract:
+  /// pure lookups, nothing spawned.
+  @visibleForTesting
+  static String get probeScriptForTest => _probeScript;
+
+  // POSIX sh probe. Emits `OS=`, `PATH=` (augmented), and `BIN=<name>=<path>`
+  // lines. Common user dirs and the login shell's PATH come before system
+  // dirs, so `command -v` resolves user-installed tools first. Pure lookups
+  // only — no tool is actually spawned (see [probeVersions] for the deferred
+  // `--version` pass), keeping this connect-blocking round trip as close to
+  // shell-builtin speed as the login-shell PATH capture allows.
   static const String _probeScript =
       'os=\$(uname -s 2>/dev/null || echo unknown); '
       // Prefer the user's login shell (sources their profile, e.g. Homebrew's
@@ -225,9 +289,5 @@ class EnvironmentResolver {
       'for b in git glab gh fswatch inotifywait stdbuf gzip; do '
       'p=\$(PATH="\$aug" command -v "\$b" 2>/dev/null || true); '
       'echo "BIN=\$b=\$p"; '
-      'if [ -n "\$p" ]; then '
-      'v=\$(PATH="\$aug" "\$b" --version 2>&1 | head -n1 || true); '
-      'echo "VER=\$b=\$v"; '
-      'fi; '
       'done';
 }

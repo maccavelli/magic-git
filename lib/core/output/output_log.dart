@@ -93,6 +93,10 @@ class OutputLogNotifier extends Notifier<OutputLogState> {
     ]);
   }
 
+  /// Logs a standalone informational line (no `$ command` header) — session
+  /// milestones like the connect-stage timing summary.
+  void logInfo(String message) => _add(_split(message, OutputLineKind.info));
+
   /// Logs a command that failed before producing a result (timeout, non-git
   /// error, …).
   void logError(String command, String message) {

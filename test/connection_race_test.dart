@@ -5,6 +5,9 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/github/gh_service.dart';
+import 'package:remote_magic_git/core/github/models.dart';
+import 'package:remote_magic_git/core/output/output_log.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
@@ -79,6 +82,39 @@ class _FsmonitorTrackingGit extends GitService {
       await gateFirst!.future;
     }
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+}
+
+/// A GhService whose token login can be held open by the test (to interleave
+/// state assertions / a disconnect while the *background* login is still in
+/// flight) and optionally made to fail; also records pullRequests calls so
+/// the forge-provider gating can be asserted.
+class _GatedGh extends GhService {
+  _GatedGh() : super(_NoopExecutor());
+  Completer<void>? gate;
+  bool fail = false;
+  int logins = 0;
+  int prCalls = 0;
+
+  @override
+  Future<void> loginWithToken(String repoPath, String token) async {
+    logins++;
+    if (gate != null) await gate!.future;
+    if (fail) {
+      throw const GhException(
+        'gh auth login failed',
+        SSHCommandResult(exitCode: 1, stdout: '', stderr: ''),
+      );
+    }
+  }
+
+  @override
+  Future<List<PullRequest>> pullRequests(
+    String repoPath, {
+    int limit = 50,
+  }) async {
+    prCalls++;
+    return const [];
   }
 }
 
@@ -352,4 +388,138 @@ void main() {
       );
     },
   );
+
+  ProviderContainer containerWithGh(_GatedManager manager, _GatedGh gh) {
+    final container = ProviderContainer(
+      overrides: [
+        sshClientManagerProvider.overrideWithValue(manager),
+        gitServiceProvider.overrideWithValue(GitService(_NoopExecutor())),
+        ghServiceProvider.overrideWithValue(gh),
+      ],
+    );
+    addTearDown(container.dispose);
+    return container;
+  }
+
+  test(
+    'connect publishes `connected` without waiting for the forge login; a '
+    'failed login surfaces as a warning afterwards',
+    () async {
+      final manager = _GatedManager();
+      final gh = _GatedGh()
+        ..gate = Completer<void>()
+        ..fail = true;
+      final container = containerWithGh(manager, gh);
+      final controller = container.read(connectionProvider.notifier);
+
+      final connecting = controller.connect(
+        profile: profile,
+        repoPath: '/repo',
+        githubToken: 'tok',
+      );
+      manager.gates.first.complete();
+      await connecting;
+
+      // The session is usable while the login is still held open — this is
+      // the whole point of moving the login off the connect critical path.
+      final state = container.read(connectionProvider);
+      expect(state.phase, ConnectionPhase.connected);
+      expect(state.warning, isNull);
+      expect(gh.logins, 1, reason: 'login started in the background');
+      expect(
+        container
+            .read(outputLogProvider)
+            .lines
+            .any((l) => l.text.startsWith('connected to h in ')),
+        isTrue,
+        reason: 'per-stage timing line logged at connected',
+      );
+
+      final settled = controller.forgeAuthSettled;
+      gh.gate!.complete();
+      await settled;
+      expect(
+        container.read(connectionProvider).warning,
+        contains('GitHub token login failed'),
+        reason: 'the failure still surfaces, just without blocking connect',
+      );
+      expect(
+        container.read(connectionProvider).phase,
+        ConnectionPhase.connected,
+        reason: 'a login failure is a warning, never a failed session',
+      );
+    },
+  );
+
+  test(
+    'a disconnect during the background login releases forgeAuthSettled and '
+    'suppresses the stale warning',
+    () async {
+      final manager = _GatedManager();
+      final gh = _GatedGh()
+        ..gate = Completer<void>()
+        ..fail = true;
+      final container = containerWithGh(manager, gh);
+      final controller = container.read(connectionProvider.notifier);
+
+      // Before any connect the gate is already open — nothing to wait for.
+      await controller.forgeAuthSettled;
+
+      final connecting = controller.connect(
+        profile: profile,
+        repoPath: '/repo',
+        githubToken: 'tok',
+      );
+      manager.gates.first.complete();
+      await connecting;
+      expect(
+        container.read(connectionProvider).phase,
+        ConnectionPhase.connected,
+      );
+
+      await controller.disconnect();
+      // disconnect() must release awaiters immediately — no connect will ever
+      // complete the departing session's gate.
+      await controller.forgeAuthSettled;
+
+      gh.gate!.complete(); // the stale login settles after supersession
+      await Future<void>.delayed(Duration.zero);
+      final state = container.read(connectionProvider);
+      expect(state.phase, ConnectionPhase.disconnected);
+      expect(
+        state.warning,
+        isNull,
+        reason: 'a superseded attempt must not write onto the new state',
+      );
+    },
+  );
+
+  test('forge data providers hold their fetch until the login settles', () async {
+    final manager = _GatedManager();
+    final gh = _GatedGh()..gate = Completer<void>();
+    final container = containerWithGh(manager, gh);
+    final controller = container.read(connectionProvider.notifier);
+
+    final connecting = controller.connect(
+      profile: profile,
+      repoPath: '/repo',
+      githubToken: 'tok',
+    );
+    manager.gates.first.complete();
+    await connecting;
+
+    // A panel visible right at connect starts its fetch immediately…
+    final prs = container.read(pullRequestsProvider('/repo').future);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      gh.prCalls,
+      0,
+      reason: 'the fetch must wait for the background login, not race it',
+    );
+
+    // …and proceeds the moment the login lands.
+    gh.gate!.complete();
+    expect(await prs, isEmpty);
+    expect(gh.prCalls, 1);
+  });
 }

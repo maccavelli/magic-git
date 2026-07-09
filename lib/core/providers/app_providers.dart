@@ -442,6 +442,21 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// [ensureForgeHostLogin].
   final Map<(Forge, String), Future<void>> _hostLogins = {};
 
+  /// Gate for the current session's connect-time forge CLI logins, which run
+  /// in the background *after* the session is already `connected` (each login
+  /// validates its token against the forge's API from the host — the slowest
+  /// connect stage back when it blocked the critical path). Starts completed:
+  /// before any connect — and for sessions that supply no tokens (local
+  /// sessions, provisioning, tokenless SSH) — there is nothing to wait for.
+  Completer<void> _forgeAuthGate = Completer<void>()..complete();
+
+  /// Completes when the current connection's background forge logins have
+  /// settled (success *or* failure — this never throws). Forge data providers
+  /// await it before their first gh/glab call, so a panel already visible at
+  /// connect shows its ordinary loading state while the login lands instead
+  /// of flashing a transient authentication error.
+  Future<void> get forgeAuthSettled => _forgeAuthGate.future;
+
   /// Resolved by [acceptHostKeyChange]/[rejectHostKeyChange] — the only way
   /// [_verifyHostKey] ever returns while a mismatch prompt is showing. Null
   /// whenever no prompt is currently awaiting a decision.
@@ -667,11 +682,14 @@ class ConnectionController extends Notifier<ConnectionState> {
   }
 
   /// Re-runs binary resolution against the active repo (e.g. after the user
-  /// edits path overrides in Settings). No-op when disconnected.
+  /// edits path overrides in Settings). No-op when disconnected. Unlike the
+  /// connect path, versions are refreshed inline: this is user-triggered from
+  /// the Settings health panel, which displays them.
   Future<void> reprobeBinaries() async {
     final repoPath = state.repoPath;
     if (!state.isConnected || repoPath == null) return;
     await _resolveEnvironment(repoPath);
+    await _refreshToolVersions(_attempt, repoPath);
   }
 
   /// Best-effort background fetch for [repoPath], fired right after a local
@@ -749,6 +767,12 @@ class ConnectionController extends Notifier<ConnectionState> {
     _lastRepoPaths = repoPaths;
     _lastFsmonitorPaths = fsmonitorPaths;
     _hostLogins.clear(); // new connection identity — re-auth forge hosts lazily
+    // A new gate for this attempt's background logins. Captured locally so
+    // this attempt only ever completes its *own* gate, never a successor's.
+    final forgeGate = _forgeAuthGate = Completer<void>();
+    // Set once _finishConnectInBackground has been launched — from then on,
+    // completing the gate is the background task's job, not the finally's.
+    var backgroundLaunched = false;
     _invalidateRepoState();
     // A fresh connection to a different host/repo shouldn't keep showing the
     // previous session's command output — but an auto-reconnect attempt to
@@ -781,6 +805,11 @@ class ConnectionController extends Notifier<ConnectionState> {
       connectionLabel: connectionLabel ?? profile.host,
       host: profile.host,
     );
+    // Per-stage wall-clock, logged at connected so "why is connecting slow"
+    // is answerable from inside the app (Output view) instead of by guesswork:
+    // the SSH handshake, the environment probe (which spawns the login shell
+    // remotely), and the repo check have very different failure/latency modes.
+    final timings = Stopwatch()..start();
     try {
       await ref
           .read(sshClientManagerProvider)
@@ -798,6 +827,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       // don't overwrite the current state (the SSH manager has already torn its
       // superseded client down).
       if (attempt != _attempt || !ref.mounted) return;
+      final sshMs = timings.elapsedMilliseconds;
 
       // Detect the remote OS and resolve external binaries FIRST, augmenting
       // the exec-channel PATH so user-installed tools (e.g. Homebrew's
@@ -809,68 +839,17 @@ class ConnectionController extends Notifier<ConnectionState> {
       // PATH, and validateRepoPath still surfaces a real problem.
       await _resolveEnvironment(repoPath, attempt: attempt);
       if (attempt != _attempt || !ref.mounted) return;
+      final envMs = timings.elapsedMilliseconds;
 
       await ref.read(gitServiceProvider).validateRepoPath(repoPath);
       if (attempt != _attempt || !ref.mounted) return;
 
-      // Apply per-repo fsmonitor tuning for every opted-in repo in ONE round
-      // trip (each used to be its own — a per-repo SSH round trip before the
-      // session became usable). Best-effort and per-repo non-fatal — status
-      // works fine without it; a failed repo is reported on stderr by the
-      // combined script and logged here, so a persistently-rejected tuning
-      // command stays discoverable instead of silently degrading refresh
-      // performance all session with no trace.
-      if (fsmonitorPaths.isNotEmpty) {
-        try {
-          final result = await ref
-              .read(gitServiceProvider)
-              .setFsmonitorMany(fsmonitorPaths, enabled: true);
-          if (attempt != _attempt || !ref.mounted) return;
-          if (result.stderr.trim().isNotEmpty) {
-            ref
-                .read(outputLogProvider.notifier)
-                .logError('fsmonitor setup', result.stderr.trim());
-          }
-        } catch (e) {
-          if (attempt != _attempt || !ref.mounted) return;
-          ref
-              .read(outputLogProvider.notifier)
-              .logError('fsmonitor setup', e.toString());
-        }
-      }
-      if (attempt != _attempt || !ref.mounted) return;
-
-      // Both forge logins are independent one-shot writes to different CLIs'
-      // credential stores — run them concurrently rather than paying two
-      // serialized round-trip sequences at every connect. Each maps its own
-      // failure to a non-fatal warning; connect() itself never fails on one.
-      String? warning;
-      final loginWarnings = await Future.wait([
-        if (gitlabToken != null && gitlabToken.isNotEmpty)
-          ref
-              .read(glabServiceProvider)
-              .loginWithToken(repoPath, gitlabToken)
-              .then<String?>(
-                (_) => null,
-                onError: (Object e) =>
-                    'GitLab token login failed — GitLab panels may not work '
-                    'until the remote is authenticated. ($e)',
-              ),
-        if (githubToken != null && githubToken.isNotEmpty)
-          ref
-              .read(ghServiceProvider)
-              .loginWithToken(repoPath, githubToken)
-              .then<String?>(
-                (_) => null,
-                onError: (Object e) =>
-                    'GitHub token login failed — GitHub panels may not work '
-                    'until the remote is authenticated. ($e)',
-              ),
-      ]);
-      if (attempt != _attempt || !ref.mounted) return;
-      final warnings = loginWarnings.whereType<String>().toList();
-      if (warnings.isNotEmpty) warning = warnings.join('\n');
-
+      // The session is usable NOW: publish `connected` and let the UI switch.
+      // Everything else a session wants — fsmonitor tuning, forge CLI logins,
+      // tool version probing — is deliberately background work (see
+      // _finishConnectInBackground): each is best-effort, none is needed for
+      // git reads, and the logins in particular validate their tokens against
+      // the forge's API from the host, historically the slowest connect stage.
       final repos = SavedConnection.dedupePaths([repoPath, ...?repoPaths]);
       state = ConnectionState(
         phase: ConnectionPhase.connected,
@@ -879,7 +858,25 @@ class ConnectionController extends Notifier<ConnectionState> {
         connectionId: connectionId,
         connectionLabel: connectionLabel ?? profile.host,
         host: profile.host,
-        warning: warning,
+      );
+      ref
+          .read(outputLogProvider.notifier)
+          .logInfo(
+            'connected to ${profile.host} in '
+            '${_fmtMs(timings.elapsedMilliseconds)} '
+            '(ssh ${_fmtMs(sshMs)} · environment ${_fmtMs(envMs - sshMs)} · '
+            'repo check ${_fmtMs(timings.elapsedMilliseconds - envMs)})',
+          );
+      backgroundLaunched = true;
+      unawaited(
+        _finishConnectInBackground(
+          attempt: attempt,
+          gate: forgeGate,
+          repoPath: repoPath,
+          fsmonitorPaths: fsmonitorPaths,
+          gitlabToken: gitlabToken,
+          githubToken: githubToken,
+        ),
       );
       // Best-effort recency bump so this profile floats to the top of the
       // landing page's recent list; never blocks a successful connect.
@@ -918,8 +915,152 @@ class ConnectionController extends Notifier<ConnectionState> {
         connectionLabel: connectionLabel ?? profile.host,
         host: profile.host,
       );
+    } finally {
+      // Any path that never launched the background finish (failure, host-key
+      // decline, supersession's early returns) must still release whoever is
+      // awaiting this attempt's forge gate — otherwise a provider created just
+      // before the failure would hang on it instead of being torn down.
+      if (!backgroundLaunched && !forgeGate.isCompleted) forgeGate.complete();
     }
   }
+
+  /// Post-`connected` session finish: fsmonitor tuning for opted-in repos,
+  /// forge CLI token logins, and the external-tool version probe (Settings
+  /// health panel). None of this is needed before the first git read, so none
+  /// of it belongs on the connect critical path — the logins especially, since
+  /// `gh`/`glab auth login` each validate their token against the forge's API
+  /// *from the host* (seconds of third-party network latency, previously paid
+  /// at every connect before the UI would switch). Every step is
+  /// attempt-guarded and non-fatal; login failures surface as a state warning
+  /// exactly as they did when they blocked the connect. Completes [gate] when
+  /// the login step settles — see [forgeAuthSettled].
+  Future<void> _finishConnectInBackground({
+    required int attempt,
+    required Completer<void> gate,
+    required String repoPath,
+    List<String> fsmonitorPaths = const [],
+    String? gitlabToken,
+    String? githubToken,
+  }) async {
+    try {
+      await Future.wait([
+        if (fsmonitorPaths.isNotEmpty)
+          _applyFsmonitorTuning(attempt, fsmonitorPaths),
+        _refreshToolVersions(attempt, repoPath),
+        _connectForgeLogins(
+          attempt: attempt,
+          gate: gate,
+          repoPath: repoPath,
+          gitlabToken: gitlabToken,
+          githubToken: githubToken,
+        ),
+      ]);
+    } finally {
+      // _connectForgeLogins already completed it; this is the backstop.
+      if (!gate.isCompleted) gate.complete();
+    }
+  }
+
+  /// Applies per-repo fsmonitor tuning for every opted-in repo in ONE round
+  /// trip (each used to be its own SSH round trip before the session became
+  /// usable). Best-effort and per-repo non-fatal — status works fine without
+  /// it; a failed repo is reported on stderr by the combined script and logged
+  /// here, so a persistently-rejected tuning command stays discoverable
+  /// instead of silently degrading refresh performance all session.
+  Future<void> _applyFsmonitorTuning(int attempt, List<String> paths) async {
+    try {
+      final result = await ref
+          .read(gitServiceProvider)
+          .setFsmonitorMany(paths, enabled: true);
+      if (attempt != _attempt || !ref.mounted) return;
+      if (result.stderr.trim().isNotEmpty) {
+        ref
+            .read(outputLogProvider.notifier)
+            .logError('fsmonitor setup', result.stderr.trim());
+      }
+    } catch (e) {
+      if (attempt != _attempt || !ref.mounted) return;
+      ref
+          .read(outputLogProvider.notifier)
+          .logError('fsmonitor setup', e.toString());
+    }
+  }
+
+  /// Version-checks the session's resolved tools in one background round trip
+  /// and merges the results into [binaryEnvironmentProvider] for the Settings
+  /// health panel. Best-effort: on failure the panel simply shows no version
+  /// numbers. Kept off the connect path because spawning `gh`/`glab` for a
+  /// banner is exactly the kind of hidden network wait (update checks) that
+  /// made connecting slow.
+  Future<void> _refreshToolVersions(int attempt, String repoPath) async {
+    try {
+      final executor = _activeExecutor;
+      final found = ref.read(binaryEnvironmentProvider).found;
+      final versions = await EnvironmentResolver(
+        executor,
+      ).probeVersions(found, repoPath: repoPath);
+      if (attempt != _attempt || !ref.mounted || versions.isEmpty) return;
+      // Re-read: a settings-triggered reprobe may have republished the
+      // environment while the version probe was in flight.
+      ref
+          .read(binaryEnvironmentProvider.notifier)
+          .set(ref.read(binaryEnvironmentProvider).withVersions(versions));
+    } catch (_) {
+      // Best-effort by design.
+    }
+  }
+
+  /// Connect-time forge CLI logins, run in the background once the session is
+  /// already `connected`. Both logins are independent one-shot writes to
+  /// different CLIs' credential stores; each maps its own failure to a
+  /// non-fatal warning appended to the connected state (never a failed
+  /// connect). Completes [gate] when both settle so gated forge providers can
+  /// start fetching against an authenticated CLI.
+  Future<void> _connectForgeLogins({
+    required int attempt,
+    required Completer<void> gate,
+    required String repoPath,
+    String? gitlabToken,
+    String? githubToken,
+  }) async {
+    try {
+      final loginWarnings = await Future.wait([
+        if (gitlabToken != null && gitlabToken.isNotEmpty)
+          ref
+              .read(glabServiceProvider)
+              .loginWithToken(repoPath, gitlabToken)
+              .then<String?>(
+                (_) => null,
+                onError: (Object e) =>
+                    'GitLab token login failed — GitLab panels may not work '
+                    'until the remote is authenticated. ($e)',
+              ),
+        if (githubToken != null && githubToken.isNotEmpty)
+          ref
+              .read(ghServiceProvider)
+              .loginWithToken(repoPath, githubToken)
+              .then<String?>(
+                (_) => null,
+                onError: (Object e) =>
+                    'GitHub token login failed — GitHub panels may not work '
+                    'until the remote is authenticated. ($e)',
+              ),
+      ]);
+      if (attempt != _attempt || !ref.mounted) return;
+      final warnings = loginWarnings.whereType<String>().toList();
+      if (warnings.isNotEmpty && state.isConnected) {
+        final joined = warnings.join('\n');
+        state = state.copyWith(warning: joined);
+        ref.read(outputLogProvider.notifier).logError('forge login', joined);
+      }
+    } finally {
+      if (!gate.isCompleted) gate.complete();
+    }
+  }
+
+  /// `1234` → `1.2s`, `87` → `87ms` — for the connect timing log line.
+  static String _fmtMs(int ms) =>
+      ms >= 1000 ? '${(ms / 1000).toStringAsFixed(1)}s' : '${ms}ms';
 
   /// Opens a repo on this machine's own filesystem — no SSH client, no host
   /// key, no environment probe of a *remote* host (though [_resolveEnvironment]
@@ -951,6 +1092,9 @@ class ConnectionController extends Notifier<ConnectionState> {
     _lastGitlabToken = null;
     _lastGithubToken = null;
     _hostLogins.clear(); // new connection identity — re-auth forge hosts lazily
+    // No tokens → no background logins to wait for: gate opens immediately,
+    // and forge panels rely on this machine's own gh/glab auth.
+    _forgeAuthGate = Completer<void>()..complete();
     // Release the *previous* session's transport before starting the new one —
     // the switcher lets the user jump straight here with no explicit disconnect.
     if (state.isLocal) {
@@ -1033,6 +1177,10 @@ class ConnectionController extends Notifier<ConnectionState> {
         connectionId: id,
         connectionLabel: label,
       );
+      // Tool versions for the Settings health panel — same background pass as
+      // the SSH path, and for the same reason: spawning gh/glab `--version`
+      // (with their potential update-check stalls) must not block the open.
+      unawaited(_refreshToolVersions(attempt, repoPath));
       // Best-effort recency bump; never blocks a successful open.
       if (id != null) {
         try {
@@ -1335,6 +1483,11 @@ class ConnectionController extends Notifier<ConnectionState> {
     _lastRepoPaths = conn.allRepoPaths;
     _lastFsmonitorPaths = conn.fsmonitorPaths;
     _hostLogins.clear();
+    // Provisioning logs its forge hosts in lazily during the browse
+    // (ensureForgeHostLogin) and repo-scoped at finalize — both awaited
+    // inline before `connected`, so there is never a background login to
+    // gate on for this session.
+    _forgeAuthGate = Completer<void>()..complete();
 
     _invalidateRepoState();
     ref.read(outputLogProvider.notifier).clear();
@@ -1522,6 +1675,10 @@ class ConnectionController extends Notifier<ConnectionState> {
     }
     ref.read(binaryEnvironmentProvider.notifier).clear();
     _hostLogins.clear();
+    // Release anyone still awaiting the departing session's background
+    // logins — their providers are invalidated right below, but an awaiter
+    // must never be left hanging on a gate no connect will ever complete.
+    if (!_forgeAuthGate.isCompleted) _forgeAuthGate.complete();
     _invalidateRepoState();
     state = const ConnectionState();
   }
@@ -2082,38 +2239,56 @@ final untrackedDiffProvider = FutureProvider.autoDispose
       return future;
     });
 
+/// Holds a forge data provider until the session's background forge logins
+/// have settled, so a panel visible right at connect loads against an
+/// authenticated CLI instead of flashing a transient auth error. A no-op
+/// (already-completed future) for sessions without managed tokens and once
+/// the logins land. See [ConnectionController.forgeAuthSettled].
+Future<void> _forgeAuthReady(Ref ref) =>
+    ref.read(connectionProvider.notifier).forgeAuthSettled;
+
 /// Open merge requests for the connected project.
 final mergeRequestsProvider = FutureProvider.autoDispose
-    .family<List<MergeRequest>, String>((ref, repoPath) {
-      return ref.watch(glabServiceProvider).mergeRequests(repoPath);
+    .family<List<MergeRequest>, String>((ref, repoPath) async {
+      final glab = ref.watch(glabServiceProvider);
+      await _forgeAuthReady(ref);
+      return glab.mergeRequests(repoPath);
     });
 
 /// Recent CI/CD pipelines for the connected project.
 final pipelinesProvider = FutureProvider.autoDispose
-    .family<List<Pipeline>, String>((ref, repoPath) {
-      return ref.watch(glabServiceProvider).pipelines(repoPath);
+    .family<List<Pipeline>, String>((ref, repoPath) async {
+      final glab = ref.watch(glabServiceProvider);
+      await _forgeAuthReady(ref);
+      return glab.pipelines(repoPath);
     });
 
 /// Jobs of a pipeline. Keyed by (repoPath, pipelineId).
 final jobsProvider = FutureProvider.autoDispose
-    .family<List<Job>, (String, int)>((ref, key) {
+    .family<List<Job>, (String, int)>((ref, key) async {
       final (repoPath, pipelineId) = key;
-      return ref.watch(glabServiceProvider).jobs(repoPath, pipelineId);
+      final glab = ref.watch(glabServiceProvider);
+      await _forgeAuthReady(ref);
+      return glab.jobs(repoPath, pipelineId);
     });
 
 /// Live CI job-trace log. Keyed by (repoPath, jobId); emits **incremental** log
 /// chunks (the view accumulates them). Auto-disposed so the remote trace process
 /// is killed when the view closes.
 final jobTraceProvider = StreamProvider.autoDispose
-    .family<String, (String, int)>((ref, key) {
+    .family<String, (String, int)>((ref, key) async* {
       final (repoPath, jobId) = key;
-      return ref.watch(glabServiceProvider).traceStream(repoPath, jobId);
+      final glab = ref.watch(glabServiceProvider);
+      await _forgeAuthReady(ref);
+      yield* glab.traceStream(repoPath, jobId);
     });
 
 /// Project overview (issues, labels, milestones, releases) in one GraphQL hop.
 final projectDashboardProvider = FutureProvider.autoDispose
-    .family<ProjectDashboard, String>((ref, repoPath) {
-      return ref.watch(glabServiceProvider).projectDashboard(repoPath);
+    .family<ProjectDashboard, String>((ref, repoPath) async {
+      final glab = ref.watch(glabServiceProvider);
+      await _forgeAuthReady(ref);
+      return glab.projectDashboard(repoPath);
     });
 
 // ---- Forge detection + GitHub providers ------------------------------------
@@ -2129,6 +2304,10 @@ final forgeProvider = FutureProvider.autoDispose.family<Forge, String>((
   repoPath,
 ) async {
   final executor = ref.watch(activeExecutorProvider);
+  // The self-hosted fallback below consults `gh/glab auth status` — let the
+  // background login land first so a custom-domain forge classifies on the
+  // first probe instead of burning a three-round-trip re-probe on remount.
+  await _forgeAuthReady(ref);
 
   Future<Forge> detect() async {
     final remote = await executor.execute(
@@ -2211,37 +2390,47 @@ final forgeRepoListProvider = FutureProvider.autoDispose
 
 /// Open pull requests for the connected GitHub repo.
 final pullRequestsProvider = FutureProvider.autoDispose
-    .family<List<PullRequest>, String>((ref, repoPath) {
-      return ref.watch(ghServiceProvider).pullRequests(repoPath);
+    .family<List<PullRequest>, String>((ref, repoPath) async {
+      final gh = ref.watch(ghServiceProvider);
+      await _forgeAuthReady(ref);
+      return gh.pullRequests(repoPath);
     });
 
 /// Recent GitHub Actions workflow runs for the connected repo.
 final workflowRunsProvider = FutureProvider.autoDispose
-    .family<List<WorkflowRun>, String>((ref, repoPath) {
-      return ref.watch(ghServiceProvider).workflowRuns(repoPath);
+    .family<List<WorkflowRun>, String>((ref, repoPath) async {
+      final gh = ref.watch(ghServiceProvider);
+      await _forgeAuthReady(ref);
+      return gh.workflowRuns(repoPath);
     });
 
 /// Live jobs of a workflow run, keyed by (repoPath, runId). Polls until the run
 /// completes (GitHub exposes no live log stream); auto-disposed so the poll
 /// stops when the view closes.
 final runJobsProvider = StreamProvider.autoDispose
-    .family<List<GhJob>, (String, int)>((ref, key) {
+    .family<List<GhJob>, (String, int)>((ref, key) async* {
       final (repoPath, runId) = key;
-      return ref.watch(ghServiceProvider).runJobsStream(repoPath, runId);
+      final gh = ref.watch(ghServiceProvider);
+      await _forgeAuthReady(ref);
+      yield* gh.runJobsStream(repoPath, runId);
     });
 
 /// A completed job's log, keyed by (repoPath, jobId). GitHub only serves logs
 /// once a job finishes; an in-progress job surfaces as an error the view shows
 /// as a "logs available when the job completes" placeholder.
 final runJobLogProvider = FutureProvider.autoDispose
-    .family<String, (String, int)>((ref, key) {
+    .family<String, (String, int)>((ref, key) async {
       final (repoPath, jobId) = key;
-      return ref.watch(ghServiceProvider).runJobLog(repoPath, jobId);
+      final gh = ref.watch(ghServiceProvider);
+      await _forgeAuthReady(ref);
+      return gh.runJobLog(repoPath, jobId);
     });
 
 /// GitHub repository overview (issues, labels, milestones, releases) in one
 /// GraphQL hop.
 final githubProjectDashboardProvider = FutureProvider.autoDispose
-    .family<GhProjectDashboard, String>((ref, repoPath) {
-      return ref.watch(ghServiceProvider).projectDashboard(repoPath);
+    .family<GhProjectDashboard, String>((ref, repoPath) async {
+      final gh = ref.watch(ghServiceProvider);
+      await _forgeAuthReady(ref);
+      return gh.projectDashboard(repoPath);
     });

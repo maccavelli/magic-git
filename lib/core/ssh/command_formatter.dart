@@ -20,6 +20,14 @@ class CommandFormatter {
     // `git add`/`commit` fail spuriously. Only optional sub-operations are
     // skipped; required locks for real writes (commit, checkout) still work.
     'GIT_OPTIONAL_LOCKS': '0',
+    // gh/glab periodically phone home to check for a newer release when
+    // invoked. That check is a hidden network round trip from the host that
+    // can stall any forge call (including a bare `--version`) on slow or
+    // firewalled egress — and its "new version available" banner would only
+    // pollute parsed output anyway. Harmless for plain git, which reads
+    // neither var.
+    'GH_NO_UPDATE_NOTIFIER': '1',
+    'GLAB_CHECK_UPDATE': 'false',
   };
 
   /// Ambient env vars `glab` treats as higher-precedence than its own stored
