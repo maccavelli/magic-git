@@ -211,14 +211,14 @@ void main() {
   });
 
   group('create', () {
-    test('gh createRepo full option matrix', () async {
-      await gh.createRepo(
-        cwd: '/srv/code',
+    test('gh createRepoInExisting full option matrix', () async {
+      await gh.createRepoInExisting(
+        repoPath: '/srv/code/newrepo',
         name: 'newrepo',
         private: true,
         description: 'my thing',
         host: 'ghe.corp.example',
-        addReadme: true,
+        push: true,
       );
       expect(exec.calls.single, [
         'gh',
@@ -228,16 +228,34 @@ void main() {
         '--private',
         '--description',
         'my thing',
-        '--add-readme',
-        '--clone',
+        '--source',
+        '.',
+        '--remote',
+        'origin',
+        '--push',
       ]);
-      expect(exec.repoPaths.single, '/srv/code');
+      expect(exec.repoPaths.single, '/srv/code/newrepo');
       expect(exec.envs.single, {'GH_HOST': 'ghe.corp.example'});
     });
 
-    test('gh createRepo public minimal', () async {
-      await gh.createRepo(cwd: '/x', name: 'r', private: false, clone: false);
-      expect(exec.calls.single, ['gh', 'repo', 'create', 'r', '--public']);
+    test('gh createRepoInExisting public minimal (no commit → no push)',
+        () async {
+      await gh.createRepoInExisting(
+        repoPath: '/x/r',
+        name: 'r',
+        private: false,
+      );
+      expect(exec.calls.single, [
+        'gh',
+        'repo',
+        'create',
+        'r',
+        '--public',
+        '--source',
+        '.',
+        '--remote',
+        'origin',
+      ]);
     });
 
     test('glab createRepoInExisting runs inside the inited repo', () async {
@@ -267,7 +285,7 @@ void main() {
         stderr: 'name already exists',
       );
       await expectLater(
-        gh.createRepo(cwd: '/x', name: 'r', private: true),
+        gh.createRepoInExisting(repoPath: '/x/r', name: 'r', private: true),
         throwsA(isA<GhException>()),
       );
       await expectLater(

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -23,6 +26,11 @@ import 'workspace_widgets.dart';
 /// remote is rarely what the user wants.
 enum _RemoteMode { none, github, gitlab, customUrl }
 
+/// Where the repository's working tree comes from: a brand-new folder
+/// (name + parent), or an existing folder that gets initialized/published
+/// in place.
+enum _SourceMode { newFolder, existingFolder }
+
 /// Create a new repository — plain `git init`, forge-backed (created on
 /// GitHub/GitLab with `origin` wired), or pointed at an existing remote URL —
 /// on the connected SSH host or this Mac.
@@ -32,25 +40,30 @@ enum _RemoteMode { none, github, gitlab, customUrl }
 /// destination picker (This Mac, or a saved SSH connection provisioned on
 /// demand).
 ///
-/// Mechanisms (one per [_RemoteMode]):
-///  * None       — one-shot `git init -b <branch> -- <name>` in the parent.
-///  * GitHub     — forge-first `gh repo create … --clone`: creates the repo
-///    on the forge, clones it into the parent, and wires `origin` in a single
-///    non-interactive command. The forge's default branch governs, so the
-///    initial-branch field is disabled in this mode.
-///  * GitLab     — init-then-create: `git init` first, then `glab repo create`
-///    run *inside* the new repo (its documented origin-wiring path), keeping
-///    the user's chosen initial branch authoritative. If the forge step
-///    fails, the local repo is kept and registered with a warning — never
-///    deleted over a forge hiccup.
-///  * Custom URL — init-then-wire: `git init`, then `git remote add origin
-///    &lt;url&gt;` — no forge CLI involved, for repos already created on a
-///    forge's web UI, bare repos on an SSH host, or any other pre-existing
-///    remote.
+/// Two sources ([_SourceMode]): a brand-new folder (name + parent), or an
+/// existing folder published in place — classified at submit as not-a-repo
+/// (init in place), its own repo root (init skipped, existing history
+/// pushed; an existing `origin` is only replaced after an explicit opt-in),
+/// or nested inside another repo (refused).
 ///
-/// Every mode that promises a remote is verified after the fact: `git remote
-/// get-url origin` must print a URL from inside the new repo, otherwise the
-/// sheet stays open with a warning (the repo itself is kept and registered).
+/// Every mode is init-first — `git init -b <branch> -- <name>` in the parent,
+/// so the user's chosen initial branch is always authoritative — followed by
+/// an optional README + initial commit, then mode-specific origin wiring:
+///  * None       — nothing further.
+///  * GitHub     — `gh repo create <name> --source . --remote origin` run
+///    inside the new repo (gh's documented "push an existing local repo"
+///    path), with `--push` when the README commit exists.
+///  * GitLab     — `glab repo create` inside the new repo (its documented
+///    origin-wiring path), then `git push -u` when a commit exists.
+///  * Custom URL — `git remote add origin &lt;url&gt;` (no forge CLI — for
+///    repos already created on a web UI, bare repos on an SSH host, or any
+///    other pre-existing remote), then `git push -u` when a commit exists.
+///
+/// Once `git init` has succeeded, the repo is always kept and registered: a
+/// failure in any later step (commit, forge publish, push, verification)
+/// keeps the sheet open with a warning instead — never deleted over a remote
+/// hiccup. Every mode that promises a remote is verified after the fact:
+/// `git remote get-url origin` must print a URL from inside the new repo.
 class CreateRepositorySheet extends ConsumerStatefulWidget {
   final bool landing;
   const CreateRepositorySheet.connected({super.key}) : landing = false;
@@ -70,8 +83,15 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   final _remoteUrl = TextEditingController();
 
   _RemoteMode _remote = _RemoteMode.none;
+  _SourceMode _source = _SourceMode.newFolder;
   bool _private = true;
   bool _addReadme = false;
+
+  // Existing-folder source options.
+  final _folder = TextEditingController();
+  String? _pickedFolder;
+  bool _commitAll = false;
+  bool _replaceOrigin = false;
 
   // SSH destination options.
   bool _createParents = false;
@@ -119,6 +139,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     _host.dispose();
     _description.dispose();
     _remoteUrl.dispose();
+    _folder.dispose();
     _localLabel.dispose();
     super.dispose();
   }
@@ -148,8 +169,6 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
 
   Forge get _forge =>
       _remote == _RemoteMode.gitlab ? Forge.gitlab : Forge.github;
-
-  bool get _branchEditable => _remote != _RemoteMode.github;
 
   String get _defaultHost =>
       _remote == _RemoteMode.gitlab ? 'gitlab.com' : 'github.com';
@@ -212,11 +231,19 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
 
   bool get _canSubmit {
     if (_submitting || _completedWarning != null) return false;
-    if (!HostFsService.isValidRepoDirName(_name.text.trim())) return false;
-    if (_branchEditable && _branch.text.trim().isEmpty) return false;
+    if (_branch.text.trim().isEmpty) return false;
     if (_remote == _RemoteMode.customUrl && _remoteUrl.text.trim().isEmpty) {
       return false;
     }
+    if (_source == _SourceMode.existingFolder) {
+      // The name only names the forge project here; the folder is the repo.
+      if (_onForge && !HostFsService.isValidRepoDirName(_name.text.trim())) {
+        return false;
+      }
+      if (_isLocalTarget) return _pickedFolder != null;
+      return _folder.text.trim().startsWith('/');
+    }
+    if (!HostFsService.isValidRepoDirName(_name.text.trim())) return false;
     if (_isLocalTarget) return _pickedParent != null;
     return _parent.text.trim().startsWith('/');
   }
@@ -238,26 +265,72 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       final fs = HostFsService(executor);
       final log = ref.read(outputLogProvider.notifier);
       final name = _name.text.trim();
-      final parentDir = _isLocalTarget ? _pickedParent! : _parent.text.trim();
-      final dest = HostFsService.joinPath(parentDir, name);
+      final existing = _source == _SourceMode.existingFolder;
+      final String? parentDir;
+      final String dest;
+      if (existing) {
+        parentDir = null;
+        dest = _stripTrailingSlashes(
+          _isLocalTarget ? _pickedFolder! : _folder.text.trim(),
+        );
+      } else {
+        parentDir = _isLocalTarget ? _pickedParent! : _parent.text.trim();
+        dest = HostFsService.joinPath(parentDir, name);
+      }
       final host = _host.text.trim().isEmpty ? _defaultHost : _host.text.trim();
 
       // --- Pre-checks ---------------------------------------------------
-      switch (await fs.probePath(dest)) {
-        case PathProbe.exists:
-          setState(() => _error = 'The destination already exists: $dest');
-          return;
-        case PathProbe.noParent:
-          if (!_isLocalTarget && _createParents) {
-            await fs.makeDirs(parentDir);
-          } else {
+      var alreadyRepo = false;
+      if (existing) {
+        // Classify the picked folder: its own repo root (skip init), not a
+        // repo yet (init in place), or nested inside another repo (refuse —
+        // publishing a subfolder of someone's repo is never what they meant).
+        final probe = await executor.execute(
+          repoPath: dest,
+          gitArgs: ['git', 'rev-parse', '--show-toplevel'],
+          lane: ExecLane.read,
+          retries: 0,
+        );
+        if (probe.isSuccess) {
+          final top = _stripTrailingSlashes(probe.stdout.trim());
+          if (top != dest) {
             setState(
-              () => _error = "The parent folder doesn't exist: $parentDir",
+              () => _error =
+                  'The folder is inside another Git repository ($top) — '
+                  "pick that repository's root instead.",
             );
             return;
           }
-        case PathProbe.absent:
-          break;
+          alreadyRepo = true;
+        } else if (!probe.stderr.toLowerCase().contains(
+          'not a git repository',
+        )) {
+          // A plain non-repo folder is the expected miss; anything else
+          // (missing folder, permissions) is a real error.
+          setState(
+            () => _error = probe.stderr.trim().isEmpty
+                ? 'Could not inspect the folder (exit code ${probe.exitCode}).'
+                : probe.stderr.trim(),
+          );
+          return;
+        }
+      } else {
+        switch (await fs.probePath(dest)) {
+          case PathProbe.exists:
+            setState(() => _error = 'The destination already exists: $dest');
+            return;
+          case PathProbe.noParent:
+            if (!_isLocalTarget && _createParents) {
+              await fs.makeDirs(parentDir!);
+            } else {
+              setState(
+                () => _error = "The parent folder doesn't exist: $parentDir",
+              );
+              return;
+            }
+          case PathProbe.absent:
+            break;
+        }
       }
       if (!mounted) return;
 
@@ -270,49 +343,129 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         if (!mounted) return;
       }
 
-      String? warning;
-      if (_remote == _RemoteMode.github) {
-        // Forge-first: one command creates + clones + wires origin.
-        final label = 'gh repo create $name';
-        try {
-          final result = await GhService(executor).createRepo(
-            cwd: parentDir,
-            name: name,
-            private: _private,
-            description: _description.text.trim(),
-            host: host,
-            addReadme: _addReadme,
+      // --- Existing-origin guard ------------------------------------------
+      // Before any mutation: a repo that already has an origin is only
+      // rewired when the user explicitly opted into replacing it.
+      if (alreadyRepo && _remote != _RemoteMode.none) {
+        final current = await executor.execute(
+          repoPath: dest,
+          gitArgs: ['git', 'remote', 'get-url', 'origin'],
+          lane: ExecLane.read,
+          retries: 0,
+        );
+        if (current.isSuccess && current.stdout.trim().isNotEmpty) {
+          if (!_replaceOrigin) {
+            setState(
+              () => _error =
+                  'This repository already has an origin remote '
+                  '(${current.stdout.trim()}). Turn on "Replace existing '
+                  'origin remote" to overwrite it.',
+            );
+            return;
+          }
+          final removed = await executor.execute(
+            repoPath: dest,
+            gitArgs: ['git', 'remote', 'remove', 'origin'],
+            lane: ExecLane.exclusive,
+            retries: 0,
           );
-          log.logResult(label, result);
-        } on GhException catch (e) {
-          log.logResult(label, e.result);
-          setState(() => _error = '$e\n${e.result.stderr}'.trim());
-          return;
+          log.logResult('git remote remove origin', removed);
+          if (!removed.isSuccess) {
+            setState(
+              () => _error = removed.stderr.trim().isEmpty
+                  ? 'git remote remove origin exited with code '
+                        '${removed.exitCode}'
+                  : removed.stderr.trim(),
+            );
+            return;
+          }
         }
-      } else {
-        // Plain init (also step 1 of the GitLab mechanism).
-        final branch = _branch.text.trim();
-        final initLabel = 'git init -b $branch $name';
-        final result = await executor.execute(
-          repoPath: parentDir,
-          gitArgs: ['git', 'init', '-b', branch, '--', name],
+        if (!mounted) return;
+      }
+
+      final warnings = <String>[];
+
+      // --- Step 1: init (skipped when the folder is already a repo) --------
+      // Init-first even for GitHub, so the user's chosen initial branch is
+      // always authoritative — never a CLI fallback's `init.defaultBranch`.
+      final branch = _branch.text.trim();
+      if (!alreadyRepo) {
+        final initArgs = existing
+            ? ['git', 'init', '-b', branch]
+            : ['git', 'init', '-b', branch, '--', name];
+        final initResult = await executor.execute(
+          repoPath: existing ? dest : parentDir!,
+          gitArgs: initArgs,
           lane: ExecLane.exclusive,
           retries: 0,
         );
-        log.logResult(initLabel, result);
-        if (!result.isSuccess) {
+        log.logResult(initArgs.join(' '), initResult);
+        if (!initResult.isSuccess) {
           setState(
-            () => _error = result.stderr.trim().isEmpty
-                ? 'git init exited with code ${result.exitCode}'
-                : result.stderr.trim(),
+            () => _error = initResult.stderr.trim().isEmpty
+                ? 'git init exited with code ${initResult.exitCode}'
+                : initResult.stderr.trim(),
           );
           return;
         }
         if (!mounted) return;
+      }
 
-        if (_remote == _RemoteMode.gitlab) {
-          // Step 2: create on GitLab from inside the new repo (wires origin).
-          // A failure keeps the local repo — registered below with a warning.
+      // --- Step 2: optional initial commit --------------------------------
+      // Before the forge publish, so GitHub's --push (and the git push below)
+      // has something to push and the branch is born on the forge too.
+      var hasCommit = false;
+      if (existing) {
+        if (_commitAll) {
+          hasCommit = await _commitAllContents(executor, log, dest, warnings);
+          if (!mounted) return;
+        }
+        if (!hasCommit) {
+          // The folder may already carry history (or a clean tree) — any
+          // resolvable HEAD is pushable.
+          final head = await executor.execute(
+            repoPath: dest,
+            gitArgs: ['git', 'rev-parse', '--verify', '--quiet', 'HEAD'],
+            lane: ExecLane.read,
+            retries: 0,
+          );
+          hasCommit = head.isSuccess;
+        }
+      } else if (_addReadme) {
+        hasCommit = await _writeReadmeAndCommit(executor, log, dest, warnings);
+        if (!mounted) return;
+      }
+      // For an existing folder push the resolved current branch (HEAD): when
+      // init was skipped, the branch field never applied to this repo.
+      final pushRef = existing ? 'HEAD' : branch;
+
+      // --- Step 3: wire origin (mode-specific) ----------------------------
+      // Every failure past this point keeps the local repo — registered
+      // below with a warning, never deleted over a remote hiccup.
+      switch (_remote) {
+        case _RemoteMode.none:
+          break;
+        case _RemoteMode.github:
+          final label = 'gh repo create $name';
+          try {
+            final result = await GhService(executor).createRepoInExisting(
+              repoPath: dest,
+              name: name,
+              private: _private,
+              description: _description.text.trim(),
+              host: host,
+              push: hasCommit,
+            );
+            log.logResult(label, result);
+          } on GhException catch (e) {
+            log.logResult(label, e.result);
+            warnings.add(
+              'The repository was created locally, but publishing to '
+              'GitHub failed — you can retry from the forge later. '
+              '(${e.result.stderr.trim().isEmpty ? e : e.result.stderr.trim()})',
+            );
+          }
+        case _RemoteMode.gitlab:
           final label = 'glab repo create $name';
           try {
             await GlabService(executor).createRepoInExisting(
@@ -322,17 +475,19 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               description: _description.text.trim(),
               host: host,
             );
+            if (hasCommit) {
+              await _pushInitial(executor, log, dest, pushRef, warnings);
+            }
           } on GlabException catch (e) {
             log.logResult(label, e.result);
-            warning =
-                'The repository was created locally, but publishing to '
-                'GitLab failed — you can retry from the forge later. '
-                '(${e.result.stderr.trim().isEmpty ? e : e.result.stderr.trim()})';
+            warnings.add(
+              'The repository was created locally, but publishing to '
+              'GitLab failed — you can retry from the forge later. '
+              '(${e.result.stderr.trim().isEmpty ? e : e.result.stderr.trim()})',
+            );
           }
-          if (!mounted) return;
-        } else if (_remote == _RemoteMode.customUrl) {
-          // Step 2: point origin at the user-supplied URL — plain git, no
-          // forge CLI. Same keep-the-repo policy as the GitLab step.
+        case _RemoteMode.customUrl:
+          // Plain git, no forge CLI — for a remote that already exists.
           final url = _remoteUrl.text.trim();
           final label = 'git remote add origin $url';
           final result = await executor.execute(
@@ -343,28 +498,32 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           );
           log.logResult(label, result);
           if (!result.isSuccess) {
-            warning =
-                'The repository was created locally, but configuring the '
-                '"origin" remote failed. '
-                '(${result.stderr.trim().isEmpty ? 'git remote add exited with code ${result.exitCode}' : result.stderr.trim()})';
+            warnings.add(
+              'The repository was created locally, but configuring the '
+              '"origin" remote failed. '
+              '(${result.stderr.trim().isEmpty ? 'git remote add exited with code ${result.exitCode}' : result.stderr.trim()})',
+            );
+          } else if (hasCommit) {
+            await _pushInitial(executor, log, dest, pushRef, warnings);
           }
-          if (!mounted) return;
-        }
       }
+      if (!mounted) return;
 
-      // --- Post-create verification --------------------------------------
+      // --- Step 4: post-create verification -------------------------------
       // Every mode that promises an origin must actually show one: don't
       // trust the forge CLI's (or our own) remote wiring blindly.
-      if (warning == null && _remote != _RemoteMode.none) {
+      if (warnings.isEmpty && _remote != _RemoteMode.none) {
         final failure = await _verifyOrigin(executor, log, dest);
         if (!mounted) return;
         if (failure != null) {
-          warning =
-              'The repository was created, but no "origin" remote is '
-              'configured — add one manually (git remote add origin <url>). '
-              '($failure)';
+          warnings.add(
+            'The repository was created, but no "origin" remote is '
+            'configured — add one manually (git remote add origin <url>). '
+            '($failure)',
+          );
         }
       }
+      final warning = warnings.isEmpty ? null : warnings.join('\n\n');
 
       // --- Register + activate (shared matrix) --------------------------
       await _register(dest);
@@ -379,6 +538,122 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       if (mounted) setState(() => _error = '$e');
     } finally {
       if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  /// Writes a README.md into [dest] and creates the initial commit, so the
+  /// new repo (and, after the push, the forge) isn't empty and the initial
+  /// branch is actually born. Returns true when the commit exists; failures
+  /// append to [warnings] and the repo is kept.
+  Future<bool> _writeReadmeAndCommit(
+    CommandExecutor executor,
+    OutputLogNotifier log,
+    String dest,
+    List<String> warnings,
+  ) async {
+    final name = _name.text.trim();
+    final desc = _description.text.trim();
+    final content = desc.isEmpty ? '# $name\n' : '# $name\n\n$desc\n';
+    try {
+      await executor.uploadBytes(
+        HostFsService.joinPath(dest, 'README.md'),
+        Uint8List.fromList(utf8.encode(content)),
+      );
+      for (final argv in [
+        ['git', 'add', '--', 'README.md'],
+        ['git', 'commit', '-m', 'Initial commit'],
+      ]) {
+        final result = await executor.execute(
+          repoPath: dest,
+          gitArgs: argv,
+          lane: ExecLane.exclusive,
+          retries: 0,
+        );
+        log.logResult(argv.join(' '), result);
+        if (!result.isSuccess) {
+          warnings.add(
+            'The README initial commit failed — commit manually (is '
+            'user.name / user.email configured on the target?). '
+            '(${result.stderr.trim().isEmpty ? '${argv.join(' ')} exited with code ${result.exitCode}' : result.stderr.trim()})',
+          );
+          return false;
+        }
+      }
+      return true;
+    } catch (e) {
+      warnings.add('The README initial commit failed. ($e)');
+      return false;
+    }
+  }
+
+  /// Stages and commits everything in [dest] — the existing-folder analogue
+  /// of [_writeReadmeAndCommit]. Returns true when a commit was created. A
+  /// clean tree ("nothing to commit") is not an error — the caller falls back
+  /// to checking whether HEAD already resolves; real failures append to
+  /// [warnings] and the repo is kept.
+  Future<bool> _commitAllContents(
+    CommandExecutor executor,
+    OutputLogNotifier log,
+    String dest,
+    List<String> warnings,
+  ) async {
+    for (final argv in [
+      ['git', 'add', '--all'],
+      ['git', 'commit', '-m', 'Initial commit'],
+    ]) {
+      final result = await executor.execute(
+        repoPath: dest,
+        gitArgs: argv,
+        lane: ExecLane.exclusive,
+        retries: 0,
+      );
+      log.logResult(argv.join(' '), result);
+      if (!result.isSuccess) {
+        if ('${result.stdout}\n${result.stderr}'.contains(
+          'nothing to commit',
+        )) {
+          return false;
+        }
+        warnings.add(
+          'Committing the folder contents failed — commit manually (is '
+          'user.name / user.email configured on the target?). '
+          '(${result.stderr.trim().isEmpty ? '${argv.join(' ')} exited with code ${result.exitCode}' : result.stderr.trim()})',
+        );
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /// Pushes the just-created initial commit and sets its upstream — the
+  /// GitLab and custom-URL counterpart of gh's `--push`. Best-effort: a
+  /// failure (auth, remote not empty, …) appends to [warnings]; the local
+  /// repo and its wired origin stay intact.
+  Future<void> _pushInitial(
+    CommandExecutor executor,
+    OutputLogNotifier log,
+    String dest,
+    String branch,
+    List<String> warnings,
+  ) async {
+    final label = 'git push -u origin $branch';
+    try {
+      final result = await executor.execute(
+        repoPath: dest,
+        gitArgs: ['git', 'push', '-u', 'origin', branch],
+        lane: ExecLane.sync,
+        retries: 0,
+      );
+      log.logResult(label, result);
+      if (!result.isSuccess) {
+        warnings.add(
+          'The initial commit could not be pushed — push manually once the '
+          'remote is reachable. '
+          '(${result.stderr.trim().isEmpty ? '$label exited with code ${result.exitCode}' : result.stderr.trim()})',
+        );
+      }
+    } catch (e) {
+      warnings.add('The initial commit could not be pushed. ($e)');
     }
   }
 
@@ -456,6 +731,45 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     }
   }
 
+  Future<void> _pickLocalFolder() async {
+    if (_picking) return;
+    setState(() => _picking = true);
+    try {
+      final path = await getDirectoryPath(confirmButtonText: 'Choose');
+      if (!mounted) return;
+      if (path != null) {
+        setState(() {
+          _pickedFolder = path;
+          _name.text = _basenameOf(path);
+        });
+      }
+    } catch (_) {
+      // No native picker (e.g. under flutter test) — leave the state as is.
+    } finally {
+      if (mounted) setState(() => _picking = false);
+    }
+  }
+
+  Future<void> _browseRemoteFolder() async {
+    if (!await _ensureProvisioned()) return;
+    if (!mounted) return;
+    final start = _folder.text.trim();
+    final picked = await showMacosSheet<String>(
+      context: context,
+      builder: (_) => EscapeDismissible(
+        child: RemoteDirectoryBrowserSheet(
+          initialPath: start.isEmpty ? null : start,
+        ),
+      ),
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        _folder.text = picked;
+        _name.text = _basenameOf(picked);
+      });
+    }
+  }
+
   Future<void> _browseRemote() async {
     if (!await _ensureProvisioned()) return;
     if (!mounted) return;
@@ -512,9 +826,15 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
                         _destinationSection(typography),
                         const SizedBox(height: 14),
                       ],
+                      _sourceSection(typography),
+                      const SizedBox(height: 14),
                       _nameSection(typography),
                       const SizedBox(height: 14),
-                      if (_isLocalTarget)
+                      if (_source == _SourceMode.existingFolder)
+                        (_isLocalTarget
+                            ? _localExistingFolder(typography)
+                            : _sshExistingFolder(typography))
+                      else if (_isLocalTarget)
                         _localDestination(typography)
                       else
                         _sshDestination(typography),
@@ -582,36 +902,187 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     );
   }
 
-  Widget _nameSection(MacosTypography typography) {
+  Widget _sourceSection(MacosTypography typography) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Repository name', style: typography.caption1),
+        Text('Source', style: typography.caption1),
         const SizedBox(height: 4),
-        MacosTextField(
-          controller: _name,
-          placeholder: 'my-project',
-          decoration: kAppTextFieldDecoration,
-          focusedDecoration: kAppTextFieldFocusedDecoration,
-          onChanged: (_) => setState(() {}),
+        Row(
+          children: [
+            _sourceButton('New folder', _SourceMode.newFolder),
+            const SizedBox(width: 6),
+            _sourceButton('Existing folder', _SourceMode.existingFolder),
+          ],
         ),
-        const SizedBox(height: 10),
+      ],
+    );
+  }
+
+  Widget _sourceButton(String label, _SourceMode mode) {
+    final active = _source == mode;
+    return PushButton(
+      controlSize: ControlSize.regular,
+      secondary: !active,
+      onPressed: () => setState(() {
+        _source = mode;
+        _error = null;
+      }),
+      child: Text(label),
+    );
+  }
+
+  Widget _nameSection(MacosTypography typography) {
+    final existing = _source == _SourceMode.existingFolder;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // For an existing folder the name only names the forge project (it's
+        // prefilled from the folder); without a forge there is nothing to
+        // name, so the field is hidden.
+        if (!existing || _onForge) ...[
+          Text(
+            existing ? 'Repository name (on the forge)' : 'Repository name',
+            style: typography.caption1,
+          ),
+          const SizedBox(height: 4),
+          MacosTextField(
+            controller: _name,
+            placeholder: 'my-project',
+            decoration: kAppTextFieldDecoration,
+            focusedDecoration: kAppTextFieldFocusedDecoration,
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 10),
+        ],
         Text(
-          _branchEditable
-              ? 'Initial branch'
-              : 'Initial branch (set by GitHub for a forge-created repo)',
+          existing
+              ? "Initial branch (used only if the folder isn't already a "
+                    'repository)'
+              : 'Initial branch',
           style: typography.caption1,
         ),
         const SizedBox(height: 4),
         MacosTextField(
           controller: _branch,
           placeholder: 'main',
-          enabled: _branchEditable,
           decoration: kAppTextFieldDecoration,
           focusedDecoration: kAppTextFieldFocusedDecoration,
           onChanged: (_) => setState(() {}),
         ),
+        if (!existing) ...[
+          const SizedBox(height: 10),
+          WorkspaceToggleRow(
+            on: _addReadme,
+            onTap: () => setState(() => _addReadme = !_addReadme),
+            onIcon: CupertinoIcons.doc_text_fill,
+            offIcon: CupertinoIcons.doc_text,
+            label: 'Add a README (creates the initial commit)',
+          ),
+        ],
       ],
+    );
+  }
+
+  Widget _localExistingFolder(MacosTypography typography) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Folder on this Mac', style: typography.caption1),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                _pickedFolder ?? 'No folder chosen',
+                style: typography.body.copyWith(
+                  color: _pickedFolder == null
+                      ? MacosColors.systemGrayColor
+                      : null,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            PushButton(
+              controlSize: ControlSize.regular,
+              secondary: true,
+              onPressed: _picking ? null : _pickLocalFolder,
+              child: const Text('Choose…'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        _commitAllToggle(),
+        const SizedBox(height: 8),
+        WorkspaceToggleRow(
+          on: _saveLocal,
+          onTap: () => setState(() => _saveLocal = !_saveLocal),
+          onIcon: CupertinoIcons.tray_arrow_down_fill,
+          offIcon: CupertinoIcons.tray_arrow_down,
+          label: 'Save to Local Repositories',
+        ),
+        if (_saveLocal) ...[
+          const SizedBox(height: 8),
+          MacosTextField(
+            controller: _localLabel,
+            placeholder: 'Label (optional)',
+            decoration: kAppTextFieldDecoration,
+            focusedDecoration: kAppTextFieldFocusedDecoration,
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _sshExistingFolder(MacosTypography typography) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Folder on the host', style: typography.caption1),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            Expanded(
+              child: MacosTextField(
+                controller: _folder,
+                placeholder: '/srv/app',
+                decoration: kAppTextFieldDecoration,
+                focusedDecoration: kAppTextFieldFocusedDecoration,
+                onChanged: (_) => setState(() {}),
+              ),
+            ),
+            const SizedBox(width: 8),
+            PushButton(
+              controlSize: ControlSize.regular,
+              secondary: true,
+              onPressed: _browseRemoteFolder,
+              child: const Text('Browse…'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        _commitAllToggle(),
+        const SizedBox(height: 8),
+        WorkspaceToggleRow(
+          on: _fsmonitor,
+          onTap: () => setState(() => _fsmonitor = !_fsmonitor),
+          onIcon: CupertinoIcons.bolt_fill,
+          offIcon: CupertinoIcons.bolt,
+          label: 'Enable git fsmonitor (faster status on large repos)',
+        ),
+      ],
+    );
+  }
+
+  Widget _commitAllToggle() {
+    return WorkspaceToggleRow(
+      on: _commitAll,
+      onTap: () => setState(() => _commitAll = !_commitAll),
+      onIcon: CupertinoIcons.doc_on_doc_fill,
+      offIcon: CupertinoIcons.doc_on_doc,
+      label: 'Commit all existing contents (initial commit)',
     );
   }
 
@@ -728,6 +1199,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             _remoteButton('Custom URL', _RemoteMode.customUrl),
           ],
         ),
+        if (_source == _SourceMode.existingFolder &&
+            _remote != _RemoteMode.none) ...[
+          const SizedBox(height: 8),
+          WorkspaceToggleRow(
+            on: _replaceOrigin,
+            onTap: () => setState(() => _replaceOrigin = !_replaceOrigin),
+            onIcon: CupertinoIcons.arrow_2_circlepath_circle_fill,
+            offIcon: CupertinoIcons.arrow_2_circlepath_circle,
+            label: 'Replace existing origin remote (if any)',
+          ),
+        ],
         if (_remote == _RemoteMode.customUrl) ...[
           const SizedBox(height: 8),
           Text(
@@ -774,16 +1256,6 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
           ),
-          if (_remote == _RemoteMode.github) ...[
-            const SizedBox(height: 8),
-            WorkspaceToggleRow(
-              on: _addReadme,
-              onTap: () => setState(() => _addReadme = !_addReadme),
-              onIcon: CupertinoIcons.doc_text_fill,
-              offIcon: CupertinoIcons.doc_text,
-              label: 'Add a README',
-            ),
-          ],
         ],
       ],
     );
@@ -862,5 +1334,19 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     final slash = trimmed.lastIndexOf('/');
     if (slash <= 0) return '/';
     return trimmed.substring(0, slash);
+  }
+
+  static String _basenameOf(String path) {
+    final trimmed = _stripTrailingSlashes(path);
+    final slash = trimmed.lastIndexOf('/');
+    return slash < 0 ? trimmed : trimmed.substring(slash + 1);
+  }
+
+  static String _stripTrailingSlashes(String path) {
+    var end = path.length;
+    while (end > 1 && path[end - 1] == '/') {
+      end--;
+    }
+    return path.substring(0, end);
   }
 }

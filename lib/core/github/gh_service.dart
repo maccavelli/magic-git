@@ -138,22 +138,25 @@ class GhService {
     );
   }
 
-  /// Creates [name] on [host] and (by default) clones it into `cwd/name` with
-  /// `origin` wired — the create sheet's forge-first GitHub mode. The forge's
-  /// default branch governs the new repo (README-initialized repos are born on
-  /// it), which is why the UI disables the initial-branch field in this mode.
-  Future<SSHCommandResult> createRepo({
-    required String cwd,
+  /// Creates [name] on [host] from *inside* a freshly-`git init`-ed repo at
+  /// [repoPath] — `gh repo create --source . --remote origin`, gh's documented
+  /// "push an existing local repository" path. Init-first keeps the user's
+  /// chosen initial branch authoritative; the `--clone` form was abandoned
+  /// because its empty-repo fallback quietly does a local `git init` on the
+  /// host's own `init.defaultBranch` (often `master`) and pushes nothing.
+  /// [push] adds `--push` — the current branch is pushed and set as upstream;
+  /// only pass it when a commit exists (an unborn branch can't be pushed).
+  Future<SSHCommandResult> createRepoInExisting({
+    required String repoPath,
     required String name,
     required bool private,
     String description = '',
     String host = 'github.com',
-    bool addReadme = false,
-    bool clone = true,
+    bool push = false,
     Duration timeout = const Duration(minutes: 3),
   }) async {
     final result = await _executor.execute(
-      repoPath: cwd,
+      repoPath: repoPath,
       gitArgs: [
         'gh',
         'repo',
@@ -161,8 +164,11 @@ class GhService {
         name,
         private ? '--private' : '--public',
         if (description.isNotEmpty) ...['--description', description],
-        if (addReadme) '--add-readme',
-        if (clone) '--clone',
+        '--source',
+        '.',
+        '--remote',
+        'origin',
+        if (push) '--push',
       ],
       lane: ExecLane.sync,
       timeout: timeout,
