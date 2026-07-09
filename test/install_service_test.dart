@@ -27,6 +27,8 @@ class _RecordingExecutor extends SSHCommandExecutor {
     String? stdin,
     Duration timeout = SSHCommandExecutor.defaultTimeout,
     int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
   }) async {
     calls.add(gitArgs);
     envs.add(extraEnv);

@@ -792,56 +792,63 @@ class ConnectionController extends Notifier<ConnectionState> {
       await ref.read(gitServiceProvider).validateRepoPath(repoPath);
       if (attempt != _attempt || !ref.mounted) return;
 
-      // Apply per-repo fsmonitor tuning for every opted-in repo (all on this
-      // host; each git command carries its own path). Best-effort and per-repo
-      // non-fatal — status works fine without it. Re-checked *inside* the loop,
-      // not just around it: without this, a connect superseded mid-loop (a
-      // fresh connect/disconnect racing this one) would keep applying config
-      // through whatever host is current *now* via the shared gitServiceProvider
-      // — the same wrong-host class of bug the attempt token exists to prevent.
-      for (final repo in fsmonitorPaths) {
-        if (attempt != _attempt || !ref.mounted) return;
+      // Apply per-repo fsmonitor tuning for every opted-in repo in ONE round
+      // trip (each used to be its own — a per-repo SSH round trip before the
+      // session became usable). Best-effort and per-repo non-fatal — status
+      // works fine without it; a failed repo is reported on stderr by the
+      // combined script and logged here, so a persistently-rejected tuning
+      // command stays discoverable instead of silently degrading refresh
+      // performance all session with no trace.
+      if (fsmonitorPaths.isNotEmpty) {
         try {
-          await ref.read(gitServiceProvider).setFsmonitor(repo, enabled: true);
+          final result = await ref
+              .read(gitServiceProvider)
+              .setFsmonitorMany(fsmonitorPaths, enabled: true);
+          if (attempt != _attempt || !ref.mounted) return;
+          if (result.stderr.trim().isNotEmpty) {
+            ref
+                .read(outputLogProvider.notifier)
+                .logError('fsmonitor setup', result.stderr.trim());
+          }
         } catch (e) {
           if (attempt != _attempt || !ref.mounted) return;
-          // Best-effort — status still works without fsmonitor — but
-          // surfaced so a persistently-rejected tuning command is
-          // discoverable instead of silently degrading refresh performance
-          // all session with no trace.
           ref
               .read(outputLogProvider.notifier)
-              .logError('fsmonitor setup ($repo)', e.toString());
+              .logError('fsmonitor setup', e.toString());
         }
       }
       if (attempt != _attempt || !ref.mounted) return;
 
+      // Both forge logins are independent one-shot writes to different CLIs'
+      // credential stores — run them concurrently rather than paying two
+      // serialized round-trip sequences at every connect. Each maps its own
+      // failure to a non-fatal warning; connect() itself never fails on one.
       String? warning;
-      if (gitlabToken != null && gitlabToken.isNotEmpty) {
-        try {
-          await ref
+      final loginWarnings = await Future.wait([
+        if (gitlabToken != null && gitlabToken.isNotEmpty)
+          ref
               .read(glabServiceProvider)
-              .loginWithToken(repoPath, gitlabToken);
-        } catch (e) {
-          warning =
-              'GitLab token login failed — GitLab panels may not work until '
-              'the remote is authenticated. ($e)';
-        }
-        if (attempt != _attempt || !ref.mounted) return;
-      }
-      if (githubToken != null && githubToken.isNotEmpty) {
-        try {
-          await ref
+              .loginWithToken(repoPath, gitlabToken)
+              .then<String?>(
+                (_) => null,
+                onError: (Object e) =>
+                    'GitLab token login failed — GitLab panels may not work '
+                    'until the remote is authenticated. ($e)',
+              ),
+        if (githubToken != null && githubToken.isNotEmpty)
+          ref
               .read(ghServiceProvider)
-              .loginWithToken(repoPath, githubToken);
-        } catch (e) {
-          final msg =
-              'GitHub token login failed — GitHub panels may not work until '
-              'the remote is authenticated. ($e)';
-          warning = warning == null ? msg : '$warning\n$msg';
-        }
-        if (attempt != _attempt || !ref.mounted) return;
-      }
+              .loginWithToken(repoPath, githubToken)
+              .then<String?>(
+                (_) => null,
+                onError: (Object e) =>
+                    'GitHub token login failed — GitHub panels may not work '
+                    'until the remote is authenticated. ($e)',
+              ),
+      ]);
+      if (attempt != _attempt || !ref.mounted) return;
+      final warnings = loginWarnings.whereType<String>().toList();
+      if (warnings.isNotEmpty) warning = warnings.join('\n');
 
       final repos = SavedConnection.dedupePaths([repoPath, ...?repoPaths]);
       state = ConnectionState(
@@ -1527,17 +1534,119 @@ final logSearchProvider = FutureProvider.autoDispose
           );
     });
 
-// The bounded keep-alive LRU backing the diff/blame/file-history caches lives in
-// keep_alive_lru.dart (extracted so it's unit-testable). String-valued caches
-// additionally report payload size via `reportSize` for byte-budget eviction;
-// the list-valued ones (fileLog/blame) rely on the count cap alone.
-final _fileLogLru = KeepAliveLru<(String, String)>(24);
-final _blameLru = KeepAliveLru<(String, String)>(24);
-final _fileDiffLru = KeepAliveLru<(String, String, bool, bool, int)>(24);
-final _commitDiffLru = KeepAliveLru<(String, String)>(24);
-final _commitFileDiffLru = KeepAliveLru<(String, String, String)>(24);
-final _conflictFileLru = KeepAliveLru<(String, String)>(24);
-final _untrackedDiffLru = KeepAliveLru<(String, String)>(24);
+/// Ties a **worktree-dependent** cached provider to the repo's most recently
+/// *landed* status, so its cached content can never go stale: every completed
+/// status refresh (a watcher tick reporting an external edit, this app's own
+/// post-mutation refresh, a manual ⌘R) produces a fresh [GitStatus] instance,
+/// which invalidates the dependent provider exactly once — an open pane
+/// refetches (live-updating its content), and a closed-but-LRU-cached entry is
+/// marked dirty so its next open refetches instead of serving stale bytes.
+///
+/// `select((s) => s.value)` rather than the raw AsyncValue: Riverpod carries
+/// the previous data through the loading state (`.value` keeps returning it),
+/// so this fires once per completed refresh — not a second, wasted time on
+/// the loading transition.
+///
+/// `ref.listen` + `invalidateSelf` rather than `ref.watch`: a select-based
+/// *watch* never observes the watched provider's errors, so if this cache
+/// entry happened to be [statusProvider]'s only subscriber (a kept-alive diff
+/// after the repo view unmounted, a viewer window on its own), a failed
+/// status refresh would surface as an *unhandled* error in the zone. The
+/// listener's `onError` swallows it deliberately — a failed status refresh is
+/// the status view's problem to display, not this cache's; the cached content
+/// simply stays as-is until a refresh lands.
+///
+/// Deliberately NOT applied to the hash-keyed caches ([commitDiffProvider] /
+/// [commitFileDiffProvider]): a commit's patch is immutable, which is exactly
+/// what lets those caches be large and long-lived (see [KeepAliveLru]).
+void _dependOnWorktreeState(Ref ref, String repoPath) {
+  ref.listen(
+    statusProvider(repoPath).select((s) => s.value),
+    (previous, next) => ref.invalidateSelf(),
+    onError: (_, _) {},
+  );
+}
+
+// The bounded keep-alive LRUs backing the diff/blame/file-history caches live
+// in keep_alive_lru.dart (extracted so it's unit-testable). Every cache
+// reports payload size via `reportSize` (measured for strings, estimated for
+// the list-valued fileLog/blame) so the byte budgets — not just entry counts —
+// bound what's pinned.
+//
+// Budgets are tiered by mutability. Over SSH, RAM is the cheapest resource in
+// the system: re-fetching content the user just looked at costs a round trip
+// plus remote git work, so the client deliberately holds a generous in-memory
+// working set.
+//
+//  * IMMUTABLE tier (hash-keyed commit patches): content that can never go
+//    stale — [_dependOnWorktreeState] deliberately doesn't touch it — so it's
+//    cached hard: browsing history stays instant for the whole session.
+//  * WORKTREE tier (file diffs, untracked previews, conflict content, blame):
+//    invalidated on every landed status refresh, so entries only serve the
+//    window between repo changes — still worth real capacity, since "close a
+//    diff, reopen it" with no intervening change is the hot path.
+const int _mib = 1024 * 1024;
+
+// Immutable tier.
+final _commitDiffLru = KeepAliveLru<(String, String)>(
+  512,
+  maxTotalBytes: 256 * _mib,
+  maxEntryBytes: 16 * _mib,
+);
+final _commitFileDiffLru = KeepAliveLru<(String, String, String)>(
+  512,
+  maxTotalBytes: 128 * _mib,
+  maxEntryBytes: 8 * _mib,
+);
+
+// Worktree tier.
+final _fileDiffLru = KeepAliveLru<(String, String, bool, bool, int)>(
+  64,
+  maxTotalBytes: 64 * _mib,
+  maxEntryBytes: 8 * _mib,
+);
+final _untrackedDiffLru = KeepAliveLru<(String, String)>(
+  64,
+  maxTotalBytes: 32 * _mib,
+  maxEntryBytes: 8 * _mib,
+);
+final _conflictFileLru = KeepAliveLru<(String, String)>(
+  32,
+  maxTotalBytes: 16 * _mib,
+  maxEntryBytes: 4 * _mib,
+);
+final _fileLogLru = KeepAliveLru<(String, String)>(
+  128,
+  maxTotalBytes: 32 * _mib,
+  maxEntryBytes: 4 * _mib,
+);
+final _blameLru = KeepAliveLru<(String, String)>(
+  64,
+  maxTotalBytes: 64 * _mib,
+  maxEntryBytes: 8 * _mib,
+);
+
+/// Rough resident size of a parsed commit list, for [KeepAliveLru.reportSize]
+/// — field code units plus a fixed per-object overhead.
+int _estimateCommitListBytes(List<GitCommit> commits) => commits.fold(
+  0,
+  (n, c) =>
+      n +
+      c.hash.length +
+      c.shortHash.length +
+      c.authorName.length +
+      c.authorEmail.length +
+      c.date.length +
+      c.subject.length +
+      64,
+);
+
+/// Rough resident size of a parsed blame, for [KeepAliveLru.reportSize].
+int _estimateBlameBytes(List<BlameLine> lines) => lines.fold(
+  0,
+  (n, l) =>
+      n + l.hash.length + l.author.length + l.summary.length + l.content.length + 48,
+);
 
 /// Commits that touched a single file, newest first, following renames — the
 /// "file history" view. Keyed by (repoPath, path). Kept alive (bounded LRU)
@@ -1547,9 +1656,14 @@ final fileLogProvider = FutureProvider.autoDispose
     .family<List<GitCommit>, (String, String)>((ref, key) {
       _fileLogLru.touch(key, ref.keepAlive());
       final (repoPath, path) = key;
-      return ref
+      final future = ref
           .watch(gitServiceProvider)
           .log(repoPath, path: path, follow: true);
+      future.then(
+        (v) => _fileLogLru.reportSize(key, _estimateCommitListBytes(v)),
+        onError: (_) {},
+      );
+      return future;
     });
 
 /// Line-by-line blame for a file. Keyed by (repoPath, path). Kept alive
@@ -1558,7 +1672,15 @@ final blameProvider = FutureProvider.autoDispose
     .family<List<BlameLine>, (String, String)>((ref, key) {
       _blameLru.touch(key, ref.keepAlive());
       final (repoPath, path) = key;
-      return ref.watch(gitServiceProvider).blame(repoPath, path);
+      // Working-copy blame reads the file as it is on disk right now — an
+      // external edit must invalidate it (see _dependOnWorktreeState).
+      _dependOnWorktreeState(ref, repoPath);
+      final future = ref.watch(gitServiceProvider).blame(repoPath, path);
+      future.then(
+        (v) => _blameLru.reportSize(key, _estimateBlameBytes(v)),
+        onError: (_) {},
+      );
+      return future;
     });
 
 /// Stashes for a repo.
@@ -1590,6 +1712,9 @@ final fileDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, bool, bool, int)>((ref, key) {
       _fileDiffLru.touch(key, ref.keepAlive());
       final (repoPath, path, staged, ignoreWhitespace, context) = key;
+      // A worktree/index diff changes whenever the repo does — every landed
+      // status refresh invalidates this so a cached diff can't go stale.
+      _dependOnWorktreeState(ref, repoPath);
       final future = ref.watch(gitServiceProvider).diffFile(
         repoPath,
         path: path,
@@ -1639,6 +1764,9 @@ final conflictFileProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       _conflictFileLru.touch(key, ref.keepAlive());
       final (repoPath, path) = key;
+      // Conflict markers change as the user (or another session) edits the
+      // file — follow the landed status so the pane never shows stale markers.
+      _dependOnWorktreeState(ref, repoPath);
       final future = ref.watch(gitServiceProvider).conflictFile(repoPath, path);
       future.then(
         (d) => _conflictFileLru.reportSize(key, d.length),
@@ -1654,6 +1782,9 @@ final untrackedDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       _untrackedDiffLru.touch(key, ref.keepAlive());
       final (repoPath, path) = key;
+      // An untracked file's contents are pure worktree state — follow the
+      // landed status so the rendered "diff" tracks on-disk edits.
+      _dependOnWorktreeState(ref, repoPath);
       final future = ref.watch(gitServiceProvider).diffUntracked(repoPath, path);
       future.then(
         (d) => _untrackedDiffLru.reportSize(key, d.length),
@@ -1709,38 +1840,56 @@ final forgeProvider = FutureProvider.autoDispose.family<Forge, String>((
   repoPath,
 ) async {
   final executor = ref.watch(activeExecutorProvider);
-  final remote = await executor.execute(
-    repoPath: repoPath,
-    gitArgs: ['git', 'remote', 'get-url', 'origin'],
-    timeout: const Duration(seconds: 20),
-  );
-  if (!remote.isSuccess) return Forge.none;
-  final url = remote.stdout.trim();
-  final byHost = forgeFromRemoteUrl(url);
-  if (byHost != Forge.unknown) return byHost;
 
-  // Unrecognized (self-hosted) host: ask the CLIs which hosts they're logged
-  // in to. `gh auth status` / `glab auth status` print their configured hosts;
-  // their exit codes are unreliable, so scan the combined stdout+stderr text.
-  final host = forgeHostFromRemoteUrl(url);
-  if (host == null) return Forge.unknown;
-  try {
-    final gh = await executor.execute(
+  Future<Forge> detect() async {
+    final remote = await executor.execute(
       repoPath: repoPath,
-      gitArgs: ['gh', 'auth', 'status'],
+      gitArgs: ['git', 'remote', 'get-url', 'origin'],
       timeout: const Duration(seconds: 20),
+      lane: ExecLane.read,
     );
-    if ('${gh.stdout}\n${gh.stderr}'.contains(host)) return Forge.github;
-    final glab = await executor.execute(
-      repoPath: repoPath,
-      gitArgs: ['glab', 'auth', 'status'],
-      timeout: const Duration(seconds: 20),
-    );
-    if ('${glab.stdout}\n${glab.stderr}'.contains(host)) return Forge.gitlab;
-  } catch (_) {
-    // A missing CLI / timeout during the probe just leaves it unclassified.
+    if (!remote.isSuccess) return Forge.none;
+    final url = remote.stdout.trim();
+    final byHost = forgeFromRemoteUrl(url);
+    if (byHost != Forge.unknown) return byHost;
+
+    // Unrecognized (self-hosted) host: ask the CLIs which hosts they're logged
+    // in to. `gh auth status` / `glab auth status` print their configured hosts;
+    // their exit codes are unreliable, so scan the combined stdout+stderr text.
+    final host = forgeHostFromRemoteUrl(url);
+    if (host == null) return Forge.unknown;
+    try {
+      final gh = await executor.execute(
+        repoPath: repoPath,
+        gitArgs: ['gh', 'auth', 'status'],
+        timeout: const Duration(seconds: 20),
+        lane: ExecLane.read,
+      );
+      if ('${gh.stdout}\n${gh.stderr}'.contains(host)) return Forge.github;
+      final glab = await executor.execute(
+        repoPath: repoPath,
+        gitArgs: ['glab', 'auth', 'status'],
+        timeout: const Duration(seconds: 20),
+        lane: ExecLane.read,
+      );
+      if ('${glab.stdout}\n${glab.stderr}'.contains(host)) return Forge.gitlab;
+    } catch (_) {
+      // A missing CLI / timeout during the probe just leaves it unclassified.
+    }
+    return Forge.unknown;
   }
-  return Forge.unknown;
+
+  final forge = await detect();
+  // A repo's forge can't change within a session, and re-probing it costs up
+  // to three round trips (two of them CLI spawns) every time the Forge tab
+  // remounts — pin a *conclusive* answer for the session. Inconclusive results
+  // (`unknown`: probe raced a slow CLI; `none`: possibly a transient failure
+  // to read the remote) stay autoDispose so they re-probe on next mount.
+  // _invalidateRepoState still clears this on every connect/repo switch.
+  if (forge == Forge.github || forge == Forge.gitlab) {
+    ref.keepAlive();
+  }
+  return forge;
 });
 
 /// Open pull requests for the connected GitHub repo.

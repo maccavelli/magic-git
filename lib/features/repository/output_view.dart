@@ -161,28 +161,36 @@ class _OutputViewState extends ConsumerState<OutputView> {
     }
     return Container(
       color: const Color(0xFF1E1E1E),
+      // SelectionArea + plain Text so a multi-line command transcript can be
+      // drag-copied — per-line SelectableText couldn't span lines.
       child: Scrollbar(
         controller: _scroll,
-        child: ListView.builder(
-          controller: _scroll,
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          itemCount: lines.length,
-          itemBuilder: (context, i) {
-            final line = lines[i];
-            return SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 1,
+        child: SelectionArea(
+          child: ListView.builder(
+            controller: _scroll,
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            // Every row is one non-wrapping mono line (fontSize 12 × height
+            // 1.3) plus 1px vertical padding each side — pinning the extent
+            // makes stick-to-tail jumps O(1) on a long scrollback.
+            itemExtent: 12 * 1.3 + 2,
+            itemCount: lines.length,
+            itemBuilder: (context, i) {
+              final line = lines[i];
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 1,
+                  ),
+                  child: Text(
+                    line.text.isEmpty ? ' ' : line.text,
+                    style: _mono.copyWith(color: _colorFor(line.kind)),
+                  ),
                 ),
-                child: SelectableText(
-                  line.text.isEmpty ? ' ' : line.text,
-                  style: _mono.copyWith(color: _colorFor(line.kind)),
-                ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );

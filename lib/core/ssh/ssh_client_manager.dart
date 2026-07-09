@@ -23,6 +23,79 @@ class SSHConnectionProfile {
   });
 }
 
+/// Actively verifies a connection is still alive by pinging it on an interval
+/// and declaring it dead after consecutive unanswered pings.
+///
+/// Why this exists: dartssh2's own `keepAliveInterval` sends a keepalive ping
+/// every few seconds but *never checks whether it was answered* — no
+/// unanswered-ping counter, no timeout on the reply. A NAT/firewall silently
+/// dropping the connection therefore surfaces only when TCP itself gives up
+/// (minutes) or the next command hits its own timeout (up to 60s of a wedged
+/// UI). This monitor turns that into prompt detection: [onDead] force-closes
+/// the client, its `done` completes, and the existing auto-reconnect machinery
+/// takes over within seconds.
+///
+/// Two consecutive failures (not one) are required, and pings never overlap —
+/// a single reply delayed past [pingTimeout] by a saturated link mustn't kill
+/// a connection that's actually fine.
+class ConnectionHealthMonitor {
+  ConnectionHealthMonitor({
+    required this.ping,
+    required this.onDead,
+    this.interval = const Duration(seconds: 15),
+    this.pingTimeout = const Duration(seconds: 15),
+    this.failureThreshold = 2,
+  });
+
+  /// Sends one keepalive round trip; the returned future completes when the
+  /// peer replies (dartssh2's `SSHClient.ping`).
+  final Future<void> Function() ping;
+
+  /// Invoked exactly once, after [failureThreshold] consecutive failed pings.
+  final void Function() onDead;
+
+  final Duration interval;
+  final Duration pingTimeout;
+  final int failureThreshold;
+
+  Timer? _timer;
+  int _failures = 0;
+  bool _probeInFlight = false;
+  bool _stopped = false;
+
+  /// Consecutive failed probes so far — for tests/diagnostics.
+  int get failures => _failures;
+
+  void start() {
+    _timer ??= Timer.periodic(interval, (_) => _probe());
+  }
+
+  void stop() {
+    _stopped = true;
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  Future<void> _probe() async {
+    // Never stack probes: a ping still awaiting its reply when the next tick
+    // fires would double-count one slow round trip as two failures.
+    if (_probeInFlight || _stopped) return;
+    _probeInFlight = true;
+    try {
+      await ping().timeout(pingTimeout);
+      _failures = 0;
+    } catch (_) {
+      if (_stopped) return;
+      if (++_failures >= failureThreshold) {
+        stop();
+        onDead();
+      }
+    } finally {
+      _probeInFlight = false;
+    }
+  }
+}
+
 /// Owns the single long-lived SSH connection. POSIX remotes only (a native
 /// Windows port lives in a separate codebase), so there is no shell probing.
 class SSHClientManager {
@@ -30,6 +103,10 @@ class SSHClientManager {
   static const Duration _authTimeout = Duration(seconds: 15);
 
   SSHClient? _client;
+
+  /// Active dead-peer monitor for [_client] (see [ConnectionHealthMonitor]).
+  /// Started when a connect succeeds, stopped when that client is retired.
+  ConnectionHealthMonitor? _health;
 
   /// Every client currently being authenticated by an in-flight [connect].
   /// Tracked separately from [_client] (which is only assigned once auth
@@ -49,14 +126,27 @@ class SSHClientManager {
   /// and prevents leaking an authenticated connection past a disconnect.
   int _generation = 0;
 
+  /// The generation whose [connect] produced the current [_client], or -1
+  /// while no client is attached. Distinct from [generation]: a new connect
+  /// bumps [generation] at its *start* but only swaps [_client] at its *end*
+  /// (deliberately, so a failed attempt doesn't kill a working session) —
+  /// during that window the two disagree, and a command must run against
+  /// neither the stale client nor the not-yet-attached new one.
+  int _clientGeneration = -1;
+
   SSHClient? get client => _client;
 
   /// Current attempt generation. Bumped by every [connect]/[disconnect].
   /// Exposed so callers that queue work against the *current* connection
-  /// (notably [SSHCommandExecutor]'s serialized command queue) can detect
+  /// (notably [SSHCommandExecutor]'s command scheduler) can detect
   /// that a reconnect/disconnect happened before their turn came up, and
   /// refuse to run against whatever host happens to be connected by then.
   int get generation => _generation;
+
+  /// The generation the currently-attached [client] belongs to (-1 when
+  /// none). A command pinned to generation G may only run when *both*
+  /// [generation] and this equal G — see [_clientGeneration].
+  int get clientGeneration => _clientGeneration;
 
   /// Completes when the active connection's transport closes — whether from a
   /// remote-side drop, network loss, or our own [disconnect]. Callers use it to
@@ -161,8 +251,24 @@ class SSHClientManager {
     }
 
     // This attempt wins: only now do we retire the previous client.
+    _health?.stop();
     previous?.close();
     _client = client;
+    _clientGeneration = gen;
+
+    // Arm dead-peer detection for this client (see ConnectionHealthMonitor).
+    // Its onDead force-closes the client, completing `done` so the ordinary
+    // drop path (auto-reconnect) takes over. Also stop probing the moment the
+    // transport closes for any other reason — the drop path is already
+    // handling it, and pinging a closed client would just error pointlessly.
+    final monitor = ConnectionHealthMonitor(
+      ping: () => client.ping(),
+      onDead: client.close,
+    )..start();
+    _health = monitor;
+    unawaited(
+      client.done.then((_) {}, onError: (_) {}).whenComplete(monitor.stop),
+    );
   }
 
   Future<void> disconnect() async {
@@ -178,7 +284,10 @@ class SSHClientManager {
   }
 
   void _closeClient() {
+    _health?.stop();
+    _health = null;
     _client?.close();
     _client = null;
+    _clientGeneration = -1;
   }
 }

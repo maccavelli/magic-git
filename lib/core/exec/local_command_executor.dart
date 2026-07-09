@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import '../ssh/command_formatter.dart';
 import '../ssh/ssh_command_executor.dart';
+import 'command_lanes.dart';
 
 /// [CommandExecutor] backed directly by [Process.start] instead of an SSH
 /// channel — for a repo living on this machine's own filesystem. No shell
@@ -14,10 +15,10 @@ import '../ssh/ssh_command_executor.dart';
 /// persistent session to go stale, so (unlike [SSHCommandExecutor]) this class
 /// never throws [SSHCommandSuperseded].
 class LocalCommandExecutor implements CommandExecutor {
-  /// Tail of the serialization chain — mirrors [SSHCommandExecutor]'s: no two
-  /// commands against the same repo ever overlap, protecting `.git/index.lock`
-  /// regardless of transport.
-  Future<void> _tail = Future.value();
+  /// Lane-aware scheduler — mirrors [SSHCommandExecutor]'s: reads overlap,
+  /// mutations run strictly alone, protecting `.git/index.lock` regardless of
+  /// transport. See [ExecLane] / [CommandLaneScheduler].
+  final CommandLaneScheduler _scheduler = CommandLaneScheduler();
 
   /// Augmented local `$PATH` (from [EnvironmentResolver], reused as-is for the
   /// local backend since a Finder-launched GUI app's inherited PATH is often
@@ -90,6 +91,10 @@ class LocalCommandExecutor implements CommandExecutor {
     String? stdin,
     Duration timeout = SSHCommandExecutor.defaultTimeout,
     int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    // Ignored: compression exists to save SSH wire bytes; a local pipe has no
+    // wire, so spending CPU gzipping/gunzipping it would be pure loss.
+    bool compress = false,
   }) {
     // Each attempt is enqueued separately so the inter-retry backoff wait
     // (taken inside runWithRetries, between enqueues) doesn't head-of-line-block
@@ -97,19 +102,8 @@ class LocalCommandExecutor implements CommandExecutor {
     return SSHCommandExecutor.runWithRetries(
       () => _run(repoPath, gitArgs, extraEnv, stdin, timeout),
       retries,
-      enqueue: _enqueue,
+      enqueue: (attempt) => _scheduler.run(lane, attempt),
     );
-  }
-
-  /// Links [attempt] onto the tail of the serialization chain and advances the
-  /// tail, swallowing errors on the tail so one failure never wedges the queue —
-  /// mirrors [SSHCommandExecutor]'s `_enqueue`.
-  Future<SSHCommandResult> _enqueue(
-    Future<SSHCommandResult> Function() attempt,
-  ) {
-    final result = _tail.then((_) => attempt());
-    _tail = result.then((_) {}, onError: (_) {});
-    return result;
   }
 
   Future<SSHCommandResult> _run(

@@ -2,7 +2,10 @@
 // (Edit + Accept, no redundant "Commit"); accepting commits that exact message.
 // With no hook it falls back to a manual field whose confirm button is Accept.
 
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -60,7 +63,43 @@ Future<void> _openSheet(WidgetTester tester, _FakeGit git) async {
   await tester.pumpAndSettle();
 }
 
+/// A commit that hangs until the test releases it, counting entries — used to
+/// prove a second activation while one is in flight can't start a second
+/// commit.
+class _GatedGit extends _FakeGit {
+  _GatedGit(super.generated);
+  final gate = Completer<void>();
+  int commitCalls = 0;
+
+  @override
+  Future<void> commit(String repoPath, {String? message}) async {
+    commitCalls++;
+    await gate.future;
+    await super.commit(repoPath, message: message);
+  }
+}
+
 void main() {
+  testWidgets('two rapid ⌘↩ presses commit once, not twice', (tester) async {
+    final git = _GatedGit('feat: add widget');
+    await _openSheet(tester, git);
+
+    // Both presses land in the same frame — before any rebuild disables the
+    // shortcut binding — so only the method's own entry guard can stop the
+    // second one.
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pump();
+
+    git.gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(git.commitCalls, 1);
+    expect(find.byType(CommitDialog), findsNothing); // sheet dismissed
+  });
+
   testWidgets('generated message → review mode → Accept commits it', (
     tester,
   ) async {

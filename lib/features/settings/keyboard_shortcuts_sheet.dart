@@ -34,7 +34,12 @@ class KeyboardShortcutsSheet extends ConsumerWidget {
           autofocus: true,
           child: SizedBox(
             width: 560,
-            height: 560,
+            // Capped to the viewport so the Close row stays reachable at the
+            // minimum window size — the category list scrolls instead.
+            height: (MediaQuery.sizeOf(context).height - 80).clamp(
+              320.0,
+              560.0,
+            ),
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Column(

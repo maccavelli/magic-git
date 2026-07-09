@@ -1,5 +1,5 @@
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart' show SelectableText;
+import 'package:flutter/material.dart' show SelectionArea;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/gitlab/models.dart';
@@ -331,15 +331,19 @@ class _TraceLogState extends ConsumerState<_TraceLog> {
 
   Widget _logList() {
     final itemCount = _chunks.length + (_error != null ? 1 : 0);
-    return ListView.builder(
-      controller: _scroll,
-      itemCount: itemCount,
-      itemBuilder: (context, index) {
-        if (index < _chunks.length) {
-          return SelectableText(_chunks[index], style: _logStyle);
-        }
-        return SelectableText('$_error', style: _logStyle);
-      },
+    // One SelectionArea over plain Text chunks: per-chunk SelectableText
+    // couldn't carry a selection across the eviction-sized chunk boundaries.
+    return SelectionArea(
+      child: ListView.builder(
+        controller: _scroll,
+        itemCount: itemCount,
+        itemBuilder: (context, index) {
+          if (index < _chunks.length) {
+            return Text(_chunks[index], style: _logStyle);
+          }
+          return Text('$_error', style: _logStyle);
+        },
+      ),
     );
   }
 }

@@ -58,6 +58,8 @@ class _SpyExecutor extends SSHCommandExecutor {
     String? stdin,
     Duration timeout = SSHCommandExecutor.defaultTimeout,
     int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
   }) async {
     if (gitArgs.contains('rev-parse')) {
       events.add('validate');
@@ -102,6 +104,8 @@ class _GatedProbeExecutor extends SSHCommandExecutor {
     String? stdin,
     Duration timeout = SSHCommandExecutor.defaultTimeout,
     int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
   }) async {
     if (gitArgs.contains('rev-parse')) {
       return const SSHCommandResult(exitCode: 0, stdout: 'true\n', stderr: '');

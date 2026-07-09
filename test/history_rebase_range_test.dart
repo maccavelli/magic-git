@@ -43,6 +43,13 @@ class _FilterAwareFakeGit extends GitService {
 
   @override
   Future<List<GitRef>> refs(String repoPath) async => const [];
+
+  // The history panel prefetches the newest commits' patches whenever the log
+  // lands — serve them here rather than letting the prefetch fall through to
+  // the real (unconfigured) executor.
+  @override
+  Future<String> showCommit(String repoPath, String hash, {String? path}) async =>
+      'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
 }
 
 GitCommit _c(String hash, String subject, {List<String> parents = const []}) =>

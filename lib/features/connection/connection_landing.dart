@@ -379,7 +379,7 @@ class NewConnectionSheet extends ConsumerWidget {
       }
     });
 
-    final screen = MediaQuery.of(context).size;
+    final screen = MediaQuery.sizeOf(context);
     return MacosSheet(
       child: SizedBox(
         width: (screen.width * 0.6).clamp(460.0, 680.0).toDouble(),

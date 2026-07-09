@@ -134,6 +134,9 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
   }
 
   Future<void> _submit() async {
+    // Entry guard: the disabled-button state is a rebuild behind, so a rapid
+    // double-activation would otherwise push and create the MR twice.
+    if (_submitting) return;
     setState(() => _submitting = true);
     final glab = ref.read(glabServiceProvider);
     // `glab mr create --milestone` takes a title (or global id) — [_milestoneIid]

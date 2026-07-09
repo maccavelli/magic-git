@@ -185,7 +185,10 @@ class _KeyboardMappingsSheetState
       child: MacosSheet(
         child: SizedBox(
           width: 640,
-          height: 560,
+          // Preferred height, capped to the viewport so the bottom controls
+          // stay reachable at the app's minimum window size (the inner list
+          // scrolls); floored so a degenerate viewport can't go negative.
+          height: (MediaQuery.sizeOf(context).height - 80).clamp(320.0, 560.0),
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: Column(

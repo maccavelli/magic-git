@@ -24,6 +24,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     String? stdin,
     Duration timeout = SSHCommandExecutor.defaultTimeout,
     int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
   }) async => const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
 }
 

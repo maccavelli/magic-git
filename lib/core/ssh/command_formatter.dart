@@ -66,12 +66,27 @@ class CommandFormatter {
   /// (a forge's token vars, when this connection supplied that forge's token —
   /// see [gitlabTokenVars]/[githubTokenVars] and ConnectionController). Empty
   /// means no `unset` prelude, leaving the remote's own CLI auth untouched.
+  ///
+  /// [compressOutput] pipes the command's stdout through `gzip -c -1` on the
+  /// remote, prefixed by an in-band exit trailer (see [exitTrailerMarker]):
+  /// SSH offers no transport compression with this client library
+  /// (dartssh2 negotiates `none`), and git's text output (diffs, logs, status)
+  /// typically compresses 5-10× — a large win on slow links. The wrapping
+  /// costs the `exec` (a shell must survive the command to emit the trailer
+  /// and feed the pipe), which is acceptable for the *read-only* commands this
+  /// is used with: a read left briefly running after a client-side timeout
+  /// dies on SIGPIPE/channel close and holds no locks. The pipeline's own exit
+  /// code is gzip's, so the real command's `$?` travels inside the compressed
+  /// stream as `\x01EXIT=<n>\x01`, appended after stdout — the executor
+  /// recovers it with [SSHCommandExecutor.splitExitTrailer]. stderr is left
+  /// uncompressed on its own channel stream.
   static String format({
     required String repoPath,
     required List<String> gitArgs,
     Map<String, String> env = defaultEnv,
     Map<String, String> binaryPaths = const {},
     Iterable<String> neutralizeEnv = const [],
+    bool compressOutput = false,
   }) {
     final args = gitArgs.isNotEmpty && binaryPaths.containsKey(gitArgs.first)
         ? [binaryPaths[gitArgs.first]!, ...gitArgs.skip(1)]
@@ -93,6 +108,13 @@ class CommandFormatter {
     final unset = neutralizeEnv.isEmpty
         ? ''
         : 'unset ${neutralizeEnv.join(' ')}; ';
-    return '$unset$prelude$cd && exec $escapedArgs';
+    if (!compressOutput) {
+      return '$unset$prelude$cd && exec $escapedArgs';
+    }
+    // POSIX group so the trailer's `$?` is the command's own exit, then one
+    // pipe through gzip. `printf '\001…'` — POSIX printf interprets octal
+    // escapes in its format string, emitting the raw 0x01 marker bytes.
+    return "$unset$prelude$cd && "
+        "{ $escapedArgs; printf '\\001EXIT=%d\\001' \"\$?\"; } | gzip -c -1";
   }
 }

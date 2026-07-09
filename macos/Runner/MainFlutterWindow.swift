@@ -7,6 +7,31 @@ class MainFlutterWindow: NSWindow {
   private var showOutputItem: NSMenuItem?
   private var showFileItem: NSMenuItem?
 
+  /// Whether a quit-initiated Flutter cleanup round trip is already running,
+  /// so a second terminate request while the first is in flight doesn't spawn
+  /// another one (AppKit needs exactly one reply).
+  private var terminateRequestInFlight = false
+
+  /// Asks Flutter to shut down cleanly (persist bounds, disconnect SSH) ahead
+  /// of app termination. Returns false when the Flutter channel isn't up yet —
+  /// the caller should terminate immediately. Otherwise `completion` runs
+  /// exactly once: when Dart answers, or after a 3s backstop so quit can never
+  /// hang on an unresponsive connection.
+  func prepareToTerminate(completion: @escaping () -> Void) -> Bool {
+    guard let channel = menuChannel else { return false }
+    if terminateRequestInFlight { return true }
+    terminateRequestInFlight = true
+    var replied = false
+    let finish = {
+      guard !replied else { return }
+      replied = true
+      completion()
+    }
+    channel.invokeMethod("prepareToTerminate", arguments: nil) { _ in finish() }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { finish() }
+    return true
+  }
+
   /// Security-scoped URLs currently being accessed for a local repo, keyed by
   /// the bookmarked path. Must be the *exact* URL instance
   /// `startAccessingSecurityScopedResource()` was called on — a URL freshly
@@ -26,6 +51,12 @@ class MainFlutterWindow: NSWindow {
     // left it never showing) so window_manager's normal show/position lifecycle
     // still works — we only mask the pixels until it's in the right place.
     self.alphaValue = 0
+
+    // Bounds are owned by WindowBoundsStore (Dart) — restored via setBounds
+    // before first show. Opt out of AppKit state restoration so two systems
+    // don't both bookkeep the frame (AppKit restoring to one position, Flutter
+    // immediately moving to another).
+    self.isRestorable = false
 
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
@@ -159,7 +190,11 @@ class MainFlutterWindow: NSWindow {
   private func installViewMenuItems() {
     guard let mainMenu = NSApp.mainMenu else { return }
 
-    // Find the existing "View" menu, or create one just before "Window".
+    // Find the existing "View" menu, or create one just before the Window
+    // menu. The Window menu is located via NSApp.windowsMenu — its systemMenu
+    // role, which survives renaming/localization — with the title comparison
+    // kept only as a fallback; the "View" title match is unavoidable (AppKit
+    // has no systemMenu role for View) but this app ships English-only menus.
     let viewMenu: NSMenu
     if let existing = mainMenu.items.first(where: {
       $0.title == "View" || $0.submenu?.title == "View"
@@ -170,7 +205,8 @@ class MainFlutterWindow: NSWindow {
       let created = NSMenu(title: "View")
       viewItem.submenu = created
       if let windowIndex = mainMenu.items.firstIndex(where: {
-        $0.title == "Window" || $0.submenu?.title == "Window"
+        ($0.submenu != nil && $0.submenu === NSApp.windowsMenu)
+          || $0.title == "Window" || $0.submenu?.title == "Window"
       }) {
         mainMenu.insertItem(viewItem, at: windowIndex)
       } else {

@@ -110,6 +110,11 @@ class LocalWatchService {
     start = () async {
       recoveryTimer?.cancel();
       recoveryTimer = null;
+      // Stop any polling loop too — a successful recovery must not leave the
+      // periodic poll timer emitting refresh ticks forever alongside the
+      // event-driven watcher. Mirrors RemoteWatchService.
+      pollTimer?.cancel();
+      pollTimer = null;
       await teardownWatcher();
       if (cancelled) return;
 

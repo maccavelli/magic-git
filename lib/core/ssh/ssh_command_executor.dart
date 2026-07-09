@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show gzip;
 import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
+import '../exec/command_lanes.dart';
 import 'command_formatter.dart';
 import 'ssh_client_manager.dart';
+
+export '../exec/command_lanes.dart' show ExecLane;
 
 class SSHCommandResult {
   final int exitCode;
@@ -154,9 +158,18 @@ class _SshSessionStreamHandle implements SSHStreamHandle {
 /// `GitService`/`GlabService`/`RemoteWatchService` depend on this interface,
 /// not a concrete transport, so they work unchanged against either backend.
 abstract class CommandExecutor {
-  /// Runs [gitArgs] against [repoPath]. Implementations serialize commands so
-  /// no two ever overlap (protects `.git/index.lock`). See
+  /// Runs [gitArgs] against [repoPath]. Implementations schedule commands by
+  /// [lane] (see [ExecLane]): reads overlap each other and remote-sync
+  /// commands, while mutations run strictly alone (protecting
+  /// `.git/index.lock`). The default lane is [ExecLane.exclusive] — the safe
+  /// choice for any call site that doesn't declare otherwise. See
   /// [SSHCommandExecutor.execute] for the full contract.
+  ///
+  /// [compress], for a read whose output is large and text-like (diffs, logs,
+  /// file contents), asks the transport to compress stdout on the wire. The
+  /// SSH backend honors it when the host has `gzip` (see
+  /// [CommandFormatter.format]'s `compressOutput`); the local backend ignores
+  /// it — there is no wire to save.
   Future<SSHCommandResult> execute({
     required String repoPath,
     required List<String> gitArgs,
@@ -164,6 +177,8 @@ abstract class CommandExecutor {
     String? stdin,
     Duration timeout = SSHCommandExecutor.defaultTimeout,
     int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
   });
 
   /// Starts a long-running command and returns a live handle for incremental
@@ -218,9 +233,11 @@ class SSHCommandExecutor implements CommandExecutor {
   /// it hands callers the raw stream and never materializes it here.
   static const int maxCommandOutputChars = 50 * 1024 * 1024;
 
-  /// Tail of the serialization chain. Every command links onto this future so
-  /// that no two remote git invocations ever overlap.
-  Future<void> _tail = Future.value();
+  /// Lane-aware scheduler: reads run concurrently (and alongside a fetch/push
+  /// on the sync lane), mutations run strictly alone — see [ExecLane] /
+  /// [CommandLaneScheduler]. Replaces the old single serialized chain, which
+  /// let one slow network op head-of-line-block every read in the app.
+  final CommandLaneScheduler _scheduler = CommandLaneScheduler();
 
   /// Augmented remote `$PATH` (discovered at connect), exported before every
   /// command so user-installed tools resolve on the minimal exec-channel PATH.
@@ -295,9 +312,11 @@ class SSHCommandExecutor implements CommandExecutor {
   /// it is killed and [SSHCommandTimeout] is thrown — so one stuck command can
   /// never wedge the serialized queue for the app's lifetime.
   ///
-  /// All commands are serialized onto a single queue: a command only starts once
-  /// the previous one has fully finished. This prevents `.git/index.lock`
-  /// contention between operations.
+  /// Commands are scheduled by [lane] (see [ExecLane]): reads run concurrently
+  /// with each other and with a fetch/push, while an exclusive mutation waits
+  /// for everything in flight and then runs strictly alone — the same
+  /// `.git/index.lock` protection the old fully-serialized queue provided,
+  /// without letting one slow network op block every read in the app.
   /// [retries] permits automatic re-execution after a *transient* transport
   /// failure (a dropped/not-yet-reconnected session). It is safe only for
   /// idempotent reads — never pass it for a mutation, which could apply twice.
@@ -315,10 +334,12 @@ class SSHCommandExecutor implements CommandExecutor {
     String? stdin,
     Duration timeout = defaultTimeout,
     int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
   }) {
     // Pin this command to the connection generation active *right now*, at
     // enqueue time — not whatever generation happens to be active once its
-    // turn in the serialized queue comes up. A reconnect or a fresh connect()
+    // turn in the scheduler comes up. A reconnect or a fresh connect()
     // to a different host between now and then bumps the generation; without
     // this, `_run` would fetch `_clientManager.client` fresh at run time and
     // silently execute against the new host/session instead of refusing.
@@ -327,24 +348,10 @@ class SSHCommandExecutor implements CommandExecutor {
     // newer generation rather than adopting the current one.
     final gen = _clientManager.generation;
     return runWithRetries(
-      () => _run(gen, repoPath, gitArgs, extraEnv, stdin, timeout),
+      () => _run(gen, repoPath, gitArgs, extraEnv, stdin, timeout, compress),
       retries,
-      enqueue: _enqueue,
+      enqueue: (attempt) => _scheduler.run(lane, attempt),
     );
-  }
-
-  /// Links [attempt] onto the tail of the serialization chain so it starts only
-  /// after the previous command has fully settled, then advances the tail.
-  /// Errors are swallowed *on the tail* (not on the returned future) so a single
-  /// failing command never wedges the queue for its successors. Called once per
-  /// attempt by [runWithRetries]; a retry is just another link at the back of
-  /// the (possibly since-grown) queue.
-  Future<SSHCommandResult> _enqueue(
-    Future<SSHCommandResult> Function() attempt,
-  ) {
-    final result = _tail.then((_) => attempt());
-    _tail = result.then((_) {}, onError: (_) {});
-    return result;
   }
 
   static const Duration _retryBackoff = Duration(milliseconds: 400);
@@ -360,13 +367,13 @@ class SSHCommandExecutor implements CommandExecutor {
   /// directly rather than duplicating retry logic that has no SSH-specific
   /// behavior in its body.
   ///
-  /// [enqueue], if given, wraps each individual attempt — it links the attempt
-  /// onto the executor's serialization chain and returns its result. The point
+  /// [enqueue], if given, wraps each individual attempt — it submits the
+  /// attempt to the executor's lane scheduler and returns its result. The point
   /// is that the [backoff] `delay` sits *between* two separate [enqueue] calls,
-  /// not inside one, so the queue slot is released for the duration of the wait
-  /// and the retry re-enqueues at the back: a failed command's retry-wait can
-  /// never head-of-line-block other commands already queued behind it. When
-  /// omitted (tests, or a caller that doesn't serialize), each attempt runs
+  /// not inside one, so the scheduler slot is released for the duration of the
+  /// wait and the retry re-enqueues at the back: a failed command's retry-wait
+  /// can never head-of-line-block other commands already queued behind it. When
+  /// omitted (tests, or a caller that doesn't schedule), each attempt runs
   /// directly with identical retry semantics.
   static Future<SSHCommandResult> runWithRetries(
     Future<SSHCommandResult> Function() attempt,
@@ -454,6 +461,25 @@ class SSHCommandExecutor implements CommandExecutor {
     ...?extraEnv,
   };
 
+  /// Marks the in-band exit trailer a compressed read appends to its stdout —
+  /// see [CommandFormatter.format]'s `compressOutput` and [splitExitTrailer].
+  static const String _exitMarker = '\u0001EXIT=';
+
+  /// Splits `<stdout><\x01EXIT=<n>\x01>` into `(exitCode, stdout)`. Returns a
+  /// null code (and the input unchanged) when no well-formed trailer terminates
+  /// [out] — a killed/truncated stream — so the caller can substitute a failure
+  /// code rather than trusting a partial read. A stray 0x01 inside real output
+  /// can't false-match: the trailer must sit at the very end, digits only.
+  static (int?, String) splitExitTrailer(String out) {
+    if (!out.endsWith('\u0001')) return (null, out);
+    final idx = out.lastIndexOf(_exitMarker);
+    if (idx < 0) return (null, out);
+    final digits = out.substring(idx + _exitMarker.length, out.length - 1);
+    final code = digits.isEmpty ? null : int.tryParse(digits);
+    if (code == null || code < 0) return (null, out);
+    return (code, out.substring(0, idx));
+  }
+
   Future<SSHCommandResult> _run(
     int gen,
     String repoPath,
@@ -461,10 +487,11 @@ class SSHCommandExecutor implements CommandExecutor {
     Map<String, String>? extraEnv,
     String? stdin,
     Duration timeout,
+    bool compress,
   ) async {
     if (_clientManager.generation != gen) {
       // A reconnect or a fresh connect() to a different host happened while
-      // this command was waiting in the serialized queue. Refuse to run
+      // this command was waiting in the scheduler. Refuse to run
       // rather than fetching whatever client is current now.
       throw SSHCommandSuperseded(gitArgs.join(' '));
     }
@@ -472,13 +499,26 @@ class SSHCommandExecutor implements CommandExecutor {
     if (client == null) {
       throw Exception('SSH connection not established.');
     }
+    if (_clientManager.clientGeneration != gen) {
+      // The generation matches but the *attached client* belongs to an older
+      // one: a new connect() is mid-handshake (it bumps the generation at its
+      // start but swaps the client in only on success). Running now would
+      // silently execute against the previous host's still-open session —
+      // exactly what generation pinning exists to prevent.
+      throw SSHCommandSuperseded(gitArgs.join(' '));
+    }
 
+    // Compression is honored only when the probe actually found gzip on the
+    // host (configureEnvironment's binaries map) — otherwise the command runs
+    // uncompressed exactly as before, so a minimal host degrades gracefully.
+    final compressed = compress && _binaryPaths.containsKey('gzip');
     final command = CommandFormatter.format(
       repoPath: repoPath,
       gitArgs: gitArgs,
       env: _mergedEnv(extraEnv),
       binaryPaths: _binaryPaths,
       neutralizeEnv: _neutralizeTokens,
+      compressOutput: compressed,
     );
 
     // The session is assigned as soon as the channel opens, so a timeout that
@@ -502,12 +542,16 @@ class SSHCommandExecutor implements CommandExecutor {
       // [OutputByteBudget] charges the raw bytes of stdout+stderr *before*
       // decoding, so an unexpectedly enormous output aborts with
       // [SSHOutputExceeded] — bounded by real byte size (combined across both
-      // streams) instead of buffering unbounded toward an OOM.
+      // streams) instead of buffering unbounded toward an OOM. For a
+      // compressed read, stdout is gunzipped *before* the budget so the cap
+      // bounds what this process actually buffers (the decompressed size) —
+      // the wire saving is the point, but a gzip bomb must not be.
       final label = gitArgs.join(' ');
       final budget = OutputByteBudget();
+      final rawStdout = s.stdout.cast<List<int>>();
       final stdoutFuture = collectBounded(
         boundedBytes(
-          s.stdout.cast<List<int>>(),
+          compressed ? rawStdout.transform(gzip.decoder) : rawStdout,
           budget,
           label,
         ).transform(const Utf8Decoder(allowMalformed: true)),
@@ -535,9 +579,22 @@ class SSHCommandExecutor implements CommandExecutor {
         stderrFuture,
       ], eagerError: true);
       final exitCode = await s.waitForExit() ?? -1;
+      if (!compressed) {
+        return SSHCommandResult(
+          exitCode: exitCode,
+          stdout: drained[0],
+          stderr: drained[1],
+        );
+      }
+      // A compressed read's channel exit code is gzip's, not the command's —
+      // the real one rides an in-band trailer at the end of stdout. A missing
+      // trailer means the stream was killed/truncated mid-flight: surface the
+      // channel's own failure code if it has one, else -1 — never 0, which
+      // would present a partial read as a success.
+      final (realExit, body) = splitExitTrailer(drained[0]);
       return SSHCommandResult(
-        exitCode: exitCode,
-        stdout: drained[0],
+        exitCode: realExit ?? (exitCode != 0 ? exitCode : -1),
+        stdout: body,
         stderr: drained[1],
       );
     }
@@ -605,6 +662,13 @@ class SSHCommandExecutor implements CommandExecutor {
     final client = _clientManager.client;
     if (client == null) {
       throw Exception('SSH connection not established.');
+    }
+    if (_clientManager.clientGeneration != _clientManager.generation) {
+      // A new connect() is mid-handshake: the attached client belongs to a
+      // superseded attempt. Refuse to bind a long-lived stream (a watcher, a
+      // CI trace) to a session that's about to be retired — the caller's
+      // restart/backoff logic re-opens it against the new session instead.
+      throw SSHCommandSuperseded(gitArgs.join(' '));
     }
 
     final command = CommandFormatter.format(

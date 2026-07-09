@@ -9,6 +9,7 @@ import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/diff_view.dart';
 import '../common/list_keyboard_nav.dart';
+import '../common/panel_shortcuts.dart';
 import '../common/tool_icon_button.dart';
 
 /// The **Stashes** namespace — stash management lifted out of the Branches pane
@@ -191,7 +192,7 @@ class _StashViewState extends ConsumerState<StashView> {
       }
     }
 
-    return CallbackShortcuts(
+    return PanelShortcuts(
       bindings: widget.isActive && !_busy
           ? resolveShortcuts(keymap, {
               'stashes.apply': selEntry == null

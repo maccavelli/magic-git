@@ -76,6 +76,7 @@ class GlabService {
       repoPath: repoPath,
       gitArgs: ['git', 'remote', 'get-url', 'origin'],
       timeout: const Duration(seconds: 20),
+      lane: ExecLane.read,
     );
     final host = _hostFromRemote(remote.stdout.trim());
     if (host == null) {
@@ -89,6 +90,9 @@ class GlabService {
       gitArgs: ['glab', 'auth', 'login', '--hostname', host, '--stdin'],
       stdin: trimmed,
       timeout: const Duration(seconds: 30),
+      // Sync lane: writes glab's credential store on the host — not a repo
+      // mutation, but ordered against other sync ops.
+      lane: ExecLane.sync,
     );
     if (!result.isSuccess) {
       throw GlabException('glab auth login failed', result);
@@ -149,6 +153,10 @@ class GlabService {
       args,
       'glab api $endpoint',
       expectHeaders: !paginate,
+      // A GET is a pure read (runs concurrently); anything else mutates
+      // forge-side state and rides the single-width sync lane — never the
+      // exclusive lane, since no glab api call touches the index/worktree.
+      lane: method == 'GET' ? ExecLane.read : ExecLane.sync,
     );
   }
 
@@ -327,6 +335,8 @@ query($path: ID!) {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: [...graphqlArgs(query, variables: variables), '-i'],
+      // Every GraphQL call this app issues is a query (the dashboard read).
+      lane: ExecLane.read,
     );
     if (!result.isSuccess) {
       throw GlabException('$label failed', result);
@@ -368,6 +378,7 @@ query($path: ID!) {
       repoPath: repoPath,
       gitArgs: ['git', 'remote', 'get-url', 'origin'],
       timeout: const Duration(seconds: 20),
+      lane: ExecLane.read,
     );
     final fullPath = projectPathFromRemote(remote.stdout.trim());
     if (fullPath == null) {
@@ -728,7 +739,11 @@ query($path: ID!) {
       if (squash) '--squash-before-merge',
       if (removeSourceBranch) '--remove-source-branch',
     ];
-    final result = await _executor.execute(repoPath: repoPath, gitArgs: args);
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: args,
+      lane: ExecLane.sync,
+    );
     if (!result.isSuccess) {
       throw GlabException('glab mr create failed', result);
     }
@@ -746,6 +761,9 @@ query($path: ID!) {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['glab', 'mr', 'checkout', '$iid'],
+      // Exclusive: this switches the working tree (fetch + checkout), so it
+      // must never overlap a concurrent read or another mutation.
+      lane: ExecLane.exclusive,
     );
     if (!result.isSuccess) {
       throw GlabException('glab mr checkout failed', result);
@@ -766,8 +784,13 @@ query($path: ID!) {
     List<String> args,
     String label, {
     bool expectHeaders = false,
+    ExecLane lane = ExecLane.read,
   }) async {
-    final result = await _executor.execute(repoPath: repoPath, gitArgs: args);
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: args,
+      lane: lane,
+    );
     if (!result.isSuccess) {
       throw GlabException('$label failed', result);
     }

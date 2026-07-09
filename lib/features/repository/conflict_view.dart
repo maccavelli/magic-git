@@ -153,30 +153,37 @@ class _ConflictViewState extends State<ConflictView> {
     final defaultColor =
         MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
 
+    // SelectionArea + plain Text so a resolution snippet spanning markers can
+    // be drag-copied — per-line SelectableText couldn't span lines.
     return Scrollbar(
-      child: ListView.builder(
-        itemCount: _lines.length,
-        itemBuilder: (context, i) {
-          final line = _lines[i];
-          final isFirst = i == 0;
-          final isLast = i == _lines.length - 1;
-          final (color, background) = _colorsFor(line.region, defaultColor);
-          return Padding(
-            padding: EdgeInsets.fromLTRB(
-              12,
-              isFirst ? 12 : 0,
-              12,
-              isLast ? 12 : 0,
-            ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: SelectableText(
-                line.text,
-                style: _mono.copyWith(color: color, backgroundColor: background),
+      child: SelectionArea(
+        child: ListView.builder(
+          itemCount: _lines.length,
+          itemBuilder: (context, i) {
+            final line = _lines[i];
+            final isFirst = i == 0;
+            final isLast = i == _lines.length - 1;
+            final (color, background) = _colorsFor(line.region, defaultColor);
+            return Padding(
+              padding: EdgeInsets.fromLTRB(
+                12,
+                isFirst ? 12 : 0,
+                12,
+                isLast ? 12 : 0,
               ),
-            ),
-          );
-        },
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Text(
+                  line.text,
+                  style: _mono.copyWith(
+                    color: color,
+                    backgroundColor: background,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
       ),
     );
   }

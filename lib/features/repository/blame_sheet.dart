@@ -19,7 +19,7 @@ class BlameSheet extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final typography = MacosTheme.of(context).typography;
     final async = ref.watch(blameProvider((repoPath, path)));
-    final screen = MediaQuery.of(context).size;
+    final screen = MediaQuery.sizeOf(context);
     return MacosSheet(
       child: SizedBox(
         width: (screen.width * 0.7).clamp(560.0, 880.0).toDouble(),

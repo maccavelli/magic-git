@@ -50,15 +50,6 @@ void main() {
     expect(list().map((v) => v.path), ['b.txt']);
   });
 
-  test('closeTop removes the front-most window and reports it', () {
-    viewers.open('/repo', 'a.txt');
-    viewers.open('/repo', 'b.txt');
-    expect(viewers.closeTop(), isTrue);
-    expect(list().map((v) => v.path), ['a.txt']);
-    viewers.closeTop();
-    expect(viewers.closeTop(), isFalse); // nothing left
-  });
-
   test('closeAll empties the stack', () {
     viewers.open('/repo', 'a.txt');
     viewers.open('/repo', 'b.txt');

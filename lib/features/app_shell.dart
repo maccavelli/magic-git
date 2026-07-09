@@ -34,6 +34,24 @@ import 'viewer/viewer_providers.dart';
 /// connection form until a session is established, then the feature panels
 /// (Status, History, Branches, Stashes, Forge, Project) selected from the
 /// sidebar.
+/// The native window title: `repo (branch) — Magic Git` while a repo is
+/// active, plain `Magic Git` otherwise. Shown in Mission Control, the app
+/// switcher, and the Window menu (the in-window titlebar is hidden), so it's
+/// how a user tells two projects apart at the OS level.
+final _windowTitleProvider = Provider.autoDispose<String>((ref) {
+  final connection = ref.watch(connectionProvider);
+  final repoPath = connection.repoPath;
+  if (!connection.isConnected || repoPath == null) return 'Magic Git';
+  final segments = repoPath.split('/').where((seg) => seg.isNotEmpty);
+  final name = segments.isEmpty ? repoPath : segments.last;
+  final branch = ref.watch(
+    statusProvider(repoPath).select((s) => s.value?.branch.head),
+  );
+  return branch == null || branch.isEmpty
+      ? '$name — Magic Git'
+      : '$name ($branch) — Magic Git';
+});
+
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
@@ -217,12 +235,12 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
   static const _menuChannel = MethodChannel('magicgit/menu');
 
   /// Debounces persisting the window's bounds while it's moved/resized. Saving
-  /// continuously (rather than only in [onWindowClose]) is what makes the
-  /// restore reliable: ⌘Q terminates the app without firing a window-close
-  /// event, and even on a normal close the single final write can be lost to
-  /// the process dying before it flushes to disk. By the time the user quits,
-  /// the last position/size is already persisted. See WindowBoundsStore and
-  /// main.dart's restore.
+  /// continuously (rather than only on close/quit) is what makes the restore
+  /// reliable: ⌘Q is intercepted (`prepareToTerminate`) and the red button
+  /// fires [onWindowClose], but a crash or force-kill fires neither, and even
+  /// a clean close's single final write can be lost to the process dying
+  /// before it flushes. By the time the app exits, the last position/size is
+  /// already persisted. See WindowBoundsStore and main.dart's restore.
   Timer? _boundsSaveTimer;
 
   @override
@@ -239,6 +257,8 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         ref.read(outputLogProvider).visible,
       );
       _syncMenuState('setFileViewChecked', ref.read(fileViewVisibleProvider));
+      // Initial title; ref.listen (in build) only fires on subsequent changes.
+      unawaited(windowManager.setTitle(ref.read(_windowTitleProvider)));
     });
     // Intercept the window close so the SSH connection gets a clean
     // disconnect instead of the socket just vanishing when the process dies.
@@ -310,6 +330,27 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         ref.read(outputLogProvider.notifier).toggle();
       case 'toggleFileView':
         ref.read(fileViewVisibleProvider.notifier).toggle();
+      case 'prepareToTerminate':
+        // ⌘Q (or any AppKit terminate path). The delegate holds termination
+        // open (.terminateLater, with a native timeout backstop) until this
+        // returns, so mirror onWindowClose: persist the final bounds and close
+        // the SSH session cleanly instead of letting the process die with the
+        // socket open.
+        _boundsSaveTimer?.cancel();
+        try {
+          final bounds = await windowManager.getBounds();
+          await WindowBoundsStore.save(
+            bounds.left,
+            bounds.top,
+            bounds.width,
+            bounds.height,
+          );
+        } catch (_) {
+          // Best-effort — never block quitting on a bounds read.
+        }
+        if (mounted) {
+          await ref.read(connectionProvider.notifier).disconnect();
+        }
       case 'syncMenuState':
         // The native side asks for this once its menu items are installed, so
         // the checkmarks are correct even if our startup push (below) raced the
@@ -489,6 +530,10 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     final connection = ref.watch(connectionProvider);
     final connected = connection.isConnected && connection.repoPath != null;
 
+    // Keep the native window title tracking the active repo/branch.
+    ref.listen(_windowTitleProvider, (_, title) {
+      unawaited(windowManager.setTitle(title));
+    });
     // Keep the native menu items' checkmarks in sync with the panel states.
     ref.listen(outputLogProvider.select((s) => s.visible), (_, visible) {
       _syncMenuState('setOutputViewChecked', visible);
@@ -688,7 +733,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
             ? ForgePanel(repoPath: repoPath, isActive: _pageIndex == 4)
             : const SizedBox.shrink(),
         _visitedPages.contains(5)
-            ? ForgeProjectPanel(repoPath: repoPath)
+            ? ForgeProjectPanel(repoPath: repoPath, isActive: _pageIndex == 5)
             : const SizedBox.shrink(),
       ],
     );

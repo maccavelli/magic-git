@@ -70,6 +70,21 @@ enum _Fallback { none, utf16, latin1 }
 final fileContentProvider = FutureProvider.autoDispose
     .family<FileContent, (String, String)>((ref, key) async {
       final (repoPath, path) = key;
+      // Follow the repo's landed status so an open viewer live-updates when
+      // the file changes on the host (external edit, checkout, pull) instead
+      // of showing stale content until a manual refresh. Size is bounded by
+      // FileContent.classify's own too-large ceiling. `fileBytesProvider`
+      // (images) deliberately does NOT get this: re-transferring a multi-MB
+      // image on every repo tick is not worth it — images rarely change, and
+      // ⌘R still re-reads them on demand. listen+invalidateSelf with a
+      // swallowed onError (not a select watch) so a *failed* status refresh —
+      // possible when this viewer is status's only subscriber — never surfaces
+      // as an unhandled error; the viewer just keeps its current content.
+      ref.listen(
+        statusProvider(repoPath).select((s) => s.value),
+        (previous, next) => ref.invalidateSelf(),
+        onError: (_, _) {},
+      );
       final git = ref.watch(gitServiceProvider);
       try {
         // Decide, from the UTF-8 read alone, whether a byte-level re-decode is
@@ -229,13 +244,6 @@ class OpenFileViewers extends Notifier<List<ViewerHandle>> {
       }
     }
     if (moved != null) state = [...rest, moved];
-  }
-
-  /// Closes the front-most window (⎋). Returns whether one was closed.
-  bool closeTop() {
-    if (state.isEmpty) return false;
-    state = state.sublist(0, state.length - 1);
-    return true;
   }
 
   /// Closes every open window — used when the active repo changes so a stale

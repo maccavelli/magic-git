@@ -8,6 +8,7 @@ import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/branch_switch.dart';
 import '../common/escape_dismissible.dart';
+import '../common/panel_shortcuts.dart';
 import '../common/tool_icon_button.dart';
 import 'create_pr_sheet.dart';
 import 'run_jobs_view.dart';
@@ -115,7 +116,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     final prNumber = _selectedPrNumber;
     final runId = _selectedRunId;
 
-    return CallbackShortcuts(
+    return PanelShortcuts(
       bindings: widget.isActive
           ? resolveShortcuts(keymap, {
               'github.newPr': _createPr,

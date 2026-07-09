@@ -118,6 +118,9 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
   }
 
   Future<void> _submit() async {
+    // Entry guard: the disabled-button state is a rebuild behind, so a rapid
+    // double-activation would otherwise push and create the PR twice.
+    if (_submitting) return;
     setState(() => _submitting = true);
     final gh = ref.read(ghServiceProvider);
     final git = ref.read(gitServiceProvider);

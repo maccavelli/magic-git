@@ -123,4 +123,40 @@ void main() {
       );
     });
   });
+
+  group('compressOutput', () {
+    test('wraps the command in an exit-trailer group piped through gzip', () {
+      final cmd = CommandFormatter.format(
+        repoPath: '/repo',
+        gitArgs: ['git', 'log'],
+        compressOutput: true,
+      );
+      expect(
+        cmd,
+        contains(
+          "{ 'git' 'log'; printf '\\001EXIT=%d\\001' \"\$?\"; } | gzip -c -1",
+        ),
+      );
+      // No `exec` — the shell must survive the command to emit the trailer.
+      expect(cmd, isNot(contains('exec ')));
+    });
+
+    test('still escapes every argument inside the group', () {
+      final cmd = CommandFormatter.format(
+        repoPath: '/repo',
+        gitArgs: ['git', 'show', r"evil'; rm -rf /"],
+        compressOutput: true,
+      );
+      expect(cmd, contains(r"'evil'\''; rm -rf /'"));
+    });
+
+    test('false keeps the exec form untouched', () {
+      final cmd = CommandFormatter.format(
+        repoPath: '/repo',
+        gitArgs: ['git', 'log'],
+      );
+      expect(cmd, endsWith("exec 'git' 'log'"));
+      expect(cmd, isNot(contains('gzip')));
+    });
+  });
 }

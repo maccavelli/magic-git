@@ -74,7 +74,7 @@ class ContextMenuOverlay {
     double width = 200,
   }) {
     remove();
-    final screen = MediaQuery.of(context).size;
+    final screen = MediaQuery.sizeOf(context);
     final estimatedHeight = entries.fold<double>(
       8,
       (h, e) => h + (e is ContextMenuDivider ? 9 : 32),
@@ -146,7 +146,15 @@ class _ContextMenuCard extends StatelessWidget {
             ),
           ],
         ),
-        child: Column(
+        // A menu taller than the screen scrolls instead of overflowing past
+        // the bottom edge (the show() height estimate clamps top to 0, so a
+        // very long menu would otherwise run off-screen with no recourse).
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height - 16,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -173,7 +181,9 @@ class _ContextMenuCard extends StatelessWidget {
                   },
                 ),
               },
-          ],
+              ],
+            ),
+          ),
         ),
       ),
     );

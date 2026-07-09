@@ -111,6 +111,51 @@ void main() {
     });
   });
 
+  group('splitExitTrailer recovers a compressed read\'s real exit code', () {
+    test('a clean success trailer', () {
+      final (code, body) = SSHCommandExecutor.splitExitTrailer(
+        'diff --git a/x b/x\n+line\n\u0001EXIT=0\u0001',
+      );
+      expect(code, 0);
+      expect(body, 'diff --git a/x b/x\n+line\n');
+    });
+
+    test('a non-zero exit survives the round trip', () {
+      final (code, body) =
+          SSHCommandExecutor.splitExitTrailer('\u0001EXIT=128\u0001');
+      expect(code, 128);
+      expect(body, isEmpty);
+    });
+
+    test('a missing trailer (killed/truncated stream) yields a null code', () {
+      final (code, body) =
+          SSHCommandExecutor.splitExitTrailer('partial output...');
+      expect(code, isNull);
+      expect(body, 'partial output...');
+    });
+
+    test('a trailer cut off mid-digits is not trusted', () {
+      final (code, body) =
+          SSHCommandExecutor.splitExitTrailer('out\u0001EXIT=12');
+      expect(code, isNull);
+      expect(body, 'out\u0001EXIT=12');
+    });
+
+    test('a stray 0x01 in the body does not false-match', () {
+      final (code, body) = SSHCommandExecutor.splitExitTrailer(
+        'weird\u0001bytes\u0001EXIT=0\u0001',
+      );
+      expect(code, 0);
+      expect(body, 'weird\u0001bytes');
+    });
+
+    test('non-digit trailer content is rejected', () {
+      final (code, _) =
+          SSHCommandExecutor.splitExitTrailer('out\u0001EXIT=abc\u0001');
+      expect(code, isNull);
+    });
+  });
+
   group('OutputByteBudget / boundedBytes bound on raw bytes', () {
     List<int> bytes(int n) => List<int>.filled(n, 0x61);
 

@@ -27,6 +27,7 @@ class InstallService {
       repoPath: repoPath,
       gitArgs: ['sh', '-c', script],
       timeout: const Duration(seconds: 20),
+      lane: ExecLane.read,
     );
     if (!result.isSuccess) return const HostCapabilities();
 
@@ -98,6 +99,9 @@ class InstallService {
       gitArgs: ['sh', '-c', kSideloadScript],
       extraEnv: {'SL_FILE': remotePath, 'SL_BIN': bin, 'SL_TMP': tmp},
       timeout: const Duration(minutes: 5),
+      // Sync lane: writes ~/.local/bin on the host, never the repo — safe
+      // alongside reads, but a 5-minute install must not block them.
+      lane: ExecLane.sync,
     );
   }
 
@@ -110,6 +114,9 @@ class InstallService {
       repoPath: repoPath,
       gitArgs: ['sh', '-c', command],
       timeout: const Duration(minutes: 10),
+      // Sync lane: a package-manager install touches the host, not the repo —
+      // reads keep flowing during a slow (up to 10-minute) install.
+      lane: ExecLane.sync,
     );
   }
 }

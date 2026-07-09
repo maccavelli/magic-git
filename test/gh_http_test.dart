@@ -27,6 +27,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     String? stdin,
     Duration timeout = SSHCommandExecutor.defaultTimeout,
     int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
   }) async {
     calls.add(gitArgs);
     stdins.add(stdin);

@@ -31,6 +31,8 @@ class _RetryCapturingExecutor extends SSHCommandExecutor {
     String? stdin,
     Duration timeout = SSHCommandExecutor.defaultTimeout,
     int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
   }) async {
     retriesSeen.add(retries);
     if (gitArgs.length == 3 && gitArgs[0] == 'sh' && gitArgs[1] == '-c') {

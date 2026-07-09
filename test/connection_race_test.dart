@@ -50,28 +50,35 @@ class _NoopExecutor extends SSHCommandExecutor {
     String? stdin,
     Duration timeout = SSHCommandExecutor.defaultTimeout,
     int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
   }) async {
     return const SSHCommandResult(exitCode: 0, stdout: 'true\n', stderr: '');
   }
 }
 
-/// Records every `setFsmonitor` call (in order) and, on the first one only,
+/// Records every `setFsmonitorMany` call (the connect path now applies all
+/// opted-in repos in one batched round trip) and, on the first one only,
 /// pauses until the test releases [gateFirst] — used to land a disconnect()
-/// exactly between the first and second repo of a multi-repo fsmonitor loop.
+/// while the fsmonitor step is still in flight.
 class _FsmonitorTrackingGit extends GitService {
   _FsmonitorTrackingGit() : super(_NoopExecutor());
-  final List<String> calls = [];
+  final List<List<String>> calls = [];
   Completer<void>? gateFirst;
 
   @override
   Future<void> validateRepoPath(String repoPath) async {}
 
   @override
-  Future<void> setFsmonitor(String repoPath, {required bool enabled}) async {
-    calls.add(repoPath);
+  Future<SSHCommandResult> setFsmonitorMany(
+    List<String> repoPaths, {
+    required bool enabled,
+  }) async {
+    calls.add(List.of(repoPaths));
     if (calls.length == 1 && gateFirst != null) {
       await gateFirst!.future;
     }
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
 }
 
@@ -303,7 +310,8 @@ void main() {
   );
 
   test(
-    'a disconnect racing the fsmonitor loop stops it before the next repo',
+    'a disconnect racing the (batched) fsmonitor step drops the connect '
+    'instead of proceeding with a superseded session',
     () async {
       final manager = _GatedManager();
       final git = _FsmonitorTrackingGit()..gateFirst = Completer<void>();
@@ -322,22 +330,25 @@ void main() {
         fsmonitorPaths: const ['/repo/a', '/repo/b'],
       );
       manager.gates.first.complete(); // let the SSH connect step finish
-      await Future<void>.delayed(Duration.zero); // reach the fsmonitor loop
-      expect(git.calls, ['/repo/a'], reason: 'first repo is gated mid-call');
+      await Future<void>.delayed(Duration.zero); // reach the fsmonitor step
+      expect(
+        git.calls,
+        [
+          ['/repo/a', '/repo/b'],
+        ],
+        reason: 'all opted-in repos are applied in ONE batched round trip',
+      );
 
       await controller.disconnect(); // supersedes this connect attempt
 
-      git.gateFirst!.complete(); // release the stuck first fsmonitor call
+      git.gateFirst!.complete(); // release the stuck fsmonitor call
       await connecting;
 
-      expect(
-        git.calls,
-        ['/repo/a'],
-        reason: 'the loop must not continue to the next repo once superseded',
-      );
+      expect(git.calls.length, 1, reason: 'no further fsmonitor work');
       expect(
         container.read(connectionProvider).phase,
         ConnectionPhase.disconnected,
+        reason: 'the superseded connect must not clobber the disconnect',
       );
     },
   );

@@ -125,6 +125,14 @@ class RemoteWatchService {
       // until it's clear whether this one succeeds.
       recoveryTimer?.cancel();
       recoveryTimer = null;
+      // Stop any polling loop too. Without this, a successful recovery from
+      // polling mode left the periodic poll timer running forever alongside
+      // the event-driven watcher — a status-refresh round trip every
+      // pollInterval for the rest of the session, mislabeled as an event tick
+      // (only startPolling and stop ever cancelled it). If this attempt fails,
+      // scheduleRestart → startPolling re-arms it.
+      pollTimer?.cancel();
+      pollTimer = null;
       await teardownWatcher();
       if (cancelled) return;
 
@@ -221,6 +229,7 @@ class RemoteWatchService {
             'elif command -v inotifywait >/dev/null 2>&1; then echo inotifywait; '
             'else echo none; fi',
       ],
+      lane: ExecLane.read,
     );
     switch (result.stdout.trim()) {
       case 'fswatch':

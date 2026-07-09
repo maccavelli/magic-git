@@ -151,7 +151,9 @@ class ConnectionsPanel extends ConsumerWidget {
     return MacosSheet(
       child: SizedBox(
         width: 540,
-        height: 500,
+        // Capped to the viewport so the footer stays reachable at the app's
+        // minimum window size — the connection list scrolls instead.
+        height: (MediaQuery.sizeOf(context).height - 80).clamp(320.0, 500.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

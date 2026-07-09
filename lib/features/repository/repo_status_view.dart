@@ -16,6 +16,7 @@ import '../common/context_menu.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
 import '../common/list_keyboard_nav.dart';
+import '../common/panel_shortcuts.dart';
 import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
 import '../common/tool_icon_button.dart';
@@ -110,6 +111,57 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
   static const _defaultCtx = 3;
   static const _expandedCtx = 25;
   int get _diffCtx => _diffExpandContext ? _expandedCtx : _defaultCtx;
+
+  /// Diff-prefetch bookkeeping — see [_prefetchDiffs].
+  DateTime? _lastDiffPrefetch;
+  static const int _prefetchMaxFiles = 8;
+  static const Duration _prefetchMinGap = Duration(seconds: 5);
+
+  /// Warms the diff cache for the first few changed files whenever a fresh
+  /// status lands, so clicking a file renders its diff from RAM instantly
+  /// instead of paying an SSH round trip — the single biggest "feels local"
+  /// lever for a remote repo. The keys are built exactly the way a click
+  /// builds them (same ignore-whitespace/context settings), so the provider
+  /// cache hit is guaranteed; the fetches ride the executor's concurrent read
+  /// lane, so they never delay an interactive command behind them. Throttled
+  /// to once per [_prefetchMinGap] so a churning repo (a build writing files,
+  /// one coalesced watcher tick per second) doesn't refetch the whole set
+  /// every tick; conflicted files are skipped (the conflict pane uses a
+  /// different provider and needs user attention anyway).
+  void _prefetchDiffs(GitStatus? status) {
+    if (status == null || !widget.isActive) return;
+    final now = DateTime.now();
+    final last = _lastDiffPrefetch;
+    if (last != null && now.difference(last) < _prefetchMinGap) return;
+    _lastDiffPrefetch = now;
+    var n = 0;
+    for (final f in status.files) {
+      if (n >= _prefetchMaxFiles) break;
+      if (f.isUnmerged) continue;
+      if (f.isUntracked) {
+        // `.ignore()`: a prefetch failure (or a mid-fetch invalidation from
+        // the next status landing) must never surface anywhere — the real
+        // read simply happens on click as before.
+        ref.read(untrackedDiffProvider((repoPath, f.path)).future).ignore();
+      } else {
+        // Prefetch the pane a click would open: the worktree diff when the
+        // file has unstaged changes, else its staged diff.
+        final staged = !f.isUnstaged;
+        ref
+            .read(
+              fileDiffProvider((
+                repoPath,
+                f.path,
+                staged,
+                _diffIgnoreWs,
+                _diffCtx,
+              )).future,
+            )
+            .ignore();
+      }
+      n++;
+    }
+  }
 
   // Whether the diff has been "popped out" into a floating window — see
   // DiffPopoutWindow. Relocates where the diff is shown; _selected still
@@ -834,6 +886,10 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     // itself has no reason to rebuild on its own — clear the selection so it
     // doesn't keep showing stale merge-marker content indefinitely.
     ref.listen(statusProvider(repoPath), (previous, next) {
+      // Warm the diff cache for the files most likely to be clicked next, so
+      // opening one renders from RAM instead of waiting a round trip — see
+      // _prefetchDiffs.
+      _prefetchDiffs(next.value);
       final status = next.value;
       final kind = _selectionKind;
       if (status == null || kind == null) return;
@@ -919,7 +975,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
           })
         : const <ShortcutActivator, VoidCallback>{};
 
-    return CallbackShortcuts(
+    return PanelShortcuts(
       bindings: shortcuts,
       child: LayoutBuilder(
         builder: (context, constraints) {

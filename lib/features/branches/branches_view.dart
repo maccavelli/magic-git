@@ -10,6 +10,7 @@ import '../common/actions.dart';
 import '../common/branch_switch.dart';
 import '../common/field_styles.dart';
 import '../common/list_keyboard_nav.dart';
+import '../common/panel_shortcuts.dart';
 import '../common/tool_icon_button.dart';
 
 /// Source-control pane: local branches (checkout/delete/create), remote-tracking
@@ -217,7 +218,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
     final git = ref.read(gitServiceProvider);
     final keymap = ref.watch(keymapProvider);
 
-    return CallbackShortcuts(
+    return PanelShortcuts(
       bindings: widget.isActive
           ? resolveShortcuts(keymap, {
               'branches.newBranch': () => _newBranchFocus.requestFocus(),

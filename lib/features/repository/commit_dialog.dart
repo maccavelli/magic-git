@@ -74,6 +74,14 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
           _editable = true; // manual: empty, editable field
         }
       });
+      // Focus the message field once it exists — in review mode it's read-only
+      // and doesn't autofocus, and with nothing focused inside the sheet, key
+      // events dispatch from the route's focus scope *above* this sheet's
+      // CallbackShortcuts, leaving ⌘↩ (Accept) and ⎋ (Cancel) dead until a
+      // click. (Manual mode's autofocus is covered too; this is idempotent.)
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focus.requestFocus();
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -94,6 +102,10 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
   /// after — the panel owns the logged/guarded push path, so it isn't
   /// reimplemented here.
   Future<void> _commit({bool push = false}) async {
+    // Entry guard, not just a disabled button: the keyboard bindings above
+    // capture `canAccept` from the previous build, so two rapid ⌘↩ presses in
+    // one event batch would otherwise both get through and commit twice.
+    if (_committing) return;
     final message = _message.text.trim();
     if (message.isEmpty) return;
     setState(() => _committing = true);

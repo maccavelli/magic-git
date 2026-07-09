@@ -4,6 +4,8 @@
 // consolidation is provably behavior-preserving, and covers the header/hunk-
 // header cases that diffLineKind intentionally doesn't classify.
 
+import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -71,5 +73,62 @@ void main() {
       expect(list.itemExtent, kDiffLineExtent);
       expect(find.text('+new line'), findsOneWidget);
     });
+
+    testWidgets('a multi-line drag selection copies across lines', (
+      tester,
+    ) async {
+      // The whole point of the single SelectionArea over plain Text rows:
+      // per-line SelectableText could never carry a selection across lines.
+      const diff = '@@ -1,2 +1,2 @@\n-old line\n+new line\n context';
+      await tester.pumpWidget(
+        const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: SizedBox(width: 400, height: 300, child: DiffView(diff: diff)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      String? copied;
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copied = (call.arguments as Map<Object?, Object?>)['text']
+                as String?;
+          }
+          return null;
+        },
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+
+      // Drag from the start of the first line to past the end of the last.
+      final from = tester.getTopLeft(find.text('@@ -1,2 +1,2 @@'));
+      final to =
+          tester.getBottomRight(find.text(' context')) + const Offset(10, 0);
+      final gesture = await tester.startGesture(
+        from + const Offset(1, 1),
+        kind: PointerDeviceKind.mouse,
+      );
+      await tester.pump();
+      await gesture.moveTo(to);
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pump();
+
+      expect(copied, isNotNull, reason: 'copy reached the clipboard');
+      for (final line in ['@@ -1,2 +1,2 @@', '-old line', '+new line']) {
+        expect(copied, contains(line));
+      }
+    }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
   });
 }

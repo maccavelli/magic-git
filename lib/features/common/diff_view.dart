@@ -92,21 +92,28 @@ class _DiffViewState extends State<DiffView> {
     final defaultColor =
         MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
 
+    // One SelectionArea over plain Text lines (not per-line SelectableText):
+    // selection state doesn't span separate SelectableText widgets, so the old
+    // shape made it impossible to drag-copy a multi-line hunk. This is the
+    // same pattern the blame sheet uses, and each row is lighter too (no
+    // per-line gesture/selection machinery).
     return Scrollbar(
-      child: ListView.builder(
-        padding: const EdgeInsets.all(12),
-        itemExtent: kDiffLineExtent,
-        itemCount: _lines.length,
-        itemBuilder: (context, index) {
-          final line = _lines[index];
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SelectableText(
-              line,
-              style: _mono.copyWith(color: diffLineColor(line, defaultColor)),
-            ),
-          );
-        },
+      child: SelectionArea(
+        child: ListView.builder(
+          padding: const EdgeInsets.all(12),
+          itemExtent: kDiffLineExtent,
+          itemCount: _lines.length,
+          itemBuilder: (context, index) {
+            final line = _lines[index];
+            return SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Text(
+                line,
+                style: _mono.copyWith(color: diffLineColor(line, defaultColor)),
+              ),
+            );
+          },
+        ),
       ),
     );
   }

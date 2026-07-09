@@ -5,6 +5,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/utils/file_actions.dart';
+import '../common/escape_dismissible.dart';
 import '../common/tool_icon_button.dart';
 import 'code_view.dart';
 import 'file_content.dart';
@@ -35,6 +36,11 @@ class FileViewerWindow extends ConsumerStatefulWidget {
   /// Whether this is the front-most (top of z-order) window. The front window
   /// holds keyboard focus so shortcuts (Escape) target it.
   final bool isFront;
+
+  /// This window's position in the open stack at creation, used to cascade
+  /// new windows instead of stacking same-size windows exactly on top of each
+  /// other (which hides the one beneath completely). Only read in initState.
+  final int cascadeIndex;
   final VoidCallback onClose;
   final VoidCallback onFocus;
 
@@ -45,6 +51,7 @@ class FileViewerWindow extends ConsumerStatefulWidget {
     required this.path,
     required this.bounds,
     required this.isFront,
+    this.cascadeIndex = 0,
     required this.onClose,
     required this.onFocus,
   });
@@ -76,6 +83,9 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
     _ => false,
   };
 
+  /// Deregisters this window's Escape-to-close handler.
+  VoidCallback? _unregisterEscape;
+
   @override
   void initState() {
     super.initState();
@@ -92,10 +102,33 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
             _fit(widget.bounds.width * 0.62, _minWidth, widget.bounds.width),
             _fit(widget.bounds.height * 0.78, _minHeight, widget.bounds.height),
           );
+    // Centered, then cascade-offset per open window (wrapping so a long
+    // session can't march off), and clamped back inside the host.
+    final cascade = 24.0 * (widget.cascadeIndex % 8);
     _position = Offset(
-      (widget.bounds.width - _size.width) / 2,
-      (widget.bounds.height - _size.height) / 2,
+      (widget.bounds.width - _size.width) / 2 + cascade,
+      (widget.bounds.height - _size.height) / 2 + cascade,
     );
+    _clamp();
+    // A brand-new window is front-most from birth, so the didUpdateWidget
+    // promotion path below never runs for it — and `autofocus` alone won't
+    // steal focus from whatever in the main window already holds it (the file
+    // row just clicked, the shell's autofocus node). Request focus explicitly
+    // so Escape/⌘W/⌘F work immediately, not only after a click inside.
+    if (widget.isFront) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _focus.requestFocus();
+      });
+    }
+    // Escape-to-close via the registry, not the focus tree: a focused
+    // SelectionArea/find field can swallow a focus-routed Escape (the exact
+    // failure escape_dismissible.dart documents). Only the front window
+    // reacts; anything registered later (a sheet, the find bar) wins first.
+    _unregisterEscape = EscapeDismissRegistry.register(() {
+      if (!widget.isFront) return false;
+      widget.onClose();
+      return true;
+    });
   }
 
   @override
@@ -115,6 +148,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
 
   @override
   void dispose() {
+    _unregisterEscape?.call();
     _focus.dispose();
     _findSignal.dispose();
     super.dispose();
@@ -138,6 +172,15 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
         ),
       );
     });
+  }
+
+  void _toggleMaximize() {
+    setState(() => _maximized = !_maximized);
+    // Remember the effective size so a maximized-then-closed window reopens
+    // large (clamped to the next host), not at the pre-maximize size.
+    ref
+        .read(viewerLastSizeProvider.notifier)
+        .set(_maximized ? widget.bounds : _size);
   }
 
   /// Clamps [v] into `[lo, hi]`, but tolerates a host smaller than the minimum
@@ -188,12 +231,12 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
       height: size.height,
       // CallbackShortcuts must be the *ancestor* of the focus node: a key event
       // dispatches to the focused node and bubbles up its ancestors, so these
-      // handlers only see it from above [_focus], not below. Escape-to-close is
-      // kept as a fixed binding (the universal dismiss key) on top of the
-      // remappable viewer shortcuts.
+      // handlers only see it from above [_focus], not below. Escape-to-close
+      // is deliberately NOT bound here — it's registered with
+      // EscapeDismissRegistry in initState so it works regardless of what
+      // holds focus (e.g. a selection drag inside the code view).
       child: CallbackShortcuts(
         bindings: {
-          const SingleActivator(LogicalKeyboardKey.escape): widget.onClose,
           ...resolveShortcuts(ref.watch(keymapProvider), {
             'viewer.close': widget.onClose,
             'viewer.copyContents': _mode == _ViewerMode.code
@@ -280,7 +323,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
               onPanUpdate: _maximized ? null : _onDrag,
               // Double-click the title bar to toggle maximize, like a native
               // window.
-              onDoubleTap: () => setState(() => _maximized = !_maximized),
+              onDoubleTap: _toggleMaximize,
               child: Row(
                 children: [
                   const MacosIcon(CupertinoIcons.doc_text, size: 15),
@@ -347,7 +390,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
                 : CupertinoIcons.arrow_up_left_arrow_down_right,
             tooltip: _maximized ? 'Restore' : 'Maximize',
             active: false,
-            onPressed: () => setState(() => _maximized = !_maximized),
+            onPressed: _toggleMaximize,
           ),
           const SizedBox(width: 2),
           ToolIconButton(
@@ -456,6 +499,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
                   languageId: _type.languageId,
                   wrap: _wrap,
                   findSignal: _findSignal,
+                  returnFocus: _focus,
                 ),
       },
     );
@@ -504,6 +548,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
       content: content,
       languageId: _type.languageId,
       wrap: _wrap,
+      returnFocus: _focus,
     ),
   };
 

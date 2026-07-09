@@ -28,13 +28,16 @@ class ViewerHost extends ConsumerWidget {
         final frontId = viewers.last.id;
         return Stack(
           children: [
-            for (final v in viewers)
+            for (final (i, v) in viewers.indexed)
               FileViewerWindow(
                 key: ValueKey(v.id),
                 id: v.id,
                 repoPath: v.repoPath,
                 path: v.path,
                 bounds: bounds,
+                // Stack position at creation seeds the cascade offset; it's
+                // only read in initState, so later reorders are irrelevant.
+                cascadeIndex: i,
                 // Front-most window owns keyboard focus, so Escape (and any
                 // shortcut) targets it — and, after the front window closes,
                 // the new front takes focus so a second Escape isn't swallowed.

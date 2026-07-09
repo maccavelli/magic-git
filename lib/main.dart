@@ -47,38 +47,46 @@ void main() async {
   );
 
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
-    // Enforce the floor explicitly too: WindowOptions.minimumSize alone isn't
-    // reliably applied across window_manager versions, and this guarantees the
-    // live constraint regardless of the restored size.
-    await windowManager.setMinimumSize(kMinWindowSize);
-    if (savedBounds != null) {
-      // Place position + size atomically *before* the first show, so the
-      // window is realized directly on its target display instead of being
-      // created on the main display and then moved — that two-step move was the
-      // visible flash (and the blinking of other apps on the target monitor).
-      //
-      // No display-list validation here on purpose: when the saved monitor is
-      // still connected this lands the window right back on it, and when it's
-      // gone AppKit's own `constrainFrameRect:toScreen:` pulls the frame onto a
-      // visible display (keeping the title bar reachable) as part of this single
-      // hidden placement — so the unplugged case degrades to "opens on the main
-      // display" with no flash, no off-screen/invisible window.
-      await windowManager.setBounds(
-        Rect.fromLTWH(
-          savedBounds.$1,
-          savedBounds.$2,
-          savedBounds.$3,
-          savedBounds.$4,
-        ),
-      );
-    }
-    await windowManager.show();
-    await windowManager.focus();
     // The native window launches fully transparent (MainFlutterWindow) so its
-    // default main-display position never paints; now that it's been placed on
-    // the correct monitor and shown, reveal it. This is what keeps other apps
-    // on the main screen from blinking as the window is positioned.
-    await windowManager.setOpacity(1);
+    // default main-display position never paints, and is revealed only by the
+    // setOpacity(1) in the `finally`. Keeping the reveal in a `finally` is
+    // load-bearing: if any placement step throws (a platform-channel hiccup,
+    // a plugin regression), the app must still become visible — the failure
+    // mode otherwise is a running process with a permanently invisible window.
+    try {
+      // Enforce the floor explicitly too: WindowOptions.minimumSize alone isn't
+      // reliably applied across window_manager versions, and this guarantees the
+      // live constraint regardless of the restored size.
+      await windowManager.setMinimumSize(kMinWindowSize);
+      if (savedBounds != null) {
+        // Place position + size atomically *before* the first show, so the
+        // window is realized directly on its target display instead of being
+        // created on the main display and then moved — that two-step move was the
+        // visible flash (and the blinking of other apps on the target monitor).
+        //
+        // No display-list validation here on purpose: when the saved monitor is
+        // still connected this lands the window right back on it, and when it's
+        // gone AppKit's own `constrainFrameRect:toScreen:` pulls the frame onto a
+        // visible display (keeping the title bar reachable) as part of this single
+        // hidden placement — so the unplugged case degrades to "opens on the main
+        // display" with no flash, no off-screen/invisible window.
+        await windowManager.setBounds(
+          Rect.fromLTWH(
+            savedBounds.$1,
+            savedBounds.$2,
+            savedBounds.$3,
+            savedBounds.$4,
+          ),
+        );
+      }
+      await windowManager.show();
+      await windowManager.focus();
+    } finally {
+      // Now that it's been placed on the correct monitor and shown, reveal it.
+      // This ordering is what keeps other apps on the main screen from blinking
+      // as the window is positioned.
+      await windowManager.setOpacity(1);
+    }
   });
 
   // Enable macOS window vibrancy

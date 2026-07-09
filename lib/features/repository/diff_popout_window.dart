@@ -4,6 +4,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/unified_diff.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/diff_view.dart';
+import '../common/escape_dismissible.dart';
 import '../common/split_diff_view.dart';
 import '../common/tool_icon_button.dart';
 import 'hunk_diff_view.dart';
@@ -59,6 +60,9 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
   late Offset _position;
   late Size _size;
 
+  /// Deregisters this window's Escape-to-close handler.
+  VoidCallback? _unregisterEscape;
+
   @override
   void initState() {
     super.initState();
@@ -70,6 +74,20 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
       (widget.bounds.width - _size.width) / 2,
       (widget.bounds.height - _size.height) / 2,
     );
+    // Escape closes the pop-out, same as the file-viewer windows. Routed
+    // through the registry (not the focus tree) so it works even while the
+    // selectable diff content holds focus, and so a sheet/dialog opened later
+    // wins the key first (LIFO).
+    _unregisterEscape = EscapeDismissRegistry.register(() {
+      widget.onClose();
+      return true;
+    });
+  }
+
+  @override
+  void dispose() {
+    _unregisterEscape?.call();
+    super.dispose();
   }
 
   /// Clamps [v] into `[lo, hi]`, tolerating a host smaller than the minimum
@@ -121,6 +139,14 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
 
   @override
   Widget build(BuildContext context) {
+    // Keep the pop-out inside the content area if it shrank (window resized,
+    // sidebar/file panel widened) — same as FileViewerWindow. Without this the
+    // window (and its only resize handle) can be stranded out of reach.
+    _size = Size(
+      _fit(_size.width, _minWidth, widget.bounds.width),
+      _fit(_size.height, _minHeight, widget.bounds.height),
+    );
+    _clampPosition();
     final diffAsync = widget.untracked
         ? ref.watch(untrackedDiffProvider((widget.repoPath, widget.path)))
         : ref.watch(

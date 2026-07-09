@@ -10,6 +10,7 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/tool_icon_button.dart';
 import 'package:remote_magic_git/features/viewer/file_content.dart';
 import 'package:remote_magic_git/features/viewer/image_preview.dart';
@@ -64,6 +65,14 @@ class _ThrowingGit extends GitService {
   @override
   Future<String> readFileBase64(String repoPath, String path) async =>
       throw _error;
+
+  // The viewer's content provider now follows the repo's status (to
+  // live-update on external edits) — serve it from the fake rather than
+  // letting it fall through to the real (unconfigured) executor, whose
+  // read-retry would leave a pending backoff Timer at test teardown.
+  @override
+  Future<GitStatus> status(String repoPath) async =>
+      GitStatus(branch: const GitBranchInfo(), files: const []);
 }
 
 Override _throwingGit(Object error) =>
@@ -84,6 +93,10 @@ String _allText(WidgetTester tester) {
 Future<ProviderContainer> _pumpHost(
   WidgetTester tester, {
   required List<Override> overrides,
+  // When set, an autofocused node underneath the viewer stack — mirrors the
+  // real app shell, where the main window already holds focus when a viewer
+  // opens (so a viewer relying on `autofocus` alone would never win it).
+  FocusNode? mainAreaFocus,
 }) async {
   final container = ProviderContainer(overrides: overrides);
   addTearDown(container.dispose);
@@ -94,8 +107,16 @@ Future<ProviderContainer> _pumpHost(
         debugShowCheckedModeBanner: false,
         home: MacosWindow(
           child: ContentArea(
-            builder: (_, _) => const Stack(
-              children: [Positioned.fill(child: ViewerHost())],
+            builder: (_, _) => Stack(
+              children: [
+                if (mainAreaFocus != null)
+                  Focus(
+                    focusNode: mainAreaFocus,
+                    autofocus: true,
+                    child: const SizedBox.expand(),
+                  ),
+                const Positioned.fill(child: ViewerHost()),
+              ],
             ),
           ),
         ),
@@ -425,6 +446,32 @@ void main() {
     expect(find.byType(FileViewerWindow), findsNothing);
   });
 
+  testWidgets(
+    'a newly opened window takes keyboard focus — Escape closes it '
+    'without clicking it first',
+    (tester) async {
+      final mainFocus = FocusNode();
+      addTearDown(mainFocus.dispose);
+      final container = await _pumpHost(
+        tester,
+        overrides: [_content('a.txt', 'aaa')],
+        mainAreaFocus: mainFocus,
+      );
+      expect(mainFocus.hasFocus, isTrue, reason: 'main area holds focus');
+
+      container.read(openFileViewersProvider.notifier).open(_repo, 'a.txt');
+      await tester.pumpAndSettle();
+      expect(find.byType(FileViewerWindow), findsOneWidget);
+
+      // No tap: the fresh window must have grabbed focus on its own (the
+      // main area held focus before it opened, so autofocus alone would
+      // never win it).
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(FileViewerWindow), findsNothing);
+    },
+  );
+
   testWidgets('⌘F opens in-file find, counts matches, Enter steps through', (
     tester,
   ) async {
@@ -462,6 +509,42 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('2 of 2'), findsOneWidget);
   });
+
+  testWidgets(
+    'Escape closes the find bar first (even while its field has focus), '
+    'then the window',
+    (tester) async {
+      final container = await _pumpHost(
+        tester,
+        overrides: [_content('a.txt', 'alpha\nbeta\n')],
+      );
+      container.read(openFileViewersProvider.notifier).open(_repo, 'a.txt');
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.keyF);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.keyF);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pumpAndSettle();
+
+      final findField = find.byWidgetPredicate(
+        (w) => w is MacosTextField && w.placeholder == 'Find in file',
+      );
+      expect(findField, findsOneWidget);
+
+      // The find field holds focus — exactly the state where a focus-routed
+      // Escape used to get swallowed. One Escape closes only the bar.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(findField, findsNothing);
+      expect(find.byType(FileViewerWindow), findsOneWidget);
+
+      // Focus is back on the window, so the next Escape closes it.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(find.byType(FileViewerWindow), findsNothing);
+    },
+  );
 
   testWidgets('⌘W closes the front viewer window', (tester) async {
     final container = await _pumpHost(

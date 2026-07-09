@@ -64,6 +64,8 @@ class _NoopExecutor extends SSHCommandExecutor {
     String? stdin,
     Duration timeout = SSHCommandExecutor.defaultTimeout,
     int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
   }) async {
     return const SSHCommandResult(exitCode: 0, stdout: 'true\n', stderr: '');
   }

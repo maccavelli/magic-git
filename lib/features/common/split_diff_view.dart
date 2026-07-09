@@ -128,26 +128,30 @@ class _SplitDiffViewState extends State<SplitDiffView> {
 
     final defaultColor =
         MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
+    // SelectionArea + plain Text cells so a drag can copy across rows —
+    // per-cell SelectableText couldn't span them.
     return Scrollbar(
-      child: ListView.builder(
-        padding: const EdgeInsets.symmetric(vertical: 8),
-        itemCount: items.length,
-        itemBuilder: (context, i) {
-          final item = items[i];
-          if (item is _HeaderRow) {
-            return Container(
-              color: MacosColors.systemGrayColor.withValues(alpha: 0.10),
-              padding: const EdgeInsets.fromLTRB(12, 4, 6, 4),
-              child: Text(
-                item.text,
-                style: kDiffMono.copyWith(color: MacosColors.systemTealColor),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            );
-          }
-          return _rowWidget(item as _SplitRow, defaultColor);
-        },
+      child: SelectionArea(
+        child: ListView.builder(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          itemCount: items.length,
+          itemBuilder: (context, i) {
+            final item = items[i];
+            if (item is _HeaderRow) {
+              return Container(
+                color: MacosColors.systemGrayColor.withValues(alpha: 0.10),
+                padding: const EdgeInsets.fromLTRB(12, 4, 6, 4),
+                child: Text(
+                  item.text,
+                  style: kDiffMono.copyWith(color: MacosColors.systemTealColor),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              );
+            }
+            return _rowWidget(item as _SplitRow, defaultColor);
+          },
+        ),
       ),
     );
   }
@@ -191,7 +195,7 @@ class _SplitDiffViewState extends State<SplitDiffView> {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        child: SelectableText(
+        child: Text(
           text ?? '',
           style: kDiffMono.copyWith(color: fg),
         ),

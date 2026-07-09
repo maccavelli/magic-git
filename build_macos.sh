@@ -13,6 +13,13 @@
 # Usage:
 #   ./build_macos.sh              signed build (needs a Development Team set in
 #                                 Xcode → Signing; Keychain "Save connection" works)
+#
+#   NOTE (for later, when a Developer ID exists): before notarizing, set
+#   ENABLE_HARDENED_RUNTIME = YES on the Runner target's Release config.
+#   It must stay OFF while builds are ad-hoc signed — hardened-runtime
+#   library validation requires matching Team IDs, and an ad-hoc signature
+#   has none, so dyld refuses to load the embedded FlutterMacOS.framework
+#   ("different Team IDs") and the app dies at launch.
 #   ./build_macos.sh --unsigned   no Apple ID needed: temporarily removes the
 #                                 keychain-access-groups entitlement and builds
 #                                 ad-hoc. "Save connection" still persists — the

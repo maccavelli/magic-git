@@ -253,22 +253,26 @@ class _HunkDiffViewState extends State<HunkDiffView> {
 
     final defaultColor =
         MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
+    // SelectionArea + plain Text lines so a drag can copy across lines (and
+    // across hunk boundaries) — per-line SelectableText couldn't span rows.
     return Focus(
       focusNode: _hunkFocus,
       onKeyEvent: _onKey,
       child: Scrollbar(
         controller: _scroll,
-        child: ListView.builder(
-          controller: _scroll,
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          itemCount: _items.length,
-          itemBuilder: (context, i) {
-            final item = _items[i];
-            if (item is _HeaderItem) {
-              return _header(file, item.hunk, item.index);
-            }
-            return _line(item as _LineItem, defaultColor);
-          },
+        child: SelectionArea(
+          child: ListView.builder(
+            controller: _scroll,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemCount: _items.length,
+            itemBuilder: (context, i) {
+              final item = _items[i];
+              if (item is _HeaderItem) {
+                return _header(file, item.hunk, item.index);
+              }
+              return _line(item as _LineItem, defaultColor);
+            },
+          ),
         ),
       ),
     );
@@ -328,7 +332,7 @@ class _HunkDiffViewState extends State<HunkDiffView> {
       ),
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
-        child: SelectableText(
+        child: Text(
           line.text,
           style: kDiffMono.copyWith(
             color: diffLineColor(line.text, defaultColor),

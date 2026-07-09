@@ -195,15 +195,10 @@ void main() {
       await tester.tap(find.text('build'));
       await tester.pumpAndSettle();
 
-      // The trace log renders via SelectableText (an EditableText internally),
-      // which find.text/textContaining don't match — assert on the controller
-      // text directly, like this file's other trace-log checks avoid find.text.
+      // The trace log renders plain Text chunks under one SelectionArea
+      // (cross-chunk copy), so the error is a directly findable Text.
       expect(
-        find.byWidgetPredicate(
-          (w) =>
-              w is EditableText &&
-              w.controller.text.contains('glab ci trace failed'),
-        ),
+        find.textContaining('glab ci trace failed'),
         findsOneWidget,
       );
     },

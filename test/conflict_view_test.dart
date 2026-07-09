@@ -45,13 +45,13 @@ Future<void> _pump(WidgetTester tester, String content) async {
 }
 
 Color? _backgroundOf(WidgetTester tester, String text) {
-  // `find.text` also matches the SelectableText's internal EditableText, so
-  // match the SelectableText widget itself directly instead.
+  // The view renders plain Text rows under one SelectionArea (cross-line
+  // copy), so match the Text widget carrying the line directly.
   final finder = find.byWidgetPredicate(
-    (widget) => widget is SelectableText && widget.data == text,
+    (widget) => widget is Text && widget.data == text,
   );
-  final selectable = tester.widget<SelectableText>(finder);
-  return selectable.style?.backgroundColor;
+  final line = tester.widget<Text>(finder);
+  return line.style?.backgroundColor;
 }
 
 void main() {

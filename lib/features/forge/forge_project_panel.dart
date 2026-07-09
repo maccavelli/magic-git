@@ -13,7 +13,17 @@ import 'forge_panel.dart';
 class ForgeProjectPanel extends ConsumerWidget {
   final String repoPath;
 
-  const ForgeProjectPanel({super.key, required this.repoPath});
+  /// Whether this is the front (visible) sidebar page. No project shortcut
+  /// exists today, but the flag keeps this panel's contract identical to the
+  /// other five so any future panel-scoped behavior is gated from day one
+  /// instead of silently running while offstage in the IndexedStack.
+  final bool isActive;
+
+  const ForgeProjectPanel({
+    super.key,
+    required this.repoPath,
+    this.isActive = true,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {

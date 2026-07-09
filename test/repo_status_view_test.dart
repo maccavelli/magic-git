@@ -158,6 +158,25 @@ class _FakeGitService extends GitService {
 
   @override
   Future<PendingOp> pendingOp(String repoPath) async => pendingOp0;
+
+  // The status view now *prefetches* diffs for the first few changed files
+  // whenever status lands (see RepoStatusView._prefetchDiffs), so every file
+  // in a test's status — not just the ones a test selects — gets its diff
+  // provider created. Serve them from the fake rather than letting them fall
+  // through to the real (unconfigured) executor, whose failure would leave
+  // erroring providers retrying in the background of every test.
+  @override
+  Future<String> diffFile(
+    String repoPath, {
+    required String path,
+    required bool staged,
+    bool ignoreWhitespace = false,
+    int? context,
+  }) async => 'diff --git a/$path b/$path\n';
+
+  @override
+  Future<String> diffUntracked(String repoPath, String path) async =>
+      'diff --git a/dev/null b/$path\n';
 }
 
 /// The file view is on by default; hide it so it doesn't call listWorkingTree

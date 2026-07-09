@@ -132,7 +132,7 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
-    final screen = MediaQuery.of(context).size;
+    final screen = MediaQuery.sizeOf(context);
     final keepCount = _rows.where((r) => r.action != RebaseAction.drop).length;
     return MacosSheet(
       child: SizedBox(

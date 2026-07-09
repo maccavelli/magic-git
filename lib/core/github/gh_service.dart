@@ -66,6 +66,7 @@ class GhService {
       repoPath: repoPath,
       gitArgs: ['git', 'remote', 'get-url', 'origin'],
       timeout: const Duration(seconds: 20),
+      lane: ExecLane.read,
     );
     final host = forgeHostFromRemoteUrl(remote.stdout.trim());
     if (host == null) {
@@ -79,6 +80,9 @@ class GhService {
       gitArgs: ['gh', 'auth', 'login', '--hostname', host, '--with-token'],
       stdin: trimmed,
       timeout: const Duration(seconds: 30),
+      // Sync lane: writes gh's credential store on the host — not a repo
+      // mutation, but ordered against other sync ops.
+      lane: ExecLane.sync,
     );
     if (!result.isSuccess) {
       throw GhException('gh auth login failed', result);
@@ -123,7 +127,15 @@ class GhService {
     for (final field in fields) {
       args.addAll(['-f', field]);
     }
-    return _runJson(repoPath, args, 'gh api $endpoint');
+    return _runJson(
+      repoPath,
+      args,
+      'gh api $endpoint',
+      // A GET is a pure read; anything else mutates forge-side state and
+      // rides the single-width sync lane (never exclusive — no `gh api`
+      // call touches the index/worktree).
+      lane: method == 'GET' ? ExecLane.read : ExecLane.sync,
+    );
   }
 
   /// Open pull requests for the current repo, via `gh pr list --json`.
@@ -203,6 +215,7 @@ class GhService {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['gh', 'run', 'view', '--job', '$jobId', '--log'],
+      lane: ExecLane.read,
     );
     if (!result.isSuccess) {
       throw GhException('gh run view --log failed', result);
@@ -248,7 +261,11 @@ class GhService {
       for (final l in labels) ...['--label', l],
       if (milestone != null && milestone.isNotEmpty) ...['--milestone', milestone],
     ];
-    final result = await _executor.execute(repoPath: repoPath, gitArgs: args);
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: args,
+      lane: ExecLane.sync,
+    );
     if (!result.isSuccess) {
       throw GhException('gh pr create failed', result);
     }
@@ -260,6 +277,7 @@ class GhService {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['gh', 'pr', 'review', '$number', '--approve'],
+      lane: ExecLane.sync,
     );
     if (!result.isSuccess) {
       throw GhException('gh pr review --approve failed', result);
@@ -282,6 +300,7 @@ class GhService {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['gh', 'pr', 'merge', '$number', flag],
+      lane: ExecLane.sync,
     );
     if (!result.isSuccess) {
       throw GhException('gh pr merge failed', result);
@@ -295,6 +314,9 @@ class GhService {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['gh', 'pr', 'checkout', '$number'],
+      // Exclusive: switches the working tree (fetch + checkout), so it must
+      // never overlap a concurrent read or another mutation.
+      lane: ExecLane.exclusive,
     );
     if (!result.isSuccess) {
       throw GhException('gh pr checkout failed', result);
@@ -307,6 +329,7 @@ class GhService {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['gh', 'run', 'rerun', '$runId', '--failed'],
+      lane: ExecLane.sync,
     );
     if (!result.isSuccess) {
       throw GhException('gh run rerun failed', result);
@@ -358,7 +381,12 @@ query($owner: String!, $name: String!) {
   }) async {
     final args = <String>['gh', 'api', 'graphql', '-f', 'query=$query'];
     variables.forEach((name, value) => args.addAll(['-f', '$name=$value']));
-    final result = await _executor.execute(repoPath: repoPath, gitArgs: args);
+    // Every GraphQL call this app issues is a query (the dashboard read).
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: args,
+      lane: ExecLane.read,
+    );
 
     final body = result.stdout.trim();
     Map<String, dynamic>? decoded;
@@ -392,6 +420,7 @@ query($owner: String!, $name: String!) {
       repoPath: repoPath,
       gitArgs: ['git', 'remote', 'get-url', 'origin'],
       timeout: const Duration(seconds: 20),
+      lane: ExecLane.read,
     );
     final slug = ownerRepoFromRemote(remote.stdout.trim());
     if (slug == null) {
@@ -470,9 +499,14 @@ query($owner: String!, $name: String!) {
   Future<dynamic> _runJson(
     String repoPath,
     List<String> args,
-    String label,
-  ) async {
-    final result = await _executor.execute(repoPath: repoPath, gitArgs: args);
+    String label, {
+    ExecLane lane = ExecLane.read,
+  }) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: args,
+      lane: lane,
+    );
     if (!result.isSuccess) {
       throw GhException('$label failed', result);
     }

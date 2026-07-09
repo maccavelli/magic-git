@@ -13,6 +13,7 @@ import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/list_keyboard_nav.dart';
+import '../common/panel_shortcuts.dart';
 import '../common/tool_icon_button.dart';
 import 'commit_graph_view.dart';
 import 'rebase_sheet.dart';
@@ -118,10 +119,10 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
   /// null if nothing is selected (or the selection scrolled out of a filtered
   /// list). Needed by cherry-pick/rebase, which act on the commit object rather
   /// than a bare hash.
-  GitCommit? _selectedCommit() {
+  GitCommit? _selectedCommitIn(List<GitCommit>? commits) {
     final hash = _selectedHash;
     if (hash == null) return null;
-    for (final c in _lastCommits ?? const <GitCommit>[]) {
+    for (final c in commits ?? const <GitCommit>[]) {
       if (c.hash == hash) return c;
     }
     return null;
@@ -487,9 +488,30 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     if (mounted) setState(() => _selectedHash = null);
   }
 
+  /// Warms the commit-patch cache for the newest few commits whenever a fresh
+  /// log lands, so selecting one renders instantly. Commit patches are
+  /// immutable (hash-keyed, cached in the large immutable LRU tier) so each is
+  /// fetched at most once per session — no throttle needed; the fetches ride
+  /// the executor's concurrent read lane and can't delay interactive commands.
+  static const int _prefetchMaxCommits = 8;
+
+  void _prefetchCommitPatches(List<GitCommit>? commits) {
+    if (commits == null || !widget.isActive) return;
+    for (final c in commits.take(_prefetchMaxCommits)) {
+      // `.ignore()`: a prefetch failure must never surface — selecting the
+      // commit simply fetches it live, exactly as before.
+      ref.read(commitDiffProvider((widget.repoPath, c.hash)).future).ignore();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final filtering = _grep.isNotEmpty || _allBranches;
+    // Warm the patch cache as fresh (unfiltered) history lands — the newest
+    // commits are the ones overwhelmingly likely to be inspected.
+    ref.listen(logProvider(widget.repoPath), (previous, next) {
+      _prefetchCommitPatches(next.value);
+    });
     final logAsync = filtering
         ? ref.watch(
             logSearchProvider((
@@ -508,10 +530,14 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
 
     final keymap = ref.watch(keymapProvider);
     final selectedHash = _selectedHash;
-    final selectedCommit = _selectedCommit();
-    final hasCommits = _lastCommits?.isNotEmpty ?? false;
+    // Preconditions from the log value this same build renders — _lastCommits
+    // is only refreshed inside the data branch below, so reading it here
+    // lagged one build behind right after a load or filter change.
+    final commits = logAsync.value ?? _lastCommits;
+    final selectedCommit = _selectedCommitIn(commits);
+    final hasCommits = commits?.isNotEmpty ?? false;
 
-    return CallbackShortcuts(
+    return PanelShortcuts(
       bindings: widget.isActive && !_busy
           ? resolveShortcuts(keymap, {
               'history.copySha': selectedHash == null
@@ -886,7 +912,7 @@ class CommitDiffSheet extends ConsumerWidget {
     final typography = MacosTheme.of(context).typography;
     final diffAsync = ref.watch(commitDiffProvider((repoPath, hash)));
     final short = hash.length > 12 ? hash.substring(0, 12) : hash;
-    final screen = MediaQuery.of(context).size;
+    final screen = MediaQuery.sizeOf(context);
 
     return MacosSheet(
       child: SizedBox(

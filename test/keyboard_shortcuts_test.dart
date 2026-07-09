@@ -17,6 +17,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
+import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
 import 'package:remote_magic_git/features/repository/commit_dialog.dart';
 import 'package:remote_magic_git/features/repository/repo_status_view.dart';
@@ -25,10 +26,10 @@ import 'package:remote_magic_git/features/stash/stash_view.dart';
 const _repo = '/srv/repo';
 
 /// Finds the callback bound to [key]/[meta]/[shift]/[control] across every
-/// [CallbackShortcuts] currently in the tree — proof that the widget actually
-/// wired this key combination up, not just that some handler exists
-/// somewhere. Compared field-by-field rather than via `Map.[]` because
-/// [SingleActivator] doesn't override `==`, so a freshly-constructed
+/// [CallbackShortcuts] and [PanelShortcuts] currently in the tree — proof
+/// that the widget actually wired this key combination up, not just that some
+/// handler exists somewhere. Compared field-by-field rather than via `Map.[]`
+/// because [SingleActivator] doesn't override `==`, so a freshly-constructed
 /// activator never matches an existing map key by identity.
 VoidCallback? _bindingFor(
   WidgetTester tester,
@@ -38,9 +39,14 @@ VoidCallback? _bindingFor(
   bool control = false,
   bool alt = false,
 }) {
-  for (final element in find.byType(CallbackShortcuts).evaluate()) {
-    final widget = element.widget as CallbackShortcuts;
-    for (final entry in widget.bindings.entries) {
+  final maps = [
+    for (final element in find.byType(CallbackShortcuts).evaluate())
+      (element.widget as CallbackShortcuts).bindings,
+    for (final element in find.byType(PanelShortcuts).evaluate())
+      (element.widget as PanelShortcuts).bindings,
+  ];
+  for (final bindings in maps) {
+    for (final entry in bindings.entries) {
       final activator = entry.key;
       if (activator is SingleActivator &&
           activator.trigger == key &&
@@ -123,6 +129,22 @@ class _FakeGit extends GitService {
   @override
   Future<String> showCommit(String repoPath, String hash, {String? path}) async =>
       'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
+
+  // The repository panel prefetches diffs for the changed files whenever
+  // status lands — serve them here rather than letting the prefetch fall
+  // through to the real (unconfigured) executor.
+  @override
+  Future<String> diffFile(
+    String repoPath, {
+    required String path,
+    required bool staged,
+    bool ignoreWhitespace = false,
+    int? context,
+  }) async => 'diff --git a/$path b/$path\n';
+
+  @override
+  Future<String> diffUntracked(String repoPath, String path) async =>
+      'diff --git a/dev/null b/$path\n';
 }
 
 GitCommit _commit(String hash, String subject) => GitCommit(

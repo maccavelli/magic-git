@@ -6,6 +6,7 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -172,6 +173,100 @@ void main() {
       final shrunk = tester.getSize(find.byType(DiffPopoutWindow));
       expect(shrunk.width, 420);
       expect(shrunk.height, 280);
+    },
+  );
+
+  testWidgets('Escape closes the pop-out and returns the diff inline', (
+    tester,
+  ) async {
+    await _pump(tester);
+    await tester.tap(find.text('lib/a.dart'));
+    await tester.pumpAndSettle();
+    await tester.tap(_byMacosTooltip('Open diff in a larger window'));
+    await tester.pumpAndSettle();
+    expect(find.byType(DiffPopoutWindow), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(DiffPopoutWindow), findsNothing);
+    expect(_byMacosTooltip('Close diff'), findsOneWidget);
+  });
+
+  testWidgets(
+    'a pop-out near the edge is pulled back inside when its bounds shrink',
+    (tester) async {
+      Widget host(Size bounds) {
+        return MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: MacosWindow(
+            child: ContentArea(
+              builder: (_, _) => Stack(
+                children: [
+                  DiffPopoutWindow(
+                    repoPath: _repo,
+                    path: 'lib/a.dart',
+                    staged: false,
+                    untracked: false,
+                    initialSplit: false,
+                    initialIgnoreWs: false,
+                    contextLines: 3,
+                    bounds: bounds,
+                    onHunkAction: (_, _, _) {},
+                    onClose: () {},
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      }
+
+      final container = ProviderContainer(
+        overrides: [
+          gitServiceProvider.overrideWithValue(_FakeGitService()),
+          fileDiffProvider((
+            _repo,
+            'lib/a.dart',
+            false,
+            false,
+            3,
+          )).overrideWith((ref) async => _diff),
+        ],
+      );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: host(const Size(800, 600)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Park the window against the bottom-right corner.
+      final titleBar = tester.getTopLeft(find.byType(DiffPopoutWindow));
+      await tester.dragFrom(
+        titleBar + const Offset(20, 10),
+        const Offset(2000, 2000),
+      );
+      await tester.pumpAndSettle();
+
+      // The content area shrinks (window resized / sidebar widened). The
+      // pop-out must be re-fitted and pulled fully back inside — previously it
+      // stayed at its old offset with the resize handle stranded off-screen.
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: host(const Size(500, 400)),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final rect = tester.getRect(find.byType(DiffPopoutWindow));
+      expect(rect.right, lessThanOrEqualTo(500));
+      expect(rect.bottom, lessThanOrEqualTo(400));
+      expect(rect.left, greaterThanOrEqualTo(0));
+      expect(rect.top, greaterThanOrEqualTo(0));
     },
   );
 

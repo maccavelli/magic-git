@@ -384,6 +384,7 @@ class GitService {
       gitArgs: ['git', 'rev-parse', '--is-inside-work-tree'],
       timeout: const Duration(seconds: 20),
       retries: _readRetries,
+      lane: ExecLane.read,
     );
     // A missing `git` comes back as 127 (the shell's "command not found", or
     // the local backend's ProcessException mapped to the same). Surface that
@@ -433,6 +434,7 @@ class GitService {
       ],
       timeout: const Duration(seconds: 20),
       retries: _readRetries,
+      lane: ExecLane.read,
     );
     if (!result.isSuccess) return;
     final lines = const LineSplitter()
@@ -545,7 +547,12 @@ class GitService {
     if (existing != null) return existing;
     final future = _fetchSnapshot(repoPath);
     _snapshotInFlight[repoPath] = future;
-    future.whenComplete(() => _snapshotInFlight.remove(repoPath));
+    // `.ignore()`: `whenComplete` yields a *derived* future that re-propagates
+    // a fetch failure, and nothing awaits that derivative — without ignoring
+    // it, every failed snapshot also surfaced as a spurious unhandled async
+    // error in the zone (the real error still reaches the caller through the
+    // returned `future` itself).
+    future.whenComplete(() => _snapshotInFlight.remove(repoPath)).ignore();
     return future;
   }
 
@@ -571,6 +578,8 @@ class GitService {
       repoPath: repoPath,
       gitArgs: ['sh', '-c', script],
       retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
     );
 
     final parts = result.stdout.split(_snapshotSep);
@@ -625,6 +634,14 @@ class GitService {
   /// left in place). One combined round trip rather than one `git config` call
   /// per setting.
   Future<void> setFsmonitor(String repoPath, {required bool enabled}) async {
+    await _runVoid(repoPath, [
+      'sh',
+      '-c',
+      _fsmonitorScript(enabled: enabled),
+    ], 'git config fsmonitor');
+  }
+
+  static String _fsmonitorScript({required bool enabled}) {
     final settings = enabled
         ? const {
             'core.fsmonitor': 'true',
@@ -632,14 +649,36 @@ class GitService {
             'feature.manyFiles': 'true',
           }
         : const {'core.fsmonitor': 'false'};
-    final script = settings.entries
+    return settings.entries
         .map(
           (e) =>
               'git config ${ShellEscaper.escape(e.key)} '
               '${ShellEscaper.escape(e.value)}',
         )
         .join(' && ');
-    await _runVoid(repoPath, ['sh', '-c', script], 'git config fsmonitor');
+  }
+
+  /// Applies [setFsmonitor] to every repo in [repoPaths] with a **single**
+  /// round trip — used at connect time, where each opted-in repo used to cost
+  /// its own SSH round trip before the session became usable. Best-effort per
+  /// repo: one repo failing (moved, permissions) doesn't stop the others; each
+  /// failure is reported on stderr as `fsmonitor setup failed: <path>` and the
+  /// command itself always exits 0. Returns the raw result so the caller can
+  /// log any reported failures.
+  Future<SSHCommandResult> setFsmonitorMany(
+    List<String> repoPaths, {
+    required bool enabled,
+  }) {
+    final inner = _fsmonitorScript(enabled: enabled);
+    final dirs = repoPaths.map(ShellEscaper.escape).join(' ');
+    // Subshell per repo so each `cd` is isolated; `|| printf … >&2` keeps the
+    // sweep going and surfaces the failed path. Trailing `true` pins exit 0.
+    final script =
+        'for d in $dirs; do '
+        '(cd "\$d" && $inner) '
+        "|| printf 'fsmonitor setup failed: %s\\n' \"\$d\" >&2; "
+        'done; true';
+    return _run(repoPaths.first, ['sh', '-c', script], 'git config fsmonitor');
   }
 
   /// Commit history for [revision] (default HEAD), most recent first, with
@@ -709,6 +748,8 @@ class GitService {
         if (path != null && path.isNotEmpty) ...['--', path],
       ],
       retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
     );
     if (!result.isSuccess) {
       // An unborn HEAD (a freshly initialized repo with no commits yet) makes
@@ -757,6 +798,8 @@ class GitService {
         path,
       ],
       retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
     );
     if (!result.isSuccess) {
       throw GitException('git diff failed', result);
@@ -785,6 +828,8 @@ class GitService {
         range,
       ],
       retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
     );
     if (!result.isSuccess) {
       throw GitException('git diff (range) failed', result);
@@ -808,6 +853,8 @@ class GitService {
         path,
       ],
       retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
     );
     // `--no-index` exits 1 when the inputs differ (always, here) — that's
     // success. Any other code, including the executor's -1 sentinel for a
@@ -844,6 +891,8 @@ class GitService {
         if (path != null && path.isNotEmpty) ...['--', path],
       ],
       retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
     );
     if (!result.isSuccess) {
       throw GitException('git show failed', result);
@@ -876,6 +925,8 @@ class GitService {
         path,
       ],
       retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
     );
     if (!result.isSuccess) {
       throw GitException('git blame failed', result);
@@ -904,6 +955,8 @@ class GitService {
       repoPath: repoPath,
       gitArgs: ['cat', '--', path],
       retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
     );
     if (!result.isSuccess) {
       throw GitException('reading file failed', result);
@@ -927,6 +980,8 @@ class GitService {
       repoPath: repoPath,
       gitArgs: ['sh', '-c', script],
       retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
     );
     if (!result.isSuccess) {
       throw GitException('reading file bytes failed', result);
@@ -957,6 +1012,8 @@ class GitService {
       ['sh', '-c', script],
       'git ls-files',
       retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
     );
     final parts = result.stdout.split(_snapshotSep);
     final files = await _splitPaths(parts.isNotEmpty ? parts[0] : '');
@@ -984,6 +1041,7 @@ class GitService {
       ['ls', '-Ap', '--', dir],
       'ls',
       retries: _readRetries,
+      lane: ExecLane.read,
     );
     final nodes = <RepoNode>[];
     for (final line in res.stdout.split('\n')) {
@@ -1106,6 +1164,7 @@ class GitService {
             '[ -x "\$hp/prepare-commit-msg" ] && echo yes || echo no',
       ],
       retries: _readRetries,
+      lane: ExecLane.read,
     );
     return result.stdout.trim() == 'yes';
   }
@@ -1396,6 +1455,8 @@ class GitService {
       repoPath: repoPath,
       gitArgs: ['cat', '--', path],
       retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
     );
     if (!result.isSuccess) {
       throw GitException('reading conflicted file failed', result);
@@ -1532,12 +1593,16 @@ class GitService {
   // ---- Remote sync ---------------------------------------------------------
 
   /// Fetches all remotes and prunes deleted refs. Returns the command result so
-  /// callers can surface its output.
+  /// callers can surface its output. Sync lane: a fetch touches refs and the
+  /// network but never the index/worktree, so reads keep flowing while a slow
+  /// fetch (up to [networkTimeout]) runs — but only one sync op at a time, so
+  /// an auto-fetch can never race a manual fetch on ref locks.
   Future<SSHCommandResult> fetch(String repoPath) => _run(
     repoPath,
     ['git', 'fetch', '--all', '--prune'],
     'git fetch',
     timeout: networkTimeout,
+    lane: ExecLane.sync,
   );
 
   /// Pulls upstream work. Defaults to fast-forward-only (never creates a
@@ -1592,6 +1657,9 @@ class GitService {
     ],
     'git push',
     timeout: networkTimeout,
+    // Sync lane: push updates the remote (and local tracking refs) but never
+    // the index/worktree — safe alongside reads, exclusive among sync ops.
+    lane: ExecLane.sync,
   );
 
   // ---- Tags ----------------------------------------------------------------
@@ -1635,6 +1703,7 @@ class GitService {
     ['git', 'push', '--end-of-options', remote, 'refs/tags/$name'],
     'git push tag',
     timeout: networkTimeout,
+    lane: ExecLane.sync,
   );
 
   /// The SHA [rev] resolves to, or null if it doesn't exist (e.g. no upstream
@@ -1645,6 +1714,7 @@ class GitService {
       repoPath: repoPath,
       gitArgs: ['git', 'rev-parse', '--verify', '--quiet', rev],
       retries: _readRetries,
+      lane: ExecLane.read,
     );
     final out = result.stdout.trim();
     return out.isEmpty ? null : out;
@@ -1669,6 +1739,7 @@ class GitService {
       ],
       'git diff --name-status',
       retries: _readRetries,
+      lane: ExecLane.read,
     );
     return result.stdout.split('\n').where((l) => l.trim().isNotEmpty).toList();
   }
@@ -1722,6 +1793,8 @@ class GitService {
       repoPath: repoPath,
       gitArgs: ['git', 'stash', 'show', '-p', '--no-color', 'stash@{$index}'],
       retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
     );
     if (!result.isSuccess) {
       throw GitException('git stash show failed', result);
@@ -1735,6 +1808,7 @@ class GitService {
       repoPath: repoPath,
       gitArgs: ['git', 'stash', 'list', '--format=%gd$fieldSep%gs$fieldSep%cr'],
       retries: _readRetries,
+      lane: ExecLane.read,
     );
     if (!result.isSuccess) {
       throw GitException('git stash list failed', result);
@@ -1762,8 +1836,10 @@ class GitService {
     return stashes;
   }
 
-  /// Runs a command through the serialized queue and returns its result,
-  /// throwing [GitException] on a non-zero exit.
+  /// Runs a command through the executor's lane scheduler and returns its
+  /// result, throwing [GitException] on a non-zero exit. [lane] defaults to
+  /// exclusive — the safe choice for a mutation; read-only callers pass
+  /// [ExecLane.read] (and fetch/push pass [ExecLane.sync]) so they overlap.
   Future<SSHCommandResult> _run(
     String repoPath,
     List<String> gitArgs,
@@ -1771,6 +1847,8 @@ class GitService {
     Duration? timeout,
     String? stdin,
     int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
@@ -1778,6 +1856,8 @@ class GitService {
       timeout: timeout ?? SSHCommandExecutor.defaultTimeout,
       stdin: stdin,
       retries: retries,
+      lane: lane,
+      compress: compress,
     );
     if (!result.isSuccess) {
       // 127 means git itself wasn't found (argv[0] is always `git` here), not

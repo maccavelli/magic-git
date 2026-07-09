@@ -83,6 +83,7 @@ class EnvironmentResolver {
       repoPath: repoPath,
       gitArgs: ['sh', '-c', script],
       timeout: const Duration(seconds: 20),
+      lane: ExecLane.read,
     );
     if (!result.isSuccess) {
       // Probe failed (e.g. odd shell) — fall back to overrides only so the user
@@ -218,7 +219,10 @@ class EnvironmentResolver {
       'aug="\$c:\$lp:\$PATH:/usr/bin:/bin:/usr/sbin:/sbin"; '
       'echo "OS=\$os"; '
       'echo "PATH=\$aug"; '
-      'for b in git glab gh fswatch inotifywait stdbuf; do '
+      // `gzip` isn't user-overridable — it's probed so the executor knows it
+      // may compress large reads on the wire (see CommandFormatter's
+      // compressOutput); a host without it just runs uncompressed.
+      'for b in git glab gh fswatch inotifywait stdbuf gzip; do '
       'p=\$(PATH="\$aug" command -v "\$b" 2>/dev/null || true); '
       'echo "BIN=\$b=\$p"; '
       'if [ -n "\$p" ]; then '

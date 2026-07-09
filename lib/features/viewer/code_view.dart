@@ -5,6 +5,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:re_highlight/styles/atom-one-dark.dart';
 import 'package:re_highlight/styles/github.dart';
 import '../common/diff_view.dart' show kDiffMono;
+import '../common/escape_dismissible.dart';
 import 'file_content.dart';
 import 'highlight_worker.dart';
 import 'syntax_highlighter.dart';
@@ -135,12 +136,19 @@ class CodeView extends StatefulWidget {
   /// on ⌘F. Null when find isn't offered (e.g. a rendered preview).
   final Listenable? findSignal;
 
+  /// Where focus goes when the find bar closes — the owning viewer window's
+  /// focus node. Without this, closing find drops focus on the enclosing
+  /// scope *above* the window's shortcut bindings, leaving ⌘W/⌘F dead until
+  /// the user clicks back inside.
+  final FocusNode? returnFocus;
+
   const CodeView({
     super.key,
     required this.content,
     required this.languageId,
     this.wrap = false,
     this.findSignal,
+    this.returnFocus,
   });
 
   @override
@@ -161,6 +169,16 @@ class _CodeViewState extends State<CodeView> {
   int _matchIdx = -1;
 
   HighlightedLines _doc = const HighlightedLines([], []);
+  // Memoized pixel width of the widest line (no-wrap mode). Measuring it runs
+  // a TextPainter layout over a line of up to maxHighlightLineLength chars —
+  // done in build, that re-ran on every frame of a window drag/resize.
+  // Invalidated when the doc or the theme brightness changes.
+  double? _widestW;
+  Brightness? _widestWFor;
+  // Registered while the find bar is open: Escape closes find (and only
+  // find), via the same registry the floating windows use — LIFO, so find
+  // (opened later) wins over the window's own Escape-to-close.
+  VoidCallback? _unregisterFindEscape;
   // Index of the line with the most code units — measured for its true pixel
   // width in `build` to size the horizontal scroll extent (so CJK/tab-heavy
   // lines, which a char-count estimate under-measures, are fully reachable).
@@ -207,6 +225,7 @@ class _CodeViewState extends State<CodeView> {
 
   @override
   void dispose() {
+    _unregisterFindEscape?.call();
     widget.findSignal?.removeListener(_openFind);
     _findCtrl.dispose();
     _findFocus.dispose();
@@ -218,6 +237,10 @@ class _CodeViewState extends State<CodeView> {
   // ---- Find ----------------------------------------------------------------
 
   void _openFind() {
+    _unregisterFindEscape ??= EscapeDismissRegistry.register(() {
+      _closeFind();
+      return true;
+    });
     setState(() => _findOpen = true);
     _findFocus.requestFocus();
     // Select any existing query so typing replaces it, matching a browser's ⌘F.
@@ -229,11 +252,15 @@ class _CodeViewState extends State<CodeView> {
   }
 
   void _closeFind() {
+    _unregisterFindEscape?.call();
+    _unregisterFindEscape = null;
     setState(() {
       _findOpen = false;
       _matchLines = const [];
       _matchIdx = -1;
     });
+    // Hand focus back to the owning window so its shortcuts stay live.
+    widget.returnFocus?.requestFocus();
   }
 
   void _recomputeMatches(String query) {
@@ -297,6 +324,7 @@ class _CodeViewState extends State<CodeView> {
 
   void _setDoc(HighlightedLines doc) {
     _doc = doc;
+    _widestW = null;
     var maxChars = 0;
     var widest = 0;
     for (var li = 0; li < doc.lines.length; li++) {
@@ -311,7 +339,8 @@ class _CodeViewState extends State<CodeView> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = codeThemeFor(MacosTheme.brightnessOf(context));
+    final brightness = MacosTheme.brightnessOf(context);
+    final theme = codeThemeFor(brightness);
     final base = kDiffMono.copyWith(color: theme.foreground);
     final charW = _charW;
     final lineH = _lineH;
@@ -348,19 +377,25 @@ class _CodeViewState extends State<CodeView> {
           // No-wrap: one synchronized horizontal scroll over content at least
           // as wide as the longest line, so every row scrolls together. Measure
           // the widest line's true pixel width (not chars × charW), so tabs and
-          // wide/CJK glyphs don't leave the tail unreachable off the right edge.
-          final widestW = _doc.lines.isEmpty
-              ? 0.0
-              : (TextPainter(
-                  text: lineToSpan(
-                    _doc.lines[_widestLineIndex],
-                    _doc.scopes,
-                    theme,
-                    base,
-                  ),
-                  textDirection: TextDirection.ltr,
-                  maxLines: 1,
-                )..layout()).width;
+          // wide/CJK glyphs don't leave the tail unreachable off the right
+          // edge. Memoized per (doc, brightness) — the measurement is O(widest
+          // line) and build runs on every frame of a window drag.
+          if (_widestW == null || _widestWFor != brightness) {
+            _widestW = _doc.lines.isEmpty
+                ? 0.0
+                : (TextPainter(
+                    text: lineToSpan(
+                      _doc.lines[_widestLineIndex],
+                      _doc.scopes,
+                      theme,
+                      base,
+                    ),
+                    textDirection: TextDirection.ltr,
+                    maxLines: 1,
+                  )..layout()).width;
+            _widestWFor = brightness;
+          }
+          final widestW = _widestW!;
           final contentW = (gutterW + 8 + widestW + 24)
               .clamp(constraints.maxWidth, double.infinity)
               .toDouble();
@@ -390,12 +425,14 @@ class _CodeViewState extends State<CodeView> {
         : total == 0
         ? 'No results'
         : '${_matchIdx + 1} of $total';
+    // Escape isn't bound here: closing find is registered with
+    // EscapeDismissRegistry while the bar is open, so it works no matter what
+    // holds focus (and takes priority over the window's Escape-to-close).
     return CallbackShortcuts(
       bindings: {
         const SingleActivator(LogicalKeyboardKey.enter): () => _step(1),
         const SingleActivator(LogicalKeyboardKey.enter, shift: true): () =>
             _step(-1),
-        const SingleActivator(LogicalKeyboardKey.escape): _closeFind,
       },
       child: Container(
         padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),

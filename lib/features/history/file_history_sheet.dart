@@ -28,7 +28,7 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
     final async = ref.watch(fileLogProvider((widget.repoPath, widget.path)));
-    final screen = MediaQuery.of(context).size;
+    final screen = MediaQuery.sizeOf(context);
     return MacosSheet(
       child: SizedBox(
         width: (screen.width * 0.78).clamp(640.0, 1040.0).toDouble(),
