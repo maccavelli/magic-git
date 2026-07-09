@@ -29,6 +29,8 @@ import 'switcher/connection_switcher.dart';
 import 'switcher/current_repo_indicator.dart';
 import 'viewer/viewer_host.dart';
 import 'viewer/viewer_providers.dart';
+import 'workspace/clone_sheet.dart';
+import 'workspace/create_repo_sheet.dart';
 
 /// Top-level window shell. Content is driven by connection state: the
 /// connection form until a session is established, then the feature panels
@@ -399,6 +401,28 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     );
   }
 
+  /// Palette entries — the sheets adapt to the active workspace (connected
+  /// mode) and own their Escape handling, so no EscapeDismissible wrapper.
+  void _openCloneRepository(BuildContext context) {
+    final connected = ref.read(connectionProvider).isConnected;
+    showMacosSheet<void>(
+      context: context,
+      builder: (_) => connected
+          ? const CloneRepositorySheet.connected()
+          : const CloneRepositorySheet.landing(),
+    );
+  }
+
+  void _openCreateRepository(BuildContext context) {
+    final connected = ref.read(connectionProvider).isConnected;
+    showMacosSheet<void>(
+      context: context,
+      builder: (_) => connected
+          ? const CreateRepositorySheet.connected()
+          : const CreateRepositorySheet.landing(),
+    );
+  }
+
   void _openPalette(BuildContext context) {
     final repoPath = ref.read(connectionProvider).repoPath;
     if (repoPath == null) return;
@@ -411,6 +435,8 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         onOpenSettings: () => _openSettings(context),
         onOpenShortcuts: () => _openShortcuts(context),
         onOpenConnections: () => _openConnections(context),
+        onCloneRepository: () => _openCloneRepository(context),
+        onCreateRepository: () => _openCreateRepository(context),
         onCheckoutBranch: (branch) =>
             _checkoutBranch(context, repoPath, branch),
       ),

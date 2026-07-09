@@ -39,6 +39,8 @@ class CommandPalette extends ConsumerStatefulWidget {
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenShortcuts;
   final VoidCallback onOpenConnections;
+  final VoidCallback onCloneRepository;
+  final VoidCallback onCreateRepository;
 
   /// Runs a guarded checkout of [branch] (dirty-tree prompt + refresh) using the
   /// shell's stable context — the palette is already gone by the time this runs.
@@ -52,6 +54,8 @@ class CommandPalette extends ConsumerStatefulWidget {
     required this.onOpenSettings,
     required this.onOpenShortcuts,
     required this.onOpenConnections,
+    required this.onCloneRepository,
+    required this.onCreateRepository,
     required this.onCheckoutBranch,
   });
 
@@ -147,6 +151,18 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
         label: 'Manage Connections',
         hint: 'Open',
         run: widget.onOpenConnections,
+      ),
+      _PaletteCommand(
+        icon: CupertinoIcons.cloud_download,
+        label: 'Clone Repository',
+        hint: 'Open',
+        run: widget.onCloneRepository,
+      ),
+      _PaletteCommand(
+        icon: CupertinoIcons.plus_rectangle_on_rectangle,
+        label: 'Create Repository',
+        hint: 'Open',
+        run: widget.onCreateRepository,
       ),
     ];
 

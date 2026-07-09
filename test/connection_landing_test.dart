@@ -20,6 +20,9 @@ Future<void> _pump(
       overrides: [
         savedConnectionsProvider.overrideWith((ref) => saved),
         savedLocalReposProvider.overrideWith((ref) => savedLocal),
+        // The clone sheet's default GitHub tab lists repos through the local
+        // executor for a This-Mac destination — stub it so no real gh runs.
+        forgeRepoListProvider.overrideWith((ref, key) async => []),
       ],
       child: const MacosApp(
         debugShowCheckedModeBanner: false,
@@ -159,6 +162,30 @@ void main() {
 
     expect(find.text('Choose…'), findsOneWidget);
     expect(find.text('No folder chosen'), findsOneWidget);
+  });
+
+  testWidgets('Clone Repository opens the clone sheet in landing mode', (
+    tester,
+  ) async {
+    await _pump(tester);
+    await tester.tap(find.text('Clone Repository'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Clone repository'), findsOneWidget);
+    expect(find.text('Destination'), findsOneWidget, reason: 'landing mode');
+    expect(find.text('This Mac'), findsOneWidget);
+  });
+
+  testWidgets('Create Repository opens the create sheet in landing mode', (
+    tester,
+  ) async {
+    await _pump(tester);
+    await tester.tap(find.text('Create Repository'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Create repository'), findsOneWidget);
+    expect(find.text('Destination'), findsOneWidget, reason: 'landing mode');
+    expect(find.text('Initial branch'), findsOneWidget);
   });
 
   testWidgets(

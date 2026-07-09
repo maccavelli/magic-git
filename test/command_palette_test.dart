@@ -26,6 +26,8 @@ const _refs = [
 ];
 
 class _Recorder {
+  int cloneOpened = 0;
+  int createOpened = 0;
   int? panel;
   String? checkedOut;
   int refreshed = 0;
@@ -50,6 +52,8 @@ Future<void> _open(WidgetTester tester, _Recorder rec) async {
                   onOpenSettings: () {},
                   onOpenShortcuts: () {},
                   onOpenConnections: () {},
+                  onCloneRepository: () => rec.cloneOpened++,
+                  onCreateRepository: () => rec.createOpened++,
                   onCheckoutBranch: (b) => rec.checkedOut = b,
                 ),
               ),
@@ -71,6 +75,26 @@ void main() {
     expect(find.text('Go to Repository'), findsOneWidget);
     expect(find.text('Go to History'), findsOneWidget);
     expect(find.text('Refresh'), findsOneWidget);
+  });
+
+  testWidgets('Clone/Create Repository commands invoke their callbacks', (
+    tester,
+  ) async {
+    final rec = _Recorder();
+    await _open(tester, rec);
+
+    await tester.enterText(find.byType(MacosTextField), 'clone');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Clone Repository'));
+    await tester.pumpAndSettle();
+    expect(rec.cloneOpened, 1);
+
+    await _open(tester, rec);
+    await tester.enterText(find.byType(MacosTextField), 'create');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create Repository'));
+    await tester.pumpAndSettle();
+    expect(rec.createOpened, 1);
   });
 
   testWidgets('offers local-branch checkouts but not remote-tracking refs', (

@@ -4,6 +4,8 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/escape_dismissible.dart';
 import '../common/tool_icon_button.dart';
+import '../workspace/clone_sheet.dart';
+import '../workspace/create_repo_sheet.dart';
 import 'connection_form.dart';
 import 'local_repo_form.dart';
 
@@ -25,6 +27,23 @@ class ConnectionLanding extends ConsumerWidget {
     showMacosSheet<void>(
       context: context,
       builder: (_) => const EscapeDismissible(child: NewLocalRepoSheet()),
+    );
+  }
+
+  // The clone/create sheets register their own Escape handling (they must
+  // confirm/cancel a running job first), so they are not wrapped in
+  // EscapeDismissible.
+  void _openCloneRepository(BuildContext context) {
+    showMacosSheet<void>(
+      context: context,
+      builder: (_) => const CloneRepositorySheet.landing(),
+    );
+  }
+
+  void _openCreateRepository(BuildContext context) {
+    showMacosSheet<void>(
+      context: context,
+      builder: (_) => const CreateRepositorySheet.landing(),
     );
   }
 
@@ -166,6 +185,24 @@ class ConnectionLanding extends ConsumerWidget {
                   controlSize: ControlSize.large,
                   onPressed: () => _openNewLocalRepo(context),
                   child: const Text('Add Local Repository'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: PushButton(
+                  controlSize: ControlSize.large,
+                  onPressed: () => _openCloneRepository(context),
+                  child: const Text('Clone Repository'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: PushButton(
+                  controlSize: ControlSize.large,
+                  onPressed: () => _openCreateRepository(context),
+                  child: const Text('Create Repository'),
                 ),
               ),
               const SizedBox(height: 12),

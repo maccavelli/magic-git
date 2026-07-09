@@ -41,6 +41,9 @@ Future<void> _pump(
     ProviderScope(
       overrides: [
         savedLocalReposProvider.overrideWith((ref) async => savedLocal),
+        // Opening the clone/create sheets from the header must not spawn a
+        // real gh for the This-Mac browse list.
+        forgeRepoListProvider.overrideWith((ref, key) async => []),
       ],
       child: const MacosApp(
         debugShowCheckedModeBanner: false,
@@ -88,6 +91,25 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Choose…'), findsOneWidget);
+  });
+
+  testWidgets('Clone repository opens the clone sheet (landing mode while '
+      'disconnected)', (tester) async {
+    await _pump(tester);
+    await tester.tap(_byMacosTooltip('Clone repository'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Clone repository'), findsOneWidget);
+    expect(find.text('Destination'), findsOneWidget);
+  });
+
+  testWidgets('Create repository opens the create sheet', (tester) async {
+    await _pump(tester);
+    await tester.tap(_byMacosTooltip('Create repository'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Create repository'), findsOneWidget);
+    expect(find.text('Initial branch'), findsOneWidget);
   });
 
   Future<void> pumpSwitcher(WidgetTester tester, ConnectionState state) async {

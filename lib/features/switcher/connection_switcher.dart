@@ -10,6 +10,8 @@ import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/tool_icon_button.dart';
 import '../connection/local_repo_form.dart';
+import '../workspace/clone_sheet.dart';
+import '../workspace/create_repo_sheet.dart';
 
 String _basename(String path) {
   final parts = path.split('/').where((s) => s.isNotEmpty).toList();
@@ -175,6 +177,20 @@ class ConnectionsPanel extends ConsumerWidget {
                     tooltip: 'Add local repository',
                     size: 16,
                     onPressed: () => _newLocalRepo(context),
+                  ),
+                  const SizedBox(width: 4),
+                  ToolIconButton(
+                    icon: CupertinoIcons.cloud_download,
+                    tooltip: 'Clone repository',
+                    size: 16,
+                    onPressed: () => _cloneRepository(context, ref),
+                  ),
+                  const SizedBox(width: 4),
+                  ToolIconButton(
+                    icon: CupertinoIcons.plus_rectangle_on_rectangle,
+                    tooltip: 'Create repository',
+                    size: 16,
+                    onPressed: () => _createRepository(context, ref),
                   ),
                   const SizedBox(width: 4),
                   ToolIconButton(
@@ -750,6 +766,32 @@ class ConnectionsPanel extends ConsumerWidget {
     showMacosSheet<void>(
       context: context,
       builder: (_) => const EscapeDismissible(child: NewLocalRepoSheet()),
+    );
+  }
+
+  /// Clone/create open in connected mode when a workspace is active (they
+  /// target it) and landing mode otherwise (they offer the destination
+  /// picker). Not EscapeDismissible-wrapped: the sheets own their Escape
+  /// handling (a running job must be cancelled first).
+  void _cloneRepository(BuildContext context, WidgetRef ref) {
+    final connected = ref.read(connectionProvider).isConnected;
+    Navigator.of(context).pop();
+    showMacosSheet<void>(
+      context: context,
+      builder: (_) => connected
+          ? const CloneRepositorySheet.connected()
+          : const CloneRepositorySheet.landing(),
+    );
+  }
+
+  void _createRepository(BuildContext context, WidgetRef ref) {
+    final connected = ref.read(connectionProvider).isConnected;
+    Navigator.of(context).pop();
+    showMacosSheet<void>(
+      context: context,
+      builder: (_) => connected
+          ? const CreateRepositorySheet.connected()
+          : const CreateRepositorySheet.landing(),
     );
   }
 

@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../exec/local_command_executor.dart';
 import '../forge/forge.dart';
+import '../forge/forge_repo_summary.dart';
 import '../git/git_service.dart';
 import '../git/host_fs_service.dart';
 import '../git/local_watch_service.dart';
@@ -432,6 +433,15 @@ class ConnectionController extends Notifier<ConnectionState> {
   List<String>? _lastRepoPaths;
   List<String> _lastFsmonitorPaths = const [];
 
+  /// Per-session memo of forge CLI logins keyed by (forge, host), so browsing
+  /// a forge's repos authenticates its host at most once. Deliberately *not*
+  /// cleared by [_invalidateRepoState] (a repo switch keeps the same host
+  /// auth) — only by the lifecycle methods that change the connection identity
+  /// ([connect], [connectLocal], [beginProvisioning], [disconnect]). A failed
+  /// login evicts its own entry so the next browse/reload retries. See
+  /// [ensureForgeHostLogin].
+  final Map<(Forge, String), Future<void>> _hostLogins = {};
+
   /// Resolved by [acceptHostKeyChange]/[rejectHostKeyChange] — the only way
   /// [_verifyHostKey] ever returns while a mismatch prompt is showing. Null
   /// whenever no prompt is currently awaiting a decision.
@@ -584,6 +594,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     // a repo switch / reconnect must never serve the previous repo's forge
     // classification or cross-host PR/run/issue data.
     ref.invalidate(forgeProvider);
+    ref.invalidate(forgeRepoListProvider);
     ref.invalidate(pullRequestsProvider);
     ref.invalidate(workflowRunsProvider);
     ref.invalidate(runJobsProvider);
@@ -737,6 +748,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     _lastConnectionLabel = connectionLabel;
     _lastRepoPaths = repoPaths;
     _lastFsmonitorPaths = fsmonitorPaths;
+    _hostLogins.clear(); // new connection identity — re-auth forge hosts lazily
     _invalidateRepoState();
     // A fresh connection to a different host/repo shouldn't keep showing the
     // previous session's command output — but an auto-reconnect attempt to
@@ -938,6 +950,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     // machine's own gh/glab auth untouched.
     _lastGitlabToken = null;
     _lastGithubToken = null;
+    _hostLogins.clear(); // new connection identity — re-auth forge hosts lazily
     // Release the *previous* session's transport before starting the new one —
     // the switcher lets the user jump straight here with no explicit disconnect.
     if (state.isLocal) {
@@ -1216,6 +1229,272 @@ class ConnectionController extends Notifier<ConnectionState> {
     );
   }
 
+  /// Ensures the active backend's forge CLI is authenticated to [host] for
+  /// [forge], using this connection's stored token — the repo-less login the
+  /// clone sheet needs before it can list "your repositories" on a host that
+  /// no open repo's origin points at. Memoized per (forge, host) for the
+  /// session (see [_hostLogins]); a no-op when this connection supplied no
+  /// token for the forge (the host's own CLI auth is then relied on). A failed
+  /// login evicts its memo so a reload retries rather than replaying failure.
+  Future<void> ensureForgeHostLogin(Forge forge, String host) {
+    final key = (forge, host);
+    final existing = _hostLogins[key];
+    if (existing != null) return existing;
+
+    final token = switch (forge) {
+      Forge.github => _lastGithubToken,
+      Forge.gitlab => _lastGitlabToken,
+      _ => null,
+    };
+    if (token == null || token.isEmpty) {
+      // No managed token — rely on whatever auth the host's gh/glab already
+      // has. Memoize the decision so a browse doesn't re-derive it each time.
+      return _hostLogins[key] = Future<void>.value();
+    }
+
+    // Construct the service from [_activeExecutor] directly rather than via
+    // ghServiceProvider/glabServiceProvider: those watch activeExecutorProvider
+    // → connectionProvider, and reading them from within this notifier trips
+    // Riverpod's circular-dependency guard. Same reason [_activeExecutor]
+    // exists (see its doc).
+    final login = switch (forge) {
+      Forge.github => GhService(
+        _activeExecutor,
+      ).loginWithTokenHost(host: host, token: token),
+      Forge.gitlab => GlabService(
+        _activeExecutor,
+      ).loginWithTokenHost(host: host, token: token),
+      _ => Future<void>.value(),
+    };
+    final guarded = login.catchError((Object e) {
+      _hostLogins.remove(key); // a failed login is retryable
+      throw e;
+    });
+    return _hostLogins[key] = guarded;
+  }
+
+  /// Opens a transport-only ("provisioning") SSH session to [conn]'s host with
+  /// **no repository**: it establishes the client and probes the environment
+  /// (so `git`/`gh`/`glab` resolve), but skips repo validation, fsmonitor, the
+  /// repo-scoped forge logins, and the `connected` state. The phase stays
+  /// [ConnectionPhase.connecting], so `app_shell` keeps routing to the landing
+  /// while the clone/create sheet drives the actual work on top.
+  ///
+  /// Returns this attempt's token — pass it to [finalizeProvisioned] (on
+  /// success) or [abortProvisioning] (on cancel/close). Returns null when the
+  /// attempt was superseded or failed (a failure lands `phase: error` exactly
+  /// like [connect]).
+  Future<int?> beginProvisioning(SavedConnection conn) async {
+    final store = ref.read(connectionStoreProvider);
+    String? secret, token, ghToken, key, passphrase;
+    try {
+      final secrets = await Future.wait([
+        store.secretFor(conn.id),
+        store.gitlabTokenFor(conn.id),
+        store.githubTokenFor(conn.id),
+        store.privateKeyFor(conn.id),
+        store.passphraseFor(conn.id),
+      ]);
+      secret = secrets[0];
+      token = secrets[1];
+      ghToken = secrets[2];
+      key = secrets[3];
+      passphrase = secrets[4];
+    } catch (_) {
+      // Secrets unavailable — the connection may still succeed via other auth.
+    }
+    String? notEmpty(String? v) => (v != null && v.isNotEmpty) ? v : null;
+    final profile = SSHConnectionProfile(
+      host: conn.host,
+      port: conn.port,
+      username: conn.username,
+      password: notEmpty(secret),
+      privateKey: notEmpty(key),
+      passphrase: notEmpty(passphrase),
+    );
+
+    final attempt = ++_attempt;
+    if (!(_hostKeyDecision?.isCompleted ?? true)) {
+      _hostKeyDecision!.complete(false);
+    }
+    _hostKeyDecision = null;
+    if (state.isLocal && state.repoPath != null) {
+      await SecurityScopedBookmark.stopAccessing(state.repoPath!);
+    }
+
+    _lastProfile = profile;
+    // Null repo: a half-provisioned session is not reconnectable until
+    // [finalizeProvisioned] gives it a real repo path.
+    _lastRepoPath = null;
+    // Retain the tokens so _forgeTokenVarsToNeutralize() and
+    // ensureForgeHostLogin work during the browse, and finalize can log in.
+    _lastGitlabToken = token;
+    _lastGithubToken = ghToken;
+    _lastConnectionId = conn.id;
+    _lastConnectionLabel = conn.displayName;
+    _lastRepoPaths = conn.allRepoPaths;
+    _lastFsmonitorPaths = conn.fsmonitorPaths;
+    _hostLogins.clear();
+
+    _invalidateRepoState();
+    ref.read(outputLogProvider.notifier).clear();
+    ref.read(executorProvider).resetEnvironment();
+    ref.read(binaryEnvironmentProvider.notifier).clear();
+
+    state = ConnectionState(
+      phase: ConnectionPhase.connecting,
+      repoPath: null,
+      connectionId: conn.id,
+      connectionLabel: conn.displayName,
+      host: conn.host,
+    );
+    try {
+      await ref
+          .read(sshClientManagerProvider)
+          .connect(
+            profile,
+            onVerifyHostKey: (type, fingerprintBytes) => _verifyHostKey(
+              attempt,
+              profile.host,
+              profile.port,
+              type,
+              fingerprintBytes,
+            ),
+          );
+      if (attempt != _attempt || !ref.mounted) return null;
+
+      // Probe from the login home dir (`cd '.'`) — no repo to validate yet.
+      await _resolveEnvironment('.', attempt: attempt);
+      if (attempt != _attempt || !ref.mounted) return null;
+
+      return attempt;
+    } catch (e) {
+      if (attempt != _attempt || !ref.mounted) return null;
+      if (_hostKeyCancelledAttempt == attempt) {
+        state = const ConnectionState();
+        return null;
+      }
+      state = ConnectionState(
+        phase: ConnectionPhase.error,
+        error: e.toString(),
+        connectionId: conn.id,
+        connectionLabel: conn.displayName,
+        host: conn.host,
+      );
+      return null;
+    }
+  }
+
+  /// Promotes a provisioning session (see [beginProvisioning]) into a normal
+  /// connected session on [repoPath] — the just-cloned/created repo. Validates
+  /// the repo, optionally tunes fsmonitor, runs the repo-scoped forge logins,
+  /// persists [repoPath] into the saved connection's repo list, and lands the
+  /// `connected` state watching for drops.
+  ///
+  /// Returns false when the session was superseded (a concurrent disconnect /
+  /// new connect) — the caller should just close. Rethrows a validation
+  /// failure so the sheet can show it and offer Close (→ [abortProvisioning]).
+  /// Deliberately does NOT clear the output log, so the clone transcript
+  /// remains as this session's history.
+  Future<bool> finalizeProvisioned({
+    required int token,
+    required SavedConnection conn,
+    required String repoPath,
+    bool enableFsmonitor = false,
+  }) async {
+    if (token != _attempt || !ref.mounted) return false;
+
+    await ref.read(gitServiceProvider).validateRepoPath(repoPath);
+    if (token != _attempt || !ref.mounted) return false;
+
+    if (enableFsmonitor) {
+      try {
+        await ref.read(gitServiceProvider).setFsmonitor(repoPath, enabled: true);
+      } catch (e) {
+        if (token != _attempt || !ref.mounted) return false;
+        ref
+            .read(outputLogProvider.notifier)
+            .logError('fsmonitor setup ($repoPath)', e.toString());
+      }
+      if (token != _attempt || !ref.mounted) return false;
+    }
+
+    // Repo-scoped forge logins against the new repo's origin — idempotent with
+    // any host login already done while browsing, and the path that
+    // authenticates a private clone-by-URL whose host was never typed into a
+    // browse field. Best-effort → non-fatal warnings, exactly like connect().
+    String? warning;
+    // Services built from [_activeExecutor] directly — see ensureForgeHostLogin
+    // for why not the providers.
+    final loginWarnings = await Future.wait([
+      if ((_lastGitlabToken ?? '').isNotEmpty)
+        GlabService(_activeExecutor)
+            .loginWithToken(repoPath, _lastGitlabToken!)
+            .then<String?>(
+              (_) => null,
+              onError: (Object e) =>
+                  'GitLab token login failed — GitLab panels may not work '
+                  'until the remote is authenticated. ($e)',
+            ),
+      if ((_lastGithubToken ?? '').isNotEmpty)
+        GhService(_activeExecutor)
+            .loginWithToken(repoPath, _lastGithubToken!)
+            .then<String?>(
+              (_) => null,
+              onError: (Object e) =>
+                  'GitHub token login failed — GitHub panels may not work '
+                  'until the remote is authenticated. ($e)',
+            ),
+    ]);
+    if (token != _attempt || !ref.mounted) return false;
+    final warnings = loginWarnings.whereType<String>().toList();
+    if (warnings.isNotEmpty) warning = warnings.join('\n');
+
+    // Persist the new repo into the saved connection.
+    var updated = conn.copyWith(
+      repoPaths: SavedConnection.dedupePaths([...conn.allRepoPaths, repoPath]),
+    );
+    if (enableFsmonitor) updated = updated.withFsmonitor(repoPath, true);
+    try {
+      await ref.read(connectionStoreProvider).updateMetadata(updated);
+      if (token != _attempt || !ref.mounted) return false;
+      ref.invalidate(savedConnectionsProvider);
+      await ref.read(connectionStoreProvider).touch(conn.id);
+    } catch (e) {
+      warning = [
+        ?warning,
+        'The repository was opened but could not be saved to this '
+            'connection. ($e)',
+      ].join('\n');
+    }
+    if (token != _attempt || !ref.mounted) return false;
+
+    // The session is reconnectable again now that it has a real repo.
+    _lastRepoPath = repoPath;
+    _lastRepoPaths = updated.allRepoPaths;
+    _lastFsmonitorPaths = updated.fsmonitorPaths;
+
+    _invalidateRepoState(); // NB: does not clear the output log
+    state = ConnectionState(
+      phase: ConnectionPhase.connected,
+      repoPath: repoPath,
+      repoPaths: updated.allRepoPaths,
+      connectionId: conn.id,
+      connectionLabel: conn.displayName,
+      host: conn.host,
+      warning: warning,
+    );
+    _watchForDrop(token);
+    return true;
+  }
+
+  /// Tears down a provisioning session that was never finalized (the clone/
+  /// create sheet closed or its job was cancelled). A no-op once superseded.
+  Future<void> abortProvisioning(int token) async {
+    if (token != _attempt) return;
+    await disconnect();
+  }
+
   Future<void> disconnect() async {
     ++_attempt; // supersede any in-flight connect
     _lastProfile = null; // an explicit disconnect is not reconnectable
@@ -1242,6 +1521,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       await ref.read(sshClientManagerProvider).disconnect();
     }
     ref.read(binaryEnvironmentProvider.notifier).clear();
+    _hostLogins.clear();
     _invalidateRepoState();
     state = const ConnectionState();
   }
@@ -1900,6 +2180,34 @@ final forgeProvider = FutureProvider.autoDispose.family<Forge, String>((
   }
   return forge;
 });
+
+/// The authenticated user's repositories on a forge host, for the clone
+/// sheet's browse list. Keyed by (forge, host, local) — an *account-level*
+/// listing, independent of any active repo, so deliberately NOT keyed by
+/// repoPath. `local` runs against this machine's own gh/glab (for a
+/// "This Mac" destination, relying on the Mac's own CLI auth — no managed
+/// token); otherwise it runs on the active/provisioned SSH session, logging
+/// the host in first with the connection's stored token. Session-scoped:
+/// cleared by [ConnectionController._invalidateRepoState] on every connect /
+/// repo switch so a stale connection's repos never leak across hosts.
+final forgeRepoListProvider = FutureProvider.autoDispose
+    .family<List<ForgeRepoSummary>, (Forge, String, bool)>((ref, key) async {
+      final (forge, host, local) = key;
+      final executor = local
+          ? ref.read(localExecutorProvider)
+          : ref.read(activeExecutorProvider);
+      if (!local) {
+        await ref.read(connectionProvider.notifier).ensureForgeHostLogin(
+          forge,
+          host,
+        );
+      }
+      return switch (forge) {
+        Forge.github => GhService(executor).listRepos(host: host),
+        Forge.gitlab => GlabService(executor).listRepos(host: host),
+        _ => throw ArgumentError('forgeRepoListProvider: not a forge: $forge'),
+      };
+    });
 
 /// Open pull requests for the connected GitHub repo.
 final pullRequestsProvider = FutureProvider.autoDispose

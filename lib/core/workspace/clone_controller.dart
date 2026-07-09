@@ -101,11 +101,19 @@ class CloneRequest {
   /// SSH-only toggle: `mkdir -p` the parent if it doesn't exist yet.
   final bool createParents;
 
+  /// Run against this machine's own filesystem ([LocalCommandExecutor])
+  /// regardless of the active session's backend. Needed for a "clone to This
+  /// Mac" from the disconnected landing, where there is no active local
+  /// session to route through [activeExecutorProvider] (the destination
+  /// doesn't exist yet, so it can't be opened first).
+  final bool local;
+
   const CloneRequest({
     required this.source,
     required this.parentDir,
     required this.name,
     this.createParents = false,
+    this.local = false,
   });
 }
 
@@ -134,7 +142,13 @@ class CloneJobController extends Notifier<CloneJobState> {
     _cancelled = false;
     _createdByThisJob = false;
 
-    final fs = ref.read(hostFsServiceProvider);
+    // Local requests force the local executor even when no local session is
+    // active (clone-to-This-Mac from the landing); everything else follows the
+    // active session's backend.
+    final executor = request.local
+        ? ref.read(localExecutorProvider)
+        : ref.read(activeExecutorProvider);
+    final fs = HostFsService(executor);
     final dest = HostFsService.joinPath(request.parentDir, request.name);
     state = CloneJobState(phase: CloneJobPhase.preparing, destPath: dest);
 
@@ -199,13 +213,11 @@ class CloneJobController extends Notifier<CloneJobState> {
 
     int? exitCode;
     try {
-      final handle = await ref
-          .read(activeExecutorProvider)
-          .executeStream(
-            repoPath: request.parentDir,
-            gitArgs: argv,
-            extraEnv: extraEnv,
-          );
+      final handle = await executor.executeStream(
+        repoPath: request.parentDir,
+        gitArgs: argv,
+        extraEnv: extraEnv,
+      );
       state = state.copyWith(phase: CloneJobPhase.cloning);
       if (_cancelled) {
         // Cancelled between the open and here — kill it right away.

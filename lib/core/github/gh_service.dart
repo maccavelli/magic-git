@@ -142,7 +142,7 @@ class GhService {
   /// `origin` wired — the create sheet's forge-first GitHub mode. The forge's
   /// default branch governs the new repo (README-initialized repos are born on
   /// it), which is why the UI disables the initial-branch field in this mode.
-  Future<void> createRepo({
+  Future<SSHCommandResult> createRepo({
     required String cwd,
     required String name,
     required bool private,
@@ -171,6 +171,7 @@ class GhService {
     if (!result.isSuccess) {
       throw GhException('gh repo create failed', result);
     }
+    return result;
   }
 
   /// argv for a streamed clone of [slug] into [dirName] (run with the parent
