@@ -11,8 +11,10 @@ import '../../core/workspace/clone_controller.dart';
 import '../common/async_views.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
+import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'remote_directory_browser.dart';
+import 'wizard.dart';
 import 'workspace_registration.dart';
 import 'workspace_targets.dart';
 import 'workspace_widgets.dart';
@@ -23,10 +25,22 @@ import 'workspace_widgets.dart';
 /// Two modes: [CloneRepositorySheet.connected] targets the active workspace;
 /// [CloneRepositorySheet.landing] adds a destination picker (This Mac, or a
 /// saved SSH connection, which is provisioned on demand).
+///
+/// Presented as a data-driven wizard (same framework as the create sheet —
+/// see wizard.dart): Destination → Source → Location → Review, with a
+/// breadcrumb indicator, per-step Continue gating, an instructional intro on
+/// every step, and a bottom progress bar that fills per step and turns green
+/// once the clone has completed. The Destination step only participates on
+/// the landing variant.
 class CloneRepositorySheet extends ConsumerStatefulWidget {
   final bool landing;
   const CloneRepositorySheet.connected({super.key}) : landing = false;
   const CloneRepositorySheet.landing({super.key}) : landing = true;
+
+  /// How long the finished (green) progress bar stays visible before the
+  /// sheet pops on success. Overridable so tests don't wait it out.
+  @visibleForTesting
+  static Duration successPopDelay = const Duration(milliseconds: 600);
 
   @override
   ConsumerState<CloneRepositorySheet> createState() =>
@@ -60,12 +74,98 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
   bool _submitting = false;
   String? _error;
 
+  /// Set once the clone completed and the repo was registered — the bottom
+  /// progress bar turns green for [CloneRepositorySheet.successPopDelay]
+  /// before the sheet pops.
+  bool _finished = false;
+
   // Provisioning (landing → saved SSH connection).
   int? _provisionToken;
   bool _provisioning = false;
 
   WorkspaceTarget _target = WorkspaceTarget.sshActive;
   VoidCallback? _unregisterEscape;
+
+  // --- Wizard engine ---------------------------------------------------
+  // The steps, in order, as data — the build method renders whatever this
+  // list says. Bodies/predicates close over the sheet's state fields.
+  late final List<WizardStep> _steps = [
+    WizardStep(
+      id: 'destination',
+      title: 'Destination',
+      intro:
+          'Choose where the clone will live: on this Mac, or on one of your '
+          'saved SSH hosts. Picking a host connects to it on demand — the '
+          'clone runs there and nothing is copied to this Mac.',
+      applicable: () => widget.landing,
+      valid: () => !_provisioning,
+      body: _destinationSection,
+    ),
+    WizardStep(
+      id: 'source',
+      title: 'Source',
+      intro:
+          'Pick what to clone: browse the GitHub or GitLab repositories '
+          'your account owns (using the destination\'s own gh/glab '
+          'sign-in), or paste any Git URL — including repositories owned '
+          'by an organization or another user.',
+      valid: _sourceValid,
+      body: _sourceStep,
+    ),
+    WizardStep(
+      id: 'location',
+      title: 'Location',
+      intro:
+          'Name the new folder and choose the parent folder it is cloned '
+          'into, plus how the finished clone is registered in this app.',
+      valid: _locationValid,
+      body: _locationStep,
+    ),
+    WizardStep(
+      id: 'review',
+      title: 'Review',
+      intro:
+          'Nothing has been cloned yet — check the summary below, then '
+          'press Clone. Progress streams live at the bottom; a failed or '
+          'cancelled clone cleans up its partial folder automatically.',
+      valid: WizardStep.always,
+      body: _reviewStep,
+    ),
+  ];
+  int _stepIndex = 0;
+
+  List<WizardStep> get _activeSteps => [
+    for (final s in _steps)
+      if (s.applicable()) s,
+  ];
+
+  bool _sourceValid() => _tab == _SourceTab.url
+      ? _url.text.trim().isNotEmpty
+      : _selected != null;
+
+  bool _locationValid() {
+    if (!HostFsService.isValidRepoDirName(_name.text.trim())) return false;
+    if (_isLocalTarget) return _pickedParent != null;
+    return _parent.text.trim().startsWith('/');
+  }
+
+  void _goBack() {
+    if (_stepIndex == 0 || _submitting || _finished) return;
+    setState(() {
+      _stepIndex--;
+      _error = null;
+    });
+  }
+
+  void _goNext() {
+    final steps = _activeSteps;
+    if (_stepIndex >= steps.length - 1) return;
+    if (!steps[_stepIndex].valid()) return;
+    setState(() {
+      _stepIndex++;
+      _error = null;
+    });
+  }
 
   @override
   void initState() {
@@ -195,14 +295,8 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
   }
 
   bool get _canSubmit {
-    if (_submitting) return false;
-    if (!HostFsService.isValidRepoDirName(_name.text.trim())) return false;
-    final sourceOk = _tab == _SourceTab.url
-        ? _url.text.trim().isNotEmpty
-        : _selected != null;
-    if (!sourceOk) return false;
-    if (_isLocalTarget) return _pickedParent != null;
-    return _parent.text.trim().startsWith('/');
+    if (_submitting || _finished) return false;
+    return _activeSteps.every((s) => s.valid());
   }
 
   Future<void> _submit() async {
@@ -254,6 +348,11 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
       if (!mounted) return;
       // Provisioning (if any) has been finalized by _register; don't abort it.
       _provisionToken = null;
+      // Let the finished (green) progress bar register before the sheet
+      // pops — success otherwise vanishes the very frame it happens.
+      setState(() => _finished = true);
+      await Future<void>.delayed(CloneRepositorySheet.successPopDelay);
+      if (!mounted) return;
       Navigator.of(context).pop();
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
@@ -292,7 +391,6 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
         }
     }
   }
-
 
   Future<void> _requestClose() async {
     final job = ref.read(cloneJobProvider);
@@ -343,55 +441,59 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
     final typography = MacosTheme.of(context).typography;
     final job = ref.watch(cloneJobProvider);
     final running = job.isRunning || _submitting;
+    final steps = _activeSteps;
+    final stepIndex = _stepIndex.clamp(0, steps.length - 1);
 
-    return MacosSheet(
-      child: SizedBox(
-        width: 560,
-        height: (MediaQuery.sizeOf(context).height - 60).clamp(420.0, 640.0),
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  const MacosIcon(CupertinoIcons.cloud_download, size: 18),
-                  const SizedBox(width: 8),
-                  Text('Clone repository', style: typography.title2),
-                  const Spacer(),
-                  ToolIconButton(
-                    icon: CupertinoIcons.xmark,
-                    tooltip: 'Close',
-                    size: 15,
-                    onPressed: _requestClose,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 14),
-              Expanded(
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (widget.landing) ...[
-                        _destinationSection(typography),
-                        const SizedBox(height: 14),
-                      ],
-                      _sourceSection(typography),
-                      const SizedBox(height: 14),
-                      _nameAndParentSection(typography),
-                    ],
-                  ),
+    return SizedSheet(
+      width: 392,
+      height: (MediaQuery.sizeOf(context).height - 60).clamp(460.0, 680.0),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const MacosIcon(CupertinoIcons.cloud_download, size: 18),
+                const SizedBox(width: 8),
+                Text('Clone repository', style: typography.title2),
+                const Spacer(),
+                ToolIconButton(
+                  icon: CupertinoIcons.xmark,
+                  tooltip: 'Close',
+                  size: 15,
+                  onPressed: _requestClose,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            WizardStepIndicator(steps: steps, current: stepIndex),
+            const SizedBox(height: 14),
+            Expanded(
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    WizardStepIntro(steps[stepIndex].intro),
+                    const SizedBox(height: 14),
+                    steps[stepIndex].body(typography),
+                  ],
                 ),
               ),
-              const SizedBox(height: 12),
-              if (_error != null) ...[
-                WorkspaceBanner(_error!, error: true),
-                const SizedBox(height: 10),
-              ],
-              _footer(typography, job, running),
+            ),
+            const SizedBox(height: 12),
+            if (_error != null) ...[
+              WorkspaceBanner(_error!, error: true),
+              const SizedBox(height: 10),
             ],
-          ),
+            WizardProgressBar(
+              steps: steps,
+              current: stepIndex,
+              complete: _finished,
+            ),
+            const SizedBox(height: 10),
+            _footer(typography, job, running),
+          ],
         ),
       ),
     );
@@ -419,6 +521,12 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
               ),
           ],
         ),
+        WizardHint(
+          _destConnectionId == null
+              ? 'The repository is cloned onto this Mac\'s own filesystem.'
+              : 'The repository is cloned on the selected host over SSH — '
+                    'its own git and forge sign-ins are used.',
+        ),
         if (_provisioning)
           Padding(
             padding: const EdgeInsets.only(top: 6),
@@ -438,21 +546,32 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
     );
   }
 
-  Widget _sourceSection(MacosTypography typography) {
+  Widget _sourceStep(MacosTypography typography) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
+        Text('Source', style: typography.caption1),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
           children: [
             _tabButton('GitHub', _SourceTab.github),
-            const SizedBox(width: 6),
             _tabButton('GitLab', _SourceTab.gitlab),
-            const SizedBox(width: 6),
             _tabButton('URL', _SourceTab.url),
           ],
         ),
+        WizardHint(
+          _tab == _SourceTab.url
+              ? 'Any URL git clone accepts — HTTPS or SSH. Private '
+                    'repositories use the destination\'s own credentials.'
+              : 'Lists the repositories your signed-in account owns — pick '
+                    'one below. For an organization\'s repo, use URL.',
+        ),
         const SizedBox(height: 10),
-        if (_tab == _SourceTab.url)
+        if (_tab == _SourceTab.url) ...[
+          Text('Repository URL', style: typography.caption1),
+          const SizedBox(height: 4),
           MacosTextField(
             controller: _url,
             placeholder: 'https://github.com/owner/repo.git',
@@ -465,8 +584,12 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
               }
               setState(() {});
             },
-          )
-        else
+          ),
+          const WizardHint(
+            'The folder name on the Location step is prefilled from the '
+            'URL\'s last path segment.',
+          ),
+        ] else
           _forgeBrowse(typography),
       ],
     );
@@ -491,6 +614,8 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        Text('Forge host', style: typography.caption1),
+        const SizedBox(height: 4),
         Row(
           children: [
             Expanded(
@@ -513,6 +638,10 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
               },
             ),
           ],
+        ),
+        WizardHint(
+          'Leave as $_defaultHost, or a self-hosted instance the '
+          'destination\'s CLI is signed in to. Press Return to reload.',
         ),
         const SizedBox(height: 6),
         MacosTextField(
@@ -559,21 +688,15 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
             ),
           ),
         ),
-        Padding(
-          padding: const EdgeInsets.only(top: 4),
-          child: Text(
-            'Shows repositories you own. For an organization repo, use the URL '
-            'tab.',
-            style: typography.caption1.copyWith(
-              color: MacosColors.systemGrayColor,
-            ),
-          ),
+        const WizardHint(
+          'Selecting a repository prefills the folder name on the '
+          'Location step.',
         ),
       ],
     );
   }
 
-  Widget _nameAndParentSection(MacosTypography typography) {
+  Widget _locationStep(MacosTypography typography) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -585,6 +708,10 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           decoration: kAppTextFieldDecoration,
           focusedDecoration: kAppTextFieldFocusedDecoration,
           onChanged: (_) => setState(() {}),
+        ),
+        const WizardHint(
+          'The new folder created inside the parent — prefilled from the '
+          'source. Letters, digits, dot, dash and underscore.',
         ),
         const SizedBox(height: 12),
         if (_isLocalTarget)
@@ -624,6 +751,9 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
             ),
           ],
         ),
+        const WizardHint(
+          'The repository folder is created inside this folder.',
+        ),
         const SizedBox(height: 10),
         WorkspaceToggleRow(
           on: _saveLocal,
@@ -632,6 +762,10 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           offIcon: CupertinoIcons.tray_arrow_down,
           label: 'Save to Local Repositories',
         ),
+        const WizardHint(
+          'Remembers this repository so it appears in the Connections '
+          'list for quick reopening.',
+        ),
         if (_saveLocal) ...[
           const SizedBox(height: 8),
           MacosTextField(
@@ -639,6 +773,10 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
             placeholder: 'Label (optional)',
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
+          ),
+          const WizardHint(
+            'Display name in the Connections list — defaults to the '
+            'folder name.',
           ),
         ],
       ],
@@ -671,6 +809,10 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
             ),
           ],
         ),
+        const WizardHint(
+          'Absolute path on the host (e.g. /srv/git). The repository '
+          'folder is created inside it.',
+        ),
         const SizedBox(height: 10),
         WorkspaceToggleRow(
           on: _createParents,
@@ -678,6 +820,10 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           onIcon: CupertinoIcons.folder_badge_plus,
           offIcon: CupertinoIcons.folder,
           label: 'Create parent folders if missing',
+        ),
+        const WizardHint(
+          'When off, a missing parent folder stops the clone instead of '
+          'being silently created.',
         ),
         const SizedBox(height: 8),
         WorkspaceToggleRow(
@@ -687,11 +833,54 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           offIcon: CupertinoIcons.bolt,
           label: 'Enable git fsmonitor (faster status on large repos)',
         ),
+        const WizardHint(
+          'Turns on git\'s filesystem monitor in the cloned repository — '
+          'speeds up status on big working trees.',
+        ),
+      ],
+    );
+  }
+
+  /// Everything the wizard collected, as label/value rows — what Clone will
+  /// actually do, derived live from the same state the steps edited.
+  Widget _reviewStep(MacosTypography typography) {
+    final destText = switch (_target) {
+      WorkspaceTarget.localMac => 'This Mac',
+      WorkspaceTarget.sshActive => 'Connected host (active session)',
+      WorkspaceTarget.sshProvision => () {
+        final conns = ref.watch(savedConnectionsProvider).value ?? const [];
+        for (final c in conns) {
+          if (c.id == _destConnectionId) return c.displayName;
+        }
+        return 'Saved connection';
+      }(),
+    };
+    final host = _host.text.trim().isEmpty ? _defaultHost : _host.text.trim();
+    final sourceText = _tab == _SourceTab.url
+        ? _url.text.trim()
+        : '${_selected?.slug ?? '—'} on $host';
+    final parentText = _isLocalTarget
+        ? (_pickedParent ?? '—')
+        : _parent.text.trim();
+    final options = <String>[
+      if (!_isLocalTarget && _createParents) 'Create parent folders if missing',
+      if (!_isLocalTarget && _fsmonitor) 'Enable git fsmonitor',
+      if (_isLocalTarget && _saveLocal) 'Save to Local Repositories',
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        WizardReviewRow('Destination', destText),
+        WizardReviewRow('Source', sourceText),
+        WizardReviewRow('Folder', '${_name.text.trim()} in $parentText'),
+        if (options.isNotEmpty) WizardReviewRow('Options', options.join('\n')),
       ],
     );
   }
 
   Widget _footer(MacosTypography typography, CloneJobState job, bool running) {
+    final steps = _activeSteps;
+    final last = _stepIndex >= steps.length - 1;
     return Row(
       children: [
         if (running)
@@ -729,15 +918,34 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           PushButton(
             controlSize: ControlSize.large,
             secondary: true,
-            onPressed: _requestClose,
+            onPressed: _submitting ? null : _requestClose,
             child: const Text('Cancel'),
           ),
+          if (_stepIndex > 0) ...[
+            const SizedBox(width: 8),
+            PushButton(
+              controlSize: ControlSize.large,
+              secondary: true,
+              onPressed: _submitting || _finished ? null : _goBack,
+              child: const Text('Back'),
+            ),
+          ],
           const SizedBox(width: 8),
-          PushButton(
-            controlSize: ControlSize.large,
-            onPressed: _canSubmit ? _submit : null,
-            child: const Text('Clone'),
-          ),
+          if (last)
+            PushButton(
+              controlSize: ControlSize.large,
+              onPressed: _canSubmit ? _submit : null,
+              child: const Text('Clone'),
+            )
+          else
+            PushButton(
+              controlSize: ControlSize.large,
+              onPressed:
+                  !_submitting && steps[_stepIndex.clamp(0, steps.length - 1)].valid()
+                  ? _goNext
+                  : null,
+              child: const Text('Continue'),
+            ),
         ],
       ],
     );
@@ -761,7 +969,6 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
       child: Text(label),
     );
   }
-
 
   static String _dirOf(String path) {
     var end = path.length;
@@ -842,4 +1049,3 @@ class _RepoRow extends StatelessWidget {
     );
   }
 }
-

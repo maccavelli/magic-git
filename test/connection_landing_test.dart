@@ -172,7 +172,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Clone repository'), findsOneWidget);
-    expect(find.text('Destination'), findsOneWidget, reason: 'landing mode');
+    // Landing wizard: 'Destination' appears as the step's section caption
+    // and in the breadcrumb indicator.
+    expect(find.text('Destination'), findsWidgets, reason: 'landing mode');
     expect(find.text('This Mac'), findsOneWidget);
   });
 

@@ -100,7 +100,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Clone repository'), findsOneWidget);
-    expect(find.text('Destination'), findsOneWidget);
+    // Landing wizard: 'Destination' appears as the step's section caption
+    // and in the breadcrumb indicator.
+    expect(find.text('Destination'), findsWidgets);
   });
 
   testWidgets('Create repository opens the create sheet', (tester) async {

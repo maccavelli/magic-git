@@ -143,48 +143,82 @@ Future<(_StubConnection, _FakeExecutor, _FakeStore)> _pumpConnected(
 
 Finder _cloneButton() => find.widgetWithText(PushButton, 'Clone');
 
+Finder _continueButton() => find.widgetWithText(PushButton, 'Continue');
+
+Finder _urlField() => find.byWidgetPredicate(
+  (w) =>
+      w is MacosTextField &&
+      (w.placeholder ?? '').startsWith('https://github.com'),
+);
+
+/// Advances the wizard one step (the current step must be valid).
+Future<void> _next(WidgetTester tester) async {
+  await tester.tap(_continueButton());
+  await tester.pumpAndSettle();
+}
+
+/// Connected-mode navigation: URL source → Location → Review.
+Future<void> _toReviewViaUrl(WidgetTester tester, String url) async {
+  await tester.tap(find.text('URL'));
+  await tester.pumpAndSettle();
+  await tester.enterText(_urlField(), url);
+  await tester.pumpAndSettle();
+  await _next(tester); // Source → Location
+  await _next(tester); // Location → Review
+}
+
 void main() {
-  testWidgets('Clone is disabled until a source and valid name exist', (
+  // Don't wait out the green-bar flash before the success pop.
+  CloneRepositorySheet.successPopDelay = Duration.zero;
+
+  testWidgets('each step gates Continue until its inputs are valid', (
     tester,
   ) async {
     await _pumpConnected(tester);
 
-    // URL tab; nothing entered yet.
+    // Source step: URL tab with nothing entered yet.
     await tester.tap(find.text('URL'));
     await tester.pumpAndSettle();
-    expect(tester.widget<PushButton>(_cloneButton()).onPressed, isNull);
+    expect(tester.widget<PushButton>(_continueButton()).onPressed, isNull);
 
     await tester.enterText(
-      find.byWidgetPredicate(
-        (w) =>
-            w is MacosTextField &&
-            (w.placeholder ?? '').startsWith('https://github.com'),
-      ),
+      _urlField(),
       'https://example.com/things/my-repo.git',
     );
     await tester.pumpAndSettle();
+    expect(tester.widget<PushButton>(_continueButton()).onPressed, isNotNull);
+    await _next(tester); // Source → Location
 
     // Name was derived from the URL; parent prefilled from the active repo.
     expect(find.text('my-repo'), findsOneWidget);
+    expect(tester.widget<PushButton>(_continueButton()).onPressed, isNotNull);
+    await _next(tester); // Location → Review
+
     expect(tester.widget<PushButton>(_cloneButton()).onPressed, isNotNull);
+  });
+
+  testWidgets('the progress bar tracks the current step left to right', (
+    tester,
+  ) async {
+    await _pumpConnected(tester);
+    expect(find.text('Step 1 of 3 — Source'), findsOneWidget);
+
+    await tester.tap(find.text('URL'));
+    await tester.pumpAndSettle();
+    await tester.enterText(_urlField(), 'https://example.com/my-repo.git');
+    await tester.pumpAndSettle();
+    await _next(tester);
+    expect(find.text('Step 2 of 3 — Location'), findsOneWidget);
+
+    await _next(tester);
+    expect(find.text('Step 3 of 3 — Review'), findsOneWidget);
   });
 
   testWidgets(
     'a successful URL clone persists the repo and activates it',
     (tester) async {
       final (stub, exec, store) = await _pumpConnected(tester);
-
-      await tester.tap(find.text('URL'));
-      await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byWidgetPredicate(
-          (w) =>
-              w is MacosTextField &&
-              (w.placeholder ?? '').startsWith('https://github.com'),
-        ),
-        'https://example.com/my-repo.git',
-      );
-      await tester.pumpAndSettle();
+      await _toReviewViaUrl(tester, 'https://example.com/my-repo.git');
 
       exec.results.add(_ok('absent')); // probe
       await tester.tap(_cloneButton());
@@ -219,18 +253,7 @@ void main() {
     tester,
   ) async {
     final (stub, exec, _) = await _pumpConnected(tester);
-
-    await tester.tap(find.text('URL'));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byWidgetPredicate(
-        (w) =>
-            w is MacosTextField &&
-            (w.placeholder ?? '').startsWith('https://github.com'),
-      ),
-      'https://example.com/my-repo.git',
-    );
-    await tester.pumpAndSettle();
+    await _toReviewViaUrl(tester, 'https://example.com/my-repo.git');
 
     exec.results.add(_ok('absent')); // probe
     exec.results.add(_ok('absent')); // cleanup probe (nothing left behind)
@@ -270,10 +293,19 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Destination'), findsOneWidget);
+    // The landing wizard opens on Destination (section caption + breadcrumb).
+    expect(find.text('Destination'), findsWidgets);
     expect(find.text('This Mac'), findsOneWidget);
-    // Local target by default: the native-picker row is shown, not the host
-    // path field.
+    await _next(tester); // Destination → Source
+
+    // Local target by default: on the Location step, the native-picker row
+    // is shown, not the host path field.
+    await tester.tap(find.text('URL'));
+    await tester.pumpAndSettle();
+    await tester.enterText(_urlField(), 'https://example.com/my-repo.git');
+    await tester.pumpAndSettle();
+    await _next(tester); // Source → Location
+
     expect(find.text('Parent folder on this Mac'), findsOneWidget);
     expect(find.text('No folder chosen'), findsOneWidget);
     expect(find.text('Parent folder on the host'), findsNothing);

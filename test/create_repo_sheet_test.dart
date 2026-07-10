@@ -130,6 +130,9 @@ Future<void> _next(WidgetTester tester) async {
 }
 
 void main() {
+  // Don't wait out the green-bar flash before the success pop.
+  CreateRepositorySheet.successPopDelay = Duration.zero;
+
   testWidgets('the Details step gates Continue until a valid name exists', (
     tester,
   ) async {
@@ -146,6 +149,17 @@ void main() {
     await tester.enterText(_nameField(), '../evil');
     await tester.pumpAndSettle();
     expect(tester.widget<PushButton>(_continueButton()).onPressed, isNull);
+  });
+
+  testWidgets('the progress bar tracks the current step left to right', (
+    tester,
+  ) async {
+    await _pumpConnected(tester);
+    expect(find.text('Step 1 of 4 — Source'), findsOneWidget);
+    await _next(tester);
+    expect(find.text('Step 2 of 4 — Remote'), findsOneWidget);
+    await _next(tester);
+    expect(find.text('Step 3 of 4 — Details'), findsOneWidget);
   });
 
   testWidgets('plain create: git init -b main in the parent, then activates', (
