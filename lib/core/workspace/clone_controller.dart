@@ -145,6 +145,12 @@ class CloneJobController extends Notifier<CloneJobState> {
     // Local requests force the local executor even when no local session is
     // active (clone-to-This-Mac from the landing); everything else follows the
     // active session's backend.
+    if (request.local) {
+      // No local session means no environment probe has run — without it,
+      // gh/glab in a Homebrew bin dir are invisible to the GUI app's
+      // inherited PATH and a forge clone dies with exit 127.
+      await ref.read(localEnvironmentProvider).ensure();
+    }
     final executor = request.local
         ? ref.read(localExecutorProvider)
         : ref.read(activeExecutorProvider);

@@ -358,6 +358,13 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     });
     try {
       if (!await _ensureProvisioned()) return;
+      if (_isLocalTarget) {
+        // Outside a local session (landing → This Mac) the local executor
+        // has never been environment-probed; without this, gh/glab in a
+        // Homebrew bin dir are invisible to the GUI app's inherited PATH.
+        await ref.read(localEnvironmentProvider).ensure();
+        if (!mounted) return;
+      }
 
       final executor = _executor;
       final fs = HostFsService(executor);

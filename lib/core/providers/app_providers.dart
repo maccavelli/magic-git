@@ -124,6 +124,48 @@ final localExecutorProvider = Provider<LocalCommandExecutor>((ref) {
   return LocalCommandExecutor();
 });
 
+/// Ensures the shared [LocalCommandExecutor] has its augmented PATH and
+/// binary rewrites before This-Mac work that runs *outside* any local
+/// session — the landing create/clone sheets and the This-Mac forge browse.
+/// A GUI-launched app's inherited PATH usually lacks Homebrew's bin dir, so
+/// a bare `gh`/`glab` exits 127 there even though the tool is installed;
+/// a local *connect* avoids this via [ConnectionController]'s own probe,
+/// but these flows run before any connect exists.
+final localEnvironmentProvider = Provider<LocalEnvironmentGuard>(
+  LocalEnvironmentGuard.new,
+);
+
+/// See [localEnvironmentProvider]. [ensure] is a no-op when the executor is
+/// already configured (a connect's probe or a previous call), re-probes
+/// after a [LocalCommandExecutor.resetEnvironment], and coalesces concurrent
+/// callers onto one in-flight probe. Best-effort like the connect-path
+/// probe: on failure, commands fall back to the inherited PATH.
+class LocalEnvironmentGuard {
+  LocalEnvironmentGuard(this._ref);
+  final Ref _ref;
+  Future<void>? _inFlight;
+
+  Future<void> ensure() {
+    final executor = _ref.read(localExecutorProvider);
+    if (executor.isConfigured) return Future<void>.value();
+    return _inFlight ??= _probe(
+      executor,
+    ).whenComplete(() => _inFlight = null);
+  }
+
+  Future<void> _probe(LocalCommandExecutor executor) async {
+    final overrides = _ref.read(appSettingsProvider).binaryOverrides;
+    try {
+      final env = await EnvironmentResolver(
+        executor,
+      ).resolve('/', overrides: overrides);
+      executor.configureEnvironment(path: env.path, binaries: env.found);
+    } catch (_) {
+      // Best-effort: leave bare-name invocation on the inherited PATH.
+    }
+  }
+}
+
 /// The [CommandExecutor] backing the *active* session, chosen by
 /// [ConnectionState.backend]. [GitService]/[GlabService] depend on this
 /// rather than [executorProvider] directly, so they work unchanged against
@@ -2375,7 +2417,11 @@ final forgeRepoListProvider = FutureProvider.autoDispose
       final executor = local
           ? ref.read(localExecutorProvider)
           : ref.read(activeExecutorProvider);
-      if (!local) {
+      if (local) {
+        // A This-Mac browse can run before any local session exists — make
+        // sure the executor's PATH can actually see the Mac's gh/glab.
+        await ref.read(localEnvironmentProvider).ensure();
+      } else {
         await ref.read(connectionProvider.notifier).ensureForgeHostLogin(
           forge,
           host,

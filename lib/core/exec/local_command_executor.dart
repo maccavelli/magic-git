@@ -36,6 +36,12 @@ class LocalCommandExecutor implements CommandExecutor {
   /// [CommandExecutor.setForgeTokenNeutralization]). Empty by default.
   List<String> _neutralizeTokens = const [];
 
+  /// Whether an environment probe has configured this executor (augmented
+  /// PATH and/or binary rewrites). False after [resetEnvironment] — used to
+  /// decide whether an on-demand probe is needed before This-Mac work that
+  /// runs outside any local session.
+  bool get isConfigured => _envPath != null || _binaryPaths.isNotEmpty;
+
   @override
   void configureEnvironment({
     String? path,
