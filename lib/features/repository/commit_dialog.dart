@@ -158,7 +158,9 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
               Navigator.of(context).pop(),
       },
       child: SizedSheet(
-        width: kSheetWidth,
+        // Wider than the standard sheet: commit messages (especially
+        // hook-generated ones) need the horizontal room to be readable.
+        width: 500,
         // Height tracks content via the text field's minLines/maxLines;
         // AnimatedSize eases between heights instead of snapping.
         child: AnimatedSize(
