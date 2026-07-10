@@ -117,30 +117,46 @@ Future<(_StubConnection, _FakeExecutor, _FakeStore)> _pumpConnected(
 
 Finder _createButton() => find.widgetWithText(PushButton, 'Create');
 
+Finder _continueButton() => find.widgetWithText(PushButton, 'Continue');
+
 Finder _nameField() => find.byWidgetPredicate(
   (w) => w is MacosTextField && w.placeholder == 'my-project',
 );
 
+/// Advances the wizard one step (the current step must be valid).
+Future<void> _next(WidgetTester tester) async {
+  await tester.tap(_continueButton());
+  await tester.pumpAndSettle();
+}
+
 void main() {
-  testWidgets('Create is disabled until a valid name exists', (tester) async {
+  testWidgets('the Details step gates Continue until a valid name exists', (
+    tester,
+  ) async {
     await _pumpConnected(tester);
-    expect(tester.widget<PushButton>(_createButton()).onPressed, isNull);
+    await _next(tester); // Source → Remote (parent prefilled from session)
+    await _next(tester); // Remote → Details (default: no remote)
+
+    expect(tester.widget<PushButton>(_continueButton()).onPressed, isNull);
 
     await tester.enterText(_nameField(), 'new-proj');
     await tester.pumpAndSettle();
-    expect(tester.widget<PushButton>(_createButton()).onPressed, isNotNull);
+    expect(tester.widget<PushButton>(_continueButton()).onPressed, isNotNull);
 
     await tester.enterText(_nameField(), '../evil');
     await tester.pumpAndSettle();
-    expect(tester.widget<PushButton>(_createButton()).onPressed, isNull);
+    expect(tester.widget<PushButton>(_continueButton()).onPressed, isNull);
   });
 
   testWidgets('plain create: git init -b main in the parent, then activates', (
     tester,
   ) async {
     final (stub, exec, store) = await _pumpConnected(tester);
+    await _next(tester); // Source
+    await _next(tester); // Remote (None)
     await tester.enterText(_nameField(), 'new-proj');
     await tester.pumpAndSettle();
+    await _next(tester); // Details → Review
 
     exec.results.add(_ok('absent')); // probe
     await tester.tap(_createButton());
@@ -156,8 +172,11 @@ void main() {
     tester,
   ) async {
     final (stub, exec, _) = await _pumpConnected(tester);
+    await _next(tester); // Source
+    await _next(tester); // Remote (None)
     await tester.enterText(_nameField(), 'new-proj');
     await tester.pumpAndSettle();
+    await _next(tester); // Details → Review
 
     exec.results.add(_ok('exists')); // probe
     await tester.tap(_createButton());
@@ -177,10 +196,11 @@ void main() {
     'and verifies origin afterwards',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
-      await tester.enterText(_nameField(), 'new-proj');
-      await tester.pumpAndSettle();
-
+      await _next(tester); // Source
       await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
+      await tester.enterText(_nameField(), 'new-proj');
       await tester.pumpAndSettle();
 
       final branchField = tester.widget<MacosTextField>(
@@ -190,6 +210,7 @@ void main() {
       );
       expect(branchField.enabled, isNot(isFalse),
           reason: 'init-first: the user branch is authoritative');
+      await _next(tester); // Details → Review
 
       exec.results.add(_ok('absent')); // probe
       exec.results.add(_ok('')); // git init
@@ -216,10 +237,11 @@ void main() {
     'the README option commits before the GitHub publish and adds --push',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
-      await tester.enterText(_nameField(), 'new-proj');
-      await tester.pumpAndSettle();
-
+      await _next(tester); // Source
       await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
+      await tester.enterText(_nameField(), 'new-proj');
       await tester.pumpAndSettle();
       await tester.tap(
         find.byWidgetPredicate(
@@ -228,6 +250,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await _next(tester); // Details → Review
 
       exec.results.add(_ok('absent')); // probe
       exec.results.add(_ok('')); // git init
@@ -260,11 +283,13 @@ void main() {
     'repo and shows a warning',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
-      await tester.enterText(_nameField(), 'new-proj');
-      await tester.pumpAndSettle();
-
+      await _next(tester); // Source
       await tester.tap(find.widgetWithText(PushButton, 'GitLab'));
       await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
+      await tester.enterText(_nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await _next(tester); // Details → Review
 
       exec.results.add(_ok('absent')); // probe
       exec.results.add(_ok('')); // git init succeeds
@@ -303,10 +328,11 @@ void main() {
     'GitLab mode with a README pushes the initial commit with -u',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
-      await tester.enterText(_nameField(), 'new-proj');
-      await tester.pumpAndSettle();
-
+      await _next(tester); // Source
       await tester.tap(find.widgetWithText(PushButton, 'GitLab'));
+      await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
+      await tester.enterText(_nameField(), 'new-proj');
       await tester.pumpAndSettle();
       await tester.tap(
         find.byWidgetPredicate(
@@ -315,6 +341,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await _next(tester); // Details → Review
 
       exec.results.add(_ok('absent')); // probe
       exec.results.add(_ok('')); // git init
@@ -345,13 +372,11 @@ void main() {
     'Custom URL mode gates on a URL, then inits, wires origin, and verifies',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
-      await tester.enterText(_nameField(), 'new-proj');
-      await tester.pumpAndSettle();
-
+      await _next(tester); // Source
       await tester.tap(find.widgetWithText(PushButton, 'Custom URL'));
       await tester.pumpAndSettle();
       expect(
-        tester.widget<PushButton>(_createButton()).onPressed,
+        tester.widget<PushButton>(_continueButton()).onPressed,
         isNull,
         reason: 'no URL entered yet',
       );
@@ -366,6 +391,10 @@ void main() {
         url,
       );
       await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
+      await tester.enterText(_nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await _next(tester); // Details → Review
 
       exec.results.add(_ok('absent')); // probe
       exec.results.add(_ok('')); // git init
@@ -392,11 +421,13 @@ void main() {
     'stays open with a warning',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
-      await tester.enterText(_nameField(), 'new-proj');
-      await tester.pumpAndSettle();
-
+      await _next(tester); // Source
       await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
       await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
+      await tester.enterText(_nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await _next(tester); // Details → Review
 
       exec.results.add(_ok('absent')); // probe
       exec.results.add(_ok('')); // git init
@@ -455,10 +486,13 @@ void main() {
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await toExistingFolder(tester, '/srv/app');
+      await _next(tester); // Source
       await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
       await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'app-repo');
       await tester.pumpAndSettle();
+      await _next(tester); // Details → Review
 
       exec.results.add(notARepo); // classify: not a repo
       exec.results.add(_ok('')); // git init (in place)
@@ -490,10 +524,13 @@ void main() {
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await toExistingFolder(tester, '/srv/app');
+      await _next(tester); // Source
       await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
       await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'app-repo');
       await tester.pumpAndSettle();
+      await _next(tester); // Details → Review
 
       exec.results.add(_ok('/srv/app\n')); // classify: repo root
       exec.results.add(noOrigin); // origin guard: nothing wired yet
@@ -526,10 +563,13 @@ void main() {
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await toExistingFolder(tester, '/srv/app');
+      await _next(tester); // Source
       await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
       await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'app-repo');
       await tester.pumpAndSettle();
+      await _next(tester); // Details → Review
 
       exec.results.add(_ok('/srv/app\n')); // classify: repo root
       exec.results.add(_ok('git@old-host:me/app.git\n')); // origin exists
@@ -543,7 +583,11 @@ void main() {
       expect(stub.repoPathsSet, isEmpty, reason: 'nothing was touched');
       expect(find.byType(CreateRepositorySheet), findsOneWidget);
 
-      // Opt in and retry.
+      // Go back to the Remote step, opt in, and retry.
+      await tester.tap(find.widgetWithText(PushButton, 'Back'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(PushButton, 'Back'));
+      await tester.pumpAndSettle();
       final replaceToggle = find.byWidgetPredicate(
         (w) =>
             w is MacosTooltip &&
@@ -553,6 +597,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(replaceToggle);
       await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
+      await _next(tester); // Details → Review
 
       exec.results.add(_ok('/srv/app\n')); // classify: repo root
       exec.results.add(_ok('git@old-host:me/app.git\n')); // origin exists
@@ -577,10 +623,13 @@ void main() {
   ) async {
     final (stub, exec, _) = await _pumpConnected(tester);
     await toExistingFolder(tester, '/srv/app');
+    await _next(tester); // Source
     await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
     await tester.pumpAndSettle();
+    await _next(tester); // Remote → Details
     await tester.enterText(_nameField(), 'app-repo');
     await tester.pumpAndSettle();
+    await _next(tester); // Details → Review
 
     exec.results.add(_ok('/srv\n')); // classify: toplevel is a parent
     await tester.tap(_createButton());
@@ -600,6 +649,7 @@ void main() {
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await toExistingFolder(tester, '/srv/app');
+      await _next(tester); // Source
       await tester.tap(find.widgetWithText(PushButton, 'Custom URL'));
       await tester.pumpAndSettle();
       const url = 'git@gitea.example.com:me/app.git';
@@ -611,6 +661,8 @@ void main() {
         ),
         url,
       );
+      await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
       await tester.tap(
         find.byWidgetPredicate(
           (w) =>
@@ -619,6 +671,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await _next(tester); // Details → Review
 
       exec.results.add(notARepo); // classify: not a repo
       exec.results.add(_ok('')); // git init (in place)

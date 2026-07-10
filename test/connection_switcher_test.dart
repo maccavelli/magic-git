@@ -109,7 +109,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Create repository'), findsOneWidget);
-    expect(find.text('Initial branch'), findsOneWidget);
+    // Disconnected → landing variant: the wizard opens on Destination.
+    expect(find.text('Destination'), findsWidgets);
+    expect(find.text('This Mac'), findsWidgets);
   });
 
   Future<void> pumpSwitcher(WidgetTester tester, ConnectionState state) async {

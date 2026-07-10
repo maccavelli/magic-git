@@ -184,8 +184,10 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Create repository'), findsOneWidget);
-    expect(find.text('Destination'), findsOneWidget, reason: 'landing mode');
-    expect(find.text('Initial branch'), findsOneWidget);
+    // Landing mode: the wizard opens on its Destination step (the title also
+    // appears in the step-indicator breadcrumb).
+    expect(find.text('Destination'), findsWidgets, reason: 'landing mode');
+    expect(find.text('This Mac'), findsWidgets);
   });
 
   testWidgets(

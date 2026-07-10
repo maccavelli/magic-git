@@ -31,6 +31,35 @@ enum _RemoteMode { none, github, gitlab, customUrl }
 /// in place.
 enum _SourceMode { newFolder, existingFolder }
 
+/// One page of the create wizard, described as data: the engine (indicator,
+/// Back/Continue gating, review) is generic over this list, so adding or
+/// reordering a step is a single entry in [_CreateRepositorySheetState._steps]
+/// — no navigation code changes.
+class _WizardStep {
+  final String id;
+  final String title;
+
+  /// Whether the step participates at all (e.g. Destination exists only on
+  /// the landing variant). Evaluated live, so steps may come and go with
+  /// earlier answers.
+  final bool Function() applicable;
+
+  /// Gates the Continue button (and, composed across all steps, Create).
+  final bool Function() valid;
+
+  final Widget Function(MacosTypography) body;
+
+  const _WizardStep({
+    required this.id,
+    required this.title,
+    this.applicable = _always,
+    required this.valid,
+    required this.body,
+  });
+
+  static bool _always() => true;
+}
+
 /// Create a new repository — plain `git init`, forge-backed (created on
 /// GitHub/GitLab with `origin` wired), or pointed at an existing remote URL —
 /// on the connected SSH host or this Mac.
@@ -39,6 +68,12 @@ enum _SourceMode { newFolder, existingFolder }
 /// targets the active workspace; [CreateRepositorySheet.landing] adds the
 /// destination picker (This Mac, or a saved SSH connection provisioned on
 /// demand).
+///
+/// Presented as a data-driven wizard: an ordered list of [_WizardStep]s
+/// (Destination → Source → Remote → Details → Review) that the build method
+/// renders generically — breadcrumb indicator, per-step Continue gating,
+/// Back navigation, and a final review summary derived from the collected
+/// state. The Destination step only participates on the landing variant.
 ///
 /// Two sources ([_SourceMode]): a brand-new folder (name + parent), or an
 /// existing folder published in place — classified at submit as not-a-repo
@@ -119,6 +154,83 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
 
   WorkspaceTarget _target = WorkspaceTarget.sshActive;
   VoidCallback? _unregisterEscape;
+
+  // --- Wizard engine ---------------------------------------------------
+  // The steps, in order, as data — the build method renders whatever this
+  // list says. Bodies/predicates close over the sheet's state fields.
+  late final List<_WizardStep> _steps = [
+    _WizardStep(
+      id: 'destination',
+      title: 'Destination',
+      applicable: () => widget.landing,
+      valid: () => !_provisioning,
+      body: _destinationSection,
+    ),
+    _WizardStep(
+      id: 'source',
+      title: 'Source',
+      valid: _sourceValid,
+      body: _sourceStep,
+    ),
+    _WizardStep(
+      id: 'remote',
+      title: 'Remote',
+      valid: _remoteValid,
+      body: _remoteSection,
+    ),
+    _WizardStep(
+      id: 'details',
+      title: 'Details',
+      valid: _detailsValid,
+      body: _detailsStep,
+    ),
+    _WizardStep(
+      id: 'review',
+      title: 'Review',
+      valid: _WizardStep._always,
+      body: _reviewStep,
+    ),
+  ];
+  int _stepIndex = 0;
+
+  List<_WizardStep> get _activeSteps =>
+      [for (final s in _steps) if (s.applicable()) s];
+
+  bool _sourceValid() {
+    if (_source == _SourceMode.existingFolder) {
+      if (_isLocalTarget) return _pickedFolder != null;
+      return _folder.text.trim().startsWith('/');
+    }
+    if (_isLocalTarget) return _pickedParent != null;
+    return _parent.text.trim().startsWith('/');
+  }
+
+  bool _remoteValid() =>
+      _remote != _RemoteMode.customUrl || _remoteUrl.text.trim().isNotEmpty;
+
+  bool _detailsValid() {
+    if (_branch.text.trim().isEmpty) return false;
+    final needName = _source == _SourceMode.newFolder || _onForge;
+    return !needName || HostFsService.isValidRepoDirName(_name.text.trim());
+  }
+
+  void _goBack() {
+    if (_stepIndex == 0 || _submitting) return;
+    setState(() {
+      _stepIndex--;
+      _error = null;
+    });
+  }
+
+  void _goNext() {
+    final steps = _activeSteps;
+    if (_stepIndex >= steps.length - 1) return;
+    if (!steps[_stepIndex].valid()) return;
+    setState(() {
+      _stepIndex++;
+      _error = null;
+    });
+  }
 
   @override
   void initState() {
@@ -231,21 +343,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
 
   bool get _canSubmit {
     if (_submitting || _completedWarning != null) return false;
-    if (_branch.text.trim().isEmpty) return false;
-    if (_remote == _RemoteMode.customUrl && _remoteUrl.text.trim().isEmpty) {
-      return false;
-    }
-    if (_source == _SourceMode.existingFolder) {
-      // The name only names the forge project here; the folder is the repo.
-      if (_onForge && !HostFsService.isValidRepoDirName(_name.text.trim())) {
-        return false;
-      }
-      if (_isLocalTarget) return _pickedFolder != null;
-      return _folder.text.trim().startsWith('/');
-    }
-    if (!HostFsService.isValidRepoDirName(_name.text.trim())) return false;
-    if (_isLocalTarget) return _pickedParent != null;
-    return _parent.text.trim().startsWith('/');
+    return _activeSteps.every((s) => s.valid());
   }
 
   CommandExecutor get _executor => _isLocalTarget
@@ -816,32 +914,15 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
                   ),
                 ],
               ),
+              const SizedBox(height: 8),
+              _stepIndicator(typography),
               const SizedBox(height: 14),
               Expanded(
                 child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (widget.landing) ...[
-                        _destinationSection(typography),
-                        const SizedBox(height: 14),
-                      ],
-                      _sourceSection(typography),
-                      const SizedBox(height: 14),
-                      _nameSection(typography),
-                      const SizedBox(height: 14),
-                      if (_source == _SourceMode.existingFolder)
-                        (_isLocalTarget
-                            ? _localExistingFolder(typography)
-                            : _sshExistingFolder(typography))
-                      else if (_isLocalTarget)
-                        _localDestination(typography)
-                      else
-                        _sshDestination(typography),
-                      const SizedBox(height: 14),
-                      _remoteSection(typography),
-                    ],
-                  ),
+                  child: _activeSteps[_stepIndex.clamp(
+                    0,
+                    _activeSteps.length - 1,
+                  )].body(typography),
                 ),
               ),
               const SizedBox(height: 12),
@@ -932,7 +1013,56 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     );
   }
 
-  Widget _nameSection(MacosTypography typography) {
+  /// Breadcrumb of the active steps with the current one highlighted.
+  Widget _stepIndicator(MacosTypography typography) {
+    final steps = _activeSteps;
+    return Row(
+      children: [
+        for (var i = 0; i < steps.length; i++) ...[
+          if (i > 0)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Text(
+                '›',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              ),
+            ),
+          Text(
+            steps[i].title,
+            style: typography.caption1.copyWith(
+              color: i == _stepIndex
+                  ? MacosColors.systemBlueColor
+                  : MacosColors.systemGrayColor,
+              fontWeight: i == _stepIndex ? FontWeight.w600 : null,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _sourceStep(MacosTypography typography) {
+    final existing = _source == _SourceMode.existingFolder;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _sourceSection(typography),
+        const SizedBox(height: 14),
+        if (existing)
+          (_isLocalTarget
+              ? _localFolderPicker(typography)
+              : _sshFolderField(typography))
+        else if (_isLocalTarget)
+          _localParentPicker(typography)
+        else
+          _sshParentField(typography),
+      ],
+    );
+  }
+
+  Widget _detailsStep(MacosTypography typography) {
     final existing = _source == _SourceMode.existingFolder;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -970,8 +1100,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           focusedDecoration: kAppTextFieldFocusedDecoration,
           onChanged: (_) => setState(() {}),
         ),
-        if (!existing) ...[
-          const SizedBox(height: 10),
+        const SizedBox(height: 10),
+        if (existing)
+          _commitAllToggle()
+        else
           WorkspaceToggleRow(
             on: _addReadme,
             onTap: () => setState(() => _addReadme = !_addReadme),
@@ -979,12 +1111,37 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             offIcon: CupertinoIcons.doc_text,
             label: 'Add a README (creates the initial commit)',
           ),
-        ],
+        const SizedBox(height: 8),
+        if (_isLocalTarget) ...[
+          WorkspaceToggleRow(
+            on: _saveLocal,
+            onTap: () => setState(() => _saveLocal = !_saveLocal),
+            onIcon: CupertinoIcons.tray_arrow_down_fill,
+            offIcon: CupertinoIcons.tray_arrow_down,
+            label: 'Save to Local Repositories',
+          ),
+          if (_saveLocal) ...[
+            const SizedBox(height: 8),
+            MacosTextField(
+              controller: _localLabel,
+              placeholder: 'Label (optional)',
+              decoration: kAppTextFieldDecoration,
+              focusedDecoration: kAppTextFieldFocusedDecoration,
+            ),
+          ],
+        ] else
+          WorkspaceToggleRow(
+            on: _fsmonitor,
+            onTap: () => setState(() => _fsmonitor = !_fsmonitor),
+            onIcon: CupertinoIcons.bolt_fill,
+            offIcon: CupertinoIcons.bolt,
+            label: 'Enable git fsmonitor (faster status on large repos)',
+          ),
       ],
     );
   }
 
-  Widget _localExistingFolder(MacosTypography typography) {
+  Widget _localFolderPicker(MacosTypography typography) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1013,30 +1170,11 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             ),
           ],
         ),
-        const SizedBox(height: 10),
-        _commitAllToggle(),
-        const SizedBox(height: 8),
-        WorkspaceToggleRow(
-          on: _saveLocal,
-          onTap: () => setState(() => _saveLocal = !_saveLocal),
-          onIcon: CupertinoIcons.tray_arrow_down_fill,
-          offIcon: CupertinoIcons.tray_arrow_down,
-          label: 'Save to Local Repositories',
-        ),
-        if (_saveLocal) ...[
-          const SizedBox(height: 8),
-          MacosTextField(
-            controller: _localLabel,
-            placeholder: 'Label (optional)',
-            decoration: kAppTextFieldDecoration,
-            focusedDecoration: kAppTextFieldFocusedDecoration,
-          ),
-        ],
       ],
     );
   }
 
-  Widget _sshExistingFolder(MacosTypography typography) {
+  Widget _sshFolderField(MacosTypography typography) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1062,16 +1200,6 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             ),
           ],
         ),
-        const SizedBox(height: 10),
-        _commitAllToggle(),
-        const SizedBox(height: 8),
-        WorkspaceToggleRow(
-          on: _fsmonitor,
-          onTap: () => setState(() => _fsmonitor = !_fsmonitor),
-          onIcon: CupertinoIcons.bolt_fill,
-          offIcon: CupertinoIcons.bolt,
-          label: 'Enable git fsmonitor (faster status on large repos)',
-        ),
       ],
     );
   }
@@ -1086,7 +1214,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     );
   }
 
-  Widget _localDestination(MacosTypography typography) {
+  Widget _localParentPicker(MacosTypography typography) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1115,28 +1243,11 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             ),
           ],
         ),
-        const SizedBox(height: 10),
-        WorkspaceToggleRow(
-          on: _saveLocal,
-          onTap: () => setState(() => _saveLocal = !_saveLocal),
-          onIcon: CupertinoIcons.tray_arrow_down_fill,
-          offIcon: CupertinoIcons.tray_arrow_down,
-          label: 'Save to Local Repositories',
-        ),
-        if (_saveLocal) ...[
-          const SizedBox(height: 8),
-          MacosTextField(
-            controller: _localLabel,
-            placeholder: 'Label (optional)',
-            decoration: kAppTextFieldDecoration,
-            focusedDecoration: kAppTextFieldFocusedDecoration,
-          ),
-        ],
       ],
     );
   }
 
-  Widget _sshDestination(MacosTypography typography) {
+  Widget _sshParentField(MacosTypography typography) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1169,14 +1280,6 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           onIcon: CupertinoIcons.folder_badge_plus,
           offIcon: CupertinoIcons.folder,
           label: 'Create parent folders if missing',
-        ),
-        const SizedBox(height: 8),
-        WorkspaceToggleRow(
-          on: _fsmonitor,
-          onTap: () => setState(() => _fsmonitor = !_fsmonitor),
-          onIcon: CupertinoIcons.bolt_fill,
-          offIcon: CupertinoIcons.bolt,
-          label: 'Enable git fsmonitor (faster status on large repos)',
         ),
       ],
     );
@@ -1277,6 +1380,81 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     );
   }
 
+  /// Everything the wizard collected, as label/value rows — what Create will
+  /// actually do, derived live from the same state the steps edited.
+  Widget _reviewStep(MacosTypography typography) {
+    final existing = _source == _SourceMode.existingFolder;
+    final host = _host.text.trim().isEmpty ? _defaultHost : _host.text.trim();
+    final destText = switch (_target) {
+      WorkspaceTarget.localMac => 'This Mac',
+      WorkspaceTarget.sshActive => 'Connected host (active session)',
+      WorkspaceTarget.sshProvision => () {
+        final conns = ref.watch(savedConnectionsProvider).value ?? const [];
+        for (final c in conns) {
+          if (c.id == _destConnectionId) return c.displayName;
+        }
+        return 'Saved connection';
+      }(),
+    };
+    final sourceText = existing
+        ? (_isLocalTarget ? (_pickedFolder ?? '—') : _folder.text.trim())
+        : '${_name.text.trim()} in '
+              '${_isLocalTarget ? (_pickedParent ?? '—') : _parent.text.trim()}';
+    final visibility = _private ? 'private' : 'public';
+    final remoteText = switch (_remote) {
+      _RemoteMode.none => 'None — no origin remote',
+      _RemoteMode.github => 'GitHub ($host) — $visibility',
+      _RemoteMode.gitlab => 'GitLab ($host) — $visibility',
+      _RemoteMode.customUrl => _remoteUrl.text.trim(),
+    };
+    final options = <String>[
+      if (!existing && _addReadme) 'Add a README (initial commit)',
+      if (existing && _commitAll) 'Commit all existing contents',
+      if (existing && _replaceOrigin && _remote != _RemoteMode.none)
+        'Replace existing origin remote',
+      if (!_isLocalTarget && !existing && _createParents)
+        'Create parent folders if missing',
+      if (!_isLocalTarget && _fsmonitor) 'Enable git fsmonitor',
+      if (_isLocalTarget && _saveLocal) 'Save to Local Repositories',
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _reviewRow(typography, 'Destination', destText),
+        _reviewRow(
+          typography,
+          existing ? 'Existing folder' : 'New folder',
+          sourceText,
+        ),
+        _reviewRow(typography, 'Initial branch', _branch.text.trim()),
+        _reviewRow(typography, 'Remote', remoteText),
+        if (options.isNotEmpty)
+          _reviewRow(typography, 'Options', options.join('\n')),
+      ],
+    );
+  }
+
+  Widget _reviewRow(MacosTypography typography, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 120,
+            child: Text(
+              label,
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ),
+          Expanded(child: Text(value, style: typography.body)),
+        ],
+      ),
+    );
+  }
+
   Widget _footer(MacosTypography typography) {
     if (_completedWarning != null) {
       return Row(
@@ -1290,6 +1468,8 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         ],
       );
     }
+    final steps = _activeSteps;
+    final last = _stepIndex >= steps.length - 1;
     return Row(
       children: [
         if (_submitting)
@@ -1315,12 +1495,30 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           onPressed: _submitting ? null : _requestClose,
           child: const Text('Cancel'),
         ),
+        if (_stepIndex > 0) ...[
+          const SizedBox(width: 8),
+          PushButton(
+            controlSize: ControlSize.large,
+            secondary: true,
+            onPressed: _submitting ? null : _goBack,
+            child: const Text('Back'),
+          ),
+        ],
         const SizedBox(width: 8),
-        PushButton(
-          controlSize: ControlSize.large,
-          onPressed: _canSubmit ? _submit : null,
-          child: const Text('Create'),
-        ),
+        if (last)
+          PushButton(
+            controlSize: ControlSize.large,
+            onPressed: _canSubmit ? _submit : null,
+            child: const Text('Create'),
+          )
+        else
+          PushButton(
+            controlSize: ControlSize.large,
+            onPressed: !_submitting && steps[_stepIndex].valid()
+                ? _goNext
+                : null,
+            child: const Text('Continue'),
+          ),
       ],
     );
   }
