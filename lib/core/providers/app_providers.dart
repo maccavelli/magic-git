@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../exec/command_telemetry.dart';
 import '../exec/local_command_executor.dart';
+import '../forge/auth_probe_service.dart';
+import '../forge/auth_status.dart';
 import '../forge/forge.dart';
 import '../forge/forge_repo_summary.dart';
 import '../git/git_service.dart';
@@ -2546,19 +2548,19 @@ final forgeRepoListProvider = FutureProvider.autoDispose
       };
     });
 
-/// The host the forge CLI on the target machine is signed in to — what the
-/// create/clone wizards prefill their forge-host fields with, so a user on a
-/// self-hosted instance (or GitHub Enterprise) sees their real host instead
-/// of the stock github.com/gitlab.com default. Keyed by (forge, local) like
-/// [forgeRepoListProvider]: `local` asks this Mac's own gh/glab, otherwise
-/// the active/provisioned SSH session's. Null when signed out or the CLI is
-/// missing — the caller keeps its stock default.
-final forgeAuthHostProvider = FutureProvider.autoDispose
-    .family<String?, (Forge, bool)>((ref, key) async {
+/// The forge CLI's parsed auth state on the target machine — the strict
+/// judgment (a host with an expired/revoked token does NOT count as signed
+/// in) behind both the wizards' host prefill and the create wizard's
+/// pre-publish guard, so the two can never disagree and the guard reuses the
+/// prefill's cached probe instead of spawning a second `auth status`.
+/// Keyed by (forge, local) like [forgeRepoListProvider]: `local` asks this
+/// Mac's own gh/glab, otherwise the active/provisioned SSH session's.
+final forgeAuthProvider = FutureProvider.autoDispose
+    .family<ToolAuth, (Forge, bool)>((ref, key) async {
       final (forge, local) = key;
       // Re-resolve when the connection generation moves (a landing wizard
       // can ask before its SSH session finishes provisioning — the answer
-      // must not stay cached as null once the host is actually reachable).
+      // must not stay cached as signed-out once the host is reachable).
       ref.watch(connectionProvider.select((c) => (c.phase, c.backend)));
       final executor = local
           ? ref.read(localExecutorProvider)
@@ -2568,24 +2570,75 @@ final forgeAuthHostProvider = FutureProvider.autoDispose
         // sure the executor's PATH can actually see the Mac's gh/glab.
         await ref.read(localEnvironmentProvider).ensure();
       }
-      final cli = forge == Forge.github ? 'gh' : 'glab';
-      final host = await switch (forge) {
-        Forge.github => GhService(executor).authenticatedHost(),
-        Forge.gitlab => GlabService(executor).authenticatedHost(),
-        _ => Future<String?>.value(),
-      };
-      // Surfaced so "why didn't my host prefill" is answerable from the
-      // output log instead of being invisible.
-      if (forge == Forge.github || forge == Forge.gitlab) {
-        ref
-            .read(outputLogProvider.notifier)
-            .logInfo(
-              '$cli auth host: '
-              '${host ?? 'none (signed out or $cli unavailable on the target)'}',
-            );
-      }
-      return host;
+      final auth = await AuthProbeService(executor).probeForgeCli(forge);
+      // Surfaced so "why didn't my host prefill" / "why did the guard stop
+      // me" are answerable from the output log instead of being invisible.
+      ref
+          .read(outputLogProvider.notifier)
+          .logInfo('${auth.tool} auth: ${auth.detail}');
+      return auth;
     });
+
+/// The host the forge CLI on the target machine is signed in to — what the
+/// create/clone wizards prefill their forge-host fields with, so a user on a
+/// self-hosted instance (or GitHub Enterprise) sees their real host instead
+/// of the stock github.com/gitlab.com default. Derived from
+/// [forgeAuthProvider]'s strict judgment: null when signed out, the CLI is
+/// missing, the token is expired, or the check couldn't complete — the
+/// caller keeps its stock default in every one of those cases.
+final forgeAuthHostProvider = FutureProvider.autoDispose
+    .family<String?, (Forge, bool)>((ref, key) async {
+      final auth = await ref.watch(forgeAuthProvider(key).future);
+      return auth.authenticated ? auth.host : null;
+    });
+
+/// Authentication status of git/gh/glab on **this Mac** — probed on demand for
+/// the Dashboard's Authentication section (and reusable by any This-Mac flow
+/// that wants to warn before a create/clone that would fail on a signed-out
+/// CLI). Ensures the local executor's PATH can see Homebrew tools first, since
+/// this can run before any local session exists.
+final localAuthStatusProvider = FutureProvider.autoDispose<TargetAuth>((
+  ref,
+) async {
+  await ref.read(localEnvironmentProvider).ensure();
+  final auth = await AuthProbeService(
+    ref.read(localExecutorProvider),
+  ).probe(label: 'This Mac', isLocal: true);
+  ref
+      .read(outputLogProvider.notifier)
+      .logInfo(
+        'auth (this Mac): '
+        'gh ${auth.gh.authenticated ? auth.gh.host : 'signed out'}, '
+        'glab ${auth.glab.authenticated ? auth.glab.host : 'signed out'}',
+      );
+  return auth;
+});
+
+/// Authentication status of git/gh/glab on the **active session's** target —
+/// the connected SSH host, or this Mac for a local session. Null when nothing
+/// is connected. Re-resolves when the connection generation moves so a
+/// reconnect / repo switch never shows a stale host.
+final sessionAuthStatusProvider = FutureProvider.autoDispose<TargetAuth?>((
+  ref,
+) async {
+  final (phase, backend, label, host, repoPath) = ref.watch(
+    connectionProvider.select(
+      (c) => (c.phase, c.backend, c.connectionLabel, c.host, c.repoPath),
+    ),
+  );
+  if (phase != ConnectionPhase.connected) return null;
+  final isLocal = backend == ConnectionBackend.local;
+  final display = isLocal
+      ? 'This Mac (active session)'
+      : (label ?? host ?? 'Connected host');
+  return AuthProbeService(ref.read(activeExecutorProvider)).probe(
+    label: display,
+    isLocal: isLocal,
+    // Run from the repo when there is one so a repo-scoped gh/glab host
+    // (an Enterprise remote) resolves; falls back to the home dir otherwise.
+    cwd: repoPath ?? '.',
+  );
+});
 
 /// Open pull requests for the connected GitHub repo.
 final pullRequestsProvider = FutureProvider.autoDispose

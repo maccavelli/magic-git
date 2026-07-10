@@ -58,6 +58,15 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
   final _parent = TextEditingController();
   ForgeRepoSummary? _selected;
 
+  /// True once the user has typed a (non-empty) host themselves. The prefill
+  /// and the browse/submit host resolution only ever apply to an *un-edited*
+  /// field — inferring "still the default" from the field's value can't
+  /// distinguish a deliberately typed `github.com`/`gitlab.com` from the
+  /// stock text, which made it impossible to browse gitlab.com while signed
+  /// in to a self-hosted instance. Clearing the field hands control back to
+  /// the signed-in host.
+  bool _hostEdited = false;
+
   // SSH destination options.
   bool _createParents = false;
   bool _fsmonitor = false;
@@ -315,12 +324,20 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
       final parentDir = _isLocalTarget
           ? _pickedParent!
           : _parent.text.trim();
-      final host = _host.text.trim();
+      // Same host derivation the browse list used (_effectiveForgeHost) —
+      // the repo the user picked from that list must be cloned from the host
+      // it was listed on, never from a stale/stock field value. A repo can
+      // only be selected once the browse rendered, so the resolved host is
+      // already in; the trailing fallback covers the URL-less edge anyway.
       final source = _tab == _SourceTab.url
           ? UrlCloneSource(_url.text.trim())
           : ForgeCloneSource(
               forge: _forge!,
-              host: host.isEmpty ? _defaultHost : host,
+              host:
+                  _effectiveForgeHost(
+                    ref.read(forgeAuthHostProvider((_forge!, _isLocalTarget))),
+                  ) ??
+                  _defaultHost,
               slug: _selected!.slug,
             );
       final request = CloneRequest(
@@ -454,9 +471,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
         next,
       ) {
         final resolved = next.value;
-        if (resolved != null &&
-            resolved.isNotEmpty &&
-            _isStockHost(_host.text)) {
+        if (resolved != null && resolved.isNotEmpty && !_hostEdited) {
           setState(() => _host.text = resolved);
         }
       });
@@ -615,11 +630,20 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
     );
   }
 
-  /// Whether the host field still holds a stock default (safe to replace
-  /// with the CLI's real signed-in host) rather than something user-typed.
-  static bool _isStockHost(String host) {
-    final h = host.trim();
-    return h.isEmpty || h == 'github.com' || h == 'gitlab.com';
+  /// The forge host a browse or clone should actually run against — ONE
+  /// derivation shared by [_forgeBrowse] and [_submit], so the repos listed
+  /// and the host cloned from can never diverge. A user-typed host wins
+  /// verbatim; an un-edited field follows the CLI's signed-in host, falling
+  /// back to the field text / stock default only once that answer is in.
+  /// Returns null while the signed-in host is still resolving and nothing
+  /// was typed — the caller must wait, not fetch against a guess.
+  String? _effectiveForgeHost(AsyncValue<String?> resolved) {
+    final typed = _host.text.trim();
+    if (_hostEdited && typed.isNotEmpty) return typed;
+    if (resolved.isLoading) return null;
+    final host = resolved.value;
+    if (host != null && host.isNotEmpty) return host;
+    return typed.isNotEmpty ? typed : _defaultHost;
   }
 
   Widget _forgeBrowse(MacosTypography typography) {
@@ -634,9 +658,17 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
         ),
       );
     }
-    final host = _host.text.trim().isEmpty ? _defaultHost : _host.text.trim();
-    final key = (_forge!, host, _isLocalTarget);
-    final async = ref.watch(forgeRepoListProvider(key));
+    // One shared derivation with _submit (see _effectiveForgeHost) — the
+    // browse list and the eventual clone must target the same host. While
+    // the signed-in host is still resolving (a network probe, up to 10s) and
+    // nothing was typed, the list shows a "resolving" placeholder instead of
+    // fetching against a stock-default guess that would flash a wrong-host
+    // (empty/401) listing at every self-hosted user.
+    final host = _effectiveForgeHost(
+      ref.watch(forgeAuthHostProvider((_forge!, _isLocalTarget))),
+    );
+    final key = host == null ? null : (_forge!, host, _isLocalTarget);
+    final async = key == null ? null : ref.watch(forgeRepoListProvider(key));
     final query = _filter.text.trim().toLowerCase();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -651,6 +683,10 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
                 placeholder: _defaultHost,
                 decoration: kAppTextFieldDecoration,
                 focusedDecoration: kAppTextFieldFocusedDecoration,
+                // Track edits without rebuilding per keystroke — the browse
+                // refetch still waits for Return (onSubmitted). An emptied
+                // field hands control back to the signed-in host.
+                onChanged: (v) => _hostEdited = v.trim().isNotEmpty,
                 onSubmitted: (_) => setState(() {}),
               ),
             ),
@@ -659,17 +695,20 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
               icon: CupertinoIcons.arrow_clockwise,
               tooltip: 'Reload',
               size: 15,
-              onPressed: () {
-                ref.invalidate(forgeRepoListProvider(key));
-                setState(() {});
-              },
+              onPressed: key == null
+                  ? null
+                  : () {
+                      ref.invalidate(forgeRepoListProvider(key));
+                      setState(() {});
+                    },
             ),
           ],
         ),
         const WizardHint(
           'Prefilled with the instance the CLI is signed in to on the '
-          'destination — change it to browse a different host. Press '
-          'Return to reload.',
+          'destination — type a different host to browse it instead (press '
+          'Return to reload), or clear the field to go back to the '
+          'signed-in host.',
         ),
         const SizedBox(height: 6),
         MacosTextField(
@@ -687,33 +726,49 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
               border: Border.all(color: MacosColors.separatorColor),
               borderRadius: BorderRadius.circular(6),
             ),
-            child: async.when(
-              loading: () => const Center(child: ProgressCircle()),
-              error: (err, _) => SectionError(err),
-              data: (repos) {
-                final shown = query.isEmpty
-                    ? repos
-                    : [
-                        for (final r in repos)
-                          if (r.slug.toLowerCase().contains(query)) r,
-                      ];
-                if (shown.isEmpty) {
-                  return const SectionEmpty('No repositories');
-                }
-                return ListView.builder(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  itemCount: shown.length,
-                  itemBuilder: (context, i) => _RepoRow(
-                    repo: shown[i],
-                    selected: identical(_selected, shown[i]),
-                    onTap: () => setState(() {
-                      _selected = shown[i];
-                      _name.text = shown[i].name;
-                    }),
+            child: async == null
+                ? Center(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const ProgressCircle(radius: 8),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Resolving the signed-in host…',
+                          style: typography.caption1.copyWith(
+                            color: MacosColors.systemGrayColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : async.when(
+                    loading: () => const Center(child: ProgressCircle()),
+                    error: (err, _) => SectionError(err),
+                    data: (repos) {
+                      final shown = query.isEmpty
+                          ? repos
+                          : [
+                              for (final r in repos)
+                                if (r.slug.toLowerCase().contains(query)) r,
+                            ];
+                      if (shown.isEmpty) {
+                        return const SectionEmpty('No repositories');
+                      }
+                      return ListView.builder(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        itemCount: shown.length,
+                        itemBuilder: (context, i) => _RepoRow(
+                          repo: shown[i],
+                          selected: identical(_selected, shown[i]),
+                          onTap: () => setState(() {
+                            _selected = shown[i];
+                            _name.text = shown[i].name;
+                          }),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
           ),
         ),
         const WizardHint(

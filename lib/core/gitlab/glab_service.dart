@@ -183,27 +183,6 @@ class GlabService {
     }
   }
 
-  /// The host glab is currently signed in to, or null when signed out /
-  /// glab missing / output unrecognizable. Best-effort and never throws —
-  /// used purely to prefill the wizards' forge-host fields with the user's
-  /// real instance (e.g. a self-hosted GitLab). Parses stdout+stderr
-  /// combined: glab historically prints auth status to stderr. Short
-  /// timeout: the status check hits the API, and a prefill must never
-  /// stall a sheet.
-  Future<String?> authenticatedHost({String cwd = '.'}) async {
-    try {
-      final result = await _executor.execute(
-        repoPath: cwd,
-        gitArgs: ['glab', 'auth', 'status'],
-        lane: ExecLane.read,
-        timeout: const Duration(seconds: 10),
-      );
-      return parseCliAuthHost('${result.stdout}\n${result.stderr}');
-    } catch (_) {
-      return null;
-    }
-  }
-
   /// argv for a streamed clone of [pathWithNamespace] into [dirName] (run with
   /// the parent directory as the working dir). `-- --progress` forces git's
   /// progress output, which is otherwise suppressed off-tty.

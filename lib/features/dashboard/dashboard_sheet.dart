@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/exec/command_telemetry.dart';
+import '../../core/forge/auth_status.dart';
 import '../../core/forge/forge.dart';
 import '../../core/git/watch_event.dart';
 import '../../core/providers/app_providers.dart';
@@ -92,6 +93,8 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           _connectionCard(typography, connection),
+                          const SizedBox(height: 14),
+                          _authSection(typography, connection),
                           const SizedBox(height: 14),
                           if (!connection.isLocal) ...[
                             _latencySection(typography),
@@ -200,6 +203,160 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
               ],
             ),
           ),
+      ],
+    );
+  }
+
+  /// Auth status of git/gh/glab on this Mac and (when the active session is a
+  /// remote host) that host too — so a signed-out CLI is visible here instead
+  /// of surfacing only as a failed create/clone. Each target renders
+  /// independently; a slow probe never blocks the rest of the dashboard.
+  Widget _authSection(MacosTypography typography, ConnectionState connection) {
+    final local = ref
+        .watch(localAuthStatusProvider)
+        .whenData<TargetAuth?>((a) => a);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _sectionTitle(typography, 'Authentication'),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Text(
+            'Whether git, gh, and glab are installed and signed in — on this '
+            'Mac and on the connected host. A create or clone needs the '
+            "target's CLI signed in to the forge host it publishes to.",
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemGrayColor,
+            ),
+          ),
+        ),
+        _authTargetTile(typography, local, fallbackLabel: 'This Mac'),
+        // Only show — and only PROBE — the session target when it is a
+        // remote host: a local session is already covered by the This-Mac
+        // tile, and watching the provider unconditionally would run three
+        // duplicate probes (two of them network calls) for a tile that is
+        // never rendered.
+        if (!connection.isLocal) ...[
+          const SizedBox(height: 10),
+          _authTargetTile(
+            typography,
+            ref.watch(sessionAuthStatusProvider),
+            fallbackLabel: connection.connectionLabel ??
+                connection.host ??
+                'Connected host',
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _authTargetTile(
+    MacosTypography typography,
+    AsyncValue<TargetAuth?> value,
+    {required String fallbackLabel}) {
+    return value.when(
+      loading: () => _authTargetHeaderRow(
+        typography,
+        fallbackLabel,
+        trailing: const SizedBox(
+          width: 14,
+          height: 14,
+          child: ProgressCircle(radius: 7),
+        ),
+      ),
+      error: (err, _) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _authTargetHeaderRow(typography, fallbackLabel),
+          Text(
+            'Could not check: $err',
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemOrangeColor,
+            ),
+          ),
+        ],
+      ),
+      data: (auth) {
+        if (auth == null) {
+          return _authTargetHeaderRow(
+            typography,
+            fallbackLabel,
+            trailing: Text(
+              'not connected',
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _authTargetHeaderRow(typography, auth.label),
+            for (final tool in auth.tools)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: _authToolRow(typography, tool),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _authTargetHeaderRow(
+    MacosTypography typography,
+    String label, {
+    Widget? trailing,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: typography.body.copyWith(fontWeight: FontWeight.w600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          ?trailing,
+        ],
+      ),
+    );
+  }
+
+  Widget _authToolRow(MacosTypography typography, ToolAuth tool) {
+    final color = switch (tool.level) {
+      ToolAuthLevel.ok => MacosColors.systemGreenColor,
+      ToolAuthLevel.warn => MacosColors.systemOrangeColor,
+      ToolAuthLevel.bad => MacosColors.systemRedColor,
+      // The check itself didn't complete — neutral, not an accusation.
+      ToolAuthLevel.unknown => MacosColors.systemGrayColor,
+    };
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        MacosIcon(CupertinoIcons.circle_fill, size: 8, color: color),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 44,
+          child: Text(
+            tool.tool,
+            style: typography.body.copyWith(fontWeight: FontWeight.w500),
+          ),
+        ),
+        Expanded(
+          child: Text(
+            tool.detail,
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemGrayColor,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
       ],
     );
   }

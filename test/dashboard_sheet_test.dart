@@ -9,6 +9,7 @@ import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/core/forge/auth_status.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
@@ -54,6 +55,34 @@ Future<void> _pump(WidgetTester tester) async {
             RepoWatchEvent(at: DateTime.now(), mode: WatchMode.polling),
           ),
         ),
+        localAuthStatusProvider.overrideWith(
+          (ref) async => TargetAuth(
+            label: 'This Mac',
+            isLocal: true,
+            git: parseGitVersion('git version 2.48.1', present: true),
+            gh: parseGhAuthStatus(
+              'github.com\n  ✓ Logged in to github.com account maccavelli\n'
+              '  - Active account: true',
+              present: true,
+            ),
+            glab: parseGlabAuthStatus(
+              'gitlab.lkqdev.com\n  ✓ Logged in to gitlab.lkqdev.com as sax (c)',
+              present: true,
+            ),
+          ),
+        ),
+        sessionAuthStatusProvider.overrideWith(
+          (ref) async => TargetAuth(
+            label: 'Prod (active session)',
+            isLocal: false,
+            git: parseGitVersion('git version 2.43.0', present: true),
+            gh: parseGhAuthStatus('signed out', present: true),
+            glab: parseGlabAuthStatus(
+              'gitlab.lkqdev.com\n  ✓ Logged in to gitlab.lkqdev.com as sax (c)',
+              present: true,
+            ),
+          ),
+        ),
         repoFootprintProvider.overrideWith(
           (ref, repo) async => const RepoFootprint(
             looseObjects: 42,
@@ -94,6 +123,10 @@ void main() {
     // Connection card.
     expect(find.text('admdevops'), findsOneWidget);
     expect(find.text('Session uptime'), findsOneWidget);
+    // Authentication section: local + the active remote target both render.
+    expect(find.text('Authentication'), findsOneWidget);
+    expect(find.text('This Mac'), findsOneWidget);
+    expect(find.text('Prod (active session)'), findsOneWidget);
     // Latency section exists for an SSH session (still collecting).
     expect(find.text('Link latency (SSH keepalive)'), findsOneWidget);
     // Repository snapshot from the status stub.

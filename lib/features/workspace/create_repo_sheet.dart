@@ -100,6 +100,15 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   bool _private = true;
   bool _addReadme = false;
 
+  /// True once the user has typed a (non-empty) host themselves. The prefill
+  /// and the submit-time host resolution only ever touch an *un-edited* field
+  /// — inferring "still the default" from the field's value can't distinguish
+  /// a deliberately typed `github.com`/`gitlab.com` from the stock text, and
+  /// silently redirecting a typed host to the CLI's enterprise instance would
+  /// publish to a destination the Review step never showed. Clearing the
+  /// field hands control back to the prefill.
+  bool _hostEdited = false;
+
   // Existing-folder source options.
   final _folder = TextEditingController();
   String? _pickedFolder;
@@ -385,7 +394,34 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         parentDir = _isLocalTarget ? _pickedParent! : _parent.text.trim();
         dest = HostFsService.joinPath(parentDir, name);
       }
-      final host = _host.text.trim().isEmpty ? _defaultHost : _host.text.trim();
+      var host = _host.text.trim().isEmpty ? _defaultHost : _host.text.trim();
+
+      // For a This-Mac forge create, check the Mac's gh/glab sign-in and fail
+      // fast when it's definitively unusable (signed out, expired token) —
+      // otherwise the forge `repo create` fails with a cryptic 401 after a
+      // local repo was already created. Goes through [forgeAuthProvider]: the
+      // same strict judgment (an expired token does NOT pass) and the same
+      // cached probe the host prefill already ran, logged to the output log.
+      // An SSH target instead relies on ensureForgeHostLogin below, which
+      // pushes the connection's token before the remote CLI is queried.
+      if (_onForge && _isLocalTarget) {
+        final auth = await ref.read(forgeAuthProvider((_forge, true)).future);
+        if (!mounted) return;
+        if (!auth.authenticated && !auth.checkFailed) {
+          // Definitive: signed out, expired, or the CLI is missing. (A check
+          // that merely timed out proceeds best-effort — blocking a create on
+          // a slow probe would be worse than the failure it guards against.)
+          setState(() => _error = auth.detail);
+          return;
+        }
+        // Trust the real signed-in host over a default the user never
+        // touched; a host the user typed themselves is used verbatim — the
+        // Review step displayed it, so it must never be silently replaced.
+        if (!_hostEdited && auth.authenticated && auth.host != null) {
+          host = auth.host!;
+          _host.text = auth.host!;
+        }
+      }
 
       // --- Pre-checks ---------------------------------------------------
       var alreadyRepo = false;
@@ -915,7 +951,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         next,
       ) {
         final host = next.value;
-        if (host != null && host.isNotEmpty && _isStockHost(_host.text)) {
+        if (host != null && host.isNotEmpty && !_hostEdited) {
           setState(() => _host.text = host);
         }
       });
@@ -1358,13 +1394,6 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     );
   }
 
-  /// Whether the host field still holds a stock default (safe to replace
-  /// with the CLI's real signed-in host) rather than something user-typed.
-  static bool _isStockHost(String host) {
-    final h = host.trim();
-    return h.isEmpty || h == 'github.com' || h == 'gitlab.com';
-  }
-
   Widget _remoteSection(MacosTypography typography) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1458,11 +1487,16 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             placeholder: _defaultHost,
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
+            // An empty field hands control back to the prefill; anything
+            // typed pins the host (see _hostEdited).
+            onChanged: (v) =>
+                setState(() => _hostEdited = v.trim().isNotEmpty),
           ),
           const WizardHint(
             'Prefilled with the instance the CLI is signed in to on the '
-            'target — change it to publish to a different host (the CLI '
-            'must be signed in there too).',
+            'target — type a different host to publish there instead (the '
+            'CLI must be signed in there too). Clear the field to go back '
+            'to the signed-in host.',
           ),
           const SizedBox(height: 8),
           Text('Project description', style: typography.caption1),
@@ -1488,8 +1522,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       secondary: !active,
       onPressed: () => setState(() {
         _remote = mode;
-        final h = _host.text.trim();
-        if (h.isEmpty || h == 'github.com' || h == 'gitlab.com') {
+        // Switching forges resets an untouched host to the new forge's
+        // default (the prefill listener then fills in the signed-in host);
+        // a user-typed host is kept.
+        if (!_hostEdited) {
           _host.text = _defaultHost;
         }
       }),
