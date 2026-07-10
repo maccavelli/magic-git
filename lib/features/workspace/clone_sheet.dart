@@ -441,6 +441,26 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
     final typography = MacosTheme.of(context).typography;
     final job = ref.watch(cloneJobProvider);
     final running = job.isRunning || _submitting;
+    final forge = _forge;
+    if (forge != null) {
+      // Prefill the host with the instance the target's gh/glab is actually
+      // signed in to (e.g. a self-hosted GitLab) the moment it resolves —
+      // but never overwrite a host the user typed themselves. Registered
+      // here (not in the step body) because ref.listen must run in this
+      // ConsumerState's own build; the setState also re-keys the browse
+      // list onto the resolved host.
+      ref.listen(forgeAuthHostProvider((forge, _isLocalTarget)), (
+        previous,
+        next,
+      ) {
+        final resolved = next.value;
+        if (resolved != null &&
+            resolved.isNotEmpty &&
+            _isStockHost(_host.text)) {
+          setState(() => _host.text = resolved);
+        }
+      });
+    }
     final steps = _activeSteps;
     final stepIndex = _stepIndex.clamp(0, steps.length - 1);
 
@@ -595,6 +615,13 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
     );
   }
 
+  /// Whether the host field still holds a stock default (safe to replace
+  /// with the CLI's real signed-in host) rather than something user-typed.
+  static bool _isStockHost(String host) {
+    final h = host.trim();
+    return h.isEmpty || h == 'github.com' || h == 'gitlab.com';
+  }
+
   Widget _forgeBrowse(MacosTypography typography) {
     if (!_forgeBrowseReady) {
       return Padding(
@@ -639,9 +666,10 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
             ),
           ],
         ),
-        WizardHint(
-          'Leave as $_defaultHost, or a self-hosted instance the '
-          'destination\'s CLI is signed in to. Press Return to reload.',
+        const WizardHint(
+          'Prefilled with the instance the CLI is signed in to on the '
+          'destination — change it to browse a different host. Press '
+          'Return to reload.',
         ),
         const SizedBox(height: 6),
         MacosTextField(

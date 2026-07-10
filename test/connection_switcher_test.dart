@@ -42,8 +42,9 @@ Future<void> _pump(
       overrides: [
         savedLocalReposProvider.overrideWith((ref) async => savedLocal),
         // Opening the clone/create sheets from the header must not spawn a
-        // real gh for the This-Mac browse list.
+        // real gh for the This-Mac browse list or the auth-host prefill.
         forgeRepoListProvider.overrideWith((ref, key) async => []),
+        forgeAuthHostProvider.overrideWith((ref, key) async => null),
       ],
       child: const MacosApp(
         debugShowCheckedModeBanner: false,

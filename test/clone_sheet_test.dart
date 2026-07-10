@@ -281,9 +281,10 @@ void main() {
           activeExecutorProvider.overrideWithValue(_FakeExecutor()),
           savedConnectionsProvider.overrideWith((ref) async => [_conn]),
           // The default GitHub tab lists repos through the LOCAL executor for
-          // a This-Mac destination — stub the listing so the test never
-          // spawns a real gh process.
+          // a This-Mac destination — stub the listing (and the auth-host
+          // prefill probe) so the test never spawns a real gh process.
           forgeRepoListProvider.overrideWith((ref, key) async => []),
+          forgeAuthHostProvider.overrideWith((ref, key) async => null),
         ],
         child: const MacosApp(
           debugShowCheckedModeBanner: false,

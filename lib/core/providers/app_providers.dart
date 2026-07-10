@@ -2465,6 +2465,31 @@ final forgeRepoListProvider = FutureProvider.autoDispose
       };
     });
 
+/// The host the forge CLI on the target machine is signed in to — what the
+/// create/clone wizards prefill their forge-host fields with, so a user on a
+/// self-hosted instance (or GitHub Enterprise) sees their real host instead
+/// of the stock github.com/gitlab.com default. Keyed by (forge, local) like
+/// [forgeRepoListProvider]: `local` asks this Mac's own gh/glab, otherwise
+/// the active/provisioned SSH session's. Null when signed out or the CLI is
+/// missing — the caller keeps its stock default.
+final forgeAuthHostProvider = FutureProvider.autoDispose
+    .family<String?, (Forge, bool)>((ref, key) async {
+      final (forge, local) = key;
+      final executor = local
+          ? ref.read(localExecutorProvider)
+          : ref.read(activeExecutorProvider);
+      if (local) {
+        // Can run before any local session exists (landing wizards) — make
+        // sure the executor's PATH can actually see the Mac's gh/glab.
+        await ref.read(localEnvironmentProvider).ensure();
+      }
+      return switch (forge) {
+        Forge.github => GhService(executor).authenticatedHost(),
+        Forge.gitlab => GlabService(executor).authenticatedHost(),
+        _ => null,
+      };
+    });
+
 /// Open pull requests for the connected GitHub repo.
 final pullRequestsProvider = FutureProvider.autoDispose
     .family<List<PullRequest>, String>((ref, repoPath) async {

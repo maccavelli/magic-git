@@ -10,6 +10,7 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -150,6 +151,67 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.widget<PushButton>(_continueButton()).onPressed, isNull);
   });
+
+  testWidgets(
+    'the forge host prefills from the CLI sign-in, but never overwrites a '
+    'typed host',
+    (tester) async {
+      final stub = _StubConnection(
+        const ConnectionState(
+          phase: ConnectionPhase.connected,
+          repoPath: '/srv/repo',
+          repoPaths: ['/srv/repo'],
+          connectionId: 'c1',
+          connectionLabel: 'Prod',
+          host: 'h',
+        ),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            connectionProvider.overrideWith(() => stub),
+            activeExecutorProvider.overrideWithValue(_FakeExecutor()),
+            connectionStoreProvider.overrideWithValue(_FakeStore()),
+            savedConnectionsProvider.overrideWith((ref) async => [_conn]),
+            gitServiceProvider.overrideWithValue(GitService(_FakeExecutor())),
+            forgeAuthHostProvider.overrideWith(
+              (ref, key) async =>
+                  key.$1 == Forge.gitlab ? 'gitlab.lkqdev.com' : null,
+            ),
+          ],
+          child: const MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: CreateRepositorySheet.connected(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _next(tester); // Source → Remote
+
+      await tester.tap(find.widgetWithText(PushButton, 'GitLab'));
+      await tester.pumpAndSettle();
+
+      Finder hostField() => find.byWidgetPredicate(
+        (w) => w is MacosTextField && w.controller?.text != '',
+      );
+      expect(find.text('gitlab.lkqdev.com'), findsOneWidget,
+          reason: 'stock default replaced by the CLI sign-in host');
+      expect(hostField(), findsWidgets);
+
+      // A user-typed host survives switching forges and re-resolution.
+      await tester.enterText(
+        find.byWidgetPredicate(
+          (w) =>
+              w is MacosTextField && w.controller?.text == 'gitlab.lkqdev.com',
+        ),
+        'gitlab.other.example',
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('gitlab.other.example'), findsOneWidget);
+      expect(find.text('gitlab.lkqdev.com'), findsNothing,
+          reason: 'typed host was not overwritten by the prefill');
+    },
+  );
 
   testWidgets('the progress bar tracks the current step left to right', (
     tester,

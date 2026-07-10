@@ -903,6 +903,23 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
+    if (_onForge) {
+      // Prefill the host with the instance the target's gh/glab is actually
+      // signed in to (e.g. a self-hosted GitLab) the moment it resolves —
+      // but never overwrite a host the user typed themselves. Registered
+      // here (not in the step body) because ref.listen must run in this
+      // ConsumerState's own build, and resolving as soon as a forge is
+      // chosen means the field is ready before the user reaches the step.
+      ref.listen(forgeAuthHostProvider((_forge, _isLocalTarget)), (
+        previous,
+        next,
+      ) {
+        final host = next.value;
+        if (host != null && host.isNotEmpty && _isStockHost(_host.text)) {
+          setState(() => _host.text = host);
+        }
+      });
+    }
     return SizedSheet(
       width: kSheetWidth,
       // Narrower sheet + per-step guidance text → a little more vertical
@@ -1341,6 +1358,13 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     );
   }
 
+  /// Whether the host field still holds a stock default (safe to replace
+  /// with the CLI's real signed-in host) rather than something user-typed.
+  static bool _isStockHost(String host) {
+    final h = host.trim();
+    return h.isEmpty || h == 'github.com' || h == 'gitlab.com';
+  }
+
   Widget _remoteSection(MacosTypography typography) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1435,9 +1459,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
           ),
-          WizardHint(
-            'Leave as $_defaultHost, or enter a self-hosted instance '
-            '(e.g. gitlab.example.com). The CLI must be signed in to it.',
+          const WizardHint(
+            'Prefilled with the instance the CLI is signed in to on the '
+            'target — change it to publish to a different host (the CLI '
+            'must be signed in there too).',
           ),
           const SizedBox(height: 8),
           Text('Project description', style: typography.caption1),

@@ -21,8 +21,10 @@ Future<void> _pump(
         savedConnectionsProvider.overrideWith((ref) => saved),
         savedLocalReposProvider.overrideWith((ref) => savedLocal),
         // The clone sheet's default GitHub tab lists repos through the local
-        // executor for a This-Mac destination — stub it so no real gh runs.
+        // executor for a This-Mac destination — stub it (and the auth-host
+        // prefill probe) so no real gh runs.
         forgeRepoListProvider.overrideWith((ref, key) async => []),
+        forgeAuthHostProvider.overrideWith((ref, key) async => null),
       ],
       child: const MacosApp(
         debugShowCheckedModeBanner: false,

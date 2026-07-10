@@ -180,6 +180,26 @@ class GhService {
     return result;
   }
 
+  /// The host gh is currently signed in to (the active account's host when
+  /// several are configured), or null when signed out / gh missing / output
+  /// unrecognizable. Best-effort and never throws — used purely to prefill
+  /// the wizards' forge-host fields with the user's real instance. Short
+  /// timeout: `gh auth status` verifies the token over the network, and a
+  /// prefill must never stall a sheet.
+  Future<String?> authenticatedHost({String cwd = '.'}) async {
+    try {
+      final result = await _executor.execute(
+        repoPath: cwd,
+        gitArgs: ['gh', 'auth', 'status'],
+        lane: ExecLane.read,
+        timeout: const Duration(seconds: 10),
+      );
+      return parseCliAuthHost('${result.stdout}\n${result.stderr}');
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// argv for a streamed clone of [slug] into [dirName] (run with the parent
   /// directory as the working dir). `-- --progress` forces git's progress
   /// output, which is otherwise suppressed off-tty.
