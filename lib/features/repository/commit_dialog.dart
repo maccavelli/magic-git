@@ -137,6 +137,38 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
     }
   }
 
+  /// Commit messages are conventionally hard-wrapped at this many columns
+  /// (hooks and CLI tools emit them that way) — the field is sized to show
+  /// exactly this many, so an authored line never soft-wraps.
+  static const int _messageColumns = 80;
+
+  /// The message is rendered in the system monospace face: hard-wrapped
+  /// text keeps its authored shape and column indentation (bullets, code
+  /// snippets) stays aligned — a proportional face can't do either.
+  static TextStyle _messageStyle(MacosTypography typography) =>
+      typography.body.copyWith(
+        fontFamily: 'Menlo',
+        fontFamilyFallback: const ['Monaco', 'Courier New'],
+        fontSize: 12,
+        height: 1.4,
+      );
+
+  /// Sheet width = [_messageColumns] of the message font + the field's own
+  /// chrome + the dialog padding, capped to the window. Measured from real
+  /// type metrics so a font substitution can't silently break the fit.
+  double _sheetWidth(BuildContext context) {
+    final mono = _messageStyle(MacosTheme.of(context).typography);
+    final line = TextPainter(
+      text: TextSpan(text: 'M' * _messageColumns, style: mono),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    const fieldChrome = 12.0; // MacosTextField padding + border
+    const dialogPadding = 40.0; // EdgeInsets.all(20)
+    final ideal = line.width + fieldChrome + dialogPadding;
+    final cap = MediaQuery.sizeOf(context).width - 40;
+    return ideal.clamp(420.0, cap < 420.0 ? 420.0 : cap);
+  }
+
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
@@ -158,9 +190,12 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
               Navigator.of(context).pop(),
       },
       child: SizedSheet(
-        // Wider than the standard sheet: commit messages (especially
-        // hook-generated ones) need the horizontal room to be readable.
-        width: 500,
+        // Sized from the type, not a magic number: wide enough that the
+        // message field shows exactly [_messageColumns] monospace columns.
+        // Hook-generated messages arrive hard-wrapped at ~72–80 columns; in
+        // a narrower proportional field every authored line re-wrapped into
+        // two ragged visual lines and column indentation fell apart.
+        width: _sheetWidth(context),
         // Height tracks content via the text field's minLines/maxLines;
         // AnimatedSize eases between heights instead of snapping.
         child: AnimatedSize(
@@ -191,6 +226,7 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
                     readOnly: !_editable,
                     autofocus: _editable,
                     placeholder: _generated ? null : 'Commit message',
+                    style: _messageStyle(typography),
                     minLines: 1,
                     maxLines: 12,
                     decoration: kAppTextFieldDecoration,
