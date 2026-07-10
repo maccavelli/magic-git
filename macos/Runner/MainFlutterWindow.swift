@@ -228,7 +228,7 @@ class MainFlutterWindow: NSWindow {
       to: viewMenu, title: "Show File View", key: "e",
       action: #selector(toggleFileView(_:)), separatorBefore: false)
     self.dashboardItem = addToggleItem(
-      to: viewMenu, title: "Dashboard View", key: "d",
+      to: viewMenu, title: "Show Dashboard View", key: "d",
       action: #selector(toggleDashboard(_:)), separatorBefore: false)
 
     // The items now exist, so pull the current checkbox states from Flutter.
