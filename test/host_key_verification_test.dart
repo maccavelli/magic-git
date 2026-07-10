@@ -30,6 +30,7 @@ class _VerifyingManager extends SSHClientManager {
     SSHConnectionProfile profile, {
     FutureOr<bool> Function(String type, Uint8List fingerprint)?
     onVerifyHostKey,
+    void Function(Duration rtt)? onPingSample,
   }) async {
     if (onVerifyHostKey != null) {
       final accepted = await onVerifyHostKey(

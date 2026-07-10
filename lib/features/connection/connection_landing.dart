@@ -154,6 +154,7 @@ class ConnectionLanding extends ConsumerWidget {
                 width: double.infinity,
                 child: PushButton(
                   controlSize: ControlSize.large,
+                  secondary: true,
                   onPressed: () => _openConnectionsManager(context),
                   child: const Text('Connections Manager'),
                 ),
@@ -316,6 +317,7 @@ class _RecentConnectionsButtonState
         width: double.infinity,
         child: PushButton(
           controlSize: ControlSize.large,
+          secondary: true,
           onPressed: empty ? null : _toggleMenu,
           child: Text(empty ? 'No Recent Workspaces' : 'Recent Workspaces'),
         ),

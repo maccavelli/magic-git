@@ -46,6 +46,7 @@ class ConnectionHealthMonitor {
   ConnectionHealthMonitor({
     required this.ping,
     required this.onDead,
+    this.onPingSample,
     this.interval = const Duration(seconds: 15),
     this.pingTimeout = const Duration(seconds: 15),
     this.failureThreshold = 3,
@@ -57,6 +58,11 @@ class ConnectionHealthMonitor {
 
   /// Invoked exactly once, after [failureThreshold] consecutive failed pings.
   final void Function() onDead;
+
+  /// Invoked with each *answered* ping's round-trip time — the probes were
+  /// already being sent every [interval]; this just stops discarding the
+  /// timing so the dashboard can chart link latency for free.
+  final void Function(Duration rtt)? onPingSample;
 
   final Duration interval;
   final Duration pingTimeout;
@@ -86,8 +92,10 @@ class ConnectionHealthMonitor {
     if (_probeInFlight || _stopped) return;
     _probeInFlight = true;
     try {
+      final sw = Stopwatch()..start();
       await ping().timeout(pingTimeout);
       _failures = 0;
+      if (!_stopped) onPingSample?.call(sw.elapsed);
     } catch (_) {
       if (_stopped) return;
       if (++_failures >= failureThreshold) {
@@ -166,6 +174,7 @@ class SSHClientManager {
     SSHConnectionProfile profile, {
     FutureOr<bool> Function(String type, Uint8List fingerprint)?
     onVerifyHostKey,
+    void Function(Duration rtt)? onPingSample,
   }) async {
     final gen = ++_generation;
     // The previous client (if any) is deliberately left open and serving
@@ -268,6 +277,7 @@ class SSHClientManager {
     final monitor = ConnectionHealthMonitor(
       ping: () => client.ping(),
       onDead: client.close,
+      onPingSample: onPingSample,
     )..start();
     _health = monitor;
     unawaited(

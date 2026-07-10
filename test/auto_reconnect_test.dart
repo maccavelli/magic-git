@@ -28,6 +28,7 @@ class _FakeManager extends SSHClientManager {
     SSHConnectionProfile profile, {
     FutureOr<bool> Function(String type, Uint8List fingerprint)?
     onVerifyHostKey,
+    void Function(Duration rtt)? onPingSample,
   }) async {
     connects++;
     if (gate != null) {

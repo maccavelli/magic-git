@@ -29,6 +29,7 @@ class _GatedManager extends SSHClientManager {
     SSHConnectionProfile profile, {
     FutureOr<bool> Function(String type, Uint8List fingerprint)?
     onVerifyHostKey,
+    void Function(Duration rtt)? onPingSample,
   }) {
     doneCompleter = Completer<void>();
     final gate = Completer<void>();

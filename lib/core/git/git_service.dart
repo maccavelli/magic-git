@@ -69,6 +69,30 @@ class GitException implements Exception {
       'GitException: $message (exit ${result.exitCode})\n${result.stderr}';
 }
 
+/// Parsed `git count-objects -vH` — the repo's object-store footprint, for
+/// the dashboard. Sizes are git's own human-readable strings.
+class RepoFootprint {
+  final int looseObjects;
+  final String looseSize;
+  final int inPackObjects;
+  final int packs;
+  final String packSize;
+  final String? garbageSize;
+
+  const RepoFootprint({
+    required this.looseObjects,
+    required this.looseSize,
+    required this.inPackObjects,
+    required this.packs,
+    required this.packSize,
+    this.garbageSize,
+  });
+
+  /// Many loose objects (or several packs) mean `git gc` would shrink and
+  /// speed up the store — the threshold mirrors git's own auto-gc default.
+  bool get wouldBenefitFromGc => looseObjects > 6700 || packs > 50;
+}
+
 /// A branch, remote-tracking ref, or tag, from `git for-each-ref`.
 class GitRef {
   final String name; // Full refname, e.g. refs/heads/main
@@ -633,6 +657,36 @@ class GitService {
   /// index v4; disabling turns fsmonitor back off (the caches are harmless and
   /// left in place). One combined round trip rather than one `git config` call
   /// per setting.
+  /// Object-store footprint via `git count-objects -vH` — one cheap round
+  /// trip, fetched on demand for the dashboard's "Measure" action. `-H`
+  /// makes git render the sizes human-readable; the UI shows them verbatim.
+  Future<RepoFootprint> repoFootprint(String repoPath) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['git', 'count-objects', '-v', '-H'],
+      lane: ExecLane.read,
+      retries: _readRetries,
+    );
+    if (!result.isSuccess) {
+      throw GitException('git count-objects failed', result);
+    }
+    final map = <String, String>{};
+    for (final line in result.stdout.split('\n')) {
+      final idx = line.indexOf(':');
+      if (idx > 0) {
+        map[line.substring(0, idx).trim()] = line.substring(idx + 1).trim();
+      }
+    }
+    return RepoFootprint(
+      looseObjects: int.tryParse(map['count'] ?? '') ?? 0,
+      looseSize: map['size'] ?? '0',
+      inPackObjects: int.tryParse(map['in-pack'] ?? '') ?? 0,
+      packs: int.tryParse(map['packs'] ?? '') ?? 0,
+      packSize: map['size-pack'] ?? '0',
+      garbageSize: map['size-garbage'],
+    );
+  }
+
   Future<void> setFsmonitor(String repoPath, {required bool enabled}) async {
     await _runVoid(repoPath, [
       'sh',

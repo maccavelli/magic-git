@@ -2,10 +2,14 @@
 // per saved local repo, and the "Add local repository" toolbar button
 // opening the picker sheet.
 
+import 'dart:async';
+
+import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 import 'package:remote_magic_git/features/switcher/connection_switcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -30,6 +34,17 @@ class _StubConnection extends ConnectionController {
   final ConnectionState _state;
   @override
   ConnectionState build() => _state;
+}
+
+/// Records connect attempts from repository clicks in the panel.
+class _RecordingConnection extends ConnectionController {
+  final connected = <(String, String?)>[];
+  @override
+  ConnectionState build() => const ConnectionState();
+  @override
+  Future<void> connectToSaved(SavedConnection conn, {String? repoPath}) async {
+    connected.add((conn.id, repoPath));
+  }
 }
 
 Future<void> _pump(
@@ -116,6 +131,68 @@ void main() {
     expect(find.text('Destination'), findsWidgets);
     expect(find.text('This Mac'), findsWidgets);
   });
+
+  testWidgets(
+    'connections are disclosure groups: repositories stay hidden until the '
+    'host row is expanded, and clicking a repository (not the host) connects',
+    (tester) async {
+      final recorder = _RecordingConnection();
+      SharedPreferences.setMockInitialValues({});
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            connectionProvider.overrideWith(() => recorder),
+            savedConnectionsProvider.overrideWith(
+              (ref) async => const [
+                SavedConnection(
+                  id: 'c1',
+                  label: 'Prod',
+                  host: 'h',
+                  port: 22,
+                  username: 'u',
+                  repoPath: '/srv/alpha',
+                  repoPaths: ['/srv/alpha', '/srv/beta'],
+                ),
+              ],
+            ),
+            savedLocalReposProvider.overrideWith((ref) async => const []),
+          ],
+          child: const MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: SizedBox(),
+          ),
+        ),
+      );
+      // Push the panel as a real route: clicking a repository pops the
+      // sheet, which needs something underneath.
+      final ctx = tester.element(find.byType(SizedBox));
+      unawaited(
+        Navigator.of(ctx).push(
+          PageRouteBuilder<void>(
+            pageBuilder: (_, _, _) => const ConnectionsPanel(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Remote Repositories - SSH'), findsOneWidget);
+      expect(find.text('2 repos'), findsOneWidget);
+      expect(find.text('alpha'), findsNothing, reason: 'collapsed by default');
+
+      await tester.tap(find.text('Prod'));
+      await tester.pumpAndSettle();
+      expect(find.text('alpha'), findsOneWidget);
+      expect(find.text('beta'), findsOneWidget);
+      expect(recorder.connected, isEmpty,
+          reason: 'expanding a host must not initiate a connection');
+
+      await tester.tap(find.text('beta'));
+      await tester.pumpAndSettle();
+      expect(recorder.connected, [('c1', '/srv/beta')]);
+      expect(find.byType(ConnectionsPanel), findsNothing,
+          reason: 'connecting closes the panel');
+    },
+  );
 
   Future<void> pumpSwitcher(WidgetTester tester, ConnectionState state) async {
     SharedPreferences.setMockInitialValues({});

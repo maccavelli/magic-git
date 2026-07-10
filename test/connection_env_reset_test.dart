@@ -19,6 +19,7 @@ class _OkManager extends SSHClientManager {
     SSHConnectionProfile profile, {
     FutureOr<bool> Function(String type, Uint8List fingerprint)?
     onVerifyHostKey,
+    void Function(Duration rtt)? onPingSample,
   }) async {}
   @override
   Future<void>? get done => Completer<void>().future; // never drops

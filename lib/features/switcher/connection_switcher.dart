@@ -132,14 +132,39 @@ class LogoutButton extends ConsumerWidget {
 /// One pane of glass for connections and their repositories: each connection is
 /// a group with its repos nested beneath it. Tap a repo to connect/switch there;
 /// add/delete connections and repos inline.
-class ConnectionsPanel extends ConsumerWidget {
+class ConnectionsPanel extends ConsumerStatefulWidget {
   const ConnectionsPanel({super.key});
 
+  @override
+  ConsumerState<ConnectionsPanel> createState() => _ConnectionsPanelState();
+}
+
+class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
   // Accent for the active connection/repo.
   static const _accent = MacosColors.systemBlueColor;
 
+  /// Connection ids whose repository list is expanded. A connection row is a
+  /// disclosure toggle — connecting happens by clicking a *repository* inside
+  /// the expanded group, never the connection itself.
+  final Set<String> _expanded = {};
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  void initState() {
+    super.initState();
+    // Start with the active connection's repositories visible — that's the
+    // group the user is most likely here to switch within.
+    final activeId = ref.read(connectionProvider).connectionId;
+    if (activeId != null) _expanded.add(activeId);
+  }
+
+  void _toggleExpanded(String id) {
+    setState(() {
+      if (!_expanded.add(id)) _expanded.remove(id);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final saved = ref.watch(savedConnectionsProvider).value ?? const [];
     final savedLocal = ref.watch(savedLocalReposProvider).value ?? const [];
     final connection = ref.watch(connectionProvider);
@@ -206,8 +231,9 @@ class ConnectionsPanel extends ConsumerWidget {
             const Padding(
               padding: EdgeInsets.fromLTRB(18, 0, 18, 10),
               child: SheetDescription(
-                'Your saved SSH hosts and local repositories — click one to '
-                'switch to it. The toolbar above adds a connection or local '
+                'Your saved SSH hosts and local repositories. Click a host '
+                'to show its repositories, then click a repository to '
+                'connect. The toolbar above adds a connection or local '
                 'repo, or clones/creates a repository.',
               ),
             ),
@@ -218,6 +244,8 @@ class ConnectionsPanel extends ConsumerWidget {
                   : ListView(
                       padding: const EdgeInsets.symmetric(vertical: 6),
                       children: [
+                        if (showAdhoc || saved.isNotEmpty)
+                          _remoteReposHeader(context),
                         if (showAdhoc) _adhocGroup(context, ref, connection),
                         for (final c in saved)
                           _connectionGroup(context, ref, c, connection),
@@ -244,6 +272,20 @@ class ConnectionsPanel extends ConsumerWidget {
       padding: const EdgeInsets.fromLTRB(16, 14, 10, 4),
       child: Text(
         'Local Repositories',
+        style: typography.caption1.copyWith(
+          fontWeight: FontWeight.bold,
+          color: MacosColors.systemGrayColor,
+        ),
+      ),
+    );
+  }
+
+  Widget _remoteReposHeader(BuildContext context) {
+    final typography = MacosTheme.of(context).typography;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 10, 4),
+      child: Text(
+        'Remote Repositories - SSH',
         style: typography.caption1.copyWith(
           fontWeight: FontWeight.bold,
           color: MacosColors.systemGrayColor,
@@ -281,18 +323,30 @@ class ConnectionsPanel extends ConsumerWidget {
     final typography = MacosTheme.of(context).typography;
     final isActive = conn.id == connection.connectionId;
     final repos = conn.allRepoPaths;
+    final expanded = _expanded.contains(conn.id);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // The connection row is a disclosure toggle, not a connect action —
+        // it reveals the server's repositories; clicking one of those is
+        // what actually connects.
         GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () => _openRepo(context, ref, conn, conn.repoPath),
+          onTap: () => _toggleExpanded(conn.id),
           child: Container(
             color: isActive ? _accent.withValues(alpha: 0.10) : null,
-            padding: const EdgeInsets.fromLTRB(16, 8, 10, 8),
+            padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
             child: Row(
               children: [
+                MacosIcon(
+                  expanded
+                      ? CupertinoIcons.chevron_down
+                      : CupertinoIcons.chevron_right,
+                  size: 12,
+                  color: MacosColors.systemGrayColor,
+                ),
+                const SizedBox(width: 6),
                 MacosIcon(
                   CupertinoIcons.desktopcomputer,
                   size: 17,
@@ -322,6 +376,17 @@ class ConnectionsPanel extends ConsumerWidget {
                     ],
                   ),
                 ),
+                if (!expanded)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 6),
+                    child: Text(
+                      '${repos.length} '
+                      'repo${repos.length == 1 ? '' : 's'}',
+                      style: typography.caption1.copyWith(
+                        color: MacosColors.systemGrayColor,
+                      ),
+                    ),
+                  ),
                 ToolIconButton(
                   icon: CupertinoIcons.trash,
                   tooltip: 'Delete connection',
@@ -333,9 +398,11 @@ class ConnectionsPanel extends ConsumerWidget {
             ),
           ),
         ),
-        for (final repo in repos)
-          _repoTile(context, ref, conn, repo, connection, repos.length),
-        _addRepoRow(context, ref, conn),
+        if (expanded) ...[
+          for (final repo in repos)
+            _repoTile(context, ref, conn, repo, connection, repos.length),
+          _addRepoRow(context, ref, conn),
+        ],
         const SizedBox(height: 6),
       ],
     );

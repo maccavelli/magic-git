@@ -4,6 +4,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../exec/command_telemetry.dart';
 import '../exec/local_command_executor.dart';
 import '../forge/forge.dart';
 import '../forge/forge_repo_summary.dart';
@@ -390,6 +391,10 @@ class ConnectionState {
   /// and takes UI priority over [reconnecting] since it can occur mid-retry too.
   final HostKeyPrompt? hostKeyPrompt;
 
+  /// When the current session reached [ConnectionPhase.connected] — null
+  /// while not connected. Drives the dashboard's session-uptime readout.
+  final DateTime? connectedAt;
+
   const ConnectionState({
     this.phase = ConnectionPhase.disconnected,
     this.backend = ConnectionBackend.ssh,
@@ -403,6 +408,7 @@ class ConnectionState {
     this.reconnectAttempt = 0,
     this.reconnecting = false,
     this.hostKeyPrompt,
+    this.connectedAt,
   });
 
   bool get isConnected => phase == ConnectionPhase.connected;
@@ -425,6 +431,7 @@ class ConnectionState {
     bool? reconnecting,
     HostKeyPrompt? hostKeyPrompt,
     bool clearHostKeyPrompt = false,
+    DateTime? connectedAt,
   }) {
     return ConnectionState(
       phase: phase ?? this.phase,
@@ -441,6 +448,7 @@ class ConnectionState {
       hostKeyPrompt: clearHostKeyPrompt
           ? null
           : (hostKeyPrompt ?? this.hostKeyPrompt),
+      connectedAt: connectedAt ?? this.connectedAt,
     );
   }
 }
@@ -823,6 +831,9 @@ class ConnectionController extends Notifier<ConnectionState> {
     if (!reconnecting) {
       ref.read(outputLogProvider.notifier).clear();
     }
+    // Session-scoped dashboard metrics start over with the session.
+    CommandTelemetry.instance.reset();
+    ref.read(pingSamplesProvider.notifier).clear();
     // Clear the previous connection's resolved environment up front. Switching
     // hosts (e.g. a macOS laptop → a Linux bastion) means a different OS, PATH,
     // and binary locations; without this reset, validateRepoPath and every early
@@ -864,6 +875,13 @@ class ConnectionController extends Notifier<ConnectionState> {
               type,
               fingerprintBytes,
             ),
+            // Feed keepalive RTTs to the dashboard's latency sparkline —
+            // guarded so a retired session's monitor can't pollute a newer
+            // session's chart.
+            onPingSample: (rtt) {
+              if (attempt != _attempt || !ref.mounted) return;
+              ref.read(pingSamplesProvider.notifier).add(rtt);
+            },
           );
       // Superseded by a newer connect or a disconnect while we were resolving —
       // don't overwrite the current state (the SSH manager has already torn its
@@ -900,6 +918,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         connectionId: connectionId,
         connectionLabel: connectionLabel ?? profile.host,
         host: profile.host,
+        connectedAt: DateTime.now(),
       );
       ref
           .read(outputLogProvider.notifier)
@@ -1114,6 +1133,9 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// session.
   Future<void> connectLocal(String repoPath, {String? label, String? id}) async {
     final attempt = ++_attempt;
+    // Session-scoped dashboard metrics start over with the session.
+    CommandTelemetry.instance.reset();
+    ref.read(pingSamplesProvider.notifier).clear();
     // Same supersession guard as connect(): a host-key prompt left open from
     // a still-in-flight SSH attempt must not orphan its Completer just
     // because the user switched to opening a local repo instead.
@@ -1218,6 +1240,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         repoPaths: [repoPath],
         connectionId: id,
         connectionLabel: label,
+        connectedAt: DateTime.now(),
       );
       // Tool versions for the Settings health panel — same background pass as
       // the SSH path, and for the same reason: spawning gh/glab `--version`
@@ -1555,6 +1578,13 @@ class ConnectionController extends Notifier<ConnectionState> {
               type,
               fingerprintBytes,
             ),
+            // Feed keepalive RTTs to the dashboard's latency sparkline —
+            // guarded so a retired session's monitor can't pollute a newer
+            // session's chart.
+            onPingSample: (rtt) {
+              if (attempt != _attempt || !ref.mounted) return;
+              ref.read(pingSamplesProvider.notifier).add(rtt);
+            },
           );
       if (attempt != _attempt || !ref.mounted) return null;
 
@@ -1678,6 +1708,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       connectionLabel: conn.displayName,
       host: conn.host,
       warning: warning,
+      connectedAt: DateTime.now(),
     );
     _watchForDrop(token);
     return true;
@@ -1978,6 +2009,56 @@ class FileViewVisibility extends Notifier<bool> {
 final fileViewVisibleProvider = NotifierProvider<FileViewVisibility, bool>(
   FileViewVisibility.new,
 );
+
+/// Whether the Dashboard sheet is open. Driven from three directions — the
+/// native "View → Dashboard View" menu checkbox, the sheet's own X button,
+/// and Esc — all routed through this one notifier so the checkmark and the
+/// sheet can never disagree.
+class DashboardVisibility extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void setVisible(bool value) {
+    if (state != value) state = value;
+  }
+
+  void toggle() => state = !state;
+}
+
+final dashboardVisibleProvider = NotifierProvider<DashboardVisibility, bool>(
+  DashboardVisibility.new,
+);
+
+/// Keepalive round-trip times from the active SSH session (newest last,
+/// bounded) — the dashboard's link-latency sparkline. The health monitor was
+/// already pinging every 15 s; this just stops discarding the timings.
+/// Cleared on every connect so the chart describes the current session.
+class PingSamplesNotifier extends Notifier<List<Duration>> {
+  static const int _cap = 40;
+
+  @override
+  List<Duration> build() => const [];
+
+  void add(Duration rtt) {
+    final next = [...state, rtt];
+    if (next.length > _cap) next.removeRange(0, next.length - _cap);
+    state = next;
+  }
+
+  void clear() => state = const [];
+}
+
+final pingSamplesProvider =
+    NotifierProvider<PingSamplesNotifier, List<Duration>>(
+      PingSamplesNotifier.new,
+    );
+
+/// The repo's object-store footprint (`git count-objects -vH`) — fetched on
+/// demand by the dashboard's Measure action, cheap enough to re-run freely.
+final repoFootprintProvider = FutureProvider.autoDispose
+    .family<RepoFootprint, String>((ref, repoPath) {
+      return ref.watch(gitServiceProvider).repoFootprint(repoPath);
+    });
 
 /// Event-driven "repo changed" ticks from the active backend's watcher.
 /// Auto-disposed so the remote fswatch/inotifywait process (or the native

@@ -17,6 +17,7 @@ import 'common/diff_view.dart' show kDiffMono;
 import 'common/escape_dismissible.dart';
 import 'common/sidebar_branding.dart';
 import 'connection/connection_landing.dart';
+import 'dashboard/dashboard_sheet.dart';
 import 'forge/forge_panel.dart';
 import 'forge/forge_project_panel.dart';
 import 'history/history_view.dart';
@@ -245,6 +246,11 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
   /// already persisted. See WindowBoundsStore and main.dart's restore.
   Timer? _boundsSaveTimer;
 
+  /// The dashboard sheet's live route while it's open — how the
+  /// menu-uncheck path closes exactly that route (and only it). Null when
+  /// the dashboard is closed.
+  ModalRoute<void>? _dashboardRoute;
+
   @override
   void initState() {
     super.initState();
@@ -259,6 +265,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         ref.read(outputLogProvider).visible,
       );
       _syncMenuState('setFileViewChecked', ref.read(fileViewVisibleProvider));
+      _syncMenuState('setDashboardChecked', ref.read(dashboardVisibleProvider));
       // Initial title; ref.listen (in build) only fires on subsequent changes.
       unawaited(windowManager.setTitle(ref.read(_windowTitleProvider)));
     });
@@ -332,6 +339,8 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         ref.read(outputLogProvider.notifier).toggle();
       case 'toggleFileView':
         ref.read(fileViewVisibleProvider.notifier).toggle();
+      case 'toggleDashboard':
+        ref.read(dashboardVisibleProvider.notifier).toggle();
       case 'prepareToTerminate':
         // ⌘Q (or any AppKit terminate path). The delegate holds termination
         // open (.terminateLater, with a native timeout backstop) until this
@@ -362,6 +371,10 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
           ref.read(outputLogProvider).visible,
         );
         _syncMenuState('setFileViewChecked', ref.read(fileViewVisibleProvider));
+        _syncMenuState(
+          'setDashboardChecked',
+          ref.read(dashboardVisibleProvider),
+        );
     }
     return null;
   }
@@ -566,6 +579,36 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     });
     ref.listen(fileViewVisibleProvider, (_, visible) {
       _syncMenuState('setFileViewChecked', visible);
+    });
+    // The dashboard is a modal sheet driven by a provider so all three of
+    // its controls stay in sync: the View-menu checkbox toggles the
+    // provider; the sheet's X / Esc pop the route (whose completion resets
+    // the provider); and unchecking the menu removes the live route.
+    ref.listen(dashboardVisibleProvider, (_, visible) {
+      _syncMenuState('setDashboardChecked', visible);
+      if (visible && _dashboardRoute == null) {
+        showMacosSheet<void>(
+          context: context,
+          builder: (sheetContext) {
+            _dashboardRoute = ModalRoute.of(sheetContext);
+            return const EscapeDismissible(child: DashboardSheet());
+          },
+        ).whenComplete(() {
+          _dashboardRoute = null;
+          if (mounted) {
+            ref.read(dashboardVisibleProvider.notifier).setVisible(false);
+          }
+        });
+      } else if (!visible && _dashboardRoute != null) {
+        final route = _dashboardRoute!;
+        _dashboardRoute = null;
+        if (route.isCurrent) {
+          Navigator.of(context, rootNavigator: true).pop();
+        } else if (route.isActive) {
+          // Buried under another sheet — remove just the dashboard.
+          Navigator.of(context, rootNavigator: true).removeRoute(route);
+        }
+      }
     });
     // A background (non-active) page's panel is kept alive across tab
     // switches for the *same* repo, but must not silently carry a previous

@@ -4,6 +4,7 @@ import 'dart:io' show gzip;
 import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
 import '../exec/command_lanes.dart';
+import '../exec/command_telemetry.dart';
 import 'command_formatter.dart';
 import 'ssh_client_manager.dart';
 
@@ -348,7 +349,16 @@ class SSHCommandExecutor implements CommandExecutor {
     // newer generation rather than adopting the current one.
     final gen = _clientManager.generation;
     return runWithRetries(
-      () => _run(gen, repoPath, gitArgs, extraEnv, stdin, timeout, compress),
+      () => _run(
+        gen,
+        repoPath,
+        gitArgs,
+        extraEnv,
+        stdin,
+        timeout,
+        compress,
+        lane,
+      ),
       retries,
       enqueue: (attempt) => _scheduler.run(lane, attempt),
     );
@@ -488,7 +498,11 @@ class SSHCommandExecutor implements CommandExecutor {
     String? stdin,
     Duration timeout,
     bool compress,
+    ExecLane lane,
   ) async {
+    // Started before the channel open so the sample's duration reflects the
+    // full user-perceived cost of the command, not just the drain.
+    final sw = Stopwatch()..start();
     if (_clientManager.generation != gen) {
       // A reconnect or a fresh connect() to a different host happened while
       // this command was waiting in the scheduler. Refuse to run
@@ -548,7 +562,14 @@ class SSHCommandExecutor implements CommandExecutor {
       // the wire saving is the point, but a gzip bomb must not be.
       final label = gitArgs.join(' ');
       final budget = OutputByteBudget();
-      final rawStdout = s.stdout.cast<List<int>>();
+      // Counts stdout's on-the-wire size *before* any decompression — with
+      // the budget's (post-decompression) total this is what lets the
+      // dashboard report real gzip savings per session.
+      var stdoutWireBytes = 0;
+      final rawStdout = s.stdout.cast<List<int>>().map((chunk) {
+        stdoutWireBytes += chunk.length;
+        return chunk;
+      });
       final stdoutFuture = collectBounded(
         boundedBytes(
           compressed ? rawStdout.transform(gzip.decoder) : rawStdout,
@@ -579,7 +600,21 @@ class SSHCommandExecutor implements CommandExecutor {
         stderrFuture,
       ], eagerError: true);
       final exitCode = await s.waitForExit() ?? -1;
+      void recordSample(int effectiveExit) {
+        CommandTelemetry.instance.record(
+          CommandSample(
+            lane: lane,
+            duration: sw.elapsed,
+            bytes: budget.used,
+            wireBytes: stdoutWireBytes,
+            compressed: compressed,
+            success: effectiveExit == 0,
+          ),
+        );
+      }
+
       if (!compressed) {
+        recordSample(exitCode);
         return SSHCommandResult(
           exitCode: exitCode,
           stdout: drained[0],
@@ -592,8 +627,10 @@ class SSHCommandExecutor implements CommandExecutor {
       // channel's own failure code if it has one, else -1 — never 0, which
       // would present a partial read as a success.
       final (realExit, body) = splitExitTrailer(drained[0]);
+      final effectiveExit = realExit ?? (exitCode != 0 ? exitCode : -1);
+      recordSample(effectiveExit);
       return SSHCommandResult(
-        exitCode: realExit ?? (exitCode != 0 ? exitCode : -1),
+        exitCode: effectiveExit,
         stdout: body,
         stderr: drained[1],
       );

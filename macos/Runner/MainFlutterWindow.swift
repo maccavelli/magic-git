@@ -6,6 +6,7 @@ class MainFlutterWindow: NSWindow {
   private var bookmarkChannel: FlutterMethodChannel?
   private var showOutputItem: NSMenuItem?
   private var showFileItem: NSMenuItem?
+  private var dashboardItem: NSMenuItem?
 
   /// Whether a quit-initiated Flutter cleanup round trip is already running,
   /// so a second terminate request while the first is in flight doesn't spawn
@@ -82,6 +83,11 @@ class MainFlutterWindow: NSWindow {
       case "setFileViewChecked":
         if let checked = call.arguments as? Bool {
           self?.showFileItem?.state = checked ? .on : .off
+        }
+        result(nil)
+      case "setDashboardChecked":
+        if let checked = call.arguments as? Bool {
+          self?.dashboardItem?.state = checked ? .on : .off
         }
         result(nil)
       default:
@@ -221,6 +227,9 @@ class MainFlutterWindow: NSWindow {
     self.showFileItem = addToggleItem(
       to: viewMenu, title: "Show File View", key: "e",
       action: #selector(toggleFileView(_:)), separatorBefore: false)
+    self.dashboardItem = addToggleItem(
+      to: viewMenu, title: "Dashboard View", key: "d",
+      action: #selector(toggleDashboard(_:)), separatorBefore: false)
 
     // The items now exist, so pull the current checkbox states from Flutter.
     // Flutter also pushes them once at startup, but that push races this
@@ -280,5 +289,9 @@ class MainFlutterWindow: NSWindow {
 
   @objc private func toggleFileView(_ sender: Any?) {
     menuChannel?.invokeMethod("toggleFileView", arguments: nil)
+  }
+
+  @objc private func toggleDashboard(_ sender: Any?) {
+    menuChannel?.invokeMethod("toggleDashboard", arguments: nil)
   }
 }

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import '../ssh/command_formatter.dart';
 import '../ssh/ssh_command_executor.dart';
 import 'command_lanes.dart';
+import 'command_telemetry.dart';
 
 /// [CommandExecutor] backed directly by [Process.start] instead of an SSH
 /// channel — for a repo living on this machine's own filesystem. No shell
@@ -106,7 +107,7 @@ class LocalCommandExecutor implements CommandExecutor {
     // (taken inside runWithRetries, between enqueues) doesn't head-of-line-block
     // other queued commands — mirrors SSHCommandExecutor.execute.
     return SSHCommandExecutor.runWithRetries(
-      () => _run(repoPath, gitArgs, extraEnv, stdin, timeout),
+      () => _run(repoPath, gitArgs, extraEnv, stdin, timeout, lane),
       retries,
       enqueue: (attempt) => _scheduler.run(lane, attempt),
     );
@@ -118,7 +119,9 @@ class LocalCommandExecutor implements CommandExecutor {
     Map<String, String>? extraEnv,
     String? stdin,
     Duration timeout,
+    ExecLane lane,
   ) async {
+    final sw = Stopwatch()..start();
     final argv = _rewriteArgv(gitArgs);
 
     // Assigned as soon as the process spawns, so a timeout firing during
@@ -191,6 +194,17 @@ class LocalCommandExecutor implements CommandExecutor {
         stderrFuture,
       ], eagerError: true);
       final exitCode = await p.exitCode;
+      CommandTelemetry.instance.record(
+        CommandSample(
+          lane: lane,
+          duration: sw.elapsed,
+          bytes: budget.used,
+          // No wire on a local pipe — buffered and "wire" size coincide.
+          wireBytes: budget.used,
+          compressed: false,
+          success: exitCode == 0,
+        ),
+      );
       return SSHCommandResult(
         exitCode: exitCode,
         stdout: drained[0],
