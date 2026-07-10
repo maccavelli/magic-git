@@ -11,6 +11,7 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/common/sheet_chrome.dart';
 import 'package:remote_magic_git/features/history/commit_graph_view.dart'
     show kGraphRowHeight;
 import 'package:remote_magic_git/features/history/history_view.dart';
@@ -159,13 +160,11 @@ void main() {
     await tester.tap(find.text('Branch from here…'));
     await tester.pumpAndSettle();
 
-    // The prompt is open and constrained to 440px rather than ballooning to
-    // fill the window. Its text field is wrapped by exactly one 440-wide
-    // SizedBox (distinct from the always-present history search field).
-    final capped = find.ancestor(
-      of: find.byType(MacosTextField),
-      matching: find.byWidgetPredicate((w) => w is SizedBox && w.width == 440),
-    );
-    expect(capped, findsOneWidget);
+    // The prompt is open at the standard sheet width rather than ballooning
+    // to fill the window — measured on the RENDERED sheet, not a declared
+    // SizedBox (inner widths can be silently ignored; see SizedSheet).
+    final sheet = find.byType(MacosSheet);
+    expect(sheet, findsOneWidget);
+    expect(tester.getSize(sheet).width, kSheetWidth);
   });
 }

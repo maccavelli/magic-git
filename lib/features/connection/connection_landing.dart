@@ -419,7 +419,7 @@ class NewConnectionSheet extends ConsumerWidget {
 
     final screen = MediaQuery.sizeOf(context);
     return SizedSheet(
-      width: (screen.width * 0.42).clamp(322.0, 476.0).toDouble(),
+      width: kSheetWidth,
       height: (screen.height * 0.82).clamp(460.0, 820.0).toDouble(),
       child: SizedBox(
         child: Column(

@@ -123,7 +123,7 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
     return SizedSheet(
-      width: 420,
+      width: kSheetWidth,
       child: SizedBox(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(22),
@@ -137,6 +137,12 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
                   const SizedBox(width: 8),
                   Text('Settings', style: typography.title2),
                 ],
+              ),
+              const SheetDescription(
+                'App-wide preferences: command timeouts, who commits are '
+                'authored as, default pull/push behavior, background '
+                'fetching, trusted SSH hosts, and keyboard shortcuts. '
+                'Changes apply after Save.',
               ),
               const SizedBox(height: 18),
 

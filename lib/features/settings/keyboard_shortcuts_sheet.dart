@@ -25,7 +25,7 @@ class KeyboardShortcutsSheet extends ConsumerWidget {
     }
 
     return SizedSheet(
-      width: 392,
+      width: kSheetWidth,
       // Capped to the viewport so the Close row stays reachable at the
       // minimum window size — the category list scrolls instead.
       height: (MediaQuery.sizeOf(context).height - 80).clamp(320.0, 560.0),

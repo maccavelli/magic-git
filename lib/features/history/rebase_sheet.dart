@@ -5,6 +5,7 @@ import '../../core/git/git_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/actions.dart';
+import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 
 /// Visual interactive-rebase editor: reorder commits, and set each to pick,
@@ -134,10 +135,10 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
     final typography = MacosTheme.of(context).typography;
     final screen = MediaQuery.sizeOf(context);
     final keepCount = _rows.where((r) => r.action != RebaseAction.drop).length;
-    return MacosSheet(
+    return SizedSheet(
+      width: kSheetWidth,
+      height: (screen.height * 0.72).clamp(400.0, 820.0).toDouble(),
       child: SizedBox(
-        width: (screen.width * 0.6).clamp(520.0, 760.0).toDouble(),
-        height: (screen.height * 0.72).clamp(400.0, 820.0).toDouble(),
         child: Column(
           children: [
             Padding(
@@ -180,15 +181,18 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
               padding: const EdgeInsets.all(14),
               child: Row(
                 children: [
-                  Text(
-                    keepCount == 0
-                        ? 'All commits dropped'
-                        : '$keepCount commit${keepCount == 1 ? '' : 's'} after rebase',
-                    style: typography.caption1.copyWith(
-                      color: MacosColors.systemGrayColor,
+                  Expanded(
+                    child: Text(
+                      keepCount == 0
+                          ? 'All commits dropped'
+                          : '$keepCount commit${keepCount == 1 ? '' : 's'} after rebase',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: typography.caption1.copyWith(
+                        color: MacosColors.systemGrayColor,
+                      ),
                     ),
                   ),
-                  const Spacer(),
                   PushButton(
                     controlSize: ControlSize.large,
                     secondary: true,

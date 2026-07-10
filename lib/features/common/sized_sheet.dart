@@ -1,6 +1,8 @@
 import 'package:flutter/widgets.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+export 'sheet_chrome.dart';
+
 /// A [MacosSheet] whose requested [width]/[height] are actually honored.
 ///
 /// [showMacosSheet]'s route lays its page out with *tight* full-screen

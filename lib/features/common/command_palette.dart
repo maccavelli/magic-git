@@ -5,6 +5,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import 'field_styles.dart';
+import 'sized_sheet.dart';
 
 /// One runnable entry in the [CommandPalette]. [run] is invoked *after* the
 /// palette has closed, so it must not depend on the palette's own context — the
@@ -233,10 +234,10 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
         const SingleActivator(LogicalKeyboardKey.escape): () =>
             Navigator.of(context).pop(),
       },
-      child: MacosSheet(
+      child: SizedSheet(
+        width: kSheetWidth,
+        height: 420,
         child: SizedBox(
-          width: 560,
-          height: 420,
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -254,6 +255,10 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
                   decoration: kAppTextFieldDecoration,
                   focusedDecoration: kAppTextFieldFocusedDecoration,
                   onChanged: (_) => setState(() => _highlighted = 0),
+                ),
+                const FieldHint(
+                  'Search every app command and branch — ↑/↓ to highlight, '
+                  'Return to run, Esc to close.',
                 ),
                 const SizedBox(height: 10),
                 Expanded(

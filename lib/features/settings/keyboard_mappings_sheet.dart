@@ -184,7 +184,7 @@ class _KeyboardMappingsSheetState
       focusNode: _captureFocus,
       onKeyEvent: _onKey,
       child: SizedSheet(
-        width: 448,
+        width: kSheetWidth,
         // Preferred height, capped to the viewport so the bottom controls
         // stay reachable at the app's minimum window size (the inner list
         // scrolls); floored so a degenerate viewport can't go negative.

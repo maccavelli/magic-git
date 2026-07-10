@@ -904,7 +904,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
     return SizedSheet(
-      width: 392,
+      width: kSheetWidth,
       // Narrower sheet + per-step guidance text → a little more vertical
       // room; each step scrolls when it doesn't fit.
       height: (MediaQuery.sizeOf(context).height - 60).clamp(460.0, 680.0),

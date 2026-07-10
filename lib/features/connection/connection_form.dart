@@ -6,6 +6,7 @@ import '../../core/ssh/ssh_client_manager.dart';
 import '../../core/storage/saved_connection.dart';
 import '../common/field_styles.dart';
 import '../common/labeled_text_field.dart';
+import '../common/sheet_chrome.dart';
 
 /// Connection form: collects SSH details + a remote repo path and drives
 /// [ConnectionController.connect]. Profiles can be saved — metadata to
@@ -207,17 +208,41 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _field('Host', _host, placeholder: 'gitlab.example.com'),
-              _field('Port', _port),
-              _field('Username', _username),
-              _field('Password', _password, obscure: true),
+              Text('Add SSH Remote', style: typography.title2),
+              const SheetDescription(
+                'Connects to a Git repository on a remote host over SSH — '
+                'the repository stays on the host and every git command '
+                'runs there. Sign in with a password or a private key.',
+              ),
+              const SizedBox(height: 16),
+              _field(
+                'Host',
+                _host,
+                placeholder: 'gitlab.example.com',
+                hint: 'Host name or IP address of the SSH server.',
+              ),
+              _field('Port', _port, hint: '22 unless the host uses a custom SSH port.'),
+              _field('Username', _username, hint: 'The account to sign in as on the host.'),
+              _field(
+                'Password',
+                _password,
+                obscure: true,
+                hint: 'For password sign-in — leave blank when using a key.',
+              ),
               _field(
                 'Private key (PEM)',
                 _privateKey,
                 placeholder: 'Paste key for key-based auth (optional)',
                 maxLines: 5,
+                hint: 'Key-based sign-in; kept in secure storage when the '
+                    'connection is saved.',
               ),
-              _field('Key passphrase', _passphrase, obscure: true),
+              _field(
+                'Key passphrase',
+                _passphrase,
+                obscure: true,
+                hint: 'Only needed when the private key is encrypted.',
+              ),
               if (_passphrase.text.isNotEmpty &&
                   _privateKey.text.trim().isEmpty) ...[
                 Text(
@@ -232,18 +257,24 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
                 'Repository path',
                 _repoPath,
                 placeholder: '/srv/git/my-project',
+                hint: 'Absolute path of the repository to open after '
+                    'connecting.',
               ),
               _field(
                 'GitLab token',
                 _gitlabToken,
                 placeholder: 'glpat-… (optional)',
                 obscure: true,
+                hint: 'Optional personal access token — signs glab in on '
+                    'the host so merge requests and pipelines work.',
               ),
               _field(
                 'GitHub token',
                 _githubToken,
                 placeholder: 'ghp_… / github_pat_… (optional)',
                 obscure: true,
+                hint: 'Optional personal access token — signs gh in on the '
+                    'host so pull requests and Actions work.',
               ),
               const SizedBox(height: 8),
               Row(
@@ -266,6 +297,10 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
                     ),
                   ],
                 ],
+              ),
+              const FieldHint(
+                'Stores this connection — secrets in secure storage — so it '
+                'appears in the Connections list for one-click reconnects.',
               ),
               const SizedBox(height: 20),
               if (phase == ConnectionPhase.connecting)
@@ -307,12 +342,27 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
     String? placeholder,
     bool obscure = false,
     int maxLines = 1,
-  }) => LabeledTextField(
-    label: label,
-    controller: controller,
-    placeholder: placeholder,
-    obscure: obscure,
-    maxLines: maxLines,
-    onChanged: () => setState(() {}),
-  );
+    String? hint,
+  }) {
+    final field = LabeledTextField(
+      label: label,
+      controller: controller,
+      placeholder: placeholder,
+      obscure: obscure,
+      maxLines: maxLines,
+      onChanged: () => setState(() {}),
+      // The hint supplies the bottom spacing when present.
+      padding: hint == null
+          ? const EdgeInsets.only(bottom: 12)
+          : EdgeInsets.zero,
+    );
+    if (hint == null) return field;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [field, FieldHint(hint)],
+      ),
+    );
+  }
 }

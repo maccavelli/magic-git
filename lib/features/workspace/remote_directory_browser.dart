@@ -4,6 +4,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/host_fs_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/field_styles.dart';
+import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 
 /// A navigable, dirs-only browser for the connected host's filesystem, used to
@@ -116,10 +117,10 @@ class _RemoteDirectoryBrowserSheetState
     final typography = MacosTheme.of(context).typography;
     final atRoot = _currentPath == '/' || _currentPath == null;
 
-    return MacosSheet(
+    return SizedSheet(
+      width: kSheetWidth,
+      height: (MediaQuery.sizeOf(context).height - 80).clamp(360.0, 560.0),
       child: SizedBox(
-        width: 560,
-        height: (MediaQuery.sizeOf(context).height - 80).clamp(360.0, 560.0),
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Column(
@@ -138,6 +139,11 @@ class _RemoteDirectoryBrowserSheetState
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
+              ),
+              const SheetDescription(
+                'Browse the connected host\'s filesystem and pick a folder — '
+                'double-click to enter a folder, or type an absolute path '
+                'and press Return.',
               ),
               const SizedBox(height: 12),
               Row(

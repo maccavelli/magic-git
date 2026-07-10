@@ -223,7 +223,7 @@ class _EnvironmentHealthSheetState
     final tools = kToolCatalog.where((t) => t.relevantOn(env.os)).toList();
 
     return SizedSheet(
-      width: 378,
+      width: kSheetWidth,
       child: SizedBox(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -249,6 +249,14 @@ class _EnvironmentHealthSheetState
                     ),
                   ),
                 ],
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(22, 0, 22, 10),
+              child: SheetDescription(
+                'The command-line tools this app relies on (git, gh, glab, …) '
+                'as found on the current host — with install or update '
+                'actions for anything missing or outdated.',
               ),
             ),
             Flexible(

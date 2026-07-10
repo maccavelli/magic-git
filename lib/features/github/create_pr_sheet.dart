@@ -11,6 +11,7 @@ import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
 import '../common/diff_view.dart';
 import '../common/labeled_text_field.dart';
+import '../common/sized_sheet.dart';
 
 /// Sheet for creating a pull request. Head defaults to the current branch.
 /// Beyond title/body it exposes draft, reviewers, assignees, labels, and
@@ -190,9 +191,9 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
         : ref.read(ghServiceProvider).lastGraphqlWarning;
     final typography = MacosTheme.of(context).typography;
 
-    return MacosSheet(
+    return SizedSheet(
+      width: kSheetWidth,
       child: SizedBox(
-        width: 520,
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Column(
@@ -200,6 +201,11 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text('New Pull Request', style: typography.title2),
+              const SheetDescription(
+                'Opens a pull request on GitHub asking to merge the head '
+                'branch into the base branch. Preview the outgoing commits '
+                'below before anything is created.',
+              ),
               if (dashboardWarning != null)
                 _dashboardWarningBanner(dashboardWarning),
               const SizedBox(height: 16),

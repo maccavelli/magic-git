@@ -152,7 +152,7 @@ class ConnectionsPanel extends ConsumerWidget {
         saved.isEmpty && savedLocal.isEmpty && !showAdhoc && !showAdhocLocal;
 
     return SizedSheet(
-      width: 378,
+      width: kSheetWidth,
       // Capped to the viewport so the footer stays reachable at the app's
       // minimum window size — the connection list scrolls instead.
       height: (MediaQuery.sizeOf(context).height - 80).clamp(320.0, 500.0),
@@ -201,6 +201,14 @@ class ConnectionsPanel extends ConsumerWidget {
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(18, 0, 18, 10),
+              child: SheetDescription(
+                'Your saved SSH hosts and local repositories — click one to '
+                'switch to it. The toolbar above adds a connection or local '
+                'repo, or clones/creates a repository.',
               ),
             ),
             Container(height: 1, color: MacosColors.separatorColor),
@@ -906,7 +914,7 @@ class _AddRepositorySheetState extends State<AddRepositorySheet> {
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
     return SizedSheet(
-      width: 380,
+      width: kSheetWidth,
       child: SizedBox(
         child: Padding(
           padding: const EdgeInsets.all(20),
@@ -915,6 +923,11 @@ class _AddRepositorySheetState extends State<AddRepositorySheet> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text('Add repository', style: typography.title2),
+              const SheetDescription(
+                'Registers another repository that already exists on the '
+                'connected host, so you can switch to it from the '
+                'Connections list.',
+              ),
               const SizedBox(height: 12),
               Text(
                 'Absolute path on the connected host',
@@ -927,6 +940,10 @@ class _AddRepositorySheetState extends State<AddRepositorySheet> {
                 decoration: kAppTextFieldDecoration,
                 focusedDecoration: kAppTextFieldFocusedDecoration,
                 onChanged: (_) => setState(() {}),
+              ),
+              const FieldHint(
+                'The repository\'s root folder on the host (the one '
+                'containing .git).',
               ),
               const SizedBox(height: 14),
               Row(

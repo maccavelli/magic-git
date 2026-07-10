@@ -1,6 +1,12 @@
 import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../common/sheet_chrome.dart';
+
+/// The wizards' field hint is the app-wide [FieldHint] — one widget, one
+/// look, whether a control lives in a wizard step or a plain sheet.
+typedef WizardHint = FieldHint;
+
 /// Shared machinery for the workspace wizards (Create repository, Clone
 /// repository): the data-driven step model plus the widgets every wizard
 /// renders around its steps — breadcrumb indicator, per-step instructional
@@ -112,26 +118,6 @@ class WizardStepIntro extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(child: Text(text, style: typography.caption1)),
         ],
-      ),
-    );
-  }
-}
-
-/// A one-line explanation under a field or control group.
-class WizardHint extends StatelessWidget {
-  final String text;
-  const WizardHint(this.text, {super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final typography = MacosTheme.of(context).typography;
-    return Padding(
-      padding: const EdgeInsets.only(top: 4),
-      child: Text(
-        text,
-        style: typography.caption1.copyWith(
-          color: MacosColors.systemGrayColor,
-        ),
       ),
     );
   }

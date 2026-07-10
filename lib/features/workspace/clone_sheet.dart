@@ -445,7 +445,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
     final stepIndex = _stepIndex.clamp(0, steps.length - 1);
 
     return SizedSheet(
-      width: 392,
+      width: kSheetWidth,
       height: (MediaQuery.sizeOf(context).height - 60).clamp(460.0, 680.0),
       child: Padding(
         padding: const EdgeInsets.all(20),

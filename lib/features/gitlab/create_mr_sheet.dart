@@ -12,6 +12,7 @@ import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
 import '../common/diff_view.dart';
 import '../common/labeled_text_field.dart';
+import '../common/sized_sheet.dart';
 
 /// Sheet for creating a merge request. Source defaults to the current branch.
 /// Beyond title/description it exposes the fields reviewers reach for most —
@@ -200,9 +201,9 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
         : ref.read(glabServiceProvider).lastGraphqlWarning;
     final typography = MacosTheme.of(context).typography;
 
-    return MacosSheet(
+    return SizedSheet(
+      width: kSheetWidth,
       child: SizedBox(
-        width: 520,
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Column(
@@ -210,6 +211,11 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text('New Merge Request', style: typography.title2),
+              const SheetDescription(
+                'Opens a merge request on GitLab asking to merge the source '
+                'branch into the target branch. Preview the outgoing commits '
+                'below before anything is created.',
+              ),
               if (dashboardWarning != null)
                 _dashboardWarningBanner(dashboardWarning),
               const SizedBox(height: 16),

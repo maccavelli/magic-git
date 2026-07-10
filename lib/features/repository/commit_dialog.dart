@@ -8,6 +8,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/field_styles.dart';
+import '../common/sized_sheet.dart';
 
 /// Commit sheet with a hook-aware flow:
 ///
@@ -156,55 +157,50 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
           const SingleActivator(LogicalKeyboardKey.escape): () =>
               Navigator.of(context).pop(),
       },
-      child: MacosSheet(
-        // Width and height both track content: IntrinsicWidth sizes to the
-        // widest child (mainly the text field's current longest line, per
-        // its own text-aware intrinsic-width computation), clamped to a sane
-        // range so an empty message isn't cramped and a single very long
-        // unwrapped line doesn't stretch the sheet absurdly wide. Height
-        // already tracks content via the text field's minLines/maxLines.
-        // AnimatedSize eases between sizes instead of snapping, since both
-        // dimensions can change on every keystroke.
+      child: SizedSheet(
+        width: kSheetWidth,
+        // Height tracks content via the text field's minLines/maxLines;
+        // AnimatedSize eases between heights instead of snapping.
         child: AnimatedSize(
           duration: const Duration(milliseconds: 180),
           curve: Curves.easeOutCubic,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(minWidth: 420, maxWidth: 680),
-            child: IntrinsicWidth(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Text(
-                      'Commit $n file${n == 1 ? '' : 's'}',
-                      style: typography.title2,
-                    ),
-                    const SizedBox(height: 12),
-                    if (_loadingPreview)
-                      _previewLoading(context)
-                    else ...[
-                      MacosTextField(
-                        controller: _message,
-                        focusNode: _focus,
-                        readOnly: !_editable,
-                        autofocus: _editable,
-                        placeholder: _generated ? null : 'Commit message',
-                        minLines: 1,
-                        maxLines: 12,
-                        decoration: kAppTextFieldDecoration,
-                        focusedDecoration: kAppTextFieldFocusedDecoration,
-                        onChanged: (_) => setState(() {}),
-                      ),
-                      const SizedBox(height: 8),
-                      _hint(context),
-                    ],
-                    const SizedBox(height: 16),
-                    _buttons(context, canAccept),
-                  ],
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Commit $n file${n == 1 ? '' : 's'}',
+                  style: typography.title2,
                 ),
-              ),
+                const SheetDescription(
+                  'Records the listed changes as a new commit on the current '
+                  'branch. Accept + Push also sends it to the remote right '
+                  'away.',
+                ),
+                const SizedBox(height: 12),
+                if (_loadingPreview)
+                  _previewLoading(context)
+                else ...[
+                  MacosTextField(
+                    controller: _message,
+                    focusNode: _focus,
+                    readOnly: !_editable,
+                    autofocus: _editable,
+                    placeholder: _generated ? null : 'Commit message',
+                    minLines: 1,
+                    maxLines: 12,
+                    decoration: kAppTextFieldDecoration,
+                    focusedDecoration: kAppTextFieldFocusedDecoration,
+                    onChanged: (_) => setState(() {}),
+                  ),
+                  const SizedBox(height: 8),
+                  _hint(context),
+                ],
+                const SizedBox(height: 16),
+                _buttons(context, canAccept),
+              ],
             ),
           ),
         ),
@@ -243,15 +239,24 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
         'Editing the generated message. Accept to commit.',
         MacosColors.systemGrayColor,
       ),
-      _ => ('', MacosColors.systemGrayColor),
+      _ => (
+        'A short summary line works best — add detail on following lines '
+            'if needed.',
+        MacosColors.systemGrayColor,
+      ),
     };
     if (text.isEmpty) return const SizedBox.shrink();
     return Text(text, style: typography.caption1.copyWith(color: color));
   }
 
   Widget _buttons(BuildContext context, bool canAccept) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
+    // A Wrap (not a Row): four large buttons don't fit the standard sheet
+    // width on one line when the Edit affordance is showing — let the row
+    // break rather than overflow.
+    return Wrap(
+      alignment: WrapAlignment.end,
+      spacing: 8,
+      runSpacing: 8,
       children: [
         PushButton(
           controlSize: ControlSize.large,
@@ -259,25 +264,21 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
           onPressed: _committing ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
-        const SizedBox(width: 8),
         if (_committing)
           const ProgressCircle()
         else if (!_loadingPreview) ...[
-          if (_generated && !_editable) ...[
+          if (_generated && !_editable)
             PushButton(
               controlSize: ControlSize.large,
               secondary: true,
               onPressed: _beginEdit,
               child: const Text('Edit'),
             ),
-            const SizedBox(width: 8),
-          ],
           PushButton(
             controlSize: ControlSize.large,
             onPressed: canAccept ? () => _commit(push: true) : null,
             child: const Text('Accept + Push'),
           ),
-          const SizedBox(width: 8),
           PushButton(
             controlSize: ControlSize.large,
             onPressed: canAccept ? () => _commit() : null,

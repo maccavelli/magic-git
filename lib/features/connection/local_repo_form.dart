@@ -7,6 +7,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_local_repo.dart';
 import '../common/actions.dart';
 import '../common/field_styles.dart';
+import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 
 /// Resolves [repo]'s macOS security-scoped bookmark to a path this process can
@@ -162,9 +163,9 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
     );
     final typography = MacosTheme.of(context).typography;
 
-    return MacosSheet(
+    return SizedSheet(
+      width: kSheetWidth,
       child: SizedBox(
-        width: 480,
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
@@ -182,6 +183,11 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
                     onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
+              ),
+              const SheetDescription(
+                'Opens a Git repository that already exists on this Mac and '
+                'makes it the active workspace — nothing is copied or '
+                'changed.',
               ),
               const SizedBox(height: 16),
               Text('Folder', style: typography.caption1),
@@ -220,6 +226,10 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
                   ),
                 ],
               ),
+              const FieldHint(
+                'Pick the repository\'s root folder (the one containing '
+                '.git).',
+              ),
               const SizedBox(height: 16),
               Row(
                 children: [
@@ -242,6 +252,10 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
                   ],
                 ],
               ),
+              const FieldHint(
+                'Remembers this repository in the Connections list for '
+                'quick reopening — the label is its display name there.',
+              ),
               const SizedBox(height: 12),
               Row(
                 children: [
@@ -257,6 +271,10 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
                     ),
                   ),
                 ],
+              ),
+              const FieldHint(
+                'Turns on git\'s filesystem monitor daemon in this '
+                'repository — speeds up status on big working trees.',
               ),
               const SizedBox(height: 20),
               if (phase == ConnectionPhase.connecting)

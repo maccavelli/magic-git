@@ -14,6 +14,7 @@ import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'commit_graph_view.dart';
 import 'rebase_sheet.dart';
@@ -259,16 +260,15 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     String title, {
     required String placeholder,
     String initial = '',
+    String? description,
   }) async {
     final controller = TextEditingController(text: initial);
     final value = await showMacosSheet<String>(
       context: context,
       builder: (sheetContext) => EscapeDismissible(
-        child: MacosSheet(
-        // A MacosSheet has no intrinsic width — without this it fills the whole
-        // window for what is just a title + one text field + Cancel/OK.
+        child: SizedSheet(
+        width: kSheetWidth,
         child: SizedBox(
-          width: 440,
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: Column(
@@ -279,6 +279,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
                   title,
                   style: MacosTheme.of(sheetContext).typography.title3,
                 ),
+                if (description != null) SheetDescription(description),
                 const SizedBox(height: 14),
                 MacosTextField(
                   controller: controller,
@@ -330,6 +331,9 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
       'Mainline parent',
       placeholder: '1',
       initial: '1',
+      description:
+          'This is a merge commit — pick which parent counts as the '
+          'mainline (1 = the branch that was merged into).',
     );
     if (v == null) return null;
     return int.tryParse(v) ?? 1;
@@ -353,6 +357,9 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     final name = await _promptText(
       'New branch from commit',
       placeholder: 'branch name',
+      description:
+          'Creates a branch starting at the selected commit and checks it '
+          'out.',
     );
     if (name != null) {
       await _run(() => _git.branchFrom(repoPath, name, hash), movesHead: true);
