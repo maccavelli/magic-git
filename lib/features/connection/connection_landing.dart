@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/escape_dismissible.dart';
+import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import '../workspace/clone_sheet.dart';
 import '../workspace/create_repo_sheet.dart';
@@ -417,10 +418,10 @@ class NewConnectionSheet extends ConsumerWidget {
     });
 
     final screen = MediaQuery.sizeOf(context);
-    return MacosSheet(
+    return SizedSheet(
+      width: (screen.width * 0.42).clamp(322.0, 476.0).toDouble(),
+      height: (screen.height * 0.82).clamp(460.0, 820.0).toDouble(),
       child: SizedBox(
-        width: (screen.width * 0.6).clamp(460.0, 680.0).toDouble(),
-        height: (screen.height * 0.82).clamp(460.0, 900.0).toDouble(),
         child: Column(
           children: [
             Align(

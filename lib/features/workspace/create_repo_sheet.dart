@@ -15,6 +15,7 @@ import '../../core/ssh/ssh_command_executor.dart';
 import '../../core/storage/saved_connection.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
+import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'remote_directory_browser.dart';
 import 'workspace_registration.dart';
@@ -39,6 +40,10 @@ class _WizardStep {
   final String id;
   final String title;
 
+  /// Instructional overview shown in an info box above the step's fields —
+  /// what this step decides and what will happen with it.
+  final String intro;
+
   /// Whether the step participates at all (e.g. Destination exists only on
   /// the landing variant). Evaluated live, so steps may come and go with
   /// earlier answers.
@@ -52,6 +57,7 @@ class _WizardStep {
   const _WizardStep({
     required this.id,
     required this.title,
+    required this.intro,
     this.applicable = _always,
     required this.valid,
     required this.body,
@@ -162,6 +168,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     _WizardStep(
       id: 'destination',
       title: 'Destination',
+      intro:
+          'Choose where the repository will live: on this Mac, or on one of '
+          'your saved SSH hosts. Picking a host connects to it on demand — '
+          'the repository stays on the host, nothing is copied to this Mac.',
       applicable: () => widget.landing,
       valid: () => !_provisioning,
       body: _destinationSection,
@@ -169,24 +179,40 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     _WizardStep(
       id: 'source',
       title: 'Source',
+      intro:
+          'Start from a brand-new empty folder, or turn a folder you '
+          'already have into a repository, in place, keeping its contents.',
       valid: _sourceValid,
       body: _sourceStep,
     ),
     _WizardStep(
       id: 'remote',
       title: 'Remote',
+      intro:
+          'Decide what the repository\'s "origin" remote points at. GitHub '
+          'and GitLab also create the project on the forge for you; Custom '
+          'URL connects a remote that already exists; None sets up no '
+          'remote at all.',
       valid: _remoteValid,
       body: _remoteSection,
     ),
     _WizardStep(
       id: 'details',
       title: 'Details',
+      intro:
+          'Name the repository, choose its initial branch, and pick the '
+          'first-commit and workspace options.',
       valid: _detailsValid,
       body: _detailsStep,
     ),
     _WizardStep(
       id: 'review',
       title: 'Review',
+      intro:
+          'Nothing has been created yet — check the summary below, then '
+          'press Create to run these steps. If anything goes wrong along '
+          'the way, the repository is kept and the failing step is '
+          'reported here.',
       valid: _WizardStep._always,
       body: _reviewStep,
     ),
@@ -895,10 +921,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
-    return MacosSheet(
+    return SizedSheet(
+      width: 392,
+      // Narrower sheet + per-step guidance text → a little more vertical
+      // room; each step scrolls when it doesn't fit.
+      height: (MediaQuery.sizeOf(context).height - 60).clamp(460.0, 680.0),
       child: SizedBox(
-        width: 560,
-        height: (MediaQuery.sizeOf(context).height - 60).clamp(420.0, 620.0),
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Column(
@@ -925,11 +953,23 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               _stepIndicator(typography),
               const SizedBox(height: 14),
               Expanded(
-                child: SingleChildScrollView(
-                  child: _activeSteps[_stepIndex.clamp(
-                    0,
-                    _activeSteps.length - 1,
-                  )].body(typography),
+                child: Builder(
+                  builder: (context) {
+                    final step = _activeSteps[_stepIndex.clamp(
+                      0,
+                      _activeSteps.length - 1,
+                    )];
+                    return SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _stepIntro(typography, step.intro),
+                          const SizedBox(height: 14),
+                          step.body(typography),
+                        ],
+                      ),
+                    );
+                  },
                 ),
               ),
               const SizedBox(height: 12),
@@ -971,6 +1011,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               ),
           ],
         ),
+        _hint(
+          typography,
+          _destConnectionId == null
+              ? 'The repository is created on this Mac\'s own filesystem.'
+              : 'The repository is created on the selected host over SSH.',
+        ),
         if (_provisioning)
           Padding(
             padding: const EdgeInsets.only(top: 6),
@@ -996,12 +1042,21 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       children: [
         Text('Source', style: typography.caption1),
         const SizedBox(height: 4),
-        Row(
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
           children: [
             _sourceButton('New folder', _SourceMode.newFolder),
-            const SizedBox(width: 6),
             _sourceButton('Existing folder', _SourceMode.existingFolder),
           ],
+        ),
+        _hint(
+          typography,
+          _source == _SourceMode.newFolder
+              ? 'A new, empty folder is created inside the parent folder '
+                    'you choose below.'
+              : 'The folder you pick becomes the repository, in place. If '
+                    'it already is one, it is published as-is.',
         ),
       ],
     );
@@ -1020,10 +1075,13 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     );
   }
 
-  /// Breadcrumb of the active steps with the current one highlighted.
+  /// Breadcrumb of the active steps with the current one highlighted. A Wrap
+  /// so the five landing-mode steps flow onto a second line at sheet width.
   Widget _stepIndicator(MacosTypography typography) {
     final steps = _activeSteps;
-    return Row(
+    return Wrap(
+      runSpacing: 2,
+      crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         for (var i = 0; i < steps.length; i++) ...[
           if (i > 0)
@@ -1047,6 +1105,43 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           ),
         ],
       ],
+    );
+  }
+
+  /// The step's instructional overview — an info box between the breadcrumb
+  /// and the fields.
+  Widget _stepIntro(MacosTypography typography, String text) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: MacosColors.systemGrayColor.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const MacosIcon(
+            CupertinoIcons.info_circle,
+            size: 14,
+            color: MacosColors.systemGrayColor,
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: typography.caption1)),
+        ],
+      ),
+    );
+  }
+
+  /// A one-line explanation under a field or control group.
+  Widget _hint(MacosTypography typography, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Text(
+        text,
+        style: typography.caption1.copyWith(
+          color: MacosColors.systemGrayColor,
+        ),
+      ),
     );
   }
 
@@ -1090,15 +1185,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             focusedDecoration: kAppTextFieldFocusedDecoration,
             onChanged: (_) => setState(() {}),
           ),
+          _hint(
+            typography,
+            existing
+                ? 'Names the project created on the forge — prefilled from '
+                      'the folder when picked with Browse/Choose.'
+                : 'Also the name of the folder created inside the parent. '
+                      'Letters, digits, dot, dash and underscore.',
+          ),
           const SizedBox(height: 10),
         ],
-        Text(
-          existing
-              ? "Initial branch (used only if the folder isn't already a "
-                    'repository)'
-              : 'Initial branch',
-          style: typography.caption1,
-        ),
+        Text('Initial branch', style: typography.caption1),
         const SizedBox(height: 4),
         MacosTextField(
           controller: _branch,
@@ -1107,10 +1204,24 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           focusedDecoration: kAppTextFieldFocusedDecoration,
           onChanged: (_) => setState(() {}),
         ),
+        _hint(
+          typography,
+          existing
+              ? 'Used only if the folder isn\'t already a repository — an '
+                    'existing repository keeps its current branch.'
+              : 'The branch the repository starts on — "main" is the '
+                    'common default.',
+        ),
         const SizedBox(height: 10),
-        if (existing)
-          _commitAllToggle()
-        else
+        if (existing) ...[
+          _commitAllToggle(),
+          _hint(
+            typography,
+            'Stages and commits everything already in the folder, and '
+            'pushes it when a remote is set up. Leave off to commit '
+            'manually later.',
+          ),
+        ] else ...[
           WorkspaceToggleRow(
             on: _addReadme,
             onTap: () => setState(() => _addReadme = !_addReadme),
@@ -1118,6 +1229,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             offIcon: CupertinoIcons.doc_text,
             label: 'Add a README (creates the initial commit)',
           ),
+          _hint(
+            typography,
+            'Writes a README.md, commits it, and pushes it when a remote '
+            'is set up — so the repository (and the forge) isn\'t empty.',
+          ),
+        ],
         const SizedBox(height: 8),
         if (_isLocalTarget) ...[
           WorkspaceToggleRow(
@@ -1127,6 +1244,11 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             offIcon: CupertinoIcons.tray_arrow_down,
             label: 'Save to Local Repositories',
           ),
+          _hint(
+            typography,
+            'Remembers this repository so it appears in the Connections '
+            'list for quick reopening.',
+          ),
           if (_saveLocal) ...[
             const SizedBox(height: 8),
             MacosTextField(
@@ -1135,8 +1257,13 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               decoration: kAppTextFieldDecoration,
               focusedDecoration: kAppTextFieldFocusedDecoration,
             ),
+            _hint(
+              typography,
+              'Display name in the Connections list — defaults to the '
+              'folder name.',
+            ),
           ],
-        ] else
+        ] else ...[
           WorkspaceToggleRow(
             on: _fsmonitor,
             onTap: () => setState(() => _fsmonitor = !_fsmonitor),
@@ -1144,6 +1271,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             offIcon: CupertinoIcons.bolt,
             label: 'Enable git fsmonitor (faster status on large repos)',
           ),
+          _hint(
+            typography,
+            'Turns on git\'s filesystem monitor daemon in the new '
+            'repository — speeds up status on big working trees.',
+          ),
+        ],
       ],
     );
   }
@@ -1177,6 +1310,11 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             ),
           ],
         ),
+        _hint(
+          typography,
+          'If this folder is not yet a Git repository it is initialized in '
+          'place; a folder nested in another repository is refused.',
+        ),
       ],
     );
   }
@@ -1206,6 +1344,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               child: const Text('Browse…'),
             ),
           ],
+        ),
+        _hint(
+          typography,
+          'Absolute path on the host. If the folder is not yet a Git '
+          'repository it is initialized in place; a folder nested in '
+          'another repository is refused.',
         ),
       ],
     );
@@ -1250,6 +1394,11 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             ),
           ],
         ),
+        _hint(
+          typography,
+          'The new repository folder (named on the Details step) is '
+          'created inside this folder.',
+        ),
       ],
     );
   }
@@ -1280,6 +1429,11 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             ),
           ],
         ),
+        _hint(
+          typography,
+          'Absolute path on the host (e.g. /srv/git). The new repository '
+          'folder is created inside it.',
+        ),
         const SizedBox(height: 10),
         WorkspaceToggleRow(
           on: _createParents,
@@ -1287,6 +1441,11 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           onIcon: CupertinoIcons.folder_badge_plus,
           offIcon: CupertinoIcons.folder,
           label: 'Create parent folders if missing',
+        ),
+        _hint(
+          typography,
+          'When off, a missing parent folder stops the create instead of '
+          'being silently created.',
         ),
       ],
     );
@@ -1298,17 +1457,33 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       children: [
         Text('Remote', style: typography.caption1),
         const SizedBox(height: 4),
-        Row(
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
           children: [
             _remoteButton('None', _RemoteMode.none),
-            const SizedBox(width: 6),
             _remoteButton('GitHub', _RemoteMode.github),
-            const SizedBox(width: 6),
             _remoteButton('GitLab', _RemoteMode.gitlab),
-            const SizedBox(width: 6),
             _remoteButton('Custom URL', _RemoteMode.customUrl),
           ],
         ),
+        _hint(typography, switch (_remote) {
+          _RemoteMode.none =>
+            'No remote is set up — you can add one later from the command '
+                'line or by re-publishing.',
+          _RemoteMode.github =>
+            'Creates the project on GitHub with the gh CLI (it must be '
+                'installed and signed in on the target machine) and wires '
+                'it as "origin".',
+          _RemoteMode.gitlab =>
+            'Creates the project on GitLab with the glab CLI (it must be '
+                'installed and signed in on the target machine) and wires '
+                'it as "origin".',
+          _RemoteMode.customUrl =>
+            'Points "origin" at a remote that already exists — created on '
+                'a web UI, a bare repo on a server, or any other Git URL. '
+                'No forge CLI needed.',
+        }),
         if (_source == _SourceMode.existingFolder &&
             _remote != _RemoteMode.none) ...[
           const SizedBox(height: 8),
@@ -1318,6 +1493,11 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             onIcon: CupertinoIcons.arrow_2_circlepath_circle_fill,
             offIcon: CupertinoIcons.arrow_2_circlepath_circle,
             label: 'Replace existing origin remote (if any)',
+          ),
+          _hint(
+            typography,
+            'When off, a folder whose repository already points at an '
+            'origin is left untouched and the create stops safely.',
           ),
         ],
         if (_remote == _RemoteMode.customUrl) ...[
@@ -1334,9 +1514,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             focusedDecoration: kAppTextFieldFocusedDecoration,
             onChanged: (_) => setState(() {}),
           ),
+          _hint(
+            typography,
+            'SSH (git@host:owner/repo.git) or HTTPS '
+            '(https://host/owner/repo.git). The remote itself is not '
+            'created — it must already exist.',
+          ),
         ],
         if (_onForge) ...[
           const SizedBox(height: 10),
+          Text('Visibility', style: typography.caption1),
+          const SizedBox(height: 4),
           Row(
             children: [
               MacosPopupButton<bool>(
@@ -1353,18 +1541,32 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             ],
           ),
           const SizedBox(height: 8),
+          Text('Forge host', style: typography.caption1),
+          const SizedBox(height: 4),
           MacosTextField(
             controller: _host,
             placeholder: _defaultHost,
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
           ),
+          _hint(
+            typography,
+            'Leave as $_defaultHost, or enter a self-hosted instance '
+            '(e.g. gitlab.example.com). The CLI must be signed in to it.',
+          ),
           const SizedBox(height: 8),
+          Text('Project description', style: typography.caption1),
+          const SizedBox(height: 4),
           MacosTextField(
             controller: _description,
             placeholder: 'Description (optional)',
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
+          ),
+          _hint(
+            typography,
+            'Shown on the forge project page (and used in the generated '
+            'README when one is added).',
           ),
         ],
       ],

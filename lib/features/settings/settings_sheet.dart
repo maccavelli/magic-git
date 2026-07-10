@@ -13,6 +13,7 @@ import '../../core/storage/known_hosts_store.dart';
 import '../common/actions.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
+import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'environment_health_sheet.dart';
 import 'keyboard_mappings_sheet.dart';
@@ -121,9 +122,9 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
-    return MacosSheet(
+    return SizedSheet(
+      width: 420,
       child: SizedBox(
-        width: 500,
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(22),
           child: Column(

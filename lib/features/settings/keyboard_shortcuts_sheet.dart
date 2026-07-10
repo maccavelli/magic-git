@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/settings/keymap.dart';
+import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 
 /// A read-only cheat sheet of every shortcut, grouped by category and reflecting
@@ -23,7 +24,11 @@ class KeyboardShortcutsSheet extends ConsumerWidget {
       byCategory.putIfAbsent(action.category, () => []).add(action);
     }
 
-    return MacosSheet(
+    return SizedSheet(
+      width: 392,
+      // Capped to the viewport so the Close row stays reachable at the
+      // minimum window size — the category list scrolls instead.
+      height: (MediaQuery.sizeOf(context).height - 80).clamp(320.0, 560.0),
       // Escape closes the sheet, matching the standard dismiss affordance.
       child: CallbackShortcuts(
         bindings: {
@@ -33,13 +38,6 @@ class KeyboardShortcutsSheet extends ConsumerWidget {
         child: Focus(
           autofocus: true,
           child: SizedBox(
-            width: 560,
-            // Capped to the viewport so the Close row stays reachable at the
-            // minimum window size — the category list scrolls instead.
-            height: (MediaQuery.sizeOf(context).height - 80).clamp(
-              320.0,
-              560.0,
-            ),
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Column(
@@ -49,8 +47,14 @@ class KeyboardShortcutsSheet extends ConsumerWidget {
                     children: [
                       const MacosIcon(CupertinoIcons.command, size: 18),
                       const SizedBox(width: 8),
-                      Text('Keyboard Shortcuts', style: typography.title2),
-                      const Spacer(),
+                      Expanded(
+                        child: Text(
+                          'Keyboard Shortcuts',
+                          style: typography.title2,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
                       ToolIconButton(
                         icon: CupertinoIcons.xmark,
                         tooltip: 'Close',

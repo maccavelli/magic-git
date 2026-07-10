@@ -27,7 +27,7 @@ void main() {
     });
   });
 
-  test('two consecutive unanswered pings declare the peer dead (once)', () {
+  test('three consecutive unanswered pings declare the peer dead (once)', () {
     fakeAsync((async) {
       var deaths = 0;
       final monitor = ConnectionHealthMonitor(
@@ -43,7 +43,14 @@ void main() {
       expect(deaths, 0);
       expect(monitor.failures, 1);
 
-      // Second probe fires at 45s, times out at 60s → failure 2 → dead.
+      // Second probe fires at 45s, times out at 60s → failure 2 — still
+      // alive: a link saturated by concurrent bulk reads can legitimately
+      // starve a couple of replies in a row.
+      async.elapse(const Duration(seconds: 30));
+      expect(deaths, 0);
+      expect(monitor.failures, 2);
+
+      // Third probe fires at 75s, times out at 90s → failure 3 → dead.
       async.elapse(const Duration(seconds: 30));
       expect(deaths, 1);
 

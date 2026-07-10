@@ -8,6 +8,7 @@ import '../../core/storage/saved_local_repo.dart';
 import '../common/actions.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
+import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import '../connection/local_repo_form.dart';
 import '../workspace/clone_sheet.dart';
@@ -150,12 +151,12 @@ class ConnectionsPanel extends ConsumerWidget {
     final empty =
         saved.isEmpty && savedLocal.isEmpty && !showAdhoc && !showAdhocLocal;
 
-    return MacosSheet(
+    return SizedSheet(
+      width: 378,
+      // Capped to the viewport so the footer stays reachable at the app's
+      // minimum window size — the connection list scrolls instead.
+      height: (MediaQuery.sizeOf(context).height - 80).clamp(320.0, 500.0),
       child: SizedBox(
-        width: 378,
-        // Capped to the viewport so the footer stays reachable at the app's
-        // minimum window size — the connection list scrolls instead.
-        height: (MediaQuery.sizeOf(context).height - 80).clamp(320.0, 500.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -904,9 +905,9 @@ class _AddRepositorySheetState extends State<AddRepositorySheet> {
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
-    return MacosSheet(
+    return SizedSheet(
+      width: 380,
       child: SizedBox(
-        width: 480,
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Column(

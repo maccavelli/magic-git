@@ -59,6 +59,14 @@ class GitBranchInfo {
 
   bool get isDetached => head == null;
   bool get hasUpstream => upstream != null;
+
+  /// Field-wise equality — see [GitStatus.contentEquals].
+  bool contentEquals(GitBranchInfo other) =>
+      oid == other.oid &&
+      head == other.head &&
+      upstream == other.upstream &&
+      ahead == other.ahead &&
+      behind == other.behind;
 }
 
 /// Full parsed result of a porcelain v2 status: branch context plus per-file
@@ -102,6 +110,33 @@ class GitStatus {
       .toList();
 
   bool get hasConflicts => conflicted.isNotEmpty;
+
+  /// Whether [other] describes the exact same repository state — same branch
+  /// context and the same file records in the same order. Lets the status
+  /// provider hand back the *previous instance* on a no-change refresh, so
+  /// identity/select-based listeners (worktree diff-cache invalidation, the
+  /// structure-tree gate, diff prefetching) treat it as a no-op instead of
+  /// refetching the world on every watcher tick. [parseWarnings] are
+  /// deliberately excluded: they describe the transport of one particular
+  /// fetch, not the repository state itself.
+  bool contentEquals(GitStatus other) {
+    if (identical(this, other)) return true;
+    if (!branch.contentEquals(other.branch)) return false;
+    if (files.length != other.files.length) return false;
+    for (var i = 0; i < files.length; i++) {
+      final a = files[i];
+      final b = other.files[i];
+      if (a.path != b.path ||
+          a.oldPath != b.oldPath ||
+          a.statusX != b.statusX ||
+          a.statusY != b.statusY ||
+          a.isSubmodule != b.isSubmodule ||
+          a.similarity != b.similarity) {
+        return false;
+      }
+    }
+    return true;
+  }
 }
 
 class GitPorcelainParser {

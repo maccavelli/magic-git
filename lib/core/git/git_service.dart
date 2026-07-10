@@ -642,20 +642,21 @@ class GitService {
   }
 
   static String _fsmonitorScript({required bool enabled}) {
-    final settings = enabled
-        ? const {
-            'core.fsmonitor': 'true',
-            'core.untrackedCache': 'true',
-            'feature.manyFiles': 'true',
-          }
-        : const {'core.fsmonitor': 'false'};
-    return settings.entries
-        .map(
-          (e) =>
-              'git config ${ShellEscaper.escape(e.key)} '
-              '${ShellEscaper.escape(e.value)}',
-        )
-        .join(' && ');
+    if (!enabled) return 'git config core.fsmonitor false';
+    // `core.fsmonitor=true` is only honored where git's fsmonitor daemon can
+    // actually run — many server builds/platforms reject it outright
+    // (`fatal: fsmonitor--daemon not supported on this platform`). Probe
+    // first and set `false` on such hosts (also repairing repos where an
+    // earlier version of this script enabled it unconditionally), so every
+    // subsequent `git status` isn't paying for — or warning about — a
+    // monitor that can never exist. untrackedCache/manyFiles are beneficial
+    // independently of the daemon and apply either way.
+    return "if git fsmonitor--daemon status 2>&1 "
+        "| grep -qi 'not supported'; then "
+        'git config core.fsmonitor false; '
+        'else git config core.fsmonitor true; fi'
+        ' && git config core.untrackedCache true'
+        ' && git config feature.manyFiles true';
   }
 
   /// Applies [setFsmonitor] to every repo in [repoPaths] with a **single**

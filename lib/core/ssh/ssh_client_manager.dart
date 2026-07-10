@@ -35,16 +35,20 @@ class SSHConnectionProfile {
 /// the client, its `done` completes, and the existing auto-reconnect machinery
 /// takes over within seconds.
 ///
-/// Two consecutive failures (not one) are required, and pings never overlap —
-/// a single reply delayed past [pingTimeout] by a saturated link mustn't kill
-/// a connection that's actually fine.
+/// Three consecutive failures (not one) are required, and pings never overlap
+/// — a reply delayed past [pingTimeout] by a saturated link mustn't kill a
+/// connection that's actually fine. Three rather than two: with the read lane
+/// running several concurrent compressed transfers, a slow link can
+/// legitimately starve keepalive replies for tens of seconds; a false kill
+/// costs far more (a reconnect fails every in-flight command as superseded)
+/// than the extra ~15 s a real dead peer now takes to detect.
 class ConnectionHealthMonitor {
   ConnectionHealthMonitor({
     required this.ping,
     required this.onDead,
     this.interval = const Duration(seconds: 15),
     this.pingTimeout = const Duration(seconds: 15),
-    this.failureThreshold = 2,
+    this.failureThreshold = 3,
   });
 
   /// Sends one keepalive round trip; the returned future completes when the

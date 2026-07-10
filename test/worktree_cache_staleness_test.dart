@@ -1,9 +1,12 @@
 // Worktree-dependent caches (file diffs, untracked previews, conflict
-// content, blame) follow the repo's landed status: a status refresh — the
-// signal that the working tree changed — invalidates them, so a kept-alive
-// cache entry can never serve stale content after an external edit. Commit
-// (hash-keyed) caches deliberately do NOT follow status: a commit's patch is
-// immutable.
+// content, blame) follow the repo's landed status: a status refresh that
+// lands *changed* content — the signal that the working tree changed —
+// invalidates them, so a kept-alive cache entry can never serve stale
+// content after an external edit. A refresh that found nothing changed
+// hands back the previous status instance (statusProvider's content-identity
+// memo) and leaves every cache intact — a watcher tick on an idle repo must
+// not refetch the world. Commit (hash-keyed) caches deliberately do NOT
+// follow status: a commit's patch is immutable.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -19,11 +22,15 @@ class _FakeGit extends GitService {
   int diffCalls = 0;
   int showCalls = 0;
 
+  /// The worktree state each status() call reports — change it to model an
+  /// actual repo change; leave it to model an idle-repo watcher tick.
+  String oid = 'oid-initial';
+
   @override
   Future<GitStatus> status(String repoPath) async {
     statusCalls++;
     // A fresh instance per call — exactly what a real refresh produces.
-    return GitStatus(branch: const GitBranchInfo(), files: const []);
+    return GitStatus(branch: GitBranchInfo(oid: oid), files: const []);
   }
 
   @override
@@ -69,7 +76,21 @@ void main() {
     expect(await container.read(fileDiffProvider(key).future), 'diff v1');
     expect(git.diffCalls, 1);
 
-    // A watcher tick / mutation refresh: status invalidated and re-landed.
+    // An idle-repo watcher tick: status refetched, identical content lands.
+    // The content-identity memo hands back the previous instance — the
+    // cached diff must survive untouched.
+    container.invalidate(statusProvider(repo));
+    await container.read(statusProvider(repo).future);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      await container.read(fileDiffProvider(key).future),
+      'diff v1',
+      reason: 'a no-change status refresh must not evict cached diffs',
+    );
+    expect(git.diffCalls, 1);
+
+    // A real external change: the re-landed status differs → invalidate.
+    git.oid = 'oid-after-edit';
     container.invalidate(statusProvider(repo));
     await container.read(statusProvider(repo).future);
     await Future<void>.delayed(Duration.zero); // let invalidation propagate
@@ -77,7 +98,7 @@ void main() {
     expect(
       await container.read(fileDiffProvider(key).future),
       'diff v2',
-      reason: 'the cached diff must refetch once fresh status lands',
+      reason: 'the cached diff must refetch once changed status lands',
     );
     expect(git.diffCalls, 2);
   });

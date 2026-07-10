@@ -9,6 +9,7 @@ import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
+import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 
 /// Modifier-only keys — pressing one alone while recording a shortcut isn't a
@@ -182,13 +183,13 @@ class _KeyboardMappingsSheetState
     return Focus(
       focusNode: _captureFocus,
       onKeyEvent: _onKey,
-      child: MacosSheet(
+      child: SizedSheet(
+        width: 448,
+        // Preferred height, capped to the viewport so the bottom controls
+        // stay reachable at the app's minimum window size (the inner list
+        // scrolls); floored so a degenerate viewport can't go negative.
+        height: (MediaQuery.sizeOf(context).height - 80).clamp(320.0, 560.0),
         child: SizedBox(
-          width: 640,
-          // Preferred height, capped to the viewport so the bottom controls
-          // stay reachable at the app's minimum window size (the inner list
-          // scrolls); floored so a degenerate viewport can't go negative.
-          height: (MediaQuery.sizeOf(context).height - 80).clamp(320.0, 560.0),
           child: Padding(
             padding: const EdgeInsets.all(20),
             child: Column(

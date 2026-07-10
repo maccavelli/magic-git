@@ -10,6 +10,7 @@ import '../../core/settings/install_planner.dart';
 import '../../core/settings/tool_catalog.dart';
 import '../../core/ssh/environment_probe.dart';
 import '../common/actions.dart';
+import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 
 /// The health state of one tool for the current host.
@@ -221,9 +222,9 @@ class _EnvironmentHealthSheetState
     final connected = ref.watch(connectionProvider).isConnected;
     final tools = kToolCatalog.where((t) => t.relevantOn(env.os)).toList();
 
-    return MacosSheet(
+    return SizedSheet(
+      width: 378,
       child: SizedBox(
-        width: 540,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -234,13 +235,17 @@ class _EnvironmentHealthSheetState
                   const MacosIcon(CupertinoIcons.wrench, size: 18),
                   const SizedBox(width: 8),
                   Text('Environment health', style: typography.title2),
-                  const Spacer(),
-                  Text(
-                    env.os == 'unknown'
-                        ? 'Not connected'
-                        : 'Host: ${env.osLabel}',
-                    style: typography.caption1.copyWith(
-                      color: MacosColors.systemGrayColor,
+                  Expanded(
+                    child: Text(
+                      env.os == 'unknown'
+                          ? 'Not connected'
+                          : 'Host: ${env.osLabel}',
+                      textAlign: TextAlign.right,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: typography.caption1.copyWith(
+                        color: MacosColors.systemGrayColor,
+                      ),
                     ),
                   ),
                 ],

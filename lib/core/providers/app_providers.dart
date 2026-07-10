@@ -1800,6 +1800,11 @@ final ownMutationTrackerProvider = Provider<OwnMutationTracker>((ref) {
 /// (and explicitly invalidated on connect/disconnect) — a reconnect never
 /// serves the previous session's branch/files. Refresh with
 /// `ref.invalidate(statusProvider(repoPath))`.
+/// Last landed status per repo, for [statusProvider]'s content-identity memo.
+/// Bounded by the number of repos touched in a session; content comparison
+/// stays valid across reconnects (same path + same content ⇒ same state).
+final _lastLandedStatus = <String, GitStatus>{};
+
 final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
   ref,
   repoPath,
@@ -1818,6 +1823,18 @@ final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
           .logError('git status parse warning', warning);
     }
   }
+  // Content-identity memo: a refresh that found *nothing changed* hands back
+  // the previous instance, so every select/identical-based listener — the
+  // worktree diff-cache invalidation ([_dependOnWorktreeState]), the
+  // structure-tree gate, diff prefetching — sees a no-op instead of a "new"
+  // status. Without this, every watcher tick/poll on an idle repo minted a
+  // fresh GitStatus, nuked all cached diffs, and re-prefetched them over
+  // SSH — the single biggest source of idle-session SSH churn.
+  final previous = _lastLandedStatus[repoPath];
+  if (previous != null && previous.contentEquals(status)) {
+    return previous;
+  }
+  _lastLandedStatus[repoPath] = status;
   return status;
 });
 
@@ -2050,7 +2067,21 @@ final logSearchProvider = FutureProvider.autoDispose
 void _dependOnWorktreeState(Ref ref, String repoPath) {
   ref.listen(
     statusProvider(repoPath).select((s) => s.value),
-    (previous, next) => ref.invalidateSelf(),
+    (previous, next) {
+      // No prior *landed* status (this entry was built while the first
+      // status fetch was still in flight): the content just fetched and the
+      // status now landing both describe the same present worktree — nothing
+      // can have gone stale, so don't throw away a diff that very likely
+      // finished fetching milliseconds ago. Every first-open used to pay
+      // this as a guaranteed double fetch.
+      if (previous == null) return;
+      // The status provider hands back the identical instance when a refresh
+      // found no change (see its content-identity memo) — the select above
+      // then doesn't even fire. This guard is belt-and-braces for direct
+      // re-emissions of the same instance.
+      if (identical(previous, next)) return;
+      ref.invalidateSelf();
+    },
     onError: (_, _) {},
   );
 }
