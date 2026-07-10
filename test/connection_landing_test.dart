@@ -1,5 +1,6 @@
-// The landing page: two actions, a disabled recent pulldown when empty, an
-// enabled one when profiles exist, and "Add SSH Remote" opening the form sheet.
+// The landing page: two actions — Connections Manager (the single entry
+// point to every workspace action) and the Recent Workspaces pulldown
+// (disabled when empty, enabled when profiles exist).
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,6 +10,9 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 import 'package:remote_magic_git/features/connection/connection_landing.dart';
+
+Finder _byMacosTooltip(String message) =>
+    find.byWidgetPredicate((w) => w is MacosTooltip && w.message == message);
 
 Future<void> _pump(
   WidgetTester tester, {
@@ -63,9 +67,15 @@ void main() {
     tester,
   ) async {
     await _pump(tester);
-    expect(find.text('Add SSH Remote'), findsOneWidget);
+    expect(find.text('Connections Manager'), findsOneWidget);
     expect(find.text('No Recent Workspaces'), findsOneWidget);
     expect(find.text('Recent Workspaces'), findsNothing);
+    // The per-task buttons moved into the Connections Manager — the landing
+    // itself stays a single clear entry point.
+    expect(find.text('Add SSH Remote'), findsNothing);
+    expect(find.text('Add Local Repository'), findsNothing);
+    expect(find.text('Clone Repository'), findsNothing);
+    expect(find.text('Create Repository'), findsNothing);
   });
 
   testWidgets('recent connections enable the pulldown', (tester) async {
@@ -141,58 +151,24 @@ void main() {
     expect(find.text('Prod box'), findsNothing);
   });
 
-  testWidgets('Add SSH Remote opens the form in a sheet', (tester) async {
-    await _pump(tester);
-    // The form's fields are not present until the sheet is opened.
-    expect(find.text('Repository path'), findsNothing);
+  testWidgets(
+    'Connections Manager opens the connections panel with its full toolbar',
+    (tester) async {
+      await _pump(tester);
+      expect(find.text('Connections'), findsNothing);
 
-    await tester.tap(find.text('Add SSH Remote'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Connections Manager'));
+      await tester.pumpAndSettle();
 
-    expect(find.text('Repository path'), findsOneWidget);
-  });
-
-  testWidgets('Add Local Repository opens the local-repo sheet', (
-    tester,
-  ) async {
-    await _pump(tester);
-    expect(find.text('Add Local Repository'), findsOneWidget);
-    expect(find.text('Choose…'), findsNothing);
-
-    await tester.tap(find.text('Add Local Repository'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Choose…'), findsOneWidget);
-    expect(find.text('No folder chosen'), findsOneWidget);
-  });
-
-  testWidgets('Clone Repository opens the clone sheet in landing mode', (
-    tester,
-  ) async {
-    await _pump(tester);
-    await tester.tap(find.text('Clone Repository'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Clone repository'), findsOneWidget);
-    // Landing wizard: 'Destination' appears as the step's section caption
-    // and in the breadcrumb indicator.
-    expect(find.text('Destination'), findsWidgets, reason: 'landing mode');
-    expect(find.text('This Mac'), findsOneWidget);
-  });
-
-  testWidgets('Create Repository opens the create sheet in landing mode', (
-    tester,
-  ) async {
-    await _pump(tester);
-    await tester.tap(find.text('Create Repository'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Create repository'), findsOneWidget);
-    // Landing mode: the wizard opens on its Destination step (the title also
-    // appears in the step-indicator breadcrumb).
-    expect(find.text('Destination'), findsWidgets, reason: 'landing mode');
-    expect(find.text('This Mac'), findsWidgets);
-  });
+      // The panel is open with every workspace action available from its
+      // toolbar (each action's own sheet is covered by the switcher tests).
+      expect(find.text('Connections'), findsOneWidget);
+      expect(_byMacosTooltip('Add connection'), findsOneWidget);
+      expect(_byMacosTooltip('Add local repository'), findsOneWidget);
+      expect(_byMacosTooltip('Clone repository'), findsOneWidget);
+      expect(_byMacosTooltip('Create repository'), findsOneWidget);
+    },
+  );
 
   testWidgets(
     'a lost connection offers Reconnect and Start Fresh, wired to the '

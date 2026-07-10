@@ -5,8 +5,7 @@ import '../../core/providers/app_providers.dart';
 import '../common/escape_dismissible.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
-import '../workspace/clone_sheet.dart';
-import '../workspace/create_repo_sheet.dart';
+import '../switcher/connection_switcher.dart';
 import 'connection_form.dart';
 import 'local_repo_form.dart';
 
@@ -17,34 +16,14 @@ import 'local_repo_form.dart';
 class ConnectionLanding extends ConsumerWidget {
   const ConnectionLanding({super.key});
 
-  void _openNewConnection(BuildContext context) {
+  /// One entry point for everything workspace-related: the Connections
+  /// Manager lists the configured connections/local repos (click to open)
+  /// and its toolbar adds SSH remotes and local repositories or clones/
+  /// creates repositories — the landing itself stays a single clear action.
+  void _openConnectionsManager(BuildContext context) {
     showMacosSheet<void>(
       context: context,
-      builder: (_) => const EscapeDismissible(child: NewConnectionSheet()),
-    );
-  }
-
-  void _openNewLocalRepo(BuildContext context) {
-    showMacosSheet<void>(
-      context: context,
-      builder: (_) => const EscapeDismissible(child: NewLocalRepoSheet()),
-    );
-  }
-
-  // The clone/create sheets register their own Escape handling (they must
-  // confirm/cancel a running job first), so they are not wrapped in
-  // EscapeDismissible.
-  void _openCloneRepository(BuildContext context) {
-    showMacosSheet<void>(
-      context: context,
-      builder: (_) => const CloneRepositorySheet.landing(),
-    );
-  }
-
-  void _openCreateRepository(BuildContext context) {
-    showMacosSheet<void>(
-      context: context,
-      builder: (_) => const CreateRepositorySheet.landing(),
+      builder: (_) => const EscapeDismissible(child: ConnectionsPanel()),
     );
   }
 
@@ -175,35 +154,17 @@ class ConnectionLanding extends ConsumerWidget {
                 width: double.infinity,
                 child: PushButton(
                   controlSize: ControlSize.large,
-                  onPressed: () => _openNewConnection(context),
-                  child: const Text('Add SSH Remote'),
+                  onPressed: () => _openConnectionsManager(context),
+                  child: const Text('Connections Manager'),
                 ),
               ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: PushButton(
-                  controlSize: ControlSize.large,
-                  onPressed: () => _openNewLocalRepo(context),
-                  child: const Text('Add Local Repository'),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: PushButton(
-                  controlSize: ControlSize.large,
-                  onPressed: () => _openCloneRepository(context),
-                  child: const Text('Clone Repository'),
-                ),
-              ),
-              const SizedBox(height: 12),
-              SizedBox(
-                width: double.infinity,
-                child: PushButton(
-                  controlSize: ControlSize.large,
-                  onPressed: () => _openCreateRepository(context),
-                  child: const Text('Create Repository'),
+              const SizedBox(height: 8),
+              Text(
+                'Open a configured workspace, add SSH remotes and local '
+                'repositories, or clone/create a repository.',
+                textAlign: TextAlign.center,
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
                 ),
               ),
               const SizedBox(height: 12),

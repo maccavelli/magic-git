@@ -2475,6 +2475,10 @@ final forgeRepoListProvider = FutureProvider.autoDispose
 final forgeAuthHostProvider = FutureProvider.autoDispose
     .family<String?, (Forge, bool)>((ref, key) async {
       final (forge, local) = key;
+      // Re-resolve when the connection generation moves (a landing wizard
+      // can ask before its SSH session finishes provisioning — the answer
+      // must not stay cached as null once the host is actually reachable).
+      ref.watch(connectionProvider.select((c) => (c.phase, c.backend)));
       final executor = local
           ? ref.read(localExecutorProvider)
           : ref.read(activeExecutorProvider);
@@ -2483,11 +2487,23 @@ final forgeAuthHostProvider = FutureProvider.autoDispose
         // sure the executor's PATH can actually see the Mac's gh/glab.
         await ref.read(localEnvironmentProvider).ensure();
       }
-      return switch (forge) {
+      final cli = forge == Forge.github ? 'gh' : 'glab';
+      final host = await switch (forge) {
         Forge.github => GhService(executor).authenticatedHost(),
         Forge.gitlab => GlabService(executor).authenticatedHost(),
-        _ => null,
+        _ => Future<String?>.value(),
       };
+      // Surfaced so "why didn't my host prefill" is answerable from the
+      // output log instead of being invisible.
+      if (forge == Forge.github || forge == Forge.gitlab) {
+        ref
+            .read(outputLogProvider.notifier)
+            .logInfo(
+              '$cli auth host: '
+              '${host ?? 'none (signed out or $cli unavailable on the target)'}',
+            );
+      }
+      return host;
     });
 
 /// Open pull requests for the connected GitHub repo.

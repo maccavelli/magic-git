@@ -17,10 +17,10 @@ void main() {
 
     // Unconnected, the shell shows the landing page with its two actions.
     expect(find.text('Magic Git'), findsWidgets);
-    expect(find.text('Add SSH Remote'), findsOneWidget);
+    expect(find.text('Connections Manager'), findsOneWidget);
     // No saved profiles in a fresh test → the recent pulldown is disabled.
     expect(find.text('No Recent Workspaces'), findsOneWidget);
-    // The form is not shown until "Add SSH Remote" is opened.
-    expect(find.text('Repository path'), findsNothing);
+    // The manager panel is not shown until its button is pressed.
+    expect(find.text('Connections'), findsNothing);
   });
 }
