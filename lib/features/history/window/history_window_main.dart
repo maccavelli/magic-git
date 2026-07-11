@@ -11,10 +11,12 @@
 library;
 
 import 'dart:async';
+import 'dart:ui' show FramePhase;
 
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -229,24 +231,44 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
   /// and Esc/X can never disagree about visibility.
   ModalRoute<void>? _recoveryRoute;
 
+  // TEMPORARY diagnostics (remove with _HubLogNavigatorObserver): a 300ms
+  // animation measured after 2s — if `value` isn't 1.0/completed, this
+  // engine's vsync never drives tickers, which is exactly the "pushed routes
+  // stay at their opacity-0 entrance frame" failure. The frame-timings
+  // samples separate "no frames at all" from "frames tick but animation
+  // clocks are frozen".
+  AnimationController? _vsyncProbe;
+  Timer? _vsyncProbeTimer;
+  TimingsCallback? _timingsProbe;
+  int _timingsSeen = 0;
+
   @override
   void initState() {
     super.initState();
     _hub.setMethodCallHandler(_onHubCall);
-    // TEMPORARY diagnostics (remove with _HubLogNavigatorObserver): a 300ms
-    // animation measured after 2s — if `value` isn't 1.0/completed, this
-    // engine's vsync never drives tickers, which is exactly the "pushed
-    // routes stay at their opacity-0 entrance frame" failure.
-    final probe = AnimationController(
+    _vsyncProbe = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 300),
     )..forward();
-    Timer(const Duration(seconds: 2), () {
+    _timingsProbe = (List<FrameTiming> timings) {
+      if (_timingsSeen >= 2) return;
+      _timingsSeen++;
+      final t = timings.first;
+      _sendHub(
+        'debugLog',
+        'frame timings[$_timingsSeen]: ${timings.length} frames, '
+        'vsyncStart=${t.timestampInMicroseconds(FramePhase.vsyncStart)}µs '
+        'rasterFinish=${t.timestampInMicroseconds(FramePhase.rasterFinish)}µs',
+      );
+    };
+    SchedulerBinding.instance.addTimingsCallback(_timingsProbe!);
+    _vsyncProbeTimer = Timer(const Duration(seconds: 2), () {
+      final probe = _vsyncProbe;
+      if (probe == null) return;
       _sendHub(
         'debugLog',
         'vsync probe: ${probe.status.name} value=${probe.value}',
       );
-      probe.dispose();
     });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // Reveal the native window only once real content exists (it opens at
@@ -268,20 +290,39 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
     });
   }
 
+  @override
+  void dispose() {
+    _vsyncProbeTimer?.cancel();
+    _vsyncProbe?.dispose();
+    _vsyncProbe = null;
+    final timings = _timingsProbe;
+    if (timings != null) {
+      SchedulerBinding.instance.removeTimingsCallback(timings);
+    }
+    _hub.setMethodCallHandler(null);
+    super.dispose();
+  }
+
   Future<Object?> _onHubCall(MethodCall call) async {
+    // Wire data — never hard-cast; a malformed push is dropped, not thrown.
+    final args = call.arguments;
     switch (call.method) {
       case 'connectionChanged':
-        _applySession(
-          ConnectionEventPayload.decode(
-            call.arguments as Map<Object?, Object?>,
-          ),
-        );
+        if (args is Map<Object?, Object?>) {
+          _applySession(ConnectionEventPayload.decode(args));
+        }
       case 'repoTick':
-        _onRepoTick(call.arguments as Map<Object?, Object?>);
+        if (args is Map<Object?, Object?>) _onRepoTick(args);
       case 'invalidateAll':
         for (final family in repoScopedFetchFamilies) {
           ref.invalidate(family);
         }
+      case 'settingsChanged':
+        // Settings are SharedPreferences-backed and each isolate caches its
+        // own copy — reload from disk so mid-session changes made in the
+        // main window (committer identity, timeouts) apply to the next
+        // command here instead of drifting until reopen.
+        await ref.read(appSettingsProvider.notifier).reloadFromDisk();
     }
     return null;
   }
@@ -306,6 +347,8 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
         ref.invalidate(family);
       }
       noteWorktreeEdit(session.repoPath!);
+      // Fresh repo, fresh suppression state — mirrors ConnectionController.
+      ref.read(ownMutationTrackerProvider).clear();
       // An open Recovery sheet targets the old repo — close it rather than
       // show stale refs under a new title.
       ref.read(recoveryVisibleProvider.notifier).setVisible(false);
@@ -344,8 +387,13 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
         'repoPath': repoPath,
         'force': force,
       });
-    } on PlatformException {
-      return; // Relay down — the window is on its way out.
+    } on PlatformException catch (e) {
+      // RELAY_DOWN = the window is on its way out; anything else is a real
+      // main-isolate failure the user must see (the bridge replies errors as
+      // data, so this path is unexpected — but never silent).
+      if (e.code == 'RELAY_DOWN' || !mounted) return;
+      await showErrorDialog(context, e.message ?? 'Undo failed.');
+      return;
     }
     if (reply == null || !mounted) return;
     final status = reply['status'] as String?;
@@ -392,6 +440,13 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
   void _refreshAfterUndo(String repoPath) {
     ref.read(ownMutationTrackerProvider).mark(repoPath);
     noteWorktreeEdit(repoPath);
+    _invalidateRepoFamilies(repoPath);
+  }
+
+  /// The one invalidation set every refresh path here shares — tick, undo,
+  /// and Recovery restores all agree, so an open Recovery sheet can never
+  /// show a pre-mutation reflog. Invalidating unwatched families is free.
+  void _invalidateRepoFamilies(String repoPath) {
     ref.invalidate(statusProvider(repoPath));
     ref.invalidate(logProvider(repoPath));
     ref.invalidate(refsProvider(repoPath));
@@ -420,12 +475,8 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
     }
     // Unlike the in-app tab (whose panels each refresh what they watch), the
     // tick is this window's ONLY freshness signal for main-window mutations —
-    // every mutation there produces one. Refresh the families History renders
-    // from; the rest of the registry isn't mounted here.
-    ref.invalidate(statusProvider(repoPath));
-    ref.invalidate(logProvider(repoPath));
-    ref.invalidate(refsProvider(repoPath));
-    ref.invalidate(stashesProvider(repoPath));
+    // every mutation there produces one.
+    _invalidateRepoFamilies(repoPath);
   }
 
   @override

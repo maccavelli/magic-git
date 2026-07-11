@@ -32,5 +32,14 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- The experimental merged UI/platform thread mode (default since Flutter
+	     3.35) freezes animation ticking in this app's SECOND FlutterEngine (the
+	     native History window): routes push but sit at their entrance
+	     transition's first frame forever. Split threads are the long-proven
+	     multi-engine model. NB: flutter/flutter#181874 plans to remove this
+	     opt-out — re-test the History window's "vsync probe" line in
+	     hw-debug.log on every Flutter upgrade. -->
+	<key>FLTEnableMergedPlatformUIThread</key>
+	<false/>
 </dict>
 </plist>

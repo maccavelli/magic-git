@@ -12,6 +12,7 @@ class MainFlutterWindow: NSWindow {
   /// (MainFlutterWindowManipulator.swift), so a later
   /// `contentViewController as? FlutterViewController` cast fails.
   private var mainFlutterViewController: FlutterViewController?
+  private var willCloseObserver: NSObjectProtocol?
   private var showOutputItem: NSMenuItem?
   private var showFileItem: NSMenuItem?
   private var dashboardItem: NSMenuItem?
@@ -152,7 +153,7 @@ class MainFlutterWindow: NSWindow {
     // but a lone History window must never outlive the session's window.
     // (applicationShouldTerminateAfterLastWindowClosed relies on this: the
     // last window to close is always this one.)
-    NotificationCenter.default.addObserver(
+    willCloseObserver = NotificationCenter.default.addObserver(
       forName: NSWindow.willCloseNotification, object: self, queue: .main
     ) { [weak self] _ in
       self?.historyController?.close()
@@ -396,6 +397,12 @@ class MainFlutterWindow: NSWindow {
       })
     historyController = controller
     controller.open()
+  }
+
+  deinit {
+    if let observer = willCloseObserver {
+      NotificationCenter.default.removeObserver(observer)
+    }
   }
 
   /// Quit-path teardown, called from AppDelegate before the main engine's

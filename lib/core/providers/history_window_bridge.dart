@@ -5,6 +5,7 @@ import '../exec/exec_proxy_codec.dart';
 import '../git/git_service.dart' show GitException;
 import '../git/watch_event.dart';
 import '../output/output_log.dart';
+import '../settings/app_settings.dart';
 import '../undo/undo_controller.dart';
 import '../undo/undo_journal.dart';
 import '../undo/undo_types.dart';
@@ -32,6 +33,12 @@ class HistoryWindowBridge extends Notifier<bool> {
       _hub.setMethodCallHandler(null);
     });
     ref.listen(connectionProvider, _onConnectionChanged);
+    // Each isolate caches SharedPreferences independently; a settings edit
+    // here (committer identity, timeouts) must tell the History isolate to
+    // reload or its GitService keeps the stale snapshot until reopen.
+    ref.listen(appSettingsProvider, (_, _) {
+      if (state) _sendEvent('settingsChanged', null);
+    });
     return false;
   }
 
@@ -183,6 +190,11 @@ class HistoryWindowBridge extends Notifier<bool> {
           };
         } on GitException catch (e) {
           return {'status': 'error', 'message': '$e'};
+        } catch (e) {
+          // Errors travel as data — a throw here would surface as an opaque
+          // PlatformException the History side can't distinguish from a
+          // torn-down relay.
+          return {'status': 'error', 'message': 'Undo failed: $e'};
         }
       case 'mutationPerformed':
         final repoPath =
@@ -191,13 +203,17 @@ class HistoryWindowBridge extends Notifier<bool> {
           // Same refresh contract as a local mutation call site: mark so the
           // watcher echo is suppressed, bump the edit generation so the
           // status memo can't swallow it, and refresh what History mutations
-          // can change.
+          // can change — including reflog/snapshots so an open Recovery
+          // sheet here never shows a pre-mutation reflog (invalidating an
+          // unwatched family is free).
           ref.read(ownMutationTrackerProvider).mark(repoPath);
           noteWorktreeEdit(repoPath);
           ref.invalidate(statusProvider(repoPath));
           ref.invalidate(logProvider(repoPath));
           ref.invalidate(refsProvider(repoPath));
           ref.invalidate(stashesProvider(repoPath));
+          ref.invalidate(reflogProvider(repoPath));
+          ref.invalidate(magicSnapshotsProvider(repoPath));
         }
         return null;
     }

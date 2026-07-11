@@ -4,19 +4,22 @@ import FlutterMacOS
 /// Diagnostic trail for the History window machinery. NSLog alone is useless
 /// here — the unified log redacts NSLog message content as <private> — so
 /// every line is also appended to hw-debug.log in the app's home directory
-/// (the sandbox container when sandboxed).
+/// (the sandbox container when sandboxed). One lazily-opened handle for the
+/// process lifetime; the OS flushes and closes it at exit.
+private let hwDebugLogHandle: FileHandle? = {
+  let url = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("hw-debug.log")
+  if !FileManager.default.fileExists(atPath: url.path) {
+    FileManager.default.createFile(atPath: url.path, contents: nil)
+  }
+  let handle = try? FileHandle(forWritingTo: url)
+  handle?.seekToEndOfFile()
+  return handle
+}()
+
 func hwDebugLog(_ message: String) {
   NSLog("Magic Git HW: %@", message)
-  let line = "\(Date()) \(message)\n"
-  let url = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("hw-debug.log")
-  if let data = line.data(using: .utf8) {
-    if let handle = try? FileHandle(forWritingTo: url) {
-      handle.seekToEndOfFile()
-      handle.write(data)
-      try? handle.close()
-    } else {
-      try? data.write(to: url)
-    }
+  if let data = "\(Date()) \(message)\n".data(using: .utf8) {
+    hwDebugLogHandle?.write(data)
   }
 }
 
@@ -63,14 +66,27 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
     // Order is load-bearing, twice over. (1) FlutterEngine(name:project:) is
     // the NON-headless initializer, so the engine may only run once a view
     // controller is attached — FlutterViewController(engine:) attaches
-    // itself; running first leaves a dead engine. (2) The view must be
-    // INSIDE a real NSWindow before run(), or the engine's vsync source has
-    // no screen to bind to: the first frame still paints, but animations
-    // never advance — every pushed route (menus, sheets) is stuck at its
-    // entrance transition's opacity-0 frame, an invisible modal barrier over
-    // a seemingly dead window.
+    // itself; running first leaves a dead engine. (2) The view must NOT be
+    // inside a window before run(): loading the view auto-launches the
+    // engine with the DEFAULT entrypoint (`main` — a rogue second copy of
+    // the whole app), and the explicit run(withEntrypoint:) then fails with
+    // "already running". Engine → attach VC → run → THEN build the window.
     let engine = FlutterEngine(name: "magicgit-history", project: nil)
     let viewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
+    hwDebugLog("engine + view controller created, running entrypoint")
+    // The entrypoint must exist in lib/main.dart (the root library) — macOS
+    // has no libraryURI variant of run(withEntrypoint:).
+    guard engine.run(withEntrypoint: "historyWindowMain") else {
+      // Nothing window-shaped exists yet, so the only cleanup is the engine
+      // itself — no orphaned invisible NSWindows, ever.
+      hwDebugLog("engine failed to launch")
+      engine.shutDownEngine()
+      onClosed()
+      return
+    }
+    hwDebugLog("engine running, registering plugins")
+    self.engine = engine
+    RegisterGeneratedPlugins(registry: viewController)
 
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1000, height: 640),
@@ -97,25 +113,6 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
     // never sees an empty white flash — same dance as the main window.
     window.alphaValue = 0
     self.window = window
-    // On a screen (still invisible at alpha 0) before run() — an ordered-out
-    // window has `screen == nil`, which is as useless to a display link as
-    // no window at all.
-    window.orderFront(nil)
-
-    hwDebugLog("window built, running entrypoint")
-    // The entrypoint must exist in lib/main.dart (the root library) — macOS
-    // has no libraryURI variant of run(withEntrypoint:).
-    guard engine.run(withEntrypoint: "historyWindowMain") else {
-      hwDebugLog("engine failed to launch")
-      engine.shutDownEngine()
-      window.delegate = nil
-      self.window = nil
-      onClosed()
-      return
-    }
-    hwDebugLog("engine running, registering plugins")
-    self.engine = engine
-    RegisterGeneratedPlugins(registry: viewController)
 
     installRelay(historyMessenger: engine.binaryMessenger)
 
@@ -191,7 +188,12 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
         return
       }
       hubB.invokeMethod(call.method, arguments: call.arguments) { [weak self] reply in
-        guard let self, !self.isTornDown else { return }
+        // Resolve even mid-teardown — an unresolved reply handle is retained
+        // forever; the caller's RELAY_DOWN handling is the graceful path.
+        guard let self, !self.isTornDown else {
+          result(FlutterError(code: "RELAY_DOWN", message: "history window closed", details: nil))
+          return
+        }
         result(reply)
       }
     }
@@ -234,7 +236,11 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
         return
       }
       hubA.invokeMethod(call.method, arguments: call.arguments) { [weak self] reply in
-        guard let self, !self.isTornDown else { return }
+        // Same as the A→B direction: never leave a reply handle unresolved.
+        guard let self, !self.isTornDown else {
+          result(FlutterError(code: "RELAY_DOWN", message: "history window closed", details: nil))
+          return
+        }
         result(reply)
       }
     }

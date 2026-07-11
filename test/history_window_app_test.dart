@@ -259,6 +259,38 @@ void main() {
     expect(find.text('Cherry-pick'), findsOneWidget);
   });
 
+  testWidgets('a repoTick that echoes our own mutation is suppressed', (
+    tester,
+  ) async {
+    mockHub(_connected('/srv/repo'));
+    final executor = _FakeExecutor();
+    await pump(tester, executor);
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(HistoryWindowShell)),
+    );
+
+    container.read(ownMutationTrackerProvider).mark('/srv/repo');
+    final before = executor.calls.length;
+    await pushHubEvent('repoTick', {
+      'repoPath': '/srv/repo',
+      'mode': 'eventDriven',
+      'atMs': DateTime.now().millisecondsSinceEpoch,
+    });
+    await tester.pumpAndSettle();
+    expect(executor.calls.length, before, reason: 'own echo → no refetch');
+
+    // A tick well outside the suppression window refreshes normally.
+    await pushHubEvent('repoTick', {
+      'repoPath': '/srv/repo',
+      'mode': 'eventDriven',
+      'atMs': DateTime.now()
+          .add(const Duration(seconds: 10))
+          .millisecondsSinceEpoch,
+    });
+    await tester.pumpAndSettle();
+    expect(executor.calls.length, greaterThan(before));
+  });
+
   testWidgets('the Recovery button opens the sheet locally in this window', (
     tester,
   ) async {

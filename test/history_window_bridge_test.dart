@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
+import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/providers/history_window_bridge.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -33,6 +34,11 @@ class _FakeExecutor extends SSHCommandExecutor {
   final List<List<String>> calls = [];
   Object? throwNext;
 
+  /// When set, [throwNext] only fires for a command whose argv contains this
+  /// marker — lets a test target the undo script while unrelated background
+  /// fetches (e.g. the pending-op probe) keep succeeding.
+  String? throwOnlyIfContains;
+
   @override
   Future<SSHCommandResult> execute({
     required String repoPath,
@@ -46,7 +52,9 @@ class _FakeExecutor extends SSHCommandExecutor {
   }) async {
     calls.add(gitArgs);
     final error = throwNext;
-    if (error != null) {
+    final marker = throwOnlyIfContains;
+    if (error != null &&
+        (marker == null || gitArgs.join(' ').contains(marker))) {
       throwNext = null;
       throw error;
     }
@@ -269,6 +277,60 @@ void main() {
       container.read(undoJournalProvider.notifier).peek('/srv/repo'),
       isNull,
       reason: 'the executed record was popped',
+    );
+  });
+
+  test('performUndo reports a non-git failure as data, never a throw',
+      () async {
+    container = makeContainer(_connected);
+    final record = UndoRecord(
+      repoPath: '/srv/repo',
+      kind: UndoOpKind.commit,
+      description: 'Commit',
+      preHead: 'a' * 40,
+      preRef: 'main',
+      postHead: 'b' * 40,
+      postRef: 'main',
+    );
+    await deliverHubCall('undoRecord', record.toJson());
+
+    // Target the throw at the undo script itself (its argv references the
+    // record's preHead) — the pending-op probe's fetch must keep succeeding.
+    executor.throwOnlyIfContains = 'a' * 40;
+    executor.throwNext = StateError('executor exploded');
+    final reply = await deliverHubCall('performUndo', {
+      'repoPath': '/srv/repo',
+      'force': false,
+    });
+    expect((reply as Map)['status'], 'error');
+    expect(reply['message'], contains('executor exploded'));
+  });
+
+  test('forwardTick and invalidateAll reach the hub only while open',
+      () async {
+    container = makeContainer(_connected);
+    final notifier = container.read(historyWindowBridgeProvider.notifier);
+    final event = RepoWatchEvent(
+      at: DateTime.fromMillisecondsSinceEpoch(1234567),
+      mode: WatchMode.eventDriven,
+    );
+
+    // Closed: both are no-ops.
+    notifier.forwardTick('/srv/repo', event);
+    notifier.invalidateAllInHistory('/srv/repo');
+    expect(hubCalls, isEmpty);
+
+    await deliverHubCall('requestState', null); // window is open
+    notifier.forwardTick('/srv/repo', event);
+    notifier.invalidateAllInHistory('/srv/repo');
+
+    final tick = hubCalls.singleWhere((c) => c.method == 'repoTick');
+    expect((tick.arguments as Map)['repoPath'], '/srv/repo');
+    expect((tick.arguments as Map)['mode'], 'eventDriven');
+    expect((tick.arguments as Map)['atMs'], 1234567);
+    expect(
+      hubCalls.map((c) => c.method),
+      contains('invalidateAll'),
     );
   });
 

@@ -140,6 +140,23 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     );
   }
 
+  /// Re-reads settings that ANOTHER isolate persisted. Each isolate's
+  /// SharedPreferences caches the on-disk map at first read, so the native
+  /// History window's engine never sees main-window edits without an explicit
+  /// `reload()`. Called from its `settingsChanged` hub event.
+  Future<void> reloadFromDisk() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+    } catch (_) {
+      return; // storage unavailable — keep what we have
+    }
+    // No settings UI exists in the History window, so a pending local edit
+    // can't be clobbered here — the on-disk state is authoritative.
+    _userEdited = false;
+    await _load();
+  }
+
   /// Floors a timeout to [_minTimeout] so a 0-second (or negative) value —
   /// user-set or a corrupted/stale stored value — never kills every command.
   static Duration _floorTimeout(Duration d) => d < _minTimeout ? _minTimeout : d;
