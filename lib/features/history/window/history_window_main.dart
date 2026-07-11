@@ -16,6 +16,7 @@ import 'dart:ui' show FramePhase;
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
+import 'package:flutter/rendering.dart' show RendererBinding;
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -320,7 +321,8 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
       if (probe == null) return;
       _sendHub(
         'debugLog',
-        'vsync probe: ${probe.status.name} value=${probe.value}',
+        'vsync probe: ${probe.status.name} value=${probe.value} '
+        'mouseConnected=${RendererBinding.instance.mouseTracker.mouseIsConnected}',
       );
     });
     WidgetsBinding.instance.addPostFrameCallback((_) async {

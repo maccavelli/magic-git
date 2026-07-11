@@ -120,6 +120,14 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
 
+    // Hover events (tooltips, cursor changes) need the view's NSTrackingArea.
+    // The default mode (inKeyWindow) was configured at window-attach time,
+    // BEFORE makeKeyAndOrderFront — when the window wasn't key — and nothing
+    // re-arms tracking on key changes. Setting the mode here re-runs the
+    // configuration, and inActiveApp keeps hover alive regardless of which
+    // of the app's windows is key (matching how the main window feels).
+    viewController.mouseTrackingMode = .inActiveApp
+
     // Backstop reveal: if the `ready` message is ever lost, an invisible
     // window that accepts clicks would be far worse than a brief flash.
     DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
