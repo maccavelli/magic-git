@@ -1,6 +1,25 @@
 import Cocoa
 import FlutterMacOS
 
+/// Diagnostic trail for the History window machinery. NSLog alone is useless
+/// here — the unified log redacts NSLog message content as <private> — so
+/// every line is also appended to hw-debug.log in the app's home directory
+/// (the sandbox container when sandboxed).
+func hwDebugLog(_ message: String) {
+  NSLog("Magic Git HW: %@", message)
+  let line = "\(Date()) \(message)\n"
+  let url = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("hw-debug.log")
+  if let data = line.data(using: .utf8) {
+    if let handle = try? FileHandle(forWritingTo: url) {
+      handle.seekToEndOfFile()
+      handle.write(data)
+      try? handle.close()
+    } else {
+      try? data.write(to: url)
+    }
+  }
+}
+
 /// The native History window: a second NSWindow hosting a second FlutterEngine
 /// (entrypoint `historyWindowMain`), plus the channel relay that lets the two
 /// engines talk. Flutter 3.44 stable has no shared-isolate multi-window on
@@ -42,6 +61,7 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
       front()
       return
     }
+    hwDebugLog("controller.open() — creating engine")
 
     // Order is load-bearing: FlutterEngine(name:project:) is the NON-headless
     // initializer, so the engine may only run once a view controller is
@@ -51,14 +71,16 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
     // FlutterPlatformMessageResponseHandle") and the window never appears.
     let engine = FlutterEngine(name: "magicgit-history", project: nil)
     let viewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
+    hwDebugLog("engine + view controller created, running entrypoint")
     // The entrypoint must exist in lib/main.dart (the root library) — macOS
     // has no libraryURI variant of run(withEntrypoint:).
     guard engine.run(withEntrypoint: "historyWindowMain") else {
-      NSLog("Magic Git: history window engine failed to launch")
+      hwDebugLog("engine failed to launch")
       engine.shutDownEngine()
       onClosed()
       return
     }
+    hwDebugLog("engine running, registering plugins")
     self.engine = engine
     RegisterGeneratedPlugins(registry: viewController)
 
@@ -90,6 +112,7 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
 
     installRelay(historyMessenger: engine.binaryMessenger)
 
+    hwDebugLog("ordering window front (alpha 0 until ready)")
     window.makeKeyAndOrderFront(nil)
     NSApp.activate(ignoringOtherApps: true)
 
@@ -135,6 +158,7 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
   // MARK: internals
 
   private func reveal() {
+    hwDebugLog("revealing window")
     window?.alphaValue = 1
   }
 

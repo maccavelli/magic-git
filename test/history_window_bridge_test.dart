@@ -128,7 +128,11 @@ void main() {
   test('open() asks Swift for the window only while a repo is active', () async {
     container = makeContainer(_connected);
     await container.read(historyWindowBridgeProvider.notifier).open();
-    expect(controlCalls.map((c) => c.method), ['openHistoryWindow']);
+    // debugLog is diagnostic chatter for the unified log — not behavior.
+    expect(
+      controlCalls.map((c) => c.method).where((m) => m != 'debugLog'),
+      ['openHistoryWindow'],
+    );
     expect(container.read(historyWindowBridgeProvider), isTrue);
 
     controlCalls.clear();

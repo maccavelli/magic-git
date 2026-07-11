@@ -6,6 +6,12 @@ class MainFlutterWindow: NSWindow {
   private var bookmarkChannel: FlutterMethodChannel?
   private var historyChannel: FlutterMethodChannel?
   private var historyController: HistoryWindowController?
+  /// The main engine's view controller, captured at awakeFromNib. Never
+  /// re-derive it from `contentViewController`: macos_window_utils replaces
+  /// that with its own wrapper when Dart calls WindowManipulator.initialize()
+  /// (MainFlutterWindowManipulator.swift), so a later
+  /// `contentViewController as? FlutterViewController` cast fails.
+  private var mainFlutterViewController: FlutterViewController?
   private var showOutputItem: NSMenuItem?
   private var showFileItem: NSMenuItem?
   private var dashboardItem: NSMenuItem?
@@ -65,6 +71,7 @@ class MainFlutterWindow: NSWindow {
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
     self.contentViewController = flutterViewController
+    self.mainFlutterViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
 
     RegisterGeneratedPlugins(registry: flutterViewController)
@@ -122,6 +129,7 @@ class MainFlutterWindow: NSWindow {
     history.setMethodCallHandler { [weak self] call, result in
       switch call.method {
       case "openHistoryWindow":
+        hwDebugLog("control openHistoryWindow received")
         self?.openHistoryWindow()
         result(nil)
       case "closeHistoryWindow":
@@ -129,6 +137,11 @@ class MainFlutterWindow: NSWindow {
         result(nil)
       case "isHistoryWindowOpen":
         result(self?.historyController != nil)
+      case "debugLog":
+        // Dart-side diagnostics: release-build prints are invisible when the
+        // app is launched from Finder, so the bridge ships them here.
+        hwDebugLog("(dart) " + ((call.arguments as? String) ?? "?"))
+        result(nil)
       default:
         result(FlutterMethodNotImplemented)
       }
@@ -360,18 +373,21 @@ class MainFlutterWindow: NSWindow {
   @objc private func openHistoryWindowFromMenu(_ sender: Any?) {
     // Routed through Dart (not opened directly) so the connected-session
     // gating lives in one place — the bridge no-ops when disconnected.
+    hwDebugLog("menu action fired, forwarding to Dart")
     menuChannel?.invokeMethod("openHistoryWindow", arguments: nil)
   }
 
   private func openHistoryWindow() {
     if let existing = historyController {
+      hwDebugLog("window already open, fronting")
       existing.front()
       return
     }
-    guard
-      let messenger = (contentViewController as? FlutterViewController)?
-        .engine.binaryMessenger
-    else { return }
+    guard let messenger = mainFlutterViewController?.engine.binaryMessenger
+    else {
+      hwDebugLog("no main messenger — cannot open")
+      return
+    }
     let controller = HistoryWindowController(
       mainMessenger: messenger,
       focusMain: { [weak self] in

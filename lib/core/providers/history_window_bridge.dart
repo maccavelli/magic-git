@@ -36,17 +36,31 @@ class HistoryWindowBridge extends Notifier<bool> {
   /// active — the window is a client of the live session.
   Future<void> open() async {
     final connection = ref.read(connectionProvider);
-    if (!connection.isConnected || connection.repoPath == null) return;
+    if (!connection.isConnected || connection.repoPath == null) {
+      _debugLog(
+        'open gated: phase=${connection.phase.name} '
+        'repo=${connection.repoPath}',
+      );
+      return;
+    }
     try {
+      _debugLog('open: invoking openHistoryWindow');
       await _control.invokeMethod<void>('openHistoryWindow');
       // Optimistic: the authoritative signal is the window's own
       // requestState handshake; this just starts event pushes early.
       state = true;
-    } catch (_) {
+    } catch (e) {
       // Missing handler / platform error — the window didn't open; stay
       // closed rather than pushing events into the void.
+      _debugLog('open failed: $e');
       state = false;
     }
+  }
+
+  /// Ships a diagnostic line to the unified log via Swift (NSLog) — the only
+  /// place release-build Dart prints are visible when launched from Finder.
+  void _debugLog(String message) {
+    _control.invokeMethod<void>('debugLog', message).catchError((_) {});
   }
 
   Future<void> close() async {
