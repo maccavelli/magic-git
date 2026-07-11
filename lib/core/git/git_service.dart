@@ -1581,7 +1581,7 @@ class GitService {
   /// only ever delete the one untracked file the caller asked for. `--`
   /// (rather than `--end-of-options`) matches how every other path argument
   /// in this file is hardened against a leading `-` — see [discard]/[stage].
-  /// Irreversible.
+  /// Undoable via a flavor-B snapshot — see [_removeCaptured].
   Future<void> removeUntrackedFile(String repoPath, String path) =>
       _removeCaptured(repoPath, ['git', 'clean', '-f', '--', path], [path]);
 
@@ -1640,7 +1640,8 @@ class GitService {
   /// counterpart (a newly `git add`ed file that was never committed),
   /// `--source=HEAD` has nothing to restore *to*, so git instead removes it
   /// from both the index and the working tree — exactly "undo the staged
-  /// add" for that case, with no special-casing needed here. Irreversible.
+  /// add" for that case, with no special-casing needed here. Undoable via a
+  /// flavor-A snapshot — see [_discardStagedCaptured].
   Future<void> discardStaged(String repoPath, String path) =>
       _discardStagedCaptured(repoPath, [path]);
 

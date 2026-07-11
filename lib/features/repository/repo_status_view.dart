@@ -615,8 +615,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       context,
       title: 'Discard changes',
       message:
-          'Discard working-tree changes to "$path"? This cannot be '
-          'undone.',
+          'Discard working-tree changes to "$path"? The content is '
+          'snapshotted first — press ⌘Z to undo, or restore it later from '
+          'the Recovery view.',
       confirmLabel: 'Discard',
     );
     if (ok) {
@@ -634,8 +635,10 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     final ok = await confirmAction(
       context,
       title: 'Delete untracked file',
-      message: 'Permanently delete untracked file "$path"? This cannot be '
-          'undone.',
+      message:
+          'Delete untracked file "$path"? Its content is snapshotted '
+          'first — press ⌘Z to undo, or restore it later from the Recovery '
+          'view.',
       confirmLabel: 'Delete',
     );
     if (ok) {
@@ -662,7 +665,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       message:
           'Discard staged changes to "$path"? This restores it to its '
           'last-committed state (or removes it entirely if it was never '
-          'committed). This cannot be undone.',
+          'committed). The content is snapshotted first — press ⌘Z to undo.',
       confirmLabel: 'Discard',
     );
     if (ok) {
@@ -708,7 +711,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       title: 'Discard changes',
       message:
           'Discard working-tree changes to ${_fileListSummary(paths)}? '
-          'This cannot be undone.',
+          'The content is snapshotted first — press ⌘Z to undo.',
       confirmLabel: 'Discard',
     );
     if (!ok) return;
@@ -720,8 +723,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       context,
       title: 'Delete untracked files',
       message:
-          'Permanently delete ${_fileListSummary(paths)}? This cannot be '
-          'undone.',
+          'Delete ${_fileListSummary(paths)}? Their content is snapshotted '
+          'first — press ⌘Z to undo.',
       confirmLabel: 'Delete',
     );
     if (!ok) return;
@@ -735,8 +738,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       context,
       title: 'Discard staged changes',
       message:
-          'Discard staged changes to ${_fileListSummary(paths)}? This '
-          'cannot be undone.',
+          'Discard staged changes to ${_fileListSummary(paths)}? The '
+          'content is snapshotted first — press ⌘Z to undo.',
       confirmLabel: 'Discard',
     );
     if (!ok) return;

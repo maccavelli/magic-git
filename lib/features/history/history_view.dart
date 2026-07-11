@@ -413,8 +413,9 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
       context,
       title: 'Reset to commit',
       message: hard
-          ? 'Hard-reset to $hash? This discards ALL uncommitted changes and '
-                'cannot be undone.'
+          ? 'Hard-reset to $hash? This overwrites ALL uncommitted changes — '
+                'they are snapshotted first, so ⌘Z right after undoes the '
+                'whole reset.'
           : 'Move HEAD to $hash (${mode.name})?',
       confirmLabel: 'Reset',
     );
