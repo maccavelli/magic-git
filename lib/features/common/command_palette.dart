@@ -238,8 +238,10 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
         const SingleActivator(LogicalKeyboardKey.enter): () {
           if (commands.isNotEmpty) _run(commands[_highlighted]);
         },
-        const SingleActivator(LogicalKeyboardKey.escape): () =>
-            Navigator.of(context).pop(),
+        // No Escape here: dismissal comes from the EscapeDismissible wrapper
+        // at the call site (registry-based, focus-independent). These three
+        // are legitimately focus-scoped — they only make sense while typing
+        // in the (autofocused) query field.
       },
       child: SizedSheet(
         width: kSheetWidth,

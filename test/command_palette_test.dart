@@ -11,6 +11,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/features/common/command_palette.dart';
+import 'package:remote_magic_git/features/common/escape_dismissible.dart';
 
 const _repo = '/repo';
 
@@ -43,18 +44,23 @@ Future<void> _open(WidgetTester tester, _Recorder rec) async {
           builder: (context) => Center(
             child: PushButton(
               controlSize: ControlSize.large,
+              // Mirrors the app shell's call site: dismissal comes from the
+              // registry-backed EscapeDismissible, not palette-internal
+              // (focus-dependent) shortcuts.
               onPressed: () => showMacosSheet<void>(
                 context: context,
-                builder: (_) => CommandPalette(
-                  repoPath: _repo,
-                  onGoToPanel: (i) => rec.panel = i,
-                  onRefresh: () => rec.refreshed++,
-                  onOpenSettings: () {},
-                  onOpenShortcuts: () {},
-                  onOpenConnections: () {},
-                  onCloneRepository: () => rec.cloneOpened++,
-                  onCreateRepository: () => rec.createOpened++,
-                  onCheckoutBranch: (b) => rec.checkedOut = b,
+                builder: (_) => EscapeDismissible(
+                  child: CommandPalette(
+                    repoPath: _repo,
+                    onGoToPanel: (i) => rec.panel = i,
+                    onRefresh: () => rec.refreshed++,
+                    onOpenSettings: () {},
+                    onOpenShortcuts: () {},
+                    onOpenConnections: () {},
+                    onCloneRepository: () => rec.cloneOpened++,
+                    onCreateRepository: () => rec.createOpened++,
+                    onCheckoutBranch: (b) => rec.checkedOut = b,
+                  ),
                 ),
               ),
               child: const Text('open'),
@@ -151,9 +157,16 @@ void main() {
     expect(rec.checkedOut, 'feature-x');
   });
 
-  testWidgets('Escape closes the palette', (tester) async {
+  testWidgets('Escape closes the palette even with nothing focused', (
+    tester,
+  ) async {
     await _open(tester, _Recorder());
     expect(find.byType(CommandPalette), findsOneWidget);
+
+    // Simulate the "just opened, autofocus hasn't landed / focus got lost"
+    // state that used to leave Escape dead until a click inside the sheet.
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
 
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();

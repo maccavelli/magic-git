@@ -412,7 +412,8 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
   void _openShortcuts(BuildContext context) {
     showMacosSheet<void>(
       context: context,
-      builder: (_) => const KeyboardShortcutsSheet(),
+      builder: (_) =>
+          const EscapeDismissible(child: KeyboardShortcutsSheet()),
     );
   }
 
@@ -450,17 +451,19 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     if (repoPath == null) return;
     showMacosSheet<void>(
       context: context,
-      builder: (_) => CommandPalette(
-        repoPath: repoPath,
-        onGoToPanel: _selectPage,
-        onRefresh: _refresh,
-        onOpenSettings: () => _openSettings(context),
-        onOpenShortcuts: () => _openShortcuts(context),
-        onOpenConnections: () => _openConnections(context),
-        onCloneRepository: () => _openCloneRepository(context),
-        onCreateRepository: () => _openCreateRepository(context),
-        onCheckoutBranch: (branch) =>
-            _checkoutBranch(context, repoPath, branch),
+      builder: (_) => EscapeDismissible(
+        child: CommandPalette(
+          repoPath: repoPath,
+          onGoToPanel: _selectPage,
+          onRefresh: _refresh,
+          onOpenSettings: () => _openSettings(context),
+          onOpenShortcuts: () => _openShortcuts(context),
+          onOpenConnections: () => _openConnections(context),
+          onCloneRepository: () => _openCloneRepository(context),
+          onCreateRepository: () => _openCreateRepository(context),
+          onCheckoutBranch: (branch) =>
+              _checkoutBranch(context, repoPath, branch),
+        ),
       ),
     );
   }

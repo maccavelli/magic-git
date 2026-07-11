@@ -1,12 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
+import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
 
@@ -36,6 +36,7 @@ class CommitDialog extends ConsumerStatefulWidget {
 class _CommitDialogState extends ConsumerState<CommitDialog> {
   final _message = TextEditingController();
   final _focus = FocusNode();
+  VoidCallback? _escInterceptorDisposer;
 
   bool _loadingPreview = true; // running the hook to preview a message
   bool _committing = false;
@@ -52,7 +53,19 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Escape dismissal itself comes from the EscapeDismissible wrapper at
+    // the call site (registry-based, so it works the moment the sheet opens
+    // — even while the hook preview is loading and nothing has focus yet).
+    // This interceptor only *blocks* it mid-commit: don't yank the sheet out
+    // from under an in-flight `git commit`.
+    _escInterceptorDisposer ??= EscapeInterceptor.of(context, () => _committing);
+  }
+
+  @override
   void dispose() {
+    _escInterceptorDisposer?.call();
     _message.dispose();
     _focus.dispose();
     super.dispose();
@@ -183,11 +196,9 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
           'commit.confirm': canAccept ? () => _commit() : null,
           'commit.confirmAndPush': canAccept ? () => _commit(push: true) : null,
         }),
-        // Escape cancels the dialog (matching the Cancel button), except while a
-        // commit is already in flight — don't yank the sheet out mid-commit.
-        if (!_committing)
-          const SingleActivator(LogicalKeyboardKey.escape): () =>
-              Navigator.of(context).pop(),
+        // No Escape here: the EscapeDismissible wrapper (call site) owns
+        // dismissal, gated by the mid-commit interceptor registered in
+        // didChangeDependencies.
       },
       child: SizedSheet(
         // Sized from the type, not a magic number: wide enough that the

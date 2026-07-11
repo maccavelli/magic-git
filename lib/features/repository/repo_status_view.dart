@@ -387,8 +387,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     // logged/​guarded push path rather than being reimplemented in the dialog.
     final andPush = await showMacosSheet<bool>(
       context: context,
-      builder: (_) =>
-          CommitDialog(repoPath: repoPath, stagedCount: stagedCount),
+      builder: (_) => EscapeDismissible(
+        child: CommitDialog(repoPath: repoPath, stagedCount: stagedCount),
+      ),
     );
     if (andPush == true && mounted) {
       await _push(followTags: ref.read(appSettingsProvider).pushFollowTags);

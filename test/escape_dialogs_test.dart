@@ -2,12 +2,18 @@
 // choices) and the custom overlay menus — surfaces that showMacosAlertDialog /
 // OverlayEntry don't dismiss on their own.
 
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/features/common/actions.dart';
 import 'package:remote_magic_git/features/common/context_menu.dart';
+import 'package:remote_magic_git/features/common/escape_dismissible.dart';
+import 'package:remote_magic_git/features/settings/keyboard_shortcuts_sheet.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> _escape(WidgetTester tester) async {
   await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -93,6 +99,47 @@ void main() {
     expect(find.text('Uncommitted changes'), findsNothing);
     expect(sentinel, isNull, reason: 'dismiss resolves to null');
   });
+
+  testWidgets(
+    'Escape closes the shortcuts sheet first try, with nothing focused',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      late BuildContext ctx;
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: Builder(
+              builder: (context) {
+                ctx = context;
+                return const Center(child: Text('canvas'));
+              },
+            ),
+          ),
+        ),
+      );
+      // Mirrors app_shell's _openShortcuts. Deliberately not awaited — the
+      // future only completes when the sheet closes.
+      unawaited(
+        showMacosSheet<void>(
+          context: ctx,
+          builder: (_) =>
+              const EscapeDismissible(child: KeyboardShortcutsSheet()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Keyboard Shortcuts'), findsOneWidget);
+
+      // A freshly opened read-only sheet has no focused descendant — the
+      // state that used to leave a focus-scoped Escape handler dead until
+      // the user clicked inside.
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump();
+
+      await _escape(tester);
+      expect(find.text('Keyboard Shortcuts'), findsNothing);
+    },
+  );
 
   testWidgets('Escape closes a context menu overlay', (tester) async {
     final menu = ContextMenuOverlay();

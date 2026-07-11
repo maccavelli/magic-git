@@ -1,5 +1,4 @@
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/settings/keymap.dart';
@@ -29,15 +28,11 @@ class KeyboardShortcutsSheet extends ConsumerWidget {
       // Capped to the viewport so the Close row stays reachable at the
       // minimum window size — the category list scrolls instead.
       height: (MediaQuery.sizeOf(context).height - 80).clamp(320.0, 560.0),
-      // Escape closes the sheet, matching the standard dismiss affordance.
-      child: CallbackShortcuts(
-        bindings: {
-          const SingleActivator(LogicalKeyboardKey.escape): () =>
-              Navigator.of(context).pop(),
-        },
-        child: Focus(
-          autofocus: true,
-          child: SizedBox(
+      // Escape-to-close comes from the EscapeDismissible wrapper at the call
+      // site (registry-based, so it works no matter what holds focus) — a
+      // CallbackShortcuts here would need focus *inside* the sheet, which a
+      // freshly opened sheet doesn't have until the user clicks something.
+      child: SizedBox(
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Column(
@@ -98,8 +93,6 @@ class KeyboardShortcutsSheet extends ConsumerWidget {
               ),
             ),
           ),
-        ),
-      ),
     );
   }
 
