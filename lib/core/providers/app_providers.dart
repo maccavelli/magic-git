@@ -3,6 +3,9 @@ import 'dart:convert';
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// For ProviderOrFamily — the type of [repoScopedFetchFamilies]' entries;
+// flutter_riverpod's main export list doesn't include it.
+import 'package:riverpod/misc.dart' show ProviderOrFamily;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../exec/command_telemetry.dart';
 import '../exec/local_command_executor.dart';
@@ -617,24 +620,13 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// unmount timing during the connecting/lost phase — real, but incidental,
   /// not a guarantee.
   void _invalidateRepoState() {
-    ref.invalidate(statusProvider);
-    ref.invalidate(pendingOpProvider);
-    ref.invalidate(logProvider);
-    ref.invalidate(logSearchProvider);
-    ref.invalidate(refsProvider);
-    ref.invalidate(stashesProvider);
-    ref.invalidate(stashDiffProvider);
-    ref.invalidate(prepareCommitMsgHookProvider);
-    ref.invalidate(repoStructureProvider);
-    ref.invalidate(repoStatusOverlayProvider);
+    for (final family in repoScopedFetchFamilies) {
+      ref.invalidate(family);
+    }
+    // The live subscriptions — restart on reset (never on ⌘R, which is why
+    // they aren't in the shared registry).
     ref.invalidate(repoWatchProvider);
-    ref.invalidate(fileLogProvider);
-    ref.invalidate(blameProvider);
-    ref.invalidate(fileDiffProvider);
-    ref.invalidate(commitDiffProvider);
-    ref.invalidate(commitFileDiffProvider);
-    ref.invalidate(conflictFileProvider);
-    ref.invalidate(untrackedDiffProvider);
+    ref.invalidate(jobTraceProvider);
     // These 7 keep their entries alive across a bounded LRU (see
     // _KeepAliveLru) rather than plain autoDispose — release every held link
     // alongside the invalidations above so a stale connection's entries don't
@@ -650,23 +642,12 @@ class ConnectionController extends Notifier<ConnectionState> {
     // mutation marked just before disconnecting could suppress a genuinely
     // external change reported by a *different* connection that happens to
     // reuse the same repoPath (e.g. two hosts both mounting a repo at the
-    // same conventional path).
+    // same conventional path). The status memo maps share that keying (and
+    // would otherwise grow by one retained GitStatus per repo path, forever).
     ref.read(ownMutationTrackerProvider).clear();
-    ref.invalidate(mergeRequestsProvider);
-    ref.invalidate(pipelinesProvider);
-    ref.invalidate(jobsProvider);
-    ref.invalidate(jobTraceProvider);
-    ref.invalidate(projectDashboardProvider);
-    // Forge detection + GitHub providers — same rationale as the GitLab set:
-    // a repo switch / reconnect must never serve the previous repo's forge
-    // classification or cross-host PR/run/issue data.
-    ref.invalidate(forgeProvider);
-    ref.invalidate(forgeRepoListProvider);
-    ref.invalidate(pullRequestsProvider);
-    ref.invalidate(workflowRunsProvider);
-    ref.invalidate(runJobsProvider);
-    ref.invalidate(runJobLogProvider);
-    ref.invalidate(githubProjectDashboardProvider);
+    _lastLandedStatus.clear();
+    _worktreeEditGeneration.clear();
+    _lastLandedEditGeneration.clear();
   }
 
   /// The executor for [state]'s current backend, read directly off `state`
@@ -1560,6 +1541,11 @@ class ConnectionController extends Notifier<ConnectionState> {
     ref.read(outputLogProvider.notifier).clear();
     ref.read(executorProvider).resetEnvironment();
     ref.read(binaryEnvironmentProvider.notifier).clear();
+    // Same contract as [connect]/[connectLocal]: session metrics always
+    // describe the current session, so a wizard-provisioned connection must
+    // not inherit the previous host's command counts or latency samples.
+    CommandTelemetry.instance.reset();
+    ref.read(pingSamplesProvider.notifier).clear();
 
     state = ConnectionState(
       phase: ConnectionPhase.connecting,
@@ -1828,20 +1814,104 @@ final ownMutationTrackerProvider = Provider<OwnMutationTracker>((ref) {
   return OwnMutationTracker();
 });
 
+/// Every repo-scoped one-shot-fetch provider family, in one place.
+///
+/// Two call sites iterate this registry instead of hand-maintaining their own
+/// lists (which drifted in the past — ⌘R silently skipped the GitHub panels):
+///
+///  * [ConnectionController._invalidateRepoState] — connect / disconnect /
+///    repo switch. Also restarts the live subscriptions and clears the LRUs,
+///    which are reset-only concerns layered on top of this list.
+///  * `AppShell._refresh` (⌘R) — manual refresh of the active repo. Also
+///    invalidates the viewer's `fileContentProvider`/`fileBytesProvider`,
+///    which live in the features layer and can't be listed here.
+///
+/// `ref.invalidate(family)` with no key invalidates every keyed instance of
+/// the family at once, and invalidating an unmounted provider is a harmless
+/// no-op — so both call sites can share one list. The live subscriptions
+/// ([repoWatchProvider], [jobTraceProvider]) are deliberately NOT here: ⌘R
+/// must not restart an already-current stream.
+///
+/// A new repo-scoped fetch family belongs in this list — that single addition
+/// covers both ⌘R and connection resets.
+final List<ProviderOrFamily> repoScopedFetchFamilies = [
+  statusProvider,
+  pendingOpProvider,
+  logProvider,
+  logSearchProvider,
+  refsProvider,
+  stashesProvider,
+  stashDiffProvider,
+  prepareCommitMsgHookProvider,
+  repoStructureProvider,
+  repoStatusOverlayProvider,
+  fileLogProvider,
+  blameProvider,
+  fileDiffProvider,
+  commitDiffProvider,
+  commitFileDiffProvider,
+  conflictFileProvider,
+  untrackedDiffProvider,
+  mergeRequestsProvider,
+  pipelinesProvider,
+  jobsProvider,
+  projectDashboardProvider,
+  forgeProvider,
+  forgeRepoListProvider,
+  pullRequestsProvider,
+  workflowRunsProvider,
+  runJobsProvider,
+  runJobLogProvider,
+  githubProjectDashboardProvider,
+];
+
 /// Working-tree status for a repo path, keyed so multiple repos can coexist.
 /// autoDispose so it's discarded when [RepoStatusView] unmounts on disconnect
 /// (and explicitly invalidated on connect/disconnect) — a reconnect never
 /// serves the previous session's branch/files. Refresh with
 /// `ref.invalidate(statusProvider(repoPath))`.
 /// Last landed status per repo, for [statusProvider]'s content-identity memo.
-/// Bounded by the number of repos touched in a session; content comparison
-/// stays valid across reconnects (same path + same content ⇒ same state).
+/// Cleared on connect/disconnect/repo-switch alongside the repo-scoped
+/// providers (see [ConnectionController._invalidateRepoState]) so the app
+/// doesn't retain one full [GitStatus] per repo path ever opened.
 final _lastLandedStatus = <String, GitStatus>{};
+
+/// Monotonic per-repo edit counters backing [noteWorktreeEdit]. Same lifetime
+/// and clearing as [_lastLandedStatus].
+final _worktreeEditGeneration = <String, int>{};
+final _lastLandedEditGeneration = <String, int>{};
+
+/// Records that on-disk worktree *content* is known to have changed (an
+/// event-driven watcher tick — a real filesystem event, not a poll timer).
+///
+/// Porcelain status records carry no content hash, so re-editing an
+/// already-modified file produces a field-identical [GitStatus] — without
+/// this signal, [statusProvider]'s content-identity memo would hand back the
+/// previous instance and [_dependOnWorktreeState]'s cache invalidation would
+/// never fire, leaving diff/blame/untracked/conflict panes serving pre-edit
+/// content indefinitely. Bumping the generation forces the next landed status
+/// to be treated as new even when its records are unchanged.
+///
+/// Deliberately NOT called for polling-mode ticks: a poll fires every few
+/// seconds whether or not anything changed, and re-minting the status on each
+/// one is exactly the idle-session cache-nuking the memo exists to prevent.
+/// In polling mode a content-only edit is caught by the next record-level
+/// change (or a manual ⌘R) — a narrower blind spot than losing event-driven
+/// correctness everywhere.
+void noteWorktreeEdit(String repoPath) {
+  _worktreeEditGeneration[repoPath] =
+      (_worktreeEditGeneration[repoPath] ?? 0) + 1;
+}
 
 final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
   ref,
   repoPath,
 ) async {
+  // Snapshot the edit generation BEFORE the fetch: a [noteWorktreeEdit] that
+  // lands while the status round-trip is in flight must not be attributed to
+  // this (pre-edit) result, or the memo below would swallow the follow-up
+  // refresh and serve stale content.
+  final editGen = _worktreeEditGeneration[repoPath] ?? 0;
   final status = await ref.watch(gitServiceProvider).status(repoPath);
   // `parseWarnings` records any porcelain status record that failed its
   // expected field-count check and was dropped (e.g. output truncated by a
@@ -1863,11 +1933,19 @@ final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
   // status. Without this, every watcher tick/poll on an idle repo minted a
   // fresh GitStatus, nuked all cached diffs, and re-prefetched them over
   // SSH — the single biggest source of idle-session SSH churn.
+  //
+  // Field-equality alone can't see a content-only edit to an already-modified
+  // file (porcelain records carry no content hash), so the memo also requires
+  // the edit generation to be unchanged — [noteWorktreeEdit] bumps it on every
+  // event-driven watcher tick, forcing that refresh to land as a new instance.
   final previous = _lastLandedStatus[repoPath];
-  if (previous != null && previous.contentEquals(status)) {
+  if (previous != null &&
+      _lastLandedEditGeneration[repoPath] == editGen &&
+      previous.contentEquals(status)) {
     return previous;
   }
   _lastLandedStatus[repoPath] = status;
+  _lastLandedEditGeneration[repoPath] = editGen;
   return status;
 });
 

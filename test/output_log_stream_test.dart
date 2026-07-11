@@ -50,6 +50,35 @@ void main() {
         reason: 'frames never accumulate as separate lines');
   });
 
+  test(r'a chunk ENDING in \r shows the frame text, not a blank line', () {
+    // git's progress.c writes each frame as `...:  42%\r` — the \r AFTER the
+    // counters — so real streamed chunks routinely end with \r. Collapsing to
+    // "text after the last \r" rendered the entire transfer blank.
+    final s = log.startStream('cmd');
+    s.append('Receiving objects:  42%\r', OutputLineKind.stderr);
+    expect(lines(), ['\$ cmd', 'Receiving objects:  42%']);
+
+    s.append('Receiving objects:  77%\r', OutputLineKind.stderr);
+    expect(lines(), ['\$ cmd', 'Receiving objects:  77%'],
+        reason: 'later frames replace the transient in place');
+
+    s.close(exitCode: 0);
+    expect(lines(), ['\$ cmd', 'Receiving objects:  77%', '✓ completed'],
+        reason: 'the final frame is flushed into the transcript');
+  });
+
+  test(r'a \r\n terminator split across two chunks keeps the line text', () {
+    final s = log.startStream('cmd');
+    s.append('remote: Compressing done.\r', OutputLineKind.stderr);
+    s.append('\nnext line\n', OutputLineKind.stderr);
+    expect(
+      lines(),
+      ['\$ cmd', 'remote: Compressing done.', 'next line'],
+      reason: r'the split \r\n must collapse to one newline — the stray \r '
+          'must not erase the finalized line',
+    );
+  });
+
   test('stdout and stderr keep separate partial buffers', () {
     final s = log.startStream('cmd');
     s.append('out-part', OutputLineKind.stdout);

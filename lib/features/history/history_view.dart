@@ -468,7 +468,23 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     final idx = commits.indexWhere((c) => c.hash == commit.hash);
     if (idx < 0) return;
     // commits[0..idx] are HEAD..selected (newest first); the todo is oldest-first.
-    final included = commits.sublist(0, idx + 1).reversed.toList();
+    final slice = commits.sublist(0, idx + 1);
+    // git rejects `pick <merge-hash>` outright, which would strand the repo in
+    // a paused rebase the user never asked for. Hand-linearizing the range
+    // (dropping the merges from the todo, like native `rebase -i` does) isn't
+    // safe either: this todo is built from a linear slice of the log, and for
+    // a DAG that slice can omit side-branch commits whose content would then
+    // be silently lost. Refuse up front with an explanation instead.
+    if (slice.any((c) => c.parents.length > 1)) {
+      await showErrorDialog(
+        context,
+        'The range from ${commit.shortHash} to HEAD contains a merge commit. '
+        'Interactive rebase across merges isn\'t supported — pick a commit '
+        'with only linear history above it.',
+      );
+      return;
+    }
+    final included = slice.reversed.toList();
     setState(() {
       _rebaseSheetOpen = true;
       _busy = true;

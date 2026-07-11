@@ -859,12 +859,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     ref.listen(repoWatchProvider(repoPath), (previous, next) {
       final event = next.value;
       if (event == null) return;
-      // While this page is hidden (another tab is up) don't fire a `git status`
-      // round-trip on every tick — in polling mode that's a fetch every few
-      // seconds against a repo the user isn't looking at. Keep the subscription
-      // (so the watcher stays alive) but skip the refetch; didUpdateWidget
-      // re-syncs once when the page becomes visible again.
-      if (!widget.isActive) return;
       // Nearly every mutating action touches `.git/index`/HEAD/refs, so the
       // watcher fires shortly after this app's own explicit, immediate
       // _refresh() already invalidated status for the same change — skip
@@ -875,6 +869,22 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
           .isRecent(repoPath, event.at, _ownMutationSuppressWindow)) {
         return;
       }
+      // An event-driven tick is a real filesystem change: record it so the
+      // status memo can't dedupe a content-only edit to an already-modified
+      // file (field-identical records, different bytes) — without this, the
+      // diff/blame/conflict caches would keep serving pre-edit content.
+      // Recorded even while the page is hidden (it's a local counter, no SSH
+      // round-trip) so the didUpdateWidget re-sync on return can't be
+      // swallowed by the memo either.
+      if (event.mode == WatchMode.eventDriven) {
+        noteWorktreeEdit(repoPath);
+      }
+      // While this page is hidden (another tab is up) don't fire a `git status`
+      // round-trip on every tick — in polling mode that's a fetch every few
+      // seconds against a repo the user isn't looking at. Keep the subscription
+      // (so the watcher stays alive) but skip the refetch; didUpdateWidget
+      // re-syncs once when the page becomes visible again.
+      if (!widget.isActive) return;
       // Refresh status; the structure tree, status overlay, and sequencer
       // state all follow from it (the tree only re-fetches when its shape
       // changes — see repoStructureProvider).

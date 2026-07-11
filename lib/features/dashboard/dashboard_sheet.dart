@@ -30,23 +30,7 @@ class DashboardSheet extends ConsumerStatefulWidget {
 }
 
 class _DashboardSheetState extends ConsumerState<DashboardSheet> {
-  Timer? _uptimeTicker;
   bool _footprintRequested = false;
-
-  @override
-  void initState() {
-    super.initState();
-    // Uptime is the only value that changes with wall-clock time alone.
-    _uptimeTicker = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _uptimeTicker?.cancel();
-    super.dispose();
-  }
 
   void _close() => Navigator.of(context).pop();
 
@@ -156,9 +140,6 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
     MacosTypography typography,
     ConnectionState connection,
   ) {
-    final uptime = connection.connectedAt == null
-        ? null
-        : DateTime.now().difference(connection.connectedAt!);
     final rows = <(String, String)>[
       (
         'Backend',
@@ -169,39 +150,27 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
       if (connection.connectionLabel != null)
         ('Connection', connection.connectionLabel!),
       if (connection.repoPath != null) ('Repository', connection.repoPath!),
-      if (uptime != null) ('Session uptime', _fmtDuration(uptime)),
-      if (connection.reconnecting)
-        ('Reconnecting', 'attempt ${connection.reconnectAttempt}'),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _sectionTitle(typography, 'Connection'),
-        for (final (label, value) in rows)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 4),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                SizedBox(
-                  width: 130,
-                  child: Text(
-                    label,
-                    style: typography.caption1.copyWith(
-                      color: MacosColors.systemGrayColor,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    value,
-                    style: typography.body,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
+        for (final (label, value) in rows) _kvRow(typography, label, value),
+        // Self-ticking: uptime is the only value on the whole sheet that
+        // changes with wall-clock time alone, so it owns its own 1s timer —
+        // a sheet-wide ticker would rebuild every section (including the
+        // O(commits) activity aggregation and both charts) once per second
+        // just to advance this one line.
+        if (connection.connectedAt != null)
+          _UptimeRow(
+            connectedAt: connection.connectedAt!,
+            typography: typography,
+          ),
+        if (connection.reconnecting)
+          _kvRow(
+            typography,
+            'Reconnecting',
+            'attempt ${connection.reconnectAttempt}',
           ),
       ],
     );
@@ -789,6 +758,74 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
       return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MiB';
     }
     return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(2)} GiB';
+  }
+}
+
+/// One label/value line of the connection card.
+Widget _kvRow(MacosTypography typography, String label, String value) =>
+    Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 130,
+            child: Text(
+              label,
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: typography.body,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+
+/// The "Session uptime" line, owning its own once-a-second timer so the tick
+/// rebuilds exactly this row — never the whole sheet (see [_connectionCard]).
+class _UptimeRow extends StatefulWidget {
+  const _UptimeRow({required this.connectedAt, required this.typography});
+
+  final DateTime connectedAt;
+  final MacosTypography typography;
+
+  @override
+  State<_UptimeRow> createState() => _UptimeRowState();
+}
+
+class _UptimeRowState extends State<_UptimeRow> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final uptime = DateTime.now().difference(widget.connectedAt);
+    return _kvRow(
+      widget.typography,
+      'Session uptime',
+      _DashboardSheetState._fmtDuration(uptime),
+    );
   }
 }
 

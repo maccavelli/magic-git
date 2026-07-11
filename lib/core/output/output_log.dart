@@ -169,8 +169,8 @@ class OutputLogNotifier extends Notifier<OutputLogState> {
 ///
 /// Feed decoded stdout/stderr chunks through [append]; fully terminated lines
 /// are appended permanently, while the trailing partial line — with `\r`
-/// progress frames (`Receiving objects:  42% …`) collapsed to the text after
-/// the last `\r` — renders as a single transient line that is rewritten in
+/// progress frames (`Receiving objects:  42% …`) collapsed to the last
+/// non-empty frame — renders as a single transient line that is rewritten in
 /// place on each chunk. stdout and stderr keep separate partial buffers (they
 /// are independent streams whose chunks interleave mid-line); the transient
 /// line always shows the most recently active one. Finish with exactly one
@@ -191,8 +191,12 @@ class OutputStreamSession {
 
   void append(String chunk, OutputLineKind kind) {
     if (_closed || chunk.isEmpty) return;
+    // CRLF conversion runs over partial+chunk COMBINED (the partial is stored
+    // raw), so a `\r\n` terminator split across two chunks — chunk 1 ending
+    // `\r`, chunk 2 starting `\n` — still collapses to one newline instead of
+    // the stray `\r` erasing the line's text in _collapseCr.
     final combined =
-        (_partials[kind] ?? '') + chunk.replaceAll('\r\n', '\n');
+        ((_partials[kind] ?? '') + chunk).replaceAll('\r\n', '\n');
     final segments = combined.split('\n');
     _partials[kind] = segments.removeLast();
 
@@ -247,11 +251,19 @@ class OutputStreamSession {
     return flushed;
   }
 
-  /// A `\r`-carrying segment shows only what a terminal would after the last
-  /// carriage return — the final progress frame.
+  /// A `\r`-carrying segment shows only what a terminal would — the last
+  /// *non-empty* progress frame. Trailing `\r`s are stripped first: git writes
+  /// each frame as `Receiving objects: 42%\r` (the `\r` AFTER the text), so a
+  /// chunk-final segment ends with `\r` and a naive "text after the last
+  /// `\r`" would render the whole live transfer as blank.
   static String _collapseCr(String line) {
-    final i = line.lastIndexOf('\r');
-    return i < 0 ? line : line.substring(i + 1);
+    var end = line.length;
+    while (end > 0 && line.codeUnitAt(end - 1) == 0x0D) {
+      end--;
+    }
+    final trimmed = line.substring(0, end);
+    final i = trimmed.lastIndexOf('\r');
+    return i < 0 ? trimmed : trimmed.substring(i + 1);
   }
 }
 

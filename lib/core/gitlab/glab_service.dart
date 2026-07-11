@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import '../forge/forge.dart';
 import '../forge/forge_repo_summary.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../utils/bounded_tail.dart';

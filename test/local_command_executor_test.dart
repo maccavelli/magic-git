@@ -55,13 +55,19 @@ void main() {
     expect(result.stderr, isNotEmpty);
   });
 
-  test('a missing working directory is a clean result, not a throw', () async {
+  test('a missing working directory is a clean non-127 failure, not a throw',
+      () async {
     final result = await executor.execute(
       repoPath: '${tempDir.path}/no-such-subdir',
       gitArgs: ['sh', '-c', 'pwd'],
     );
     expect(result.isSuccess, isFalse);
-    expect(result.exitCode, 127);
+    // NOT 127: GitService reads 127 as "git is not installed" and tells the
+    // user to fix their git install — misleading when the repo folder itself
+    // was moved/deleted. Mirrors the SSH backend, where a missing dir is a
+    // failed `cd` (non-127) and surfaces as "not a git repository".
+    expect(result.exitCode, isNot(127));
+    expect(result.stderr, contains('cannot access repository folder'));
   });
 
   test('a deterministic spawn failure is not retried', () async {

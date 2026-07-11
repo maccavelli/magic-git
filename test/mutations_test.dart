@@ -166,11 +166,16 @@ void main() {
       final b64 = await git.readFileBase64('/repo', 'assets/logo.png');
       // The `tr -d '\r\n'` strips base64's wrapping newlines on the remote, so
       // the caller can decode directly without a client-side whitespace copy.
-      expect(exec.calls.single, [
-        'sh',
-        '-c',
-        "base64 < 'assets/logo.png' | tr -d '\\r\\n'",
-      ]);
+      // The `test -r` guard runs first: a pipeline reports its LAST command's
+      // exit status, so without it a missing/unreadable file would exit 0
+      // with empty output instead of failing.
+      final call = exec.calls.single;
+      expect(call[0], 'sh');
+      expect(call[1], '-c');
+      final script = call[2];
+      expect(script, startsWith("test -r 'assets/logo.png' || "));
+      expect(script, contains('exit 66'));
+      expect(script, endsWith("base64 < 'assets/logo.png' | tr -d '\\r\\n'"));
       expect(b64, 'aGVsbG8=');
     });
 
@@ -208,6 +213,10 @@ void main() {
       expect(script, contains("touch \"\$f\""));
       expect(script, contains("grep -qxF -- 'build/'"));
       expect(script, contains("printf '%s\\n' 'build/'"));
+      // A .gitignore without a trailing newline must be normalized before the
+      // append, or the new pattern concatenates onto the last existing line
+      // (`*.logbuild/`), corrupting both rules.
+      expect(script, contains('tail -c 1'));
     });
 
     test('stageMany/unstageMany/discardMany/removeUntrackedFilesMany/'

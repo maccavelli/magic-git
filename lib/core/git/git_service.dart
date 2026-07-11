@@ -1030,7 +1030,15 @@ class GitService {
   /// on the client. Oversized output trips the executor's hard cap and surfaces
   /// as a failure rather than spiking memory.
   Future<String> readFileBase64(String repoPath, String path) async {
-    final script = "base64 < ${ShellEscaper.escape(path)} | tr -d '\\r\\n'";
+    // A pipeline's exit status is its LAST command's, so `base64 < missing |
+    // tr` exits 0 with empty output — the read failure would silently become
+    // "" and render as a corrupt-image state instead of an error. Check
+    // readability up front and fail the script with a real message + nonzero
+    // exit before the pipeline runs.
+    final q = ShellEscaper.escape(path);
+    final script =
+        'test -r $q || { echo "cannot read (missing or unreadable):" $q >&2; '
+        "exit 66; }; base64 < $q | tr -d '\\r\\n'";
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['sh', '-c', script],
@@ -1405,7 +1413,14 @@ class GitService {
         .map(ShellEscaper.escape)
         .map((q) => 'grep -qxF -- $q "\$f" || printf \'%s\\n\' $q >> "\$f"')
         .join('; ');
-    return 'f=.gitignore; touch "\$f"; $lines';
+    // A hand-edited .gitignore often lacks a trailing newline; appending onto
+    // that would concatenate the new pattern into the last existing line,
+    // corrupting both. `tail -c 1` is POSIX (BSD + GNU); the command
+    // substitution strips a trailing newline, so a non-empty result means the
+    // last byte isn't one — normalize before appending.
+    return 'f=.gitignore; touch "\$f"; '
+        '[ -s "\$f" ] && [ -n "\$(tail -c 1 "\$f")" ] && printf \'\\n\' >> "\$f"; '
+        '$lines';
   }
 
   // ---- History actions -----------------------------------------------------

@@ -144,6 +144,24 @@ class LocalCommandExecutor implements CommandExecutor {
         // `GitException`, rather than a raw `ProcessException` that no caller
         // catches — and that `runWithRetries` would otherwise pointlessly retry
         // (the failure is deterministic).
+        //
+        // The two causes are indistinguishable from the exception alone (both
+        // surface as ENOENT), but 127 specifically means "command not found" —
+        // GitService turns it into "install git / set its path in Settings",
+        // which is actively misleading when the real problem is that the
+        // repository folder was moved, deleted, or made unreadable. Check the
+        // working directory to pick the honest exit shape, mirroring SSH's
+        // `cd` failure (non-127, "not a git repository").
+        if (!Directory(repoPath).existsSync()) {
+          return SSHCommandResult(
+            exitCode: 1,
+            stdout: '',
+            stderr:
+                'cannot access repository folder: $repoPath — it may have '
+                'been moved, deleted, or had its permissions changed. '
+                '(${e.message})',
+          );
+        }
         return SSHCommandResult(exitCode: 127, stdout: '', stderr: e.message);
       }
       final p = process!;

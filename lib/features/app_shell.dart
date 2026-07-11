@@ -475,44 +475,25 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
   /// provider that isn't currently mounted is a harmless no-op, so one handler
   /// covers whichever page is showing.
   ///
-  /// Providers keyed purely by `repoPath` are invalidated by key; ones keyed
-  /// by a compound record (a file path, a commit hash, a job id, …) are
-  /// invalidated as a whole family instead — there's no single "currently
-  /// selected" key to reconstruct here, and re-fetching a rarely-open pane
-  /// for another repo is a negligible cost for a manual, occasional action.
-  /// [repoWatchProvider] and [jobTraceProvider] are deliberately excluded:
-  /// they're live subscriptions (a filesystem watcher, a streaming job log),
-  /// not one-shot fetches, so invalidating them would just restart an
-  /// already-current stream for no benefit.
+  /// The list of families lives in [repoScopedFetchFamilies] — shared with
+  /// the connection-reset path, so a new repo-scoped provider added there is
+  /// automatically covered here too (the two lists drifted in the past and
+  /// ⌘R silently skipped the GitHub panels). Whole-family invalidation is
+  /// fine for a manual, occasional action: re-fetching a rarely-open pane for
+  /// another repo is a negligible cost. The registry deliberately excludes
+  /// the live subscriptions ([repoWatchProvider], [jobTraceProvider]) —
+  /// invalidating those would just restart an already-current stream.
   void _refresh() {
     final connection = ref.read(connectionProvider);
     final repo = connection.repoPath;
     if (repo == null || !connection.isConnected) return;
-    ref.invalidate(statusProvider(repo));
-    ref.invalidate(pendingOpProvider(repo));
-    ref.invalidate(logProvider(repo));
-    ref.invalidate(logSearchProvider);
-    ref.invalidate(refsProvider(repo));
-    ref.invalidate(stashesProvider(repo));
-    ref.invalidate(stashDiffProvider);
-    ref.invalidate(prepareCommitMsgHookProvider(repo));
-    ref.invalidate(repoStructureProvider(repo));
-    ref.invalidate(repoStatusOverlayProvider(repo));
-    ref.invalidate(fileLogProvider);
-    ref.invalidate(blameProvider);
-    ref.invalidate(fileDiffProvider);
-    ref.invalidate(commitDiffProvider);
-    ref.invalidate(commitFileDiffProvider);
-    ref.invalidate(conflictFileProvider);
-    ref.invalidate(untrackedDiffProvider);
-    ref.invalidate(mergeRequestsProvider(repo));
-    ref.invalidate(pipelinesProvider(repo));
-    ref.invalidate(jobsProvider);
-    ref.invalidate(projectDashboardProvider(repo));
-    // Re-read any open file viewer so a manual refresh reflects on-disk edits;
-    // keyed by (repoPath, path), so the whole family is invalidated (there's no
-    // single "current" key). Cheap — a closed viewer isn't watching, and an open
-    // one costs one `cat`.
+    for (final family in repoScopedFetchFamilies) {
+      ref.invalidate(family);
+    }
+    // Re-read any open file viewer so a manual refresh reflects on-disk edits.
+    // These live in the viewer feature (the registry, in core, can't list
+    // them). Cheap — a closed viewer isn't watching, and an open one costs
+    // one `cat`.
     ref.invalidate(fileContentProvider);
     ref.invalidate(fileBytesProvider);
   }
