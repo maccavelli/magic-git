@@ -276,14 +276,15 @@ class MainFlutterWindow: NSWindow {
       action: #selector(toggleRecovery(_:)), separatorBefore: false)
 
     // Plain action item (no checkbox — the window's own close button is its
-    // "off"). ⌥⌘H: the ⇧⌘ letters are taken by the toggles above.
+    // "off"). ⇧⌘H: NOT ⌥⌘H, which is the system-wide "Hide Others" and wins
+    // over any menu key equivalent (pressing it hid every other app).
     if viewMenu.items.first(where: {
       $0.action == #selector(openHistoryWindowFromMenu(_:))
     }) == nil {
       let item = NSMenuItem(
         title: "Open History in New Window",
         action: #selector(openHistoryWindowFromMenu(_:)), keyEquivalent: "h")
-      item.keyEquivalentModifierMask = [.command, .option]
+      item.keyEquivalentModifierMask = [.command, .shift]
       item.target = self
       viewMenu.addItem(item)
     }

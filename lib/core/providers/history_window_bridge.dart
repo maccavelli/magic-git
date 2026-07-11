@@ -37,10 +37,14 @@ class HistoryWindowBridge extends Notifier<bool> {
   Future<void> open() async {
     final connection = ref.read(connectionProvider);
     if (!connection.isConnected || connection.repoPath == null) return;
-    state = true;
     try {
       await _control.invokeMethod<void>('openHistoryWindow');
-    } on PlatformException {
+      // Optimistic: the authoritative signal is the window's own
+      // requestState handshake; this just starts event pushes early.
+      state = true;
+    } catch (_) {
+      // Missing handler / platform error — the window didn't open; stay
+      // closed rather than pushing events into the void.
       state = false;
     }
   }

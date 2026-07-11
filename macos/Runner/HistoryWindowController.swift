@@ -43,13 +43,23 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
       return
     }
 
+    // Order is load-bearing: FlutterEngine(name:project:) is the NON-headless
+    // initializer, so the engine may only run once a view controller is
+    // attached — FlutterViewController(engine:) attaches itself. Running
+    // first (or ignoring run's result) leaves a dead engine: every later
+    // step silently no-ops ("Failed to create a
+    // FlutterPlatformMessageResponseHandle") and the window never appears.
     let engine = FlutterEngine(name: "magicgit-history", project: nil)
+    let viewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
     // The entrypoint must exist in lib/main.dart (the root library) — macOS
     // has no libraryURI variant of run(withEntrypoint:).
-    engine.run(withEntrypoint: "historyWindowMain")
+    guard engine.run(withEntrypoint: "historyWindowMain") else {
+      NSLog("Magic Git: history window engine failed to launch")
+      engine.shutDownEngine()
+      onClosed()
+      return
+    }
     self.engine = engine
-
-    let viewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
     RegisterGeneratedPlugins(registry: viewController)
 
     let window = NSWindow(
