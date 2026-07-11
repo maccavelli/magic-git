@@ -1,6 +1,6 @@
 // The main-isolate end of the native History window: gated open, execute
 // serving (success + typed errors), undo-record absorption into the real
-// journal, mutation-driven refresh marks, Recovery forwarding, and
+// journal, mutation-driven refresh marks, forwarded undo execution, and
 // close-on-disconnect.
 
 import 'package:flutter/services.dart';
@@ -234,11 +234,42 @@ void main() {
     );
   });
 
-  test('openRecovery shows the main-window Recovery sheet', () async {
+  test('performUndo runs the journal-top undo and reports the outcome',
+      () async {
     container = makeContainer(_connected);
-    expect(container.read(recoveryVisibleProvider), isFalse);
-    await deliverHubCall('openRecovery', null);
-    expect(container.read(recoveryVisibleProvider), isTrue);
+
+    // Nothing journaled yet — the reply says so instead of guessing.
+    expect(
+      await deliverHubCall('performUndo', {
+        'repoPath': '/srv/repo',
+        'force': false,
+      }),
+      {'status': 'nothingToUndo'},
+    );
+
+    final record = UndoRecord(
+      repoPath: '/srv/repo',
+      kind: UndoOpKind.commit,
+      description: 'Commit',
+      preHead: 'a' * 40,
+      preRef: 'main',
+      postHead: 'b' * 40,
+      postRef: 'main',
+    );
+    await deliverHubCall('undoRecord', record.toJson());
+
+    final reply = await deliverHubCall('performUndo', {
+      'repoPath': '/srv/repo',
+      'force': false,
+    });
+    expect((reply as Map)['status'], 'done');
+    expect(reply['description'], 'Commit');
+    expect(executor.calls, isNotEmpty, reason: 'undo script actually ran');
+    expect(
+      container.read(undoJournalProvider.notifier).peek('/srv/repo'),
+      isNull,
+      reason: 'the executed record was popped',
+    );
   });
 
   test('while open, connection changes are pushed; disconnect also closes',

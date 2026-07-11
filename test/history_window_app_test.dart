@@ -1,6 +1,6 @@
 // The native History window's Dart shell: boot handshake (ready +
 // requestState), session-driven rendering, repo-switch/disconnect handling,
-// and the forwarded Recovery button. The executor seam is the same one
+// and the locally-opened Recovery sheet + forwarded ⌘Z undo. The executor seam is the same one
 // production uses, so a fake executor stands in for the whole proxy.
 
 import 'package:flutter/cupertino.dart' hide ConnectionState;

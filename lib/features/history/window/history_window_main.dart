@@ -51,7 +51,10 @@ void runHistoryWindow() {
   // the native side's hw-debug.log through the hub relay.
   final defaultOnError = FlutterError.onError;
   FlutterError.onError = (details) {
-    _sendHub('debugLog', 'FlutterError: ${details.exception}\n${details.stack}');
+    _sendHub(
+      'debugLog',
+      'FlutterError: ${details.exception}\n${details.stack}',
+    );
     defaultOnError?.call(details);
   };
   PlatformDispatcher.instance.onError = (error, stack) {
@@ -79,21 +82,25 @@ void runHistoryWindow() {
           ),
         ),
         // Identical construction to the production gitServiceProvider except
-        // undo records are forwarded to the main window's journal — ⌘Z lives
-        // only there, and a journal split across isolates would be worse
-        // than none.
+        // undo records are forwarded to the main window's journal — the
+        // single source of undo truth (this window's ⌘Z executes against it
+        // via `performUndo`; a journal split across isolates would drift).
         gitServiceProvider.overrideWith((ref) {
-          final (commitTimeout, networkTimeout, committerName, committerEmail) =
-              ref.watch(
-                appSettingsProvider.select(
-                  (s) => (
-                    s.commitTimeout,
-                    s.networkTimeout,
-                    s.committerName,
-                    s.committerEmail,
-                  ),
-                ),
-              );
+          final (
+            commitTimeout,
+            networkTimeout,
+            committerName,
+            committerEmail,
+          ) = ref.watch(
+            appSettingsProvider.select(
+              (s) => (
+                s.commitTimeout,
+                s.networkTimeout,
+                s.committerName,
+                s.committerEmail,
+              ),
+            ),
+          );
           return GitService(
             ref.watch(activeExecutorProvider),
             commitTimeout: commitTimeout,
@@ -165,6 +172,21 @@ final historySessionProvider =
       HistorySessionNotifier.new,
     );
 
+/// TEMPORARY diagnostics (remove once the dead-controls bug is closed):
+/// route-level breadcrumbs so hw-debug.log shows whether a tapped control's
+/// menu/sheet route actually pushed.
+class _HubLogNavigatorObserver extends NavigatorObserver {
+  @override
+  void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _sendHub('debugLog', 'route push: ${route.runtimeType}');
+  }
+
+  @override
+  void didPop(Route<dynamic> route, Route<dynamic>? previousRoute) {
+    _sendHub('debugLog', 'route pop: ${route.runtimeType}');
+  }
+}
+
 class HistoryWindowApp extends StatelessWidget {
   const HistoryWindowApp({super.key});
 
@@ -176,6 +198,7 @@ class HistoryWindowApp extends StatelessWidget {
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
       debugShowCheckedModeBanner: false,
+      navigatorObservers: [_HubLogNavigatorObserver()],
       home: const HistoryWindowShell(),
     );
   }
@@ -361,7 +384,8 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell> {
 
   void _onRepoTick(Map<Object?, Object?> args) {
     final repoPath = args['repoPath'] as String?;
-    if (repoPath == null || repoPath != ref.read(historySessionProvider).repoPath) {
+    if (repoPath == null ||
+        repoPath != ref.read(historySessionProvider).repoPath) {
       return;
     }
     final at = DateTime.fromMillisecondsSinceEpoch(
@@ -398,9 +422,7 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell> {
           context: context,
           builder: (sheetContext) {
             _recoveryRoute = ModalRoute.of(sheetContext);
-            return EscapeDismissible(
-              child: RecoverySheet(repoPath: repoPath),
-            );
+            return EscapeDismissible(child: RecoverySheet(repoPath: repoPath));
           },
         ).whenComplete(() {
           _recoveryRoute = null;
@@ -435,51 +457,60 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell> {
       bindings: shortcuts,
       child: Focus(
         autofocus: true,
-        child: MacosWindow(
-          child: ContentArea(
-            builder: (context, _) => Stack(
-              children: [
-                !showBody
-                    ? Center(
-                        child: Text(
-                          'Waiting for session…',
-                          style: typography.body.copyWith(
-                            color: MacosColors.systemGrayColor,
+        // TEMPORARY diagnostics (remove with _HubLogNavigatorObserver):
+        // proves whether clicks reach this Flutter view at all, and where.
+        child: Listener(
+          onPointerDown: (event) => _sendHub(
+            'debugLog',
+            'pointerDown ${event.position.dx.round()},'
+                '${event.position.dy.round()}',
+          ),
+          child: MacosWindow(
+            child: ContentArea(
+              builder: (context, _) => Stack(
+                children: [
+                  !showBody
+                      ? Center(
+                          child: Text(
+                            'Waiting for session…',
+                            style: typography.body.copyWith(
+                              color: MacosColors.systemGrayColor,
+                            ),
                           ),
-                        ),
-                      )
-                    : Column(
-                        children: [
-                          if (session.phase == ConnectionPhase.lost)
-                            Container(
-                              width: double.infinity,
-                              color: MacosColors.systemOrangeColor.withValues(
-                                alpha: 0.18,
-                              ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 5,
-                              ),
-                              child: Text(
-                                'Connection lost — reconnecting… actions will '
-                                'fail until the session returns.',
-                                style: typography.caption1.copyWith(
-                                  color: MacosColors.systemOrangeColor,
+                        )
+                      : Column(
+                          children: [
+                            if (session.phase == ConnectionPhase.lost)
+                              Container(
+                                width: double.infinity,
+                                color: MacosColors.systemOrangeColor.withValues(
+                                  alpha: 0.18,
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 5,
+                                ),
+                                child: Text(
+                                  'Connection lost — reconnecting… actions will '
+                                  'fail until the session returns.',
+                                  style: typography.caption1.copyWith(
+                                    color: MacosColors.systemOrangeColor,
+                                  ),
                                 ),
                               ),
+                            Expanded(
+                              child: HistoryView(
+                                repoPath: session.repoPath!,
+                                isActive: true,
+                              ),
                             ),
-                          Expanded(
-                            child: HistoryView(
-                              repoPath: session.repoPath!,
-                              isActive: true,
-                            ),
-                          ),
-                        ],
-                      ),
-                // Same top layer as AppShell's Stack: "<op> — ⌘Z to undo"
-                // after this window's own mutations, "Undid: …" after ⌘Z.
-                UndoToastOverlay(onUndo: _undoGitOperation),
-              ],
+                          ],
+                        ),
+                  // Same top layer as AppShell's Stack: "<op> — ⌘Z to undo"
+                  // after this window's own mutations, "Undid: …" after ⌘Z.
+                  UndoToastOverlay(onUndo: _undoGitOperation),
+                ],
+              ),
             ),
           ),
         ),

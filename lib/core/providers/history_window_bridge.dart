@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../exec/exec_proxy_codec.dart';
 import '../git/git_service.dart' show GitException;
 import '../git/watch_event.dart';
+import '../output/output_log.dart';
 import '../undo/undo_controller.dart';
 import '../undo/undo_journal.dart';
 import '../undo/undo_types.dart';
@@ -178,7 +179,7 @@ class HistoryWindowBridge extends Notifier<bool> {
           }
           return {
             'status': attempt.status.name,
-            if (description != null) 'description': description,
+            'description': ?description,
           };
         } on GitException catch (e) {
           return {'status': 'error', 'message': '$e'};
