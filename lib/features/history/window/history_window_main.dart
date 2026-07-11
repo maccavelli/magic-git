@@ -10,6 +10,8 @@
 /// engine; this window's bounds live in AppKit's `frameAutosaveName`.
 library;
 
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
@@ -216,7 +218,8 @@ class HistoryWindowShell extends ConsumerStatefulWidget {
   ConsumerState<HistoryWindowShell> createState() => _HistoryWindowShellState();
 }
 
-class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell> {
+class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
+    with SingleTickerProviderStateMixin {
   /// Same suppression window as the repo panel's watcher listener: a tick
   /// arriving within this of our own mutation is that mutation's echo.
   static const _ownMutationSuppressWindow = Duration(seconds: 3);
@@ -230,6 +233,21 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell> {
   void initState() {
     super.initState();
     _hub.setMethodCallHandler(_onHubCall);
+    // TEMPORARY diagnostics (remove with _HubLogNavigatorObserver): a 300ms
+    // animation measured after 2s — if `value` isn't 1.0/completed, this
+    // engine's vsync never drives tickers, which is exactly the "pushed
+    // routes stay at their opacity-0 entrance frame" failure.
+    final probe = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    )..forward();
+    Timer(const Duration(seconds: 2), () {
+      _sendHub(
+        'debugLog',
+        'vsync probe: ${probe.status.name} value=${probe.value}',
+      );
+      probe.dispose();
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // Reveal the native window only once real content exists (it opens at
       // alpha 0 — same flash-free dance as the main window).

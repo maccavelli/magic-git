@@ -60,26 +60,17 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
     }
     hwDebugLog("controller.open() — creating engine")
 
-    // Order is load-bearing: FlutterEngine(name:project:) is the NON-headless
-    // initializer, so the engine may only run once a view controller is
-    // attached — FlutterViewController(engine:) attaches itself. Running
-    // first (or ignoring run's result) leaves a dead engine: every later
-    // step silently no-ops ("Failed to create a
-    // FlutterPlatformMessageResponseHandle") and the window never appears.
+    // Order is load-bearing, twice over. (1) FlutterEngine(name:project:) is
+    // the NON-headless initializer, so the engine may only run once a view
+    // controller is attached — FlutterViewController(engine:) attaches
+    // itself; running first leaves a dead engine. (2) The view must be
+    // INSIDE a real NSWindow before run(), or the engine's vsync source has
+    // no screen to bind to: the first frame still paints, but animations
+    // never advance — every pushed route (menus, sheets) is stuck at its
+    // entrance transition's opacity-0 frame, an invisible modal barrier over
+    // a seemingly dead window.
     let engine = FlutterEngine(name: "magicgit-history", project: nil)
     let viewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
-    hwDebugLog("engine + view controller created, running entrypoint")
-    // The entrypoint must exist in lib/main.dart (the root library) — macOS
-    // has no libraryURI variant of run(withEntrypoint:).
-    guard engine.run(withEntrypoint: "historyWindowMain") else {
-      hwDebugLog("engine failed to launch")
-      engine.shutDownEngine()
-      onClosed()
-      return
-    }
-    hwDebugLog("engine running, registering plugins")
-    self.engine = engine
-    RegisterGeneratedPlugins(registry: viewController)
 
     let window = NSWindow(
       contentRect: NSRect(x: 0, y: 0, width: 1000, height: 640),
@@ -106,6 +97,25 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
     // never sees an empty white flash — same dance as the main window.
     window.alphaValue = 0
     self.window = window
+    // On a screen (still invisible at alpha 0) before run() — an ordered-out
+    // window has `screen == nil`, which is as useless to a display link as
+    // no window at all.
+    window.orderFront(nil)
+
+    hwDebugLog("window built, running entrypoint")
+    // The entrypoint must exist in lib/main.dart (the root library) — macOS
+    // has no libraryURI variant of run(withEntrypoint:).
+    guard engine.run(withEntrypoint: "historyWindowMain") else {
+      hwDebugLog("engine failed to launch")
+      engine.shutDownEngine()
+      window.delegate = nil
+      self.window = nil
+      onClosed()
+      return
+    }
+    hwDebugLog("engine running, registering plugins")
+    self.engine = engine
+    RegisterGeneratedPlugins(registry: viewController)
 
     installRelay(historyMessenger: engine.binaryMessenger)
 
