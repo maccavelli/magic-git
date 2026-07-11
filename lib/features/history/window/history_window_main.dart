@@ -44,11 +44,64 @@ void _sendHub(String method, [Object? arguments]) {
   _hub.invokeMethod<void>(method, arguments).catchError((_) {});
 }
 
+/// [WidgetsFlutterBinding] with a self-healing frame clock.
+///
+/// The macOS embedder's vsync waiter is armed when the engine runs. A custom
+/// entrypoint forces run() BEFORE the view can join a window (view load
+/// auto-launches `main` otherwise), so this second engine's waiter falls
+/// back to a viewless path whose frame timestamps never advance — probe
+/// evidence: frames render (100-frame batches) but `vsyncStart=0µs` on every
+/// frame and an AnimationController pinned at 0.0 forever. Frozen animation
+/// clocks leave every pushed route (menus, sheets, dialogs) stuck at its
+/// entrance transition's opacity-0 frame: an invisible modal barrier.
+///
+/// Fix at the exact seam the timestamps enter Dart: when the engine's clock
+/// is not advancing, substitute a monotonic wall clock. Healthy timestamps
+/// pass through untouched, so this degrades to a no-op if a future Flutter
+/// fixes the embedder (re-check via the "vsync probe" line in hw-debug.log
+/// on upgrades).
+class HistoryWindowBinding extends WidgetsFlutterBinding {
+  // Canonical custom-binding pattern: `WidgetsBinding.instance` THROWS on an
+  // uninitialized isolate, so existence is tracked with our own field set in
+  // initInstances, never probed through the framework getter.
+  static HistoryWindowBinding? _instance;
+
+  static HistoryWindowBinding ensureInitialized() {
+    if (_instance == null) HistoryWindowBinding();
+    return _instance!;
+  }
+
+  @override
+  void initInstances() {
+    super.initInstances();
+    _instance = this;
+  }
+
+  final Stopwatch _clock = Stopwatch()..start();
+  Duration _lastPassed = Duration.zero;
+
+  @override
+  void handleBeginFrame(Duration? rawTimeStamp) {
+    // null = warm-up frame; the framework substitutes its own stopwatch.
+    if (rawTimeStamp == null) return super.handleBeginFrame(null);
+    var timeStamp = rawTimeStamp;
+    if (timeStamp <= _lastPassed) {
+      // Engine clock frozen (or rewound): synthesize forward motion.
+      timeStamp = _clock.elapsed;
+      if (timeStamp <= _lastPassed) {
+        timeStamp = _lastPassed + const Duration(microseconds: 1);
+      }
+    }
+    _lastPassed = timeStamp;
+    super.handleBeginFrame(timeStamp);
+  }
+}
+
 /// Entrypoint body — called by `historyWindowMain()` in `lib/main.dart`
 /// (the `@pragma('vm:entry-point')` stub must live in the root library,
 /// because macOS `FlutterEngine.run(withEntrypoint:)` resolves names there).
 void runHistoryWindow() {
-  WidgetsFlutterBinding.ensureInitialized();
+  HistoryWindowBinding.ensureInitialized();
   // This engine has no visible console (release build, second engine), so an
   // uncaught error would otherwise vanish without a trace — historically
   // exactly how "the button does nothing" bugs hid here. Ship every error to
