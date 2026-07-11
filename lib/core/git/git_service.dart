@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:isolate';
 import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
+import '../undo/undo_types.dart';
 import '../utils/git_porcelain_parser.dart';
 import 'repo_tree.dart';
 
@@ -199,6 +200,34 @@ List<GitCommit> parseGitLog(String raw) {
   return commits;
 }
 
+/// Parses `git reflog` output (field/record separated, same wire format as
+/// [parseGitLog]). Top-level so it can run in a background isolate.
+List<ReflogEntry> parseReflog(String raw) {
+  final entries = <ReflogEntry>[];
+  for (final record in raw.split(GitService.recordSep)) {
+    final trimmed = record.replaceFirst(RegExp(r'^\n'), '');
+    if (trimmed.trim().isEmpty) continue;
+    final f = trimmed.split(GitService.fieldSep);
+    if (f.length < 5) continue; // truncated/malformed — skip, keep parsing
+    // %gs is `<action>: <detail>` ("checkout: moving from a to b",
+    // "commit (amend): subject", "reset: moving to HEAD~1"). Split at the
+    // first colon; an unexpected shape becomes all-detail with no action.
+    final gs = _stripSeps(f[3]);
+    final colon = gs.indexOf(': ');
+    entries.add(
+      ReflogEntry(
+        hash: f[0],
+        shortHash: f[1],
+        selector: _stripSeps(f[2]),
+        action: colon < 0 ? '' : gs.substring(0, colon),
+        detail: colon < 0 ? gs : gs.substring(colon + 2),
+        subject: _stripSeps(f[4]),
+      ),
+    );
+  }
+  return entries;
+}
+
 /// Parses `git blame --line-porcelain` output into one [BlameLine] per source
 /// line. Top-level so it can run in a background isolate for large files. Each
 /// line block is a header row (`<sha> <orig> <final> [<num>]`) followed by
@@ -314,6 +343,63 @@ class RepoSnapshot {
   });
 }
 
+/// One `git reflog` entry: where a ref (HEAD) pointed and why it moved.
+/// Recovery actions always use [hash] — reflog indices shift with every new
+/// entry, so a stored `HEAD@{n}` would go stale immediately.
+class ReflogEntry {
+  final String hash;
+  final String shortHash;
+
+  /// Display selector, e.g. `HEAD@{2 minutes ago}` (`%gd` under
+  /// `--date=relative`).
+  final String selector;
+
+  /// The reflog action verb from `%gs` — `commit`, `checkout`, `reset`,
+  /// `rebase (finish)`, `pull`, … Empty when the message had no `<action>: `
+  /// prefix.
+  final String action;
+
+  /// The rest of the reflog message ("moving from main to feature").
+  final String detail;
+
+  /// The commit's own subject line — what the state at [hash] looks like.
+  final String subject;
+
+  const ReflogEntry({
+    required this.hash,
+    required this.shortHash,
+    required this.selector,
+    required this.action,
+    required this.detail,
+    required this.subject,
+  });
+}
+
+/// One anchored pre-destroy snapshot under `refs/magic-git/snapshots/` —
+/// the Recovery sheet's second section.
+class SnapshotRef {
+  final String refName;
+  final String oid;
+
+  /// Flavor A snapshots carry `stash create`'s own subject ("WIP on main:
+  /// …"); flavor B ones are created with the literal subject
+  /// `magic-git snapshot`.
+  final String subject;
+  final String relativeDate;
+
+  const SnapshotRef({
+    required this.refName,
+    required this.oid,
+    required this.subject,
+    required this.relativeDate,
+  });
+
+  /// Flavor B (temp-index commit of deleted untracked files) restores with
+  /// `git restore`; flavor A (a `stash create` commit) restores with
+  /// `git stash apply`. See [GitService.restoreSnapshot].
+  bool get isUntrackedSnapshot => subject == 'magic-git snapshot';
+}
+
 /// Parses `git for-each-ref`'s `fieldSep`-delimited output (see
 /// [GitService.refs]) into [GitRef]s. Top-level so [GitService._fetchSnapshot]
 /// and [GitService.refs] share one implementation.
@@ -370,6 +456,12 @@ class GitService {
   final String? committerName;
   final String? committerEmail;
 
+  /// Receives an [UndoRecord] after every successful undoable mutation (see
+  /// `_runCaptured`). Wired by `gitServiceProvider` to push onto the
+  /// `UndoJournal`; null (e.g. in most tests) simply disables recording —
+  /// mutations behave identically either way.
+  final void Function(UndoRecord record)? onUndoRecord;
+
   /// One automatic retry for idempotent reads, so a sub-second transport blip
   /// (e.g. mid-reconnect) doesn't surface as an error before auto-reconnect
   /// kicks in. Never applied to mutations — see [SSHCommandExecutor.execute].
@@ -384,6 +476,7 @@ class GitService {
     this.networkTimeout = defaultNetworkTimeout,
     this.committerName,
     this.committerEmail,
+    this.onUndoRecord,
   });
 
   /// `-c user.name=… -c user.email=…` overrides to inject right after `git` on
@@ -555,6 +648,12 @@ class GitService {
   /// section's own success/failure — the combined script's own exit code is
   /// just the last command's, which can't distinguish an earlier failure).
   static const String _snapshotSep = '\u0002RMGSNAP\u0002';
+
+  /// Separates the pre/post state fields from the mutation's own stdout in
+  /// [_runCaptured]'s combined script — same STX-bracketed reasoning as
+  /// [_snapshotSep] (the control byte can't appear in OIDs, ref names, or any
+  /// text git prints in these positions).
+  static const String _undoSep = '\u0002RMGUNDO\u0002';
 
   /// In-flight combined fetch per repo, so concurrent callers within the same
   /// tick (e.g. [pendingOp]'s provider `ref.watch`ing [status] and then
@@ -827,6 +926,49 @@ class GitService {
       return Isolate.run(() => parseGitLog(stdout));
     }
     return parseGitLog(stdout);
+  }
+
+  /// HEAD's reflog — the Recovery sheet's raw material. Same wire format and
+  /// hardening as [log] (separator fields, `--no-show-signature`, UTF-8
+  /// re-encoding, isolate-offloaded parse). `--date=relative` makes `%gd`
+  /// render as `HEAD@{2 minutes ago}` for display; recovery actions use the
+  /// full hash, never the selector, so reflog-index shifting is harmless.
+  Future<List<ReflogEntry>> reflog(
+    String repoPath, {
+    int maxCount = 200,
+  }) async {
+    final format = ['%H', '%h', '%gd', '%gs', '%s'].join(fieldSep);
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: [
+        'git',
+        '-c',
+        'i18n.logOutputEncoding=UTF-8',
+        'reflog',
+        '--no-show-signature',
+        '--date=relative',
+        '--format=$format$recordSep',
+        '--max-count=$maxCount',
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
+    );
+    if (!result.isSuccess) {
+      // A freshly initialized repo has no reflog to walk — mirror [log]'s
+      // unborn-HEAD handling so the sheet's empty state applies.
+      if (result.exitCode == 128 &&
+          (result.stderr.contains('does not have any commits yet') ||
+              result.stderr.contains('no such ref'))) {
+        return const [];
+      }
+      throw GitException('git reflog failed', result);
+    }
+    final stdout = result.stdout;
+    if (stdout.length > _isolateThreshold) {
+      return Isolate.run(() => parseReflog(stdout));
+    }
+    return parseReflog(stdout);
   }
 
   /// Unified diff for a single file. [staged] selects the index-vs-HEAD diff
@@ -1199,14 +1341,28 @@ class GitService {
   /// hook (e.g. an AI generator) writes the message and the empty "editor"
   /// accepts it non-interactively. `--no-gpg-sign` avoids a failure on repos
   /// with `commit.gpgsign=true` (no GPG agent over the SSH exec channel).
-  Future<void> commit(String repoPath, {String? message}) {
+  Future<void> commit(String repoPath, {String? message}) async {
     final args = ['git', ..._idArgs, 'commit', '--no-gpg-sign'];
     if (message != null && message.trim().isNotEmpty) {
       args.addAll(['-m', message]);
     }
     // A prepare-commit-msg hook may invoke a slow AI generator — allow generous
     // headroom so a legitimately slow commit isn't killed as if it hung.
-    return _runVoid(repoPath, args, 'git commit', timeout: commitTimeout);
+    await _runCaptured(
+      repoPath,
+      args,
+      'git commit',
+      timeout: commitTimeout,
+      // The very first commit on an unborn branch has no pre-state to reset
+      // back to — not undoable.
+      record: (c) => c.preHead.isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.commit,
+              description: 'Commit',
+            ),
+    );
   }
 
   /// Whether a `prepare-commit-msg` hook is installed (respecting
@@ -1277,51 +1433,147 @@ class GitService {
   /// [ref] that happens to start with `-` (a branch named e.g. `-d`) from
   /// being parsed as a flag — plain `--` isn't safe here since checkout gives
   /// it pathspec-separator meaning, not just "end of options".
-  Future<void> checkout(String repoPath, String ref) => _runVoid(repoPath, [
-    'git',
-    'checkout',
-    '--end-of-options',
-    ref,
-  ], 'git checkout');
+  Future<void> checkout(String repoPath, String ref) async {
+    await _runCaptured(
+      repoPath,
+      ['git', 'checkout', '--end-of-options', ref],
+      'git checkout',
+      // From an unborn branch there is nothing checked out to return to.
+      record: (c) => c.preHead.isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.checkout,
+              description: 'Checkout of $ref',
+            ),
+    );
+  }
 
-  /// Creates a branch, optionally checking it out. `--end-of-options` guards
-  /// [name] the same way [checkout] guards its ref.
+  /// Creates a branch, optionally checking it out.
+  ///
+  /// The checkout form deliberately has no `--end-of-options` before [name]:
+  /// `-b` consumes its next token verbatim as the branch name, so the guard
+  /// itself would *become* the name (`fatal: a branch '--end-of-options'
+  /// cannot be created`) — and a leading-dash [name] is already safe, since
+  /// git rejects it as an invalid ref format rather than parsing it as a
+  /// flag. The plain `git branch` form takes [name] positionally and keeps
+  /// the guard.
   Future<void> createBranch(
     String repoPath,
     String name, {
     bool checkout = true,
-  }) => _runVoid(
+  }) => _createBranchCaptured(
     repoPath,
     checkout
-        ? ['git', 'checkout', '-b', '--end-of-options', name]
+        ? ['git', 'checkout', '-b', name]
         : ['git', 'branch', '--end-of-options', name],
-    'git branch',
+    name: name,
+    checkedOut: checkout,
+    startPoint: null,
   );
 
+  /// Shared undo capture for [createBranch]/[branchFrom]: undo deletes the
+  /// created branch (validating its tip hasn't moved since creation) and,
+  /// when the creation checked it out, returns to the previous branch first.
+  ///
+  /// The created tip is known without a post-mutation capture: it's HEAD
+  /// after a checkout creation, and the (pre-resolved) start point — or the
+  /// unchanged pre-op HEAD — otherwise.
+  Future<void> _createBranchCaptured(
+    String repoPath,
+    List<String> mutation, {
+    required String name,
+    required bool checkedOut,
+    required String? startPoint,
+  }) async {
+    await _runCaptured(
+      repoPath,
+      mutation,
+      'git branch',
+      extraCaptures: [
+        if (startPoint != null)
+          'git rev-parse -q --verify '
+              '${ShellEscaper.escape('$startPoint^{commit}')}',
+      ],
+      record: (c) {
+        final createdOid = checkedOut
+            ? c.postHead
+            : (startPoint != null ? c.extras[0] : c.preHead);
+        return createdOid.isEmpty
+            ? null
+            : c.toRecord(
+                repoPath: repoPath,
+                kind: UndoOpKind.createBranch,
+                description: 'Creation of branch $name',
+                refName: name,
+                deletedOid: createdOid,
+              );
+      },
+    );
+  }
+
   /// Deletes a local branch. [force] uses `-D` (discard unmerged commits).
+  /// Undo recreates the branch at its captured tip; upstream/tracking config
+  /// is not restored.
   Future<void> deleteBranch(
     String repoPath,
     String name, {
     bool force = false,
-  }) => _runVoid(repoPath, [
-    'git',
-    'branch',
-    force ? '-D' : '-d',
-    '--end-of-options',
-    name,
-  ], 'git branch -d');
+  }) async {
+    await _runCaptured(
+      repoPath,
+      ['git', 'branch', force ? '-D' : '-d', '--end-of-options', name],
+      'git branch -d',
+      extraCaptures: [
+        'git rev-parse -q --verify ${ShellEscaper.escape('refs/heads/$name')}',
+      ],
+      record: (c) => c.extras[0].isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.deleteBranch,
+              description: 'Deletion of branch $name',
+              refName: name,
+              deletedOid: c.extras[0],
+            ),
+    );
+  }
 
-  /// Discards working-tree changes to a path (`git restore`). Irreversible.
+  /// Discards working-tree changes to a path (`git restore`). Undoable via a
+  /// pre-op snapshot — see [_discardCaptured].
   Future<void> discard(String repoPath, String path) =>
-      _runVoid(repoPath, ['git', 'restore', '--', path], 'git restore');
+      _discardCaptured(repoPath, [path]);
 
   /// Discards working-tree changes to every path in [paths] with a single
-  /// invocation — the multi-select bulk equivalent of [discard]. Irreversible.
-  Future<void> discardMany(String repoPath, List<String> paths) => _runVoid(
-    repoPath,
-    ['git', 'restore', '--', ...paths],
-    'git restore',
-  );
+  /// invocation — the multi-select bulk equivalent of [discard].
+  Future<void> discardMany(String repoPath, List<String> paths) =>
+      _discardCaptured(repoPath, paths);
+
+  /// A flavor-A snapshot (worktree + index trees) is taken in the same shell
+  /// invocation, immediately before the restore destroys the content; undo
+  /// restores exactly [paths] from it. An empty snapshot field (unborn HEAD,
+  /// conflicted index — `stash create` refused) means the discard proceeds
+  /// without a ⌘Z net, as before this feature existed.
+  Future<void> _discardCaptured(String repoPath, List<String> paths) async {
+    final refName = _newSnapshotRef();
+    await _runCaptured(
+      repoPath,
+      ['git', 'restore', '--', ...paths],
+      'git restore',
+      extraCaptures: [_snapshotCaptureA(refName)],
+      record: (c) => c.extras[0].isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.discardPaths,
+              description: paths.length == 1
+                  ? 'Discard of ${paths.single}'
+                  : 'Discard of ${paths.length} files',
+              snapshotOid: c.extras[0],
+              paths: paths,
+            ),
+    );
+  }
 
   /// Removes a single untracked file from the working tree. Deliberately
   /// scoped to exactly [path] (`git clean -f --`, not a blanket `-fd` sweep):
@@ -1331,14 +1583,44 @@ class GitService {
   /// in this file is hardened against a leading `-` — see [discard]/[stage].
   /// Irreversible.
   Future<void> removeUntrackedFile(String repoPath, String path) =>
-      _runVoid(repoPath, ['git', 'clean', '-f', '--', path], 'git clean');
+      _removeCaptured(repoPath, ['git', 'clean', '-f', '--', path], [path]);
 
   /// Removes every untracked path in [paths] with a single invocation — the
   /// multi-select bulk equivalent of [removeUntrackedFile]. Same scoping
   /// rationale: `git clean` still refuses to touch anything tracked, so this
-  /// can only ever delete the untracked files the caller named. Irreversible.
+  /// can only ever delete the untracked files the caller named.
   Future<void> removeUntrackedFilesMany(String repoPath, List<String> paths) =>
-      _runVoid(repoPath, ['git', 'clean', '-f', '--', ...paths], 'git clean');
+      _removeCaptured(repoPath, ['git', 'clean', '-f', '--', ...paths], paths);
+
+  /// Untracked (and ignored) content is invisible to `stash create`, so
+  /// deletions snapshot the doomed [paths] with flavor B — a temp-index
+  /// plumbing commit holding exactly those files' on-disk bytes — before the
+  /// mutation removes them. Undo restores them; they come back untracked,
+  /// as they were.
+  Future<void> _removeCaptured(
+    String repoPath,
+    List<String> mutation,
+    List<String> paths,
+  ) async {
+    final refName = _newSnapshotRef();
+    await _runCaptured(
+      repoPath,
+      mutation,
+      mutation.first == 'rm' ? 'rm' : 'git clean',
+      extraCaptures: [_snapshotCaptureB(refName, paths)],
+      record: (c) => c.extras[0].isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.removeFilePaths,
+              description: paths.length == 1
+                  ? 'Deletion of ${paths.single}'
+                  : 'Deletion of ${paths.length} files',
+              snapshotOid: c.extras[0],
+              paths: paths,
+            ),
+    );
+  }
 
   /// Permanently deletes [path] from the working tree with `rm -f`, regardless
   /// of whether git tracks it. Unlike [removeUntrackedFile] (`git clean`, which
@@ -1351,7 +1633,7 @@ class GitService {
   /// file doesn't error out. `--` guards a leading-`-` path, matching how every
   /// other path argument in this file is hardened.
   Future<void> deleteFile(String repoPath, String path) =>
-      _runVoid(repoPath, ['rm', '-f', '--', path], 'rm');
+      _removeCaptured(repoPath, ['rm', '-f', '--', path], [path]);
 
   /// Discards a staged path's changes entirely — both the index and working
   /// tree are reset to HEAD's content for [path]. For a path with no HEAD
@@ -1359,21 +1641,26 @@ class GitService {
   /// `--source=HEAD` has nothing to restore *to*, so git instead removes it
   /// from both the index and the working tree — exactly "undo the staged
   /// add" for that case, with no special-casing needed here. Irreversible.
-  Future<void> discardStaged(String repoPath, String path) => _runVoid(repoPath, [
-    'git',
-    'restore',
-    '--staged',
-    '--worktree',
-    '--source=HEAD',
-    '--',
-    path,
-  ], 'git restore');
+  Future<void> discardStaged(String repoPath, String path) =>
+      _discardStagedCaptured(repoPath, [path]);
 
   /// Discards staged changes to every path in [paths] with a single
   /// invocation — the multi-select bulk equivalent of [discardStaged]. Same
-  /// "no HEAD counterpart" handling applies per-path. Irreversible.
+  /// "no HEAD counterpart" handling applies per-path.
   Future<void> discardStagedMany(String repoPath, List<String> paths) =>
-      _runVoid(repoPath, [
+      _discardStagedCaptured(repoPath, paths);
+
+  /// Same flavor-A snapshot as [_discardCaptured]; the staged variant's undo
+  /// additionally restores the index from the snapshot's index tree
+  /// (`<snap>^2`), so a never-committed staged file round-trips too.
+  Future<void> _discardStagedCaptured(
+    String repoPath,
+    List<String> paths,
+  ) async {
+    final refName = _newSnapshotRef();
+    await _runCaptured(
+      repoPath,
+      [
         'git',
         'restore',
         '--staged',
@@ -1381,7 +1668,22 @@ class GitService {
         '--source=HEAD',
         '--',
         ...paths,
-      ], 'git restore');
+      ],
+      'git restore',
+      extraCaptures: [_snapshotCaptureA(refName)],
+      record: (c) => c.extras[0].isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.discardStagedPaths,
+              description: paths.length == 1
+                  ? 'Staged discard of ${paths.single}'
+                  : 'Staged discard of ${paths.length} files',
+              snapshotOid: c.extras[0],
+              paths: paths,
+            ),
+    );
+  }
 
   /// Appends [path] as a new ignore pattern to the repo root's `.gitignore`,
   /// creating the file if it doesn't exist. Not a git subcommand — this app
@@ -1431,14 +1733,33 @@ class GitService {
     String repoPath,
     String hash, {
     int? mainline,
-  }) => _run(repoPath, [
-    'git',
-    ..._idArgs,
-    'cherry-pick',
-    if (mainline != null) ...['-m', '$mainline'],
-    '--end-of-options',
-    hash,
-  ], 'git cherry-pick');
+  }) {
+    final refName = _newSnapshotRef();
+    return _runCaptured(
+      repoPath,
+      [
+        'git',
+        ..._idArgs,
+        'cherry-pick',
+        if (mainline != null) ...['-m', '$mainline'],
+        '--end-of-options',
+        hash,
+      ],
+      'git cherry-pick',
+      // Clean completions only — a conflict throws and records nothing (the
+      // pending-op abort owns it). Undo is `reset --hard` back, so unrelated
+      // uncommitted changes are snapshotted like a hard reset's.
+      extraCaptures: [_snapshotCaptureA(refName)],
+      record: (c) => c.preHead.isEmpty || c.preHead == c.postHead
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.resetHard,
+              description: 'Cherry-pick',
+              snapshotOid: c.extras[0],
+            ),
+    );
+  }
 
   /// Aborts an in-progress cherry-pick, restoring the pre-pick state.
   Future<void> cherryPickAbort(String repoPath) => _runVoid(repoPath, [
@@ -1453,55 +1774,134 @@ class GitService {
     String repoPath,
     String hash, {
     int? mainline,
-  }) => _run(repoPath, [
-    'git',
-    ..._idArgs,
-    'revert',
-    '--no-edit',
-    if (mainline != null) ...['-m', '$mainline'],
-    '--end-of-options',
-    hash,
-  ], 'git revert');
+  }) {
+    final refName = _newSnapshotRef();
+    return _runCaptured(
+      repoPath,
+      [
+        'git',
+        ..._idArgs,
+        'revert',
+        '--no-edit',
+        if (mainline != null) ...['-m', '$mainline'],
+        '--end-of-options',
+        hash,
+      ],
+      'git revert',
+      // Same shape as cherry-pick: clean completions only, hard-reset back.
+      extraCaptures: [_snapshotCaptureA(refName)],
+      record: (c) => c.preHead.isEmpty || c.preHead == c.postHead
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.resetHard,
+              description: 'Revert',
+              snapshotOid: c.extras[0],
+            ),
+    );
+  }
 
   /// Aborts an in-progress revert.
   Future<void> revertAbort(String repoPath) =>
       _runVoid(repoPath, ['git', 'revert', '--abort'], 'git revert --abort');
 
   /// Moves HEAD (and, per [mode], the index/worktree) to [hash].
-  Future<void> reset(String repoPath, String hash, {required ResetMode mode}) =>
-      _runVoid(repoPath, [
-        'git',
-        'reset',
-        switch (mode) {
-          ResetMode.soft => '--soft',
-          ResetMode.mixed => '--mixed',
-          ResetMode.hard => '--hard',
-        },
-        '--end-of-options',
-        hash,
-      ], 'git reset');
+  Future<void> reset(
+    String repoPath,
+    String hash, {
+    required ResetMode mode,
+  }) async {
+    final args = [
+      'git',
+      'reset',
+      switch (mode) {
+        ResetMode.soft => '--soft',
+        ResetMode.mixed => '--mixed',
+        ResetMode.hard => '--hard',
+      },
+      '--end-of-options',
+      hash,
+    ];
+    switch (mode) {
+      case ResetMode.soft:
+        await _runCaptured(
+          repoPath,
+          args,
+          'git reset',
+          record: (c) => c.preHead.isEmpty
+              ? null
+              : c.toRecord(
+                  repoPath: repoPath,
+                  kind: UndoOpKind.resetSoft,
+                  description: 'Soft reset',
+                ),
+        );
+      case ResetMode.mixed:
+        await _runCaptured(
+          repoPath,
+          args,
+          'git reset',
+          // The pre-reset index as a tree, so undo can restore exactly what
+          // was staged. `write-tree` fails on an unmerged (conflicted) index
+          // — the empty capture degrades the undo to soft-only.
+          extraCaptures: ['git write-tree 2>/dev/null'],
+          record: (c) => c.preHead.isEmpty
+              ? null
+              : c.toRecord(
+                  repoPath: repoPath,
+                  kind: UndoOpKind.resetMixed,
+                  description: 'Mixed reset',
+                  preIndexTree: c.extras[0],
+                ),
+        );
+      case ResetMode.hard:
+        // Destroys uncommitted content, so a flavor-A snapshot is taken
+        // first. An empty snapshot usually means the tree was clean — the
+        // plain `reset --hard` back is then already exact — so the record is
+        // kept either way (unlike the discard kinds, where an empty snapshot
+        // means there is nothing to restore from).
+        final refName = _newSnapshotRef();
+        await _runCaptured(
+          repoPath,
+          args,
+          'git reset',
+          extraCaptures: [_snapshotCaptureA(refName)],
+          record: (c) => c.preHead.isEmpty
+              ? null
+              : c.toRecord(
+                  repoPath: repoPath,
+                  kind: UndoOpKind.resetHard,
+                  description: 'Hard reset',
+                  snapshotOid: c.extras[0],
+                ),
+        );
+    }
+  }
 
   /// Creates a branch named [name] rooted at [startPoint], optionally checking
-  /// it out.
+  /// it out. Same `-b`-consumes-the-name reasoning as [createBranch]; the
+  /// checkout form's `--end-of-options` guards the positional [startPoint].
   Future<void> branchFrom(
     String repoPath,
     String name,
     String startPoint, {
     bool checkout = true,
-  }) => _runVoid(
+  }) => _createBranchCaptured(
     repoPath,
     checkout
-        ? ['git', 'checkout', '-b', '--end-of-options', name, startPoint]
+        ? ['git', 'checkout', '-b', name, '--end-of-options', startPoint]
         : ['git', 'branch', '--end-of-options', name, startPoint],
-    'git branch',
+    name: name,
+    checkedOut: checkout,
+    startPoint: startPoint,
   );
 
   /// Amends the current HEAD commit. With a [message] it rewrites the subject
   /// (`-m`); without one it keeps the existing message (`--no-edit`). Picks up
   /// whatever is currently staged.
-  Future<void> amendCommit(String repoPath, {String? message}) {
+  Future<void> amendCommit(String repoPath, {String? message}) async {
     final hasMsg = message != null && message.trim().isNotEmpty;
-    return _runVoid(
+    await _runCaptured(
       repoPath,
       [
         'git',
@@ -1513,6 +1913,15 @@ class GitService {
       ],
       'git commit --amend',
       timeout: commitTimeout,
+      // preHead is the pre-amend commit; undo's `reset --soft` restores it
+      // with the amendment's content left staged — the exact pre-amend state.
+      record: (c) => c.preHead.isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.amend,
+              description: 'Amend',
+            ),
     );
   }
 
@@ -1583,17 +1992,44 @@ class GitService {
     String repoPath,
     String branch, {
     MergeMode mode = MergeMode.normal,
-  }) => _run(repoPath, [
-    'git',
-    ..._idArgs,
-    'merge',
-    '--no-edit',
-    if (mode == MergeMode.noFf) '--no-ff',
-    if (mode == MergeMode.ffOnly) '--ff-only',
-    if (mode == MergeMode.squash) '--squash',
-    '--end-of-options',
-    branch,
-  ], 'git merge');
+  }) {
+    final args = [
+      'git',
+      ..._idArgs,
+      'merge',
+      '--no-edit',
+      if (mode == MergeMode.noFf) '--no-ff',
+      if (mode == MergeMode.ffOnly) '--ff-only',
+      if (mode == MergeMode.squash) '--squash',
+      '--end-of-options',
+      branch,
+    ];
+    // A squash merge doesn't move HEAD (postHead == preHead), so the undo
+    // validation would be meaningless — not undoable; discard the staged
+    // result by hand. Conflicted merges throw (rc != 0) and record nothing:
+    // the pending-op banner's abort owns that path.
+    if (mode == MergeMode.squash) {
+      return _run(repoPath, args, 'git merge');
+    }
+    final refName = _newSnapshotRef();
+    return _runCaptured(
+      repoPath,
+      args,
+      'git merge',
+      // Undo is `reset --hard` back — which would also destroy any
+      // uncommitted-but-unrelated changes the merge allowed through, so
+      // they're snapshotted like a hard reset's.
+      extraCaptures: [_snapshotCaptureA(refName)],
+      record: (c) => c.preHead.isEmpty || c.preHead == c.postHead
+          ? null // nothing moved (e.g. --ff-only already up to date)
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.resetHard,
+              description: 'Merge of $branch',
+              snapshotOid: c.extras[0],
+            ),
+    );
+  }
 
   // ---- Rebase --------------------------------------------------------------
 
@@ -1618,21 +2054,36 @@ class GitService {
     // expands $tmp into the env value so git's editor subshell sees the literal
     // path. No `set -e` — we capture git's exit code even on a conflict, clean
     // up, then propagate it. One shell invocation.
+    //
+    // Runs as a subshell inside [_runCaptured]'s wrapper so the pre-rebase
+    // HEAD is captured atomically (making a *completed* rebase undoable via
+    // `reset --hard` back) — the subshell keeps its internal `exit` from
+    // killing the wrapper before the post-state prints. A conflicted rebase
+    // exits non-zero and records nothing; abort/continue own that path. No
+    // snapshot: `rebase -i` refuses to start on a dirty tree anyway.
     final idFlags = _idFlagsForShell;
     final ontoQ = ShellEscaper.escape(onto);
     // `--end-of-options` stops an [onto] value that starts with `-` from
     // being parsed as a flag to `rebase -i`, same reasoning as [checkout].
     final script =
-        'tmp=\$(mktemp) || exit 1; cat > "\$tmp"; '
+        '(tmp=\$(mktemp) || exit 1; cat > "\$tmp"; '
         'GIT_SEQUENCE_EDITOR="cp \\"\$tmp\\"" GIT_EDITOR=true '
         'git${idFlags.isEmpty ? '' : ' $idFlags'} rebase -i --end-of-options $ontoQ; '
-        'rc=\$?; rm -f "\$tmp"; exit \$rc';
-    return _run(
+        'rc=\$?; rm -f "\$tmp"; exit \$rc)';
+    return _runCaptured(
       repoPath,
-      ['sh', '-c', script],
+      const [],
       'git rebase -i',
+      mutationScript: script,
       stdin: todo,
       timeout: commitTimeout,
+      record: (c) => c.preHead.isEmpty || c.preHead == c.postHead
+          ? null // no-op rebase (nothing changed)
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.resetHard,
+              description: 'Interactive rebase',
+            ),
     );
   }
 
@@ -1754,14 +2205,28 @@ class GitService {
     ref,
   ], 'git tag');
 
-  /// Deletes a local tag.
-  Future<void> deleteTag(String repoPath, String name) => _runVoid(repoPath, [
-    'git',
-    'tag',
-    '-d',
-    '--end-of-options',
-    name,
-  ], 'git tag -d');
+  /// Deletes a local tag. The captured OID is the tag *object* for an
+  /// annotated tag (deliberately not peeled), so undo restores it
+  /// byte-identical via `update-ref`.
+  Future<void> deleteTag(String repoPath, String name) async {
+    await _runCaptured(
+      repoPath,
+      ['git', 'tag', '-d', '--end-of-options', name],
+      'git tag -d',
+      extraCaptures: [
+        'git rev-parse -q --verify ${ShellEscaper.escape('refs/tags/$name')}',
+      ],
+      record: (c) => c.extras[0].isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.deleteTag,
+              description: 'Deletion of tag $name',
+              refName: name,
+              deletedOid: c.extras[0],
+            ),
+    );
+  }
 
   /// Pushes a single tag to [remote].
   Future<SSHCommandResult> pushTag(
@@ -1846,15 +2311,61 @@ class GitService {
     'git stash apply',
   );
 
-  Future<SSHCommandResult> stashDrop(String repoPath, int index) => _run(
-    repoPath,
-    ['git', 'stash', 'drop', 'stash@{$index}'],
-    'git stash drop',
-  );
+  Future<SSHCommandResult> stashDrop(String repoPath, int index) {
+    // Capture the doomed stash commit's OID and subject before the drop, so
+    // undo can `stash store` it back (the commit stays in the object DB until
+    // gc prunes unreachables — weeks, by default).
+    final selector = ShellEscaper.escape('stash@{$index}');
+    return _runCaptured(
+      repoPath,
+      ['git', 'stash', 'drop', 'stash@{$index}'],
+      'git stash drop',
+      extraCaptures: [
+        'git rev-parse -q --verify $selector',
+        'git log -1 --format=%s $selector 2>/dev/null',
+      ],
+      record: (c) => c.extras[0].isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.stashDrop,
+              description: 'Stash drop',
+              deletedOid: c.extras[0],
+              stashSubject: c.extras[1],
+            ),
+    );
+  }
 
-  /// Drops every stash (`git stash clear`). Irreversible.
-  Future<SSHCommandResult> stashClear(String repoPath) =>
-      _run(repoPath, ['git', 'stash', 'clear'], 'git stash clear');
+  /// Drops every stash (`git stash clear`). Undoable: every stash commit's
+  /// OID and subject are captured first, so undo can `stash store` them all
+  /// back in their original order.
+  Future<SSHCommandResult> stashClear(String repoPath) => _runCaptured(
+    repoPath,
+    ['git', 'stash', 'clear'],
+    'git stash clear',
+    extraCaptures: [
+      // One `<oid> <subject>` line per stash, newest first (reflog order).
+      // Multi-line output is fine inside a single capture field — the
+      // sentinel, not the newline, delimits fields.
+      "git log -g --format='%H %gs' refs/stash 2>/dev/null",
+    ],
+    record: (c) {
+      final entries = c.extras[0]
+          .split('\n')
+          .where((l) => l.trim().isNotEmpty)
+          .toList();
+      return entries.isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.stashClear,
+              description: entries.length == 1
+                  ? 'Clearing of 1 stash'
+                  : 'Clearing of ${entries.length} stashes',
+              stashEntries: entries,
+            );
+    },
+  );
 
   /// The full patch a stash holds (`git stash show -p`), for previewing its
   /// contents. Read-only.
@@ -1904,6 +2415,405 @@ class GitService {
       );
     }
     return stashes;
+  }
+
+  // ---- Undo capture & execution --------------------------------------------
+
+  /// Namespace of the hidden refs that anchor pre-destroy snapshots. A ref
+  /// (rather than `git stash store`) keeps the snapshot commit gc-alive
+  /// without polluting the stash list that [stashList]/the Stash panel — and
+  /// every other git tool on the host — would show. Ref names embed the
+  /// app-side creation epoch (`<epochSeconds>-<seq>`) so expiry never has to
+  /// parse dates on the remote.
+  static const String snapshotRefPrefix = 'refs/magic-git/snapshots/';
+
+  /// Snapshots older than this are pruned opportunistically each time a new
+  /// one is taken. Consumed snapshots are deliberately left in place until
+  /// then — an undone undo is still recoverable from the Recovery sheet.
+  static const Duration snapshotExpiry = Duration(days: 7);
+
+  /// Disambiguates snapshots taken within the same second.
+  int _snapshotSeq = 0;
+
+  /// Fixed identity for snapshot objects: `stash create` and `commit-tree`
+  /// both make real commit objects and refuse without one, and a host with no
+  /// git identity must still get its safety net. Env (not `-c`) so it also
+  /// covers the commits `stash create` makes internally; overriding a real
+  /// configured identity is harmless — snapshots are app-internal.
+  static const String _snapshotIdEnv =
+      'GIT_AUTHOR_NAME=magic-git GIT_AUTHOR_EMAIL=snapshot@magic-git '
+      'GIT_COMMITTER_NAME=magic-git GIT_COMMITTER_EMAIL=snapshot@magic-git';
+
+  String _newSnapshotRef() =>
+      '$snapshotRefPrefix'
+      '${DateTime.now().millisecondsSinceEpoch ~/ 1000}-${++_snapshotSeq}';
+
+  /// Deletes expired snapshot refs. Piggybacked onto every snapshot capture —
+  /// all-local ref operations, so the cost inside an already-running script
+  /// is negligible. Refs whose name doesn't parse as an epoch are left alone.
+  String get _snapshotPruneScript {
+    final cutoff =
+        DateTime.now().subtract(snapshotExpiry).millisecondsSinceEpoch ~/ 1000;
+    // The leading `(` on the case pattern is load-bearing: this whole loop
+    // runs inside the capture's `x0=$(…)`, and an unbalanced `)` in a case
+    // pattern would otherwise terminate that command substitution early
+    // (POSIX allows the optional open paren for exactly this).
+    return "git for-each-ref 'refs/magic-git/snapshots' --format='%(refname)' "
+        '| while read -r r; do e=\${r##*/}; e=\${e%%-*}; '
+        "case \"\$e\" in (''|*[!0-9]*) continue;; esac; "
+        '[ "\$e" -lt $cutoff ] && git update-ref -d "\$r"; done';
+  }
+
+  /// Flavor A snapshot (tracked-content destroys: discard, discardStaged,
+  /// reset --hard): `git stash create` captures the full worktree tree plus
+  /// the index tree (`<snap>^2`) without touching the stash list, then the
+  /// commit is anchored under [snapshotRefPrefix]. Emits the snapshot OID as
+  /// the capture field — empty when there was nothing to capture (clean
+  /// tree) or the create failed (unborn HEAD, conflicted index); either way
+  /// the mutation still runs. Runs as a [_runCaptured] extra, i.e. *before*
+  /// the mutation destroys anything.
+  String _snapshotCaptureA(String refName) =>
+      'snap=\$($_snapshotIdEnv git stash create 2>/dev/null); '
+      'if [ -n "\$snap" ]; then '
+      'git update-ref ${ShellEscaper.escape(refName)} "\$snap" '
+      '&& printf %s "\$snap"; fi; '
+      '$_snapshotPruneScript';
+
+  /// Flavor B snapshot (untracked/ignored destroys: clean, rm): `stash
+  /// create` cannot see untracked files, so this builds a commit holding
+  /// exactly the doomed [paths] via a throwaway index — `add -f` (captures
+  /// ignored files too) into a fresh `GIT_INDEX_FILE`, `write-tree`,
+  /// `commit-tree`. Parented on HEAD when it exists (`$pre` is already set by
+  /// the [_runCaptured] prologue this runs inside). The `$$`-suffixed temp
+  /// index can't collide: mutations are serialized on the exclusive lane.
+  String _snapshotCaptureB(String refName, List<String> paths) {
+    final pathArgs = paths.map(ShellEscaper.escape).join(' ');
+    return 'idx="\$(git rev-parse --git-dir)/magicgit-snapidx.\$\$"; '
+        'rm -f "\$idx"; '
+        'GIT_INDEX_FILE="\$idx" git add -f -- $pathArgs 2>/dev/null && '
+        't=\$(GIT_INDEX_FILE="\$idx" git write-tree 2>/dev/null) && '
+        'c=\$($_snapshotIdEnv git commit-tree "\$t" \${pre:+-p "\$pre"} '
+        '-m ${ShellEscaper.escape('magic-git snapshot')} 2>/dev/null) && '
+        'git update-ref ${ShellEscaper.escape(refName)} "\$c" '
+        '&& printf %s "\$c"; '
+        'rm -f "\$idx"; '
+        '$_snapshotPruneScript';
+  }
+
+  /// Lists the anchored snapshots — the Recovery sheet's "Snapshots"
+  /// section. Newest first (ref names embed the creation epoch).
+  Future<List<SnapshotRef>> snapshotRefs(String repoPath) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: [
+        'git',
+        'for-each-ref',
+        '--sort=-refname',
+        '--format=%(refname)$fieldSep%(objectname)$fieldSep%(subject)'
+            '$fieldSep%(creatordate:relative)',
+        'refs/magic-git/snapshots',
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    if (!result.isSuccess) {
+      throw GitException('listing snapshots failed', result);
+    }
+    final snapshots = <SnapshotRef>[];
+    for (final line in result.stdout.split('\n')) {
+      if (line.trim().isEmpty) continue;
+      final f = line.split(fieldSep);
+      if (f.length < 4) continue;
+      snapshots.add(
+        SnapshotRef(
+          refName: f[0],
+          oid: f[1],
+          subject: _stripSeps(f[2]),
+          relativeDate: f[3].trim(),
+        ),
+      );
+    }
+    return snapshots;
+  }
+
+  /// Restores a snapshot's content into the working tree. Flavor A (a
+  /// `stash create` commit) applies like a stash — it merges the captured
+  /// changes back and can conflict like any stash apply. Flavor B (a
+  /// temp-index commit holding exactly the deleted files) restores every
+  /// path in its tree; `:/` scopes the pathspec to the repo root regardless
+  /// of any prefix, and paths absent from the source tree are untouched.
+  Future<void> restoreSnapshot(String repoPath, SnapshotRef snapshot) =>
+      _runVoid(
+        repoPath,
+        snapshot.isUntrackedSnapshot
+            ? [
+                'git',
+                'restore',
+                '--source=${snapshot.oid}',
+                '--worktree',
+                '--',
+                ':/',
+              ]
+            : ['git', 'stash', 'apply', snapshot.oid],
+        snapshot.isUntrackedSnapshot ? 'git restore' : 'git stash apply',
+      );
+
+  /// Deletes a snapshot's anchor ref; the objects become unreachable and gc
+  /// reaps them eventually.
+  Future<void> deleteSnapshot(String repoPath, SnapshotRef snapshot) =>
+      _runVoid(repoPath, [
+        'git',
+        'update-ref',
+        '-d',
+        snapshot.refName,
+      ], 'git update-ref -d');
+
+  /// Runs an undoable mutation with its pre/post repo state captured
+  /// *atomically* in the same shell invocation: the script prints
+  /// [_undoSep]-delimited fields (HEAD OID + checked-out branch shortname,
+  /// plus any [extraCaptures], each a shell command whose output becomes one
+  /// field) before the mutation, runs the mutation, prints the post fields,
+  /// and exits with the mutation's own status. Capturing in-script — rather
+  /// than with a separate `rev-parse` round trip — costs nothing over SSH and
+  /// cannot race another mutation, because the exclusive lane serializes the
+  /// whole script.
+  ///
+  /// On exit 0, [record] builds the journal entry from the capture (returning
+  /// null skips recording — e.g. an unborn-HEAD first commit) and it is
+  /// delivered via [onUndoRecord]. Either way callers observe exactly what
+  /// the plain argv form produced: the returned/thrown result carries only
+  /// the mutation's own stdout, with the capture fields stripped. Output that
+  /// doesn't parse (a fake test executor, a script that died before the first
+  /// printf) degrades to "no record" rather than an error.
+  Future<SSHCommandResult> _runCaptured(
+    String repoPath,
+    List<String> mutation,
+    String label, {
+    required UndoRecord? Function(UndoCapture capture) record,
+    List<String> extraCaptures = const [],
+    Duration? timeout,
+    String? stdin,
+    // A raw shell snippet to run as the mutation instead of [mutation]'s
+    // argv — for operations that are already scripts (rebaseInteractive).
+    // Must be safe to follow with `; rc=$?` (i.e. a subshell or simple
+    // command list that never `exit`s the outer shell).
+    String? mutationScript,
+  }) async {
+    final mut =
+        mutationScript ?? mutation.map(ShellEscaper.escape).join(' ');
+    final assigns = StringBuffer();
+    final printfArgs = StringBuffer();
+    var fmt = '$_undoSep%s$_undoSep%s$_undoSep';
+    for (var i = 0; i < extraCaptures.length; i++) {
+      assigns.write('x$i=\$(${extraCaptures[i]}); ');
+      fmt += '%s$_undoSep';
+      printfArgs.write(' "\$x$i"');
+    }
+    // No `set -e`: `-q --verify` legitimately fails on an unborn HEAD and
+    // `symbolic-ref` on a detached one — both yield empty fields the record
+    // builders understand. The mutation's own exit code is preserved via $rc.
+    final script =
+        'pre=\$(git rev-parse -q --verify HEAD); '
+        'preref=\$(git symbolic-ref -q --short HEAD); '
+        '$assigns'
+        "printf '$fmt' \"\$pre\" \"\$preref\"$printfArgs; "
+        '$mut; rc=\$?; '
+        'post=\$(git rev-parse -q --verify HEAD); '
+        'postref=\$(git symbolic-ref -q --short HEAD); '
+        "printf '$_undoSep%s$_undoSep%s$_undoSep' \"\$post\" \"\$postref\"; "
+        'exit \$rc';
+
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['sh', '-c', script],
+      timeout: timeout ?? SSHCommandExecutor.defaultTimeout,
+      stdin: stdin,
+    );
+
+    // Expected shape: '' pre preref extras… mutOut post postref '' — the
+    // leading/trailing separators bracket the whole stream, so the count is
+    // deterministic and the mutation's own stdout is exactly one segment.
+    final n = extraCaptures.length;
+    final parts = result.stdout.split(_undoSep);
+    UndoCapture? capture;
+    var mutationStdout = result.stdout;
+    if (parts.length == 7 + n) {
+      mutationStdout = parts[3 + n];
+      capture = UndoCapture(
+        preHead: parts[1],
+        preRef: parts[2],
+        extras: parts.sublist(3, 3 + n),
+        postHead: parts[4 + n],
+        postRef: parts[5 + n],
+      );
+    }
+    final cleaned = SSHCommandResult(
+      exitCode: result.exitCode,
+      stdout: mutationStdout,
+      stderr: result.stderr,
+    );
+    if (!cleaned.isSuccess) {
+      // argv[0] is `sh` here, but a missing git still surfaces as the
+      // mutation's own 127 — same message as [_run].
+      if (cleaned.exitCode == 127) {
+        throw GitException(_gitNotFoundMessage, cleaned);
+      }
+      throw GitException('$label failed', cleaned);
+    }
+    if (capture != null && onUndoRecord != null) {
+      final entry = record(capture);
+      if (entry != null) onUndoRecord!(entry);
+    }
+    return cleaned;
+  }
+
+  /// Executes [record]'s undo as one atomic validate-then-execute script on
+  /// the exclusive lane. The script re-checks the repo is still in the
+  /// recorded post-op state before moving anything: exit 42 surfaces as
+  /// [UndoStaleException] (something else changed the repo — discard the
+  /// record); exit 43 as [UndoDirtyException] (the working tree changed where
+  /// this undo would write — confirm with the user, then retry with [force],
+  /// which strips only that guard; state validation always runs).
+  Future<void> undoExecute(UndoRecord record, {bool force = false}) async {
+    final result = await _executor.execute(
+      repoPath: record.repoPath,
+      gitArgs: ['sh', '-c', _undoScript(record, force: force)],
+    );
+    if (result.exitCode == 42) throw UndoStaleException(record);
+    if (result.exitCode == 43) throw UndoDirtyException(record);
+    if (!result.isSuccess) {
+      if (result.exitCode == 127) {
+        throw GitException(_gitNotFoundMessage, result);
+      }
+      throw GitException('undoing ${record.description} failed', result);
+    }
+  }
+
+  /// The validate+execute script for one journal entry. Every captured value
+  /// is shell-escaped on embedding even though it came from git's own output —
+  /// defense in depth, and it makes empty-string comparisons well-formed.
+  //
+  // [force] strips only the worktree-overwrite guards (exit 43) used by the
+  // snapshot-restoring kinds; none of the current kinds carry one yet, but
+  // the parameter is plumbed now so the controller's confirm-and-retry flow
+  // doesn't change shape when they land.
+  String _undoScript(UndoRecord r, {required bool force}) {
+    const esc = ShellEscaper.escape;
+    // HEAD and the checked-out branch must both still match the recorded
+    // post-op state — an empty postRef (detached) compares against
+    // symbolic-ref's empty failure output, so the same check covers both.
+    final headGuard =
+        '[ "\$(git rev-parse -q --verify HEAD)" = ${esc(r.postHead)} ] || exit 42; '
+        '[ "\$(git symbolic-ref -q --short HEAD)" = ${esc(r.postRef)} ] || exit 42; ';
+    switch (r.kind) {
+      case UndoOpKind.commit:
+      case UndoOpKind.amend:
+      case UndoOpKind.resetSoft:
+        // `reset --soft` back: the index still holds the committed/amended
+        // content, so this restores the exact pre-op staged state without
+        // touching the working tree.
+        return '${headGuard}git reset --soft ${esc(r.preHead)}';
+      case UndoOpKind.resetMixed:
+        // Restore the pre-reset index from its captured tree; a degraded
+        // capture (conflicted index at reset time) falls back to soft-only.
+        final readTree = r.preIndexTree.isEmpty
+            ? ''
+            : ' && git read-tree ${esc(r.preIndexTree)}';
+        return '${headGuard}git reset --soft ${esc(r.preHead)}$readTree';
+      case UndoOpKind.checkout:
+        // git itself refuses if the working tree would lose changes — that
+        // surfaces as a plain GitException, same as a manual checkout would.
+        final back = r.preRef.isNotEmpty
+            ? 'git checkout --end-of-options ${esc(r.preRef)}'
+            : 'git checkout --detach ${esc(r.preHead)}';
+        return '$headGuard$back';
+      case UndoOpKind.deleteBranch:
+        // Only the target ref is validated (not HEAD): recreating a still-
+        // absent branch at its old tip is safe no matter where HEAD went.
+        return 'git rev-parse -q --verify ${esc('refs/heads/${r.refName}')} >/dev/null && exit 42; '
+            'git branch --end-of-options ${esc(r.refName)} ${esc(r.deletedOid)}';
+      case UndoOpKind.deleteTag:
+        // `update-ref` rather than `git tag`: the captured OID is the tag
+        // *object* for an annotated tag, so it comes back byte-identical
+        // (message, tagger, signature) instead of as a new lightweight tag.
+        return 'git rev-parse -q --verify ${esc('refs/tags/${r.refName}')} >/dev/null && exit 42; '
+            'git update-ref ${esc('refs/tags/${r.refName}')} ${esc(r.deletedOid)}';
+      case UndoOpKind.stashDrop:
+        // Always additive (lands at stash@{0}), so no validation to fail.
+        // `stash store` writes a stash reflog entry — an object-creating
+        // command, so it carries the identity flags like stashPush.
+        final subject = r.stashSubject.isEmpty
+            ? 'Restored stash'
+            : r.stashSubject;
+        final id = _idFlagsForShell;
+        return 'git${id.isEmpty ? '' : ' $id'} stash store -m ${esc(subject)} ${esc(r.deletedOid)}';
+      case UndoOpKind.createBranch:
+        // The created branch must still point where creation left it —
+        // commits made on it since must not be silently discarded.
+        final tipGuard =
+            '[ "\$(git rev-parse -q --verify ${esc('refs/heads/${r.refName}')})" '
+            '= ${esc(r.deletedOid)} ] || exit 42; ';
+        final deleteBranch =
+            'git branch -D --end-of-options ${esc(r.refName)}';
+        if (r.postRef != r.refName) {
+          // Creation didn't check the branch out — just delete it.
+          return '$tipGuard$deleteBranch';
+        }
+        // Creation switched to it: verify we're still on it, go back, then
+        // delete. git itself refuses the checkout if the tree is dirty.
+        final back = r.preRef.isNotEmpty
+            ? 'git checkout --end-of-options ${esc(r.preRef)}'
+            : 'git checkout --detach ${esc(r.preHead)}';
+        return '$tipGuard'
+            '[ "\$(git symbolic-ref -q --short HEAD)" = ${esc(r.postRef)} ] '
+            '|| exit 42; '
+            '$back && $deleteBranch';
+      case UndoOpKind.stashClear:
+        // Re-store every cleared stash, oldest first, so the newest ends up
+        // back at stash@{0}. Always additive — no validation to fail.
+        final id = _idFlagsForShell;
+        final prefix = 'git${id.isEmpty ? '' : ' $id'}';
+        final stores = <String>[];
+        for (final entry in r.stashEntries.reversed) {
+          final space = entry.indexOf(' ');
+          final oid = space < 0 ? entry : entry.substring(0, space);
+          final subject = space < 0 ? 'Restored stash' : entry.substring(space + 1);
+          stores.add('$prefix stash store -m ${esc(subject)} ${esc(oid)}');
+        }
+        return stores.join(' && ');
+      case UndoOpKind.resetHard:
+        // Anything in the tree now appeared *after* the reset (which left it
+        // matching its target) — moving back would overwrite it: exit 43.
+        final dirtyGuard = force
+            ? ''
+            : '[ -z "\$(git status --porcelain)" ] || exit 43; ';
+        // `--index` restores staged-vs-unstaged exactly; a clean tree at
+        // reset time captured nothing, and the bare reset back is exact.
+        final apply = r.snapshotOid.isEmpty
+            ? ''
+            : ' && git stash apply --index ${esc(r.snapshotOid)}';
+        return '$headGuard$dirtyGuard'
+            'git reset --hard ${esc(r.preHead)}$apply';
+      case UndoOpKind.discardPaths:
+      case UndoOpKind.removeFilePaths:
+      case UndoOpKind.discardStagedPaths:
+        // Path-scoped restore from the snapshot — deliberately no HEAD
+        // guard: where the branch has moved since doesn't change what "bring
+        // those files back" means. Only the affected paths are guarded: any
+        // change under them since the destroy (an edit, a recreated file)
+        // would be overwritten — exit 43 unless the user confirmed.
+        final pathArgs = r.paths.map(esc).join(' ');
+        final dirtyGuard = force
+            ? ''
+            : '[ -z "\$(git status --porcelain -- $pathArgs)" ] || exit 43; ';
+        final restoreIndex = r.kind == UndoOpKind.discardStagedPaths
+            ? 'git restore --source=${esc('${r.snapshotOid}^2')} --staged '
+                  '-- $pathArgs && '
+            : '';
+        return '$dirtyGuard$restoreIndex'
+            'git restore --source=${esc(r.snapshotOid)} --worktree '
+            '-- $pathArgs';
+    }
   }
 
   /// Runs a command through the executor's lane scheduler and returns its

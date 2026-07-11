@@ -7,6 +7,7 @@ class MainFlutterWindow: NSWindow {
   private var showOutputItem: NSMenuItem?
   private var showFileItem: NSMenuItem?
   private var dashboardItem: NSMenuItem?
+  private var recoveryItem: NSMenuItem?
 
   /// Whether a quit-initiated Flutter cleanup round trip is already running,
   /// so a second terminate request while the first is in flight doesn't spawn
@@ -88,6 +89,11 @@ class MainFlutterWindow: NSWindow {
       case "setDashboardChecked":
         if let checked = call.arguments as? Bool {
           self?.dashboardItem?.state = checked ? .on : .off
+        }
+        result(nil)
+      case "setRecoveryChecked":
+        if let checked = call.arguments as? Bool {
+          self?.recoveryItem?.state = checked ? .on : .off
         }
         result(nil)
       default:
@@ -230,6 +236,10 @@ class MainFlutterWindow: NSWindow {
     self.dashboardItem = addToggleItem(
       to: viewMenu, title: "Show Dashboard View", key: "d",
       action: #selector(toggleDashboard(_:)), separatorBefore: false)
+    // ⇧⌘U — ⇧⌘R would collide with the History panel's rebase shortcut.
+    self.recoveryItem = addToggleItem(
+      to: viewMenu, title: "Show Recovery View", key: "u",
+      action: #selector(toggleRecovery(_:)), separatorBefore: false)
 
     // The items now exist, so pull the current checkbox states from Flutter.
     // Flutter also pushes them once at startup, but that push races this
@@ -293,5 +303,9 @@ class MainFlutterWindow: NSWindow {
 
   @objc private func toggleDashboard(_ sender: Any?) {
     menuChannel?.invokeMethod("toggleDashboard", arguments: nil)
+  }
+
+  @objc private func toggleRecovery(_ sender: Any?) {
+    menuChannel?.invokeMethod("toggleRecovery", arguments: nil)
   }
 }

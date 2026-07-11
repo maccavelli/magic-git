@@ -37,6 +37,7 @@ import '../storage/known_hosts_store.dart';
 import '../storage/local_repo_store.dart';
 import '../storage/saved_connection.dart';
 import '../storage/saved_local_repo.dart';
+import '../undo/undo_journal.dart';
 import '../utils/git_porcelain_parser.dart';
 import 'keep_alive_lru.dart';
 
@@ -211,6 +212,11 @@ final gitServiceProvider = Provider<GitService>((ref) {
     networkTimeout: networkTimeout,
     committerName: committerName,
     committerEmail: committerEmail,
+    // Every successful undoable mutation lands in the journal, which is what
+    // ⌘Z (UndoController) pops. `read` deliberately: the journal is a sink,
+    // not a dependency — its state changing must not rebuild GitService.
+    onUndoRecord: (record) =>
+        ref.read(undoJournalProvider.notifier).push(record),
   );
 });
 
@@ -648,6 +654,10 @@ class ConnectionController extends Notifier<ConnectionState> {
     _lastLandedStatus.clear();
     _worktreeEditGeneration.clear();
     _lastLandedEditGeneration.clear();
+    // Undo records share that pure-repoPath keying — and undoing an operation
+    // from a previous connection into a colliding path would be worse than a
+    // suppressed refresh.
+    ref.read(undoJournalProvider.notifier).clear();
   }
 
   /// The executor for [state]'s current backend, read directly off `state`
@@ -1863,6 +1873,8 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   runJobsProvider,
   runJobLogProvider,
   githubProjectDashboardProvider,
+  reflogProvider,
+  magicSnapshotsProvider,
 ];
 
 /// Working-tree status for a repo path, keyed so multiple repos can coexist.
@@ -2109,6 +2121,24 @@ final dashboardVisibleProvider = NotifierProvider<DashboardVisibility, bool>(
   DashboardVisibility.new,
 );
 
+/// The Recovery sheet's visibility — same provider-driven modal-route pattern
+/// as [dashboardVisibleProvider] (View-menu checkbox, palette entry, and the
+/// sheet's own Esc/X all stay in sync through it).
+class RecoveryVisibility extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void setVisible(bool value) {
+    if (state != value) state = value;
+  }
+
+  void toggle() => state = !state;
+}
+
+final recoveryVisibleProvider = NotifierProvider<RecoveryVisibility, bool>(
+  RecoveryVisibility.new,
+);
+
 /// Keepalive round-trip times from the active SSH session (newest last,
 /// bounded) — the dashboard's link-latency sparkline. The health monitor was
 /// already pinging every 15 s; this just stops discarding the timings.
@@ -2176,6 +2206,19 @@ final logProvider = FutureProvider.autoDispose.family<List<GitCommit>, String>((
 ) {
   return ref.watch(gitServiceProvider).log(repoPath);
 });
+
+/// HEAD's reflog — the Recovery sheet's entry list.
+final reflogProvider = FutureProvider.autoDispose
+    .family<List<ReflogEntry>, String>((ref, repoPath) {
+      return ref.watch(gitServiceProvider).reflog(repoPath);
+    });
+
+/// The anchored pre-destroy snapshots (`refs/magic-git/snapshots/`) — the
+/// Recovery sheet's second section.
+final magicSnapshotsProvider = FutureProvider.autoDispose
+    .family<List<SnapshotRef>, String>((ref, repoPath) {
+      return ref.watch(gitServiceProvider).snapshotRefs(repoPath);
+    });
 
 /// A filtered/searched commit log. Keyed by a query record (structural equality
 /// gives correct caching). [all] walks every ref; grep/author/since narrow it.

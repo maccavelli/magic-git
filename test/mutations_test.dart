@@ -39,6 +39,27 @@ class _FakeExecutor extends SSHCommandExecutor {
   }
 }
 
+/// Pins the undo-capture wrapper every undoable mutation runs through: one
+/// `sh -c` script that brackets the shell-escaped [mutation] with
+/// sentinel-delimited pre/post state prints and preserves its exit code (see
+/// `GitService._runCaptured`). Returns the script for further, op-specific
+/// pinning (extra capture fields).
+String expectCapturedScript(List<String> call, String mutation) {
+  expect(call, hasLength(3));
+  expect(call.sublist(0, 2), ['sh', '-c']);
+  final script = call[2];
+  expect(
+    script,
+    startsWith(
+      r'pre=$(git rev-parse -q --verify HEAD); '
+      r'preref=$(git symbolic-ref -q --short HEAD); ',
+    ),
+  );
+  expect(script, contains('; $mutation; rc=\$?; '));
+  expect(script, endsWith(r'exit $rc'));
+  return script;
+}
+
 void main() {
   group('GitService mutations build correct argv', () {
     late _FakeExecutor exec;
@@ -67,68 +88,73 @@ void main() {
 
     test('commit passes --no-gpg-sign and the message as one arg', () async {
       await git.commit('/repo', message: 'fix: a thing');
-      expect(exec.calls.single, [
-        'git',
-        'commit',
-        '--no-gpg-sign',
-        '-m',
-        'fix: a thing',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'commit' '--no-gpg-sign' '-m' 'fix: a thing'",
+      );
     });
 
     test('commit with no message omits -m (lets the hook write it)', () async {
       await git.commit('/repo');
-      expect(exec.calls.single, ['git', 'commit', '--no-gpg-sign']);
+      expectCapturedScript(exec.calls.single, "'git' 'commit' '--no-gpg-sign'");
       exec.calls.clear();
       await git.commit('/repo', message: '   ');
-      expect(exec.calls.single, ['git', 'commit', '--no-gpg-sign']);
+      expectCapturedScript(exec.calls.single, "'git' 'commit' '--no-gpg-sign'");
     });
 
     test('checkout', () async {
       await git.checkout('/repo', 'feature');
-      expect(exec.calls.single, [
-        'git',
-        'checkout',
-        '--end-of-options',
-        'feature',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'checkout' '--end-of-options' 'feature'",
+      );
     });
 
     test('createBranch checks out by default', () async {
       await git.createBranch('/repo', 'feat');
-      expect(exec.calls.single, [
-        'git',
-        'checkout',
-        '-b',
-        '--end-of-options',
-        'feat',
-      ]);
+      // No --end-of-options before the name: -b consumes its next token
+      // verbatim, so the guard itself would become the branch name (a real
+      // bug this pin used to enshrine — caught by the real-git undo tests).
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'checkout' '-b' 'feat'",
+      );
     });
 
     test('createBranch without checkout uses git branch', () async {
       await git.createBranch('/repo', 'feat', checkout: false);
-      expect(exec.calls.single, [
-        'git',
-        'branch',
-        '--end-of-options',
-        'feat',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'branch' '--end-of-options' 'feat'",
+      );
     });
 
-    test('deleteBranch force uses -D', () async {
+    test('deleteBranch force uses -D and captures the doomed tip', () async {
       await git.deleteBranch('/repo', 'old', force: true);
-      expect(exec.calls.single, [
-        'git',
-        'branch',
-        '-D',
-        '--end-of-options',
-        'old',
-      ]);
+      final script = expectCapturedScript(
+        exec.calls.single,
+        "'git' 'branch' '-D' '--end-of-options' 'old'",
+      );
+      // The tip OID is captured before the delete so undo can recreate it.
+      expect(
+        script,
+        contains(r"x0=$(git rev-parse -q --verify 'refs/heads/old'); "),
+      );
     });
 
     test('discard restores the working tree path', () async {
       await git.discard('/repo', 'a.dart');
-      expect(exec.calls.single, ['git', 'restore', '--', 'a.dart']);
+      final script = expectCapturedScript(
+        exec.calls.single,
+        "'git' 'restore' '--' 'a.dart'",
+      );
+      // A flavor-A snapshot (stash create, anchored on a hidden ref) is taken
+      // in the same invocation, before the restore destroys the content.
+      expect(script, contains(r'git stash create 2>/dev/null'));
+      expect(script, contains("git update-ref 'refs/magic-git/snapshots/"));
+      expect(script, contains('GIT_AUTHOR_NAME=magic-git'));
+      expect(script, contains("git for-each-ref 'refs/magic-git/snapshots'"),
+          reason: 'expiry pruning piggybacks on every snapshot');
     });
 
     test('deleteFile removes any path via rm -f, guarded by --', () async {
@@ -136,13 +162,27 @@ void main() {
       // this is the file-tree pane's generic delete and must work on tracked
       // files too — hence a plain rm.
       await git.deleteFile('/repo', 'lib/main.dart');
-      expect(exec.calls.single, ['rm', '-f', '--', 'lib/main.dart']);
+      final script = expectCapturedScript(
+        exec.calls.single,
+        "'rm' '-f' '--' 'lib/main.dart'",
+      );
+      // rm destroys content stash create can't see (untracked/ignored), so
+      // the snapshot is flavor B: a temp-index plumbing commit of the doomed
+      // paths.
+      expect(script, contains('GIT_INDEX_FILE="\$idx" git add -f -- '
+          "'lib/main.dart' 2>/dev/null"));
+      expect(script, contains(r'git write-tree'));
+      expect(script, contains(r'git commit-tree "$t" ${pre:+-p "$pre"}'));
+      expect(script, contains("git update-ref 'refs/magic-git/snapshots/"));
     });
 
     test('deleteFile keeps a leading-dash path out of rm option parsing',
         () async {
       await git.deleteFile('/repo', '-weird.txt');
-      expect(exec.calls.single, ['rm', '-f', '--', '-weird.txt']);
+      expectCapturedScript(
+        exec.calls.single,
+        "'rm' '-f' '--' '-weird.txt'",
+      );
     });
 
     test('readFile cats the path directly, guarded by --', () async {
@@ -193,15 +233,12 @@ void main() {
 
     test('discardStaged restores both index and worktree from HEAD', () async {
       await git.discardStaged('/repo', 'a.dart');
-      expect(exec.calls.single, [
-        'git',
-        'restore',
-        '--staged',
-        '--worktree',
-        '--source=HEAD',
-        '--',
-        'a.dart',
-      ]);
+      final script = expectCapturedScript(
+        exec.calls.single,
+        "'git' 'restore' '--staged' '--worktree' '--source=HEAD' '--' 'a.dart'",
+      );
+      expect(script, contains(r'git stash create 2>/dev/null'),
+          reason: 'flavor-A snapshot taken before the destroy');
     });
 
     test('addToGitignore appends via a dedup-checked shell script', () async {
@@ -240,37 +277,30 @@ void main() {
       exec.calls.clear();
 
       await git.discardMany('/repo', paths);
-      expect(exec.calls.single, [
-        'git',
-        'restore',
-        '--',
-        'a.dart',
-        'b.dart',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'restore' '--' 'a.dart' 'b.dart'",
+      );
       exec.calls.clear();
 
       await git.removeUntrackedFilesMany('/repo', paths);
-      expect(exec.calls.single, [
-        'git',
-        'clean',
-        '-f',
-        '--',
-        'a.dart',
-        'b.dart',
-      ]);
+      final cleanScript = expectCapturedScript(
+        exec.calls.single,
+        "'git' 'clean' '-f' '--' 'a.dart' 'b.dart'",
+      );
+      expect(
+        cleanScript,
+        contains("git add -f -- 'a.dart' 'b.dart' 2>/dev/null"),
+        reason: 'flavor-B snapshot covers every doomed path',
+      );
       exec.calls.clear();
 
       await git.discardStagedMany('/repo', paths);
-      expect(exec.calls.single, [
-        'git',
-        'restore',
-        '--staged',
-        '--worktree',
-        '--source=HEAD',
-        '--',
-        'a.dart',
-        'b.dart',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'restore' '--staged' '--worktree' '--source=HEAD' '--' "
+        "'a.dart' 'b.dart'",
+      );
       exec.calls.clear();
 
       await git.addToGitignoreMany('/repo', paths);
@@ -449,13 +479,16 @@ void main() {
     test('deleteTag / pushTag', () async {
       await git.deleteTag('/repo', 'v1.0.0');
       await git.pushTag('/repo', 'v1.0.0');
-      expect(exec.calls[0], [
-        'git',
-        'tag',
-        '-d',
-        '--end-of-options',
-        'v1.0.0',
-      ]);
+      final script = expectCapturedScript(
+        exec.calls[0],
+        "'git' 'tag' '-d' '--end-of-options' 'v1.0.0'",
+      );
+      // The tag *object* OID (not peeled) is captured so undo restores an
+      // annotated tag byte-identical via update-ref.
+      expect(
+        script,
+        contains(r"x0=$(git rev-parse -q --verify 'refs/tags/v1.0.0'); "),
+      );
       expect(exec.calls[1], [
         'git',
         'push',
@@ -467,22 +500,16 @@ void main() {
 
     test('cherryPick: plain vs merge mainline, and abort', () async {
       await git.cherryPick('/repo', 'abc');
-      expect(exec.calls.single, [
-        'git',
-        'cherry-pick',
-        '--end-of-options',
-        'abc',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'cherry-pick' '--end-of-options' 'abc'",
+      );
       exec.calls.clear();
       await git.cherryPick('/repo', 'abc', mainline: 1);
-      expect(exec.calls.single, [
-        'git',
-        'cherry-pick',
-        '-m',
-        '1',
-        '--end-of-options',
-        'abc',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'cherry-pick' '-m' '1' '--end-of-options' 'abc'",
+      );
       exec.calls.clear();
       await git.cherryPickAbort('/repo');
       expect(exec.calls.single, ['git', 'cherry-pick', '--abort']);
@@ -490,24 +517,16 @@ void main() {
 
     test('revert: no-edit, merge mainline, and abort', () async {
       await git.revert('/repo', 'abc');
-      expect(exec.calls.single, [
-        'git',
-        'revert',
-        '--no-edit',
-        '--end-of-options',
-        'abc',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'revert' '--no-edit' '--end-of-options' 'abc'",
+      );
       exec.calls.clear();
       await git.revert('/repo', 'abc', mainline: 2);
-      expect(exec.calls.single, [
-        'git',
-        'revert',
-        '--no-edit',
-        '-m',
-        '2',
-        '--end-of-options',
-        'abc',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'revert' '--no-edit' '-m' '2' '--end-of-options' 'abc'",
+      );
       exec.calls.clear();
       await git.revertAbort('/repo');
       expect(exec.calls.single, ['git', 'revert', '--abort']);
@@ -517,69 +536,54 @@ void main() {
       await git.reset('/repo', 'abc', mode: ResetMode.soft);
       await git.reset('/repo', 'abc', mode: ResetMode.mixed);
       await git.reset('/repo', 'abc', mode: ResetMode.hard);
-      expect(exec.calls[0], [
-        'git',
-        'reset',
-        '--soft',
-        '--end-of-options',
-        'abc',
-      ]);
-      expect(exec.calls[1], [
-        'git',
-        'reset',
-        '--mixed',
-        '--end-of-options',
-        'abc',
-      ]);
-      expect(exec.calls[2], [
-        'git',
-        'reset',
-        '--hard',
-        '--end-of-options',
-        'abc',
-      ]);
+      expectCapturedScript(
+        exec.calls[0],
+        "'git' 'reset' '--soft' '--end-of-options' 'abc'",
+      );
+      // Mixed additionally snapshots the pre-reset index as a tree so undo
+      // can restore exactly what was staged.
+      final mixed = expectCapturedScript(
+        exec.calls[1],
+        "'git' 'reset' '--mixed' '--end-of-options' 'abc'",
+      );
+      expect(mixed, contains(r'x0=$(git write-tree 2>/dev/null); '));
+      // Hard destroys uncommitted content, so it takes a flavor-A snapshot.
+      final hard = expectCapturedScript(
+        exec.calls[2],
+        "'git' 'reset' '--hard' '--end-of-options' 'abc'",
+      );
+      expect(hard, contains(r'git stash create 2>/dev/null'));
     });
 
     test('branchFrom roots the branch at a start point', () async {
       await git.branchFrom('/repo', 'feat', 'abc');
-      expect(exec.calls.single, [
-        'git',
-        'checkout',
-        '-b',
-        '--end-of-options',
-        'feat',
-        'abc',
-      ]);
+      final script = expectCapturedScript(
+        exec.calls.single,
+        "'git' 'checkout' '-b' 'feat' '--end-of-options' 'abc'",
+      );
+      // The start point is resolved pre-mutation so undo knows the created
+      // tip even when the creation doesn't move HEAD.
+      expect(script, contains(r"x0=$(git rev-parse -q --verify 'abc^{commit}')"));
       exec.calls.clear();
       await git.branchFrom('/repo', 'feat', 'abc', checkout: false);
-      expect(exec.calls.single, [
-        'git',
-        'branch',
-        '--end-of-options',
-        'feat',
-        'abc',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'branch' '--end-of-options' 'feat' 'abc'",
+      );
     });
 
     test('amendCommit: keep message vs rewrite', () async {
       await git.amendCommit('/repo');
-      expect(exec.calls.single, [
-        'git',
-        'commit',
-        '--amend',
-        '--no-gpg-sign',
-        '--no-edit',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'commit' '--amend' '--no-gpg-sign' '--no-edit'",
+      );
       exec.calls.clear();
       await git.amendCommit('/repo', message: 'new subject');
-      expect(exec.calls.single, [
-        'git',
-        'commit',
-        '--amend',
-        '--no-gpg-sign',
-        '-m',
-        'new subject',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'commit' '--amend' '--no-gpg-sign' '-m' 'new subject'",
+      );
     });
 
     test('pendingOp detects an in-progress operation from the git dir', () async {
@@ -605,18 +609,19 @@ void main() {
         const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
       );
       await git.merge('/repo', 'feature', mode: MergeMode.noFf);
-      expect(exec.calls.single, [
-        'git',
-        'merge',
-        '--no-edit',
-        '--no-ff',
-        '--end-of-options',
-        'feature',
-      ]);
+      final script = expectCapturedScript(
+        exec.calls.single,
+        "'git' 'merge' '--no-edit' '--no-ff' '--end-of-options' 'feature'",
+      );
+      expect(script, contains(r'git stash create 2>/dev/null'),
+          reason: "undo is reset --hard back — snapshot the merge's "
+              'uncommitted survivors first');
       exec.calls.clear();
       exec.results.add(
         const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
       );
+      // Squash doesn't move HEAD, so undo validation would be meaningless —
+      // it stays a plain argv with no capture wrapper.
       await git.merge('/repo', 'feature', mode: MergeMode.squash);
       expect(exec.calls.single, [
         'git',
@@ -712,17 +717,11 @@ void main() {
         const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
       );
       await idGit.commit('/repo', message: 'hi');
-      expect(exec.calls.single, [
-        'git',
-        '-c',
-        'user.name=Jane Dev',
-        '-c',
-        'user.email=jane@example.com',
-        'commit',
-        '--no-gpg-sign',
-        '-m',
-        'hi',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' '-c' 'user.name=Jane Dev' '-c' 'user.email=jane@example.com' "
+        "'commit' '--no-gpg-sign' '-m' 'hi'",
+      );
     });
 
     test('stashPush with and without a message', () async {
@@ -731,6 +730,23 @@ void main() {
       exec.calls.clear();
       await git.stashPush('/repo', message: 'wip');
       expect(exec.calls.single, ['git', 'stash', 'push', '-m', 'wip']);
+    });
+
+    test('stashDrop captures the doomed stash before dropping', () async {
+      await git.stashDrop('/repo', 1);
+      final script = expectCapturedScript(
+        exec.calls.single,
+        "'git' 'stash' 'drop' 'stash@{1}'",
+      );
+      // OID + subject captured pre-drop so undo can `stash store` it back.
+      expect(
+        script,
+        contains(r"x0=$(git rev-parse -q --verify 'stash@{1}'); "),
+      );
+      expect(
+        script,
+        contains(r"x1=$(git log -1 --format=%s 'stash@{1}' 2>/dev/null); "),
+      );
     });
 
     test('committer identity injects -c flags on stashPush', () async {
@@ -827,9 +843,18 @@ void main() {
       ]);
     });
 
-    test('stashClear drops every stash', () async {
+    test('stashClear drops every stash, capturing them all first', () async {
       await git.stashClear('/repo');
-      expect(exec.calls.single, ['git', 'stash', 'clear']);
+      final script = expectCapturedScript(
+        exec.calls.single,
+        "'git' 'stash' 'clear'",
+      );
+      expect(
+        script,
+        contains("x0=\$(git log -g --format='%H %gs' refs/stash 2>/dev/null)"),
+        reason: 'every stash OID+subject is captured so undo can re-store '
+            'them in order',
+      );
     });
 
     test('stashShow requests the stash patch', () async {

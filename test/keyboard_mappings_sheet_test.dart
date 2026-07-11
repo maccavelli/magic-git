@@ -54,17 +54,19 @@ void main() {
     await tester.pump();
     expect(find.text('Press keys…'), findsOneWidget);
 
+    // ⌘J: not a default binding of any action (⌘Z is global.undo's now, and
+    // recording a taken combo triggers the conflict dialog instead).
     await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyZ);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyZ);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyJ);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyJ);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
     await tester.pumpAndSettle();
 
-    expect(find.text('⌘Z'), findsOneWidget);
+    expect(find.text('⌘J'), findsOneWidget);
     expect(find.text('⌘R'), findsNothing);
     expect(
       container.read(keymapProvider)['global.refresh'],
-      [KeyBinding.fromKey(LogicalKeyboardKey.keyZ, meta: true)],
+      [KeyBinding.fromKey(LogicalKeyboardKey.keyJ, meta: true)],
     );
   });
 
@@ -98,18 +100,19 @@ void main() {
 
     await tester.tap(find.text('⌘R'));
     await tester.pump();
+    // ⌘J — see above: a combo no action's defaults claim.
     await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyZ);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyZ);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.keyJ);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.keyJ);
     await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
     await tester.pumpAndSettle();
-    expect(find.text('⌘Z'), findsOneWidget);
+    expect(find.text('⌘J'), findsOneWidget);
 
     await tester.tap(_byMacosTooltip('Reset to default'));
     await tester.pumpAndSettle();
 
     expect(find.text('⌘R'), findsOneWidget);
-    expect(find.text('⌘Z'), findsNothing);
+    expect(find.text('⌘J'), findsNothing);
     expect(
       container.read(keymapProvider)['global.refresh'],
       kKeymapActionsById['global.refresh']!.defaultBindings,

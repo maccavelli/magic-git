@@ -96,9 +96,10 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
 
   List<_PaletteCommand> _allCommands() {
     // Captured up front so the closures don't touch a torn-down ref/context
-    // after the palette pops (both notifiers outlive this widget).
+    // after the palette pops (the notifiers outlive this widget).
     final fileView = ref.read(fileViewVisibleProvider.notifier);
     final output = ref.read(outputLogProvider.notifier);
+    final recovery = ref.read(recoveryVisibleProvider.notifier);
 
     const panels = [
       (0, CupertinoIcons.folder, 'Repository'),
@@ -134,6 +135,12 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
         label: 'Toggle Output View',
         hint: 'View',
         run: output.toggle,
+      ),
+      _PaletteCommand(
+        icon: CupertinoIcons.arrow_counterclockwise_circle,
+        label: 'Recovery: Browse Reflog & Snapshots',
+        hint: 'Open',
+        run: recovery.toggle,
       ),
       _PaletteCommand(
         icon: CupertinoIcons.settings,

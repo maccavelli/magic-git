@@ -653,6 +653,14 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
             color: _allBranches ? MacosColors.systemBlueColor : null,
             onPressed: () => setState(() => _allBranches = !_allBranches),
           ),
+          const SizedBox(width: 6),
+          ToolIconButton(
+            icon: CupertinoIcons.arrow_counterclockwise_circle,
+            tooltip: 'Recovery (reflog & snapshots)',
+            size: 16,
+            onPressed: () =>
+                ref.read(recoveryVisibleProvider.notifier).setVisible(true),
+          ),
         ],
       ),
     );

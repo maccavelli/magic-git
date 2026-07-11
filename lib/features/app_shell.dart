@@ -6,21 +6,26 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:window_manager/window_manager.dart';
+import '../core/git/git_service.dart';
 import '../core/output/output_log.dart';
 import '../core/providers/app_providers.dart';
 import '../core/settings/keymap.dart';
 import '../core/ssh/host_key_prompt.dart';
+import '../core/undo/undo_controller.dart';
 import 'branches/branches_view.dart';
+import 'common/actions.dart';
 import 'common/branch_switch.dart';
 import 'common/command_palette.dart';
 import 'common/diff_view.dart' show kDiffMono;
 import 'common/escape_dismissible.dart';
 import 'common/sidebar_branding.dart';
+import 'common/undo_toast.dart';
 import 'connection/connection_landing.dart';
 import 'dashboard/dashboard_sheet.dart';
 import 'forge/forge_panel.dart';
 import 'forge/forge_project_panel.dart';
 import 'history/history_view.dart';
+import 'recovery/recovery_sheet.dart';
 import 'repository/repo_status_view.dart';
 import 'settings/keyboard_shortcuts_sheet.dart';
 import 'settings/settings_sheet.dart';
@@ -250,6 +255,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
   /// menu-uncheck path closes exactly that route (and only it). Null when
   /// the dashboard is closed.
   ModalRoute<void>? _dashboardRoute;
+  ModalRoute<void>? _recoveryRoute;
 
   @override
   void initState() {
@@ -341,6 +347,8 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         ref.read(fileViewVisibleProvider.notifier).toggle();
       case 'toggleDashboard':
         ref.read(dashboardVisibleProvider.notifier).toggle();
+      case 'toggleRecovery':
+        ref.read(recoveryVisibleProvider.notifier).toggle();
       case 'prepareToTerminate':
         // ⌘Q (or any AppKit terminate path). The delegate holds termination
         // open (.terminateLater, with a native timeout backstop) until this
@@ -375,6 +383,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
           'setDashboardChecked',
           ref.read(dashboardVisibleProvider),
         );
+        _syncMenuState('setRecoveryChecked', ref.read(recoveryVisibleProvider));
     }
     return null;
   }
@@ -498,6 +507,69 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     ref.invalidate(fileBytesProvider);
   }
 
+  /// ⌘Z (and the toast's click target): undo the most recent undoable git
+  /// operation for the active repo. Success is announced as a toast, with a
+  /// matching output-log line for the transcript.
+  Future<void> _undoGitOperation() async {
+    // In-field ⌘Z must stay text undo. A focused field's own text-editing
+    // shortcuts consume the key before it bubbles up to the app-level
+    // CallbackShortcuts; this guard is the backstop for focus setups that
+    // don't (custom fields, platform quirks).
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused != null &&
+        (focused.widget is EditableText ||
+            focused.findAncestorStateOfType<EditableTextState>() != null)) {
+      return;
+    }
+    final repoPath = ref.read(connectionProvider).repoPath;
+    if (repoPath == null) return;
+
+    final controller = ref.read(undoControllerProvider);
+    try {
+      var attempt = await controller.undo(repoPath);
+      if (!mounted) return;
+      if (attempt.status == UndoStatus.dirty) {
+        final overwrite = await confirmAction(
+          context,
+          title: 'Files Changed Since',
+          message:
+              'Undoing "${attempt.record!.description}" would overwrite '
+              'files that changed after the operation ran. Overwrite them?',
+          confirmLabel: 'Overwrite',
+          destructive: true,
+        );
+        if (!overwrite || !mounted) return;
+        attempt = await controller.undo(repoPath, force: true);
+        if (!mounted) return;
+      }
+      switch (attempt.status) {
+        case UndoStatus.done:
+          ref
+              .read(undoToastProvider.notifier)
+              .show(UndoToast('Undid: ${attempt.record!.description}'));
+          ref
+              .read(outputLogProvider.notifier)
+              .logInfo('Undid: ${attempt.record!.description}');
+        case UndoStatus.stale:
+          await showErrorDialog(
+            context,
+            'The repository has changed since "${attempt.record!.description}" '
+            '— this undo is no longer safe and has been discarded.',
+          );
+        case UndoStatus.nothingToUndo:
+        case UndoStatus.blockedByPendingOp:
+        case UndoStatus.dirty:
+          // Nothing actionable: an empty journal is silent, a pending
+          // merge/rebase already shows its own banner with abort/continue,
+          // and a declined dirty-overwrite was handled above.
+          break;
+      }
+    } on GitException catch (e) {
+      if (!mounted) return;
+      await showErrorDialog(context, '$e');
+    }
+  }
+
   /// Shows the non-dismissible host-key-mismatch dialog. "Cancel Connection"
   /// is the primary (default/most prominent) button — the safe choice when a
   /// server's identity key unexpectedly changes should never be an accidental
@@ -591,6 +663,33 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         }
       }
     });
+    // The Recovery sheet follows the Dashboard's provider-driven route
+    // pattern exactly — see the comment above.
+    ref.listen(recoveryVisibleProvider, (_, visible) {
+      _syncMenuState('setRecoveryChecked', visible);
+      if (visible && _recoveryRoute == null) {
+        showMacosSheet<void>(
+          context: context,
+          builder: (sheetContext) {
+            _recoveryRoute = ModalRoute.of(sheetContext);
+            return const EscapeDismissible(child: RecoverySheet());
+          },
+        ).whenComplete(() {
+          _recoveryRoute = null;
+          if (mounted) {
+            ref.read(recoveryVisibleProvider.notifier).setVisible(false);
+          }
+        });
+      } else if (!visible && _recoveryRoute != null) {
+        final route = _recoveryRoute!;
+        _recoveryRoute = null;
+        if (route.isCurrent) {
+          Navigator.of(context, rootNavigator: true).pop();
+        } else if (route.isActive) {
+          Navigator.of(context, rootNavigator: true).removeRoute(route);
+        }
+      }
+    });
     // A background (non-active) page's panel is kept alive across tab
     // switches for the *same* repo, but must not silently carry a previous
     // repo's selections/scroll position/in-flight guards into a newly
@@ -640,6 +739,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
       'global.openSettings': () => _openSettings(context),
       'global.showShortcuts': () => _openShortcuts(context),
       'global.commandPalette': connected ? () => _openPalette(context) : null,
+      'global.undo': connected ? _undoGitOperation : null,
       'global.panel1': connected ? () => _selectPage(0) : null,
       'global.panel2': connected ? () => _selectPage(1) : null,
       'global.panel3': connected ? () => _selectPage(2) : null,
@@ -654,11 +754,14 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         autofocus: true,
         // The file-viewer windows float above the whole app (sidebar +
         // content) and survive tab switches, so they're mounted here as the
-        // top layer rather than inside any single panel.
+        // top layer rather than inside any single panel. The undo toast sits
+        // above even those — a transient announcement must never hide behind
+        // a viewer window.
         child: Stack(
           children: [
             _buildWindow(context, connection, connected),
             const Positioned.fill(child: ViewerHost()),
+            UndoToastOverlay(onUndo: _undoGitOperation),
           ],
         ),
       ),
