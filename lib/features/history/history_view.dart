@@ -30,10 +30,16 @@ class HistoryView extends ConsumerStatefulWidget {
   /// fire from a background page kept mounted in the shell's IndexedStack.
   final bool isActive;
 
+  /// Opens this view in its own native macOS window. Non-null only in the
+  /// main app shell (which owns the window bridge); the popped-out window
+  /// itself passes null — no popout-from-popout, and no button rendered.
+  final VoidCallback? onPopOut;
+
   const HistoryView({
     super.key,
     required this.repoPath,
     this.isActive = true,
+    this.onPopOut,
   });
 
   @override
@@ -662,6 +668,15 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
             onPressed: () =>
                 ref.read(recoveryVisibleProvider.notifier).setVisible(true),
           ),
+          if (widget.onPopOut != null) ...[
+            const SizedBox(width: 6),
+            ToolIconButton(
+              icon: CupertinoIcons.macwindow,
+              tooltip: 'Open History in new window',
+              size: 16,
+              onPressed: widget.onPopOut,
+            ),
+          ],
         ],
       ),
     );

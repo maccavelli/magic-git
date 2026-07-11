@@ -5,6 +5,14 @@ import 'package:window_manager/window_manager.dart';
 import 'core/providers/app_providers.dart';
 import 'core/theme/app_theme.dart';
 import 'features/app_shell.dart';
+import 'features/history/window/history_window_main.dart';
+
+/// Entrypoint for the native History window's second FlutterEngine (see
+/// `HistoryWindowController.swift`). Lives here — not in the history feature
+/// — because macOS `FlutterEngine.run(withEntrypoint:)` resolves entrypoint
+/// names in the root library only.
+@pragma('vm:entry-point')
+void historyWindowMain() => runHistoryWindow();
 
 /// The default first-launch window size (before any bounds are persisted).
 /// Sized to leave a comfortable margin on a 13"/14" laptop (~75% width) rather

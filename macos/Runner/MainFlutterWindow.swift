@@ -4,6 +4,8 @@ import FlutterMacOS
 class MainFlutterWindow: NSWindow {
   private var menuChannel: FlutterMethodChannel?
   private var bookmarkChannel: FlutterMethodChannel?
+  private var historyChannel: FlutterMethodChannel?
+  private var historyController: HistoryWindowController?
   private var showOutputItem: NSMenuItem?
   private var showFileItem: NSMenuItem?
   private var dashboardItem: NSMenuItem?
@@ -109,6 +111,38 @@ class MainFlutterWindow: NSWindow {
     self.bookmarkChannel = bookmarks
     bookmarks.setMethodCallHandler { [weak self] call, result in
       self?.handleBookmarkCall(call, result: result)
+    }
+
+    // Native History window control (open/close from Dart; closed
+    // notification back). The window itself lives in HistoryWindowController.
+    let history = FlutterMethodChannel(
+      name: "magicgit/history",
+      binaryMessenger: flutterViewController.engine.binaryMessenger)
+    self.historyChannel = history
+    history.setMethodCallHandler { [weak self] call, result in
+      switch call.method {
+      case "openHistoryWindow":
+        self?.openHistoryWindow()
+        result(nil)
+      case "closeHistoryWindow":
+        self?.historyController?.close()
+        result(nil)
+      case "isHistoryWindowOpen":
+        result(self?.historyController != nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    // Backstop: if this (main) window closes while the History window is
+    // still up, close it too — the Dart disconnect path normally does this,
+    // but a lone History window must never outlive the session's window.
+    // (applicationShouldTerminateAfterLastWindowClosed relies on this: the
+    // last window to close is always this one.)
+    NotificationCenter.default.addObserver(
+      forName: NSWindow.willCloseNotification, object: self, queue: .main
+    ) { [weak self] _ in
+      self?.historyController?.close()
     }
 
     // Defer so the app's main menu (loaded from MainMenu.xib) is in place.
@@ -241,6 +275,19 @@ class MainFlutterWindow: NSWindow {
       to: viewMenu, title: "Show Recovery View", key: "u",
       action: #selector(toggleRecovery(_:)), separatorBefore: false)
 
+    // Plain action item (no checkbox — the window's own close button is its
+    // "off"). ⌥⌘H: the ⇧⌘ letters are taken by the toggles above.
+    if viewMenu.items.first(where: {
+      $0.action == #selector(openHistoryWindowFromMenu(_:))
+    }) == nil {
+      let item = NSMenuItem(
+        title: "Open History in New Window",
+        action: #selector(openHistoryWindowFromMenu(_:)), keyEquivalent: "h")
+      item.keyEquivalentModifierMask = [.command, .option]
+      item.target = self
+      viewMenu.addItem(item)
+    }
+
     // The items now exist, so pull the current checkbox states from Flutter.
     // Flutter also pushes them once at startup, but that push races this
     // (async-deferred) install and is dropped if it lands while showOutputItem
@@ -307,5 +354,43 @@ class MainFlutterWindow: NSWindow {
 
   @objc private func toggleRecovery(_ sender: Any?) {
     menuChannel?.invokeMethod("toggleRecovery", arguments: nil)
+  }
+
+  @objc private func openHistoryWindowFromMenu(_ sender: Any?) {
+    // Routed through Dart (not opened directly) so the connected-session
+    // gating lives in one place — the bridge no-ops when disconnected.
+    menuChannel?.invokeMethod("openHistoryWindow", arguments: nil)
+  }
+
+  private func openHistoryWindow() {
+    if let existing = historyController {
+      existing.front()
+      return
+    }
+    guard
+      let messenger = (contentViewController as? FlutterViewController)?
+        .engine.binaryMessenger
+    else { return }
+    let controller = HistoryWindowController(
+      mainMessenger: messenger,
+      focusMain: { [weak self] in
+        NSApp.activate(ignoringOtherApps: true)
+        self?.makeKeyAndOrderFront(nil)
+      },
+      onClosed: { [weak self] in
+        self?.historyController = nil
+        self?.historyChannel?.invokeMethod("historyWindowClosed", arguments: nil)
+      })
+    historyController = controller
+    controller.open()
+  }
+
+  /// Quit-path teardown, called from AppDelegate before the main engine's
+  /// prepareToTerminate round trip. Nothing to flush: the window's bounds are
+  /// frame-autosaved continuously and the history engine holds no session
+  /// state of its own.
+  func teardownHistoryWindow() {
+    historyController?.teardown()
+    historyController = nil
   }
 }

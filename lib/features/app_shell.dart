@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 import '../core/git/git_service.dart';
 import '../core/output/output_log.dart';
 import '../core/providers/app_providers.dart';
+import '../core/providers/history_window_bridge.dart';
 import '../core/settings/keymap.dart';
 import '../core/ssh/host_key_prompt.dart';
 import '../core/undo/undo_controller.dart';
@@ -349,6 +350,8 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         ref.read(dashboardVisibleProvider.notifier).toggle();
       case 'toggleRecovery':
         ref.read(recoveryVisibleProvider.notifier).toggle();
+      case 'openHistoryWindow':
+        await ref.read(historyWindowBridgeProvider.notifier).open();
       case 'prepareToTerminate':
         // ⌘Q (or any AppKit terminate path). The delegate holds termination
         // open (.terminateLater, with a native timeout backstop) until this
@@ -461,6 +464,8 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
           onOpenConnections: () => _openConnections(context),
           onCloneRepository: () => _openCloneRepository(context),
           onCreateRepository: () => _openCreateRepository(context),
+          onOpenHistoryWindow: () =>
+              ref.read(historyWindowBridgeProvider.notifier).open(),
           onCheckoutBranch: (branch) =>
               _checkoutBranch(context, repoPath, branch),
         ),
@@ -508,6 +513,8 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     // one `cat`.
     ref.invalidate(fileContentProvider);
     ref.invalidate(fileBytesProvider);
+    // ⌘R covers the native History window too (no-op while it's closed).
+    ref.read(historyWindowBridgeProvider.notifier).invalidateAllInHistory(repo);
   }
 
   /// ⌘Z (and the toast's click target): undo the most recent undoable git
@@ -624,6 +631,12 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
   Widget build(BuildContext context) {
     final connection = ref.watch(connectionProvider);
     final connected = connection.isConnected && connection.repoPath != null;
+
+    // Keep the native-History-window plumbing alive for the app's lifetime:
+    // the bridge serves the second window's proxied commands and events; the
+    // forwarder relays watcher ticks to it while (and only while) it's open.
+    ref.watch(historyWindowBridgeProvider);
+    ref.watch(historyTickForwarderProvider);
 
     // Keep the native window title tracking the active repo/branch.
     ref.listen(_windowTitleProvider, (_, title) {
@@ -877,7 +890,12 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
             ? RepoStatusView(repoPath: repoPath, isActive: _pageIndex == 0)
             : const SizedBox.shrink(),
         _visitedPages.contains(1)
-            ? HistoryView(repoPath: repoPath, isActive: _pageIndex == 1)
+            ? HistoryView(
+                repoPath: repoPath,
+                isActive: _pageIndex == 1,
+                onPopOut: () =>
+                    ref.read(historyWindowBridgeProvider.notifier).open(),
+              )
             : const SizedBox.shrink(),
         _visitedPages.contains(2)
             ? BranchesView(repoPath: repoPath, isActive: _pageIndex == 2)

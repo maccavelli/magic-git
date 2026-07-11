@@ -18,6 +18,10 @@ class AppDelegate: FlutterAppDelegate {
   /// open just long enough for Flutter to disconnect, with a native timeout
   /// backstop so quit can never hang on a wedged connection.
   override func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    // The History window first: its engine holds no session state (bounds
+    // are frame-autosaved continuously), so a synchronous teardown is safe
+    // and keeps its engine from outliving the main one mid-quit.
+    (mainFlutterWindow as? MainFlutterWindow)?.teardownHistoryWindow()
     guard let window = mainFlutterWindow as? MainFlutterWindow,
       window.prepareToTerminate(completion: {
         NSApp.reply(toApplicationShouldTerminate: true)

@@ -147,6 +147,52 @@ class UndoRecord {
     this.stashEntries = const [],
     DateTime? at,
   }) : at = at ?? DateTime.now();
+
+  /// Wire form for forwarding a record from the History window's isolate to
+  /// the main window's journal (⌘Z lives only there). Every field is plain
+  /// data; the enum travels by name, the timestamp as ISO-8601.
+  Map<String, Object?> toJson() => {
+    'repoPath': repoPath,
+    'kind': kind.name,
+    'description': description,
+    'preHead': preHead,
+    'preRef': preRef,
+    'postHead': postHead,
+    'postRef': postRef,
+    'refName': refName,
+    'deletedOid': deletedOid,
+    'stashSubject': stashSubject,
+    'preIndexTree': preIndexTree,
+    'snapshotOid': snapshotOid,
+    'paths': paths,
+    'stashEntries': stashEntries,
+    'at': at.toIso8601String(),
+  };
+
+  /// Returns null for an unknown [UndoOpKind] name (version skew between the
+  /// two isolates) — a record whose undo script can't be built must be
+  /// dropped, not guessed at.
+  static UndoRecord? fromJson(Map<Object?, Object?> json) {
+    final kind = UndoOpKind.values.asNameMap()[json['kind'] as String? ?? ''];
+    if (kind == null) return null;
+    return UndoRecord(
+      repoPath: json['repoPath'] as String? ?? '',
+      kind: kind,
+      description: json['description'] as String? ?? '',
+      preHead: json['preHead'] as String? ?? '',
+      preRef: json['preRef'] as String? ?? '',
+      postHead: json['postHead'] as String? ?? '',
+      postRef: json['postRef'] as String? ?? '',
+      refName: json['refName'] as String? ?? '',
+      deletedOid: json['deletedOid'] as String? ?? '',
+      stashSubject: json['stashSubject'] as String? ?? '',
+      preIndexTree: json['preIndexTree'] as String? ?? '',
+      snapshotOid: json['snapshotOid'] as String? ?? '',
+      paths: (json['paths'] as List?)?.cast<String>() ?? const [],
+      stashEntries: (json['stashEntries'] as List?)?.cast<String>() ?? const [],
+      at: DateTime.tryParse(json['at'] as String? ?? ''),
+    );
+  }
 }
 
 /// The raw pre/post state one `_runCaptured` invocation observed, handed to

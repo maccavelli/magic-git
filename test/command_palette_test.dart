@@ -29,6 +29,7 @@ const _refs = [
 class _Recorder {
   int cloneOpened = 0;
   int createOpened = 0;
+  int historyWindowOpened = 0;
   int? panel;
   String? checkedOut;
   int refreshed = 0;
@@ -59,6 +60,7 @@ Future<void> _open(WidgetTester tester, _Recorder rec) async {
                     onOpenConnections: () {},
                     onCloneRepository: () => rec.cloneOpened++,
                     onCreateRepository: () => rec.createOpened++,
+                    onOpenHistoryWindow: () => rec.historyWindowOpened++,
                     onCheckoutBranch: (b) => rec.checkedOut = b,
                   ),
                 ),
@@ -171,5 +173,19 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     expect(find.byType(CommandPalette), findsNothing);
+  });
+
+  testWidgets('Open History in New Window invokes its callback', (
+    tester,
+  ) async {
+    final rec = _Recorder();
+    await _open(tester, rec);
+
+    await tester.enterText(find.byType(MacosTextField), 'history window');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open History in New Window'));
+    await tester.pumpAndSettle();
+
+    expect(rec.historyWindowOpened, 1);
   });
 }

@@ -42,6 +42,7 @@ class CommandPalette extends ConsumerStatefulWidget {
   final VoidCallback onOpenConnections;
   final VoidCallback onCloneRepository;
   final VoidCallback onCreateRepository;
+  final VoidCallback onOpenHistoryWindow;
 
   /// Runs a guarded checkout of [branch] (dirty-tree prompt + refresh) using the
   /// shell's stable context — the palette is already gone by the time this runs.
@@ -57,6 +58,7 @@ class CommandPalette extends ConsumerStatefulWidget {
     required this.onOpenConnections,
     required this.onCloneRepository,
     required this.onCreateRepository,
+    required this.onOpenHistoryWindow,
     required this.onCheckoutBranch,
   });
 
@@ -141,6 +143,12 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
         label: 'Recovery: Browse Reflog & Snapshots',
         hint: 'Open',
         run: recovery.toggle,
+      ),
+      _PaletteCommand(
+        icon: CupertinoIcons.macwindow,
+        label: 'Open History in New Window',
+        hint: 'Open',
+        run: widget.onOpenHistoryWindow,
       ),
       _PaletteCommand(
         icon: CupertinoIcons.settings,
