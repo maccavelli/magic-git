@@ -11,6 +11,7 @@
 library;
 
 import 'package:flutter/cupertino.dart' hide ConnectionState;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,7 +23,12 @@ import '../../../core/git/git_service.dart';
 import '../../../core/git/watch_event.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/settings/app_settings.dart';
+import '../../../core/settings/keymap.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../common/actions.dart';
+import '../../common/escape_dismissible.dart';
+import '../../common/undo_toast.dart';
+import '../../recovery/recovery_sheet.dart';
 import '../history_view.dart';
 
 const _hub = MethodChannel('magicgit/history/hub');
@@ -39,6 +45,21 @@ void _sendHub(String method, [Object? arguments]) {
 /// because macOS `FlutterEngine.run(withEntrypoint:)` resolves names there).
 void runHistoryWindow() {
   WidgetsFlutterBinding.ensureInitialized();
+  // This engine has no visible console (release build, second engine), so an
+  // uncaught error would otherwise vanish without a trace — historically
+  // exactly how "the button does nothing" bugs hid here. Ship every error to
+  // the native side's hw-debug.log through the hub relay.
+  final defaultOnError = FlutterError.onError;
+  FlutterError.onError = (details) {
+    _sendHub('debugLog', 'FlutterError: ${details.exception}\n${details.stack}');
+    defaultOnError?.call(details);
+  };
+  PlatformDispatcher.instance.onError = (error, stack) {
+    _sendHub('debugLog', 'Uncaught: $error\n$stack');
+    // Handled: logged is better than letting the zone kill this window's
+    // event processing over one bad async path.
+    return true;
+  };
   runApp(
     ProviderScope(
       // Same rationale as the main isolate: git failures are deterministic,
@@ -79,12 +100,17 @@ void runHistoryWindow() {
             networkTimeout: networkTimeout,
             committerName: committerName,
             committerEmail: committerEmail,
-            onUndoRecord: (record) => _sendHub('undoRecord', record.toJson()),
+            onUndoRecord: (record) {
+              _sendHub('undoRecord', record.toJson());
+              // The main window's post-mutation toast is journal-driven; our
+              // journal lives over there, so raise the same "⌘Z to undo"
+              // affordance directly — the mutation happened in THIS window.
+              ref
+                  .read(undoToastProvider.notifier)
+                  .show(UndoToast(record.description, showUndoHint: true));
+            },
           );
         }),
-        // The History filter bar's Recovery button keeps working untouched —
-        // it now means "open the Recovery sheet in the main window".
-        recoveryVisibleProvider.overrideWith(ForwardingRecoveryVisibility.new),
         // Defensive: nothing in HistoryView's graph watches this, but the
         // real implementation would call executeStream through the proxy and
         // throw. Watcher ticks arrive as pushed `repoTick` events instead.
@@ -95,19 +121,6 @@ void runHistoryWindow() {
       child: const HistoryWindowApp(),
     ),
   );
-}
-
-/// [RecoveryVisibility] that forwards "show" to the main window instead of
-/// tracking local state — the Recovery sheet renders there, over the session
-/// that owns the journal and snapshots.
-class ForwardingRecoveryVisibility extends RecoveryVisibility {
-  @override
-  void setVisible(bool value) {
-    if (value) _sendHub('openRecovery');
-  }
-
-  @override
-  void toggle() => setVisible(true);
 }
 
 /// The slice of the main window's connection state this window renders from.
@@ -185,6 +198,11 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell> {
   /// arriving within this of our own mutation is that mutation's echo.
   static const _ownMutationSuppressWindow = Duration(seconds: 3);
 
+  /// The Recovery sheet's live route while it's open — same provider-driven
+  /// route pattern as AppShell's `_recoveryRoute`, so the filter-bar button
+  /// and Esc/X can never disagree about visibility.
+  ModalRoute<void>? _recoveryRoute;
+
   @override
   void initState() {
     super.initState();
@@ -247,6 +265,9 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell> {
         ref.invalidate(family);
       }
       noteWorktreeEdit(session.repoPath!);
+      // An open Recovery sheet targets the old repo — close it rather than
+      // show stale refs under a new title.
+      ref.read(recoveryVisibleProvider.notifier).setVisible(false);
     }
     final repoName = session.repoPath?.split('/').last;
     _sendHub(
@@ -256,6 +277,86 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell> {
           : 'History — $repoName'
                 '${session.connectionLabel == null ? '' : ' (${session.connectionLabel})'}',
     );
+  }
+
+  /// ⌘Z (and the toast's click target): the journal lives in the main
+  /// isolate, so the actual undo runs there via `performUndo`; every piece of
+  /// UI it needs (dirty-overwrite confirm, stale/error dialogs, the "Undid:"
+  /// toast) renders here — the window the user is looking at.
+  Future<void> _undoGitOperation() async {
+    // In-field ⌘Z must stay text undo — same backstop as AppShell.
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused != null &&
+        (focused.widget is EditableText ||
+            focused.findAncestorStateOfType<EditableTextState>() != null)) {
+      return;
+    }
+    final repoPath = ref.read(historySessionProvider).repoPath;
+    if (repoPath == null) return;
+    await _performUndo(repoPath, force: false);
+  }
+
+  Future<void> _performUndo(String repoPath, {required bool force}) async {
+    Map<Object?, Object?>? reply;
+    try {
+      reply = await _hub.invokeMethod<Map<Object?, Object?>>('performUndo', {
+        'repoPath': repoPath,
+        'force': force,
+      });
+    } on PlatformException {
+      return; // Relay down — the window is on its way out.
+    }
+    if (reply == null || !mounted) return;
+    final status = reply['status'] as String?;
+    final description = reply['description'] as String? ?? 'operation';
+    switch (status) {
+      case 'done':
+        ref
+            .read(undoToastProvider.notifier)
+            .show(UndoToast('Undid: $description'));
+        _refreshAfterUndo(repoPath);
+      case 'dirty':
+        final overwrite = await confirmAction(
+          context,
+          title: 'Files Changed Since',
+          message:
+              'Undoing "$description" would overwrite files that changed '
+              'after the operation ran. Overwrite them?',
+          confirmLabel: 'Overwrite',
+          destructive: true,
+        );
+        if (overwrite && mounted) {
+          await _performUndo(repoPath, force: true);
+        }
+      case 'stale':
+        await showErrorDialog(
+          context,
+          'The repository has changed since "$description" — this undo is '
+          'no longer safe and has been discarded.',
+        );
+      case 'error':
+        await showErrorDialog(
+          context,
+          reply['message'] as String? ?? 'Undo failed.',
+        );
+      default:
+        // nothingToUndo / blockedByPendingOp — silent, matching AppShell.
+        break;
+    }
+  }
+
+  /// The main isolate already refreshed its own providers as part of the
+  /// undo; mirror that here (the forwarded watcher tick would catch up
+  /// eventually, but immediate is what the user expects mid-gaze).
+  void _refreshAfterUndo(String repoPath) {
+    ref.read(ownMutationTrackerProvider).mark(repoPath);
+    noteWorktreeEdit(repoPath);
+    ref.invalidate(statusProvider(repoPath));
+    ref.invalidate(logProvider(repoPath));
+    ref.invalidate(refsProvider(repoPath));
+    ref.invalidate(stashesProvider(repoPath));
+    ref.invalidate(reflogProvider(repoPath));
+    ref.invalidate(magicSnapshotsProvider(repoPath));
   }
 
   void _onRepoTick(Map<Object?, Object?> args) {
@@ -287,6 +388,36 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell> {
 
   @override
   Widget build(BuildContext context) {
+    // The Recovery sheet opens locally in this window (full parity with the
+    // in-app History tab) — the reflog/snapshot reads and restore actions all
+    // flow through the same proxied executor as everything else here.
+    ref.listen(recoveryVisibleProvider, (_, visible) {
+      final repoPath = ref.read(historySessionProvider).repoPath;
+      if (visible && _recoveryRoute == null && repoPath != null) {
+        showMacosSheet<void>(
+          context: context,
+          builder: (sheetContext) {
+            _recoveryRoute = ModalRoute.of(sheetContext);
+            return EscapeDismissible(
+              child: RecoverySheet(repoPath: repoPath),
+            );
+          },
+        ).whenComplete(() {
+          _recoveryRoute = null;
+          if (mounted) {
+            ref.read(recoveryVisibleProvider.notifier).setVisible(false);
+          }
+        });
+      } else if (!visible && _recoveryRoute != null) {
+        final route = _recoveryRoute!;
+        _recoveryRoute = null;
+        if (route.isCurrent) {
+          Navigator.of(context, rootNavigator: true).pop();
+        } else if (route.isActive) {
+          Navigator.of(context, rootNavigator: true).removeRoute(route);
+        }
+      }
+    });
     final session = ref.watch(historySessionProvider);
     final typography = MacosTheme.of(context).typography;
     // During a drop (`lost`) keep the history visible under a banner —
@@ -295,45 +426,63 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell> {
     final showBody =
         session.repoPath != null &&
         (session.isConnected || session.phase == ConnectionPhase.lost);
-    return MacosWindow(
-      child: ContentArea(
-        builder: (context, _) => !showBody
-            ? Center(
-                child: Text(
-                  'Waiting for session…',
-                  style: typography.body.copyWith(
-                    color: MacosColors.systemGrayColor,
-                  ),
-                ),
-              )
-            : Column(
-                children: [
-                  if (session.phase == ConnectionPhase.lost)
-                    Container(
-                      width: double.infinity,
-                      color: MacosColors.systemOrangeColor.withValues(
-                        alpha: 0.18,
-                      ),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 5,
-                      ),
-                      child: Text(
-                        'Connection lost — reconnecting… actions will fail '
-                        'until the session returns.',
-                        style: typography.caption1.copyWith(
-                          color: MacosColors.systemOrangeColor,
+    // Only the keymap actions that mean something in this window; the rest
+    // (panels, palette, refresh) belong to the main shell.
+    final shortcuts = resolveShortcuts(ref.watch(keymapProvider), {
+      'global.undo': showBody ? _undoGitOperation : null,
+    });
+    return CallbackShortcuts(
+      bindings: shortcuts,
+      child: Focus(
+        autofocus: true,
+        child: MacosWindow(
+          child: ContentArea(
+            builder: (context, _) => Stack(
+              children: [
+                !showBody
+                    ? Center(
+                        child: Text(
+                          'Waiting for session…',
+                          style: typography.body.copyWith(
+                            color: MacosColors.systemGrayColor,
+                          ),
                         ),
+                      )
+                    : Column(
+                        children: [
+                          if (session.phase == ConnectionPhase.lost)
+                            Container(
+                              width: double.infinity,
+                              color: MacosColors.systemOrangeColor.withValues(
+                                alpha: 0.18,
+                              ),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 5,
+                              ),
+                              child: Text(
+                                'Connection lost — reconnecting… actions will '
+                                'fail until the session returns.',
+                                style: typography.caption1.copyWith(
+                                  color: MacosColors.systemOrangeColor,
+                                ),
+                              ),
+                            ),
+                          Expanded(
+                            child: HistoryView(
+                              repoPath: session.repoPath!,
+                              isActive: true,
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  Expanded(
-                    child: HistoryView(
-                      repoPath: session.repoPath!,
-                      isActive: true,
-                    ),
-                  ),
-                ],
-              ),
+                // Same top layer as AppShell's Stack: "<op> — ⌘Z to undo"
+                // after this window's own mutations, "Undid: …" after ⌘Z.
+                UndoToastOverlay(onUndo: _undoGitOperation),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

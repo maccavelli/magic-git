@@ -2,7 +2,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../exec/exec_proxy_codec.dart';
+import '../git/git_service.dart' show GitException;
 import '../git/watch_event.dart';
+import '../undo/undo_controller.dart';
 import '../undo/undo_journal.dart';
 import '../undo/undo_types.dart';
 import 'app_providers.dart';
@@ -157,6 +159,30 @@ class HistoryWindowBridge extends Notifier<bool> {
           ref.read(undoJournalProvider.notifier).push(record);
         }
         return null;
+      case 'performUndo':
+        // ⌘Z pressed in the History window. The journal (and the executor
+        // that can safely run the undo script) live here; all user-facing
+        // UI for the outcome — dirty-overwrite confirm, stale/error dialogs,
+        // the "Undid:" toast — renders back in the History window from the
+        // reply, so `force` only ever arrives after a user confirmed there.
+        final args = call.arguments as Map<Object?, Object?>;
+        final repoPath = args['repoPath'] as String?;
+        if (repoPath == null) return {'status': UndoStatus.nothingToUndo.name};
+        try {
+          final attempt = await ref
+              .read(undoControllerProvider)
+              .undo(repoPath, force: args['force'] == true);
+          final description = attempt.record?.description;
+          if (attempt.status == UndoStatus.done) {
+            ref.read(outputLogProvider.notifier).logInfo('Undid: $description');
+          }
+          return {
+            'status': attempt.status.name,
+            if (description != null) 'description': description,
+          };
+        } on GitException catch (e) {
+          return {'status': 'error', 'message': '$e'};
+        }
       case 'mutationPerformed':
         final repoPath =
             (call.arguments as Map<Object?, Object?>)['repoPath'] as String?;
@@ -172,10 +198,6 @@ class HistoryWindowBridge extends Notifier<bool> {
           ref.invalidate(refsProvider(repoPath));
           ref.invalidate(stashesProvider(repoPath));
         }
-        return null;
-      case 'openRecovery':
-        // Swift already fronted the main window before forwarding.
-        ref.read(recoveryVisibleProvider.notifier).setVisible(true);
         return null;
     }
     return null;

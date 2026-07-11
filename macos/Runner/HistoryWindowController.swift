@@ -30,7 +30,7 @@ func hwDebugLog(_ message: String) {
 /// reply piping, no logic — so everything testable lives in Dart. A small
 /// allowlist is handled natively instead of forwarded: `ready` (reveal the
 /// window after Flutter's first frame), `setWindowTitle`, `closeSelf`, and
-/// `openRecovery` (front the main window first, then forward).
+/// `debugLog` (the history engine's error trail → hw-debug.log).
 class HistoryWindowController: NSObject, NSWindowDelegate {
   private var window: NSWindow?
   private var engine: FlutterEngine?
@@ -42,16 +42,13 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
   private var isTornDown = false
 
   private let mainMessenger: FlutterBinaryMessenger
-  private let focusMain: () -> Void
   private let onClosed: () -> Void
 
   init(
     mainMessenger: FlutterBinaryMessenger,
-    focusMain: @escaping () -> Void,
     onClosed: @escaping () -> Void
   ) {
     self.mainMessenger = mainMessenger
-    self.focusMain = focusMain
     self.onClosed = onClosed
     super.init()
   }
@@ -190,7 +187,7 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
     }
 
     // History Dart → native allowlist, else forward to main Dart
-    // (execute / requestState / undoRecord / mutationPerformed / openRecovery).
+    // (execute / requestState / undoRecord / mutationPerformed / performUndo).
     hubB.setMethodCallHandler { [weak self] call, result in
       guard let self, !self.isTornDown else {
         result(FlutterError(code: "RELAY_DOWN", message: "history window closed", details: nil))
@@ -199,6 +196,12 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
       switch call.method {
       case "ready":
         self.reveal()
+        result(nil)
+        return
+      case "debugLog":
+        // The history engine's Dart errors — invisible anywhere else in a
+        // release build. Handled natively; never forwarded to main Dart.
+        hwDebugLog("(hist) " + ((call.arguments as? String) ?? "?"))
         result(nil)
         return
       case "setWindowTitle":
@@ -213,9 +216,6 @@ class HistoryWindowController: NSObject, NSWindowDelegate {
         // out first.
         DispatchQueue.main.async { [weak self] in self?.close() }
         return
-      case "openRecovery":
-        // Front the main window before the main isolate opens its sheet.
-        self.focusMain()
       default:
         break
       }

@@ -390,10 +390,6 @@ class MainFlutterWindow: NSWindow {
     }
     let controller = HistoryWindowController(
       mainMessenger: messenger,
-      focusMain: { [weak self] in
-        NSApp.activate(ignoringOtherApps: true)
-        self?.makeKeyAndOrderFront(nil)
-      },
       onClosed: { [weak self] in
         self?.historyController = nil
         self?.historyChannel?.invokeMethod("historyWindowClosed", arguments: nil)

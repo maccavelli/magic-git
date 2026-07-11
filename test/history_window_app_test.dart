@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart' show MacosIcon;
 import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
+import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
@@ -40,6 +41,44 @@ class _FakeExecutor extends SSHCommandExecutor {
     calls.add(gitArgs);
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
+}
+
+/// A GitService that serves one canned commit — enough for the actions-menu
+/// test, which needs a selectable row (the executor-level fake can't produce
+/// git's log wire format).
+class _FakeGit extends GitService {
+  _FakeGit() : super(SSHCommandExecutor(SSHClientManager()));
+
+  static const headCommit = GitCommit(
+    hash: 'aaaaaaa1111111',
+    shortHash: 'aaaaaaa',
+    authorName: 'Dev',
+    authorEmail: 'd@e',
+    date: '2026-07-04T10:00',
+    parents: [],
+    subject: 'head commit',
+  );
+
+  @override
+  Future<List<GitCommit>> log(
+    String repoPath, {
+    String revision = 'HEAD',
+    int maxCount = 200,
+    String? grep,
+    String? author,
+    String? since,
+    String? until,
+    String? path,
+    bool all = false,
+    bool follow = false,
+  }) async => const [headCommit];
+
+  @override
+  Future<List<GitRef>> refs(String repoPath) async => const [];
+
+  @override
+  Future<String> showCommit(String repoPath, String hash, {String? path}) async =>
+      'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
 }
 
 ConnectionEventPayload _connected(String repoPath) => ConnectionEventPayload(
@@ -76,15 +115,18 @@ void main() {
     );
   }
 
-  Future<void> pump(WidgetTester tester, _FakeExecutor executor) async {
+  Future<void> pump(
+    WidgetTester tester,
+    _FakeExecutor executor, {
+    GitService? gitService,
+  }) async {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           activeExecutorProvider.overrideWithValue(executor),
-          recoveryVisibleProvider.overrideWith(
-            ForwardingRecoveryVisibility.new,
-          ),
+          if (gitService != null)
+            gitServiceProvider.overrideWithValue(gitService),
         ],
         child: const HistoryWindowApp(),
       ),
@@ -198,8 +240,28 @@ void main() {
     expect(outgoing.map((c) => c.method), contains('closeSelf'));
   });
 
-  testWidgets('the Recovery button forwards to the main window instead of '
-      'opening a local sheet', (tester) async {
+  testWidgets('the commit actions menu opens inside the window shell', (
+    tester,
+  ) async {
+    mockHub(_connected('/srv/repo'));
+    await pump(tester, _FakeExecutor(), gitService: _FakeGit());
+
+    await tester.tap(find.text('head commit'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.line_horizontal_3,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Checkout'), findsOneWidget);
+    expect(find.text('Cherry-pick'), findsOneWidget);
+  });
+
+  testWidgets('the Recovery button opens the sheet locally in this window', (
+    tester,
+  ) async {
     mockHub(_connected('/srv/repo'));
     await pump(tester, _FakeExecutor());
 
@@ -213,7 +275,34 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(outgoing.map((c) => c.method), contains('openRecovery'));
-    expect(find.text('Recovery'), findsNothing, reason: 'no local sheet');
+    expect(find.text('Recovery'), findsWidgets, reason: 'local sheet opened');
+    expect(outgoing.map((c) => c.method), isNot(contains('openRecovery')));
+  });
+
+  testWidgets('⌘Z asks the main isolate to undo and toasts the outcome', (
+    tester,
+  ) async {
+    mockHub(_connected('/srv/repo'));
+    messenger.setMockMethodCallHandler(_hub, (call) async {
+      outgoing.add(call);
+      if (call.method == 'requestState') return _connected('/srv/repo').encode();
+      if (call.method == 'performUndo') {
+        return {'status': 'done', 'description': 'Cherry-pick abc1234'};
+      }
+      return null;
+    });
+    await pump(tester, _FakeExecutor());
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+
+    final undoCall = outgoing.singleWhere((c) => c.method == 'performUndo');
+    expect(
+      (undoCall.arguments as Map)['repoPath'],
+      '/srv/repo',
+    );
+    expect(find.text('Undid: Cherry-pick abc1234'), findsOneWidget);
   });
 }

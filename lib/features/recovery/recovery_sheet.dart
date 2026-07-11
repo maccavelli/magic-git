@@ -24,7 +24,12 @@ import '../history/ref_chip.dart';
 /// exactly like the Dashboard, so the menu checkmark and the sheet can never
 /// disagree.
 class RecoverySheet extends ConsumerStatefulWidget {
-  const RecoverySheet({super.key});
+  const RecoverySheet({super.key, this.repoPath});
+
+  /// Target repo. When null (the main window), the active repo is read from
+  /// [connectionProvider]. The native History window passes it explicitly —
+  /// its `connectionProvider` is inert; the session lives in the main isolate.
+  final String? repoPath;
 
   @override
   ConsumerState<RecoverySheet> createState() => _RecoverySheetState();
@@ -67,8 +72,13 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
-    final connection = ref.watch(connectionProvider);
-    final repoPath = connection.isConnected ? connection.repoPath : null;
+    final String? repoPath;
+    if (widget.repoPath != null) {
+      repoPath = widget.repoPath;
+    } else {
+      final connection = ref.watch(connectionProvider);
+      repoPath = connection.isConnected ? connection.repoPath : null;
+    }
 
     return SizedSheet(
       // Wide like the Dashboard's exemption class: a diff pane needs room.
