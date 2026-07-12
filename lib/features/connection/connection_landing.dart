@@ -143,7 +143,7 @@ class ConnectionLanding extends ConsumerWidget {
               Text('Magic Git', style: typography.largeTitle),
               const SizedBox(height: 6),
               Text(
-                'Manage repositories over SSH or on this Mac',
+                'Manage your repositories anywhere',
                 textAlign: TextAlign.center,
                 style: typography.body.copyWith(
                   color: MacosColors.systemGrayColor,
