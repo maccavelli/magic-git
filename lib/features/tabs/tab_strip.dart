@@ -26,13 +26,15 @@ class TabStrip extends StatelessWidget {
     // A single tab is the pre-tabs experience — no strip.
     if (tabs.length <= 1) return const SizedBox.shrink();
 
+    // Resolve the bar's colors from the (dark) app theme rather than fixed
+    // MacosColors, whose base variants are the LIGHT ones — the source of the
+    // white bar / invisible white text.
+    final theme = MacosTheme.of(context);
     return Container(
       height: 36,
-      decoration: const BoxDecoration(
-        color: MacosColors.controlBackgroundColor,
-        border: Border(
-          bottom: BorderSide(color: MacosColors.separatorColor),
-        ),
+      decoration: BoxDecoration(
+        color: theme.canvasColor,
+        border: Border(bottom: BorderSide(color: theme.dividerColor)),
       ),
       child: Row(
         children: [
