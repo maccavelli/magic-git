@@ -81,26 +81,25 @@ class _DiffViewState extends State<DiffView> {
   final ScrollController _horizontal = ScrollController();
 
   late List<String> _lines = const LineSplitter().convert(widget.diff);
-  late int _maxLineChars = _computeMaxChars(_lines);
+  late double _maxLineWidth = _measureMaxWidth(_lines);
 
-  static int _computeMaxChars(List<String> lines) {
-    var longest = 0;
+  /// The exact rendered width of the widest line, sizing the shared horizontal
+  /// scroll extent. Only the single longest line (by char count — the font is
+  /// monospace) is laid out, so this stays cheap on large patches; measuring
+  /// the real glyph run — rather than estimating char-count × advance — means
+  /// the extent is never a hair short, so a long line's tail always scrolls
+  /// fully into view.
+  static double _measureMaxWidth(List<String> lines) {
+    var longest = '';
     for (final line in lines) {
-      if (line.length > longest) longest = line.length;
+      if (line.length > longest.length) longest = line;
     }
-    return longest;
-  }
-
-  /// The advance width of one [kDiffMono] glyph, measured once. The font is
-  /// monospace, so char count × this is an exact line width — no need to lay
-  /// out every line to size the shared horizontal extent.
-  static double? _charWidth;
-  static double _monoCharWidth() {
-    return _charWidth ??= (TextPainter(
-      text: const TextSpan(text: '00000000000000000000', style: kDiffMono),
+    if (longest.isEmpty) return 0;
+    return (TextPainter(
+      text: TextSpan(text: longest, style: kDiffMono),
       textDirection: TextDirection.ltr,
-    )..layout()).width /
-        20;
+      maxLines: 1,
+    )..layout()).width;
   }
 
   @override
@@ -112,7 +111,7 @@ class _DiffViewState extends State<DiffView> {
     // across otherwise-unrelated rebuilds (a theme change, a parent resize).
     if (oldWidget.diff != widget.diff) {
       _lines = const LineSplitter().convert(widget.diff);
-      _maxLineChars = _computeMaxChars(_lines);
+      _maxLineWidth = _measureMaxWidth(_lines);
     }
   }
 
@@ -175,7 +174,7 @@ class _DiffViewState extends State<DiffView> {
   Widget _buildUnwrapped(Color defaultColor) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final lineWidth = _maxLineChars * _monoCharWidth() + _hPad * 2;
+        final lineWidth = _maxLineWidth + _hPad * 2;
         final overflows = lineWidth > constraints.maxWidth;
         // The inner list is as wide as the widest line (never narrower than the
         // viewport), so the single horizontal scroll below reveals every line's

@@ -82,6 +82,94 @@ void main() {
       expect(horizontal, hasLength(1));
     });
 
+    testWidgets('no-wrap makes long lines horizontally scrollable to their end', (
+      tester,
+    ) async {
+      final diff = '@@ -1,1 +1,1 @@\n+${'x' * 400}\n';
+      await tester.pumpWidget(
+        MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: Center(
+            child: SizedBox(
+              width: 200,
+              height: 300,
+              child: DiffView(diff: diff),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final horizontal = tester
+          .stateList<ScrollableState>(find.byType(Scrollable))
+          .firstWhere((s) => s.position.axis == Axis.horizontal);
+      expect(horizontal.position.maxScrollExtent, greaterThan(0));
+    });
+
+    testWidgets('a horizontal wheel pans the whole diff at once', (
+      tester,
+    ) async {
+      final diff = '@@ -1,1 +1,1 @@\n+${'x' * 400}\n';
+      await tester.pumpWidget(
+        MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: Center(
+            child: SizedBox(
+              width: 200,
+              height: 300,
+              child: DiffView(diff: diff),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final horizontal = tester
+          .stateList<ScrollableState>(find.byType(Scrollable))
+          .firstWhere((s) => s.position.axis == Axis.horizontal);
+      expect(horizontal.position.pixels, 0);
+
+      final center = tester.getCenter(find.byType(DiffView));
+      final pointer = TestPointer(1, PointerDeviceKind.mouse);
+      await tester.sendEventToBinding(pointer.hover(center));
+      await tester.sendEventToBinding(pointer.scroll(const Offset(150, 0)));
+      await tester.pump();
+      expect(horizontal.position.pixels, greaterThan(0));
+    });
+
+    testWidgets('a horizontal trackpad swipe pans the whole diff at once', (
+      tester,
+    ) async {
+      final diff = '@@ -1,1 +1,1 @@\n+${'x' * 400}\n';
+      await tester.pumpWidget(
+        MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: Center(
+            child: SizedBox(
+              width: 200,
+              height: 300,
+              child: DiffView(diff: diff),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final horizontal = tester
+          .stateList<ScrollableState>(find.byType(Scrollable))
+          .firstWhere((s) => s.position.axis == Axis.horizontal);
+
+      final center = tester.getCenter(find.byType(DiffView));
+      final pointer = TestPointer(1, PointerDeviceKind.trackpad);
+      await tester.sendEventToBinding(pointer.panZoomStart(center));
+      await tester.pump();
+      await tester.sendEventToBinding(
+        pointer.panZoomUpdate(center, pan: const Offset(-150, 0)),
+      );
+      await tester.pump();
+      await tester.sendEventToBinding(pointer.panZoomEnd());
+      await tester.pump();
+      expect(horizontal.position.pixels.abs(), greaterThan(0));
+    });
+
     testWidgets('wrap mode drops the fixed extent and the horizontal scroll', (
       tester,
     ) async {

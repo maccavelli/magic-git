@@ -1786,7 +1786,7 @@ class CommitDiffSheet extends ConsumerWidget {
                     ),
                   ),
                 ),
-                data: (diff) => DiffView(diff: diff),
+                data: (diff) => DiffView(diff: diff, wrap: wrap),
               ),
             ),
           ],
