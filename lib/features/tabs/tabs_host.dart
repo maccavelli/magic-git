@@ -135,6 +135,8 @@ class _TabsHostState extends State<TabsHost> with WindowListener {
     if (_controller.activeId != _wiredTabId) {
       _wireActive();
       _pushActiveState();
+      // A History pop-out follows the active tab — retarget it to the new one.
+      WindowManagerBridge.current?.onActiveTabChanged(_controller.activeId);
     }
     if (mounted) setState(() {});
   }

@@ -14,11 +14,13 @@ import '../window/window_kind.dart';
 import 'app_providers.dart';
 
 /// One open secondary window as the main isolate tracks it. The [repoPath] is
-/// the repo this window is currently showing; [tabId] is the main-window tab it
-/// was spawned from and stays pinned to — every session read for this window
-/// (executor, connection, undo, output) resolves against THAT tab's container,
-/// so a History pop-out keeps showing its own repo even after the user switches
-/// to a different tab (and never silently retargets to another host's session).
+/// the repo this window is currently showing; [tabId] is the tab whose container
+/// serves it (executor, connection, undo, output).
+///
+/// A **History** window is a singleton that FOLLOWS the active tab: [tabId] is
+/// re-pointed to whichever tab is active (see `onActiveTabChanged`) so the
+/// pop-out always mirrors the repo the user is currently looking at. A
+/// repo-bound (detached) window instead stays pinned to its spawning tab.
 class WindowHandle {
   final String id;
   final WindowKind kind;
@@ -156,9 +158,8 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
       return;
     }
 
-    // Dedupe against the SAME tab: two tabs on the same repo each get their own
-    // History window (they're different sessions), so key front-existing on the
-    // pinned tab too.
+    // History is a singleton (one window that follows the active tab); a
+    // repo-bound window dedupes on its pinned (tab, repo).
     final existing = _existingForTab(kind, target, tabId);
     if (existing != null) {
       _debugLog('open: fronting existing ${kind.name} ${existing.id}');
@@ -202,10 +203,56 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
 
   WindowHandle? _existingForTab(WindowKind kind, String? repoPath, String? tabId) {
     for (final w in state) {
-      if (w.kind != kind || w.tabId != tabId) continue;
-      if (kind.isSingleton || w.repoPath == repoPath) return w;
+      if (w.kind != kind) continue;
+      // A singleton (History) fronts the one existing window regardless of which
+      // tab it's currently following; a repo-bound window is per (tab, repo).
+      if (kind.isSingleton) return w;
+      if (w.tabId == tabId && w.repoPath == repoPath) return w;
     }
     return null;
+  }
+
+  /// The active tab changed — retarget every follow-active (History) window to
+  /// it so the pop-out mirrors whichever repo the user is now looking at,
+  /// pushing the new snapshot and moving its session/watcher subscriptions onto
+  /// the new tab's container. If the new active tab has no connected repo there
+  /// is nothing to show, so the follower closes (matching the single-window
+  /// "no active repo → no History" behavior). Called by TabsHost on every
+  /// active-tab switch.
+  void onActiveTabChanged(String? tabId) {
+    if (state.every((w) => w.kind != WindowKind.history)) return;
+    final container = tabId == null ? null : sessionContainerFor(tabId);
+    final conn = container?.read(connectionProvider);
+    final hasRepo = conn != null && conn.isConnected && conn.repoPath != null;
+    for (final w in List<WindowHandle>.of(state)) {
+      if (w.kind != WindowKind.history) continue;
+      if (!hasRepo) {
+        close(w.id);
+        continue;
+      }
+      final updated = WindowHandle(
+        id: w.id,
+        kind: w.kind,
+        repoPath: conn.repoPath,
+        tabId: tabId,
+      );
+      state = [
+        for (final x in state)
+          if (x.id == w.id) updated else x,
+      ];
+      _connSubs.remove(w.id)?.close();
+      _connSubs[w.id] = container!.listen(
+        connectionProvider,
+        (_, next) => _onWindowConnectionChanged(w.id, next),
+      );
+      _subscribeTick(w.id, container, conn.repoPath);
+      _hubs[w.id]
+          ?.invokeMethod<void>(
+            'connectionChanged',
+            _snapshotFor(updated, conn).encode(),
+          )
+          .catchError((_) {});
+    }
   }
 
   /// Subscribes a freshly-opened window to its pinned tab's connection + file
@@ -244,12 +291,20 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     }
   }
 
-  /// A tab is closing (its container is about to be disposed) — close every
-  /// window pinned to it and drop the now-dangling subscriptions before the
-  /// container goes away. Called by TabsController.close.
+  /// A tab is closing (its container is about to be disposed). A repo-bound
+  /// window pinned to it goes away with it. A History follower currently showing
+  /// this tab is NOT closed — it follows the active tab, and closing this one
+  /// makes a neighbor active — so just detach its now-dangling subscriptions
+  /// from the departing container; the ensuing `onActiveTabChanged` re-pins it
+  /// (or closes it if no repo tab remains active). Called by TabsController.close
+  /// before the container is disposed.
   void onTabClosed(String tabId) {
     for (final w in List<WindowHandle>.of(state)) {
-      if (w.tabId == tabId) {
+      if (w.tabId != tabId) continue;
+      if (w.kind == WindowKind.history) {
+        _connSubs.remove(w.id)?.close();
+        _tickSubs.remove(w.id)?.close();
+      } else {
         close(w.id);
         _forget(w.id);
       }

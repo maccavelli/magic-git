@@ -1,7 +1,7 @@
-// P4: each secondary window is pinned to its SPAWNING tab. Two tabs (A on /a,
-// B on /b) each pop out a History window; each window's proxied commands must
-// route to its own tab's executor even after the active tab switches, and
-// closing a tab closes only that tab's window.
+// The History pop-out is a SINGLE window that FOLLOWS the active tab: as the
+// user switches from one repo tab to another, the window retargets to the new
+// tab's repo (its proxied commands route there too), and it closes when the
+// active tab has no repo to show.
 
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -49,50 +49,56 @@ ConnectionState _connected(String repo) => ConnectionState(
   host: 'h',
 );
 
+ExecuteRequest _req(String repo) => ExecuteRequest(
+  repoPath: repo,
+  gitArgs: const ['git', 'log'],
+  timeout: const Duration(seconds: 30),
+  retries: 0,
+  lane: ExecLane.read,
+  compress: false,
+);
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   const control = MethodChannel(windowControlChannel);
+  final hub1 = MethodChannel(windowHubChannel('1'));
   const codec = StandardMethodCodec();
 
   late List<MethodCall> controlCalls;
+  late List<MethodCall> hubCalls;
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     controlCalls = [];
+    hubCalls = [];
     messenger.setMockMethodCallHandler(control, (call) async {
       controlCalls.add(call);
       return null;
     });
-    // Silence the per-window hub pushes (connectionChanged, etc.).
-    for (final id in ['1', '2']) {
-      messenger.setMockMethodCallHandler(
-        MethodChannel(windowHubChannel(id)),
-        (_) async => null,
-      );
-    }
+    messenger.setMockMethodCallHandler(hub1, (call) async {
+      hubCalls.add(call);
+      return null;
+    });
   });
 
   tearDown(() {
     messenger.setMockMethodCallHandler(control, null);
-    for (final id in ['1', '2']) {
-      messenger.setMockMethodCallHandler(MethodChannel(windowHubChannel(id)), null);
-    }
+    messenger.setMockMethodCallHandler(hub1, null);
   });
 
-  Future<Object?> deliverHubCall(String id, String method, Object? args) async {
+  Future<Object?> deliverHubCall(String method, Object? args) async {
     Object? decoded;
     await messenger.handlePlatformMessage(
-      windowHubChannel(id),
+      windowHubChannel('1'),
       codec.encodeMethodCall(MethodCall(method, args)),
       (reply) => decoded = reply == null ? null : codec.decodeEnvelope(reply),
     );
     return decoded;
   }
 
-  test('windows pin to their spawning tab; commands route there after a switch '
-      'and closing a tab closes only its window', () async {
+  test('one History window follows the active tab across switches', () async {
     final execA = _FakeExecutor('A');
     final execB = _FakeExecutor('B');
     final containerA = ProviderContainer(
@@ -117,86 +123,66 @@ void main() {
       ..sessionContainerFor = ((tabId) => switch (tabId) {
         'A' => containerA,
         'B' => containerB,
-        _ => null,
+        _ => null, // 'blank' / unknown → no session
       })
       ..activeTabId = (() => activeTab);
 
-    // Tab A pops out History → window '1' pinned to A, showing /a.
+    // Pop out History from tab A → one window showing /a, serving from A.
     await bridge.openHistory();
-    // Switch the active tab to B and pop out again → window '2' pinned to B.
-    activeTab = 'B';
-    await bridge.openHistory();
-
-    final opened = controlCalls.where((c) => c.method == 'openWindow').toList();
-    expect(opened, hasLength(2), reason: 'a separate window per tab');
-    expect((opened[0].arguments as Map)['repoPath'], '/a');
-    expect((opened[1].arguments as Map)['repoPath'], '/b');
-    expect(bridge.state.map((w) => (w.tabId, w.repoPath)),
-        [('A', '/a'), ('B', '/b')]);
-
-    // Even though B is the active tab now, window '1' still serves tab A.
-    final req = encodeExecuteRequest(
-      const ExecuteRequest(
-        repoPath: '/a',
-        gitArgs: ['git', 'log'],
-        timeout: Duration(seconds: 30),
-        retries: 0,
-        lane: ExecLane.read,
-        compress: false,
-      ),
-    );
-    final replyA = await deliverHubCall('1', 'execute', req);
+    expect(bridge.state.map((w) => (w.kind.name, w.repoPath, w.tabId)),
+        [('history', '/a', 'A')]);
     expect(
-      decodeExecuteResponse((replyA as Map).cast<Object?, Object?>()).stdout,
+      decodeExecuteResponse(
+        (await deliverHubCall('execute', encodeExecuteRequest(_req('/a'))) as Map)
+            .cast<Object?, Object?>(),
+      ).stdout,
       'served-by-A',
-      reason: 'window 1 stays pinned to tab A regardless of the active tab',
     );
-    expect(execA.repos, ['/a']);
-    expect(execB.repos, isEmpty);
 
-    final reqB = encodeExecuteRequest(
-      const ExecuteRequest(
-        repoPath: '/b',
-        gitArgs: ['git', 'log'],
-        timeout: Duration(seconds: 30),
-        retries: 0,
-        lane: ExecLane.read,
-        compress: false,
-      ),
-    );
-    final replyB = await deliverHubCall('2', 'execute', reqB);
+    // Switch the active tab to B → the SAME window retargets to /b.
+    hubCalls.clear();
+    activeTab = 'B';
+    bridge.onActiveTabChanged('B');
+
+    expect(bridge.state, hasLength(1), reason: 'still one History window');
+    expect(bridge.state.single.repoPath, '/b');
+    expect(bridge.state.single.tabId, 'B');
+    // The window was told about its new repo.
+    final change = hubCalls.singleWhere((c) => c.method == 'connectionChanged');
     expect(
-      decodeExecuteResponse((replyB as Map).cast<Object?, Object?>()).stdout,
+      ConnectionEventPayload.decode(
+        (change.arguments as Map).cast<Object?, Object?>(),
+      ).repoPath,
+      '/b',
+    );
+    // And its commands now route to tab B's executor.
+    expect(
+      decodeExecuteResponse(
+        (await deliverHubCall('execute', encodeExecuteRequest(_req('/b'))) as Map)
+            .cast<Object?, Object?>(),
+      ).stdout,
       'served-by-B',
     );
+    expect(execB.repos, ['/b']);
 
-    // A hub call whose tab's container can no longer be resolved (host unwired
-    // it, or the tab is mid-teardown) replies RELAY_DOWN — the child treats it
-    // as "window on its way out".
-    bridge.sessionContainerFor = (_) => null;
-    await expectLater(
-      deliverHubCall('2', 'execute', reqB),
-      throwsA(
-        isA<PlatformException>().having((e) => e.code, 'code', 'RELAY_DOWN'),
-      ),
-    );
-    // Re-wire so onTabClosed can still run its native closes.
-    bridge.sessionContainerFor = ((tabId) => switch (tabId) {
-      'A' => containerA,
-      'B' => containerB,
-      _ => null,
-    });
-
-    // Closing tab A closes only window '1' and forgets it.
+    // Opening History again just fronts the one window (singleton).
     controlCalls.clear();
-    bridge.onTabClosed('A');
+    await bridge.openHistory();
+    expect(
+      controlCalls.map((c) => c.method).where((m) => m != 'debugLog'),
+      ['frontWindow'],
+    );
+    expect(bridge.state, hasLength(1));
+
+    // Switching to a tab with no repo closes the follower (nothing to show).
+    controlCalls.clear();
+    activeTab = 'blank';
+    bridge.onActiveTabChanged('blank');
     expect(
       controlCalls.where((c) => c.method == 'closeWindow').map(
         (c) => (c.arguments as Map)['windowId'],
       ),
       ['1'],
     );
-    expect(bridge.state.map((w) => w.id), ['2'],
-        reason: 'window 2 (tab B) survives');
   });
 }
