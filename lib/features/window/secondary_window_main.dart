@@ -82,6 +82,9 @@ void runSecondaryWindow() {
 
 Future<void> _bootSecondaryWindow() async {
   SecondaryWindowBinding.ensureInitialized();
+  // TEMPORARY (MGDBG): route the shared diff-provider's debug lines to
+  // hw-debug.log so we can see whether this window's diff fetches resolve.
+  kHwDebugSink = (m) => _native('debugLog', m);
   // This engine has no visible console (release build, second engine), so an
   // uncaught error would otherwise vanish without a trace. Ship every error to
   // the native side's hw-debug.log over the always-available bootstrap channel.
