@@ -2498,27 +2498,14 @@ final fileDiffProvider = FutureProvider.autoDispose
 
 /// Full patch for a commit. Keyed by (repoPath, hash). Kept alive (bounded
 /// LRU) — see [KeepAliveLru].
-/// TEMPORARY debug sink (MGDBG) for diagnosing the History pop-out's diff
-/// rendering. Set by the secondary window's bootstrap to route to hw-debug.log;
-/// null (no-op) in the main isolate.
-void Function(String message)? kHwDebugSink;
-
-String _shortHash(String h) => h.length >= 8 ? h.substring(0, 8) : h;
-
 final commitDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       _commitDiffLru.touch(key, ref.keepAlive());
       final (repoPath, hash) = key;
-      kHwDebugSink?.call('MGDBG-CHILD diff-start repo=$repoPath h=${_shortHash(hash)}');
       final future = ref.watch(gitServiceProvider).showCommit(repoPath, hash);
       future.then(
-        (d) {
-          _commitDiffLru.reportSize(key, d.length);
-          kHwDebugSink?.call('MGDBG-CHILD diff-done h=${_shortHash(hash)} len=${d.length}');
-        },
-        onError: (Object e, _) {
-          kHwDebugSink?.call('MGDBG-CHILD diff-error h=${_shortHash(hash)} err=$e');
-        },
+        (d) => _commitDiffLru.reportSize(key, d.length),
+        onError: (_) {},
       );
       return future;
     });

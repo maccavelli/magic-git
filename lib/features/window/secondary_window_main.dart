@@ -82,9 +82,6 @@ void runSecondaryWindow() {
 
 Future<void> _bootSecondaryWindow() async {
   SecondaryWindowBinding.ensureInitialized();
-  // TEMPORARY (MGDBG): route the shared diff-provider's debug lines to
-  // hw-debug.log so we can see whether this window's diff fetches resolve.
-  kHwDebugSink = (m) => _native('debugLog', m);
   // This engine has no visible console (release build, second engine), so an
   // uncaught error would otherwise vanish without a trace. Ship every error to
   // the native side's hw-debug.log over the always-available bootstrap channel.
@@ -447,10 +444,6 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
     final previous = ref.read(windowSessionProvider);
     ref.read(windowSessionProvider.notifier).apply(payload);
     final session = ref.read(windowSessionProvider);
-    kHwDebugSink?.call(
-      'MGDBG-CHILD applySession prev=${previous.repoPath} next=${session.repoPath} '
-      'changed=${session.repoPath != previous.repoPath} phase=${session.phase.name}',
-    );
 
     if (session.phase == ConnectionPhase.disconnected) {
       // The window follows the session — nothing meaningful to show once the

@@ -119,7 +119,6 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   @override
   void initState() {
     super.initState();
-    kHwDebugSink?.call('MGDBG-CHILD hv-MOUNT repo=${widget.repoPath}');
     HardwareKeyboard.instance.addHandler(_onHardwareKey);
     WidgetsBinding.instance.addObserver(this);
   }
@@ -166,7 +165,6 @@ class _HistoryViewState extends ConsumerState<HistoryView>
 
   @override
   void dispose() {
-    kHwDebugSink?.call('MGDBG-CHILD hv-DISPOSE repo=${widget.repoPath}');
     HardwareKeyboard.instance.removeHandler(_onHardwareKey);
     WidgetsBinding.instance.removeObserver(this);
     _searchDebounce?.cancel();
@@ -243,10 +241,6 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   /// toggles this row in/out of it; ⇧-click extends a contiguous range from
   /// the anchor.
   void _handleRowTap(String hash) {
-    kHwDebugSink?.call(
-      'MGDBG-CHILD rowtap h=${hash.length >= 8 ? hash.substring(0, 8) : hash} '
-      'nCommits=${_lastCommits?.length} repo=${widget.repoPath}',
-    );
     _commitFocus.requestFocus();
     final commits = _lastCommits ?? const <GitCommit>[];
     final keys = HardwareKeyboard.instance;
@@ -1481,13 +1475,6 @@ class _HistoryViewState extends ConsumerState<HistoryView>
 
   Widget _commitDiff(BuildContext context, String hash) {
     final diffAsync = ref.watch(commitDiffProvider((widget.repoPath, hash)));
-    // TEMPORARY (MGDBG): what the diff PANE sees for the selected commit —
-    // no-op in the main window (sink null), routes to hw-debug.log in the pop-out.
-    kHwDebugSink?.call(
-      'MGDBG-CHILD pane repo=${widget.repoPath} '
-      'h=${hash.length >= 8 ? hash.substring(0, 8) : hash} '
-      'state=${diffAsync.isLoading ? "loading" : diffAsync.hasError ? "error:${diffAsync.error}" : "data:${diffAsync.value?.length}"}',
-    );
     final wrap = ref.watch(appSettingsProvider.select((s) => s.historyDiffWrap));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

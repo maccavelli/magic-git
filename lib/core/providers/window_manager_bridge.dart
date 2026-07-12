@@ -494,15 +494,7 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
         // the wrong host and fails. Fall back to the pinned tab only when no open
         // tab holds the repo.
         final execContainer = containerForRepo(request.repoPath) ?? container;
-        if (execContainer == null) {
-          _debugLog('MGDBG exec RELAY_DOWN win=$id tab=${handle?.tabId}');
-          throw _relayDown();
-        }
-        _debugLog(
-          'MGDBG exec win=$id tab=${handle?.tabId} repo=${request.repoPath} '
-          'byRepo=${containerForRepo(request.repoPath) != null} '
-          'cmd=${request.gitArgs.take(6).join(" ")}',
-        );
+        if (execContainer == null) throw _relayDown();
         try {
           // Read per call so a backend switch mid-session is honored.
           final result = await execContainer.read(activeExecutorProvider).execute(
@@ -515,16 +507,11 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
             lane: request.lane,
             compress: request.compress,
           );
-          _debugLog(
-            'MGDBG exec-done win=$id exit=${result.exitCode} '
-            'out=${result.stdout.length} err=${result.stderr.length}',
-          );
           return encodeExecuteResult(result);
         } catch (e) {
           // Typed executor exceptions keep their identity across the wire;
           // everything else degrades to a message. Never let a throw escape
           // into the channel as an opaque PlatformException.
-          _debugLog('MGDBG exec-throw win=$id err=$e');
           return encodeExecuteError(e);
         }
       case 'requestState':
