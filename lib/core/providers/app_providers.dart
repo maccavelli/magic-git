@@ -120,18 +120,9 @@ final sshClientManagerProvider = Provider<SSHClientManager>((ref) {
 });
 
 /// Serialized command executor over the shared SSH connection.
-///
-/// `dependencies` (here and across the session/repo graph below) makes this
-/// provider *scopeable*: in a per-tab `ProviderContainer` that overrides the
-/// session seam, this recomputes against that tab's [sshClientManagerProvider],
-/// so each tab gets its own executor. At the plain root (no tab scope) it
-/// resolves normally. Rule: list the *direct* scoped providers you read — a
-/// missing entry throws `ProviderException` loudly (never a silent cross-tab
-/// bleed), and the keystone isolation test exercises every repo family.
-final executorProvider = Provider<SSHCommandExecutor>(
-  (ref) => SSHCommandExecutor(ref.watch(sshClientManagerProvider)),
-  dependencies: [sshClientManagerProvider],
-);
+final executorProvider = Provider<SSHCommandExecutor>((ref) {
+  return SSHCommandExecutor(ref.watch(sshClientManagerProvider));
+});
 
 /// Serialized command executor for a repo on this machine's own filesystem —
 /// no SSH, no shell string, just `Process.start` directly. Stateless enough
@@ -186,19 +177,16 @@ class LocalEnvironmentGuard {
 /// [ConnectionState.backend]. [GitService]/[GlabService] depend on this
 /// rather than [executorProvider] directly, so they work unchanged against
 /// either transport.
-final activeExecutorProvider = Provider<CommandExecutor>(
-  (ref) {
-    final backend = ref.watch(connectionProvider.select((c) => c.backend));
-    // Exhaustive switch (no default): adding a third ConnectionBackend becomes a
-    // compile error here rather than silently routing every command to the SSH
-    // executor.
-    return switch (backend) {
-      ConnectionBackend.local => ref.watch(localExecutorProvider),
-      ConnectionBackend.ssh => ref.watch(executorProvider),
-    };
-  },
-  dependencies: [connectionProvider, executorProvider, localExecutorProvider],
-);
+final activeExecutorProvider = Provider<CommandExecutor>((ref) {
+  final backend = ref.watch(connectionProvider.select((c) => c.backend));
+  // Exhaustive switch (no default): adding a third ConnectionBackend becomes a
+  // compile error here rather than silently routing every command to the SSH
+  // executor.
+  return switch (backend) {
+    ConnectionBackend.local => ref.watch(localExecutorProvider),
+    ConnectionBackend.ssh => ref.watch(executorProvider),
+  };
+});
 
 final gitServiceProvider = Provider<GitService>((ref) {
   // Select only the four fields GitService actually consumes. GitService has no
@@ -230,38 +218,33 @@ final gitServiceProvider = Provider<GitService>((ref) {
     onUndoRecord: (record) =>
         ref.read(undoJournalProvider.notifier).push(record),
   );
-}, dependencies: [activeExecutorProvider]);
+});
 
-final glabServiceProvider = Provider<GlabService>(
-  (ref) => GlabService(ref.watch(activeExecutorProvider)),
-  dependencies: [activeExecutorProvider],
-);
+final glabServiceProvider = Provider<GlabService>((ref) {
+  return GlabService(ref.watch(activeExecutorProvider));
+});
 
 /// GitHub counterpart to [glabServiceProvider]; same executor seam, so it works
 /// over both SSH and local backends unchanged.
-final ghServiceProvider = Provider<GhService>(
-  (ref) => GhService(ref.watch(activeExecutorProvider)),
-  dependencies: [activeExecutorProvider],
-);
+final ghServiceProvider = Provider<GhService>((ref) {
+  return GhService(ref.watch(activeExecutorProvider));
+});
 
 /// Plain host filesystem primitives (home dir, directory listing, path
 /// probing, mkdir, the guarded clone-cleanup delete) — used by the clone/
 /// create flows and the remote directory browser. Same executor seam as the
 /// services above.
-final hostFsServiceProvider = Provider<HostFsService>(
-  (ref) => HostFsService(ref.watch(activeExecutorProvider)),
-  dependencies: [activeExecutorProvider],
-);
+final hostFsServiceProvider = Provider<HostFsService>((ref) {
+  return HostFsService(ref.watch(activeExecutorProvider));
+});
 
-final installServiceProvider = Provider<InstallService>(
-  (ref) => InstallService(ref.watch(activeExecutorProvider)),
-  dependencies: [activeExecutorProvider],
-);
+final installServiceProvider = Provider<InstallService>((ref) {
+  return InstallService(ref.watch(activeExecutorProvider));
+});
 
-final remoteWatchServiceProvider = Provider<RemoteWatchService>(
-  (ref) => RemoteWatchService(ref.watch(executorProvider)),
-  dependencies: [executorProvider],
-);
+final remoteWatchServiceProvider = Provider<RemoteWatchService>((ref) {
+  return RemoteWatchService(ref.watch(executorProvider));
+});
 
 /// Native-filesystem-event equivalent of [remoteWatchServiceProvider] for a
 /// local repo — no SSH-spawned `fswatch`/`inotifywait`, just `dart:io`'s
@@ -1998,7 +1981,7 @@ final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
   _lastLandedStatus[repoPath] = status;
   _lastLandedEditGeneration[repoPath] = editGen;
   return status;
-}, dependencies: [gitServiceProvider]);
+});
 
 /// Which git operation (merge / cherry-pick / revert / rebase), if any, is
 /// mid-flight, so the Repository panel can offer to continue or abort it.
@@ -2013,7 +1996,7 @@ final pendingOpProvider = FutureProvider.autoDispose.family<PendingOp, String>((
   // Depend on status so this re-runs whenever the working tree changes.
   ref.watch(statusProvider(repoPath));
   return ref.watch(gitServiceProvider).pendingOp(repoPath);
-}, dependencies: [statusProvider, gitServiceProvider]);
+});
 
 /// Background auto-fetch: while connected and a positive interval is configured,
 /// periodically `git fetch --prune` the active repo and refresh refs/status, so
@@ -2085,7 +2068,7 @@ final autoFetchProvider = Provider.autoDispose<void>((ref) {
     }
   });
   ref.onDispose(timer.cancel);
-}, dependencies: [connectionProvider, gitServiceProvider, refsProvider]);
+});
 
 /// The repository file-tree *structure* for the file-view pane, keyed by
 /// repoPath. autoDispose so the `ls-files` work only runs while the pane is
@@ -2108,7 +2091,6 @@ final repoStructureProvider = FutureProvider.autoDispose.family<RepoNode, String
     }
     return build();
   },
-  dependencies: [statusProvider, gitServiceProvider],
 );
 
 /// The change/dirty overlay for the file-view pane, derived from
@@ -2122,7 +2104,7 @@ final repoStatusOverlayProvider = Provider.autoDispose
       return status == null
           ? RepoStatusOverlay.empty
           : RepoStatusOverlay.fromStatus(status);
-    }, dependencies: [statusProvider]);
+    });
 
 /// Whether the file-view pane is shown on the Repository panel. Off by default;
 /// toggled from the native "View → Show File View" menu item — mirrors the
@@ -2208,7 +2190,7 @@ final pingSamplesProvider =
 final repoFootprintProvider = FutureProvider.autoDispose
     .family<RepoFootprint, String>((ref, repoPath) {
       return ref.watch(gitServiceProvider).repoFootprint(repoPath);
-    }, dependencies: [gitServiceProvider]);
+    });
 
 /// Event-driven "repo changed" ticks from the active backend's watcher.
 /// Auto-disposed so the remote fswatch/inotifywait process (or the native
@@ -2229,7 +2211,7 @@ final repoWatchProvider = StreamProvider.autoDispose
             .watch(remoteWatchServiceProvider)
             .watch(repoPath),
       };
-    }, dependencies: [connectionProvider, remoteWatchServiceProvider]);
+    });
 
 /// Branches + remote-tracking refs for a repo.
 final refsProvider = FutureProvider.autoDispose.family<List<GitRef>, String>((
@@ -2237,7 +2219,7 @@ final refsProvider = FutureProvider.autoDispose.family<List<GitRef>, String>((
   repoPath,
 ) {
   return ref.watch(gitServiceProvider).refs(repoPath);
-}, dependencies: [gitServiceProvider]);
+});
 
 /// Commit history (HEAD) for a repo.
 final logProvider = FutureProvider.autoDispose.family<List<GitCommit>, String>((
@@ -2245,20 +2227,20 @@ final logProvider = FutureProvider.autoDispose.family<List<GitCommit>, String>((
   repoPath,
 ) {
   return ref.watch(gitServiceProvider).log(repoPath);
-}, dependencies: [gitServiceProvider]);
+});
 
 /// HEAD's reflog — the Recovery sheet's entry list.
 final reflogProvider = FutureProvider.autoDispose
     .family<List<ReflogEntry>, String>((ref, repoPath) {
       return ref.watch(gitServiceProvider).reflog(repoPath);
-    }, dependencies: [gitServiceProvider]);
+    });
 
 /// The anchored pre-destroy snapshots (`refs/magic-git/snapshots/`) — the
 /// Recovery sheet's second section.
 final magicSnapshotsProvider = FutureProvider.autoDispose
     .family<List<SnapshotRef>, String>((ref, repoPath) {
       return ref.watch(gitServiceProvider).snapshotRefs(repoPath);
-    }, dependencies: [gitServiceProvider]);
+    });
 
 /// A filtered/searched commit log. Keyed by a query record (structural equality
 /// gives correct caching). [all] walks every ref; the rest narrow the walk —
@@ -2289,7 +2271,7 @@ final logSearchProvider = FutureProvider.autoDispose
             noMerges: q.noMerges,
             all: q.all,
           );
-    }, dependencies: [gitServiceProvider]);
+    });
 
 /// Ties a **worktree-dependent** cached provider to the repo's most recently
 /// *landed* status, so its cached content can never go stale: every completed
@@ -2440,7 +2422,7 @@ final fileLogProvider = FutureProvider.autoDispose
         onError: (_) {},
       );
       return future;
-    }, dependencies: [gitServiceProvider]);
+    });
 
 /// Line-by-line blame for a file. Keyed by (repoPath, path). Kept alive
 /// (bounded LRU) — see [KeepAliveLru].
@@ -2457,13 +2439,13 @@ final blameProvider = FutureProvider.autoDispose
         onError: (_) {},
       );
       return future;
-    }, dependencies: [statusProvider, gitServiceProvider]);
+    });
 
 /// Stashes for a repo.
 final stashesProvider = FutureProvider.autoDispose
     .family<List<GitStash>, String>((ref, repoPath) {
       return ref.watch(gitServiceProvider).stashList(repoPath);
-    }, dependencies: [gitServiceProvider]);
+    });
 
 /// The patch a single stash holds, for the stash preview pane. Keyed by
 /// (repoPath, index).
@@ -2471,14 +2453,14 @@ final stashDiffProvider = FutureProvider.autoDispose
     .family<String, (String, int)>((ref, key) {
       final (repoPath, index) = key;
       return ref.watch(gitServiceProvider).stashShow(repoPath, index);
-    }, dependencies: [gitServiceProvider]);
+    });
 
 /// Whether the repo has a prepare-commit-msg hook (message becomes optional /
 /// the "Generate" action becomes available). Keyed by repoPath.
 final prepareCommitMsgHookProvider = FutureProvider.autoDispose
     .family<bool, String>((ref, repoPath) {
       return ref.watch(gitServiceProvider).hasPrepareCommitMsgHook(repoPath);
-    }, dependencies: [gitServiceProvider]);
+    });
 
 /// Unified diff for a single working-tree/staged file. Keyed by
 /// (repoPath, path, staged, ignoreWhitespace, context) — records give
@@ -2500,7 +2482,7 @@ final fileDiffProvider = FutureProvider.autoDispose
       );
       future.then((d) => _fileDiffLru.reportSize(key, d.length), onError: (_) {});
       return future;
-    }, dependencies: [statusProvider, gitServiceProvider]);
+    });
 
 /// Full patch for a commit. Keyed by (repoPath, hash). Kept alive (bounded
 /// LRU) — see [KeepAliveLru].
@@ -2514,7 +2496,7 @@ final commitDiffProvider = FutureProvider.autoDispose
         onError: (_) {},
       );
       return future;
-    }, dependencies: [gitServiceProvider]);
+    });
 
 /// The diff between two commits — what `newer` adds on top of `older`
 /// (`git diff older..newer`). Keyed by (repoPath, olderHash, newerHash);
@@ -2531,7 +2513,7 @@ final commitRangeDiffProvider = FutureProvider.autoDispose
         onError: (_) {},
       );
       return future;
-    }, dependencies: [gitServiceProvider]);
+    });
 
 /// A commit's patch scoped to a single file. Keyed by (repoPath, hash, path)
 /// — used by the file-history view so selecting a commit fetches only the
@@ -2549,7 +2531,7 @@ final commitFileDiffProvider = FutureProvider.autoDispose
         onError: (_) {},
       );
       return future;
-    }, dependencies: [gitServiceProvider]);
+    });
 
 /// The conflicted working-tree file (with merge markers). Keyed by
 /// (repoPath, path). Kept alive (bounded LRU) — see [KeepAliveLru].
@@ -2566,7 +2548,7 @@ final conflictFileProvider = FutureProvider.autoDispose
         onError: (_) {},
       );
       return future;
-    }, dependencies: [statusProvider, gitServiceProvider]);
+    });
 
 /// An untracked file's contents rendered as an all-additions diff, so new files
 /// display their content (a plain `git diff` shows nothing for them). Keyed by
@@ -2584,7 +2566,7 @@ final untrackedDiffProvider = FutureProvider.autoDispose
         onError: (_) {},
       );
       return future;
-    }, dependencies: [statusProvider, gitServiceProvider]);
+    });
 
 /// Holds a forge data provider until the session's background forge logins
 /// have settled, so a panel visible right at connect loads against an
@@ -2600,7 +2582,7 @@ final mergeRequestsProvider = FutureProvider.autoDispose
       final glab = ref.watch(glabServiceProvider);
       await _forgeAuthReady(ref);
       return glab.mergeRequests(repoPath);
-    }, dependencies: [glabServiceProvider, connectionProvider]);
+    });
 
 /// Recent CI/CD pipelines for the connected project.
 final pipelinesProvider = FutureProvider.autoDispose
@@ -2608,7 +2590,7 @@ final pipelinesProvider = FutureProvider.autoDispose
       final glab = ref.watch(glabServiceProvider);
       await _forgeAuthReady(ref);
       return glab.pipelines(repoPath);
-    }, dependencies: [glabServiceProvider, connectionProvider]);
+    });
 
 /// Jobs of a pipeline. Keyed by (repoPath, pipelineId).
 final jobsProvider = FutureProvider.autoDispose
@@ -2617,7 +2599,7 @@ final jobsProvider = FutureProvider.autoDispose
       final glab = ref.watch(glabServiceProvider);
       await _forgeAuthReady(ref);
       return glab.jobs(repoPath, pipelineId);
-    }, dependencies: [glabServiceProvider, connectionProvider]);
+    });
 
 /// Live CI job-trace log. Keyed by (repoPath, jobId); emits **incremental** log
 /// chunks (the view accumulates them). Auto-disposed so the remote trace process
@@ -2628,7 +2610,7 @@ final jobTraceProvider = StreamProvider.autoDispose
       final glab = ref.watch(glabServiceProvider);
       await _forgeAuthReady(ref);
       yield* glab.traceStream(repoPath, jobId);
-    }, dependencies: [glabServiceProvider, connectionProvider]);
+    });
 
 /// Project overview (issues, labels, milestones, releases) in one GraphQL hop.
 final projectDashboardProvider = FutureProvider.autoDispose
@@ -2636,7 +2618,7 @@ final projectDashboardProvider = FutureProvider.autoDispose
       final glab = ref.watch(glabServiceProvider);
       await _forgeAuthReady(ref);
       return glab.projectDashboard(repoPath);
-    }, dependencies: [glabServiceProvider, connectionProvider]);
+    });
 
 // ---- Forge detection + GitHub providers ------------------------------------
 
@@ -2705,7 +2687,7 @@ final forgeProvider = FutureProvider.autoDispose.family<Forge, String>((
     ref.keepAlive();
   }
   return forge;
-}, dependencies: [activeExecutorProvider, connectionProvider]);
+});
 
 /// The authenticated user's repositories on a forge host, for the clone
 /// sheet's browse list. Keyed by (forge, host, local) — an *account-level*
@@ -2737,7 +2719,7 @@ final forgeRepoListProvider = FutureProvider.autoDispose
         Forge.gitlab => GlabService(executor).listRepos(host: host),
         _ => throw ArgumentError('forgeRepoListProvider: not a forge: $forge'),
       };
-    }, dependencies: [localExecutorProvider, activeExecutorProvider, connectionProvider]);
+    });
 
 /// The forge CLI's parsed auth state on the target machine — the strict
 /// judgment (a host with an expired/revoked token does NOT count as signed
@@ -2768,7 +2750,7 @@ final forgeAuthProvider = FutureProvider.autoDispose
           .read(outputLogProvider.notifier)
           .logInfo('${auth.tool} auth: ${auth.detail}');
       return auth;
-    }, dependencies: [connectionProvider, localExecutorProvider, activeExecutorProvider]);
+    });
 
 /// The host the forge CLI on the target machine is signed in to — what the
 /// create/clone wizards prefill their forge-host fields with, so a user on a
@@ -2781,7 +2763,7 @@ final forgeAuthHostProvider = FutureProvider.autoDispose
     .family<String?, (Forge, bool)>((ref, key) async {
       final auth = await ref.watch(forgeAuthProvider(key).future);
       return auth.authenticated ? auth.host : null;
-    }, dependencies: [forgeAuthProvider]);
+    });
 
 /// Authentication status of git/gh/glab on **this Mac** — probed on demand for
 /// the Dashboard's Authentication section (and reusable by any This-Mac flow
@@ -2803,7 +2785,7 @@ final localAuthStatusProvider = FutureProvider.autoDispose<TargetAuth>((
         'glab ${auth.glab.authenticated ? auth.glab.host : 'signed out'}',
       );
   return auth;
-}, dependencies: [localExecutorProvider]);
+});
 
 /// Authentication status of git/gh/glab on the **active session's** target —
 /// the connected SSH host, or this Mac for a local session. Null when nothing
@@ -2829,7 +2811,7 @@ final sessionAuthStatusProvider = FutureProvider.autoDispose<TargetAuth?>((
     // (an Enterprise remote) resolves; falls back to the home dir otherwise.
     cwd: repoPath ?? '.',
   );
-}, dependencies: [connectionProvider, activeExecutorProvider]);
+});
 
 /// Open pull requests for the connected GitHub repo.
 final pullRequestsProvider = FutureProvider.autoDispose
@@ -2837,7 +2819,7 @@ final pullRequestsProvider = FutureProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       await _forgeAuthReady(ref);
       return gh.pullRequests(repoPath);
-    }, dependencies: [ghServiceProvider, connectionProvider]);
+    });
 
 /// Recent GitHub Actions workflow runs for the connected repo.
 final workflowRunsProvider = FutureProvider.autoDispose
@@ -2845,7 +2827,7 @@ final workflowRunsProvider = FutureProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       await _forgeAuthReady(ref);
       return gh.workflowRuns(repoPath);
-    }, dependencies: [ghServiceProvider, connectionProvider]);
+    });
 
 /// Live jobs of a workflow run, keyed by (repoPath, runId). Polls until the run
 /// completes (GitHub exposes no live log stream); auto-disposed so the poll
@@ -2856,7 +2838,7 @@ final runJobsProvider = StreamProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       await _forgeAuthReady(ref);
       yield* gh.runJobsStream(repoPath, runId);
-    }, dependencies: [ghServiceProvider, connectionProvider]);
+    });
 
 /// A completed job's log, keyed by (repoPath, jobId). GitHub only serves logs
 /// once a job finishes; an in-progress job surfaces as an error the view shows
@@ -2867,7 +2849,7 @@ final runJobLogProvider = FutureProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       await _forgeAuthReady(ref);
       return gh.runJobLog(repoPath, jobId);
-    }, dependencies: [ghServiceProvider, connectionProvider]);
+    });
 
 /// GitHub repository overview (issues, labels, milestones, releases) in one
 /// GraphQL hop.
@@ -2876,4 +2858,4 @@ final githubProjectDashboardProvider = FutureProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       await _forgeAuthReady(ref);
       return gh.projectDashboard(repoPath);
-    }, dependencies: [ghServiceProvider, connectionProvider]);
+    });
