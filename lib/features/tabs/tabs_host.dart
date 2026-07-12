@@ -87,6 +87,13 @@ class _TabsHostState extends State<TabsHost> with WindowListener {
     _controller.addListener(_onTabsChanged);
     // Expose the controller to connection sheets pushed above TabsScope.
     TabsController.current = _controller;
+    // Point the single root History bridge at this controller so a pop-out pins
+    // to (and serves from) its spawning tab's container. The bridge was built by
+    // the root ProviderScope keeper before this host mounted.
+    WindowManagerBridge.current
+      ?..sessionContainerFor =
+          ((tabId) => tabId == null ? null : _controller.containerFor(tabId))
+      ..activeTabId = (() => _controller.activeId);
 
     _menuChannel.setMethodCallHandler(_handleMenuCall);
     // Intercept the window close so each tab's SSH session gets a clean
@@ -116,6 +123,10 @@ class _TabsHostState extends State<TabsHost> with WindowListener {
     if (identical(TabsController.current, _controller)) {
       TabsController.current = null;
     }
+    // Un-wire the bridge so it stops resolving against a disposed controller.
+    WindowManagerBridge.current
+      ?..sessionContainerFor = ((_) => null)
+      ..activeTabId = (() => null);
     if (_ownsController) _controller.dispose();
     super.dispose();
   }
@@ -197,7 +208,7 @@ class _TabsHostState extends State<TabsHost> with WindowListener {
       case 'toggleRecovery':
         c.read(recoveryVisibleProvider.notifier).toggle();
       case 'openHistoryWindow':
-        await c.read(windowManagerBridgeProvider.notifier).openHistory();
+        await WindowManagerBridge.current?.openHistory();
       case 'prepareToTerminate':
         // ⌘Q (or any AppKit terminate path). The delegate holds termination
         // open (.terminateLater, with a native timeout backstop) until this

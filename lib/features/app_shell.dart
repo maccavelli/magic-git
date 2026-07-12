@@ -287,8 +287,7 @@ class _AppShellState extends ConsumerState<AppShell> {
           onOpenConnections: () => _openConnections(context),
           onCloneRepository: () => _openCloneRepository(context),
           onCreateRepository: () => _openCreateRepository(context),
-          onOpenHistoryWindow: () =>
-              ref.read(windowManagerBridgeProvider.notifier).openHistory(),
+          onOpenHistoryWindow: () => WindowManagerBridge.current?.openHistory(),
           onCheckoutBranch: (branch) =>
               _checkoutBranch(context, repoPath, branch),
         ),
@@ -337,7 +336,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     ref.invalidate(fileContentProvider);
     ref.invalidate(fileBytesProvider);
     // ⌘R covers the native History window too (no-op while it's closed).
-    ref.read(windowManagerBridgeProvider.notifier).invalidateAllFor(repo);
+    WindowManagerBridge.current?.invalidateAllFor(repo);
   }
 
   /// ⌘Z (and the toast's click target): undo the most recent undoable git
@@ -457,12 +456,10 @@ class _AppShellState extends ConsumerState<AppShell> {
     final pageIndex = ref.watch(pageIndexProvider);
     final visitedPages = ref.watch(visitedPagesProvider);
 
-    // Keep this tab's native-History-window plumbing alive while it's the
-    // mounted (active) tab: the bridge serves the second window's proxied
-    // commands and events; the forwarder relays watcher ticks to it while (and
-    // only while) it's open.
-    ref.watch(windowManagerBridgeProvider);
-    ref.watch(windowTickForwardersProvider);
+    // The single native-History-window bridge lives in the root container (kept
+    // alive by main.dart), not here — watching windowManagerBridgeProvider from
+    // a tab container would spin up a second, conflicting bridge. Pop-outs are
+    // spawned via WindowManagerBridge.current below.
 
     // The dashboard is a modal sheet driven by a provider so all three of
     // its controls stay in sync: the View-menu checkbox toggles the
@@ -705,8 +702,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             ? HistoryView(
                 repoPath: repoPath,
                 isActive: pageIndex == 1,
-                onPopOut: () =>
-                    ref.read(windowManagerBridgeProvider.notifier).openHistory(),
+                onPopOut: () => WindowManagerBridge.current?.openHistory(),
               )
             : const SizedBox.shrink(),
         visitedPages.contains(2)

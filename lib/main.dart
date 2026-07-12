@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:window_manager/window_manager.dart';
 import 'core/providers/app_providers.dart';
+import 'core/providers/window_manager_bridge.dart';
 import 'core/theme/app_theme.dart';
 import 'features/tabs/tabs_host.dart';
 import 'features/window/secondary_window_main.dart';
@@ -113,11 +114,17 @@ void main() async {
   );
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends ConsumerWidget {
   const MyApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Instantiate + keep alive the SINGLE native-window bridge in the root
+    // container for the app's lifetime. It must live here (not in a tab
+    // container) because it owns the process-global `magicgit/windows` control
+    // handler and the window-id registry; TabsHost wires it to the tab
+    // controller so each pop-out pins to its spawning tab.
+    ref.watch(windowManagerBridgeProvider);
     return MacosApp(
       title: 'Magic Git',
       // Dark-only by design (see AppTheme): pin dark for both slots so the app

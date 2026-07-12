@@ -14,18 +14,26 @@ import '../window/window_kind.dart';
 import 'app_providers.dart';
 
 /// One open secondary window as the main isolate tracks it. The [repoPath] is
-/// the repo this window is currently showing: for a [WindowKind.history] window
-/// it tracks the active session's repo (updated as the session switches); for a
-/// repo-bound kind it is fixed for the window's life.
+/// the repo this window is currently showing; [tabId] is the main-window tab it
+/// was spawned from and stays pinned to — every session read for this window
+/// (executor, connection, undo, output) resolves against THAT tab's container,
+/// so a History pop-out keeps showing its own repo even after the user switches
+/// to a different tab (and never silently retargets to another host's session).
 class WindowHandle {
   final String id;
   final WindowKind kind;
   final String? repoPath;
+  final String? tabId;
 
-  const WindowHandle({required this.id, required this.kind, this.repoPath});
+  const WindowHandle({
+    required this.id,
+    required this.kind,
+    this.repoPath,
+    this.tabId,
+  });
 
   WindowHandle withRepoPath(String? path) =>
-      WindowHandle(id: id, kind: kind, repoPath: path);
+      WindowHandle(id: id, kind: kind, repoPath: path, tabId: tabId);
 }
 
 /// Main-isolate registry and hub for every native secondary window: mints
@@ -34,38 +42,78 @@ class WindowHandle {
 /// over its own per-window hub channel, and fans session/watcher/settings
 /// events out to the windows they concern.
 ///
-/// State is the list of open windows. Ids are minted HERE (not natively) and
-/// each window's hub handler is installed BEFORE `openWindow` is invoked, so a
-/// child's first `requestState`/event can never race an unregistered handler —
-/// and the bridge is unit-testable with a known id, no native side required.
-/// Native owns only the NSWindow/engine map, keyed by the id we hand it.
+/// It is a **single process-global instance** living in the root
+/// [ProviderScope] container — NOT per tab — because the native
+/// `magicgit/windows` control handler and the `id`/hub registry are last-wins
+/// and must not be duplicated across tab containers. Each open window is pinned
+/// to its spawning tab ([WindowHandle.tabId]); the bridge resolves that tab's
+/// [ProviderContainer] through [sessionContainerFor] (wired by `TabsHost`) and
+/// reads/subscribes session state there. Reached from tab-land (which lives in
+/// separate root containers with no path to this provider) via [current].
 ///
-/// Dedupe lives here too (the registry is here): a [WindowKind.isSingleton]
-/// window fronts the existing one; a repo-bound kind fronts the existing window
-/// for the same `(kind, repoPath)`. The native side stays a dumb executor of
-/// open/close/front by id.
+/// Ids are minted HERE and each window's hub handler is installed BEFORE
+/// `openWindow` is invoked, so a child's first `requestState`/event can never
+/// race an unregistered handler.
 class WindowManagerBridge extends Notifier<List<WindowHandle>> {
   static const _control = MethodChannel(windowControlChannel);
+
+  /// The live bridge while its provider is alive. Tab widgets (AppShell,
+  /// TabsHost) reach it through this instead of `ref` — their tab containers are
+  /// separate roots that don't contain this provider, so watching it there would
+  /// spin up a second, conflicting bridge.
+  static WindowManagerBridge? current;
+
+  /// Resolves the [ProviderContainer] for a spawning tab id — wired by TabsHost
+  /// to `TabsController.containerFor`. Returns null when the tab has since
+  /// closed (its window is on the way out) or before any host is mounted.
+  ProviderContainer? Function(String? tabId) sessionContainerFor = (_) => null;
+
+  /// The id of the currently active tab — wired by TabsHost. A pop-out is always
+  /// spawned from the active tab (only its AppShell is mounted), so this is the
+  /// tab a new window pins to.
+  String? Function() activeTabId = () => null;
 
   /// Per-window hub channels, keyed by window id — one handler installed per
   /// open window, torn down when it closes.
   final Map<String, MethodChannel> _hubs = {};
+
+  /// Per-window subscription to its pinned tab's connection — drives
+  /// connectionChanged pushes, history retargeting, and close-on-disconnect.
+  final Map<String, ProviderSubscription<ConnectionState>> _connSubs = {};
+
+  /// Per-window subscription to its pinned tab's file watcher for the repo it
+  /// shows — forwards ticks so the window refreshes even while its tab is
+  /// backgrounded. Re-pointed when a history window retargets.
+  final Map<String, ProviderSubscription<AsyncValue<RepoWatchEvent>>>
+  _tickSubs = {};
+
   int _nextId = 1;
 
   @override
   List<WindowHandle> build() {
+    current = this;
     _control.setMethodCallHandler(_onControlCall);
     ref.onDispose(() {
+      if (identical(current, this)) current = null;
       _control.setMethodCallHandler(null);
+      for (final s in _connSubs.values) {
+        s.close();
+      }
+      for (final s in _tickSubs.values) {
+        s.close();
+      }
+      _connSubs.clear();
+      _tickSubs.clear();
       for (final hub in _hubs.values) {
         hub.setMethodCallHandler(null);
       }
       _hubs.clear();
     });
-    ref.listen(connectionProvider, _onConnectionChanged);
     // Each isolate caches SharedPreferences independently; a settings edit here
     // (committer identity, timeouts, zoom) must tell every open window to
-    // reload or its GitService keeps the stale snapshot until reopen.
+    // reload or its GitService keeps the stale snapshot until reopen. Settings
+    // are global (bus-synced across tab containers), so this reads the bridge's
+    // own (root) container — no per-tab routing needed.
     ref.listen(appSettingsProvider, (_, _) => _broadcast('settingsChanged'));
     return const [];
   }
@@ -77,25 +125,23 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     return null;
   }
 
-  WindowHandle? _existing(WindowKind kind, String? repoPath) {
-    for (final w in state) {
-      if (w.kind != kind) continue;
-      if (kind.isSingleton || w.repoPath == repoPath) return w;
-    }
-    return null;
-  }
+  /// Opens (or fronts) the History window for the active tab — mirrors that
+  /// tab's session repo. No-op unless the active tab has a repo active.
+  Future<void> openHistory() =>
+      _open(WindowKind.history, null, activeTabId());
 
-  /// Opens (or fronts) the History window — mirrors the active session's repo.
-  /// No-op unless a repo is active; the window is a client of the live session.
-  Future<void> openHistory() => _open(WindowKind.history, null);
-
-  /// Opens (or fronts) a detached full-repo window pinned to [repoPath]. Falls
-  /// back to the active repo when [repoPath] is null.
+  /// Opens (or fronts) a detached full-repo window pinned to [repoPath] on the
+  /// active tab. Falls back to that tab's active repo when [repoPath] is null.
   Future<void> openDetachedRepo([String? repoPath]) =>
-      _open(WindowKind.detachedRepo, repoPath);
+      _open(WindowKind.detachedRepo, repoPath, activeTabId());
 
-  Future<void> _open(WindowKind kind, String? repoPath) async {
-    final connection = ref.read(connectionProvider);
+  Future<void> _open(WindowKind kind, String? repoPath, String? tabId) async {
+    final container = sessionContainerFor(tabId);
+    if (container == null) {
+      _debugLog('open gated: no session container for tab=$tabId');
+      return;
+    }
+    final connection = container.read(connectionProvider);
     if (!connection.isConnected) {
       _debugLog('open gated: phase=${connection.phase.name}');
       return;
@@ -110,7 +156,10 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
       return;
     }
 
-    final existing = _existing(kind, target);
+    // Dedupe against the SAME tab: two tabs on the same repo each get their own
+    // History window (they're different sessions), so key front-existing on the
+    // pinned tab too.
+    final existing = _existingForTab(kind, target, tabId);
     if (existing != null) {
       _debugLog('open: fronting existing ${kind.name} ${existing.id}');
       await _invokeControl('frontWindow', {'windowId': existing.id});
@@ -123,13 +172,19 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     final hub = MethodChannel(windowHubChannel(id));
     hub.setMethodCallHandler((call) => _onHubCall(id, call));
     _hubs[id] = hub;
-    final handle = WindowHandle(id: id, kind: kind, repoPath: target);
+    final handle = WindowHandle(
+      id: id,
+      kind: kind,
+      repoPath: target,
+      tabId: tabId,
+    );
     // Optimistic registry add — the authoritative "still open" signal is the
     // native windowClosed notification, which removes it again.
     state = [...state, handle];
+    _subscribeWindow(id, container, target);
 
     try {
-      _debugLog('open: ${kind.name} id=$id repo=$target');
+      _debugLog('open: ${kind.name} id=$id repo=$target tab=$tabId');
       await _invokeControl('openWindow', {
         'windowId': id,
         'kind': kind.name,
@@ -145,6 +200,41 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     }
   }
 
+  WindowHandle? _existingForTab(WindowKind kind, String? repoPath, String? tabId) {
+    for (final w in state) {
+      if (w.kind != kind || w.tabId != tabId) continue;
+      if (kind.isSingleton || w.repoPath == repoPath) return w;
+    }
+    return null;
+  }
+
+  /// Subscribes a freshly-opened window to its pinned tab's connection + file
+  /// watcher.
+  void _subscribeWindow(
+    String id,
+    ProviderContainer container,
+    String? repoPath,
+  ) {
+    _connSubs[id] = container.listen(
+      connectionProvider,
+      (_, next) => _onWindowConnectionChanged(id, next),
+    );
+    _subscribeTick(id, container, repoPath);
+  }
+
+  void _subscribeTick(
+    String id,
+    ProviderContainer container,
+    String? repoPath,
+  ) {
+    _tickSubs.remove(id)?.close();
+    if (repoPath == null) return;
+    _tickSubs[id] = container.listen(repoWatchProvider(repoPath), (_, next) {
+      final event = next.value;
+      if (event != null) forwardTick(repoPath, event);
+    });
+  }
+
   /// Closes a specific window (used by explicit UI close and disconnect).
   Future<void> close(String id) async {
     try {
@@ -154,9 +244,24 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     }
   }
 
-  /// Removes a window from the registry and tears down its hub handler. Called
-  /// on the native `windowClosed` notification and on a failed open.
+  /// A tab is closing (its container is about to be disposed) — close every
+  /// window pinned to it and drop the now-dangling subscriptions before the
+  /// container goes away. Called by TabsController.close.
+  void onTabClosed(String tabId) {
+    for (final w in List<WindowHandle>.of(state)) {
+      if (w.tabId == tabId) {
+        close(w.id);
+        _forget(w.id);
+      }
+    }
+  }
+
+  /// Removes a window from the registry and tears down its hub handler and
+  /// subscriptions. Called on the native `windowClosed` notification, a failed
+  /// open, and tab close.
   void _forget(String id) {
+    _connSubs.remove(id)?.close();
+    _tickSubs.remove(id)?.close();
     _hubs.remove(id)?.setMethodCallHandler(null);
     if (state.any((w) => w.id == id)) {
       state = [
@@ -178,9 +283,8 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     }
   }
 
-  /// Forwards one watcher tick to every window showing [repoPath] (subscription
-  /// owned by [windowTickForwardersProvider]). Deliberately unsuppressed — each
-  /// window applies its own own-mutation logic.
+  /// Forwards one watcher tick to every window showing [repoPath]. Deliberately
+  /// unsuppressed — each window applies its own own-mutation logic.
   void forwardTick(String repoPath, RepoWatchEvent event) {
     final payload = {
       'repoPath': repoPath,
@@ -194,13 +298,6 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     }
   }
 
-  /// The set of distinct repoPaths currently shown by open windows — the
-  /// watchers [windowTickForwardersProvider] must keep alive.
-  Set<String> get watchedRepoPaths => {
-    for (final w in state)
-      if (w.repoPath != null) w.repoPath!,
-  };
-
   Future<Object?> _onControlCall(MethodCall call) async {
     if (call.method == 'windowClosed') {
       final id = (call.arguments as Map?)?['windowId'] as String?;
@@ -209,24 +306,33 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     return null;
   }
 
-  void _onConnectionChanged(ConnectionState? previous, ConnectionState next) {
-    if (state.isEmpty) return;
+  /// A pinned tab's connection changed: retarget a history window to follow that
+  /// tab's repo, push the new snapshot to the window, and close it if the tab's
+  /// session ended.
+  void _onWindowConnectionChanged(String id, ConnectionState next) {
+    final handle = _handle(id);
+    if (handle == null) return;
     final disconnected = next.phase == ConnectionPhase.disconnected;
-    // Snapshot the ids first — pushing may mutate `state` (history repo retarget).
-    for (final w in List<WindowHandle>.of(state)) {
-      // A History window retargets to follow the active repo; a repo-bound
-      // window keeps its pinned repo across session changes.
-      final handle = w.kind == WindowKind.history && next.isConnected
-          ? _retarget(w, next.repoPath)
-          : w;
-      _hubs[w.id]
-          ?.invokeMethod<void>('connectionChanged', _snapshotFor(handle, next).encode())
-          .catchError((_) {});
-      if (disconnected) {
-        // The window follows the session — close it. The child also asks Swift
-        // to close on seeing a disconnected snapshot; both paths are idempotent.
-        close(w.id);
-      }
+    // A History window retargets to follow its tab's active repo; a repo-bound
+    // window keeps its pinned repo across session changes.
+    final updated = handle.kind == WindowKind.history && next.isConnected
+        ? _retarget(handle, next.repoPath)
+        : handle;
+    // Retargeted → move the watcher subscription to the new repo.
+    if (!identical(updated, handle)) {
+      final container = sessionContainerFor(handle.tabId);
+      if (container != null) _subscribeTick(id, container, updated.repoPath);
+    }
+    _hubs[id]
+        ?.invokeMethod<void>(
+          'connectionChanged',
+          _snapshotFor(updated, next).encode(),
+        )
+        .catchError((_) {});
+    if (disconnected) {
+      // The window follows the session — close it. The child also asks Swift to
+      // close on seeing a disconnected snapshot; both paths are idempotent.
+      close(id);
     }
   }
 
@@ -245,7 +351,7 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
         phase: c.phase.name,
         backend: c.backend.name,
         // The window's OWN repo — a detached window stays pinned regardless of
-        // which repo is active in the main window.
+        // which repo is active in its tab.
         repoPath: handle.repoPath,
         connectionLabel: c.connectionLabel,
         host: c.host,
@@ -259,28 +365,31 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     return '$prefix — $repoName$label';
   }
 
-  /// Serves one call from window [id]'s child isolate. Identical semantics to
-  /// the former single-window bridge, but requestState answers with THIS
-  /// window's pinned repo so a detached window shows its own repo, not the
-  /// active one.
+  /// Serves one call from window [id]'s child isolate against the window's
+  /// PINNED tab container. If that tab has since closed there's no container to
+  /// serve from — reply-expecting methods raise `RELAY_DOWN` (the child treats
+  /// it as "window on its way out"); fire-and-forget ones are dropped.
   Future<Object?> _onHubCall(String id, MethodCall call) async {
+    final handle = _handle(id);
+    final container = handle == null ? null : sessionContainerFor(handle.tabId);
     switch (call.method) {
       case 'execute':
+        if (container == null) throw _relayDown();
         final request = decodeExecuteRequest(
           call.arguments as Map<Object?, Object?>,
         );
         try {
           // Read per call so a backend switch mid-session is honored.
-          final result = await ref.read(activeExecutorProvider).execute(
-                repoPath: request.repoPath,
-                gitArgs: request.gitArgs,
-                extraEnv: request.extraEnv,
-                stdin: request.stdin,
-                timeout: request.timeout,
-                retries: request.retries,
-                lane: request.lane,
-                compress: request.compress,
-              );
+          final result = await container.read(activeExecutorProvider).execute(
+            repoPath: request.repoPath,
+            gitArgs: request.gitArgs,
+            extraEnv: request.extraEnv,
+            stdin: request.stdin,
+            timeout: request.timeout,
+            retries: request.retries,
+            lane: request.lane,
+            compress: request.compress,
+          );
           return encodeExecuteResult(result);
         } catch (e) {
           // Typed executor exceptions keep their identity across the wire;
@@ -289,18 +398,20 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
           return encodeExecuteError(e);
         }
       case 'requestState':
-        final handle = _handle(id);
-        // The window exists and is asking — if the registry raced (native
-        // opened it but our optimistic add was rolled back), synthesize a
-        // handle from the live connection so it still gets a snapshot.
-        final resolved = handle ??
+        if (container == null) throw _relayDown();
+        final resolved =
+            handle ??
             WindowHandle(
               id: id,
               kind: WindowKind.history,
-              repoPath: ref.read(connectionProvider).repoPath,
+              repoPath: container.read(connectionProvider).repoPath,
             );
-        return _snapshotFor(resolved, ref.read(connectionProvider)).encode();
+        return _snapshotFor(
+          resolved,
+          container.read(connectionProvider),
+        ).encode();
       case 'undoRecord':
+        if (container == null) return null;
         final record = UndoRecord.fromJson(
           call.arguments as Map<Object?, Object?>,
         );
@@ -308,25 +419,28 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
         // originated first so the main window's journal-driven UndoToastOverlay
         // stays silent — the originating window already showed its own toast.
         if (record != null) {
-          ref.read(historyOriginUndoProvider.notifier).mark(record);
-          ref.read(undoJournalProvider.notifier).push(record);
+          container.read(historyOriginUndoProvider.notifier).mark(record);
+          container.read(undoJournalProvider.notifier).push(record);
         }
         return null;
       case 'performUndo':
+        if (container == null) throw _relayDown();
         // ⌘Z pressed in a secondary window. The journal (and the executor that
-        // can safely run the undo script) live here; all user-facing UI for the
-        // outcome renders back in that window from the reply, so `force` only
-        // ever arrives after a user confirmed there.
+        // can safely run the undo script) live in the pinned tab; all
+        // user-facing UI for the outcome renders back in that window from the
+        // reply, so `force` only ever arrives after a user confirmed there.
         final args = call.arguments as Map<Object?, Object?>;
         final repoPath = args['repoPath'] as String?;
         if (repoPath == null) return {'status': UndoStatus.nothingToUndo.name};
         try {
-          final attempt = await ref
+          final attempt = await container
               .read(undoControllerProvider)
               .undo(repoPath, force: args['force'] == true);
           final description = attempt.record?.description;
           if (attempt.status == UndoStatus.done) {
-            ref.read(outputLogProvider.notifier).logInfo('Undid: $description');
+            container
+                .read(outputLogProvider.notifier)
+                .logInfo('Undid: $description');
           }
           return {'status': attempt.status.name, 'description': ?description};
         } on GitException catch (e) {
@@ -336,28 +450,34 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
         }
       case 'settingsChanged':
         // A window persisted a settings edit; adopt it here (each isolate
-        // caches its own SharedPreferences). The echo terminates: reloading
-        // re-broadcasts settingsChanged, but a window's send is gated on a
-        // value *change*, which a same-value reload isn't.
+        // caches its own SharedPreferences). Settings are global, so this is the
+        // bridge's own (root) container — the echo terminates because a
+        // same-value reload re-broadcasts nothing new.
         await ref.read(appSettingsProvider.notifier).reloadFromDisk();
         return null;
       case 'mutationPerformed':
+        if (container == null) return null;
         final repoPath =
             (call.arguments as Map<Object?, Object?>)['repoPath'] as String?;
         if (repoPath != null) {
           // Same refresh contract as a local mutation call site: mark so the
           // watcher echo is suppressed, bump the edit generation, and refresh
-          // what a mutation can change.
-          ref.read(ownMutationTrackerProvider).mark(repoPath);
+          // what a mutation can change — in the pinned tab's container.
+          container.read(ownMutationTrackerProvider).mark(repoPath);
           noteWorktreeEdit(repoPath);
           for (final p in repoMutationFamilies(repoPath)) {
-            ref.invalidate(p);
+            container.invalidate(p);
           }
         }
         return null;
     }
     return null;
   }
+
+  PlatformException _relayDown() => PlatformException(
+    code: 'RELAY_DOWN',
+    message: 'the window\'s tab has closed',
+  );
 
   /// Broadcasts a fire-and-forget event (no args) to every open window.
   void _broadcast(String method) {
@@ -378,33 +498,11 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
 
 final windowManagerBridgeProvider =
     NotifierProvider<WindowManagerBridge, List<WindowHandle>>(
-  WindowManagerBridge.new,
-);
+      WindowManagerBridge.new,
+    );
 
 /// Whether the History window is currently open — the toolbar/menu toggle state.
 final historyWindowOpenProvider = Provider<bool>((ref) {
   final windows = ref.watch(windowManagerBridgeProvider);
   return windows.any((w) => w.kind == WindowKind.history);
-});
-
-/// Keeps a watcher alive for every repo shown by an open window and forwards its
-/// ticks — but only for repos actually on screen somewhere, so closed windows
-/// cost nothing. Watched by AppShell alongside the bridge.
-final windowTickForwardersProvider = Provider<void>((ref) {
-  final bridge = ref.watch(windowManagerBridgeProvider.notifier);
-  final repoPaths = ref.watch(
-    windowManagerBridgeProvider.select(
-      (windows) => {
-        for (final w in windows)
-          if (w.repoPath != null) w.repoPath!,
-      },
-    ),
-  );
-  for (final repoPath in repoPaths) {
-    ref.listen(repoWatchProvider(repoPath), (previous, next) {
-      final event = next.value;
-      if (event == null) return;
-      bridge.forwardTick(repoPath, event);
-    });
-  }
 });

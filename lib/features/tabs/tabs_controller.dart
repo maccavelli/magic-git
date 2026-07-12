@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod/misc.dart' show Override;
 
 import '../../core/providers/app_providers.dart';
+import '../../core/providers/window_manager_bridge.dart';
 import '../../core/storage/store_bus.dart';
 
 /// One open repository tab: a stable id and its OWN root [ProviderContainer].
@@ -143,6 +144,9 @@ class TabsController extends ChangeNotifier {
     final tab = _tabs.removeAt(idx);
     final wasActive = _activeId == id;
     tab._connSub?.close();
+    // Close any History/detached windows pinned to this tab before its container
+    // (which they serve from) is disposed.
+    WindowManagerBridge.current?.onTabClosed(id);
     try {
       await tab.container.read(connectionProvider.notifier).disconnect();
     } catch (_) {

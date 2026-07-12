@@ -93,8 +93,12 @@ void main() {
       ],
     );
     addTearDown(c.dispose);
-    // Activate the bridge (installs the control handler, connection listener).
-    c.read(windowManagerBridgeProvider);
+    // Activate the bridge (installs the control handler), then wire it to serve
+    // from this container for a fixed tab id — the role TabsHost plays in the
+    // app. All windows here pin to 'tab-1' → this container.
+    c.read(windowManagerBridgeProvider.notifier)
+      ..sessionContainerFor = ((_) => c)
+      ..activeTabId = (() => 'tab-1');
     return c;
   }
 
