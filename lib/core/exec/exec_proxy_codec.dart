@@ -1,6 +1,6 @@
-/// Wire codec for proxying `CommandExecutor.execute` calls from the History
-/// window's isolate to the main isolate over the `magicgit/history/hub`
-/// method channel.
+/// Wire codec for proxying `CommandExecutor.execute` calls from a secondary
+/// window's isolate to the main isolate over that window's per-window hub
+/// method channel, plus the [WindowDescriptor] a child pulls at boot.
 ///
 /// Pure Dart by design — no channel imports — so every encode/decode pair is
 /// unit-testable without platform machinery. All payloads are
@@ -9,6 +9,54 @@
 library;
 
 import '../ssh/ssh_command_executor.dart';
+
+/// The identity a secondary window's child isolate pulls from native at boot
+/// (over the bootstrap channel): which window it is and what to render. The
+/// per-window hub/lifecycle channel names are DERIVED from [windowId] via
+/// `window_channels.dart` rather than carried here, so this codec stays pure
+/// (no channel-name knowledge) and there is one owner of the naming scheme.
+class WindowDescriptor {
+  /// Dart-minted, stable for this window's whole life. Names its channels.
+  final String windowId;
+
+  /// [WindowKind] name (`history` / `detachedRepo`) — the wire discriminator.
+  final String kind;
+
+  /// The repo this window is pinned to for repo-bound kinds; null for History
+  /// (which follows the active session and learns its repo via `requestState`).
+  final String? repoPath;
+
+  /// Initial native window title (native reveals with this; the child may push
+  /// a refined one via `setWindowTitle`).
+  final String? title;
+
+  /// The active connection's label at open time, for the initial title.
+  final String? connectionLabel;
+
+  const WindowDescriptor({
+    required this.windowId,
+    required this.kind,
+    this.repoPath,
+    this.title,
+    this.connectionLabel,
+  });
+
+  Map<String, Object?> encode() => {
+    'windowId': windowId,
+    'kind': kind,
+    'repoPath': repoPath,
+    'title': title,
+    'connectionLabel': connectionLabel,
+  };
+
+  static WindowDescriptor decode(Map<Object?, Object?> map) => WindowDescriptor(
+    windowId: map['windowId'] as String? ?? '',
+    kind: map['kind'] as String? ?? '',
+    repoPath: map['repoPath'] as String?,
+    title: map['title'] as String?,
+    connectionLabel: map['connectionLabel'] as String?,
+  );
+}
 
 /// One `execute()` call's parameters, typed. Mirrors
 /// [CommandExecutor.execute]'s signature exactly.

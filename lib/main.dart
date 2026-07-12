@@ -5,14 +5,20 @@ import 'package:window_manager/window_manager.dart';
 import 'core/providers/app_providers.dart';
 import 'core/theme/app_theme.dart';
 import 'features/app_shell.dart';
-import 'features/history/window/history_window_main.dart';
+import 'features/window/secondary_window_main.dart';
 
-/// Entrypoint for the native History window's second FlutterEngine (see
-/// `HistoryWindowController.swift`). Lives here — not in the history feature
-/// — because macOS `FlutterEngine.run(withEntrypoint:)` resolves entrypoint
-/// names in the root library only.
+/// Entrypoint for every native secondary window's second FlutterEngine (see
+/// `SecondaryWindowController.swift`). Lives here — not in the window feature —
+/// because macOS `FlutterEngine.run(withEntrypoint:)` resolves entrypoint names
+/// in the root library only. The window learns which kind/repo it is from the
+/// [WindowDescriptor] it pulls at boot, so ONE entrypoint serves all kinds.
 @pragma('vm:entry-point')
-void historyWindowMain() => runHistoryWindow();
+void secondaryWindowMain() => runSecondaryWindow();
+
+/// Deprecated alias kept for one release so a stale native build (still asking
+/// for `historyWindowMain`) can't strand. New builds use `secondaryWindowMain`.
+@pragma('vm:entry-point')
+void historyWindowMain() => runSecondaryWindow();
 
 /// The default first-launch window size (before any bounds are persisted).
 /// Sized to leave a comfortable margin on a 13"/14" laptop (~75% width) rather

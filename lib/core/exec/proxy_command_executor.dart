@@ -1,26 +1,36 @@
 import 'package:flutter/services.dart';
 
 import '../ssh/ssh_command_executor.dart';
+import '../window/window_channels.dart';
 import 'exec_proxy_codec.dart';
 
-/// The History window's [CommandExecutor]: forwards every `execute()` call
-/// over the `magicgit/history/hub` channel to the main isolate, which runs it
-/// on the real executor. This is what lets the second window's entire
-/// provider stack (GitService, log/diff/blame providers, mutations) run
-/// unchanged — and it keeps the correctness properties that two independent
-/// executors would break: all commands still flow through the main isolate's
-/// single [CommandLaneScheduler] (mutations stay globally serialized) and
-/// command telemetry stays unified.
+/// A secondary window's [CommandExecutor]: forwards every `execute()` call over
+/// that window's per-window hub channel to the main isolate, which runs it on
+/// the real executor. This is what lets a second window's entire provider stack
+/// (GitService, log/diff/blame providers, mutations) run unchanged — and it
+/// keeps the correctness properties that two independent executors would break:
+/// all commands still flow through the main isolate's single
+/// [CommandLaneScheduler] (mutations stay globally serialized) and command
+/// telemetry stays unified.
 ///
 /// No id-multiplexing is needed for concurrency: each `invokeMethod` platform
 /// message carries its own reply handle, so any number of in-flight calls
 /// resolve independently and possibly out of order — ordering is enforced
-/// where it belongs, in the main isolate's lane scheduler.
+/// where it belongs, in the main isolate's lane scheduler. The per-window
+/// channel name means two windows' proxies never share a channel, so this
+/// property holds no matter how many windows are open.
 class ProxyCommandExecutor implements CommandExecutor {
   ProxyCommandExecutor({
-    this.channel = const MethodChannel('magicgit/history/hub'),
+    required this.channel,
     this.onMutationCompleted,
   });
+
+  /// Builds a proxy bound to [windowId]'s hub channel — the normal way a child
+  /// constructs one, from the id in its [WindowDescriptor].
+  ProxyCommandExecutor.forWindow(
+    String windowId, {
+    this.onMutationCompleted,
+  }) : channel = MethodChannel(windowHubChannel(windowId));
 
   final MethodChannel channel;
 
@@ -80,7 +90,7 @@ class ProxyCommandExecutor implements CommandExecutor {
   }
 
   /// Never needed: `GitService`'s entire surface is request/response
-  /// (verified — zero `executeStream` call sites), and the History window
+  /// (verified — zero `executeStream` call sites), and a secondary window
   /// receives watcher ticks as pushed events instead of running a watcher.
   @override
   Future<SSHStreamHandle> executeStream({
@@ -89,12 +99,12 @@ class ProxyCommandExecutor implements CommandExecutor {
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
   }) => throw UnsupportedError(
-    'executeStream is not proxied to the History window',
+    'executeStream is not proxied to a secondary window',
   );
 
   @override
   Future<void> uploadBytes(String remotePath, Uint8List bytes) =>
-      throw UnsupportedError('uploadBytes is not proxied to the History window');
+      throw UnsupportedError('uploadBytes is not proxied to a secondary window');
 
   /// Environment ownership stays with the main isolate's real executor —
   /// these are deliberate no-ops, not errors, because the connection

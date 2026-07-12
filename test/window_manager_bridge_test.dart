@@ -1,7 +1,8 @@
-// The main-isolate end of the native History window: gated open, execute
-// serving (success + typed errors), undo-record absorption into the real
-// journal, mutation-driven refresh marks, forwarded undo execution, and
-// close-on-disconnect.
+// The main-isolate registry for native secondary windows: gated open over the
+// `magicgit/windows` control channel, dedupe/front, per-window hub serving
+// (execute success + typed errors), undo-record absorption into the real
+// journal, mutation-driven refresh marks, forwarded undo execution, per-window
+// event fan-out (tick/invalidate/connectionChanged), and close-on-disconnect.
 
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,16 +10,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
-import 'package:remote_magic_git/core/providers/history_window_bridge.dart';
+import 'package:remote_magic_git/core/providers/window_manager_bridge.dart';
 import 'package:remote_magic_git/core/settings/app_settings.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/undo/undo_journal.dart';
 import 'package:remote_magic_git/core/undo/undo_types.dart';
+import 'package:remote_magic_git/core/window/window_channels.dart';
+import 'package:remote_magic_git/core/window/window_kind.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const _control = MethodChannel('magicgit/history');
-const _hub = MethodChannel('magicgit/history/hub');
+// The first window minted in a fresh container always gets id '1'.
+const _id = '1';
+const _control = MethodChannel(windowControlChannel);
+final _hub = MethodChannel(windowHubChannel(_id));
 const _codec = StandardMethodCodec();
 
 class _StubConnection extends ConnectionController {
@@ -35,10 +40,6 @@ class _FakeExecutor extends SSHCommandExecutor {
   _FakeExecutor() : super(SSHClientManager());
   final List<List<String>> calls = [];
   Object? throwNext;
-
-  /// When set, [throwNext] only fires for a command whose argv contains this
-  /// marker — lets a test target the undo script while unrelated background
-  /// fetches (e.g. the pending-op probe) keep succeeding.
   String? throwOnlyIfContains;
 
   @override
@@ -92,27 +93,32 @@ void main() {
       ],
     );
     addTearDown(c.dispose);
-    // Activate the bridge (installs channel handlers, connection listener).
-    c.read(historyWindowBridgeProvider);
+    // Activate the bridge (installs the control handler, connection listener).
+    c.read(windowManagerBridgeProvider);
     return c;
   }
 
-  /// Simulates the relay delivering a call from the History isolate and
+  /// Opens the History window (mints id '1'); its per-window hub handler is now
+  /// live, so [deliverHubCall] can reach it.
+  Future<void> openHistory() =>
+      container.read(windowManagerBridgeProvider.notifier).openHistory();
+
+  /// Simulates the relay delivering a call from the window's isolate and
   /// returns the decoded reply.
   Future<Object?> deliverHubCall(String method, Object? arguments) async {
     Object? decoded;
     await messenger.handlePlatformMessage(
-      'magicgit/history/hub',
+      windowHubChannel(_id),
       _codec.encodeMethodCall(MethodCall(method, arguments)),
       (reply) => decoded = reply == null ? null : _codec.decodeEnvelope(reply),
     );
     return decoded;
   }
 
-  Future<void> deliverControlCall(String method) async {
+  Future<void> deliverControlCall(String method, Object? arguments) async {
     await messenger.handlePlatformMessage(
-      'magicgit/history',
-      _codec.encodeMethodCall(MethodCall(method)),
+      windowControlChannel,
+      _codec.encodeMethodCall(MethodCall(method, arguments)),
       (_) {},
     );
   }
@@ -124,6 +130,7 @@ void main() {
       controlCalls.add(call);
       return null;
     });
+    // Captures the main→window pushes the bridge sends over the hub.
     messenger.setMockMethodCallHandler(_hub, (call) async {
       hubCalls.add(call);
       return null;
@@ -135,28 +142,47 @@ void main() {
     messenger.setMockMethodCallHandler(_hub, null);
   });
 
-  test('open() asks Swift for the window only while a repo is active', () async {
+  test('openHistory asks Swift for a window only while a repo is active',
+      () async {
     container = makeContainer(_connected);
-    await container.read(historyWindowBridgeProvider.notifier).open();
-    // debugLog is diagnostic chatter for the unified log — not behavior.
+    await openHistory();
+    final open = controlCalls.singleWhere((c) => c.method == 'openWindow');
+    expect((open.arguments as Map)['kind'], WindowKind.history.name);
+    expect((open.arguments as Map)['windowId'], _id);
+    expect((open.arguments as Map)['repoPath'], '/srv/repo');
     expect(
-      controlCalls.map((c) => c.method).where((m) => m != 'debugLog'),
-      ['openHistoryWindow'],
+      container.read(windowManagerBridgeProvider).map((w) => w.kind),
+      [WindowKind.history],
     );
-    expect(container.read(historyWindowBridgeProvider), isTrue);
 
     controlCalls.clear();
     stub.set(const ConnectionState()); // disconnected
-    await container.read(historyWindowBridgeProvider.notifier).open();
+    await container.read(windowManagerBridgeProvider.notifier).openHistory();
+    expect(controlCalls.map((c) => c.method), isNot(contains('openWindow')));
+  });
+
+  test('opening History again fronts the existing window (no duplicate)',
+      () async {
+    container = makeContainer(_connected);
+    await openHistory();
+    controlCalls.clear();
+    await openHistory();
+    // debugLog is diagnostic chatter for the unified log — not behavior.
     expect(
-      controlCalls.map((c) => c.method),
-      isNot(contains('openHistoryWindow')),
+      controlCalls.map((c) => c.method).where((m) => m != 'debugLog'),
+      ['frontWindow'],
     );
+    expect(
+      controlCalls.singleWhere((c) => c.method == 'frontWindow').arguments,
+      {'windowId': _id},
+    );
+    expect(container.read(windowManagerBridgeProvider), hasLength(1));
   });
 
   test('serves execute calls: success and each typed error as envelopes',
       () async {
     container = makeContainer(_connected);
+    await openHistory();
     final request = encodeExecuteRequest(
       const ExecuteRequest(
         repoPath: '/srv/repo',
@@ -169,10 +195,8 @@ void main() {
     );
 
     final ok = await deliverHubCall('execute', request);
-    final result = decodeExecuteResponse(
-      (ok as Map).cast<Object?, Object?>(),
-    );
-    expect(result.stdout, 'served');
+    expect(decodeExecuteResponse((ok as Map).cast<Object?, Object?>()).stdout,
+        'served');
     expect(executor.calls.single, ['git', 'log']);
 
     executor.throwNext = const SSHCommandTimeout('git log');
@@ -190,75 +214,46 @@ void main() {
     );
   });
 
-  test('requestState returns the live snapshot and marks the window open',
-      () async {
+  test('requestState returns the window\'s pinned snapshot', () async {
     container = makeContainer(_connected);
-    expect(container.read(historyWindowBridgeProvider), isFalse);
-
+    await openHistory();
     final reply = await deliverHubCall('requestState', null);
-    final payload = ConnectionEventPayload.decode(
-      (reply as Map).cast<Object?, Object?>(),
-    );
+    final payload =
+        ConnectionEventPayload.decode((reply as Map).cast<Object?, Object?>());
     expect(payload.phase, 'connected');
     expect(payload.repoPath, '/srv/repo');
     expect(payload.connectionLabel, 'Prod');
-    expect(container.read(historyWindowBridgeProvider), isTrue);
   });
 
   test('forwarded undo records land in the real journal', () async {
     container = makeContainer(_connected);
-    final record = UndoRecord(
-      repoPath: '/srv/repo',
-      kind: UndoOpKind.commit,
-      description: 'Commit',
-      preHead: 'a' * 40,
-      preRef: 'main',
-      postHead: 'b' * 40,
-      postRef: 'main',
-    );
+    await openHistory();
+    final record = _record();
     await deliverHubCall('undoRecord', record.toJson());
-    final journaled = container
-        .read(undoJournalProvider.notifier)
-        .peek('/srv/repo');
+    final journaled =
+        container.read(undoJournalProvider.notifier).peek('/srv/repo');
     expect(journaled, isNotNull);
     expect(journaled!.description, 'Commit');
-    expect(journaled.postHead, 'b' * 40);
 
     // Version skew: an unknown kind is dropped, never guessed at.
     final skewed = record.toJson()..['kind'] = 'teleport';
     await deliverHubCall('undoRecord', skewed);
-    expect(
-      container.read(undoJournalProvider)['/srv/repo'],
-      hasLength(1),
-    );
+    expect(container.read(undoJournalProvider)['/srv/repo'], hasLength(1));
   });
 
-  test('a forwarded undo record is flagged History-originated so the main '
+  test('a forwarded undo record is flagged window-originated so the main '
       'window skips its redundant toast', () async {
     container = makeContainer(_connected);
-    final record = UndoRecord(
-      repoPath: '/srv/repo',
-      kind: UndoOpKind.commit,
-      description: 'Commit',
-      preHead: 'a' * 40,
-      preRef: 'main',
-      postHead: 'b' * 40,
-      postRef: 'main',
-    );
-    await deliverHubCall('undoRecord', record.toJson());
-
-    // The exact instance now in the journal is the one the overlay reads back;
-    // take() consuming it is what suppresses the main window's second toast.
-    final journaled = container
-        .read(undoJournalProvider.notifier)
-        .peek('/srv/repo');
+    await openHistory();
+    await deliverHubCall('undoRecord', _record().toJson());
+    final journaled =
+        container.read(undoJournalProvider.notifier).peek('/srv/repo');
     expect(journaled, isNotNull);
     expect(
       container.read(historyOriginUndoProvider.notifier).take(journaled!),
       isTrue,
-      reason: 'the record was marked History-originated',
+      reason: 'the record was marked window-originated',
     );
-    // Consumed exactly once — a locally-originated push would toast normally.
     expect(container.read(historyOriginUndoProvider), isEmpty);
     expect(
       container.read(historyOriginUndoProvider.notifier).take(journaled),
@@ -268,6 +263,7 @@ void main() {
 
   test('mutationPerformed marks the own-mutation tracker', () async {
     container = makeContainer(_connected);
+    await openHistory();
     await deliverHubCall('mutationPerformed', {'repoPath': '/srv/repo'});
     expect(
       container
@@ -280,8 +276,8 @@ void main() {
   test('performUndo runs the journal-top undo and reports the outcome',
       () async {
     container = makeContainer(_connected);
+    await openHistory();
 
-    // Nothing journaled yet — the reply says so instead of guessing.
     expect(
       await deliverHubCall('performUndo', {
         'repoPath': '/srv/repo',
@@ -290,17 +286,7 @@ void main() {
       {'status': 'nothingToUndo'},
     );
 
-    final record = UndoRecord(
-      repoPath: '/srv/repo',
-      kind: UndoOpKind.commit,
-      description: 'Commit',
-      preHead: 'a' * 40,
-      preRef: 'main',
-      postHead: 'b' * 40,
-      postRef: 'main',
-    );
-    await deliverHubCall('undoRecord', record.toJson());
-
+    await deliverHubCall('undoRecord', _record().toJson());
     final reply = await deliverHubCall('performUndo', {
       'repoPath': '/srv/repo',
       'force': false,
@@ -318,19 +304,9 @@ void main() {
   test('performUndo reports a non-git failure as data, never a throw',
       () async {
     container = makeContainer(_connected);
-    final record = UndoRecord(
-      repoPath: '/srv/repo',
-      kind: UndoOpKind.commit,
-      description: 'Commit',
-      preHead: 'a' * 40,
-      preRef: 'main',
-      postHead: 'b' * 40,
-      postRef: 'main',
-    );
-    await deliverHubCall('undoRecord', record.toJson());
+    await openHistory();
+    await deliverHubCall('undoRecord', _record().toJson());
 
-    // Target the throw at the undo script itself (its argv references the
-    // record's preHead) — the pending-op probe's fetch must keep succeeding.
     executor.throwOnlyIfContains = 'a' * 40;
     executor.throwNext = StateError('executor exploded');
     final reply = await deliverHubCall('performUndo', {
@@ -341,97 +317,99 @@ void main() {
     expect(reply['message'], contains('executor exploded'));
   });
 
-  test('forwardTick and invalidateAll reach the hub only while open',
+  test('forwardTick and invalidateAllFor reach the hub only for an open window',
       () async {
     container = makeContainer(_connected);
-    final notifier = container.read(historyWindowBridgeProvider.notifier);
+    final notifier = container.read(windowManagerBridgeProvider.notifier);
     final event = RepoWatchEvent(
       at: DateTime.fromMillisecondsSinceEpoch(1234567),
       mode: WatchMode.eventDriven,
     );
 
-    // Closed: both are no-ops.
+    // No window open: both are no-ops.
     notifier.forwardTick('/srv/repo', event);
-    notifier.invalidateAllInHistory('/srv/repo');
+    notifier.invalidateAllFor('/srv/repo');
     expect(hubCalls, isEmpty);
 
-    await deliverHubCall('requestState', null); // window is open
+    await openHistory();
     notifier.forwardTick('/srv/repo', event);
-    notifier.invalidateAllInHistory('/srv/repo');
+    notifier.invalidateAllFor('/srv/repo');
 
     final tick = hubCalls.singleWhere((c) => c.method == 'repoTick');
     expect((tick.arguments as Map)['repoPath'], '/srv/repo');
     expect((tick.arguments as Map)['mode'], 'eventDriven');
     expect((tick.arguments as Map)['atMs'], 1234567);
-    expect(
-      hubCalls.map((c) => c.method),
-      contains('invalidateAll'),
-    );
+    expect(hubCalls.map((c) => c.method), contains('invalidateAll'));
   });
 
   test('while open, connection changes are pushed; disconnect also closes',
       () async {
     container = makeContainer(_connected);
-    await deliverHubCall('requestState', null); // window is open
+    await openHistory();
 
     stub.set(_connected.copyWith(repoPath: '/srv/other'));
     await container.pump();
-    final change = hubCalls.singleWhere(
-      (c) => c.method == 'connectionChanged',
-    );
+    final change =
+        hubCalls.singleWhere((c) => c.method == 'connectionChanged');
     expect(
       ConnectionEventPayload.decode(
         (change.arguments as Map).cast<Object?, Object?>(),
       ).repoPath,
       '/srv/other',
+      reason: 'a History window retargets to follow the active repo',
     );
 
     hubCalls.clear();
+    controlCalls.clear();
     stub.set(const ConnectionState()); // disconnected
     await container.pump();
     expect(hubCalls.map((c) => c.method), contains('connectionChanged'));
     expect(
       controlCalls.map((c) => c.method),
-      contains('closeHistoryWindow'),
+      contains('closeWindow'),
       reason: 'the window follows the session',
     );
   });
 
-  test('settingsChanged from the History isolate reloads settings from disk',
-      () async {
+  test('settingsChanged from a window reloads settings from disk', () async {
     container = makeContainer(_connected);
+    await openHistory();
     expect(container.read(appSettingsProvider).historyZoom, 1.0);
 
-    // The History isolate's zoom gestures persisted a new factor; its hub
-    // event must make this isolate re-read its SharedPreferences cache.
     SharedPreferences.setMockInitialValues({'historyZoom': 1.4});
     await deliverHubCall('settingsChanged', null);
     expect(container.read(appSettingsProvider).historyZoom, 1.4);
   });
 
   test('reloadFromDisk still applies disk state after a local edit in this '
-      'isolate (a once-edited isolate is not frozen to its own value)',
-      () async {
+      'isolate', () async {
     SharedPreferences.setMockInitialValues({'historyZoom': 1.0});
     container = makeContainer(_connected);
-    // A local zoom edit here (as the History window's own gesture would make),
-    // fully settled — the pending-write guard is clear afterwards.
+    await openHistory();
     await container.read(appSettingsProvider.notifier).setHistoryZoom(1.5);
     expect(container.read(appSettingsProvider).historyZoom, 1.5);
 
-    // Another isolate then persisted a different value; the reload must adopt
-    // it rather than clinging to the sticky "I have edited" flag forever.
     SharedPreferences.setMockInitialValues({'historyZoom': 0.8});
     await deliverHubCall('settingsChanged', null);
     expect(container.read(appSettingsProvider).historyZoom, 0.8);
   });
 
-  test('historyWindowClosed flips the open flag off', () async {
+  test('windowClosed forgets the window', () async {
     container = makeContainer(_connected);
-    await deliverHubCall('requestState', null);
-    expect(container.read(historyWindowBridgeProvider), isTrue);
+    await openHistory();
+    expect(container.read(windowManagerBridgeProvider), hasLength(1));
 
-    await deliverControlCall('historyWindowClosed');
-    expect(container.read(historyWindowBridgeProvider), isFalse);
+    await deliverControlCall('windowClosed', {'windowId': _id});
+    expect(container.read(windowManagerBridgeProvider), isEmpty);
   });
 }
+
+UndoRecord _record() => UndoRecord(
+  repoPath: '/srv/repo',
+  kind: UndoOpKind.commit,
+  description: 'Commit',
+  preHead: 'a' * 40,
+  preRef: 'main',
+  postHead: 'b' * 40,
+  postRef: 'main',
+);

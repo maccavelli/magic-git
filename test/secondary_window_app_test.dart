@@ -1,7 +1,9 @@
-// The native History window's Dart shell: boot handshake (ready +
-// requestState), session-driven rendering, repo-switch/disconnect handling,
-// and the locally-opened Recovery sheet + forwarded ⌘Z undo. The executor seam is the same one
-// production uses, so a fake executor stands in for the whole proxy.
+// A native secondary window's Dart shell: boot handshake (ready +
+// requestState), session-driven rendering, repo-switch/disconnect handling, and
+// the locally-opened Recovery sheet + forwarded ⌘Z undo. The executor seam is
+// the same one production uses, so a fake executor stands in for the whole
+// proxy. Native per-window ops (ready/setWindowTitle/closeSelf) travel over the
+// per-engine bootstrap channel; relayed traffic over the per-window hub.
 
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/services.dart';
@@ -13,16 +15,21 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/window/window_channels.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
-import 'package:remote_magic_git/features/history/window/history_window_main.dart';
+import 'package:remote_magic_git/features/window/secondary_window_main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-const _hub = MethodChannel('magicgit/history/hub');
+const _windowId = '7';
+final _hub = MethodChannel(windowHubChannel(_windowId));
+const _bootstrap = MethodChannel(windowBootstrapChannel);
 const _codec = StandardMethodCodec();
 
-/// Every command succeeds with empty output — enough for HistoryView to
-/// render its "No commits" empty state, which proves the whole
-/// provider-into-widget pipeline without fabricating git wire formats.
+const _descriptor = WindowDescriptor(windowId: _windowId, kind: 'history');
+
+/// Every command succeeds with empty output — enough for HistoryView to render
+/// its "No commits" empty state, which proves the whole provider-into-widget
+/// pipeline without fabricating git wire formats.
 class _FakeExecutor extends SSHCommandExecutor {
   final List<List<String>> calls = [];
   _FakeExecutor() : super(SSHClientManager());
@@ -95,13 +102,19 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
-  late List<MethodCall> outgoing;
+  // Native per-window ops the shell fires over the bootstrap channel.
+  late List<MethodCall> native;
+  // Relayed calls the shell makes over the hub.
+  late List<MethodCall> hubOut;
 
-  /// Captures everything the shell sends over the hub; answers requestState
-  /// with [initialState].
-  void mockHub(ConnectionEventPayload? initialState) {
+  /// Answers the hub's requestState with [initialState]; captures the rest.
+  void mockChannels(ConnectionEventPayload? initialState) {
+    messenger.setMockMethodCallHandler(_bootstrap, (call) async {
+      native.add(call);
+      return null;
+    });
     messenger.setMockMethodCallHandler(_hub, (call) async {
-      outgoing.add(call);
+      hubOut.add(call);
       if (call.method == 'requestState') return initialState?.encode();
       return null;
     });
@@ -110,7 +123,7 @@ void main() {
   /// Simulates a platform→Dart hub call (a pushed event from the relay).
   Future<void> pushHubEvent(String method, Object? arguments) async {
     await messenger.handlePlatformMessage(
-      'magicgit/history/hub',
+      windowHubChannel(_windowId),
       _codec.encodeMethodCall(MethodCall(method, arguments)),
       (_) {},
     );
@@ -129,32 +142,34 @@ void main() {
           if (gitService != null)
             gitServiceProvider.overrideWithValue(gitService),
         ],
-        child: const HistoryWindowApp(),
+        child: SecondaryWindowApp(descriptor: _descriptor, hub: _hub),
       ),
     );
     await tester.pumpAndSettle();
   }
 
   setUp(() {
-    outgoing = [];
+    native = [];
+    hubOut = [];
   });
 
   tearDown(() {
+    messenger.setMockMethodCallHandler(_bootstrap, null);
     messenger.setMockMethodCallHandler(_hub, null);
   });
 
   testWidgets('boots via ready + requestState and renders the history view', (
     tester,
   ) async {
-    mockHub(_connected('/srv/repo'));
+    mockChannels(_connected('/srv/repo'));
     final executor = _FakeExecutor();
     await pump(tester, executor);
 
-    final methods = outgoing.map((c) => c.method).toList();
-    expect(methods, contains('ready'), reason: 'reveals the native window');
-    expect(methods, contains('requestState'));
+    expect(native.map((c) => c.method), contains('ready'),
+        reason: 'reveals the native window');
+    expect(hubOut.map((c) => c.method), contains('requestState'));
     expect(
-      outgoing.singleWhere((c) => c.method == 'setWindowTitle').arguments,
+      native.singleWhere((c) => c.method == 'setWindowTitle').arguments,
       'History — repo (Prod)',
     );
     expect(find.byType(HistoryView), findsOneWidget);
@@ -171,7 +186,7 @@ void main() {
 
   testWidgets('a lost connection shows a banner over the (frozen) history',
       (tester) async {
-    mockHub(_connected('/srv/repo'));
+    mockChannels(_connected('/srv/repo'));
     await pump(tester, _FakeExecutor());
 
     await pushHubEvent(
@@ -187,13 +202,13 @@ void main() {
     expect(find.byType(HistoryView), findsOneWidget,
         reason: 'frozen-but-readable beats a blank window');
     expect(find.textContaining('Connection lost'), findsOneWidget);
-    expect(outgoing.map((c) => c.method), isNot(contains('closeSelf')));
+    expect(native.map((c) => c.method), isNot(contains('closeSelf')));
   });
 
   testWidgets('shows the waiting placeholder until a session arrives', (
     tester,
   ) async {
-    mockHub(null); // requestState answered with nothing
+    mockChannels(null); // requestState answered with nothing
     await pump(tester, _FakeExecutor());
     expect(find.byType(HistoryView), findsNothing);
     expect(find.text('Waiting for session…'), findsOneWidget);
@@ -206,7 +221,7 @@ void main() {
   testWidgets('a repo switch re-targets the view and retitles the window', (
     tester,
   ) async {
-    mockHub(_connected('/srv/repo'));
+    mockChannels(_connected('/srv/repo'));
     final executor = _FakeExecutor();
     await pump(tester, executor);
     final callsBefore = executor.calls.length;
@@ -215,7 +230,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      outgoing.last.arguments,
+      native.last.arguments,
       'History — other (Prod)',
       reason: 'title follows the active repo',
     );
@@ -227,7 +242,7 @@ void main() {
   testWidgets('disconnect asks the native side to close the window', (
     tester,
   ) async {
-    mockHub(_connected('/srv/repo'));
+    mockChannels(_connected('/srv/repo'));
     await pump(tester, _FakeExecutor());
 
     await pushHubEvent(
@@ -238,13 +253,13 @@ void main() {
       ).encode(),
     );
     await tester.pumpAndSettle();
-    expect(outgoing.map((c) => c.method), contains('closeSelf'));
+    expect(native.map((c) => c.method), contains('closeSelf'));
   });
 
   testWidgets('the commit actions menu opens inside the window shell', (
     tester,
   ) async {
-    mockHub(_connected('/srv/repo'));
+    mockChannels(_connected('/srv/repo'));
     await pump(tester, _FakeExecutor(), gitService: _FakeGit());
 
     await tester.tap(find.text('head commit'));
@@ -263,11 +278,11 @@ void main() {
   testWidgets('a repoTick that echoes our own mutation is suppressed', (
     tester,
   ) async {
-    mockHub(_connected('/srv/repo'));
+    mockChannels(_connected('/srv/repo'));
     final executor = _FakeExecutor();
     await pump(tester, executor);
     final container = ProviderScope.containerOf(
-      tester.element(find.byType(HistoryWindowShell)),
+      tester.element(find.byType(SecondaryWindowShell)),
     );
 
     container.read(ownMutationTrackerProvider).mark('/srv/repo');
@@ -295,7 +310,7 @@ void main() {
   testWidgets('the Recovery button opens the sheet locally in this window', (
     tester,
   ) async {
-    mockHub(_connected('/srv/repo'));
+    mockChannels(_connected('/srv/repo'));
     await pump(tester, _FakeExecutor());
 
     await tester.tap(
@@ -309,15 +324,15 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Recovery'), findsWidgets, reason: 'local sheet opened');
-    expect(outgoing.map((c) => c.method), isNot(contains('openRecovery')));
+    expect(hubOut.map((c) => c.method), isNot(contains('openRecovery')));
   });
 
   testWidgets('⌘Z asks the main isolate to undo and toasts the outcome', (
     tester,
   ) async {
-    mockHub(_connected('/srv/repo'));
+    mockChannels(_connected('/srv/repo'));
     messenger.setMockMethodCallHandler(_hub, (call) async {
-      outgoing.add(call);
+      hubOut.add(call);
       if (call.method == 'requestState') return _connected('/srv/repo').encode();
       if (call.method == 'performUndo') {
         return {'status': 'done', 'description': 'Cherry-pick abc1234'};
@@ -331,11 +346,8 @@ void main() {
     await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
     await tester.pumpAndSettle();
 
-    final undoCall = outgoing.singleWhere((c) => c.method == 'performUndo');
-    expect(
-      (undoCall.arguments as Map)['repoPath'],
-      '/srv/repo',
-    );
+    final undoCall = hubOut.singleWhere((c) => c.method == 'performUndo');
+    expect((undoCall.arguments as Map)['repoPath'], '/srv/repo');
     expect(find.text('Undid: Cherry-pick abc1234'), findsOneWidget);
   });
 }

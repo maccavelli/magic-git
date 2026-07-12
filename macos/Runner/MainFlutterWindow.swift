@@ -4,8 +4,10 @@ import FlutterMacOS
 class MainFlutterWindow: NSWindow {
   private var menuChannel: FlutterMethodChannel?
   private var bookmarkChannel: FlutterMethodChannel?
-  private var historyChannel: FlutterMethodChannel?
-  private var historyController: HistoryWindowController?
+  private var windowsChannel: FlutterMethodChannel?
+  /// Open secondary windows, keyed by their Dart-minted window id. The owner of
+  /// this map is the single source of truth for which native windows exist.
+  private var secondaryWindows: [String: SecondaryWindowController] = [:]
   /// The main engine's view controller, captured at awakeFromNib. Never
   /// re-derive it from `contentViewController`: macos_window_utils replaces
   /// that with its own wrapper when Dart calls WindowManipulator.initialize()
@@ -121,23 +123,29 @@ class MainFlutterWindow: NSWindow {
       self?.handleBookmarkCall(call, result: result)
     }
 
-    // Native History window control (open/close from Dart; closed
-    // notification back). The window itself lives in HistoryWindowController.
-    let history = FlutterMethodChannel(
-      name: "magicgit/history",
+    // Native secondary-window control (open/close/front from Dart; a closed
+    // notification back carrying the window's id). The windows themselves live
+    // in SecondaryWindowController instances keyed by id.
+    let windows = FlutterMethodChannel(
+      name: "magicgit/windows",
       binaryMessenger: flutterViewController.engine.binaryMessenger)
-    self.historyChannel = history
-    history.setMethodCallHandler { [weak self] call, result in
+    self.windowsChannel = windows
+    windows.setMethodCallHandler { [weak self] call, result in
+      let args = call.arguments as? [String: Any]
       switch call.method {
-      case "openHistoryWindow":
-        hwDebugLog("control openHistoryWindow received")
-        self?.openHistoryWindow()
+      case "openWindow":
+        self?.openWindow(args ?? [:])
         result(nil)
-      case "closeHistoryWindow":
-        self?.historyController?.close()
+      case "closeWindow":
+        if let id = args?["windowId"] as? String {
+          self?.secondaryWindows[id]?.close()
+        }
         result(nil)
-      case "isHistoryWindowOpen":
-        result(self?.historyController != nil)
+      case "frontWindow":
+        if let id = args?["windowId"] as? String {
+          self?.secondaryWindows[id]?.front()
+        }
+        result(nil)
       case "debugLog":
         // Dart-side diagnostics: release-build prints are invisible when the
         // app is launched from Finder, so the bridge ships them here.
@@ -148,15 +156,19 @@ class MainFlutterWindow: NSWindow {
       }
     }
 
-    // Backstop: if this (main) window closes while the History window is
-    // still up, close it too — the Dart disconnect path normally does this,
-    // but a lone History window must never outlive the session's window.
-    // (applicationShouldTerminateAfterLastWindowClosed relies on this: the
-    // last window to close is always this one.)
+    // Backstop: if this (main) window closes while any secondary window is
+    // still up, close them all — the Dart disconnect path normally does this,
+    // but a secondary window must never outlive the session's window.
+    // (applicationShouldTerminateAfterLastWindowClosed relies on this: the last
+    // window to close is always this one.) Snapshot the values first — each
+    // close() fires onClosed, which mutates the dictionary.
     willCloseObserver = NotificationCenter.default.addObserver(
       forName: NSWindow.willCloseNotification, object: self, queue: .main
     ) { [weak self] _ in
-      self?.historyController?.close()
+      guard let self else { return }
+      for controller in Array(self.secondaryWindows.values) {
+        controller.close()
+      }
     }
 
     // Defer so the app's main menu (loaded from MainMenu.xib) is in place.
@@ -378,9 +390,18 @@ class MainFlutterWindow: NSWindow {
     menuChannel?.invokeMethod("openHistoryWindow", arguments: nil)
   }
 
-  private func openHistoryWindow() {
-    if let existing = historyController {
-      hwDebugLog("window already open, fronting")
+  private func openWindow(_ args: [String: Any]) {
+    guard let id = args["windowId"] as? String,
+      let kindName = args["kind"] as? String,
+      let kind = WindowKind(rawValue: kindName)
+    else {
+      hwDebugLog("openWindow: bad args")
+      return
+    }
+    // Dedupe is enforced Dart-side (it owns the registry), but guard here too so
+    // a duplicate id can never spawn a second engine.
+    if let existing = secondaryWindows[id] {
+      hwDebugLog("window \(id) already open, fronting")
       existing.front()
       return
     }
@@ -389,13 +410,19 @@ class MainFlutterWindow: NSWindow {
       hwDebugLog("no main messenger — cannot open")
       return
     }
-    let controller = HistoryWindowController(
+    let controller = SecondaryWindowController(
+      windowId: id,
+      kind: kind,
+      repoPath: args["repoPath"] as? String,
+      title: args["title"] as? String,
+      connectionLabel: args["connectionLabel"] as? String,
       mainMessenger: messenger,
-      onClosed: { [weak self] in
-        self?.historyController = nil
-        self?.historyChannel?.invokeMethod("historyWindowClosed", arguments: nil)
+      onClosed: { [weak self] closedId in
+        self?.secondaryWindows.removeValue(forKey: closedId)
+        self?.windowsChannel?.invokeMethod(
+          "windowClosed", arguments: ["windowId": closedId])
       })
-    historyController = controller
+    secondaryWindows[id] = controller
     controller.open()
   }
 
@@ -406,11 +433,14 @@ class MainFlutterWindow: NSWindow {
   }
 
   /// Quit-path teardown, called from AppDelegate before the main engine's
-  /// prepareToTerminate round trip. Nothing to flush: the window's bounds are
-  /// frame-autosaved continuously and the history engine holds no session
-  /// state of its own.
-  func teardownHistoryWindow() {
-    historyController?.teardown()
-    historyController = nil
+  /// prepareToTerminate round trip. Nothing to flush: window bounds are
+  /// frame-autosaved continuously and the secondary engines hold no session
+  /// state of their own. Snapshot the values first — teardown() is synchronous
+  /// but defensive against any re-entrant mutation.
+  func teardownAllSecondaryWindows() {
+    for controller in Array(secondaryWindows.values) {
+      controller.teardown()
+    }
+    secondaryWindows.removeAll()
   }
 }

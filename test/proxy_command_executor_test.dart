@@ -9,8 +9,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
 import 'package:remote_magic_git/core/exec/proxy_command_executor.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/window/window_channels.dart';
 
-const _channel = MethodChannel('magicgit/history/hub');
+// A concrete per-window hub — the proxy derives this exact name from the id.
+const _windowId = '7';
+final _channel = MethodChannel(windowHubChannel(_windowId));
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -32,7 +35,7 @@ void main() {
       );
     });
 
-    final executor = ProxyCommandExecutor();
+    final executor = ProxyCommandExecutor.forWindow(_windowId);
     final result = await executor.execute(
       repoPath: '/srv/repo',
       gitArgs: ['git', 'log'],
@@ -60,7 +63,7 @@ void main() {
       };
     });
 
-    final executor = ProxyCommandExecutor();
+    final executor = ProxyCommandExecutor.forWindow(_windowId);
     Future<void> run() =>
         executor.execute(repoPath: '/r', gitArgs: ['git', 'log']);
 
@@ -74,7 +77,7 @@ void main() {
   test('a dead bridge surfaces as a readable ProxyExecuteException', () async {
     // No handler installed at all → MissingPluginException; and an explicit
     // PlatformException path too.
-    final executor = ProxyCommandExecutor();
+    final executor = ProxyCommandExecutor.forWindow(_windowId);
     messenger.setMockMethodCallHandler(_channel, (call) async {
       throw PlatformException(code: 'RELAY_DOWN', message: 'window closing');
     });
@@ -104,7 +107,7 @@ void main() {
       );
     });
 
-    final executor = ProxyCommandExecutor();
+    final executor = ProxyCommandExecutor.forWindow(_windowId);
     final resolved = <String>[];
     final first = executor
         .execute(repoPath: '/r', gitArgs: ['git', 'first'], lane: ExecLane.read)
@@ -133,7 +136,7 @@ void main() {
     });
 
     final mutated = <String>[];
-    final executor = ProxyCommandExecutor(onMutationCompleted: mutated.add);
+    final executor = ProxyCommandExecutor.forWindow(_windowId, onMutationCompleted: mutated.add);
 
     await executor.execute(repoPath: '/repo', gitArgs: ['git', 'log'],
         lane: ExecLane.read);
