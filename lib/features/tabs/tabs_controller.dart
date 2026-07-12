@@ -70,6 +70,11 @@ class TabsController extends ChangeNotifier {
   static ProviderContainer _defaultContainerFactory(List<Override> overrides) =>
       ProviderContainer(retry: (_, _) => null, overrides: overrides);
 
+  /// Upper bound on concurrently open tabs. Each tab is a full live session
+  /// (its own SSH client/socket or local access), so this is a resource
+  /// backstop, not just a UX choice — well above any realistic working set.
+  static const int maxTabs = 8;
+
   final ProviderContainer Function(List<Override>) _containerFactory;
   final List<StreamSubscription<void>> _storeSubs = [];
   final List<RepoTab> _tabs = [];
@@ -80,6 +85,10 @@ class TabsController extends ChangeNotifier {
   String? get activeId => _activeId;
   RepoTab? get active => _activeId == null ? null : _byId(_activeId!);
   ProviderContainer? containerFor(String id) => _byId(id)?.container;
+
+  /// Whether another tab can be opened. False at [maxTabs] — the "+" and
+  /// open-in-new-tab paths stop creating; dedupe/blank-reuse still work.
+  bool get canOpenTab => _tabs.length < maxTabs;
 
   /// Ensures at least one (blank, disconnected) tab exists — it shows the
   /// landing screen. Called at boot and whenever the last tab closes.
@@ -94,6 +103,7 @@ class TabsController extends ChangeNotifier {
       activate(act.id);
       return act;
     }
+    if (!canOpenTab) return act ?? ensureInitialTab();
     return _create();
   }
 
@@ -120,6 +130,10 @@ class TabsController extends ChangeNotifier {
       notifyListeners();
       return act;
     }
+    // At capacity: don't spin up a ninth live session — focus the active tab
+    // unchanged. The "+"/open affordances are disabled at the cap, so this is a
+    // backstop for a programmatic open, not the normal path.
+    if (!canOpenTab) return act ?? ensureInitialTab();
     final tab = _create(
       connectionId: connectionId,
       repoPath: repoPath,
@@ -132,6 +146,18 @@ class TabsController extends ChangeNotifier {
   void activate(String id) {
     if (_activeId == id || _byId(id) == null) return;
     _activeId = id;
+    notifyListeners();
+  }
+
+  /// Moves the tab at [oldIndex] to final position [newIndex] (browser-style
+  /// drag reorder). [newIndex] is the post-removal target index — matching
+  /// `ReorderableListView`'s `onReorderItem` — so no off-by-one adjustment is
+  /// needed. The active tab is unchanged (it's tracked by id, not position).
+  void reorder(int oldIndex, int newIndex) {
+    if (oldIndex < 0 || oldIndex >= _tabs.length) return;
+    final target = newIndex.clamp(0, _tabs.length - 1);
+    if (target == oldIndex) return;
+    _tabs.insert(target, _tabs.removeAt(oldIndex));
     notifyListeners();
   }
 

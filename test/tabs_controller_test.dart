@@ -174,4 +174,65 @@ void main() {
     expect(c.tabs, hasLength(2));
     expect(c.activeId, fresh.id);
   });
+
+  test('reorder moves a tab to its target slot; active tab is unchanged', () {
+    final c = makeController();
+    addTearDown(c.dispose);
+    c.ensureInitialTab();
+    final a = c.openOrFocus(connectionId: 'a', repoPath: '/a', connect: (_) {});
+    final b = c.openOrFocus(connectionId: 'b', repoPath: '/b', connect: (_) {});
+    final cc = c.openOrFocus(connectionId: 'c', repoPath: '/c', connect: (_) {});
+    c.activate(b.id);
+    expect(c.tabs.map((t) => t.id), [a.id, b.id, cc.id]);
+
+    // Drag the first tab to the end.
+    c.reorder(0, 2);
+    expect(c.tabs.map((t) => t.id), [b.id, cc.id, a.id]);
+    expect(c.activeId, b.id, reason: 'reorder tracks by id, not position');
+
+    // Drag it back to the front.
+    c.reorder(2, 0);
+    expect(c.tabs.map((t) => t.id), [a.id, b.id, cc.id]);
+
+    // Out-of-range / no-op reorders are safe.
+    c.reorder(1, 1);
+    c.reorder(9, 0);
+    expect(c.tabs.map((t) => t.id), [a.id, b.id, cc.id]);
+  });
+
+  test('stops opening new tabs at the cap; dedupe/focus still work', () {
+    final c = makeController();
+    addTearDown(c.dispose);
+    c.ensureInitialTab();
+    // Fill to the cap: the blank tab is reused for the first, then new tabs.
+    for (var i = 0; i < TabsController.maxTabs; i++) {
+      c.openOrFocus(connectionId: 'c$i', repoPath: '/r$i', connect: (_) {});
+    }
+    expect(c.tabs, hasLength(TabsController.maxTabs));
+    expect(c.canOpenTab, isFalse);
+
+    // A brand-new repo past the cap does NOT open a ninth tab.
+    var connected = false;
+    c.openOrFocus(
+      connectionId: 'overflow',
+      repoPath: '/over',
+      connect: (_) => connected = true,
+    );
+    expect(c.tabs, hasLength(TabsController.maxTabs));
+    expect(connected, isFalse, reason: 'no ninth session is created');
+
+    // "+" is a no-op at the cap.
+    c.newTab();
+    expect(c.tabs, hasLength(TabsController.maxTabs));
+
+    // An already-open repo is still focused (dedupe never blocked by the cap).
+    final again = c.openOrFocus(
+      connectionId: 'c0',
+      repoPath: '/r0',
+      connect: (_) {},
+    );
+    expect(again.connectionId, 'c0');
+    expect(c.activeId, again.id);
+    expect(c.tabs, hasLength(TabsController.maxTabs));
+  });
 }

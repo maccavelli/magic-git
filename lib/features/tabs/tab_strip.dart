@@ -1,4 +1,6 @@
 import 'package:flutter/cupertino.dart' hide ConnectionState;
+import 'package:flutter/material.dart'
+    show ReorderableDragStartListener, ReorderableListView;
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/providers/app_providers.dart';
@@ -35,25 +37,40 @@ class TabStrip extends StatelessWidget {
       child: Row(
         children: [
           Expanded(
-            child: ListView.builder(
+            child: ReorderableListView.builder(
               scrollDirection: Axis.horizontal,
+              buildDefaultDragHandles: false,
               padding: const EdgeInsets.symmetric(horizontal: 4),
               itemCount: tabs.length,
+              onReorderItem: controller.reorder,
+              // A flat proxy while dragging — the default Material elevation
+              // shadow looks wrong against the macOS chrome.
+              proxyDecorator: (child, index, animation) => child,
               itemBuilder: (context, i) {
                 final tab = tabs[i];
-                return _TabChip(
-                  tab: tab,
-                  active: tab.id == controller.activeId,
-                  onTap: () => controller.activate(tab.id),
-                  onClose: () => controller.close(tab.id),
+                return ReorderableDragStartListener(
+                  key: ValueKey(tab.id),
+                  index: i,
+                  child: _TabChip(
+                    tab: tab,
+                    active: tab.id == controller.activeId,
+                    onTap: () => controller.activate(tab.id),
+                    onClose: () => controller.close(tab.id),
+                  ),
                 );
               },
             ),
           ),
-          MacosIconButton(
-            icon: const MacosIcon(CupertinoIcons.add, size: 15),
-            boxConstraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            onPressed: controller.newTab,
+          MacosTooltip(
+            message: controller.canOpenTab
+                ? 'New tab'
+                : 'Maximum of ${TabsController.maxTabs} tabs open',
+            child: MacosIconButton(
+              icon: const MacosIcon(CupertinoIcons.add, size: 15),
+              boxConstraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              // Disabled at the cap (a null handler greys it out).
+              onPressed: controller.canOpenTab ? controller.newTab : null,
+            ),
           ),
           const SizedBox(width: 4),
         ],
