@@ -39,6 +39,7 @@ class _FilterAwareFakeGit extends GitService {
     String? path,
     bool all = false,
     bool follow = false,
+    bool noMerges = false,
   }) async => (grep == null && !all) ? full : filtered;
 
   @override

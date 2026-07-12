@@ -410,6 +410,32 @@ final List<KeymapAction> kKeymapActions = [
     category: KeymapCategory.history,
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyF, meta: true)],
   ),
+  // The zoom trio mirrors the ecosystem convention (GitKraken, browsers):
+  // ⌘= / ⌘− / ⌘0. ⌘-scroll-wheel and trackpad pinch also zoom, unremappable.
+  KeymapAction(
+    id: 'history.zoomIn',
+    label: 'Zoom commit list in',
+    category: KeymapCategory.history,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.equal, meta: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'history.zoomOut',
+    label: 'Zoom commit list out',
+    category: KeymapCategory.history,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.minus, meta: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'history.zoomReset',
+    label: 'Reset commit list zoom',
+    category: KeymapCategory.history,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.digit0, meta: true),
+    ],
+  ),
   // Stashes — scoped to the Stashes panel; require a selected stash.
   KeymapAction(
     id: 'stashes.apply',

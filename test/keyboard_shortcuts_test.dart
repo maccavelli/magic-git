@@ -121,6 +121,7 @@ class _FakeGit extends GitService {
     String? path,
     bool all = false,
     bool follow = false,
+    bool noMerges = false,
   }) async => commits;
 
   @override

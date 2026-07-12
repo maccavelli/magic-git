@@ -862,6 +862,7 @@ class GitService {
     String? path,
     bool all = false,
     bool follow = false,
+    bool noMerges = false,
   }) async {
     final format = ['%H', '%h', '%an', '%ae', '%aI', '%P', '%s'].join(fieldSep);
 
@@ -890,6 +891,7 @@ class GitService {
           '--author=${author.trim()}',
         if (since != null && since.trim().isNotEmpty) '--since=${since.trim()}',
         if (until != null && until.trim().isNotEmpty) '--until=${until.trim()}',
+        if (noMerges) '--no-merges',
         // `--follow` is only valid with exactly one pathspec; git errors out
         // otherwise (and it also rejects `--follow --all`).
         if (follow && !all && path != null && path.isNotEmpty) '--follow',

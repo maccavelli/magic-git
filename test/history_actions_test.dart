@@ -1,8 +1,12 @@
 // The History panel's per-commit actions menu: it appears once a commit is
 // selected, and "Amend last commit" is offered only for HEAD (the first log
-// row). Uses a fake GitService so no SSH is touched.
+// row). Also the multi-selection machinery (⌘/⇧-click, compare-two pane,
+// right-click menu, bulk cherry-pick/revert). Uses a fake GitService so no
+// SSH is touched.
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -14,11 +18,24 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/common/sheet_chrome.dart';
 import 'package:remote_magic_git/features/history/commit_graph_view.dart'
     show kGraphRowHeight;
+import 'package:remote_magic_git/features/history/history_minimap.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _FakeGit extends GitService {
   _FakeGit(this.commits) : super(SSHCommandExecutor(SSHClientManager()));
   final List<GitCommit> commits;
+
+  final List<String> cherryPicked = [];
+  final List<String> reverted = [];
+
+  /// Cherry-pick/revert of this hash throws a [GitException] — a stand-in
+  /// for a conflict, which is how GitService signals one.
+  String? conflictOn;
+
+  /// The named arguments of the most recent [log] call — what the filter UI
+  /// actually asked git for.
+  Map<String, Object?>? lastLogArgs;
 
   @override
   Future<List<GitCommit>> log(
@@ -32,7 +49,19 @@ class _FakeGit extends GitService {
     String? path,
     bool all = false,
     bool follow = false,
-  }) async => commits;
+    bool noMerges = false,
+  }) async {
+    lastLogArgs = {
+      'grep': grep,
+      'author': author,
+      'since': since,
+      'until': until,
+      'path': path,
+      'all': all,
+      'noMerges': noMerges,
+    };
+    return commits;
+  }
 
   @override
   Future<List<GitRef>> refs(String repoPath) async => const [];
@@ -40,6 +69,39 @@ class _FakeGit extends GitService {
   @override
   Future<String> showCommit(String repoPath, String hash, {String? path}) async =>
       'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
+
+  @override
+  Future<String> diffRange(
+    String repoPath,
+    String range, {
+    bool ignoreWhitespace = false,
+    int? context,
+  }) async => 'diff --git a/r b/r\n@@ -1 +1 @@\n-old\n+$range';
+
+  SSHCommandResult _mutate(List<String> record, String hash) {
+    if (hash == conflictOn) {
+      throw const GitException(
+        'conflict',
+        SSHCommandResult(exitCode: 1, stdout: '', stderr: 'CONFLICT'),
+      );
+    }
+    record.add(hash);
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+
+  @override
+  Future<SSHCommandResult> cherryPick(
+    String repoPath,
+    String hash, {
+    int? mainline,
+  }) async => _mutate(cherryPicked, hash);
+
+  @override
+  Future<SSHCommandResult> revert(
+    String repoPath,
+    String hash, {
+    int? mainline,
+  }) async => _mutate(reverted, hash);
 }
 
 GitCommit _c(String hash, String subject) => GitCommit(
@@ -54,9 +116,18 @@ GitCommit _c(String hash, String subject) => GitCommit(
 
 const _repo = '/srv/repo';
 
-Future<void> _pump(WidgetTester tester, List<GitCommit> commits) async {
+Future<void> _pump(
+  WidgetTester tester,
+  List<GitCommit> commits, {
+  _FakeGit? git,
+}) async {
+  // The zoom setter persists through SharedPreferences — back it with the
+  // in-memory mock so writes don't hit a missing platform channel.
+  SharedPreferences.setMockInitialValues({});
   final container = ProviderContainer(
-    overrides: [gitServiceProvider.overrideWithValue(_FakeGit(commits))],
+    overrides: [
+      gitServiceProvider.overrideWithValue(git ?? _FakeGit(commits)),
+    ],
   );
   addTearDown(container.dispose);
   await tester.pumpWidget(
@@ -106,9 +177,11 @@ void main() {
     await tester.tap(_actionsMenu);
     await tester.pumpAndSettle();
 
-    expect(find.text('Checkout'), findsOneWidget);
-    expect(find.text('Cherry-pick'), findsOneWidget);
-    expect(find.text('Revert'), findsOneWidget);
+    // Labels interpolate the target hash (Tower/Fork convention), so the
+    // menu always says exactly which commit it acts on.
+    expect(find.text('Checkout aaaaaaa'), findsOneWidget);
+    expect(find.text('Cherry-pick aaaaaaa'), findsOneWidget);
+    expect(find.text('Revert aaaaaaa'), findsOneWidget);
     expect(find.text('Amend last commit'), findsOneWidget);
   });
 
@@ -120,7 +193,7 @@ void main() {
     await tester.tap(_actionsMenu);
     await tester.pumpAndSettle();
 
-    expect(find.text('Revert'), findsOneWidget);
+    expect(find.text('Revert bbbbbbb'), findsOneWidget);
     expect(find.text('Amend last commit'), findsNothing);
   });
 
@@ -145,7 +218,7 @@ void main() {
     await tester.tap(_actionsMenu);
     await tester.pumpAndSettle();
 
-    expect(find.text('Revert'), findsOneWidget);
+    expect(find.text('Revert aaaaaaa'), findsOneWidget);
     expect(find.text('Amend last commit'), findsNothing);
   });
 
@@ -157,7 +230,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(_actionsMenu);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Branch from here…'));
+    await tester.tap(find.text('Branch from aaaaaaa…'));
     await tester.pumpAndSettle();
 
     // The prompt is open at the standard sheet width rather than ballooning
@@ -166,5 +239,267 @@ void main() {
     final sheet = find.byType(MacosSheet);
     expect(sheet, findsOneWidget);
     expect(tester.getSize(sheet).width, kSheetWidth);
+  });
+
+  // ── Multi-selection ──────────────────────────────────────────────────────
+
+  final mid = _c('ccccccc3333333', 'mid commit');
+
+  Future<void> metaClick(WidgetTester tester, Finder target) async {
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.tap(target);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> shiftClick(WidgetTester tester, Finder target) async {
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.tap(target);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('⌘-click builds a two-commit selection and shows the compare '
+      'pane', (tester) async {
+    await _pump(tester, [head, mid, older]);
+    await tester.tap(find.text('head commit'));
+    await tester.pumpAndSettle();
+    await metaClick(tester, find.text('old commit'));
+
+    // Two selected → the pane diffs older → newer.
+    expect(find.text('Comparing bbbbbbb → aaaaaaa'), findsOneWidget);
+
+    // ⌘-clicking a selected row deselects it, collapsing back to one.
+    await metaClick(tester, find.text('old commit'));
+    expect(find.text('Comparing bbbbbbb → aaaaaaa'), findsNothing);
+    expect(find.text('aaaaaaa111'), findsOneWidget); // single-diff header
+  });
+
+  testWidgets('⇧-click selects the contiguous range from the anchor', (
+    tester,
+  ) async {
+    await _pump(tester, [head, mid, older]);
+    await tester.tap(find.text('head commit'));
+    await tester.pumpAndSettle();
+    await shiftClick(tester, find.text('old commit'));
+
+    expect(find.text('3 commits selected'), findsOneWidget);
+    expect(find.textContaining('Right-click the selection'), findsOneWidget);
+  });
+
+  testWidgets('⌘C copies every selected SHA, newest first', (tester) async {
+    final copied = <String>[];
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copied.add((call.arguments as Map)['text'] as String);
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+
+    await _pump(tester, [head, mid, older]);
+    await tester.tap(find.text('old commit'));
+    await tester.pumpAndSettle();
+    // ⌘-click ABOVE the anchor: on-screen order (newest first) must win over
+    // click order in what lands on the clipboard.
+    await metaClick(tester, find.text('head commit'));
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+
+    expect(copied.single, 'aaaaaaa1111111\nbbbbbbb2222222');
+  });
+
+  testWidgets('right-click outside the selection collapses to the clicked '
+      'row', (tester) async {
+    await _pump(tester, [head, older]);
+    await tester.tap(find.text('head commit'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.text('old commit'),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+
+    // The menu targets the clicked row, not the pre-click selection.
+    expect(find.text('Checkout bbbbbbb'), findsOneWidget);
+    expect(find.text('Cherry-pick bbbbbbb'), findsOneWidget);
+    expect(find.text('Reset to bbbbbbb — hard'), findsOneWidget);
+  });
+
+  testWidgets('bulk cherry-pick applies oldest→newest', (tester) async {
+    final git = _FakeGit([head, mid, older]);
+    await _pump(tester, [head, mid, older], git: git);
+    await tester.tap(find.text('head commit'));
+    await tester.pumpAndSettle();
+    await shiftClick(tester, find.text('old commit'));
+
+    await tester.tap(
+      find.text('mid commit'),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cherry-pick 3 commits'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(PushButton, 'Cherry-pick'));
+    await tester.pumpAndSettle();
+
+    expect(git.cherryPicked, [
+      'bbbbbbb2222222',
+      'ccccccc3333333',
+      'aaaaaaa1111111',
+    ]);
+  });
+
+  testWidgets('bulk revert runs newest→oldest and stops at a conflict', (
+    tester,
+  ) async {
+    final git = _FakeGit([head, mid, older])..conflictOn = 'ccccccc3333333';
+    await _pump(tester, [head, mid, older], git: git);
+    await tester.tap(find.text('head commit'));
+    await tester.pumpAndSettle();
+    await shiftClick(tester, find.text('old commit'));
+
+    await tester.tap(
+      find.text('head commit'),
+      buttons: kSecondaryMouseButton,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Revert 3 commits'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(PushButton, 'Revert'));
+    await tester.pumpAndSettle();
+
+    // Newest reverted first; the mid-commit conflict stopped the batch, so
+    // the oldest was never attempted.
+    expect(git.reverted, ['aaaaaaa1111111']);
+    // The conflict surfaced as an error dialog.
+    expect(find.textContaining('CONFLICT'), findsOneWidget);
+  });
+
+  // ── Minimap ──────────────────────────────────────────────────────────────
+
+  final minimapTrack = find.descendant(
+    of: find.byType(HistoryMinimap),
+    matching: find.byType(CustomPaint),
+  );
+
+  testWidgets('the minimap stays hidden while the list fits the viewport', (
+    tester,
+  ) async {
+    await _pump(tester, [head, older]);
+    expect(find.byType(HistoryMinimap), findsOneWidget);
+    expect(minimapTrack, findsNothing);
+  });
+
+  testWidgets('the minimap appears when the list overflows and jumps on tap', (
+    tester,
+  ) async {
+    // Sixty rows × 52px overflow the test viewport comfortably.
+    final many = [
+      for (var i = 0; i < 60; i++)
+        _c('aaaa${i.toString().padLeft(3, '0')}bbbbfff', 'commit $i'),
+    ];
+    await _pump(tester, many);
+    expect(minimapTrack, findsOneWidget);
+
+    ListView list() => tester.widget<ListView>(find.byType(ListView).first);
+    expect(list().controller!.offset, 0);
+
+    // A tap near the track's bottom centers the viewport near the end.
+    final rect = tester.getRect(minimapTrack);
+    await tester.tapAt(Offset(rect.center.dx, rect.bottom - 2));
+    await tester.pumpAndSettle();
+    expect(list().controller!.offset, greaterThan(0));
+  });
+
+  // ── Zoom ─────────────────────────────────────────────────────────────────
+
+  testWidgets('⌘= zooms the commit list and ⌘0 resets it', (tester) async {
+    await _pump(tester, [head, older]);
+    await tester.tap(find.text('head commit'));
+    await tester.pumpAndSettle();
+
+    ListView list() => tester.widget<ListView>(find.byType(ListView).first);
+    expect(list().itemExtent, kGraphRowHeight);
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.equal);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+    expect(list().itemExtent, moreOrLessEquals(kGraphRowHeight * 1.1));
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.digit0);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+    expect(list().itemExtent, kGraphRowHeight);
+  });
+
+  // ── Filter fields ────────────────────────────────────────────────────────
+
+  final filterToggle = find.byWidgetPredicate(
+    (w) => w is MacosIcon && w.icon == CupertinoIcons.slider_horizontal_3,
+  );
+
+  testWidgets('the filter fields drive the git log query', (tester) async {
+    final git = _FakeGit([head, older]);
+    await _pump(tester, [head, older], git: git);
+
+    await tester.tap(filterToggle);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(MacosTextField, 'Author'),
+      'alice',
+    );
+    await tester.enterText(
+      find.widgetWithText(MacosTextField, 'After'),
+      '2026-01-01',
+    );
+    await tester.enterText(
+      find.widgetWithText(MacosTextField, 'Path (e.g. src/)'),
+      'src/',
+    );
+    await tester.tap(find.byType(MacosCheckbox)); // hide merges
+    // Let the shared 350ms filter debounce land.
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(git.lastLogArgs, {
+      'grep': null,
+      'author': 'alice',
+      'since': '2026-01-01',
+      'until': null,
+      'path': 'src/',
+      'all': false,
+      'noMerges': true,
+    });
+    expect(find.textContaining('matching'), findsOneWidget);
+
+    await tester.tap(find.text('Clear filters'));
+    await tester.pumpAndSettle();
+    // Every criterion reset: the footer disappears and the fields are empty.
+    // (No new `git log` fires — the still-cached unfiltered logProvider
+    // serves the list again, which is the desired behavior.)
+    expect(find.text('Clear filters'), findsNothing);
+    expect(
+      tester
+          .widget<MacosTextField>(find.widgetWithText(MacosTextField, 'Author'))
+          .controller!
+          .text,
+      isEmpty,
+    );
   });
 }

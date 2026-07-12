@@ -1,5 +1,7 @@
 import 'dart:async';
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart'
+    show GestureBinding, PointerScrollEvent;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -7,8 +9,10 @@ import '../../core/git/commit_graph.dart';
 import '../../core/git/git_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
+import '../common/context_menu.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
@@ -17,6 +21,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'commit_graph_view.dart';
+import 'history_minimap.dart';
 import 'rebase_sheet.dart';
 import 'ref_chip.dart';
 
@@ -47,7 +52,15 @@ class HistoryView extends ConsumerStatefulWidget {
 }
 
 class _HistoryViewState extends ConsumerState<HistoryView> {
-  String? _selectedHash;
+  // Multi-selection over commit hashes, following the macOS list-selection
+  // conventions (same scheme as RepoStatusView's file rows): plain click
+  // replaces the selection, ⌘-click toggles a row in/out, ⇧-click extends a
+  // contiguous range from the anchor. [_selectionAnchor] is the fixed end of
+  // a shift-range; [_selectionCursor] is the moving end — the row keyboard
+  // navigation continues from.
+  Set<String> _selectedHashes = {};
+  String? _selectionAnchor;
+  String? _selectionCursor;
 
   // Guards against opening a second interactive-rebase sheet while one is
   // already up: each sheet captures its own commit-list snapshot, so if the
@@ -62,72 +75,221 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
   // produced (e.g. onto a half-applied cherry-pick). Mirrors BranchesView.
   bool _busy = false;
 
-  // History search/filter: a debounced message filter and an all-branches
-  // toggle. When either is active the panel uses [logSearchProvider].
+  // History search/filter: a debounced message filter, an all-branches
+  // toggle, and the advanced criteria (author / date range / path / hide
+  // merges) revealed by the filter toggle. When any is active the panel uses
+  // [logSearchProvider] — every criterion maps to a `git log` flag, so
+  // filtering is server-side and complete, never limited to loaded rows.
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocus = FocusNode();
+  final TextEditingController _authorController = TextEditingController();
+  final TextEditingController _afterController = TextEditingController();
+  final TextEditingController _beforeController = TextEditingController();
+  final TextEditingController _pathController = TextEditingController();
 
   // Keyboard navigation of the commit list: the list takes focus on a row tap,
-  // then ↑/↓ walk _selectedHash through the commits, scrolling each into view.
+  // then ↑/↓ walk the selection through the commits (⇧↑/⇧↓ extend a range),
+  // scrolling each into view.
   final FocusNode _commitFocus = FocusNode(debugLabel: 'commit-list');
   final ScrollController _commitScroll = ScrollController();
   final Map<String, GlobalKey> _commitRowKeys = {};
 
+  // Right-click menu on commit rows. One controller for the whole list.
+  final ContextMenuOverlay _contextMenu = ContextMenuOverlay();
+
+  // Bumped on every ScrollMetricsNotification from the commit list — the
+  // minimap's signal for "content dimensions exist/changed". A
+  // ScrollController only notifies on scroll, so first layout, list-length
+  // changes, and window resizes are invisible to it.
+  final ValueNotifier<int> _scrollMetricsTick = ValueNotifier(0);
+
+  // ⌘-scroll zoom needs the list's own scrolling out of the way: while ⌘ is
+  // held the ListView gets NeverScrollableScrollPhysics, whose
+  // shouldAcceptUserOffset=false makes the Scrollable skip registering for
+  // pointer-scroll events — so the zoom Listener's registration wins.
+  // Tracked via a HardwareKeyboard handler because no widget has focus
+  // guarantees over a hovering-only mouse.
+  bool _metaDown = false;
+
+  // PointerPanZoomUpdate.scale is cumulative for the whole trackpad-pinch
+  // gesture; zoom applies the per-event ratio against this running value.
+  double _lastPinchScale = 1.0;
+
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_onHardwareKey);
+  }
+
+  bool _onHardwareKey(KeyEvent event) {
+    final meta = HardwareKeyboard.instance.isMetaPressed;
+    if (meta != _metaDown && mounted) {
+      setState(() => _metaDown = meta);
+    }
+    return false; // observe only — never consume the event
+  }
+
   String _grep = '';
+  String _author = '';
+  String _since = '';
+  String _until = '';
+  String _path = '';
+  bool _hideMerges = false;
   bool _allBranches = false;
+  bool _filtersExpanded = false;
   Timer? _searchDebounce;
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onHardwareKey);
     _searchDebounce?.cancel();
     _searchController.dispose();
     _searchFocus.dispose();
+    _authorController.dispose();
+    _afterController.dispose();
+    _beforeController.dispose();
+    _pathController.dispose();
     _commitFocus.dispose();
     _commitScroll.dispose();
+    _scrollMetricsTick.dispose();
+    _contextMenu.dispose();
     super.dispose();
   }
+
+  /// True when any narrowing criterion is active. The all-branches toggle is
+  /// a view *scope* rather than a filter, but both route the panel through
+  /// [logSearchProvider] and disqualify the top row as HEAD.
+  bool get _hasQueryFilters =>
+      _grep.isNotEmpty ||
+      _author.isNotEmpty ||
+      _since.isNotEmpty ||
+      _until.isNotEmpty ||
+      _path.isNotEmpty ||
+      _hideMerges;
+
+  bool get _filtering => _hasQueryFilters || _allBranches;
 
   GlobalKey _commitRowKeyFor(String hash) =>
       _commitRowKeys.putIfAbsent(hash, GlobalKey.new);
 
-  void _moveCommitSelection(int dir) {
+  /// The selection's single hash when exactly one commit is selected — the
+  /// target for single-commit actions (checkout, reset, the diff pane…),
+  /// which are meaningless or ambiguous against a multi-selection.
+  String? get _soleSelectedHash =>
+      _selectedHashes.length == 1 ? _selectedHashes.first : null;
+
+  /// Resets the selection state. Callers wrap in setState (or are already in
+  /// a state-mutation path such as didUpdateWidget).
+  void _clearSelection() {
+    _selectedHashes = {};
+    _selectionAnchor = null;
+    _selectionCursor = null;
+  }
+
+  /// The selected commits in on-screen (newest-first) order. A selection
+  /// survives filter changes, so hashes not present in the displayed list are
+  /// simply omitted here.
+  List<GitCommit> _orderedSelected(List<GitCommit>? commits) => [
+    for (final c in commits ?? const <GitCommit>[])
+      if (_selectedHashes.contains(c.hash)) c,
+  ];
+
+  /// The contiguous run of hashes (in on-screen order) between [anchor] and
+  /// [target], inclusive of both — the result of a shift-click range-select.
+  /// Falls back to just [target] if either endpoint isn't in the displayed
+  /// list (e.g. the anchor was filtered out since it was set).
+  Set<String> _rangeBetween(
+    List<GitCommit> commits,
+    String anchor,
+    String target,
+  ) {
+    final i = commits.indexWhere((c) => c.hash == anchor);
+    final j = commits.indexWhere((c) => c.hash == target);
+    if (i == -1 || j == -1) return {target};
+    final lo = i < j ? i : j;
+    final hi = i < j ? j : i;
+    return {for (var k = lo; k <= hi; k++) commits[k].hash};
+  }
+
+  /// Handles a plain click, ⌘-click, or ⇧-click on a commit row — the macOS
+  /// list-selection conventions: plain click replaces the selection; ⌘-click
+  /// toggles this row in/out of it; ⇧-click extends a contiguous range from
+  /// the anchor.
+  void _handleRowTap(String hash) {
+    _commitFocus.requestFocus();
+    final commits = _lastCommits ?? const <GitCommit>[];
+    final keys = HardwareKeyboard.instance;
+    setState(() {
+      if (keys.isMetaPressed) {
+        if (_selectedHashes.contains(hash)) {
+          _selectedHashes = {..._selectedHashes}..remove(hash);
+          if (_selectedHashes.isEmpty) {
+            _selectionAnchor = null;
+            _selectionCursor = null;
+            return;
+          }
+        } else {
+          _selectedHashes = {..._selectedHashes, hash};
+        }
+        _selectionAnchor = hash;
+        _selectionCursor = hash;
+      } else if (keys.isShiftPressed && _selectionAnchor != null) {
+        _selectedHashes = _rangeBetween(commits, _selectionAnchor!, hash);
+        // Anchor deliberately stays put — repeated shift-clicks extend or
+        // contract from the same fixed end, matching Finder.
+        _selectionCursor = hash;
+      } else {
+        _selectedHashes = {hash};
+        _selectionAnchor = hash;
+        _selectionCursor = hash;
+      }
+    });
+  }
+
+  void _moveCommitSelection(int dir, {bool extend = false}) {
     final commits = _lastCommits;
     if (commits == null || commits.isEmpty) return;
+    final fromHash = _selectionCursor;
     var current = -1;
-    if (_selectedHash != null) {
-      for (var i = 0; i < commits.length; i++) {
-        if (commits[i].hash == _selectedHash) {
-          current = i;
-          break;
-        }
-      }
+    if (fromHash != null) {
+      current = commits.indexWhere((c) => c.hash == fromHash);
     }
     final next = stepSelection(current, dir, commits.length);
-    setState(() => _selectedHash = commits[next].hash);
-    ensureRowVisible(_commitRowKeyFor(commits[next].hash));
+    final hash = commits[next].hash;
+    setState(() {
+      if (extend && _selectionAnchor != null) {
+        _selectedHashes = _rangeBetween(commits, _selectionAnchor!, hash);
+      } else {
+        _selectedHashes = {hash};
+        _selectionAnchor = hash;
+      }
+      _selectionCursor = hash;
+    });
+    ensureRowVisible(_commitRowKeyFor(hash));
   }
 
   KeyEventResult _onCommitKey(FocusNode node, KeyEvent event) {
     if (event is KeyUpEvent || !widget.isActive || _busy) {
       return KeyEventResult.ignored;
     }
+    final extend = HardwareKeyboard.instance.isShiftPressed;
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowDown:
-        _moveCommitSelection(1);
+        _moveCommitSelection(1, extend: extend);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowUp:
-        _moveCommitSelection(-1);
+        _moveCommitSelection(-1, extend: extend);
         return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
 
-  /// The [GitCommit] for [_selectedHash] in the currently-displayed list, or
-  /// null if nothing is selected (or the selection scrolled out of a filtered
-  /// list). Needed by cherry-pick/rebase, which act on the commit object rather
-  /// than a bare hash.
+  /// The [GitCommit] for the sole selected hash in the currently-displayed
+  /// list, or null if the selection isn't exactly one commit (or it scrolled
+  /// out of a filtered list). Needed by cherry-pick/rebase, which act on the
+  /// commit object rather than a bare hash.
   GitCommit? _selectedCommitIn(List<GitCommit>? commits) {
-    final hash = _selectedHash;
+    final hash = _soleSelectedHash;
     if (hash == null) return null;
     for (final c in commits ?? const <GitCommit>[]) {
       if (c.hash == hash) return c;
@@ -135,11 +297,40 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     return null;
   }
 
-  void _onSearchChanged(String value) {
-    // Debounce so a remote `git log` doesn't fire on every keystroke.
+  /// Debounces syncing the filter state from ALL the text controllers, so a
+  /// remote `git log` doesn't fire on every keystroke. One timer, one full
+  /// sync: a per-field pending mutation would be lost when typing moves to
+  /// the next field inside the debounce window and cancels the timer.
+  void _debounceFilters() {
     _searchDebounce?.cancel();
     _searchDebounce = Timer(const Duration(milliseconds: 350), () {
-      if (mounted) setState(() => _grep = value.trim());
+      if (!mounted) return;
+      setState(() {
+        _grep = _searchController.text.trim();
+        _author = _authorController.text.trim();
+        _since = _afterController.text.trim();
+        _until = _beforeController.text.trim();
+        _path = _pathController.text.trim();
+      });
+    });
+  }
+
+  /// Resets every filter criterion (not the all-branches scope — that has
+  /// its own toggle and represents what's shown, not what's excluded).
+  void _clearFilters() {
+    _searchDebounce?.cancel();
+    _searchController.clear();
+    _authorController.clear();
+    _afterController.clear();
+    _beforeController.clear();
+    _pathController.clear();
+    setState(() {
+      _grep = '';
+      _author = '';
+      _since = '';
+      _until = '';
+      _path = '';
+      _hideMerges = false;
     });
   }
 
@@ -172,7 +363,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
   void didUpdateWidget(HistoryView oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repoPath != widget.repoPath) {
-      _selectedHash = null;
+      _clearSelection();
       _lastCommits = null;
       _graph = null;
       _lastRefs = null;
@@ -202,7 +393,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     setState(() => _busy = true);
     try {
       if (await runAction(context, op)) {
-        if (movesHead) _selectedHash = null;
+        if (movesHead) _clearSelection();
         _refresh();
       }
     } finally {
@@ -250,13 +441,12 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
   }
 
   // The unfiltered list is `git log HEAD`, so its first row is the current
-  // HEAD commit. Under an active filter (grep / all-branches) the displayed
-  // list is a subset whose top row need not be HEAD, so refuse to treat any
-  // commit as HEAD then: "Amend last commit" rewrites the *real* HEAD, not the
-  // shown commit, and must never be offered against a non-HEAD top row.
+  // HEAD commit. Under any active filter/scope the displayed list is a
+  // subset whose top row need not be HEAD, so refuse to treat any commit as
+  // HEAD then: "Amend last commit" rewrites the *real* HEAD, not the shown
+  // commit, and must never be offered against a non-HEAD top row.
   bool _isHead(String hash) =>
-      _grep.isEmpty &&
-      !_allBranches &&
+      !_filtering &&
       _lastCommits?.isNotEmpty == true &&
       _lastCommits!.first.hash == hash;
 
@@ -347,6 +537,20 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
 
   GitService get _git => ref.read(gitServiceProvider);
 
+  double get _zoom =>
+      ref.read(appSettingsProvider.select((s) => s.historyZoom));
+
+  /// Nudges the persisted zoom factor; the notifier clamps and no-ops at the
+  /// bounds. Additive for discrete steps (⌘=/⌘−, scroll ticks).
+  void _adjustZoom(double delta) {
+    ref.read(appSettingsProvider.notifier).setHistoryZoom(_zoom + delta);
+  }
+
+  /// Multiplicative zoom for trackpad pinches, which report scale ratios.
+  void _scaleZoom(double factor) {
+    ref.read(appSettingsProvider.notifier).setHistoryZoom(_zoom * factor);
+  }
+
   Future<void> _actCheckout(String hash) async {
     final ok = await confirmAction(
       context,
@@ -413,6 +617,64 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     );
   }
 
+  /// Cherry-picks a multi-selection, applying oldest→newest so each commit
+  /// lands on top of the previous one — the order the range was authored in.
+  /// A conflict throws a [GitException] out of the loop, so the batch stops
+  /// at the first conflicting commit (already-applied picks stand, matching
+  /// `git cherry-pick a b c` semantics) and [_runLogged] surfaces the error
+  /// and refreshes into the pending-op/conflict state.
+  ///
+  /// Merge commits are excluded up front by the menu (each needs its own
+  /// mainline choice — pick those individually).
+  Future<void> _actCherryPickMany(List<GitCommit> newestFirst) async {
+    if (newestFirst.length == 1) return _actCherryPick(newestFirst.single);
+    final oldestFirst = newestFirst.reversed.toList();
+    final n = oldestFirst.length;
+    final ok = await confirmAction(
+      context,
+      title: 'Cherry-pick $n commits',
+      message:
+          'Apply the $n selected commits (oldest first) onto the current '
+          'branch? The batch stops at the first conflict.',
+      confirmLabel: 'Cherry-pick',
+    );
+    if (!ok) return;
+    await _runLogged('git cherry-pick ($n commits)', (log) async {
+      for (final c in oldestFirst) {
+        log.logResult(
+          'git cherry-pick ${c.shortHash}',
+          await _git.cherryPick(repoPath, c.hash),
+        );
+      }
+    });
+  }
+
+  /// Reverts a multi-selection, newest→oldest — undoing on top of history in
+  /// the reverse of the order it was made, so each revert applies cleanly
+  /// against the state the next one expects. Same stop-at-first-conflict
+  /// semantics as [_actCherryPickMany]; merges excluded by the menu.
+  Future<void> _actRevertMany(List<GitCommit> newestFirst) async {
+    if (newestFirst.length == 1) return _actRevert(newestFirst.single);
+    final n = newestFirst.length;
+    final ok = await confirmAction(
+      context,
+      title: 'Revert $n commits',
+      message:
+          'Create $n commits that undo the selected commits (newest first)? '
+          'The batch stops at the first conflict.',
+      confirmLabel: 'Revert',
+    );
+    if (!ok) return;
+    await _runLogged('git revert ($n commits)', (log) async {
+      for (final c in newestFirst) {
+        log.logResult(
+          'git revert ${c.shortHash}',
+          await _git.revert(repoPath, c.hash),
+        );
+      }
+    });
+  }
+
   Future<void> _actReset(String hash, ResetMode mode) async {
     final hard = mode == ResetMode.hard;
     final ok = await confirmAction(
@@ -444,6 +706,157 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
 
   Future<void> _copySha(String hash) async {
     await Clipboard.setData(ClipboardData(text: hash));
+  }
+
+  /// Copies every selected commit's full SHA, one per line, in on-screen
+  /// (newest-first) order. Selection hashes that fell out of the displayed
+  /// list keep a stable fallback order so ⌘C never silently drops one.
+  Future<void> _copySelectedShas() async {
+    final ordered = _orderedSelected(_lastCommits);
+    final hashes = ordered.length == _selectedHashes.length
+        ? [for (final c in ordered) c.hash]
+        : _selectedHashes.toList();
+    if (hashes.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: hashes.join('\n')));
+  }
+
+  /// Handles a right-click on a commit row: if the click landed outside the
+  /// current selection, it collapses to just that row first — same as Finder,
+  /// the menu always acts on what ends up selected, not whatever was selected
+  /// before the click. Then shows the menu for whichever selection results.
+  void _handleRowSecondaryTap(GitCommit commit, Offset globalPosition) {
+    if (!_selectedHashes.contains(commit.hash)) {
+      setState(() {
+        _selectedHashes = {commit.hash};
+        _selectionAnchor = commit.hash;
+        _selectionCursor = commit.hash;
+      });
+    }
+    final ordered = _orderedSelected(_lastCommits);
+    if (ordered.isEmpty) return;
+    _contextMenu.show(
+      context,
+      globalPosition,
+      _commitMenuEntries(ordered),
+      width: 250,
+    );
+  }
+
+  /// The commit actions for [selection] (in on-screen, newest-first order) —
+  /// the single source of truth consumed by both the right-click menu and the
+  /// diff-header pulldown, so the two can never drift apart. Single-commit
+  /// verbs interpolate the target hash; a multi-selection gets the bulk verbs
+  /// (cherry-pick N / revert N / copy N SHAs).
+  List<ContextMenuEntry> _commitMenuEntries(List<GitCommit> selection) {
+    // Every mutating item is disabled while an operation is already
+    // mid-flight, so a second tap can't queue up behind it — the same _busy
+    // gating the pulldown menu has always applied.
+    final canAct = !_busy;
+    if (selection.length == 1) {
+      final commit = selection.single;
+      final hash = commit.hash;
+      final short = commit.shortHash;
+      final canRebase = canAct && commit.parents.isNotEmpty;
+      return [
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_right_circle,
+          label: 'Checkout $short',
+          enabled: canAct,
+          onTap: () => _actCheckout(hash),
+        ),
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_branch,
+          label: 'Branch from $short…',
+          enabled: canAct,
+          onTap: () => _actBranchFrom(hash),
+        ),
+        const ContextMenuDivider(),
+        ContextMenuItem(
+          icon: CupertinoIcons.plus_circle,
+          label: 'Cherry-pick $short',
+          enabled: canAct,
+          onTap: () => _actCherryPick(commit),
+        ),
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_uturn_left,
+          label: 'Revert $short',
+          enabled: canAct,
+          onTap: () => _actRevert(commit),
+        ),
+        ContextMenuItem(
+          icon: CupertinoIcons.list_number,
+          label: 'Interactive rebase from here…',
+          enabled: canRebase,
+          disabledTooltip: commit.parents.isEmpty
+              ? 'The root commit has no parent to rebase onto'
+              : null,
+          onTap: () => _actRebaseFrom(commit),
+        ),
+        const ContextMenuDivider(),
+        ContextMenuItem(
+          icon: CupertinoIcons.gobackward,
+          label: 'Reset to $short — soft',
+          enabled: canAct,
+          onTap: () => _actReset(hash, ResetMode.soft),
+        ),
+        ContextMenuItem(
+          icon: CupertinoIcons.gobackward,
+          label: 'Reset to $short — mixed',
+          enabled: canAct,
+          onTap: () => _actReset(hash, ResetMode.mixed),
+        ),
+        ContextMenuItem(
+          icon: CupertinoIcons.gobackward,
+          label: 'Reset to $short — hard',
+          enabled: canAct,
+          iconColor: MacosColors.systemRedColor,
+          onTap: () => _actReset(hash, ResetMode.hard),
+        ),
+        const ContextMenuDivider(),
+        if (_isHead(hash))
+          ContextMenuItem(
+            icon: CupertinoIcons.pencil,
+            label: 'Amend last commit',
+            enabled: canAct,
+            onTap: _actAmend,
+          ),
+        ContextMenuItem(
+          icon: CupertinoIcons.doc_on_clipboard,
+          label: 'Copy SHA',
+          onTap: () => _copySha(hash),
+        ),
+      ];
+    }
+
+    final n = selection.length;
+    // Bulk cherry-pick/revert can't span a merge commit: each merge needs
+    // its own mainline choice, which a batch can't prompt for sensibly.
+    final hasMerge = selection.any((c) => c.isMerge);
+    const mergeTooltip =
+        'The selection contains a merge commit — act on it individually to '
+        'choose its mainline parent';
+    return [
+      ContextMenuItem(
+        icon: CupertinoIcons.plus_circle,
+        label: 'Cherry-pick $n commits',
+        enabled: canAct && !hasMerge,
+        disabledTooltip: hasMerge ? mergeTooltip : null,
+        onTap: () => _actCherryPickMany(selection),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_uturn_left,
+        label: 'Revert $n commits',
+        enabled: canAct && !hasMerge,
+        disabledTooltip: hasMerge ? mergeTooltip : null,
+        onTap: () => _actRevertMany(selection),
+      ),
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.doc_on_clipboard,
+        label: 'Copy $n SHAs',
+        onTap: _copySelectedShas,
+      ),
+    ];
   }
 
   /// Opens the interactive-rebase editor for the commits from [commit] up to
@@ -515,7 +928,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     // commit (if it was in that range) no longer exists, so the diff pane
     // would otherwise keep requesting a stale hash and surface a raw git
     // error instead of just clearing.
-    if (mounted) setState(() => _selectedHash = null);
+    if (mounted) setState(_clearSelection);
   }
 
   /// Warms the commit-patch cache for the newest few commits whenever a fresh
@@ -536,7 +949,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
 
   @override
   Widget build(BuildContext context) {
-    final filtering = _grep.isNotEmpty || _allBranches;
+    final filtering = _filtering;
     // Warm the patch cache as fresh (unfiltered) history lands — the newest
     // commits are the ones overwhelmingly likely to be inspected.
     ref.listen(logProvider(widget.repoPath), (previous, next) {
@@ -547,8 +960,11 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
             logSearchProvider((
               repoPath: widget.repoPath,
               grep: _grep.isEmpty ? null : _grep,
-              author: null,
-              since: null,
+              author: _author.isEmpty ? null : _author,
+              since: _since.isEmpty ? null : _since,
+              until: _until.isEmpty ? null : _until,
+              path: _path.isEmpty ? null : _path,
+              noMerges: _hideMerges,
               all: _allBranches,
             )),
           )
@@ -559,7 +975,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     );
 
     final keymap = ref.watch(keymapProvider);
-    final selectedHash = _selectedHash;
+    final selectedHash = _soleSelectedHash;
     // Preconditions from the log value this same build renders — _lastCommits
     // is only refreshed inside the data branch below, so reading it here
     // lagged one build behind right after a load or filter change.
@@ -570,9 +986,9 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     return PanelShortcuts(
       bindings: widget.isActive && !_busy
           ? resolveShortcuts(keymap, {
-              'history.copySha': selectedHash == null
+              'history.copySha': _selectedHashes.isEmpty
                   ? null
-                  : () => _copySha(selectedHash),
+                  : _copySelectedShas,
               'history.checkout': selectedHash == null
                   ? null
                   : () => _actCheckout(selectedHash),
@@ -587,6 +1003,10 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
                   : () => _actRebaseFrom(selectedCommit),
               'history.amend': hasCommits ? _actAmend : null,
               'history.filter': () => _searchFocus.requestFocus(),
+              'history.zoomIn': () => _adjustZoom(0.1),
+              'history.zoomOut': () => _adjustZoom(-0.1),
+              'history.zoomReset': () =>
+                  ref.read(appSettingsProvider.notifier).setHistoryZoom(1.0),
             })
           : const <ShortcutActivator, VoidCallback>{},
       child: Row(
@@ -611,32 +1031,85 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
                                 .copyWith(color: MacosColors.systemGrayColor),
                           ),
                         )
-                      : _commitList(context, _graphFor(commits), decorations),
+                      : NotificationListener<ScrollMetricsNotification>(
+                          onNotification: (_) {
+                            _scrollMetricsTick.value++;
+                            return false;
+                          },
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Expanded(
+                                child: _commitList(
+                                  context,
+                                  _graphFor(commits),
+                                  decorations,
+                                ),
+                              ),
+                              HistoryMinimap(
+                                controller: _commitScroll,
+                                metricsTick: _scrollMetricsTick,
+                                graph: _graphFor(commits),
+                                decorations: decorations,
+                                selected: _selectedHashes,
+                              ),
+                            ],
+                          ),
+                        ),
                 ),
               ),
+              if (_hasQueryFilters) ...[
+                Container(height: 1, color: MacosColors.separatorColor),
+                _filterFooter(context, logAsync),
+              ],
             ],
           ),
         ),
         Container(width: 1, color: MacosColors.separatorColor),
-        Expanded(
-          child: _selectedHash == null
-              ? Center(
-                  child: Text(
-                    'Select a commit',
-                    style: MacosTheme.of(context).typography.body,
-                  ),
-                )
-              : _commitDiff(context, _selectedHash!),
-        ),
+        Expanded(child: _rightPane(context, commits)),
       ],
       ),
     );
   }
 
+  /// The right pane follows the selection's shape: nothing → prompt, one
+  /// commit → its patch, exactly two → the diff between them (older→newer),
+  /// three or more → a summary panel pointing at the bulk actions.
+  Widget _rightPane(BuildContext context, List<GitCommit>? commits) {
+    if (_selectedHashes.isEmpty) {
+      return Center(
+        child: Text(
+          'Select a commit',
+          style: MacosTheme.of(context).typography.body,
+        ),
+      );
+    }
+    final sole = _soleSelectedHash;
+    if (sole != null) return _commitDiff(context, sole);
+    final ordered = _orderedSelected(commits);
+    if (_selectedHashes.length == 2 && ordered.length == 2) {
+      // On-screen order is newest-first: ordered[1] is the older commit.
+      return _compareView(context, older: ordered[1], newer: ordered[0]);
+    }
+    return _multiSelectionPanel(context, ordered);
+  }
+
   Widget _filterBar(BuildContext context, bool filtering) {
+    // Advanced criteria stay visibly flagged on the toggle even while the
+    // row is collapsed, so an active author/date/path filter can't be
+    // forgotten behind a closed panel.
+    final advancedActive =
+        _author.isNotEmpty ||
+        _since.isNotEmpty ||
+        _until.isNotEmpty ||
+        _path.isNotEmpty ||
+        _hideMerges;
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
         children: [
           Expanded(
             child: MacosTextField(
@@ -645,8 +1118,19 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
               placeholder: 'Filter commits by message…',
               decoration: kAppTextFieldDecoration,
               focusedDecoration: kAppTextFieldFocusedDecoration,
-              onChanged: _onSearchChanged,
+              onChanged: (_) => _debounceFilters(),
             ),
+          ),
+          const SizedBox(width: 6),
+          ToolIconButton(
+            icon: CupertinoIcons.slider_horizontal_3,
+            tooltip: 'Filter by author, date, or path',
+            size: 16,
+            color: advancedActive || _filtersExpanded
+                ? MacosColors.systemBlueColor
+                : null,
+            onPressed: () =>
+                setState(() => _filtersExpanded = !_filtersExpanded),
           ),
           const SizedBox(width: 6),
           ToolIconButton(
@@ -678,6 +1162,113 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
             ),
           ],
         ],
+          ),
+          if (_filtersExpanded) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: MacosTextField(
+                    controller: _authorController,
+                    placeholder: 'Author',
+                    decoration: kAppTextFieldDecoration,
+                    focusedDecoration: kAppTextFieldFocusedDecoration,
+                    onChanged: (_) => _debounceFilters(),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 96,
+                  child: MacosTextField(
+                    controller: _afterController,
+                    // Passed verbatim to `git log --since`, which accepts
+                    // dates and phrases ("2 weeks ago") alike.
+                    placeholder: 'After',
+                    decoration: kAppTextFieldDecoration,
+                    focusedDecoration: kAppTextFieldFocusedDecoration,
+                    onChanged: (_) => _debounceFilters(),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 96,
+                  child: MacosTextField(
+                    controller: _beforeController,
+                    placeholder: 'Before',
+                    decoration: kAppTextFieldDecoration,
+                    focusedDecoration: kAppTextFieldFocusedDecoration,
+                    onChanged: (_) => _debounceFilters(),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: MacosTextField(
+                    controller: _pathController,
+                    placeholder: 'Path (e.g. src/)',
+                    decoration: kAppTextFieldDecoration,
+                    focusedDecoration: kAppTextFieldFocusedDecoration,
+                    onChanged: (_) => _debounceFilters(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                MacosCheckbox(
+                  value: _hideMerges,
+                  onChanged: (v) => setState(() => _hideMerges = v),
+                ),
+                const SizedBox(width: 5),
+                GestureDetector(
+                  onTap: () => setState(() => _hideMerges = !_hideMerges),
+                  child: Text(
+                    'Hide merges',
+                    style: MacosTheme.of(context).typography.caption1,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Compact status line under a filtered list: the match count (flagging
+  /// the fetch cap when it's hit) plus a one-click reset of every criterion.
+  Widget _filterFooter(
+    BuildContext context,
+    AsyncValue<List<GitCommit>> logAsync,
+  ) {
+    final typography = MacosTheme.of(context).typography;
+    final count = logAsync.value?.length;
+    final label = count == null
+        ? 'Filtering…'
+        : count >= 200
+        ? 'First $count matching commits'
+        : '$count matching ${count == 1 ? 'commit' : 'commits'}';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 4, 8, 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          PushButton(
+            controlSize: ControlSize.small,
+            secondary: true,
+            onPressed: _clearFilters,
+            child: const Text('Clear filters'),
+          ),
+        ],
       ),
     );
   }
@@ -688,43 +1279,81 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     Map<String, List<GitRef>> decorations,
   ) {
     final typography = MacosTheme.of(context).typography;
+    // The zoom factor scales the whole list coherently: row extent, lane
+    // geometry, node dot, and (via the TextScaler below) the text. Watched
+    // here so ⌘=/⌘−/pinch rebuild the list live.
+    final zoom = ref.watch(appSettingsProvider.select((s) => s.historyZoom));
+    final rowHeight = kGraphRowHeight * zoom;
+    final laneUnit = kLaneWidth * zoom;
     // Clamp the drawn lane *band* so a very wide graph can't crowd out the
     // text — but a topology with more than [_maxFullWidthLanes] concurrent
     // lanes (e.g. many long-lived branches active at once) must still have
     // every lane rendered somewhere in that band, just thinner, rather than
     // having the overflow lanes clipped away to invisible (silently dropping
     // a commit's line). `laneWidth` is what's actually fed to the painter;
-    // it only shrinks below [kLaneWidth] once the lane count exceeds the cap.
+    // it only shrinks below the full unit once the lane count exceeds the cap.
     const maxFullWidthLanes = 8;
     final laneCount = graph.laneCount < 1 ? 1 : graph.laneCount;
     final visibleLaneCount = laneCount.clamp(1, maxFullWidthLanes);
-    final graphWidth = visibleLaneCount * kLaneWidth + kLaneWidth / 2;
+    final graphWidth = visibleLaneCount * laneUnit + laneUnit / 2;
     final laneWidth = laneCount > maxFullWidthLanes
         ? graphWidth / (laneCount + 0.5)
-        : kLaneWidth;
+        : laneUnit;
 
     return Focus(
       focusNode: _commitFocus,
       onKeyEvent: _onCommitKey,
-      child: ListView.builder(
+      child: Listener(
+        // ⌘-scroll (mouse wheel) zooms. Registration through the pointer-
+        // signal resolver only wins because the ⌘-held physics swap (below)
+        // makes the Scrollable stand down — see _metaDown.
+        onPointerSignal: (event) {
+          if (event is PointerScrollEvent &&
+              HardwareKeyboard.instance.isMetaPressed) {
+            GestureBinding.instance.pointerSignalResolver.register(event, (e) {
+              _adjustZoom(-(e as PointerScrollEvent).scrollDelta.dy / 300);
+            });
+          }
+        },
+        // Trackpads deliver two-finger scrolls AND pinches as pan-zoom
+        // events (Flutter ≥3.3), not scroll signals: pinch carries a scale
+        // ratio (zoom always), ⌘+two-finger-scroll carries a pan delta.
+        onPointerPanZoomStart: (_) => _lastPinchScale = 1.0,
+        onPointerPanZoomUpdate: (event) {
+          if (event.scale != 1.0) {
+            _scaleZoom(event.scale / _lastPinchScale);
+            _lastPinchScale = event.scale;
+          } else if (HardwareKeyboard.instance.isMetaPressed &&
+              event.panDelta.dy != 0) {
+            _adjustZoom(-event.panDelta.dy / 300);
+          }
+        },
+        child: MediaQuery(
+          // Scale the list's text in lockstep with its geometry. Replaces
+          // (rather than multiplies) the ambient scaler: the app is
+          // desktop-only with no OS text scaling in play.
+          data: MediaQuery.of(
+            context,
+          ).copyWith(textScaler: TextScaler.linear(zoom)),
+          child: ListView.builder(
       controller: _commitScroll,
-      itemExtent: kGraphRowHeight,
+      itemExtent: rowHeight,
+      physics: _metaDown ? const NeverScrollableScrollPhysics() : null,
       itemCount: graph.rows.length,
       itemBuilder: (context, index) {
         final row = graph.rows[index];
         final commit = row.commit;
-        final selected = commit.hash == _selectedHash;
+        final selected = _selectedHashes.contains(commit.hash);
         return GestureDetector(
           key: _commitRowKeyFor(commit.hash),
-          onTap: () {
-            _commitFocus.requestFocus();
-            setState(() => _selectedHash = commit.hash);
-          },
+          onTap: () => _handleRowTap(commit.hash),
+          onSecondaryTapUp: (d) =>
+              _handleRowSecondaryTap(commit, d.globalPosition),
           child: Container(
             color: selected
                 ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
                 : const Color(0x00000000),
-            height: kGraphRowHeight,
+            height: rowHeight,
             child: Row(
               children: [
                 // Clip to the fixed band so rounding in the compressed-lane
@@ -734,8 +1363,12 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
                 // the cap), never dropped.
                 ClipRect(
                   child: CustomPaint(
-                    size: Size(graphWidth, kGraphRowHeight),
-                    painter: CommitRowPainter(row, laneWidth: laneWidth),
+                    size: Size(graphWidth, rowHeight),
+                    painter: CommitRowPainter(
+                      row,
+                      laneWidth: laneWidth,
+                      scale: zoom,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -747,9 +1380,9 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
                       Row(
                         children: [
                           if (commit.isMerge) ...[
-                            const MacosIcon(
+                            MacosIcon(
                               CupertinoIcons.arrow_merge,
-                              size: 13,
+                              size: 13 * zoom,
                             ),
                             const SizedBox(width: 4),
                           ],
@@ -785,6 +1418,8 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
           ),
         );
       },
+          ),
+        ),
       ),
     );
   }
@@ -807,13 +1442,124 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     );
   }
 
+  /// The diff between exactly two selected commits — what [newer] adds on
+  /// top of [older] (`git diff older..newer`). The pane appears the moment a
+  /// second commit is ⌘/⇧-selected, matching Fork/Tower's compare-two flow.
+  Widget _compareView(
+    BuildContext context, {
+    required GitCommit older,
+    required GitCommit newer,
+  }) {
+    final typography = MacosTheme.of(context).typography;
+    final diffAsync = ref.watch(
+      commitRangeDiffProvider((widget.repoPath, older.hash, newer.hash)),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Comparing ${older.shortHash} → ${newer.shortHash}',
+                  style: typography.caption1.copyWith(
+                    color: MacosColors.systemGrayColor,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              ToolIconButton(
+                icon: CupertinoIcons.doc_on_clipboard,
+                tooltip: 'Copy both SHAs',
+                size: 14,
+                onPressed: _copySelectedShas,
+              ),
+            ],
+          ),
+        ),
+        Container(height: 1, color: MacosColors.separatorColor),
+        Expanded(
+          child: diffAsync.when(
+            loading: () => const Center(child: ProgressCircle()),
+            error: (err, _) => _error(context, err),
+            data: (diff) => diff.trim().isEmpty
+                ? Center(
+                    child: Text(
+                      'No differences between '
+                      '${older.shortHash} and ${newer.shortHash}',
+                      style: typography.body.copyWith(
+                        color: MacosColors.systemGrayColor,
+                      ),
+                    ),
+                  )
+                : DiffView(diff: diff),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Placeholder pane for a selection of three or more commits: a compact
+  /// summary plus a pointer at the bulk actions (which live in the
+  /// right-click menu).
+  Widget _multiSelectionPanel(BuildContext context, List<GitCommit> ordered) {
+    final typography = MacosTheme.of(context).typography;
+    const previewMax = 8;
+    final n = _selectedHashes.length;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('$n commits selected', style: typography.title3),
+            const SizedBox(height: 12),
+            for (final c in ordered.take(previewMax))
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  '${c.shortHash}  ${c.subject}',
+                  style: typography.caption1.copyWith(
+                    color: MacosColors.systemGrayColor,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            if (ordered.length > previewMax)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  '… and ${ordered.length - previewMax} more',
+                  style: typography.caption1.copyWith(
+                    color: MacosColors.systemGrayColor,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 12),
+            Text(
+              'Right-click the selection for bulk actions · ⌘C copies the '
+              'SHAs',
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// Slim bar atop the diff pane: the short hash on the left, then commit
   /// actions (copy SHA, an actions menu) and a pop-out button on the right.
   Widget _diffHeader(BuildContext context, String hash) {
     final typography = MacosTheme.of(context).typography;
     final short = hash.length > 10 ? hash.substring(0, 10) : hash;
     final commit = _commitFor(hash);
-    final isHead = _isHead(hash);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
       child: Row(
@@ -847,22 +1593,16 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
             ),
           ),
           const SizedBox(width: 2),
-          if (commit != null) _actionsMenu(commit, isHead),
+          if (commit != null) _actionsMenu(commit),
         ],
       ),
     );
   }
 
-  Widget _actionsMenu(GitCommit commit, bool isHead) {
-    final hash = commit.hash;
-    // Every item below mutates the repo, so each is disabled — both visually
-    // (greyed via `enabled: false`, matching the built-in disabled style
-    // MacosPulldownMenuItem already applies for the "Reset to…" header) and
-    // functionally (`onTap: null`, mirroring the `onPressed: _busy ? null :
-    // …` idiom used by RepoStatusView/StashView) — while an operation is
-    // already mid-flight, so a second tap can't queue up behind it.
-    final canAct = !_busy;
-    final canRebase = canAct && commit.parents.isNotEmpty;
+  /// The diff-header pulldown, built from the same [_commitMenuEntries] the
+  /// right-click menu uses — one action list, two presentations.
+  Widget _actionsMenu(GitCommit commit) {
+    final entries = _commitMenuEntries([commit]);
     return MacosPulldownButtonTheme(
       data: MacosPulldownButtonTheme.of(
         context,
@@ -872,53 +1612,15 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
         // lines) glyph — the universally recognized menu affordance.
         icon: CupertinoIcons.line_horizontal_3,
         items: [
-          MacosPulldownMenuItem(
-            enabled: canAct,
-            title: const Text('Checkout'),
-            onTap: canAct ? () => _actCheckout(hash) : null,
-          ),
-          MacosPulldownMenuItem(
-            enabled: canAct,
-            title: const Text('Branch from here…'),
-            onTap: canAct ? () => _actBranchFrom(hash) : null,
-          ),
-          MacosPulldownMenuItem(
-            enabled: canAct,
-            title: const Text('Cherry-pick'),
-            onTap: canAct ? () => _actCherryPick(commit) : null,
-          ),
-          MacosPulldownMenuItem(
-            enabled: canAct,
-            title: const Text('Revert'),
-            onTap: canAct ? () => _actRevert(commit) : null,
-          ),
-          MacosPulldownMenuItem(
-            enabled: canRebase,
-            title: const Text('Interactive rebase from here…'),
-            onTap: canRebase ? () => _actRebaseFrom(commit) : null,
-          ),
-          const MacosPulldownMenuItem(enabled: false, title: Text('Reset to…')),
-          MacosPulldownMenuItem(
-            enabled: canAct,
-            title: const Text('  Soft (keep changes staged)'),
-            onTap: canAct ? () => _actReset(hash, ResetMode.soft) : null,
-          ),
-          MacosPulldownMenuItem(
-            enabled: canAct,
-            title: const Text('  Mixed (keep changes unstaged)'),
-            onTap: canAct ? () => _actReset(hash, ResetMode.mixed) : null,
-          ),
-          MacosPulldownMenuItem(
-            enabled: canAct,
-            title: const Text('  Hard (discard changes)'),
-            onTap: canAct ? () => _actReset(hash, ResetMode.hard) : null,
-          ),
-          if (isHead)
-            MacosPulldownMenuItem(
-              enabled: canAct,
-              title: const Text('Amend last commit'),
-              onTap: canAct ? _actAmend : null,
-            ),
+          for (final e in entries)
+            switch (e) {
+              ContextMenuDivider() => const MacosPulldownMenuDivider(),
+              ContextMenuItem() => MacosPulldownMenuItem(
+                enabled: e.enabled,
+                title: Text(e.label),
+                onTap: e.enabled ? e.onTap : null,
+              ),
+            },
         ],
       ),
     );

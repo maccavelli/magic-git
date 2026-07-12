@@ -2221,12 +2221,17 @@ final magicSnapshotsProvider = FutureProvider.autoDispose
     });
 
 /// A filtered/searched commit log. Keyed by a query record (structural equality
-/// gives correct caching). [all] walks every ref; grep/author/since narrow it.
+/// gives correct caching). [all] walks every ref; the rest narrow the walk —
+/// each maps 1:1 to a `git log` flag, so filtering is always server-side and
+/// results are complete up to the fetch cap (never "only what was loaded").
 typedef LogQuery = ({
   String repoPath,
   String? grep,
   String? author,
   String? since,
+  String? until,
+  String? path,
+  bool noMerges,
   bool all,
 });
 
@@ -2239,6 +2244,9 @@ final logSearchProvider = FutureProvider.autoDispose
             grep: q.grep,
             author: q.author,
             since: q.since,
+            until: q.until,
+            path: q.path,
+            noMerges: q.noMerges,
             all: q.all,
           );
     });
@@ -2320,6 +2328,11 @@ final _commitFileDiffLru = KeepAliveLru<(String, String, String)>(
   512,
   maxTotalBytes: 128 * _mib,
   maxEntryBytes: 8 * _mib,
+);
+final _commitRangeDiffLru = KeepAliveLru<(String, String, String)>(
+  64,
+  maxTotalBytes: 64 * _mib,
+  maxEntryBytes: 16 * _mib,
 );
 
 // Worktree tier.
@@ -2458,6 +2471,23 @@ final commitDiffProvider = FutureProvider.autoDispose
       final future = ref.watch(gitServiceProvider).showCommit(repoPath, hash);
       future.then(
         (d) => _commitDiffLru.reportSize(key, d.length),
+        onError: (_) {},
+      );
+      return future;
+    });
+
+/// The diff between two commits — what `newer` adds on top of `older`
+/// (`git diff older..newer`). Keyed by (repoPath, olderHash, newerHash);
+/// immutable like a commit patch, so it shares the hash-keyed LRU treatment.
+final commitRangeDiffProvider = FutureProvider.autoDispose
+    .family<String, (String, String, String)>((ref, key) {
+      _commitRangeDiffLru.touch(key, ref.keepAlive());
+      final (repoPath, older, newer) = key;
+      final future = ref
+          .watch(gitServiceProvider)
+          .diffRange(repoPath, '$older..$newer');
+      future.then(
+        (d) => _commitRangeDiffLru.reportSize(key, d.length),
         onError: (_) {},
       );
       return future;

@@ -71,6 +71,7 @@ class _FakeGit extends GitService {
     String? path,
     bool all = false,
     bool follow = false,
+    bool noMerges = false,
   }) async => const [headCommit];
 
   @override
@@ -255,8 +256,8 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('Checkout'), findsOneWidget);
-    expect(find.text('Cherry-pick'), findsOneWidget);
+    expect(find.text('Checkout aaaaaaa'), findsOneWidget);
+    expect(find.text('Cherry-pick aaaaaaa'), findsOneWidget);
   });
 
   testWidgets('a repoTick that echoes our own mutation is suppressed', (

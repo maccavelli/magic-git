@@ -196,6 +196,15 @@ class HistoryWindowBridge extends Notifier<bool> {
           // torn-down relay.
           return {'status': 'error', 'message': 'Undo failed: $e'};
         }
+      case 'settingsChanged':
+        // The History isolate persisted a settings edit (the zoom gestures
+        // write historyZoom from either window). This isolate's
+        // SharedPreferences cache doesn't see other-isolate writes without
+        // an explicit reload. The echo terminates: reloading re-broadcasts
+        // settingsChanged to the History isolate, but its send is gated on a
+        // historyZoom value *change*, which a same-value reload isn't.
+        await ref.read(appSettingsProvider.notifier).reloadFromDisk();
+        return null;
       case 'mutationPerformed':
         final repoPath =
             (call.arguments as Map<Object?, Object?>)['repoPath'] as String?;

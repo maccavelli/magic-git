@@ -285,6 +285,12 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
   /// and Esc/X can never disagree about visibility.
   ModalRoute<void>? _recoveryRoute;
 
+  /// Debounces the zoom→main settings sync: the zoom gestures fire dozens of
+  /// [AppSettingsNotifier.setHistoryZoom] calls (each persisting to disk),
+  /// and the main isolate should reload once, after the burst — and strictly
+  /// after the last write has landed, which the debounce slack covers.
+  Timer? _zoomSyncDebounce;
+
   // TEMPORARY diagnostics (remove with _HubLogNavigatorObserver): a 300ms
   // animation measured after 2s — if `value` isn't 1.0/completed, this
   // engine's vsync never drives tickers, which is exactly the "pushed routes
@@ -347,6 +353,7 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
 
   @override
   void dispose() {
+    _zoomSyncDebounce?.cancel();
     _vsyncProbeTimer?.cancel();
     _vsyncProbe?.dispose();
     _vsyncProbe = null;
@@ -563,6 +570,17 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
           Navigator.of(context, rootNavigator: true).removeRoute(route);
         }
       }
+    });
+    // Zoom changes made HERE (⌘=/⌘−/pinch in this window persist historyZoom
+    // from this isolate) must tell the main isolate to reload its own
+    // SharedPreferences cache. Gated on a value *change* via select, so the
+    // main window's settingsChanged pushes — whose reload re-lands the same
+    // zoom value here — can't ping-pong the event back and forth.
+    ref.listen(appSettingsProvider.select((s) => s.historyZoom), (_, _) {
+      _zoomSyncDebounce?.cancel();
+      _zoomSyncDebounce = Timer(const Duration(milliseconds: 600), () {
+        _sendHub('settingsChanged');
+      });
     });
     final session = ref.watch(historySessionProvider);
     final typography = MacosTheme.of(context).typography;

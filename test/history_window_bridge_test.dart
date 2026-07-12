@@ -10,10 +10,12 @@ import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/providers/history_window_bridge.dart';
+import 'package:remote_magic_git/core/settings/app_settings.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/undo/undo_journal.dart';
 import 'package:remote_magic_git/core/undo/undo_types.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const _control = MethodChannel('magicgit/history');
 const _hub = MethodChannel('magicgit/history/hub');
@@ -360,6 +362,18 @@ void main() {
       contains('closeHistoryWindow'),
       reason: 'the window follows the session',
     );
+  });
+
+  test('settingsChanged from the History isolate reloads settings from disk',
+      () async {
+    container = makeContainer(_connected);
+    expect(container.read(appSettingsProvider).historyZoom, 1.0);
+
+    // The History isolate's zoom gestures persisted a new factor; its hub
+    // event must make this isolate re-read its SharedPreferences cache.
+    SharedPreferences.setMockInitialValues({'historyZoom': 1.4});
+    await deliverHubCall('settingsChanged', null);
+    expect(container.read(appSettingsProvider).historyZoom, 1.4);
   });
 
   test('historyWindowClosed flips the open flag off', () async {

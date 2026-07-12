@@ -38,6 +38,11 @@ class AppSettings {
   /// These win over discovery when resolving the remote environment.
   final Map<String, String> binaryOverrides;
 
+  /// Scale factor for the History commit list (row height, graph geometry,
+  /// and text together). 1.0 = default density; clamped to
+  /// [AppSettingsNotifier.minHistoryZoom]–[AppSettingsNotifier.maxHistoryZoom].
+  final double historyZoom;
+
   const AppSettings({
     this.networkTimeout = GitService.defaultNetworkTimeout,
     this.commitTimeout = GitService.defaultCommitTimeout,
@@ -47,6 +52,7 @@ class AppSettings {
     this.pushFollowTags = false,
     this.autoFetchMinutes = 5,
     this.binaryOverrides = const {},
+    this.historyZoom = 1.0,
   });
 
   AppSettings copyWith({
@@ -58,6 +64,7 @@ class AppSettings {
     bool? pushFollowTags,
     int? autoFetchMinutes,
     Map<String, String>? binaryOverrides,
+    double? historyZoom,
   }) => AppSettings(
     networkTimeout: networkTimeout ?? this.networkTimeout,
     commitTimeout: commitTimeout ?? this.commitTimeout,
@@ -67,6 +74,7 @@ class AppSettings {
     pushFollowTags: pushFollowTags ?? this.pushFollowTags,
     autoFetchMinutes: autoFetchMinutes ?? this.autoFetchMinutes,
     binaryOverrides: binaryOverrides ?? this.binaryOverrides,
+    historyZoom: historyZoom ?? this.historyZoom,
   );
 }
 
@@ -83,6 +91,7 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   static const _followTagsKey = 'pushFollowTags';
   static const _autoFetchKey = 'autoFetchMinutes';
   static const _binPrefix = 'binPath_';
+  static const _historyZoomKey = 'historyZoom';
 
   /// Set true by any setter the moment the user explicitly changes a setting.
   /// [build] kicks [_load] fire-and-forget and returns defaults immediately, so
@@ -137,6 +146,10 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
           .getInt(_autoFetchKey)
           ?.clamp(0, _maxAutoFetchMinutes),
       binaryOverrides: overrides,
+      historyZoom: prefs
+          .getDouble(_historyZoomKey)
+          ?.clamp(minHistoryZoom, maxHistoryZoom)
+          .toDouble(),
     );
   }
 
@@ -221,6 +234,23 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
         await prefs.setString('$_binPrefix$bin', v);
       }
     }
+  }
+
+  /// Bounds for [AppSettings.historyZoom]: 60% keeps rows tappable and text
+  /// legible; 200% doubles everything without degenerate layouts.
+  static const double minHistoryZoom = 0.6;
+  static const double maxHistoryZoom = 2.0;
+
+  /// Updates and persists the History-list zoom factor. Called from rapid
+  /// gestures (⌘-scroll, pinch), so it early-returns when clamping produces
+  /// no change — no state churn or prefs writes while pinned at a bound.
+  Future<void> setHistoryZoom(double zoom) async {
+    final clamped = zoom.clamp(minHistoryZoom, maxHistoryZoom).toDouble();
+    if (clamped == state.historyZoom) return;
+    _userEdited = true;
+    state = state.copyWith(historyZoom: clamped);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_historyZoomKey, clamped);
   }
 
   static const _minTimeout = Duration(seconds: 5);

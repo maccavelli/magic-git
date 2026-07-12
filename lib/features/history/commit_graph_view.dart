@@ -33,7 +33,13 @@ class CommitRowPainter extends CustomPainter {
   final GraphRow row;
   final double laneWidth;
 
-  const CommitRowPainter(this.row, {this.laneWidth = kLaneWidth});
+  /// The History zoom factor — scales the node dot and stroke weight so the
+  /// graph reads at the same visual weight at every density (lane spacing
+  /// and row height are scaled by the caller through [laneWidth] and the
+  /// painted size).
+  final double scale;
+
+  const CommitRowPainter(this.row, {this.laneWidth = kLaneWidth, this.scale = 1.0});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -43,7 +49,7 @@ class CommitRowPainter extends CustomPainter {
 
     final stroke = Paint()
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.6
+      ..strokeWidth = 1.6 * scale
       ..strokeCap = StrokeCap.round;
 
     for (final edge in row.edges) {
@@ -69,15 +75,15 @@ class CommitRowPainter extends CustomPainter {
     final center = Offset(_laneX(row.column, laneWidth), midY);
     canvas.drawCircle(
       center,
-      _dotRadius,
+      _dotRadius * scale,
       Paint()..color = laneColor(row.column),
     );
     canvas.drawCircle(
       center,
-      _dotRadius,
+      _dotRadius * scale,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4
+        ..strokeWidth = 1.4 * scale
         ..color = const Color(0xFF1E1E1E),
     );
   }
@@ -97,5 +103,7 @@ class CommitRowPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CommitRowPainter oldDelegate) =>
-      oldDelegate.row != row || oldDelegate.laneWidth != laneWidth;
+      oldDelegate.row != row ||
+      oldDelegate.laneWidth != laneWidth ||
+      oldDelegate.scale != scale;
 }
