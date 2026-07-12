@@ -136,7 +136,12 @@ class _TabsHostState extends State<TabsHost> with WindowListener {
       _wireActive();
       _pushActiveState();
       // A History pop-out follows the active tab — retarget it to the new one.
-      WindowManagerBridge.current?.onActiveTabChanged(_controller.activeId);
+      // isBlank distinguishes a landing tab (nothing to follow) from a repo tab
+      // that's merely still connecting (activated synchronously, connects next).
+      WindowManagerBridge.current?.onActiveTabChanged(
+        _controller.activeId,
+        isBlank: _controller.active?.isBlank ?? true,
+      );
     }
     if (mounted) setState(() {});
   }

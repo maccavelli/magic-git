@@ -1,7 +1,8 @@
 // The History pop-out is a SINGLE window that FOLLOWS the active tab: as the
-// user switches from one repo tab to another, the window retargets to the new
-// tab's repo (its proxied commands route there too), and it closes when the
-// active tab has no repo to show.
+// user switches from one repo tab to another it retargets to the new tab's repo
+// (commands route there too). Crucially, opening a brand-new repo — whose tab is
+// activated synchronously but connects a beat later — must NOT close the window;
+// it waits for the tab to connect, then retargets.
 
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,11 +15,12 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/window/window_channels.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class _StubConnection extends ConnectionController {
-  _StubConnection(this._initial);
+class _MutableConnection extends ConnectionController {
+  _MutableConnection(this._initial);
   final ConnectionState _initial;
   @override
   ConnectionState build() => _initial;
+  void set(ConnectionState next) => state = next;
 }
 
 class _FakeExecutor extends SSHCommandExecutor {
@@ -98,18 +100,24 @@ void main() {
     return decoded;
   }
 
-  test('one History window follows the active tab across switches', () async {
+  String repoOf(MethodCall change) => ConnectionEventPayload.decode(
+    (change.arguments as Map).cast<Object?, Object?>(),
+  ).repoPath!;
+
+  test('History follows the active tab; a still-connecting new repo does not '
+      'close it — it retargets once connected', () async {
     final execA = _FakeExecutor('A');
     final execB = _FakeExecutor('B');
+    final stubB = _MutableConnection(const ConnectionState()); // connecting
     final containerA = ProviderContainer(
       overrides: [
-        connectionProvider.overrideWith(() => _StubConnection(_connected('/a'))),
+        connectionProvider.overrideWith(() => _MutableConnection(_connected('/a'))),
         activeExecutorProvider.overrideWithValue(execA),
       ],
     );
     final containerB = ProviderContainer(
       overrides: [
-        connectionProvider.overrideWith(() => _StubConnection(_connected('/b'))),
+        connectionProvider.overrideWith(() => stubB),
         activeExecutorProvider.overrideWithValue(execB),
       ],
     );
@@ -119,43 +127,30 @@ void main() {
     addTearDown(bridgeContainer.dispose);
 
     var activeTab = 'A';
+    final tabs = {'A': containerA, 'B': containerB};
     final bridge = bridgeContainer.read(windowManagerBridgeProvider.notifier)
-      ..sessionContainerFor = ((tabId) => switch (tabId) {
-        'A' => containerA,
-        'B' => containerB,
-        _ => null, // 'blank' / unknown → no session
-      })
+      ..sessionContainerFor = ((tabId) => tabs[tabId])
       ..activeTabId = (() => activeTab);
 
-    // Pop out History from tab A → one window showing /a, serving from A.
+    // Pop out History from tab A → one window showing /a.
     await bridge.openHistory();
-    expect(bridge.state.map((w) => (w.kind.name, w.repoPath, w.tabId)),
-        [('history', '/a', 'A')]);
-    expect(
-      decodeExecuteResponse(
-        (await deliverHubCall('execute', encodeExecuteRequest(_req('/a'))) as Map)
-            .cast<Object?, Object?>(),
-      ).stdout,
-      'served-by-A',
-    );
+    expect(bridge.state.single.repoPath, '/a');
 
-    // Switch the active tab to B → the SAME window retargets to /b.
+    // Open a new repo B: its tab is activated synchronously but not yet
+    // connected. The window must NOT close — it stays on /a and waits.
     hubCalls.clear();
     activeTab = 'B';
-    bridge.onActiveTabChanged('B');
+    bridge.onActiveTabChanged('B', isBlank: false);
+    expect(bridge.state, hasLength(1), reason: 'the window is not closed');
+    expect(bridge.state.single.repoPath, '/a', reason: 'still on A until B connects');
+    expect(hubCalls.where((c) => c.method == 'connectionChanged'), isEmpty);
 
-    expect(bridge.state, hasLength(1), reason: 'still one History window');
+    // B finishes connecting → the window retargets to /b.
+    stubB.set(_connected('/b'));
+    await containerB.pump();
     expect(bridge.state.single.repoPath, '/b');
     expect(bridge.state.single.tabId, 'B');
-    // The window was told about its new repo.
-    final change = hubCalls.singleWhere((c) => c.method == 'connectionChanged');
-    expect(
-      ConnectionEventPayload.decode(
-        (change.arguments as Map).cast<Object?, Object?>(),
-      ).repoPath,
-      '/b',
-    );
-    // And its commands now route to tab B's executor.
+    expect(repoOf(hubCalls.singleWhere((c) => c.method == 'connectionChanged')), '/b');
     expect(
       decodeExecuteResponse(
         (await deliverHubCall('execute', encodeExecuteRequest(_req('/b'))) as Map)
@@ -163,7 +158,6 @@ void main() {
       ).stdout,
       'served-by-B',
     );
-    expect(execB.repos, ['/b']);
 
     // Opening History again just fronts the one window (singleton).
     controlCalls.clear();
@@ -173,11 +167,52 @@ void main() {
       ['frontWindow'],
     );
     expect(bridge.state, hasLength(1));
+  });
 
-    // Switching to a tab with no repo closes the follower (nothing to show).
+  test('an already-connected switch retargets immediately; visiting a landing '
+      'tab keeps the window, but closing the followed repo closes it', () async {
+    final containerA = ProviderContainer(
+      overrides: [
+        connectionProvider.overrideWith(() => _MutableConnection(_connected('/a'))),
+        activeExecutorProvider.overrideWithValue(_FakeExecutor('A')),
+      ],
+    );
+    final containerB = ProviderContainer(
+      overrides: [
+        connectionProvider.overrideWith(() => _MutableConnection(_connected('/b'))),
+        activeExecutorProvider.overrideWithValue(_FakeExecutor('B')),
+      ],
+    );
+    final bridgeContainer = ProviderContainer();
+    addTearDown(containerA.dispose);
+    addTearDown(containerB.dispose);
+    addTearDown(bridgeContainer.dispose);
+
+    var activeTab = 'A';
+    // A live map so a tab can be "closed" by dropping its container.
+    final tabs = <String, ProviderContainer>{'A': containerA, 'B': containerB};
+    final bridge = bridgeContainer.read(windowManagerBridgeProvider.notifier)
+      ..sessionContainerFor = ((tabId) => tabs[tabId])
+      ..activeTabId = (() => activeTab);
+
+    await bridge.openHistory();
+    activeTab = 'B';
+    bridge.onActiveTabChanged('B', isBlank: false);
+    expect(bridge.state.single.repoPath, '/b', reason: 'connected → retarget now');
+
+    // Visit a blank landing tab while B is still open → keep the window (the
+    // user is just between repos).
+    activeTab = 'landing';
+    bridge.onActiveTabChanged('landing', isBlank: true);
+    expect(bridge.state, hasLength(1), reason: 'followed repo (B) is still open');
+
+    // Now the followed repo's tab (B) is closed. Its window is detached, and
+    // switching to the blank landing tab closes the follower (nothing to show).
+    bridge.onTabClosed('B');
+    tabs.remove('B');
     controlCalls.clear();
-    activeTab = 'blank';
-    bridge.onActiveTabChanged('blank');
+    activeTab = 'landing';
+    bridge.onActiveTabChanged('landing', isBlank: true);
     expect(
       controlCalls.where((c) => c.method == 'closeWindow').map(
         (c) => (c.arguments as Map)['windowId'],

@@ -83,6 +83,11 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
   /// connectionChanged pushes, history retargeting, and close-on-disconnect.
   final Map<String, ProviderSubscription<ConnectionState>> _connSubs = {};
 
+  /// Per-History-window subscription that waits for a just-switched-to tab to
+  /// finish connecting before retargeting the follower onto it (a freshly
+  /// opened repo tab is activated synchronously but connects a beat later).
+  final Map<String, ProviderSubscription<ConnectionState>> _pendingSubs = {};
+
   /// Per-window subscription to its pinned tab's file watcher for the repo it
   /// shows — forwards ticks so the window refreshes even while its tab is
   /// backgrounded. Re-pointed when a history window retargets.
@@ -104,8 +109,12 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
       for (final s in _tickSubs.values) {
         s.close();
       }
+      for (final s in _pendingSubs.values) {
+        s.close();
+      }
       _connSubs.clear();
       _tickSubs.clear();
+      _pendingSubs.clear();
       for (final hub in _hubs.values) {
         hub.setMethodCallHandler(null);
       }
@@ -212,47 +221,84 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     return null;
   }
 
-  /// The active tab changed — retarget every follow-active (History) window to
-  /// it so the pop-out mirrors whichever repo the user is now looking at,
-  /// pushing the new snapshot and moving its session/watcher subscriptions onto
-  /// the new tab's container. If the new active tab has no connected repo there
-  /// is nothing to show, so the follower closes (matching the single-window
-  /// "no active repo → no History" behavior). Called by TabsHost on every
-  /// active-tab switch.
-  void onActiveTabChanged(String? tabId) {
+  /// The active tab changed — retarget every follow-active (History) window so
+  /// the pop-out mirrors whichever repo the user is now looking at. [isBlank] is
+  /// whether the new active tab is a blank landing tab (no repo, and none
+  /// pending) — the bridge can't tell that from the container alone, because a
+  /// freshly-opened repo tab is *also* momentarily disconnected: it's activated
+  /// synchronously but its connect runs a beat later. So:
+  ///  - already connected with a repo → retarget now;
+  ///  - a repo tab still connecting → keep the window where it is and retarget
+  ///    once that tab reports its repo (the [_pendingSubs] wait) — this is what
+  ///    stops a brand-new repo from closing the window;
+  ///  - a genuine blank landing tab → close the follower only if the repo it's
+  ///    currently showing is gone (its tab was closed); otherwise leave it
+  ///    (the user is just visiting the landing between repos).
+  /// Called by TabsHost on every active-tab switch.
+  void onActiveTabChanged(String? tabId, {required bool isBlank}) {
     if (state.every((w) => w.kind != WindowKind.history)) return;
     final container = tabId == null ? null : sessionContainerFor(tabId);
     final conn = container?.read(connectionProvider);
-    final hasRepo = conn != null && conn.isConnected && conn.repoPath != null;
+    final ready = conn != null && conn.isConnected && conn.repoPath != null;
     for (final w in List<WindowHandle>.of(state)) {
       if (w.kind != WindowKind.history) continue;
-      if (!hasRepo) {
+      _pendingSubs.remove(w.id)?.close();
+      if (ready) {
+        _repinHistory(w.id, tabId!, container!, conn);
+      } else if (!isBlank && container != null && tabId != null) {
+        // A repo tab mid-connect — wait for it, then retarget (if it's still
+        // the active tab by the time it connects).
+        final pendingTab = tabId;
+        final pendingContainer = container;
+        _pendingSubs[w.id] = pendingContainer.listen(connectionProvider, (
+          _,
+          next,
+        ) {
+          if (next.isConnected &&
+              next.repoPath != null &&
+              activeTabId() == pendingTab) {
+            _pendingSubs.remove(w.id)?.close();
+            _repinHistory(w.id, pendingTab, pendingContainer, next);
+          }
+        });
+      } else if (sessionContainerFor(w.tabId) == null) {
+        // Blank landing tab AND the repo this window was showing is gone.
         close(w.id);
-        continue;
       }
-      final updated = WindowHandle(
-        id: w.id,
-        kind: w.kind,
-        repoPath: conn.repoPath,
-        tabId: tabId,
-      );
-      state = [
-        for (final x in state)
-          if (x.id == w.id) updated else x,
-      ];
-      _connSubs.remove(w.id)?.close();
-      _connSubs[w.id] = container!.listen(
-        connectionProvider,
-        (_, next) => _onWindowConnectionChanged(w.id, next),
-      );
-      _subscribeTick(w.id, container, conn.repoPath);
-      _hubs[w.id]
-          ?.invokeMethod<void>(
-            'connectionChanged',
-            _snapshotFor(updated, conn).encode(),
-          )
-          .catchError((_) {});
     }
+  }
+
+  /// Re-pins a History window onto [tabId]/[container]: swaps its tabId+repo,
+  /// moves its connection/watcher subscriptions, and pushes the new snapshot so
+  /// the child refetches for the new repo.
+  void _repinHistory(
+    String windowId,
+    String tabId,
+    ProviderContainer container,
+    ConnectionState conn,
+  ) {
+    final updated = WindowHandle(
+      id: windowId,
+      kind: WindowKind.history,
+      repoPath: conn.repoPath,
+      tabId: tabId,
+    );
+    state = [
+      for (final x in state)
+        if (x.id == windowId) updated else x,
+    ];
+    _connSubs.remove(windowId)?.close();
+    _connSubs[windowId] = container.listen(
+      connectionProvider,
+      (_, next) => _onWindowConnectionChanged(windowId, next),
+    );
+    _subscribeTick(windowId, container, conn.repoPath);
+    _hubs[windowId]
+        ?.invokeMethod<void>(
+          'connectionChanged',
+          _snapshotFor(updated, conn).encode(),
+        )
+        .catchError((_) {});
   }
 
   /// Subscribes a freshly-opened window to its pinned tab's connection + file
@@ -304,6 +350,7 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
       if (w.kind == WindowKind.history) {
         _connSubs.remove(w.id)?.close();
         _tickSubs.remove(w.id)?.close();
+        _pendingSubs.remove(w.id)?.close();
       } else {
         close(w.id);
         _forget(w.id);
@@ -317,6 +364,7 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
   void _forget(String id) {
     _connSubs.remove(id)?.close();
     _tickSubs.remove(id)?.close();
+    _pendingSubs.remove(id)?.close();
     _hubs.remove(id)?.setMethodCallHandler(null);
     if (state.any((w) => w.id == id)) {
       state = [
