@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'async_write_queue.dart';
 import 'saved_local_repo.dart';
+import 'store_bus.dart';
 
 /// Persists bookmarked local repos — non-secret metadata only; a local repo
 /// has no credentials, so unlike [ConnectionStore] there is no Keychain/
@@ -52,6 +53,9 @@ class LocalRepoStore {
       _metaKey,
       jsonEncode(repos.map((r) => r.toJson()).toList()),
     );
+    // Every save/touch/delete flows through here — one notify refreshes
+    // `savedLocalReposProvider` in every open tab (fanned out by TabsController).
+    StoreBus.instance.notifyLocalReposChanged();
   }
 
   Future<void> save(SavedLocalRepo repo) => _writes.run(() async {

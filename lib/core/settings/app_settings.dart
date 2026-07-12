@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../git/git_service.dart';
+import 'settings_bus.dart';
 
 /// User-tunable knobs persisted across sessions:
 ///  * the two generous per-command timeouts, so a legitimately slow push/commit
@@ -84,6 +85,48 @@ class AppSettings {
     historyZoom: historyZoom ?? this.historyZoom,
     historyDiffWrap: historyDiffWrap ?? this.historyDiffWrap,
   );
+
+  // Value equality so a cross-tab [reloadFromDisk] that re-reads the same value
+  // is a no-op (no listener churn, clean echo-termination) — and so unrelated
+  // settings mutations don't rebuild value-equal consumers.
+  @override
+  bool operator ==(Object other) =>
+      other is AppSettings &&
+      other.networkTimeout == networkTimeout &&
+      other.commitTimeout == commitTimeout &&
+      other.committerName == committerName &&
+      other.committerEmail == committerEmail &&
+      other.defaultPullMode == defaultPullMode &&
+      other.pushFollowTags == pushFollowTags &&
+      other.autoFetchMinutes == autoFetchMinutes &&
+      other.historyZoom == historyZoom &&
+      other.historyDiffWrap == historyDiffWrap &&
+      _mapEquals(other.binaryOverrides, binaryOverrides);
+
+  @override
+  int get hashCode => Object.hash(
+    networkTimeout,
+    commitTimeout,
+    committerName,
+    committerEmail,
+    defaultPullMode,
+    pushFollowTags,
+    autoFetchMinutes,
+    historyZoom,
+    historyDiffWrap,
+    Object.hashAllUnordered(
+      binaryOverrides.entries.map((e) => Object.hash(e.key, e.value)),
+    ),
+  );
+
+  static bool _mapEquals(Map<String, String> a, Map<String, String> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (final e in a.entries) {
+      if (b[e.key] != e.value) return false;
+    }
+    return true;
+  }
 }
 
 /// Loads settings from [SharedPreferences] (async, after construction) and
@@ -131,6 +174,14 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   @override
   AppSettings build() {
     _load();
+    // Cross-tab sync: another tab's write (each tab is its own container with
+    // its own notifier) reloads this one from disk. Reload never re-broadcasts,
+    // so there is no ping-pong; a value-equal reload is a no-op via AppSettings
+    // value equality.
+    final sub = SettingsBus.instance.onSettingsWritten.listen(
+      (_) => reloadFromDisk(),
+    );
+    ref.onDispose(sub.cancel);
     return const AppSettings();
   }
 
@@ -142,8 +193,9 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
       return; // storage unavailable (e.g. no platform binding) — keep defaults
     }
     // Initial-load race: honor a user edit that landed while we read disk
-    // rather than overwriting it with the now-stale stored snapshot.
-    _applyFromPrefs(prefs, abort: () => _userEdited);
+    // rather than overwriting it with the now-stale stored snapshot. Also abort
+    // if the provider was disposed across the async gap (e.g. a tab closed).
+    _applyFromPrefs(prefs, abort: () => _userEdited || !ref.mounted);
   }
 
   /// Folds the persisted values from [prefs] into [state]. [abort] is consulted
@@ -205,7 +257,9 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     } catch (_) {
       return; // storage unavailable — keep what we have
     }
-    _applyFromPrefs(prefs, abort: () => _pendingWrites > 0);
+    // Guard the disposed-across-the-gap case too — this now fires on every
+    // cross-tab settings write, so a tab that closed mid-reload must not assign.
+    _applyFromPrefs(prefs, abort: () => _pendingWrites > 0 || !ref.mounted);
   }
 
   /// Runs a batch of setter disk writes with [_pendingWrites] held up for the
@@ -220,6 +274,10 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     } finally {
       _pendingWrites--;
     }
+    // Tell sibling tabs (and, via the root notifier's listener, the native
+    // History window) to reload. Fired after the write is flushed and the
+    // pending-guard released, so this notifier's own reload defers correctly.
+    SettingsBus.instance.notifySettingsWritten();
   }
 
   /// Floors a timeout to [_minTimeout] so a 0-second (or negative) value —

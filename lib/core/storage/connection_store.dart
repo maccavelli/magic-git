@@ -4,6 +4,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'async_write_queue.dart';
 import 'saved_connection.dart';
+import 'store_bus.dart';
 
 /// Persists connection profiles: non-secret metadata in shared_preferences,
 /// secrets (SSH password/passphrase/private key, GitLab token, GitHub token) in
@@ -114,6 +115,10 @@ class ConnectionStore {
       _metaKey,
       jsonEncode(connections.map((c) => c.toJson()).toList()),
     );
+    // Every save/updateMetadata/touch/delete flows through here — one notify
+    // refreshes `savedConnectionsProvider` in every open tab (fanned out by
+    // TabsController). See StoreBus.
+    StoreBus.instance.notifyConnectionsChanged();
   }
 
   Future<void> save(

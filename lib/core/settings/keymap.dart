@@ -6,6 +6,8 @@ import 'package:flutter/widgets.dart' show SingleActivator, ShortcutActivator;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'settings_bus.dart';
+
 /// A single serializable key combination — the persistable, comparable
 /// counterpart to Flutter's [SingleActivator] (which supports neither out of
 /// the box).
@@ -578,9 +580,18 @@ class KeymapNotifier extends Notifier<Map<String, List<KeyBinding>>> {
   /// with the stale stored overrides. Checked right before [_load]'s assignment.
   bool _userEdited = false;
 
+  /// Count of setter disk writes in flight — mirrors [AppSettingsNotifier]'s
+  /// guard so a cross-tab [reloadFromDisk] defers to an unflushed local write.
+  int _pendingWrites = 0;
+
   @override
   Map<String, List<KeyBinding>> build() {
     _load();
+    // Cross-tab sync: a rebind in another tab reloads this notifier from disk.
+    final sub = SettingsBus.instance.onKeymapWritten.listen(
+      (_) => reloadFromDisk(),
+    );
+    ref.onDispose(sub.cancel);
     return Map<String, List<KeyBinding>>.from(_defaults);
   }
 
@@ -591,12 +602,40 @@ class KeymapNotifier extends Notifier<Map<String, List<KeyBinding>>> {
     } catch (_) {
       return; // storage unavailable — keep defaults
     }
+    final next = _decodeOverrides(prefs);
+    // A user edit landed while we were reading disk — honor it over the stale
+    // stored overrides; also bail if disposed across the async gap.
+    if (next == null || _userEdited || !ref.mounted) return;
+    state = next;
+  }
+
+  /// Re-reads keymap overrides another tab persisted (each tab is its own
+  /// container). Defers while a local write is unflushed, and only assigns when
+  /// the result actually differs, so a value-equal reload is a no-op.
+  Future<void> reloadFromDisk() async {
+    if (_pendingWrites > 0) return;
+    final SharedPreferences prefs;
+    try {
+      prefs = await SharedPreferences.getInstance();
+      await prefs.reload();
+    } catch (_) {
+      return; // storage unavailable — keep what we have
+    }
+    final next = _decodeOverrides(prefs);
+    if (next == null || !ref.mounted || _keymapEquals(next, state)) return;
+    state = next;
+  }
+
+  /// Decodes the persisted overrides folded onto [_defaults]. Returns a fresh
+  /// full map (defaults when nothing is stored), or null on a corrupt top-level
+  /// payload (caller keeps current state). Shared by [_load]/[reloadFromDisk].
+  Map<String, List<KeyBinding>>? _decodeOverrides(SharedPreferences prefs) {
+    final next = Map<String, List<KeyBinding>>.from(_defaults);
     final raw = prefs.getString(_prefsKey);
-    if (raw == null || raw.isEmpty) return;
+    if (raw == null || raw.isEmpty) return next;
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is! Map) return;
-      final next = Map<String, List<KeyBinding>>.from(_defaults);
+      if (decoded is! Map) return null;
       for (final entry in decoded.entries) {
         if (!_defaults.containsKey('${entry.key}')) {
           continue; // a since-removed action
@@ -604,33 +643,38 @@ class KeymapNotifier extends Notifier<Map<String, List<KeyBinding>>> {
         try {
           final value = entry.value;
           if (value is! List) continue;
-          final decoded = value
+          final list = value
               .whereType<String>()
               .map(KeyBinding.decode)
               .whereType<KeyBinding>()
               .toList();
-          if (decoded.isEmpty && value.isNotEmpty) {
-            // The stored list was non-empty but every element failed to
-            // decode (corrupted entry / future format change) — this is not
-            // the same as the user deliberately clearing the shortcut (which
-            // stores an empty list to begin with). Skip so the action falls
-            // back to its default binding, matching the wrong-type branch
-            // above.
+          if (list.isEmpty && value.isNotEmpty) {
+            // Stored list non-empty but every element failed to decode
+            // (corrupted / future format) — fall back to the default binding,
+            // distinct from a deliberately-cleared (stored-empty) shortcut.
             continue;
           }
-          next['${entry.key}'] = decoded;
+          next['${entry.key}'] = list;
         } catch (_) {
-          // Skip one malformed action's overrides (keeps its default) rather
-          // than discarding *every* customization on a single bad entry.
+          // Skip one malformed action's overrides (keeps its default).
         }
       }
-      // A user edit landed while we were reading from disk — honor it rather
-      // than overwriting it with the now-stale stored overrides.
-      if (_userEdited) return;
-      state = next;
+      return next;
     } catch (_) {
-      // Corrupt top-level payload — fall back to defaults rather than crash.
+      return null; // corrupt top-level payload — keep current state
     }
+  }
+
+  static bool _keymapEquals(
+    Map<String, List<KeyBinding>> a,
+    Map<String, List<KeyBinding>> b,
+  ) {
+    if (a.length != b.length) return false;
+    for (final e in a.entries) {
+      final other = b[e.key];
+      if (other == null || !listEquals(e.value, other)) return false;
+    }
+    return true;
   }
 
   /// Replaces every binding for [actionId] and persists.
@@ -653,19 +697,25 @@ class KeymapNotifier extends Notifier<Map<String, List<KeyBinding>>> {
   }
 
   Future<void> _persist() async {
-    final prefs = await SharedPreferences.getInstance();
-    final overrides = <String, dynamic>{};
-    for (final entry in state.entries) {
-      final defaults = _defaults[entry.key] ?? const <KeyBinding>[];
-      if (!listEquals(entry.value, defaults)) {
-        overrides[entry.key] = entry.value.map((b) => b.encode()).toList();
+    _pendingWrites++;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final overrides = <String, dynamic>{};
+      for (final entry in state.entries) {
+        final defaults = _defaults[entry.key] ?? const <KeyBinding>[];
+        if (!listEquals(entry.value, defaults)) {
+          overrides[entry.key] = entry.value.map((b) => b.encode()).toList();
+        }
       }
+      if (overrides.isEmpty) {
+        await prefs.remove(_prefsKey);
+      } else {
+        await prefs.setString(_prefsKey, jsonEncode(overrides));
+      }
+    } finally {
+      _pendingWrites--;
     }
-    if (overrides.isEmpty) {
-      await prefs.remove(_prefsKey);
-    } else {
-      await prefs.setString(_prefsKey, jsonEncode(overrides));
-    }
+    SettingsBus.instance.notifyKeymapWritten();
   }
 
   /// Every other action — in [actionId]'s own category, or global — currently
