@@ -16,6 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/output/output_log.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/providers/window_manager_bridge.dart';
 import 'package:remote_magic_git/features/app_shell.dart';
 import 'package:remote_magic_git/features/tabs/tabs_controller.dart';
 import 'package:remote_magic_git/features/tabs/tabs_host.dart';
@@ -135,6 +136,26 @@ void main() {
     expect(_findMacosIcon(CupertinoIcons.add), findsOneWidget);
     await _teardownHost(tester);
   });
+
+  testWidgets(
+    'the History bridge is wired to the tab controller after mount',
+    (tester) async {
+      final c = TabsController(containerFactory: _tabContainer);
+      addTearDown(c.dispose);
+      await _pumpHost(tester, c);
+
+      // The bridge (built during MacosApp's first build) must have its
+      // resolvers wired to the controller — otherwise openHistory() gates out
+      // with "no session container" and no window ever launches.
+      final bridge = WindowManagerBridge.current;
+      expect(bridge, isNotNull);
+      expect(bridge!.activeTabId(), c.activeId,
+          reason: 'activeTabId resolver is wired');
+      expect(bridge.sessionContainerFor(c.activeId), same(c.active!.container),
+          reason: 'sessionContainerFor resolver is wired');
+      await _teardownHost(tester);
+    },
+  );
 
   testWidgets(
     'a sheet on the root navigator reads the active tab session, not root',

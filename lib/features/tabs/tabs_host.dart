@@ -95,15 +95,10 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     _controller = widget.controller ?? TabsController();
     _controller.ensureInitialTab();
     _controller.addListener(_onTabsChanged);
-    // Expose the controller to connection sheets pushed above TabsScope.
+    // Expose the controller to connection sheets pushed above TabsScope. The
+    // History bridge is wired in build() — it isn't built until this host's
+    // first build watches it, which is after initState.
     TabsController.current = _controller;
-    // Point the single root History bridge at this controller so a pop-out pins
-    // to (and serves from) its spawning tab's container. The bridge was built by
-    // the root ProviderScope keeper before this host mounted.
-    WindowManagerBridge.current
-      ?..sessionContainerFor =
-          ((tabId) => tabId == null ? null : _controller.containerFor(tabId))
-      ..activeTabId = (() => _controller.activeId);
 
     _menuChannel.setMethodCallHandler(_handleMenuCall);
     // Intercept the window close so each tab's SSH session gets a clean
@@ -312,9 +307,15 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
   @override
   Widget build(BuildContext context) {
     // Instantiate + keep alive the SINGLE native-window bridge in this (root)
-    // container for the app's lifetime; wired to the tab controller in initState
-    // so each pop-out pins to its spawning tab.
+    // container for the app's lifetime. Watching it here builds it (setting
+    // WindowManagerBridge.current), so wire its tab resolvers right after — this
+    // is the earliest point the bridge exists (it doesn't yet in initState), and
+    // re-setting the closures each build is a cheap no-op.
     ref.watch(windowManagerBridgeProvider);
+    WindowManagerBridge.current
+      ?..sessionContainerFor =
+          ((tabId) => tabId == null ? null : _controller.containerFor(tabId))
+      ..activeTabId = (() => _controller.activeId);
     return MacosApp(
       title: 'Magic Git',
       // Dark-only by design (see AppTheme): pin dark for both slots so the app
