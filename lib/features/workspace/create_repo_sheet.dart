@@ -591,8 +591,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           break;
         case _RemoteMode.github:
           final label = 'gh repo create $name';
+          final gh = GhService(executor);
+          var created = false;
           try {
-            final result = await GhService(executor).createRepoInExisting(
+            final result = await gh.createRepoInExisting(
               repoPath: dest,
               name: name,
               private: _private,
@@ -601,6 +603,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               push: hasCommit,
             );
             log.logResult(label, result);
+            created = true;
           } on GhException catch (e) {
             log.logResult(label, e.result);
             warnings.add(
@@ -609,25 +612,53 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               '(${e.result.stderr.trim().isEmpty ? e : e.result.stderr.trim()})',
             );
           }
+          if (created) {
+            await _ensureForgeOrigin(
+              executor,
+              log,
+              dest,
+              hasCommit,
+              pushRef,
+              warnings,
+              forgeHandlesPush: true,
+              lookupUrl: () =>
+                  gh.cloneUrl(repoPath: dest, name: name, host: host),
+            );
+          }
         case _RemoteMode.gitlab:
           final label = 'glab repo create $name';
+          final glab = GlabService(executor);
+          var created = false;
           try {
-            await GlabService(executor).createRepoInExisting(
+            await glab.createRepoInExisting(
               repoPath: dest,
               name: name,
               private: _private,
               description: _description.text.trim(),
               host: host,
             );
-            if (hasCommit) {
-              await _pushInitial(executor, log, dest, pushRef, warnings);
-            }
+            created = true;
           } on GlabException catch (e) {
             log.logResult(label, e.result);
             warnings.add(
               'The repository was created locally, but publishing to '
               'GitLab failed — you can retry from the forge later. '
               '(${e.result.stderr.trim().isEmpty ? e : e.result.stderr.trim()})',
+            );
+          }
+          if (created) {
+            // glab never passes a remote flag — origin is purely its implicit
+            // side effect — and it doesn't push on create, so we own both.
+            await _ensureForgeOrigin(
+              executor,
+              log,
+              dest,
+              hasCommit,
+              pushRef,
+              warnings,
+              forgeHandlesPush: false,
+              lookupUrl: () =>
+                  glab.cloneUrl(repoPath: dest, name: name, host: host),
             );
           }
         case _RemoteMode.customUrl:
@@ -654,9 +685,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       if (!mounted) return;
 
       // --- Step 4: post-create verification -------------------------------
-      // Every mode that promises an origin must actually show one: don't
-      // trust the forge CLI's (or our own) remote wiring blindly.
-      if (warnings.isEmpty && _remote != _RemoteMode.none) {
+      // The GitHub/GitLab modes already verified (and repaired) origin inside
+      // _ensureForgeOrigin using our PATH-hardened git — the one place that no
+      // longer trusts the forge CLI's own remote wiring. Only the plain
+      // custom-URL path still needs the final check that our `git remote add`
+      // actually took.
+      if (warnings.isEmpty && _remote == _RemoteMode.customUrl) {
         final failure = await _verifyOrigin(executor, log, dest);
         if (!mounted) return;
         if (failure != null) {
@@ -803,6 +837,71 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       }
     } catch (e) {
       warnings.add('The initial commit could not be pushed. ($e)');
+    }
+  }
+
+  /// Guarantees a usable `origin` in [dest] after a forge `repo create`, using
+  /// our own PATH-hardened git rather than trusting the forge CLI's nested
+  /// `git remote add` — whose child `git` rides an unhardened PATH and can
+  /// silently no-op under a Finder-launched GUI or a bare SSH exec channel,
+  /// leaving the repo created on the forge but with no origin locally (nothing
+  /// to push — the reported failure). Idempotent and best-effort; every failure
+  /// is a warning and the local repo is always kept:
+  ///  * origin already resolves → the forge wired it; push the initial commit
+  ///    only if the forge itself didn't ([forgeHandlesPush] false — glab does
+  ///    not push on create).
+  ///  * origin missing → look up the clone URL from the forge via [lookupUrl]
+  ///    and `git remote add origin`, then push the initial commit.
+  Future<void> _ensureForgeOrigin(
+    CommandExecutor executor,
+    OutputLogNotifier log,
+    String dest,
+    bool hasCommit,
+    String pushRef,
+    List<String> warnings, {
+    required bool forgeHandlesPush,
+    required Future<String?> Function() lookupUrl,
+  }) async {
+    final existing = await executor.execute(
+      repoPath: dest,
+      gitArgs: ['git', 'remote', 'get-url', 'origin'],
+      lane: ExecLane.read,
+      retries: 0,
+    );
+    final hasOrigin = existing.isSuccess && existing.stdout.trim().isNotEmpty;
+    var repaired = false;
+    if (!hasOrigin) {
+      final url = (await lookupUrl())?.trim();
+      if (url == null || url.isEmpty) {
+        warnings.add(
+          'The repository was created on the forge, but no "origin" remote '
+          'could be configured locally — its clone URL could not be '
+          'determined. Add one manually: git remote add origin <url>.',
+        );
+        return;
+      }
+      final add = await executor.execute(
+        repoPath: dest,
+        gitArgs: ['git', 'remote', 'add', 'origin', url],
+        lane: ExecLane.exclusive,
+        retries: 0,
+      );
+      log.logResult('git remote add origin $url', add);
+      if (!add.isSuccess) {
+        warnings.add(
+          'The repository was created on the forge, but wiring the "origin" '
+          'remote failed. '
+          '(${add.stderr.trim().isEmpty ? 'git remote add exited with code ${add.exitCode}' : add.stderr.trim()})',
+        );
+        return;
+      }
+      repaired = true;
+    }
+    // Push when there's a commit not already up there: the forge only pushed if
+    // it both handles push AND had a real origin to push to, so a just-repaired
+    // origin always still needs the push.
+    if (hasCommit && (repaired || !forgeHandlesPush)) {
+      await _pushInitial(executor, log, dest, pushRef, warnings);
     }
   }
 

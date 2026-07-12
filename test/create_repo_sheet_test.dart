@@ -424,8 +424,9 @@ void main() {
       exec.results.add(_ok('')); // git add
       exec.results.add(_ok('')); // git commit
       exec.results.add(_ok('')); // glab repo create
+      // _ensureForgeOrigin: glab wired origin — confirmed with our own git.
+      exec.results.add(_ok('git@gitlab.com:me/new-proj.git\n'));
       exec.results.add(_ok('')); // git push -u
-      exec.results.add(_ok('git@gitlab.com:me/new-proj.git\n')); // verify
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
@@ -435,8 +436,10 @@ void main() {
           'git init -b main -- new-proj',
           'git commit -m Initial commit',
           'glab repo create new-proj --private',
-          'git push -u origin main',
+          // Origin is confirmed (glab wired it) before we push — glab, unlike
+          // gh, does not push on create, so we own the push.
           'git remote get-url origin',
+          'git push -u origin main',
         ]),
       );
       expect(stub.repoPathsSet, ['/srv/new-proj']);
@@ -493,8 +496,69 @@ void main() {
   );
 
   testWidgets(
-    'a create whose origin verification fails still registers the repo but '
-    'stays open with a warning',
+    'gh leaves origin unset: the repo is repaired from the forge URL and '
+    'the initial commit is pushed',
+    (tester) async {
+      final (stub, exec, _) = await _pumpConnected(tester);
+      await _next(tester); // Source
+      await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
+      await tester.enterText(_nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byWidgetPredicate(
+          (w) => w is MacosTooltip && w.message.startsWith('Add a README'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _next(tester); // Details → Review
+
+      exec.results.add(_ok('absent')); // probe
+      exec.results.add(_ok('')); // git init
+      exec.results.add(_ok('')); // git add
+      exec.results.add(_ok('')); // git commit
+      exec.results.add(_ok('')); // gh repo create --source --push
+      // gh's nested `git remote add` silently no-op'd on an unhardened PATH:
+      // the GitHub repo exists but origin is unset locally.
+      exec.results.add(
+        const SSHCommandResult(
+          exitCode: 2,
+          stdout: '',
+          stderr: "error: No such remote 'origin'",
+        ),
+      ); // _ensureForgeOrigin: origin missing
+      exec.results.add(
+        _ok('{"url":"https://github.com/me/new-proj","sshUrl":'
+            '"git@github.com:me/new-proj.git"}'),
+      ); // gh repo view (repair lookup)
+      exec.results.add(_ok('https')); // gh config get git_protocol
+      exec.results.add(_ok('')); // git remote add origin (our hardened git)
+      exec.results.add(_ok('')); // git push -u origin main
+      await tester.tap(_createButton());
+      await tester.pumpAndSettle();
+
+      expect(
+        exec.calls.map((c) => c.join(' ')),
+        containsAllInOrder([
+          'gh repo create new-proj --private --source . --remote origin --push',
+          'git remote get-url origin',
+          'gh repo view new-proj --json url,sshUrl',
+          'gh config get git_protocol -h github.com',
+          'git remote add origin https://github.com/me/new-proj.git',
+          'git push -u origin main',
+        ]),
+        reason: 'origin repaired from the canonical clone URL, then pushed',
+      );
+      expect(stub.repoPathsSet, ['/srv/new-proj']);
+      expect(find.byType(CreateRepositorySheet), findsNothing,
+          reason: 'repair succeeded — no warning, sheet pops');
+    },
+  );
+
+  testWidgets(
+    'gh leaves origin unset and the forge URL is unresolvable: the repo is '
+    'kept and the sheet warns',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
@@ -514,7 +578,10 @@ void main() {
           stdout: '',
           stderr: "error: No such remote 'origin'",
         ),
-      ); // verify fails
+      ); // _ensureForgeOrigin: origin missing
+      exec.results.add(
+        const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'not found'),
+      ); // gh repo view fails — URL can't be determined
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
@@ -523,7 +590,7 @@ void main() {
       expect(find.byType(CreateRepositorySheet), findsOneWidget,
           reason: 'stays open to show the warning');
       expect(
-        find.textContaining('no "origin" remote is configured'),
+        find.textContaining('clone URL could not be'),
         findsOneWidget,
       );
     },

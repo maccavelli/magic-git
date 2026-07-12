@@ -295,6 +295,92 @@ void main() {
     });
   });
 
+  group('cloneUrl (origin repair)', () {
+    test('gh: https protocol returns the web URL with a .git suffix', () async {
+      exec.results.add(_ok(
+        '{"url":"https://github.com/mac/r","sshUrl":"git@github.com:mac/r.git"}',
+      )); // gh repo view
+      exec.results.add(_ok('https')); // gh config get git_protocol
+      final url = await gh.cloneUrl(repoPath: '/x/r', name: 'r');
+      expect(url, 'https://github.com/mac/r.git');
+      expect(exec.calls[0], ['gh', 'repo', 'view', 'r', '--json', 'url,sshUrl']);
+      expect(exec.calls[1], [
+        'gh',
+        'config',
+        'get',
+        'git_protocol',
+        '-h',
+        'github.com',
+      ]);
+    });
+
+    test('gh: ssh protocol returns the SSH URL verbatim', () async {
+      exec.results.add(_ok(
+        '{"url":"https://github.com/mac/r","sshUrl":"git@github.com:mac/r.git"}',
+      ));
+      exec.results.add(_ok('ssh'));
+      expect(
+        await gh.cloneUrl(repoPath: '/x/r', name: 'r'),
+        'git@github.com:mac/r.git',
+      );
+    });
+
+    test('gh: a GHE host rides GH_HOST on both probes', () async {
+      exec.results.add(_ok(
+        '{"url":"https://ghe.corp/mac/r","sshUrl":"git@ghe.corp:mac/r.git"}',
+      ));
+      exec.results.add(_ok('https'));
+      await gh.cloneUrl(repoPath: '/x/r', name: 'r', host: 'ghe.corp.example');
+      expect(exec.envs[0], {'GH_HOST': 'ghe.corp.example'});
+      expect(exec.envs[1], {'GH_HOST': 'ghe.corp.example'});
+    });
+
+    test('gh: a failed view yields null (never throws)', () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 1,
+        stdout: '',
+        stderr: 'not found',
+      );
+      expect(await gh.cloneUrl(repoPath: '/x/r', name: 'r'), isNull);
+    });
+
+    test('glab: a bare name resolves the user namespace, then the project URL',
+        () async {
+      exec.results.add(_ok('$_glabHeaders{"username":"mac"}')); // glab api user
+      exec.results.add(_ok(
+        '$_glabHeaders{"http_url_to_repo":"https://gitlab.com/mac/r.git"}',
+      )); // glab api projects
+      final url = await glab.cloneUrl(repoPath: '/x/r', name: 'r');
+      expect(url, 'https://gitlab.com/mac/r.git');
+      expect(exec.calls[0], ['glab', 'api', 'user', '-i']);
+      expect(exec.calls[1], ['glab', 'api', 'projects/mac%2Fr', '-i']);
+    });
+
+    test('glab: a group path skips the user lookup and is %2F-encoded',
+        () async {
+      exec.results.add(_ok(
+        '$_glabHeaders{"http_url_to_repo":"https://gitlab.com/grp/sub/r.git"}',
+      ));
+      final url = await glab.cloneUrl(repoPath: '/x/r', name: 'grp/sub/r');
+      expect(exec.calls.single, [
+        'glab',
+        'api',
+        'projects/grp%2Fsub%2Fr',
+        '-i',
+      ]);
+      expect(url, 'https://gitlab.com/grp/sub/r.git');
+    });
+
+    test('glab: a failed user lookup yields null (never throws)', () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 1,
+        stdout: '',
+        stderr: 'boom',
+      );
+      expect(await glab.cloneUrl(repoPath: '/x/r', name: 'r'), isNull);
+    });
+  });
+
   group('cloneArgv builders', () {
     test('gh', () {
       expect(GhService.cloneArgv(slug: 'mac/magic-git', dirName: 'magic-git'), [

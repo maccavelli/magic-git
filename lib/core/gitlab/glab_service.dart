@@ -182,6 +182,55 @@ class GlabService {
     }
   }
 
+  /// The clone URL of the just-created [name] on [host] — used to repair a
+  /// missing `origin` after [createRepoInExisting] (glab wires the remote as an
+  /// implicit side effect via a *nested* `git` that rides an unhardened PATH
+  /// and can silently no-op under a Finder-launched GUI or a bare SSH exec
+  /// channel). `glab repo create <name>` lands in the authenticated user's
+  /// namespace, so the project is resolved as `<username>/<name>` (a [name]
+  /// that already carries a group path is used verbatim) and its canonical
+  /// `http_url_to_repo` read back from the API. Best-effort: returns null
+  /// (never throws) when the project can't be confirmed, so the caller warns
+  /// rather than wiring a guessed — possibly wrong — origin.
+  Future<String?> cloneUrl({
+    required String repoPath,
+    required String name,
+    String host = 'gitlab.com',
+  }) async {
+    try {
+      String full;
+      if (name.contains('/')) {
+        full = name;
+      } else {
+        final who = await _runJson(
+          repoPath,
+          ['glab', 'api', 'user', '-i'],
+          'glab api user',
+          expectHeaders: true,
+          extraEnv: hostEnv(host),
+        );
+        final username = (who is Map ? who['username'] : null) as String?;
+        if (username == null || username.isEmpty) return null;
+        full = '$username/$name';
+      }
+      // GitLab's project id must arrive URL-encoded — each path segment
+      // percent-encoded and the separators as `%2F`.
+      final encoded = full.split('/').map(Uri.encodeComponent).join('%2F');
+      final project = await _runJson(
+        repoPath,
+        ['glab', 'api', 'projects/$encoded', '-i'],
+        'glab api projects',
+        expectHeaders: true,
+        extraEnv: hostEnv(host),
+      );
+      final url = (project is Map ? project['http_url_to_repo'] : null)
+          as String?;
+      return (url == null || url.isEmpty) ? null : url;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// argv for a streamed clone of [pathWithNamespace] into [dirName] (run with
   /// the parent directory as the working dir). `-- --progress` forces git's
   /// progress output, which is otherwise suppressed off-tty.

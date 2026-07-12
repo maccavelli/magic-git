@@ -180,6 +180,62 @@ class GhService {
     return result;
   }
 
+  /// The clone URL of the just-created [name] on [host] — used to repair a
+  /// missing `origin` after [createRepoInExisting] (gh wires the remote with a
+  /// *nested* `git` that rides an unhardened PATH and can silently no-op under
+  /// a Finder-launched GUI or a bare SSH exec channel). `gh repo view <name>`
+  /// resolves the bare name against the authenticated account exactly as
+  /// `gh repo create` did, so it always finds the same repo. The protocol is
+  /// matched to the user's `git_protocol` so the repaired remote is identical
+  /// to gh's own — SSH users don't get an HTTPS origin they can't push, and
+  /// vice versa. Best-effort: returns null (never throws) when the lookup
+  /// can't produce a URL, so the caller warns rather than wiring a guess.
+  Future<String?> cloneUrl({
+    required String repoPath,
+    required String name,
+    String host = 'github.com',
+  }) async {
+    try {
+      final decoded = await _runJson(
+        repoPath,
+        ['gh', 'repo', 'view', name, '--json', 'url,sshUrl'],
+        'gh repo view',
+        extraEnv: hostEnv(host),
+      );
+      if (decoded is! Map) return null;
+      final https = decoded['url'];
+      final ssh = decoded['sshUrl'];
+      if (await _gitProtocol(repoPath, host) == 'ssh' &&
+          ssh is String &&
+          ssh.isNotEmpty) {
+        return ssh;
+      }
+      if (https is String && https.isNotEmpty) {
+        return https.endsWith('.git') ? https : '$https.git';
+      }
+      return (ssh is String && ssh.isNotEmpty) ? ssh : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// The user's configured clone protocol for [host] (`gh config get
+  /// git_protocol`) — `ssh` or `https`; defaults to `https` (gh's own default)
+  /// on any error, so a failed probe never blocks remote repair.
+  Future<String> _gitProtocol(String repoPath, String host) async {
+    try {
+      final result = await _executor.execute(
+        repoPath: repoPath,
+        gitArgs: ['gh', 'config', 'get', 'git_protocol', '-h', host],
+        lane: ExecLane.read,
+        extraEnv: hostEnv(host),
+      );
+      return result.stdout.trim().toLowerCase() == 'ssh' ? 'ssh' : 'https';
+    } catch (_) {
+      return 'https';
+    }
+  }
+
   /// argv for a streamed clone of [slug] into [dirName] (run with the parent
   /// directory as the working dir). `-- --progress` forces git's progress
   /// output, which is otherwise suppressed off-tty.
