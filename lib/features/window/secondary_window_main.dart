@@ -447,6 +447,10 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
     final previous = ref.read(windowSessionProvider);
     ref.read(windowSessionProvider.notifier).apply(payload);
     final session = ref.read(windowSessionProvider);
+    kHwDebugSink?.call(
+      'MGDBG-CHILD applySession prev=${previous.repoPath} next=${session.repoPath} '
+      'changed=${session.repoPath != previous.repoPath} phase=${session.phase.name}',
+    );
 
     if (session.phase == ConnectionPhase.disconnected) {
       // The window follows the session — nothing meaningful to show once the
@@ -462,6 +466,12 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       for (final family in repoScopedFetchFamilies) {
         ref.invalidate(family);
       }
+      // Mirror the main window's ConnectionController._invalidateRepoState:
+      // clearing the hash-keyed diff LRUs alongside the invalidation keeps their
+      // KeepAliveLink bookkeeping from pinning links to the just-disposed
+      // providers — a stale link there breaks delivery of a later fresh fetch to
+      // the diff pane (the pop-out "diff doesn't load after switching" bug).
+      clearHashKeyedRepoCaches();
       noteWorktreeEdit(session.repoPath!);
       // Fresh repo, fresh suppression state — mirrors ConnectionController.
       ref.read(ownMutationTrackerProvider).clear();

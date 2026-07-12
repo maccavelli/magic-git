@@ -637,13 +637,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     // _KeepAliveLru) rather than plain autoDispose — release every held link
     // alongside the invalidations above so a stale connection's entries don't
     // linger in the LRUs' own bookkeeping.
-    _fileLogLru.clear();
-    _blameLru.clear();
-    _fileDiffLru.clear();
-    _commitDiffLru.clear();
-    _commitFileDiffLru.clear();
-    _conflictFileLru.clear();
-    _untrackedDiffLru.clear();
+    clearHashKeyedRepoCaches();
     // Keyed purely by repoPath with no connection identity — without this, a
     // mutation marked just before disconnecting could suppress a genuinely
     // external change reported by a *different* connection that happens to
@@ -1876,6 +1870,24 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   reflogProvider,
   magicSnapshotsProvider,
 ];
+
+/// Clears the seven hash-keyed diff/blame/log LRUs — the LRU-clearing half of
+/// [ConnectionController._invalidateRepoState], exposed for callers that
+/// invalidate repo-scoped state WITHOUT going through the controller: the
+/// secondary (History pop-out) window's `_applySession` on a repo retarget.
+/// Without it, those callers leave the LRUs holding stale KeepAliveLinks to
+/// just-disposed providers, and a subsequent FRESH fetch for a key can fail to
+/// deliver its result to the watching pane (already-cached entries still render,
+/// fresh ones stay stuck loading — the pop-out diff-on-switch bug).
+void clearHashKeyedRepoCaches() {
+  _fileLogLru.clear();
+  _blameLru.clear();
+  _fileDiffLru.clear();
+  _commitDiffLru.clear();
+  _commitFileDiffLru.clear();
+  _conflictFileLru.clear();
+  _untrackedDiffLru.clear();
+}
 
 /// The repo-scoped fetch providers a single commit-mutating operation (commit,
 /// cherry-pick, revert, reset, amend, undo…) can change for one [repoPath] —
