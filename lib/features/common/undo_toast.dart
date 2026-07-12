@@ -94,9 +94,13 @@ class _UndoToastOverlayState extends ConsumerState<UndoToastOverlay> {
       // a discarded stale record) announce themselves separately or not at
       // all.
       if (stack == null || stack.isEmpty || stack.length <= before) return;
+      final record = stack.last;
+      // A mutation performed in the History window already raised its own
+      // toast there; skip the redundant one here (see historyOriginUndoProvider).
+      if (ref.read(historyOriginUndoProvider.notifier).take(record)) return;
       ref
           .read(undoToastProvider.notifier)
-          .show(UndoToast(stack.last.description, showUndoHint: true));
+          .show(UndoToast(record.description, showUndoHint: true));
     });
 
     final toast = ref.watch(undoToastProvider);

@@ -46,31 +46,47 @@ class UndoController {
   UndoController(this._ref);
   final Ref _ref;
 
+  /// Serializes undo execution. [undo] `peek`s the journal and only `pop`s
+  /// after awaiting the (async) undo script, so two overlapping calls — the
+  /// main window's ⌘Z and the History window's `performUndo` both land on
+  /// this single main-isolate instance, or a mashed double-⌘Z — would
+  /// otherwise both act on the same record: run its undo script twice (the
+  /// second failing, e.g. "branch already exists") and `pop` twice, silently
+  /// discarding the next-older record's undo-ability. While one undo is in
+  /// flight, a second is a no-op.
+  bool _undoInFlight = false;
+
   Future<UndoAttempt> undo(String repoPath, {bool force = false}) async {
-    final journal = _ref.read(undoJournalProvider.notifier);
-    final record = journal.peek(repoPath);
-    if (record == null) return const UndoAttempt(UndoStatus.nothingToUndo);
-
-    // Only block when a pending op is positively known — while the probe is
-    // still loading, let the undo script's own validation be the arbiter.
-    final pending =
-        _ref.read(pendingOpProvider(repoPath)).value ?? PendingOp.none;
-    if (pending != PendingOp.none) {
-      return UndoAttempt(UndoStatus.blockedByPendingOp, record);
-    }
-
+    if (_undoInFlight) return const UndoAttempt(UndoStatus.nothingToUndo);
+    _undoInFlight = true;
     try {
-      await _ref.read(gitServiceProvider).undoExecute(record, force: force);
-    } on UndoStaleException {
-      journal.pop(repoPath);
-      return UndoAttempt(UndoStatus.stale, record);
-    } on UndoDirtyException {
-      return UndoAttempt(UndoStatus.dirty, record);
-    }
+      final journal = _ref.read(undoJournalProvider.notifier);
+      final record = journal.peek(repoPath);
+      if (record == null) return const UndoAttempt(UndoStatus.nothingToUndo);
 
-    journal.pop(repoPath);
-    _refresh(repoPath);
-    return UndoAttempt(UndoStatus.done, record);
+      // Only block when a pending op is positively known — while the probe is
+      // still loading, let the undo script's own validation be the arbiter.
+      final pending =
+          _ref.read(pendingOpProvider(repoPath)).value ?? PendingOp.none;
+      if (pending != PendingOp.none) {
+        return UndoAttempt(UndoStatus.blockedByPendingOp, record);
+      }
+
+      try {
+        await _ref.read(gitServiceProvider).undoExecute(record, force: force);
+      } on UndoStaleException {
+        journal.pop(repoPath);
+        return UndoAttempt(UndoStatus.stale, record);
+      } on UndoDirtyException {
+        return UndoAttempt(UndoStatus.dirty, record);
+      }
+
+      journal.pop(repoPath);
+      _refresh(repoPath);
+      return UndoAttempt(UndoStatus.done, record);
+    } finally {
+      _undoInFlight = false;
+    }
   }
 
   /// The standard post-mutation refresh (see the per-panel `_refresh`
@@ -80,14 +96,12 @@ class UndoController {
   void _refresh(String repoPath) {
     _ref.read(ownMutationTrackerProvider).mark(repoPath);
     noteWorktreeEdit(repoPath);
-    _ref.invalidate(statusProvider(repoPath));
-    _ref.invalidate(logProvider(repoPath));
-    _ref.invalidate(refsProvider(repoPath));
-    _ref.invalidate(stashesProvider(repoPath));
     // Undo moves refs and consumes journal state the Recovery sheet renders;
-    // autoDispose makes these free when the sheet is closed.
-    _ref.invalidate(reflogProvider(repoPath));
-    _ref.invalidate(magicSnapshotsProvider(repoPath));
+    // reflog/snapshots are in the shared set so an open Recovery sheet stays
+    // fresh. autoDispose makes any unwatched family free.
+    for (final p in repoMutationFamilies(repoPath)) {
+      _ref.invalidate(p);
+    }
   }
 }
 

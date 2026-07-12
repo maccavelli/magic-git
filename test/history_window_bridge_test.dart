@@ -233,6 +233,39 @@ void main() {
     );
   });
 
+  test('a forwarded undo record is flagged History-originated so the main '
+      'window skips its redundant toast', () async {
+    container = makeContainer(_connected);
+    final record = UndoRecord(
+      repoPath: '/srv/repo',
+      kind: UndoOpKind.commit,
+      description: 'Commit',
+      preHead: 'a' * 40,
+      preRef: 'main',
+      postHead: 'b' * 40,
+      postRef: 'main',
+    );
+    await deliverHubCall('undoRecord', record.toJson());
+
+    // The exact instance now in the journal is the one the overlay reads back;
+    // take() consuming it is what suppresses the main window's second toast.
+    final journaled = container
+        .read(undoJournalProvider.notifier)
+        .peek('/srv/repo');
+    expect(journaled, isNotNull);
+    expect(
+      container.read(historyOriginUndoProvider.notifier).take(journaled!),
+      isTrue,
+      reason: 'the record was marked History-originated',
+    );
+    // Consumed exactly once — a locally-originated push would toast normally.
+    expect(container.read(historyOriginUndoProvider), isEmpty);
+    expect(
+      container.read(historyOriginUndoProvider.notifier).take(journaled),
+      isFalse,
+    );
+  });
+
   test('mutationPerformed marks the own-mutation tracker', () async {
     container = makeContainer(_connected);
     await deliverHubCall('mutationPerformed', {'repoPath': '/srv/repo'});
@@ -374,6 +407,23 @@ void main() {
     SharedPreferences.setMockInitialValues({'historyZoom': 1.4});
     await deliverHubCall('settingsChanged', null);
     expect(container.read(appSettingsProvider).historyZoom, 1.4);
+  });
+
+  test('reloadFromDisk still applies disk state after a local edit in this '
+      'isolate (a once-edited isolate is not frozen to its own value)',
+      () async {
+    SharedPreferences.setMockInitialValues({'historyZoom': 1.0});
+    container = makeContainer(_connected);
+    // A local zoom edit here (as the History window's own gesture would make),
+    // fully settled — the pending-write guard is clear afterwards.
+    await container.read(appSettingsProvider.notifier).setHistoryZoom(1.5);
+    expect(container.read(appSettingsProvider).historyZoom, 1.5);
+
+    // Another isolate then persisted a different value; the reload must adopt
+    // it rather than clinging to the sticky "I have edited" flag forever.
+    SharedPreferences.setMockInitialValues({'historyZoom': 0.8});
+    await deliverHubCall('settingsChanged', null);
+    expect(container.read(appSettingsProvider).historyZoom, 0.8);
   });
 
   test('historyWindowClosed flips the open flag off', () async {

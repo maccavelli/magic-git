@@ -6,10 +6,19 @@ import FlutterMacOS
 /// every line is also appended to hw-debug.log in the app's home directory
 /// (the sandbox container when sandboxed). One lazily-opened handle for the
 /// process lifetime; the OS flushes and closes it at exit.
+///
+/// Rotated at open: if a prior session left the file past the cap it is
+/// truncated to a fresh empty file, so the log can never grow without bound
+/// across launches (the per-launch volume is tiny once the Dart-side
+/// diagnostics flag is off — only lifecycle breadcrumbs and real errors).
+private let hwDebugLogMaxBytes: UInt64 = 1_000_000
+
 private let hwDebugLogHandle: FileHandle? = {
   let url = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("hw-debug.log")
-  if !FileManager.default.fileExists(atPath: url.path) {
-    FileManager.default.createFile(atPath: url.path, contents: nil)
+  let fm = FileManager.default
+  let size = (try? fm.attributesOfItem(atPath: url.path)[.size] as? UInt64) ?? nil
+  if !fm.fileExists(atPath: url.path) || (size ?? 0) > hwDebugLogMaxBytes {
+    fm.createFile(atPath: url.path, contents: nil)
   }
   let handle = try? FileHandle(forWritingTo: url)
   handle?.seekToEndOfFile()

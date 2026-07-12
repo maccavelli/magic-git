@@ -161,9 +161,11 @@ class HistoryWindowBridge extends Notifier<bool> {
           call.arguments as Map<Object?, Object?>,
         );
         // A null record means version skew — drop it; an un-runnable undo
-        // is worse than a missing one. The journal push also triggers the
-        // main window's toast (UndoToastOverlay is journal-listen-driven).
+        // is worse than a missing one. Mark it as History-originated first so
+        // the main window's journal-driven UndoToastOverlay stays silent — the
+        // History window already showed its own toast for this action.
         if (record != null) {
+          ref.read(historyOriginUndoProvider.notifier).mark(record);
           ref.read(undoJournalProvider.notifier).push(record);
         }
         return null;
@@ -217,12 +219,9 @@ class HistoryWindowBridge extends Notifier<bool> {
           // unwatched family is free).
           ref.read(ownMutationTrackerProvider).mark(repoPath);
           noteWorktreeEdit(repoPath);
-          ref.invalidate(statusProvider(repoPath));
-          ref.invalidate(logProvider(repoPath));
-          ref.invalidate(refsProvider(repoPath));
-          ref.invalidate(stashesProvider(repoPath));
-          ref.invalidate(reflogProvider(repoPath));
-          ref.invalidate(magicSnapshotsProvider(repoPath));
+          for (final p in repoMutationFamilies(repoPath)) {
+            ref.invalidate(p);
+          }
         }
         return null;
     }

@@ -97,8 +97,18 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   /// [build] kicks [_load] fire-and-forget and returns defaults immediately, so
   /// a user mutation can land before the async on-disk read resolves; when that
   /// happens [_load] must not clobber the just-made edit with the stale stored
-  /// value. Checked right before [_load]'s state assignment.
+  /// value. Sticky (never reset), so every disk read [_load] issues defers to a
+  /// prior edit. Guards ONLY the initial-load race — cross-isolate syncs use
+  /// [_pendingWrites] instead so a once-edited isolate still accepts later
+  /// disk updates.
   bool _userEdited = false;
+
+  /// Count of setter disk writes currently in flight. A [reloadFromDisk] (an
+  /// explicit cross-isolate sync) reads the on-disk snapshot, which is stale
+  /// for the value a local write hasn't yet flushed — so while any write is
+  /// pending, the reload defers rather than snapping that value back (e.g. a
+  /// zoom gesture mid-write, or an in-flight Settings-sheet save).
+  int _pendingWrites = 0;
 
   /// Binaries the user may override a path for.
   static const List<String> overridableBinaries = [
@@ -122,6 +132,19 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     } catch (_) {
       return; // storage unavailable (e.g. no platform binding) — keep defaults
     }
+    // Initial-load race: honor a user edit that landed while we read disk
+    // rather than overwriting it with the now-stale stored snapshot.
+    _applyFromPrefs(prefs, abort: () => _userEdited);
+  }
+
+  /// Folds the persisted values from [prefs] into [state]. [abort] is consulted
+  /// immediately before the (synchronous) assignment; because the prefs reads
+  /// don't await, no setter can interleave between the check and the write —
+  /// so a false abort at this instant means it is genuinely safe to apply.
+  void _applyFromPrefs(
+    SharedPreferences prefs, {
+    required bool Function() abort,
+  }) {
     final n = prefs.getInt(_networkKey);
     final c = prefs.getInt(_commitKey);
     final pull = prefs.getInt(_pullModeKey);
@@ -130,9 +153,7 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
       final v = prefs.getString('$_binPrefix$bin');
       if (v != null && v.trim().isNotEmpty) overrides[bin] = v.trim();
     }
-    // A user edit landed while we were reading from disk — honor it rather than
-    // overwriting it with the now-stale stored snapshot.
-    if (_userEdited) return;
+    if (abort()) return;
     state = state.copyWith(
       networkTimeout: n != null ? _floorTimeout(Duration(seconds: n)) : null,
       commitTimeout: c != null ? _floorTimeout(Duration(seconds: c)) : null,
@@ -157,17 +178,38 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   /// SharedPreferences caches the on-disk map at first read, so the native
   /// History window's engine never sees main-window edits without an explicit
   /// `reload()`. Called from its `settingsChanged` hub event.
+  ///
+  /// The History window DOES make local edits (the zoom gestures write
+  /// `historyZoom` from either isolate), so this can't blindly trust disk: a
+  /// reload racing an in-flight local write would read the pre-write value and
+  /// snap it back. [_pendingWrites] gates that — while a write is in flight the
+  /// local value is authoritative and the reload defers. (A genuinely
+  /// concurrent remote change is then briefly missed here until the next
+  /// settingsChanged, a far smaller cost than reverting the user's live edit.)
   Future<void> reloadFromDisk() async {
+    if (_pendingWrites > 0) return;
+    final SharedPreferences prefs;
     try {
-      final prefs = await SharedPreferences.getInstance();
+      prefs = await SharedPreferences.getInstance();
       await prefs.reload();
     } catch (_) {
       return; // storage unavailable — keep what we have
     }
-    // No settings UI exists in the History window, so a pending local edit
-    // can't be clobbered here — the on-disk state is authoritative.
-    _userEdited = false;
-    await _load();
+    _applyFromPrefs(prefs, abort: () => _pendingWrites > 0);
+  }
+
+  /// Runs a batch of setter disk writes with [_pendingWrites] held up for the
+  /// whole batch, so a concurrent [reloadFromDisk] defers to it.
+  Future<void> _persist(
+    Future<void> Function(SharedPreferences prefs) writes,
+  ) async {
+    _pendingWrites++;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await writes(prefs);
+    } finally {
+      _pendingWrites--;
+    }
   }
 
   /// Floors a timeout to [_minTimeout] so a 0-second (or negative) value —
@@ -183,9 +225,10 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
       networkTimeout: floor(network),
       commitTimeout: floor(commit),
     );
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_networkKey, state.networkTimeout.inSeconds);
-    await prefs.setInt(_commitKey, state.commitTimeout.inSeconds);
+    await _persist((prefs) async {
+      await prefs.setInt(_networkKey, state.networkTimeout.inSeconds);
+      await prefs.setInt(_commitKey, state.commitTimeout.inSeconds);
+    });
   }
 
   /// Updates and persists the committer identity, sync defaults, and auto-fetch
@@ -208,12 +251,13 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
       // fingered, or a corrupt import) shouldn't schedule a fetch years out.
       autoFetchMinutes: autoFetchMinutes?.clamp(0, _maxAutoFetchMinutes),
     );
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_nameKey, state.committerName);
-    await prefs.setString(_emailKey, state.committerEmail);
-    await prefs.setInt(_pullModeKey, state.defaultPullMode.index);
-    await prefs.setBool(_followTagsKey, state.pushFollowTags);
-    await prefs.setInt(_autoFetchKey, state.autoFetchMinutes);
+    await _persist((prefs) async {
+      await prefs.setString(_nameKey, state.committerName);
+      await prefs.setString(_emailKey, state.committerEmail);
+      await prefs.setInt(_pullModeKey, state.defaultPullMode.index);
+      await prefs.setBool(_followTagsKey, state.pushFollowTags);
+      await prefs.setInt(_autoFetchKey, state.autoFetchMinutes);
+    });
   }
 
   /// Updates and persists the external-binary path overrides. Blank entries are
@@ -225,15 +269,16 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
         if (e.value.trim().isNotEmpty) e.key: e.value.trim(),
     };
     state = state.copyWith(binaryOverrides: cleaned);
-    final prefs = await SharedPreferences.getInstance();
-    for (final bin in overridableBinaries) {
-      final v = cleaned[bin];
-      if (v == null) {
-        await prefs.remove('$_binPrefix$bin');
-      } else {
-        await prefs.setString('$_binPrefix$bin', v);
+    await _persist((prefs) async {
+      for (final bin in overridableBinaries) {
+        final v = cleaned[bin];
+        if (v == null) {
+          await prefs.remove('$_binPrefix$bin');
+        } else {
+          await prefs.setString('$_binPrefix$bin', v);
+        }
       }
-    }
+    });
   }
 
   /// Bounds for [AppSettings.historyZoom]: 60% keeps rows tappable and text
@@ -249,8 +294,7 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     if (clamped == state.historyZoom) return;
     _userEdited = true;
     state = state.copyWith(historyZoom: clamped);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble(_historyZoomKey, clamped);
+    await _persist((prefs) => prefs.setDouble(_historyZoomKey, clamped));
   }
 
   static const _minTimeout = Duration(seconds: 5);

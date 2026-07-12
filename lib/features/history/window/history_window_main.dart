@@ -38,6 +38,19 @@ import '../history_view.dart';
 
 const _hub = MethodChannel('magicgit/history/hub');
 
+/// Master switch for the History-window diagnostics that trace to
+/// hw-debug.log — the per-pointer-down coordinates, the per-route breadcrumbs,
+/// and the vsync/frame-timing probe. OFF in shipped builds, so they neither
+/// record user activity to disk nor grow the log. The instrumentation is kept
+/// (not deleted) because the dead-controls / tooltip investigation it serves
+/// isn't formally closed: re-enable it with
+/// `--dart-define=HISTORY_WINDOW_DIAGNOSTICS=true` and rebuild. Uncaught-error
+/// forwarding (below) is NOT gated by this — that trail is load-bearing for a
+/// windowless release engine and only fires on an actual error.
+const bool kHistoryWindowDiagnostics = bool.fromEnvironment(
+  'HISTORY_WINDOW_DIAGNOSTICS',
+);
+
 /// Fire-and-forget sender for hub events. Errors (relay torn down mid-close)
 /// are deliberately swallowed — an event that can't be delivered has no one
 /// left to care about it.
@@ -230,9 +243,9 @@ final historySessionProvider =
       HistorySessionNotifier.new,
     );
 
-/// TEMPORARY diagnostics (remove once the dead-controls bug is closed):
-/// route-level breadcrumbs so hw-debug.log shows whether a tapped control's
-/// menu/sheet route actually pushed.
+/// Diagnostics (gated by [kHistoryWindowDiagnostics]): route-level breadcrumbs
+/// so hw-debug.log shows whether a tapped control's menu/sheet route actually
+/// pushed. Installed only when the flag is on.
 class _HubLogNavigatorObserver extends NavigatorObserver {
   @override
   void didPush(Route<dynamic> route, Route<dynamic>? previousRoute) {
@@ -256,7 +269,9 @@ class HistoryWindowApp extends StatelessWidget {
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
       debugShowCheckedModeBanner: false,
-      navigatorObservers: [_HubLogNavigatorObserver()],
+      navigatorObservers: kHistoryWindowDiagnostics
+          ? [_HubLogNavigatorObserver()]
+          : const <NavigatorObserver>[],
       home: const HistoryWindowShell(),
     );
   }
@@ -291,12 +306,11 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
   /// after the last write has landed, which the debounce slack covers.
   Timer? _zoomSyncDebounce;
 
-  // TEMPORARY diagnostics (remove with _HubLogNavigatorObserver): a 300ms
-  // animation measured after 2s — if `value` isn't 1.0/completed, this
-  // engine's vsync never drives tickers, which is exactly the "pushed routes
-  // stay at their opacity-0 entrance frame" failure. The frame-timings
-  // samples separate "no frames at all" from "frames tick but animation
-  // clocks are frozen".
+  // Diagnostics (gated by kHistoryWindowDiagnostics): a 300ms animation
+  // measured after 2s — if `value` isn't 1.0/completed, this engine's vsync
+  // never drives tickers, which is exactly the "pushed routes stay at their
+  // opacity-0 entrance frame" failure. The frame-timings samples separate "no
+  // frames at all" from "frames tick but animation clocks are frozen".
   AnimationController? _vsyncProbe;
   Timer? _vsyncProbeTimer;
   TimingsCallback? _timingsProbe;
@@ -306,31 +320,33 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
   void initState() {
     super.initState();
     _hub.setMethodCallHandler(_onHubCall);
-    _vsyncProbe = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 300),
-    )..forward();
-    _timingsProbe = (List<FrameTiming> timings) {
-      if (_timingsSeen >= 2) return;
-      _timingsSeen++;
-      final t = timings.first;
-      _sendHub(
-        'debugLog',
-        'frame timings[$_timingsSeen]: ${timings.length} frames, '
-        'vsyncStart=${t.timestampInMicroseconds(FramePhase.vsyncStart)}µs '
-        'rasterFinish=${t.timestampInMicroseconds(FramePhase.rasterFinish)}µs',
-      );
-    };
-    SchedulerBinding.instance.addTimingsCallback(_timingsProbe!);
-    _vsyncProbeTimer = Timer(const Duration(seconds: 2), () {
-      final probe = _vsyncProbe;
-      if (probe == null) return;
-      _sendHub(
-        'debugLog',
-        'vsync probe: ${probe.status.name} value=${probe.value} '
-        'mouseConnected=${RendererBinding.instance.mouseTracker.mouseIsConnected}',
-      );
-    });
+    if (kHistoryWindowDiagnostics) {
+      _vsyncProbe = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 300),
+      )..forward();
+      _timingsProbe = (List<FrameTiming> timings) {
+        if (_timingsSeen >= 2) return;
+        _timingsSeen++;
+        final t = timings.first;
+        _sendHub(
+          'debugLog',
+          'frame timings[$_timingsSeen]: ${timings.length} frames, '
+          'vsyncStart=${t.timestampInMicroseconds(FramePhase.vsyncStart)}µs '
+          'rasterFinish=${t.timestampInMicroseconds(FramePhase.rasterFinish)}µs',
+        );
+      };
+      SchedulerBinding.instance.addTimingsCallback(_timingsProbe!);
+      _vsyncProbeTimer = Timer(const Duration(seconds: 2), () {
+        final probe = _vsyncProbe;
+        if (probe == null) return;
+        _sendHub(
+          'debugLog',
+          'vsync probe: ${probe.status.name} value=${probe.value} '
+          'mouseConnected=${RendererBinding.instance.mouseTracker.mouseIsConnected}',
+        );
+      });
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       // Reveal the native window only once real content exists (it opens at
       // alpha 0 — same flash-free dance as the main window).
@@ -509,12 +525,9 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
   /// and Recovery restores all agree, so an open Recovery sheet can never
   /// show a pre-mutation reflog. Invalidating unwatched families is free.
   void _invalidateRepoFamilies(String repoPath) {
-    ref.invalidate(statusProvider(repoPath));
-    ref.invalidate(logProvider(repoPath));
-    ref.invalidate(refsProvider(repoPath));
-    ref.invalidate(stashesProvider(repoPath));
-    ref.invalidate(reflogProvider(repoPath));
-    ref.invalidate(magicSnapshotsProvider(repoPath));
+    for (final p in repoMutationFamilies(repoPath)) {
+      ref.invalidate(p);
+    }
   }
 
   void _onRepoTick(Map<Object?, Object?> args) {
@@ -599,14 +612,17 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
       bindings: shortcuts,
       child: Focus(
         autofocus: true,
-        // TEMPORARY diagnostics (remove with _HubLogNavigatorObserver):
-        // proves whether clicks reach this Flutter view at all, and where.
+        // Diagnostics (gated by kHistoryWindowDiagnostics): proves whether
+        // clicks reach this Flutter view at all, and where. Null handler when
+        // off — the Listener is then an inert passthrough.
         child: Listener(
-          onPointerDown: (event) => _sendHub(
-            'debugLog',
-            'pointerDown ${event.position.dx.round()},'
-                '${event.position.dy.round()}',
-          ),
+          onPointerDown: kHistoryWindowDiagnostics
+              ? (event) => _sendHub(
+                  'debugLog',
+                  'pointerDown ${event.position.dx.round()},'
+                      '${event.position.dy.round()}',
+                )
+              : null,
           child: MacosWindow(
             child: ContentArea(
               builder: (context, _) => Stack(

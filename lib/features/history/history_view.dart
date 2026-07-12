@@ -51,7 +51,8 @@ class HistoryView extends ConsumerStatefulWidget {
   ConsumerState<HistoryView> createState() => _HistoryViewState();
 }
 
-class _HistoryViewState extends ConsumerState<HistoryView> {
+class _HistoryViewState extends ConsumerState<HistoryView>
+    with WidgetsBindingObserver {
   // Multi-selection over commit hashes, following the macOS list-selection
   // conventions (same scheme as RepoStatusView's file rows): plain click
   // replaces the selection, ⌘-click toggles a row in/out, ⇧-click extends a
@@ -119,14 +120,37 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_onHardwareKey);
+    WidgetsBinding.instance.addObserver(this);
   }
 
   bool _onHardwareKey(KeyEvent event) {
+    // Only the active view needs to track ⌘ (it gates this list's scroll
+    // physics for ⌘-scroll zoom). Skipping when offscreen avoids rebuilding a
+    // hidden History tab on every ⌘-shortcut pressed anywhere in the app.
+    if (widget.isActive) _syncMeta();
+    return false; // observe only — never consume the event
+  }
+
+  /// Re-derives [_metaDown] from the live keyboard state. Called from the key
+  /// handler AND from pointer hover/scroll on the list, because macOS can drop
+  /// a ⌘ key-up when focus is stolen mid-press (a native menu opening, ⌘Tab):
+  /// the handler then never fires again and a stuck-true [_metaDown] would
+  /// freeze the list (NeverScrollableScrollPhysics) until ⌘ is pressed again.
+  /// Any mouse interaction over the list re-syncs first, so scroll self-heals.
+  void _syncMeta() {
     final meta = HardwareKeyboard.instance.isMetaPressed;
     if (meta != _metaDown && mounted) {
       setState(() => _metaDown = meta);
     }
-    return false; // observe only — never consume the event
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Focus left the app (⌘Tab, Mission Control): a ⌘ key-up may land
+    // elsewhere, so drop the held state rather than trust a stale true.
+    if (state != AppLifecycleState.resumed && _metaDown && mounted) {
+      setState(() => _metaDown = false);
+    }
   }
 
   String _grep = '';
@@ -142,6 +166,7 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onHardwareKey);
+    WidgetsBinding.instance.removeObserver(this);
     _searchDebounce?.cancel();
     _searchController.dispose();
     _searchFocus.dispose();
@@ -222,17 +247,33 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     setState(() {
       if (keys.isMetaPressed) {
         if (_selectedHashes.contains(hash)) {
+          // ⌘-click on a selected row removes it. The removed hash must NOT
+          // stay the range anchor / keyboard cursor — a following ⇧-click or
+          // ⇧-arrow would range from it and silently re-include the row just
+          // deselected (mis-targeting the bulk cherry-pick/revert that acts on
+          // the selection). Re-seat any endpoint that pointed at it onto a
+          // still-selected row (newest-first on-screen order = a stable end).
           _selectedHashes = {..._selectedHashes}..remove(hash);
           if (_selectedHashes.isEmpty) {
             _selectionAnchor = null;
             _selectionCursor = null;
-            return;
+          } else {
+            final remaining = _orderedSelected(commits);
+            final seat = remaining.isNotEmpty
+                ? remaining.first.hash
+                : _selectedHashes.first;
+            if (!_selectedHashes.contains(_selectionAnchor)) {
+              _selectionAnchor = seat;
+            }
+            if (!_selectedHashes.contains(_selectionCursor)) {
+              _selectionCursor = seat;
+            }
           }
         } else {
           _selectedHashes = {..._selectedHashes, hash};
+          _selectionAnchor = hash;
+          _selectionCursor = hash;
         }
-        _selectionAnchor = hash;
-        _selectionCursor = hash;
       } else if (keys.isShiftPressed && _selectionAnchor != null) {
         _selectedHashes = _rangeBetween(commits, _selectionAnchor!, hash);
         // Anchor deliberately stays put — repeated shift-clicks extend or
@@ -377,10 +418,11 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
     // `_run` calls this right after an awaited op with no further check of
     // its own, and touching `ref` after the widget is disposed throws.
     if (!mounted) return;
-    ref.invalidate(logProvider(repoPath));
-    ref.invalidate(refsProvider(repoPath));
-    ref.invalidate(statusProvider(repoPath));
-    ref.invalidate(stashesProvider(repoPath));
+    // The shared post-mutation set (see repoMutationFamilies) — includes
+    // reflog/snapshots so an open Recovery sheet reflects a tab-side mutation.
+    for (final p in repoMutationFamilies(repoPath)) {
+      ref.invalidate(p);
+    }
   }
 
   /// Runs a mutating op, refreshing on success. [movesHead] clears the diff
@@ -1304,10 +1346,17 @@ class _HistoryViewState extends ConsumerState<HistoryView> {
       focusNode: _commitFocus,
       onKeyEvent: _onCommitKey,
       child: Listener(
+        // Re-sync the held-⌘ state on any hover: if a key-up was missed while
+        // focus was elsewhere, moving the mouse back over the list clears the
+        // stuck flag before the user tries to scroll.
+        onPointerHover: (_) => _syncMeta(),
         // ⌘-scroll (mouse wheel) zooms. Registration through the pointer-
         // signal resolver only wins because the ⌘-held physics swap (below)
         // makes the Scrollable stand down — see _metaDown.
         onPointerSignal: (event) {
+          // Re-sync first so a stuck _metaDown (missed key-up) can't leave the
+          // list frozen: a plain scroll then flips physics back to scrollable.
+          _syncMeta();
           if (event is PointerScrollEvent &&
               HardwareKeyboard.instance.isMetaPressed) {
             GestureBinding.instance.pointerSignalResolver.register(event, (e) {

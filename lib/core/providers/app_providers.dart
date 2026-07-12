@@ -1877,6 +1877,28 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   magicSnapshotsProvider,
 ];
 
+/// The repo-scoped fetch providers a single commit-mutating operation (commit,
+/// cherry-pick, revert, reset, amend, undo…) can change for one [repoPath] —
+/// the ONE list every post-mutation refresh path shares (the undo controller,
+/// the History window bridge, the History window shell, the in-tab History
+/// refresh). Keeping it here rather than hand-copying the six invalidations in
+/// each site means a newly-added mutation-sensitive family is picked up
+/// everywhere at once, with no chance of one isolate drifting stale.
+///
+/// Unlike [repoScopedFetchFamilies] (whole families, for ⌘R / connection
+/// resets), these are the concrete per-[repoPath] provider instances, so only
+/// the affected repo's entries are dropped. Invalidating an unwatched instance
+/// is a harmless no-op — hence reflog/snapshots are always included so an open
+/// Recovery sheet can never show a pre-mutation reflog.
+List<ProviderOrFamily> repoMutationFamilies(String repoPath) => [
+  statusProvider(repoPath),
+  logProvider(repoPath),
+  refsProvider(repoPath),
+  stashesProvider(repoPath),
+  reflogProvider(repoPath),
+  magicSnapshotsProvider(repoPath),
+];
+
 /// Working-tree status for a repo path, keyed so multiple repos can coexist.
 /// autoDispose so it's discarded when [RepoStatusView] unmounts on disconnect
 /// (and explicitly invalidated on connect/disconnect) — a reconnect never

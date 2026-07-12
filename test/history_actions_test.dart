@@ -287,6 +287,48 @@ void main() {
     expect(find.textContaining('Right-click the selection'), findsOneWidget);
   });
 
+  testWidgets('⌘-deselecting the anchor re-seats it on a still-selected row, '
+      'so a later ⇧-click ranges from the right place', (tester) async {
+    await _pump(tester, [head, mid, older]);
+    // Build {head, older} with the anchor on `older` (the last ⌘-clicked row).
+    await tester.tap(find.text('head commit'));
+    await tester.pumpAndSettle();
+    await metaClick(tester, find.text('old commit'));
+    // ⌘-click `older` again to deselect it — it was the anchor. The old code
+    // left the anchor pointing at this just-removed row; a following ⇧-click
+    // then ranged from a deselected commit (a bug that could mis-target the
+    // bulk cherry-pick/revert). The fix re-seats the anchor on `head`.
+    await metaClick(tester, find.text('old commit'));
+
+    // ⇧-click back down to `older`: from the correct anchor (head) this is the
+    // full contiguous range. From the stale anchor (older) it would collapse
+    // to a single commit instead.
+    await shiftClick(tester, find.text('old commit'));
+    expect(find.text('3 commits selected'), findsOneWidget);
+  });
+
+  testWidgets('a lost ⌘ key-up is recovered — app deactivation unfreezes the '
+      'commit list scroll', (tester) async {
+    await _pump(tester, [head, mid, older]);
+    ListView list() =>
+        tester.widgetList<ListView>(find.byType(ListView)).first;
+    expect(list().physics, isNot(isA<NeverScrollableScrollPhysics>()));
+
+    // ⌘ goes down (⌘-scroll zoom arms), freezing the list's own scrolling…
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+    expect(list().physics, isA<NeverScrollableScrollPhysics>());
+
+    // …but its key-up is lost to another surface. Focus leaving the app drops
+    // the held state rather than trusting the stale "still pressed", so the
+    // list doesn't stay frozen.
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    await tester.pumpAndSettle();
+    expect(list().physics, isNot(isA<NeverScrollableScrollPhysics>()));
+
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+  });
+
   testWidgets('⌘C copies every selected SHA, newest first', (tester) async {
     final copied = <String>[];
     tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
