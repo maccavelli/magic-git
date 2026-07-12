@@ -23,7 +23,7 @@ import '../github/gh_service.dart';
 import '../github/models.dart';
 import '../gitlab/glab_service.dart';
 import '../gitlab/models.dart';
-import '../local/security_scoped_bookmark.dart';
+import '../local/scoped_access.dart';
 import '../output/output_log.dart';
 import '../settings/app_settings.dart';
 import '../settings/install_service.dart';
@@ -796,7 +796,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     // grant leaks for the app's lifetime. Safe/no-op if the prior session wasn't
     // a bookmark-backed local one.
     if (state.isLocal && state.repoPath != null) {
-      await SecurityScopedBookmark.stopAccessing(state.repoPath!);
+      await ScopedAccess.instance.release(state.repoPath!);
     }
     // While reconnecting, keep the popup up (and its attempt number) across this
     // transient connecting phase instead of falling back to the landing card.
@@ -1158,7 +1158,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       // local → local: release the prior repo's security-scoped access. Safe/
       // no-op if that session was never bookmark-backed.
       if (state.repoPath != null && state.repoPath != repoPath) {
-        await SecurityScopedBookmark.stopAccessing(state.repoPath!);
+        await ScopedAccess.instance.release(state.repoPath!);
       }
     } else if (state.repoPath != null) {
       // ssh → local: tear down the authenticated SSH client and socket.
@@ -1525,7 +1525,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     }
     _hostKeyDecision = null;
     if (state.isLocal && state.repoPath != null) {
-      await SecurityScopedBookmark.stopAccessing(state.repoPath!);
+      await ScopedAccess.instance.release(state.repoPath!);
     }
 
     _lastProfile = profile;
@@ -1738,7 +1738,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       // place (an unsaved/ad-hoc local open).
       final repoPath = state.repoPath;
       if (repoPath != null) {
-        await SecurityScopedBookmark.stopAccessing(repoPath);
+        await ScopedAccess.instance.release(repoPath);
       }
     } else {
       ref.read(executorProvider).resetEnvironment();

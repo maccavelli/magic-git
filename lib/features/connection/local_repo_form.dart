@@ -2,6 +2,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+import '../../core/local/scoped_access.dart';
 import '../../core/local/security_scoped_bookmark.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_local_repo.dart';
@@ -25,9 +26,9 @@ Future<String?> resolveSavedLocalRepoPath(
   SavedLocalRepo repo,
 ) async {
   if (repo.bookmarkData.isEmpty) return repo.repoPath;
-  final resolved = await SecurityScopedBookmark.startAccessing(
-    repo.bookmarkData,
-  );
+  // Refcounted so concurrent tabs on the same folder don't pull the shared
+  // native grant out from under each other on the first one's disconnect.
+  final resolved = await ScopedAccess.instance.acquire(repo.bookmarkData);
   if (resolved == null) {
     if (context.mounted) {
       await showErrorDialog(
