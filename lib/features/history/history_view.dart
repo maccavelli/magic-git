@@ -1475,21 +1475,34 @@ class _HistoryViewState extends ConsumerState<HistoryView>
 
   Widget _commitDiff(BuildContext context, String hash) {
     final diffAsync = ref.watch(commitDiffProvider((widget.repoPath, hash)));
+    final wrap = ref.watch(appSettingsProvider.select((s) => s.historyDiffWrap));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _diffHeader(context, hash),
+        _diffHeader(context, hash, wrap),
         Container(height: 1, color: MacosColors.separatorColor),
         Expanded(
           child: diffAsync.when(
             loading: () => const Center(child: ProgressCircle()),
             error: (err, _) => _error(context, err),
-            data: (diff) => DiffView(diff: diff),
+            data: (diff) => DiffView(diff: diff, wrap: wrap),
           ),
         ),
       ],
     );
   }
+
+  /// The shared word-wrap toggle for every History diff header — reads and
+  /// writes the persisted [AppSettings.historyDiffWrap], so all three diff
+  /// surfaces (tab, pop-out window, enlarged sheet) and both windows agree.
+  Widget _wrapToggle(bool wrap) => ToolIconButton(
+    icon: CupertinoIcons.arrow_turn_down_left,
+    tooltip: wrap ? 'Turn off word wrap' : 'Wrap long lines',
+    size: 15,
+    color: wrap ? MacosColors.systemBlueColor : null,
+    onPressed: () =>
+        ref.read(appSettingsProvider.notifier).setHistoryDiffWrap(!wrap),
+  );
 
   /// The diff between exactly two selected commits — what [newer] adds on
   /// top of [older] (`git diff older..newer`). The pane appears the moment a
@@ -1500,6 +1513,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     required GitCommit newer,
   }) {
     final typography = MacosTheme.of(context).typography;
+    final wrap = ref.watch(appSettingsProvider.select((s) => s.historyDiffWrap));
     final diffAsync = ref.watch(
       commitRangeDiffProvider((widget.repoPath, older.hash, newer.hash)),
     );
@@ -1520,6 +1534,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              _wrapToggle(wrap),
+              const SizedBox(width: 2),
               ToolIconButton(
                 icon: CupertinoIcons.doc_on_clipboard,
                 tooltip: 'Copy both SHAs',
@@ -1544,7 +1560,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                       ),
                     ),
                   )
-                : DiffView(diff: diff),
+                : DiffView(diff: diff, wrap: wrap),
           ),
         ),
       ],
@@ -1604,8 +1620,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   }
 
   /// Slim bar atop the diff pane: the short hash on the left, then commit
-  /// actions (copy SHA, an actions menu) and a pop-out button on the right.
-  Widget _diffHeader(BuildContext context, String hash) {
+  /// actions (word wrap, copy SHA, an actions menu) and a pop-out button.
+  Widget _diffHeader(BuildContext context, String hash, bool wrap) {
     final typography = MacosTheme.of(context).typography;
     final short = hash.length > 10 ? hash.substring(0, 10) : hash;
     final commit = _commitFor(hash);
@@ -1623,6 +1639,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          _wrapToggle(wrap),
+          const SizedBox(width: 2),
           ToolIconButton(
             icon: CupertinoIcons.doc_on_clipboard,
             tooltip: 'Copy full SHA',
@@ -1709,6 +1727,7 @@ class CommitDiffSheet extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final typography = MacosTheme.of(context).typography;
     final diffAsync = ref.watch(commitDiffProvider((repoPath, hash)));
+    final wrap = ref.watch(appSettingsProvider.select((s) => s.historyDiffWrap));
     final short = hash.length > 12 ? hash.substring(0, 12) : hash;
     final screen = MediaQuery.sizeOf(context);
 
@@ -1733,6 +1752,16 @@ class CommitDiffSheet extends ConsumerWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  ToolIconButton(
+                    icon: CupertinoIcons.arrow_turn_down_left,
+                    tooltip: wrap ? 'Turn off word wrap' : 'Wrap long lines',
+                    size: 16,
+                    color: wrap ? MacosColors.systemBlueColor : null,
+                    onPressed: () => ref
+                        .read(appSettingsProvider.notifier)
+                        .setHistoryDiffWrap(!wrap),
+                  ),
+                  const SizedBox(width: 2),
                   ToolIconButton(
                     icon: CupertinoIcons.xmark,
                     tooltip: 'Close',

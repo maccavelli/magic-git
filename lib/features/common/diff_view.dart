@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/unified_diff.dart';
@@ -52,10 +53,19 @@ Color diffLineColor(String line, Color defaultColor) {
 /// Renders a raw unified diff (from `git diff` / `git show`) with per-line
 /// syntax coloring in a monospace font. Uses [ListView.builder] so large patches
 /// stay responsive.
+///
+/// [wrap] chooses the line-length behavior:
+///  * false (default): every line stays on one line and the whole diff shares
+///    ONE horizontal scrollbar along the bottom, so you can scroll all lines
+///    together to reach their ends. Uniform row height keeps the fixed
+///    [kDiffLineExtent] item extent (O(1) jump-scroll on large patches).
+///  * true: long lines wrap to the viewport width (variable row heights, no
+///    horizontal scroll).
 class DiffView extends StatefulWidget {
   final String diff;
+  final bool wrap;
 
-  const DiffView({super.key, required this.diff});
+  const DiffView({super.key, required this.diff, this.wrap = false});
 
   @override
   State<DiffView> createState() => _DiffViewState();
@@ -63,8 +73,35 @@ class DiffView extends StatefulWidget {
 
 class _DiffViewState extends State<DiffView> {
   static const _mono = kDiffMono;
+  static const double _hPad = 12;
+
+  // Separate controllers so the two nested scrollbars (vertical list, shared
+  // horizontal pan) each drive an unambiguous axis.
+  final ScrollController _vertical = ScrollController();
+  final ScrollController _horizontal = ScrollController();
 
   late List<String> _lines = const LineSplitter().convert(widget.diff);
+  late int _maxLineChars = _computeMaxChars(_lines);
+
+  static int _computeMaxChars(List<String> lines) {
+    var longest = 0;
+    for (final line in lines) {
+      if (line.length > longest) longest = line.length;
+    }
+    return longest;
+  }
+
+  /// The advance width of one [kDiffMono] glyph, measured once. The font is
+  /// monospace, so char count × this is an exact line width — no need to lay
+  /// out every line to size the shared horizontal extent.
+  static double? _charWidth;
+  static double _monoCharWidth() {
+    return _charWidth ??= (TextPainter(
+      text: const TextSpan(text: '00000000000000000000', style: kDiffMono),
+      textDirection: TextDirection.ltr,
+    )..layout()).width /
+        20;
+  }
 
   @override
   void didUpdateWidget(DiffView oldWidget) {
@@ -75,7 +112,15 @@ class _DiffViewState extends State<DiffView> {
     // across otherwise-unrelated rebuilds (a theme change, a parent resize).
     if (oldWidget.diff != widget.diff) {
       _lines = const LineSplitter().convert(widget.diff);
+      _maxLineChars = _computeMaxChars(_lines);
     }
+  }
+
+  @override
+  void dispose() {
+    _vertical.dispose();
+    _horizontal.dispose();
+    super.dispose();
   }
 
   @override
@@ -92,21 +137,30 @@ class _DiffViewState extends State<DiffView> {
     final defaultColor =
         MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
 
-    // One SelectionArea over plain Text lines (not per-line SelectableText):
-    // selection state doesn't span separate SelectableText widgets, so the old
-    // shape made it impossible to drag-copy a multi-line hunk. This is the
-    // same pattern the blame sheet uses, and each row is lighter too (no
-    // per-line gesture/selection machinery).
+    return widget.wrap
+        ? _buildWrapped(defaultColor)
+        : _buildUnwrapped(defaultColor);
+  }
+
+  // One SelectionArea over plain Text lines (not per-line SelectableText):
+  // selection state doesn't span separate SelectableText widgets, so the old
+  // shape made it impossible to drag-copy a multi-line hunk. This is the same
+  // pattern the blame sheet uses, and each row is lighter too.
+
+  Widget _buildWrapped(Color defaultColor) {
     return Scrollbar(
+      controller: _vertical,
       child: SelectionArea(
         child: ListView.builder(
-          padding: const EdgeInsets.all(12),
-          itemExtent: kDiffLineExtent,
+          controller: _vertical,
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          // Wrapped lines have variable height, so no fixed itemExtent — the
+          // builder still lazily measures only the visible rows.
           itemCount: _lines.length,
           itemBuilder: (context, index) {
             final line = _lines[index];
-            return SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: _hPad),
               child: Text(
                 line,
                 style: _mono.copyWith(color: diffLineColor(line, defaultColor)),
@@ -115,6 +169,62 @@ class _DiffViewState extends State<DiffView> {
           },
         ),
       ),
+    );
+  }
+
+  Widget _buildUnwrapped(Color defaultColor) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final lineWidth = _maxLineChars * _monoCharWidth() + _hPad * 2;
+        final overflows = lineWidth > constraints.maxWidth;
+        // The inner list is as wide as the widest line (never narrower than the
+        // viewport), so the single horizontal scroll below reveals every line's
+        // end in lockstep.
+        final contentWidth = math.max(constraints.maxWidth, lineWidth);
+        return Scrollbar(
+          controller: _vertical,
+          // The vertical list sits one viewport deeper than the horizontal
+          // scroll, so its notifications arrive at depth 1 here; the default
+          // depth-0 predicate would otherwise track the horizontal axis.
+          notificationPredicate: (notification) => notification.depth == 1,
+          child: Scrollbar(
+            controller: _horizontal,
+            // Keep the bottom bar visible whenever lines run past the edge, so
+            // the "there's more to the right" affordance is never hidden.
+            thumbVisibility: overflows,
+            child: SingleChildScrollView(
+              controller: _horizontal,
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: contentWidth,
+                height: constraints.maxHeight,
+                child: SelectionArea(
+                  child: ListView.builder(
+                    controller: _vertical,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    itemExtent: kDiffLineExtent,
+                    itemCount: _lines.length,
+                    itemBuilder: (context, index) {
+                      final line = _lines[index];
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: _hPad),
+                        child: Text(
+                          line,
+                          maxLines: 1,
+                          softWrap: false,
+                          style: _mono.copyWith(
+                            color: diffLineColor(line, defaultColor),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

@@ -307,6 +307,27 @@ void main() {
     expect(find.text('3 commits selected'), findsOneWidget);
   });
 
+  testWidgets('the diff header word-wrap toggle flips and activates', (
+    tester,
+  ) async {
+    await _pump(tester, [head, older]);
+    await tester.tap(find.text('head commit'));
+    await tester.pumpAndSettle();
+
+    // The toggle lives in the diff header regardless of whether the patch
+    // itself loaded, so a single selected commit is enough to exercise it.
+    final toggle = find.byWidgetPredicate(
+      (w) => w is MacosIcon && w.icon == CupertinoIcons.arrow_turn_down_left,
+    );
+    expect(toggle, findsOneWidget);
+    expect(tester.widget<MacosIcon>(toggle).color, isNull);
+
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    // Now active — the persisted setting flipped, colouring the icon.
+    expect(tester.widget<MacosIcon>(toggle).color, MacosColors.systemBlueColor);
+  });
+
   testWidgets('a lost ⌘ key-up is recovered — app deactivation unfreezes the '
       'commit list scroll', (tester) async {
     await _pump(tester, [head, mid, older]);

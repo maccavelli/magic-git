@@ -72,6 +72,37 @@ void main() {
       final list = tester.widget<ListView>(find.byType(ListView));
       expect(list.itemExtent, kDiffLineExtent);
       expect(find.text('+new line'), findsOneWidget);
+
+      // One shared horizontal scroll for the whole diff — not the old
+      // per-line independent scrollers — so all lines pan to their ends
+      // together beneath a single bottom scrollbar.
+      final horizontal = tester
+          .widgetList<SingleChildScrollView>(find.byType(SingleChildScrollView))
+          .where((s) => s.scrollDirection == Axis.horizontal);
+      expect(horizontal, hasLength(1));
+    });
+
+    testWidgets('wrap mode drops the fixed extent and the horizontal scroll', (
+      tester,
+    ) async {
+      const diff = '@@ -1,2 +1,2 @@\n-old line\n+new line\n context';
+      await tester.pumpWidget(
+        const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: SizedBox(
+            width: 400,
+            height: 300,
+            child: DiffView(diff: diff, wrap: true),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Wrapped rows have variable height, so the fixed extent is dropped and
+      // nothing scrolls horizontally.
+      expect(tester.widget<ListView>(find.byType(ListView)).itemExtent, isNull);
+      expect(find.byType(SingleChildScrollView), findsNothing);
+      expect(find.text('+new line'), findsOneWidget);
     });
 
     testWidgets('a multi-line drag selection copies across lines', (

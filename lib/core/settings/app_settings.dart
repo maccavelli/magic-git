@@ -43,6 +43,11 @@ class AppSettings {
   /// [AppSettingsNotifier.minHistoryZoom]–[AppSettingsNotifier.maxHistoryZoom].
   final double historyZoom;
 
+  /// Whether the History diff views wrap long lines to the viewport width.
+  /// false (default) keeps one line per source line with a shared horizontal
+  /// scrollbar for reaching line ends.
+  final bool historyDiffWrap;
+
   const AppSettings({
     this.networkTimeout = GitService.defaultNetworkTimeout,
     this.commitTimeout = GitService.defaultCommitTimeout,
@@ -53,6 +58,7 @@ class AppSettings {
     this.autoFetchMinutes = 5,
     this.binaryOverrides = const {},
     this.historyZoom = 1.0,
+    this.historyDiffWrap = false,
   });
 
   AppSettings copyWith({
@@ -65,6 +71,7 @@ class AppSettings {
     int? autoFetchMinutes,
     Map<String, String>? binaryOverrides,
     double? historyZoom,
+    bool? historyDiffWrap,
   }) => AppSettings(
     networkTimeout: networkTimeout ?? this.networkTimeout,
     commitTimeout: commitTimeout ?? this.commitTimeout,
@@ -75,6 +82,7 @@ class AppSettings {
     autoFetchMinutes: autoFetchMinutes ?? this.autoFetchMinutes,
     binaryOverrides: binaryOverrides ?? this.binaryOverrides,
     historyZoom: historyZoom ?? this.historyZoom,
+    historyDiffWrap: historyDiffWrap ?? this.historyDiffWrap,
   );
 }
 
@@ -92,6 +100,7 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   static const _autoFetchKey = 'autoFetchMinutes';
   static const _binPrefix = 'binPath_';
   static const _historyZoomKey = 'historyZoom';
+  static const _historyDiffWrapKey = 'historyDiffWrap';
 
   /// Set true by any setter the moment the user explicitly changes a setting.
   /// [build] kicks [_load] fire-and-forget and returns defaults immediately, so
@@ -171,6 +180,7 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
           .getDouble(_historyZoomKey)
           ?.clamp(minHistoryZoom, maxHistoryZoom)
           .toDouble(),
+      historyDiffWrap: prefs.getBool(_historyDiffWrapKey),
     );
   }
 
@@ -295,6 +305,15 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     _userEdited = true;
     state = state.copyWith(historyZoom: clamped);
     await _persist((prefs) => prefs.setDouble(_historyZoomKey, clamped));
+  }
+
+  /// Toggles and persists whether History diff views wrap long lines. Shared
+  /// by both windows — the sync path is the same as [setHistoryZoom]'s.
+  Future<void> setHistoryDiffWrap(bool wrap) async {
+    if (wrap == state.historyDiffWrap) return;
+    _userEdited = true;
+    state = state.copyWith(historyDiffWrap: wrap);
+    await _persist((prefs) => prefs.setBool(_historyDiffWrapKey, wrap));
   }
 
   static const _minTimeout = Duration(seconds: 5);

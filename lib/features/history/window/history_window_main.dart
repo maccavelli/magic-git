@@ -300,11 +300,12 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
   /// and Esc/X can never disagree about visibility.
   ModalRoute<void>? _recoveryRoute;
 
-  /// Debounces the zoom→main settings sync: the zoom gestures fire dozens of
-  /// [AppSettingsNotifier.setHistoryZoom] calls (each persisting to disk),
-  /// and the main isolate should reload once, after the burst — and strictly
-  /// after the last write has landed, which the debounce slack covers.
-  Timer? _zoomSyncDebounce;
+  /// Debounces the settings→main sync for edits ORIGINATING in this window
+  /// (the zoom gestures and the diff word-wrap toggle). Zoom fires dozens of
+  /// [AppSettingsNotifier.setHistoryZoom] calls (each persisting to disk), so
+  /// the main isolate should reload once, after the burst — and strictly after
+  /// the last write has landed, which the debounce slack covers.
+  Timer? _settingsSyncDebounce;
 
   // Diagnostics (gated by kHistoryWindowDiagnostics): a 300ms animation
   // measured after 2s — if `value` isn't 1.0/completed, this engine's vsync
@@ -369,7 +370,7 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
 
   @override
   void dispose() {
-    _zoomSyncDebounce?.cancel();
+    _settingsSyncDebounce?.cancel();
     _vsyncProbeTimer?.cancel();
     _vsyncProbe?.dispose();
     _vsyncProbe = null;
@@ -584,17 +585,20 @@ class _HistoryWindowShellState extends ConsumerState<HistoryWindowShell>
         }
       }
     });
-    // Zoom changes made HERE (⌘=/⌘−/pinch in this window persist historyZoom
-    // from this isolate) must tell the main isolate to reload its own
-    // SharedPreferences cache. Gated on a value *change* via select, so the
-    // main window's settingsChanged pushes — whose reload re-lands the same
-    // zoom value here — can't ping-pong the event back and forth.
-    ref.listen(appSettingsProvider.select((s) => s.historyZoom), (_, _) {
-      _zoomSyncDebounce?.cancel();
-      _zoomSyncDebounce = Timer(const Duration(milliseconds: 600), () {
-        _sendHub('settingsChanged');
-      });
-    });
+    // Settings changed HERE (⌘=/⌘−/pinch zoom, or the diff word-wrap toggle,
+    // all persisted from this isolate) must tell the main isolate to reload
+    // its own SharedPreferences cache. Gated on a value *change* via a record
+    // select — records compare by value, so the main window's settingsChanged
+    // push (whose reload re-lands the same values here) can't ping-pong back.
+    ref.listen(
+      appSettingsProvider.select((s) => (s.historyZoom, s.historyDiffWrap)),
+      (_, _) {
+        _settingsSyncDebounce?.cancel();
+        _settingsSyncDebounce = Timer(const Duration(milliseconds: 600), () {
+          _sendHub('settingsChanged');
+        });
+      },
+    );
     final session = ref.watch(historySessionProvider);
     final typography = MacosTheme.of(context).typography;
     // During a drop (`lost`) keep the history visible under a banner —
