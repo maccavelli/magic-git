@@ -15,11 +15,6 @@ import 'features/window/secondary_window_main.dart';
 @pragma('vm:entry-point')
 void secondaryWindowMain() => runSecondaryWindow();
 
-/// Deprecated alias kept for one release so a stale native build (still asking
-/// for `historyWindowMain`) can't strand. New builds use `secondaryWindowMain`.
-@pragma('vm:entry-point')
-void historyWindowMain() => runSecondaryWindow();
-
 /// The default first-launch window size (before any bounds are persisted).
 /// Sized to leave a comfortable margin on a 13"/14" laptop (~75% width) rather
 /// than nearly filling the screen, while staying roomy for the three-pane

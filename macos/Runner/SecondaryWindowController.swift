@@ -80,6 +80,9 @@ class SecondaryWindowController: NSObject, NSWindowDelegate {
   private var engine: FlutterEngine?
   private var viewController: FlutterViewController?
   private var bootstrap: FlutterMethodChannel?
+  /// Native→child pushes of AppLifecycleState as the window is occluded /
+  /// minimized / revealed, so the child pauses and resumes its own rendering.
+  private var lifecycle: FlutterMethodChannel?
   /// Hub endpoints: A = main engine, B = child engine. Each side's Dart
   /// `invokeMethod` lands on the same-named per-window Swift channel here and is
   /// forwarded verbatim to the other engine's Dart handler.
@@ -130,9 +133,15 @@ class SecondaryWindowController: NSObject, NSWindowDelegate {
     // run(withEntrypoint:) then fails "already running". Engine → attach VC →
     // install channels (so the child's first descriptor pull finds a handler) →
     // run → THEN build the window.
-    let engine = FlutterEngine(name: "magicgit-window-\(windowId)", project: nil)
+    // allowHeadlessExecution lets the engine's isolate survive while the window
+    // is occluded/minimized and we pause its rendering (see pushLifecycle); the
+    // frame-clock self-heal in SecondaryWindowBinding keeps a viewless engine
+    // survivable. Attach order is unchanged — VC attached before run().
+    let engine = FlutterEngine(
+      name: "magicgit-window-\(windowId)", project: nil, allowHeadlessExecution: true)
     let viewController = FlutterViewController(engine: engine, nibName: nil, bundle: nil)
     installBootstrap(childMessenger: engine.binaryMessenger)
+    installLifecycle(childMessenger: engine.binaryMessenger)
     installRelay(childMessenger: engine.binaryMessenger)
     hwDebugLog("engine + view controller created, running entrypoint")
     // The entrypoint must exist in lib/main.dart (the root library) — macOS has
@@ -247,6 +256,22 @@ class SecondaryWindowController: NSObject, NSWindowDelegate {
     onClosed(windowId)
   }
 
+  /// Occlusion is the primary pause signal: a fully-occluded (covered) or
+  /// off-screen window reports not-visible, and there is no point rendering it.
+  func windowDidChangeOcclusionState(_ notification: Notification) {
+    let visible = window?.occlusionState.contains(.visible) ?? true
+    pushLifecycle(visible ? "resumed" : "hidden")
+  }
+
+  // Miniaturize doesn't always flip occlusionState, so pause/resume explicitly.
+  func windowDidMiniaturize(_ notification: Notification) {
+    pushLifecycle("hidden")
+  }
+
+  func windowDidDeminiaturize(_ notification: Notification) {
+    pushLifecycle("resumed")
+  }
+
   // MARK: internals
 
   private func reveal() {
@@ -263,12 +288,26 @@ class SecondaryWindowController: NSObject, NSWindowDelegate {
     hubA?.setMethodCallHandler(nil)
     hubB?.setMethodCallHandler(nil)
     bootstrap = nil
+    lifecycle = nil
     hubA = nil
     hubB = nil
     window?.contentViewController = nil
     engine?.shutDownEngine()
     engine = nil
     viewController = nil
+  }
+
+  /// The per-window lifecycle push channel (native→child): the child listens and
+  /// drives its framework AppLifecycleState from these, so a hidden window's
+  /// frame production and tickers stop until it's revealed again.
+  private func installLifecycle(childMessenger: FlutterBinaryMessenger) {
+    lifecycle = FlutterMethodChannel(
+      name: "magicgit/window/\(windowId)/lifecycle", binaryMessenger: childMessenger)
+  }
+
+  private func pushLifecycle(_ state: String) {
+    guard !isTornDown else { return }
+    lifecycle?.invokeMethod("setLifecycleState", arguments: state)
   }
 
   /// The per-engine allowlist channel: answers the child's identity `descriptor`

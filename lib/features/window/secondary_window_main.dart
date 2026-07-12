@@ -69,7 +69,18 @@ void _native(String method, [Object? arguments]) {
 /// Entrypoint body — called by `secondaryWindowMain()` in lib/main.dart (the
 /// `@pragma('vm:entry-point')` stub must live in the root library, because
 /// macOS `FlutterEngine.run(withEntrypoint:)` resolves names there).
-Future<void> runSecondaryWindow() async {
+///
+/// The whole boot runs inside a guarded zone so one window's uncaught Dart error
+/// can never cascade — it's logged and swallowed, this window degrades alone.
+/// (Native crashes still share the process; true per-window crash isolation
+/// would need separate processes, out of scope.)
+void runSecondaryWindow() {
+  runZonedGuarded(_bootSecondaryWindow, (error, stack) {
+    _native('debugLog', 'Zone error: $error\n$stack');
+  });
+}
+
+Future<void> _bootSecondaryWindow() async {
   SecondaryWindowBinding.ensureInitialized();
   // This engine has no visible console (release build, second engine), so an
   // uncaught error would otherwise vanish without a trace. Ship every error to
@@ -87,6 +98,7 @@ Future<void> runSecondaryWindow() async {
   };
 
   final descriptor = await _fetchDescriptor();
+  _installLifecycle(descriptor.windowId);
   final hub = MethodChannel(windowHubChannel(descriptor.windowId));
   void sendHub(String method, [Object? arguments]) {
     hub.invokeMethod<void>(method, arguments).catchError((_) {});
@@ -181,6 +193,27 @@ Future<WindowDescriptor> _fetchDescriptor() async {
   }
   _native('debugLog', 'descriptor handshake failed — rendering waiting state');
   return const WindowDescriptor(windowId: '', kind: 'history');
+}
+
+/// Listens for native occlusion/minimize pushes and drives the framework's
+/// AppLifecycleState from them. Feeding the state through the standard
+/// `flutter/lifecycle` pathway (rather than a protected binding method) makes
+/// [SchedulerBinding] stop producing frames while the window is hidden — the
+/// whole point of pausing an occluded window's engine — and resume cleanly when
+/// it reappears (the frame-clock self-heal handles the cold vsync).
+void _installLifecycle(String windowId) {
+  MethodChannel(windowLifecycleChannel(windowId)).setMethodCallHandler((
+    call,
+  ) async {
+    if (call.method == 'setLifecycleState' && call.arguments is String) {
+      ServicesBinding.instance.channelBuffers.push(
+        'flutter/lifecycle',
+        const StringCodec().encodeMessage('AppLifecycleState.${call.arguments}'),
+        (_) {},
+      );
+    }
+    return null;
+  });
 }
 
 /// The slice of the main window's connection state this window renders from.
