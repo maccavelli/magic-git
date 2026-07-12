@@ -477,9 +477,16 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     final container = handle == null ? null : sessionContainerFor(handle.tabId);
     switch (call.method) {
       case 'execute':
-        if (container == null) throw _relayDown();
+        if (container == null) {
+          _debugLog('MGDBG exec RELAY_DOWN win=$id tab=${handle?.tabId}');
+          throw _relayDown();
+        }
         final request = decodeExecuteRequest(
           call.arguments as Map<Object?, Object?>,
+        );
+        _debugLog(
+          'MGDBG exec win=$id tab=${handle?.tabId} repo=${request.repoPath} '
+          'cmd=${request.gitArgs.take(6).join(" ")}',
         );
         try {
           // Read per call so a backend switch mid-session is honored.
@@ -493,11 +500,16 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
             lane: request.lane,
             compress: request.compress,
           );
+          _debugLog(
+            'MGDBG exec-done win=$id exit=${result.exitCode} '
+            'out=${result.stdout.length} err=${result.stderr.length}',
+          );
           return encodeExecuteResult(result);
         } catch (e) {
           // Typed executor exceptions keep their identity across the wire;
           // everything else degrades to a message. Never let a throw escape
           // into the channel as an opaque PlatformException.
+          _debugLog('MGDBG exec-throw win=$id err=$e');
           return encodeExecuteError(e);
         }
       case 'requestState':
