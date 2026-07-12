@@ -710,9 +710,24 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
 
   /// The window's content, chosen by kind: History renders the History view; a
   /// detached repo window renders the full status view for its pinned repo.
+  ///
+  /// Keyed by [repoPath] so that when a History pop-out FOLLOWS the active tab
+  /// to a different repo, the view fully remounts (fresh State — selection,
+  /// commit graph, diff panes all reset) rather than mutating in place. A
+  /// retarget then behaves exactly like a fresh open, which is the known-good
+  /// path; an in-place `didUpdateWidget` update otherwise risks carrying stale
+  /// per-repo view state (e.g. a diff pane still bound to the old repo) across
+  /// the switch.
   Widget _body(String repoPath) => switch (_kind) {
-    WindowKind.history => HistoryView(repoPath: repoPath, isActive: true),
-    WindowKind.detachedRepo =>
-      RepoStatusView(repoPath: repoPath, isActive: true),
+    WindowKind.history => HistoryView(
+      key: ValueKey(repoPath),
+      repoPath: repoPath,
+      isActive: true,
+    ),
+    WindowKind.detachedRepo => RepoStatusView(
+      key: ValueKey(repoPath),
+      repoPath: repoPath,
+      isActive: true,
+    ),
   };
 }
