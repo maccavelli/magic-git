@@ -7,6 +7,8 @@
 //      switch — the dispose-clobber regression that moving the handler out of
 //      the (remounting) AppShell and into the stable host is meant to prevent.
 
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,6 +16,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/output/output_log.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/features/app_shell.dart';
 import 'package:remote_magic_git/features/tabs/tabs_controller.dart';
 import 'package:remote_magic_git/features/tabs/tabs_host.dart';
 import 'package:riverpod/misc.dart' show Override;
@@ -22,6 +25,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 class _Disconnected extends ConnectionController {
   @override
   ConnectionState build() => const ConnectionState();
+}
+
+/// A disconnected session carrying a distinctive marker (so a sheet reading
+/// connectionProvider can be shown to resolve THIS tab container, not root).
+class _MarkedConn extends ConnectionController {
+  _MarkedConn(this.marker);
+  final String marker;
+  @override
+  ConnectionState build() => ConnectionState(host: marker);
 }
 
 /// Each tab is its own root container with a disconnected session (so AppShell
@@ -66,11 +78,10 @@ Future<void> _pumpHost(WidgetTester tester, TabsController c) async {
     messenger.setMockMethodCallHandler(channel, (call) async => null);
     addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
   }
+  // TabsHost now owns MacosApp and watches the bridge, so it needs a
+  // ProviderScope ancestor (the app's root container).
   await tester.pumpWidget(
-    MacosApp(
-      debugShowCheckedModeBanner: false,
-      home: TabsHost(controller: c),
-    ),
+    ProviderScope(child: TabsHost(controller: c)),
   );
   await tester.pumpAndSettle();
 }
@@ -124,6 +135,48 @@ void main() {
     expect(_findMacosIcon(CupertinoIcons.add), findsOneWidget);
     await _teardownHost(tester);
   });
+
+  testWidgets(
+    'a sheet on the root navigator reads the active tab session, not root',
+    (tester) async {
+      final c = TabsController(
+        containerFactory: (overrides) => ProviderContainer(
+          retry: (_, _) => null,
+          overrides: [
+            connectionProvider.overrideWith(() => _MarkedConn('TAB-MARKER')),
+            savedConnectionsProvider.overrideWith((ref) => const []),
+            savedLocalReposProvider.overrideWith((ref) => const []),
+            forgeRepoListProvider.overrideWith((ref, key) async => const []),
+            forgeAuthHostProvider.overrideWith((ref, key) async => null),
+            ...overrides,
+          ],
+        ),
+      );
+      addTearDown(c.dispose);
+      await _pumpHost(tester, c);
+
+      // Push a sheet exactly as the commit dialog does — on the root navigator,
+      // from an AppShell context — and capture what connectionProvider it sees.
+      String? seenHost;
+      final ctx = tester.element(find.byType(AppShell));
+      unawaited(
+        showMacosSheet<void>(
+          context: ctx,
+          builder: (_) => Consumer(
+            builder: (_, ref, _) {
+              seenHost = ref.watch(connectionProvider).host;
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(seenHost, 'TAB-MARKER',
+          reason: 'the sheet resolved the active tab container, not empty root');
+      await _teardownHost(tester);
+    },
+  );
 
   testWidgets(
     'the menu channel keeps routing to the active tab after a switch',

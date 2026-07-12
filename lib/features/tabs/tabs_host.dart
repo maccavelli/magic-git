@@ -1,13 +1,16 @@
 import 'dart:async';
 
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:macos_ui/macos_ui.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/providers/window_manager_bridge.dart';
+import '../../core/theme/app_theme.dart';
 import '../app_shell.dart';
 import 'tab_strip.dart';
 import 'tabs_controller.dart';
@@ -32,18 +35,25 @@ final windowTitleProvider = Provider.autoDispose<String>((ref) {
       : '$name ($branch) — Magic Git';
 });
 
-/// The stably-mounted top-level host: it owns the process-level concerns that
-/// must survive tab switches — the native `magicgit/menu` bridge, the window
-/// lifecycle (bounds persistence, clean-disconnect-on-close, ⌘Q), and the
-/// native window title — and mounts exactly ONE tab's [AppShell] at a time
+/// The stably-mounted top-level host: it owns [MacosApp] plus the process-level
+/// concerns that must survive tab switches — the native `magicgit/menu` bridge,
+/// the window lifecycle (bounds persistence, clean-disconnect-on-close, ⌘Q), and
+/// the native window title — and mounts exactly ONE tab's [AppShell] at a time
 /// (single-active-mount) under that tab's own [ProviderContainer].
+///
+/// Crucially, the active tab's container is provided via [MacosApp.builder] —
+/// ABOVE the app's root Navigator — so modal sheets and dialogs (commit,
+/// clone/create, palette), which are pushed on that Navigator, resolve session
+/// providers against the active tab rather than the empty root container. The
+/// container switches in place on a tab change, leaving the Navigator (and any
+/// navigation state) intact.
 ///
 /// These concerns are deliberately NOT in [AppShell]: the active shell remounts
 /// on every tab switch, and an end-of-frame `dispose` there would tear down the
 /// menu handler out from under the newly-active tab. The host is created once
 /// and never remounts, so the menu/window plumbing stays stable while it merely
 /// *re-points* its subscriptions at whichever tab is active.
-class TabsHost extends StatefulWidget {
+class TabsHost extends ConsumerStatefulWidget {
   const TabsHost({super.key, this.controller});
 
   /// Test seam: inject a controller to observe/drive tabs. In production the
@@ -51,10 +61,10 @@ class TabsHost extends StatefulWidget {
   final TabsController? controller;
 
   @override
-  State<TabsHost> createState() => _TabsHostState();
+  ConsumerState<TabsHost> createState() => _TabsHostState();
 }
 
-class _TabsHostState extends State<TabsHost> with WindowListener {
+class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
   late final TabsController _controller;
   late final bool _ownsController;
 
@@ -301,25 +311,56 @@ class _TabsHostState extends State<TabsHost> with WindowListener {
 
   @override
   Widget build(BuildContext context) {
-    final active = _controller.active!;
-    return TabsScope(
-      controller: _controller,
-      child: Column(
-        children: [
-          const TabStrip(),
-          Expanded(
-            // Single-active-mount: only the active tab's AppShell is mounted,
-            // keyed by tab id so switching disposes the old shell and builds a
-            // fresh one against the newly-active container (background tabs'
-            // autoDispose fetches quiesce; their sockets stay alive).
-            child: UncontrolledProviderScope(
-              key: ValueKey(active.id),
-              container: active.container,
-              child: const AppShell(),
-            ),
-          ),
-        ],
+    // Instantiate + keep alive the SINGLE native-window bridge in this (root)
+    // container for the app's lifetime; wired to the tab controller in initState
+    // so each pop-out pins to its spawning tab.
+    ref.watch(windowManagerBridgeProvider);
+    return MacosApp(
+      title: 'Magic Git',
+      // Dark-only by design (see AppTheme): pin dark for both slots so the app
+      // never renders a half-tuned light appearance regardless of system mode.
+      theme: AppTheme.darkTheme,
+      darkTheme: AppTheme.darkTheme,
+      themeMode: ThemeMode.dark,
+      debugShowCheckedModeBanner: false,
+      // Provide the tab controller + the ACTIVE tab's container ABOVE the root
+      // Navigator, so sheets/dialogs pushed there (commit, clone/create,
+      // palette) read the active tab's live session — not the empty root
+      // container. Rebuilt on every tab switch (this host setState's), so the
+      // container tracks the active tab; the Navigator itself is preserved.
+      builder: (context, child) => TabsScope(
+        controller: _controller,
+        child: UncontrolledProviderScope(
+          container: _controller.active!.container,
+          child: child!,
+        ),
       ),
+      home: const _TabsBody(),
+    );
+  }
+}
+
+/// The window body under [MacosApp]: the tab strip plus the active tab's
+/// [AppShell]. The shell is keyed by the active tab id so switching tabs mounts
+/// a fresh shell against the newly-active container (background tabs' autoDispose
+/// fetches quiesce; their sockets stay alive) — single-active-mount. The ambient
+/// container comes from [TabsHost]'s `MacosApp.builder`.
+class _TabsBody extends StatelessWidget {
+  const _TabsBody();
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = TabsScope.of(context);
+    return Column(
+      children: [
+        const TabStrip(),
+        Expanded(
+          child: KeyedSubtree(
+            key: ValueKey(controller.activeId),
+            child: const AppShell(),
+          ),
+        ),
+      ],
     );
   }
 }

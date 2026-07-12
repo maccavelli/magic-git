@@ -3,16 +3,17 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:remote_magic_git/main.dart';
+import 'package:remote_magic_git/features/tabs/tabs_host.dart';
 
 void main() {
   testWidgets('App renders the connection landing page', (
     WidgetTester tester,
   ) async {
-    // Build the app inside a ProviderScope, matching how main() runs it.
-    // pumpAndSettle drains one-shot timers (e.g. macos_ui's scrollbar
-    // fade-out) so none remain pending at test teardown.
-    await tester.pumpWidget(const ProviderScope(child: MyApp()));
+    // Build the app inside a ProviderScope, matching how main() runs it —
+    // TabsHost is the top widget (it owns MacosApp). pumpAndSettle drains
+    // one-shot timers (e.g. macos_ui's scrollbar fade-out) so none remain
+    // pending at test teardown.
+    await tester.pumpWidget(const ProviderScope(child: TabsHost()));
     await tester.pumpAndSettle();
 
     // Unconnected, the shell shows the landing page with its two actions.
