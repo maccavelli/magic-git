@@ -86,6 +86,18 @@ class TabsController extends ChangeNotifier {
   RepoTab? get active => _activeId == null ? null : _byId(_activeId!);
   ProviderContainer? containerFor(String id) => _byId(id)?.container;
 
+  /// The container of the (first) open tab currently on [repoPath], or null if
+  /// no open tab holds that repo. Used to route a secondary window's proxied
+  /// commands to the session that actually owns the repo being operated on —
+  /// robust across a History pop-out following the active tab, where the window
+  /// briefly still requests the previous repo while the target tab switches.
+  ProviderContainer? containerForRepo(String repoPath) {
+    for (final t in _tabs) {
+      if (t.repoPath == repoPath) return t.container;
+    }
+    return null;
+  }
+
   /// Whether another tab can be opened. False at [maxTabs] — the "+" and
   /// open-in-new-tab paths stop creating; dedupe/blank-reuse still work.
   bool get canOpenTab => _tabs.length < maxTabs;

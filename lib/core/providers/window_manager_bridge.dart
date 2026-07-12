@@ -75,6 +75,13 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
   /// tab a new window pins to.
   String? Function() activeTabId = () => null;
 
+  /// Resolves the container of the open tab that owns [repoPath] — wired by
+  /// TabsHost to `TabsController.containerForRepo`. Proxied `execute` calls route
+  /// by the repo in the REQUEST (which the child always knows), not the pinned
+  /// tab, so a command can never hit the wrong session while a History pop-out
+  /// is mid-switch between repos.
+  ProviderContainer? Function(String repoPath) containerForRepo = (_) => null;
+
   /// Per-window hub channels, keyed by window id — one handler installed per
   /// open window, torn down when it closes.
   final Map<String, MethodChannel> _hubs = {};
@@ -477,20 +484,28 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     final container = handle == null ? null : sessionContainerFor(handle.tabId);
     switch (call.method) {
       case 'execute':
-        if (container == null) {
-          _debugLog('MGDBG exec RELAY_DOWN win=$id tab=${handle?.tabId}');
-          throw _relayDown();
-        }
         final request = decodeExecuteRequest(
           call.arguments as Map<Object?, Object?>,
         );
+        // Route by the repo in the REQUEST, not the pinned tab: the child always
+        // knows which repo it's operating on, and during a follow-active switch
+        // its in-flight requests still carry the previous repo — sending those
+        // to the newly-pinned tab's session runs `git -C <other-repo>` against
+        // the wrong host and fails. Fall back to the pinned tab only when no open
+        // tab holds the repo.
+        final execContainer = containerForRepo(request.repoPath) ?? container;
+        if (execContainer == null) {
+          _debugLog('MGDBG exec RELAY_DOWN win=$id tab=${handle?.tabId}');
+          throw _relayDown();
+        }
         _debugLog(
           'MGDBG exec win=$id tab=${handle?.tabId} repo=${request.repoPath} '
+          'byRepo=${containerForRepo(request.repoPath) != null} '
           'cmd=${request.gitArgs.take(6).join(" ")}',
         );
         try {
           // Read per call so a backend switch mid-session is honored.
-          final result = await container.read(activeExecutorProvider).execute(
+          final result = await execContainer.read(activeExecutorProvider).execute(
             repoPath: request.repoPath,
             gitArgs: request.gitArgs,
             extraEnv: request.extraEnv,

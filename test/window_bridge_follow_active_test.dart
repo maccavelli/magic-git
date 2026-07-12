@@ -220,4 +220,54 @@ void main() {
       ['1'],
     );
   });
+
+  test('proxied execute routes by the repo in the request, not the pinned tab',
+      () async {
+    final execA = _FakeExecutor('A');
+    final execB = _FakeExecutor('B');
+    final containerA = ProviderContainer(
+      overrides: [
+        connectionProvider.overrideWith(() => _MutableConnection(_connected('/a'))),
+        activeExecutorProvider.overrideWithValue(execA),
+      ],
+    );
+    final containerB = ProviderContainer(
+      overrides: [
+        connectionProvider.overrideWith(() => _MutableConnection(_connected('/b'))),
+        activeExecutorProvider.overrideWithValue(execB),
+      ],
+    );
+    final bridgeContainer = ProviderContainer();
+    addTearDown(containerA.dispose);
+    addTearDown(containerB.dispose);
+    addTearDown(bridgeContainer.dispose);
+
+    var activeTab = 'A';
+    final byTab = {'A': containerA, 'B': containerB};
+    final byRepo = {'/a': containerA, '/b': containerB};
+    final bridge = bridgeContainer.read(windowManagerBridgeProvider.notifier)
+      ..sessionContainerFor = ((t) => byTab[t])
+      ..activeTabId = (() => activeTab)
+      ..containerForRepo = ((repo) => byRepo[repo]);
+
+    await bridge.openHistory(); // pinned to A
+    activeTab = 'B';
+    bridge.onActiveTabChanged('B', isBlank: false);
+    expect(bridge.state.single.tabId, 'B', reason: 'window now follows tab B');
+
+    // A lagging request for the OLD repo (/a) — still open in tab A — must route
+    // to tab A's session, NOT the now-pinned tab B (which would run git -C /a on
+    // the wrong host and fail). This is the switch-time diff bug.
+    final replyA = await deliverHubCall('execute', encodeExecuteRequest(_req('/a')));
+    expect(
+      decodeExecuteResponse((replyA as Map).cast<Object?, Object?>()).stdout,
+      'served-by-A',
+    );
+    expect(execA.repos, ['/a']);
+    expect(execB.repos, isEmpty);
+
+    // A request for the new repo (/b) routes to tab B.
+    await deliverHubCall('execute', encodeExecuteRequest(_req('/b')));
+    expect(execB.repos, ['/b']);
+  });
 }

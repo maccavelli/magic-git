@@ -315,7 +315,8 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     WindowManagerBridge.current
       ?..sessionContainerFor =
           ((tabId) => tabId == null ? null : _controller.containerFor(tabId))
-      ..activeTabId = (() => _controller.activeId);
+      ..activeTabId = (() => _controller.activeId)
+      ..containerForRepo = _controller.containerForRepo;
     return MacosApp(
       title: 'Magic Git',
       // Dark-only by design (see AppTheme): pin dark for both slots so the app
