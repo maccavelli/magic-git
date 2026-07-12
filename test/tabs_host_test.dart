@@ -1,0 +1,169 @@
+// TabsHost mounts exactly one tab's AppShell at a time and owns the native
+// menu channel + window lifecycle stably across switches. These tests guard the
+// two riskiest parts of the host/AppShell split:
+//   1. The tab strip is invisible with one tab (zero UX change) and appears
+//      browser-style with two.
+//   2. The `magicgit/menu` channel keeps routing to the ACTIVE tab AFTER a
+//      switch — the dispose-clobber regression that moving the handler out of
+//      the (remounting) AppShell and into the stable host is meant to prevent.
+
+import 'package:flutter/cupertino.dart' hide ConnectionState;
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/core/output/output_log.dart';
+import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/features/tabs/tabs_controller.dart';
+import 'package:remote_magic_git/features/tabs/tabs_host.dart';
+import 'package:riverpod/misc.dart' show Override;
+import 'package:shared_preferences/shared_preferences.dart';
+
+class _Disconnected extends ConnectionController {
+  @override
+  ConnectionState build() => const ConnectionState();
+}
+
+/// Each tab is its own root container with a disconnected session (so AppShell
+/// renders the lightweight ConnectionLanding) and stubbed saved-lists/forge so
+/// nothing reaches disk or a real executor.
+ProviderContainer _tabContainer(List<Override> overrides) => ProviderContainer(
+  retry: (_, _) => null,
+  overrides: [
+    connectionProvider.overrideWith(_Disconnected.new),
+    savedConnectionsProvider.overrideWith((ref) => const []),
+    savedLocalReposProvider.overrideWith((ref) => const []),
+    forgeRepoListProvider.overrideWith((ref, key) async => const []),
+    forgeAuthHostProvider.overrideWith((ref, key) async => null),
+    ...overrides,
+  ],
+);
+
+// MacosIcon renders a RichText, not a Flutter Icon, so find.byIcon never
+// matches it — match on the MacosIcon's `icon` field instead.
+Finder _findMacosIcon(IconData icon) =>
+    find.byWidgetPredicate((w) => w is MacosIcon && w.icon == icon);
+
+Future<void> _sendMenu(WidgetTester tester, String method) async {
+  await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+    'magicgit/menu',
+    const StandardMethodCodec().encodeMethodCall(MethodCall(method)),
+    (_) {},
+  );
+  await tester.pump();
+}
+
+// Plugin channels absent in tests. window_manager backs the host's window
+// lifecycle; macos_window_utils backs MacosWindow's vibrancy subview (which
+// also schedules an untracked zero-duration Timer per build — drained by
+// [_teardownHost] before teardown).
+const _windowManager = MethodChannel('window_manager');
+const _macosWindowUtils = MethodChannel('macos_window_utils/window_manipulator');
+
+Future<void> _pumpHost(WidgetTester tester, TabsController c) async {
+  final messenger = tester.binding.defaultBinaryMessenger;
+  for (final channel in const [_windowManager, _macosWindowUtils]) {
+    messenger.setMockMethodCallHandler(channel, (call) async => null);
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+  }
+  await tester.pumpWidget(
+    MacosApp(
+      debugShowCheckedModeBanner: false,
+      home: TabsHost(controller: c),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+/// Tears the host down cleanly inside the test body so no `Timer` is pending at
+/// the framework's end-of-test invariant check. Two independent leaks:
+///   1. MacosWindow's vibrancy subview schedules an untracked `Timer(zero)` on
+///      each build (macos_window_utils) — drained here while still mounted (its
+///      callback needs the live render object, so it must fire before unmount).
+///   2. Unmounting closes the host's `windowTitleProvider` (autoDispose)
+///      subscription, which arms Riverpod's dispose scheduler `Timer` — drained
+///      after unmounting the tree.
+Future<void> _teardownHost(WidgetTester tester) async {
+  await tester.pumpAndSettle();
+  await tester.pump(const Duration(milliseconds: 10)); // fire vibrancy timers
+  await tester.pumpWidget(const SizedBox()); // unmount → TabsHost.dispose
+  await tester.pump(const Duration(milliseconds: 10)); // fire Riverpod dispose
+}
+
+void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
+  testWidgets('a single tab shows no tab-strip chrome (zero UX change)', (
+    tester,
+  ) async {
+    final c = TabsController(containerFactory: _tabContainer);
+    addTearDown(c.dispose);
+    await _pumpHost(tester, c);
+
+    // The landing renders, and there is no "+" (the strip is hidden at 1 tab).
+    expect(find.text('Connections Manager'), findsOneWidget);
+    expect(_findMacosIcon(CupertinoIcons.add), findsNothing);
+    await _teardownHost(tester);
+  });
+
+  testWidgets('opening a second repo shows a browser-style two-chip strip', (
+    tester,
+  ) async {
+    final c = TabsController(containerFactory: _tabContainer);
+    addTearDown(c.dispose);
+    c.ensureInitialTab();
+    c.openOrFocus(connectionId: 'a', repoPath: '/repo-alpha', connect: (_) {});
+    c.openOrFocus(connectionId: 'b', repoPath: '/repo-beta', connect: (_) {});
+    await _pumpHost(tester, c);
+
+    expect(find.text('repo-alpha'), findsOneWidget);
+    expect(find.text('repo-beta'), findsOneWidget);
+    // The "+" (new-tab) affordance is present with a multi-tab strip.
+    expect(_findMacosIcon(CupertinoIcons.add), findsOneWidget);
+    await _teardownHost(tester);
+  });
+
+  testWidgets(
+    'the menu channel keeps routing to the active tab after a switch',
+    (tester) async {
+      final c = TabsController(containerFactory: _tabContainer);
+      addTearDown(c.dispose);
+      c.ensureInitialTab();
+      c.openOrFocus(connectionId: 'a', repoPath: '/repo-alpha', connect: (_) {});
+      c.openOrFocus(connectionId: 'b', repoPath: '/repo-beta', connect: (_) {});
+      await _pumpHost(tester, c);
+
+      final tabA = c.tabs[0];
+      final tabB = c.tabs[1];
+      expect(c.activeId, tabB.id, reason: 'the newest tab is active');
+
+      final bBefore = tabB.container.read(outputLogProvider).visible;
+      await _sendMenu(tester, 'toggleOutputView');
+      expect(
+        tabB.container.read(outputLogProvider).visible,
+        !bBefore,
+        reason: 'the menu toggled the ACTIVE tab (B)',
+      );
+      // Tab A, in the background, is untouched.
+      final aInitial = tabA.container.read(outputLogProvider).visible;
+
+      // Switch to tab A by tapping its chip.
+      await tester.tap(find.text('repo-alpha'));
+      await tester.pumpAndSettle();
+      expect(c.activeId, tabA.id);
+
+      // The handler survived the AppShell remount and now routes to A.
+      await _sendMenu(tester, 'toggleOutputView');
+      expect(
+        tabA.container.read(outputLogProvider).visible,
+        !aInitial,
+        reason: 'the menu now toggles the newly-active tab (A)',
+      );
+      // Tab B keeps the value it had — the switch didn't leak across tabs.
+      expect(tabB.container.read(outputLogProvider).visible, !bBefore);
+      await _teardownHost(tester);
+    },
+  );
+}

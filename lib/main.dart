@@ -4,7 +4,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:window_manager/window_manager.dart';
 import 'core/providers/app_providers.dart';
 import 'core/theme/app_theme.dart';
-import 'features/app_shell.dart';
+import 'features/tabs/tabs_host.dart';
 import 'features/window/secondary_window_main.dart';
 
 /// Entrypoint for every native secondary window's second FlutterEngine (see
@@ -126,7 +126,7 @@ class MyApp extends StatelessWidget {
       darkTheme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
       debugShowCheckedModeBanner: false,
-      home: const AppShell(),
+      home: const TabsHost(),
     );
   }
 }

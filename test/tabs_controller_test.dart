@@ -155,4 +155,23 @@ void main() {
     expect(c.tabs, hasLength(1));
     expect(c.active!.isBlank, isTrue);
   });
+
+  test('newTab opens a fresh blank tab, but reuses an already-blank active one',
+      () {
+    final c = makeController();
+    addTearDown(c.dispose);
+    final t0 = c.ensureInitialTab();
+    // Active tab is already blank — "+" focuses it rather than stacking a
+    // duplicate empty tab.
+    final again = c.newTab();
+    expect(again.id, t0.id);
+    expect(c.tabs, hasLength(1));
+
+    // With a connected active tab, "+" opens a new blank landing tab.
+    c.openOrFocus(connectionId: 'c1', repoPath: '/a', connect: (_) {});
+    final fresh = c.newTab();
+    expect(fresh.isBlank, isTrue);
+    expect(c.tabs, hasLength(2));
+    expect(c.activeId, fresh.id);
+  });
 }

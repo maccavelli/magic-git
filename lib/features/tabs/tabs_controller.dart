@@ -56,6 +56,16 @@ class TabsController extends ChangeNotifier {
     );
   }
 
+  /// The live main-window controller while a [TabsHost] is mounted (null
+  /// otherwise). Connection sheets (the connections manager, command palette)
+  /// are pushed on MacosApp's root Navigator, which sits ABOVE [TabsScope], so
+  /// they can't reach it through the widget tree — they read this instead.
+  /// There is exactly one main window (secondary windows run in their own
+  /// engines), so a single current-instance pointer is correct; callers that
+  /// find it null (widget tests, non-main contexts) fall back to connecting in
+  /// the current session in place.
+  static TabsController? current;
+
   static ProviderContainer _defaultContainerFactory(List<Override> overrides) =>
       ProviderContainer(retry: (_, _) => null, overrides: overrides);
 
@@ -73,6 +83,18 @@ class TabsController extends ChangeNotifier {
   /// Ensures at least one (blank, disconnected) tab exists — it shows the
   /// landing screen. Called at boot and whenever the last tab closes.
   RepoTab ensureInitialTab() => _tabs.isEmpty ? _create() : active!;
+
+  /// Opens (and focuses) a fresh blank landing tab — the "+" action. If the
+  /// active tab is already a blank landing tab, focuses it instead of stacking
+  /// a second empty tab (a duplicate blank the user would just have to close).
+  RepoTab newTab() {
+    final act = active;
+    if (act != null && act.isBlank) {
+      activate(act.id);
+      return act;
+    }
+    return _create();
+  }
 
   /// Opens (or focuses) a tab for [connectionId]/[repoPath] and connects it.
   /// Dedupe: a matching open tab is focused, not duplicated. A blank landing

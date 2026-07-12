@@ -11,6 +11,7 @@ import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import '../connection/local_repo_form.dart';
+import '../tabs/tabs_controller.dart';
 import '../workspace/clone_sheet.dart';
 import '../workspace/create_repo_sheet.dart';
 
@@ -696,14 +697,30 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     SavedConnection conn,
     String repo,
   ) {
-    final notifier = ref.read(connectionProvider.notifier);
-    final connection = ref.read(connectionProvider);
-    Navigator.of(context).pop();
-    if (conn.id == connection.connectionId) {
-      if (repo != connection.repoPath) notifier.setRepoPath(repo);
-    } else {
-      notifier.connectToSaved(conn, repoPath: repo);
+    final tabs = TabsController.current;
+    if (tabs == null) {
+      // No tab host (widget tests / non-main contexts): connect in place.
+      final notifier = ref.read(connectionProvider.notifier);
+      final connection = ref.read(connectionProvider);
+      Navigator.of(context).pop();
+      if (conn.id == connection.connectionId) {
+        if (repo != connection.repoPath) notifier.setRepoPath(repo);
+      } else {
+        notifier.connectToSaved(conn, repoPath: repo);
+      }
+      return;
     }
+    // Open (or focus) this repo in its own tab, connecting in that tab's
+    // container. A repo already open on this connection is focused, not
+    // re-connected; the first repo picked from a blank landing tab fills it.
+    Navigator.of(context).pop();
+    tabs.openOrFocus(
+      connectionId: conn.id,
+      repoPath: repo,
+      connect: (container) => container
+          .read(connectionProvider.notifier)
+          .connectToSaved(conn, repoPath: repo),
+    );
   }
 
   Future<void> _deleteConnection(
@@ -832,9 +849,17 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
   }
 
   void _newConnection(BuildContext context, WidgetRef ref) {
-    final notifier = ref.read(connectionProvider.notifier);
+    final tabs = TabsController.current;
+    if (tabs == null) {
+      final notifier = ref.read(connectionProvider.notifier);
+      Navigator.of(context).pop();
+      notifier.disconnect(); // reveals the connection form in place
+      return;
+    }
+    // Open a fresh landing tab (the connection form) without disturbing the
+    // sessions already open in other tabs.
     Navigator.of(context).pop();
-    notifier.disconnect(); // reveals the connection form
+    tabs.newTab();
   }
 
   void _newLocalRepo(BuildContext context) {
@@ -876,17 +901,30 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     WidgetRef ref,
     SavedLocalRepo repo,
   ) async {
-    final notifier = ref.read(connectionProvider.notifier);
-    final connection = ref.read(connectionProvider);
-    // Already *connected* to this exact repo — just close the panel. Gated on
-    // isConnected (not merely a matching id): after a failed open the state
-    // still carries this repo's id in the `error` phase, and without the phase
-    // check a retap would no-op instead of retrying.
-    if (connection.isConnected &&
-        connection.isLocal &&
-        connection.connectionId == repo.id) {
-      Navigator.of(context).pop();
-      return;
+    final tabs = TabsController.current;
+    // A tab for this saved repo is already open — focus it without re-resolving
+    // the bookmark (a saved local repo's id is unique, so it identifies the
+    // tab). Avoids a redundant security-scoped access on an already-open repo.
+    if (tabs != null) {
+      for (final t in tabs.tabs) {
+        if (t.connectionId == repo.id) {
+          Navigator.of(context).pop();
+          tabs.activate(t.id);
+          return;
+        }
+      }
+    } else {
+      final connection = ref.read(connectionProvider);
+      // Already *connected* to this exact repo — just close the panel. Gated on
+      // isConnected (not merely a matching id): after a failed open the state
+      // still carries this repo's id in the `error` phase, and without the
+      // phase check a retap would no-op instead of retrying.
+      if (connection.isConnected &&
+          connection.isLocal &&
+          connection.connectionId == repo.id) {
+        Navigator.of(context).pop();
+        return;
+      }
     }
     // Keep the panel OPEN across resolution (don't pop first): a failed resolve
     // shows an error dialog, which needs this context still mounted.
@@ -894,10 +932,19 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     if (path == null) return; // access could not be restored; dialog shown
     // Resolution succeeded — now dismiss the panel and open the repo.
     if (context.mounted) Navigator.of(context).pop();
-    await notifier.connectLocal(
-      path,
-      label: repo.label.isEmpty ? null : repo.label,
-      id: repo.id,
+    final label = repo.label.isEmpty ? null : repo.label;
+    if (tabs == null) {
+      await ref
+          .read(connectionProvider.notifier)
+          .connectLocal(path, label: label, id: repo.id);
+      return;
+    }
+    tabs.openOrFocus(
+      connectionId: repo.id,
+      repoPath: path,
+      connect: (container) => container
+          .read(connectionProvider.notifier)
+          .connectLocal(path, label: label, id: repo.id),
     );
   }
 

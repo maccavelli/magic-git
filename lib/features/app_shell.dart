@@ -2,10 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/material.dart' show SelectableText;
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
-import 'package:window_manager/window_manager.dart';
 import '../core/git/git_service.dart';
 import '../core/output/output_log.dart';
 import '../core/providers/app_providers.dart';
@@ -34,33 +32,21 @@ import 'settings/tool_health_banner.dart';
 import 'stash/stash_view.dart';
 import 'switcher/connection_switcher.dart';
 import 'switcher/current_repo_indicator.dart';
+import 'tabs/tab_ui_providers.dart';
 import 'viewer/viewer_host.dart';
 import 'viewer/viewer_providers.dart';
 import 'workspace/clone_sheet.dart';
 import 'workspace/create_repo_sheet.dart';
 
-/// Top-level window shell. Content is driven by connection state: the
+/// Top-level per-tab content shell. Content is driven by connection state: the
 /// connection form until a session is established, then the feature panels
 /// (Status, History, Branches, Stashes, Forge, Project) selected from the
 /// sidebar.
-/// The native window title: `repo (branch) — Magic Git` while a repo is
-/// active, plain `Magic Git` otherwise. Shown in Mission Control, the app
-/// switcher, and the Window menu (the in-window titlebar is hidden), so it's
-/// how a user tells two projects apart at the OS level.
-final _windowTitleProvider = Provider.autoDispose<String>((ref) {
-  final connection = ref.watch(connectionProvider);
-  final repoPath = connection.repoPath;
-  if (!connection.isConnected || repoPath == null) return 'Magic Git';
-  final segments = repoPath.split('/').where((seg) => seg.isNotEmpty);
-  final name = segments.isEmpty ? repoPath : segments.last;
-  final branch = ref.watch(
-    statusProvider(repoPath).select((s) => s.value?.branch.head),
-  );
-  return branch == null || branch.isEmpty
-      ? '$name — Magic Git'
-      : '$name ($branch) — Magic Git';
-});
-
+///
+/// Mounted by [TabsHost] inside the active tab's own [ProviderContainer], so
+/// every `ref` here resolves against that tab's session. Process-level concerns
+/// that must outlive tab switches — the native menu bridge, the window
+/// lifecycle, and the window title — live in [TabsHost], not here.
 class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
@@ -211,18 +197,7 @@ class _ReconnectingOverlayState extends State<_ReconnectingOverlay> {
   }
 }
 
-class _AppShellState extends ConsumerState<AppShell> with WindowListener {
-  int _pageIndex = 0;
-
-  /// Which sidebar pages have been visited at least once since the current
-  /// repo connected. A visited page's panel widget is kept alive in the
-  /// [IndexedStack] (preserving scroll position, selections, in-flight
-  /// guards, etc.) across tab switches instead of being torn down and
-  /// rebuilt from scratch every time; an unvisited page renders a cheap
-  /// placeholder so its panel — and the provider fetches its `build()` would
-  /// trigger — doesn't run until the user actually opens that tab.
-  final Set<int> _visitedPages = {0};
-
+class _AppShellState extends ConsumerState<AppShell> {
   /// Whether the host-key mismatch dialog is currently on screen. The
   /// dialog's non-dismissible full-window barrier already blocks every UI
   /// path that could otherwise clear the prompt out from under it, but this
@@ -238,171 +213,19 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
   /// dialog had already been dismissed but before the bool was reset.
   ModalRoute<dynamic>? _hostKeyDialogRoute;
 
-  /// Bridge to the native menu bar. The Swift side ("View → Show Output View")
-  /// invokes `toggleOutputView`; we push the current checkbox state back with
-  /// `setOutputViewChecked` so the menu item's checkmark stays in sync.
-  static const _menuChannel = MethodChannel('magicgit/menu');
-
-  /// Debounces persisting the window's bounds while it's moved/resized. Saving
-  /// continuously (rather than only on close/quit) is what makes the restore
-  /// reliable: ⌘Q is intercepted (`prepareToTerminate`) and the red button
-  /// fires [onWindowClose], but a crash or force-kill fires neither, and even
-  /// a clean close's single final write can be lost to the process dying
-  /// before it flushes. By the time the app exits, the last position/size is
-  /// already persisted. See WindowBoundsStore and main.dart's restore.
-  Timer? _boundsSaveTimer;
-
   /// The dashboard sheet's live route while it's open — how the
   /// menu-uncheck path closes exactly that route (and only it). Null when
   /// the dashboard is closed.
   ModalRoute<void>? _dashboardRoute;
   ModalRoute<void>? _recoveryRoute;
 
-  @override
-  void initState() {
-    super.initState();
-    _menuChannel.setMethodCallHandler(_handleMenuCall);
-    // Push the initial (on-by-default) panel states so the native menu
-    // checkmarks are correct from the first frame; ref.listen only fires on
-    // subsequent changes.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      _syncMenuState(
-        'setOutputViewChecked',
-        ref.read(outputLogProvider).visible,
-      );
-      _syncMenuState('setFileViewChecked', ref.read(fileViewVisibleProvider));
-      _syncMenuState('setDashboardChecked', ref.read(dashboardVisibleProvider));
-      // Initial title; ref.listen (in build) only fires on subsequent changes.
-      unawaited(windowManager.setTitle(ref.read(_windowTitleProvider)));
-    });
-    // Intercept the window close so the SSH connection gets a clean
-    // disconnect instead of the socket just vanishing when the process dies.
-    windowManager.addListener(this);
-    windowManager.setPreventClose(true);
-  }
-
-  @override
-  void dispose() {
-    // Detach the native menu handler so a late `toggleOutputView`/`toggleFileView`
-    // from Swift can't invoke `_handleMenuCall` (and touch a disposed `ref`).
-    _menuChannel.setMethodCallHandler(null);
-    _boundsSaveTimer?.cancel();
-    windowManager.removeListener(this);
-    super.dispose();
-  }
-
-  @override
-  void onWindowMoved() => _persistBoundsSoon();
-
-  @override
-  void onWindowResized() => _persistBoundsSoon();
-
-  /// Persist the window's current bounds shortly after it settles. Debounced so
-  /// a drag/resize that emits a burst of events writes once, not on every tick.
-  void _persistBoundsSoon() {
-    _boundsSaveTimer?.cancel();
-    _boundsSaveTimer = Timer(const Duration(milliseconds: 400), () async {
-      // A minimized or full-screen frame isn't where the user wants the window
-      // to reopen, so don't persist those transient bounds.
-      if (await windowManager.isMinimized() ||
-          await windowManager.isFullScreen()) {
-        return;
-      }
-      final bounds = await windowManager.getBounds();
-      await WindowBoundsStore.save(
-        bounds.left,
-        bounds.top,
-        bounds.width,
-        bounds.height,
-      );
-    });
-  }
-
-  @override
-  void onWindowClose() async {
-    if (!await windowManager.isPreventClose()) return;
-    // Capture bounds before the window actually closes so the next launch can
-    // restore this position/size instead of always centering at the
-    // hardcoded default (see WindowBoundsStore / main.dart).
-    final bounds = await windowManager.getBounds();
-    await WindowBoundsStore.save(
-      bounds.left,
-      bounds.top,
-      bounds.width,
-      bounds.height,
-    );
-    await ref.read(connectionProvider.notifier).disconnect();
-    await windowManager.setPreventClose(false);
-    await windowManager.close();
-  }
-
-  Future<dynamic> _handleMenuCall(MethodCall call) async {
-    // A menu call can still be dispatched during teardown; touching `ref` after
-    // disposal throws, so bail once unmounted.
-    if (!mounted) return null;
-    switch (call.method) {
-      case 'toggleOutputView':
-        ref.read(outputLogProvider.notifier).toggle();
-      case 'toggleFileView':
-        ref.read(fileViewVisibleProvider.notifier).toggle();
-      case 'toggleDashboard':
-        ref.read(dashboardVisibleProvider.notifier).toggle();
-      case 'toggleRecovery':
-        ref.read(recoveryVisibleProvider.notifier).toggle();
-      case 'openHistoryWindow':
-        await ref.read(windowManagerBridgeProvider.notifier).openHistory();
-      case 'prepareToTerminate':
-        // ⌘Q (or any AppKit terminate path). The delegate holds termination
-        // open (.terminateLater, with a native timeout backstop) until this
-        // returns, so mirror onWindowClose: persist the final bounds and close
-        // the SSH session cleanly instead of letting the process die with the
-        // socket open.
-        _boundsSaveTimer?.cancel();
-        try {
-          final bounds = await windowManager.getBounds();
-          await WindowBoundsStore.save(
-            bounds.left,
-            bounds.top,
-            bounds.width,
-            bounds.height,
-          );
-        } catch (_) {
-          // Best-effort — never block quitting on a bounds read.
-        }
-        if (mounted) {
-          await ref.read(connectionProvider.notifier).disconnect();
-        }
-      case 'syncMenuState':
-        // The native side asks for this once its menu items are installed, so
-        // the checkmarks are correct even if our startup push (below) raced the
-        // item creation and was dropped.
-        _syncMenuState(
-          'setOutputViewChecked',
-          ref.read(outputLogProvider).visible,
-        );
-        _syncMenuState('setFileViewChecked', ref.read(fileViewVisibleProvider));
-        _syncMenuState(
-          'setDashboardChecked',
-          ref.read(dashboardVisibleProvider),
-        );
-        _syncMenuState('setRecoveryChecked', ref.read(recoveryVisibleProvider));
-    }
-    return null;
-  }
-
-  void _syncMenuState(String method, bool visible) {
-    _menuChannel.invokeMethod<void>(method, visible).catchError((_) {});
-  }
-
   /// Switches the active sidebar page — shared by the sidebar's own tap
   /// handler and the ⌘1–⌘6 shortcuts below, so both paths mark the page
-  /// visited the same way.
+  /// visited the same way. Page state lives in per-tab providers (retained
+  /// while this tab is backgrounded), not widget State.
   void _selectPage(int index) {
-    setState(() {
-      _pageIndex = index;
-      _visitedPages.add(index);
-    });
+    ref.read(pageIndexProvider.notifier).select(index);
+    ref.read(visitedPagesProvider.notifier).visit(index);
   }
 
   void _openSettings(BuildContext context) {
@@ -631,30 +454,22 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
   Widget build(BuildContext context) {
     final connection = ref.watch(connectionProvider);
     final connected = connection.isConnected && connection.repoPath != null;
+    final pageIndex = ref.watch(pageIndexProvider);
+    final visitedPages = ref.watch(visitedPagesProvider);
 
-    // Keep the native-History-window plumbing alive for the app's lifetime:
-    // the bridge serves the second window's proxied commands and events; the
-    // forwarder relays watcher ticks to it while (and only while) it's open.
+    // Keep this tab's native-History-window plumbing alive while it's the
+    // mounted (active) tab: the bridge serves the second window's proxied
+    // commands and events; the forwarder relays watcher ticks to it while (and
+    // only while) it's open.
     ref.watch(windowManagerBridgeProvider);
     ref.watch(windowTickForwardersProvider);
 
-    // Keep the native window title tracking the active repo/branch.
-    ref.listen(_windowTitleProvider, (_, title) {
-      unawaited(windowManager.setTitle(title));
-    });
-    // Keep the native menu items' checkmarks in sync with the panel states.
-    ref.listen(outputLogProvider.select((s) => s.visible), (_, visible) {
-      _syncMenuState('setOutputViewChecked', visible);
-    });
-    ref.listen(fileViewVisibleProvider, (_, visible) {
-      _syncMenuState('setFileViewChecked', visible);
-    });
     // The dashboard is a modal sheet driven by a provider so all three of
     // its controls stay in sync: the View-menu checkbox toggles the
     // provider; the sheet's X / Esc pop the route (whose completion resets
-    // the provider); and unchecking the menu removes the live route.
+    // the provider); and unchecking the menu removes the live route. The
+    // menu-checkmark push itself lives in TabsHost (routed to the active tab).
     ref.listen(dashboardVisibleProvider, (_, visible) {
-      _syncMenuState('setDashboardChecked', visible);
       if (visible && _dashboardRoute == null) {
         showMacosSheet<void>(
           context: context,
@@ -682,7 +497,6 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     // The Recovery sheet follows the Dashboard's provider-driven route
     // pattern exactly — see the comment above.
     ref.listen(recoveryVisibleProvider, (_, visible) {
-      _syncMenuState('setRecoveryChecked', visible);
       if (visible && _recoveryRoute == null) {
         showMacosSheet<void>(
           context: context,
@@ -721,11 +535,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         ref.read(openFileViewersProvider.notifier).closeAll();
       }
       if (next != null && next != previous) {
-        setState(
-          () => _visitedPages
-            ..clear()
-            ..add(_pageIndex),
-        );
+        ref.read(visitedPagesProvider.notifier).reset(ref.read(pageIndexProvider));
       }
     });
     // A changed host key pauses the in-progress connect/reconnect on an
@@ -775,7 +585,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
         // a viewer window.
         child: Stack(
           children: [
-            _buildWindow(context, connection, connected),
+            _buildWindow(context, connection, connected, pageIndex, visitedPages),
             const Positioned.fill(child: ViewerHost()),
             UndoToastOverlay(onUndo: _undoGitOperation),
           ],
@@ -788,6 +598,8 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     BuildContext context,
     ConnectionState connection,
     bool connected,
+    int pageIndex,
+    Set<int> visitedPages,
   ) {
     return MacosWindow(
       sidebar: Sidebar(
@@ -810,7 +622,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
             : null,
         builder: (context, scrollController) {
           return SidebarItems(
-            currentIndex: connected ? _pageIndex : 0,
+            currentIndex: connected ? pageIndex : 0,
             // While disconnected the content is pinned to ConnectionLanding, so
             // swallow sidebar taps rather than mutating the (hidden) page state.
             // (onChanged is non-nullable, so use a no-op instead of null.)
@@ -874,7 +686,7 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
           return Column(
             children: [
               const ToolHealthBanner(),
-              Expanded(child: _pages(repoPath)),
+              Expanded(child: _pages(repoPath, pageIndex, visitedPages)),
             ],
           );
         },
@@ -882,32 +694,32 @@ class _AppShellState extends ConsumerState<AppShell> with WindowListener {
     );
   }
 
-  Widget _pages(String repoPath) {
+  Widget _pages(String repoPath, int pageIndex, Set<int> visitedPages) {
     return IndexedStack(
-      index: _pageIndex,
+      index: pageIndex,
       children: [
-        _visitedPages.contains(0)
-            ? RepoStatusView(repoPath: repoPath, isActive: _pageIndex == 0)
+        visitedPages.contains(0)
+            ? RepoStatusView(repoPath: repoPath, isActive: pageIndex == 0)
             : const SizedBox.shrink(),
-        _visitedPages.contains(1)
+        visitedPages.contains(1)
             ? HistoryView(
                 repoPath: repoPath,
-                isActive: _pageIndex == 1,
+                isActive: pageIndex == 1,
                 onPopOut: () =>
                     ref.read(windowManagerBridgeProvider.notifier).openHistory(),
               )
             : const SizedBox.shrink(),
-        _visitedPages.contains(2)
-            ? BranchesView(repoPath: repoPath, isActive: _pageIndex == 2)
+        visitedPages.contains(2)
+            ? BranchesView(repoPath: repoPath, isActive: pageIndex == 2)
             : const SizedBox.shrink(),
-        _visitedPages.contains(3)
-            ? StashView(repoPath: repoPath, isActive: _pageIndex == 3)
+        visitedPages.contains(3)
+            ? StashView(repoPath: repoPath, isActive: pageIndex == 3)
             : const SizedBox.shrink(),
-        _visitedPages.contains(4)
-            ? ForgePanel(repoPath: repoPath, isActive: _pageIndex == 4)
+        visitedPages.contains(4)
+            ? ForgePanel(repoPath: repoPath, isActive: pageIndex == 4)
             : const SizedBox.shrink(),
-        _visitedPages.contains(5)
-            ? ForgeProjectPanel(repoPath: repoPath, isActive: _pageIndex == 5)
+        visitedPages.contains(5)
+            ? ForgeProjectPanel(repoPath: repoPath, isActive: pageIndex == 5)
             : const SizedBox.shrink(),
       ],
     );
