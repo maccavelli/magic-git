@@ -396,9 +396,12 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
         if (reply != null && mounted) {
           _applySession(ConnectionEventPayload.decode(reply));
         }
-      } on PlatformException {
-        // Bridge not up (shouldn't happen — it opened this window); the next
-        // connectionChanged push recovers.
+      } on PlatformException catch (e) {
+        // RELAY_DOWN = the pinned tab was already gone by the time we asked, so
+        // no connectionChanged push will ever arrive — close instead of hanging
+        // forever on "Waiting for session…". Any other platform error is a
+        // transient bridge hiccup the next push recovers from.
+        if (e.code == 'RELAY_DOWN') _native('closeSelf');
       }
     });
   }

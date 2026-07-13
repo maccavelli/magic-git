@@ -80,6 +80,7 @@ class TabsController extends ChangeNotifier {
   final List<RepoTab> _tabs = [];
   String? _activeId;
   int _nextId = 1;
+  bool _disposed = false;
 
   List<RepoTab> get tabs => List.unmodifiable(_tabs);
   String? get activeId => _activeId;
@@ -182,6 +183,18 @@ class TabsController extends ChangeNotifier {
     final tab = _tabs.removeAt(idx);
     final wasActive = _activeId == id;
     tab._connSub?.close();
+    // Reassign the active tab BEFORE the awaited disconnect. Until a new id is
+    // set, `active` resolves to null, and any rebuild during the (network,
+    // hundreds-of-ms) disconnect await would deref `active!` in TabsHost's
+    // MacosApp builder and crash — and a rebuild is easy to trigger, since a
+    // background tab's connection flipping (drop / lost / reconnect) notifies
+    // and TabsHost setState()s on any change. Doing it first also lets the
+    // bridge re-home a History follower against the correct new active tab.
+    if (wasActive) {
+      _activeId = _tabs.isEmpty
+          ? null
+          : _tabs[idx < _tabs.length ? idx : _tabs.length - 1].id;
+    }
     // Close any History/detached windows pinned to this tab before its container
     // (which they serve from) is disposed.
     WindowManagerBridge.current?.onTabClosed(id);
@@ -191,14 +204,20 @@ class TabsController extends ChangeNotifier {
       // Best-effort — a disconnect hiccup must not block teardown.
     }
     tab.container.dispose();
-    if (wasActive) {
-      _activeId = _tabs.isEmpty
-          ? null
-          : _tabs[idx < _tabs.length ? idx : _tabs.length - 1].id;
-    }
+    if (_disposed) return; // the host tore us down mid-close — touch nothing else
     if (_tabs.isEmpty) {
-      _create(); // keep >=1 tab (a blank landing tab)
+      _create(); // keep >=1 tab (a blank landing tab); notifies + re-homes windows
     } else {
+      // Re-home a History follower onto the (possibly unchanged) active tab.
+      // When the closed tab was NOT the active one, the active id doesn't
+      // change, so TabsHost's activeId-changed hook never fires — drive the
+      // retarget here so a follower pinned to the just-closed tab can't be
+      // orphaned (frozen, unsubscribed, unroutable). Idempotent when the
+      // follower is already correctly pinned.
+      WindowManagerBridge.current?.onActiveTabChanged(
+        _activeId,
+        isBlank: active?.isBlank ?? true,
+      );
       notifyListeners();
     }
   }
@@ -245,6 +264,7 @@ class TabsController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
     for (final s in _storeSubs) {
       s.cancel();
     }

@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+import '../../core/local/scoped_access.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
@@ -910,6 +911,27 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
         if (t.connectionId == repo.id) {
           Navigator.of(context).pop();
           tabs.activate(t.id);
+          // If that tab's earlier open FAILED (or its session later dropped), a
+          // retap should retry the connection, not just refocus a dead tab —
+          // matching the non-tab fallback's `isConnected` guard below. Its
+          // security-scoped access was already acquired and is still held (only
+          // the git validation failed), and `t.repoPath` is the resolved path,
+          // so reconnect on that WITHOUT re-acquiring — a second acquire here
+          // would leave the refcount permanently one high.
+          final conn = t.container.read(connectionProvider);
+          final resolved = t.repoPath;
+          if (resolved != null &&
+              (conn.phase == ConnectionPhase.error ||
+                  conn.phase == ConnectionPhase.lost ||
+                  conn.phase == ConnectionPhase.disconnected)) {
+            await t.container
+                .read(connectionProvider.notifier)
+                .connectLocal(
+                  resolved,
+                  label: repo.label.isEmpty ? null : repo.label,
+                  id: repo.id,
+                );
+          }
           return;
         }
       }
@@ -939,13 +961,25 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
           .connectLocal(path, label: label, id: repo.id);
       return;
     }
+    var connected = false;
     tabs.openOrFocus(
       connectionId: repo.id,
       repoPath: path,
-      connect: (container) => container
-          .read(connectionProvider.notifier)
-          .connectLocal(path, label: label, id: repo.id),
+      connect: (container) {
+        connected = true;
+        container
+            .read(connectionProvider.notifier)
+            .connectLocal(path, label: label, id: repo.id);
+      },
     );
+    if (!connected) {
+      // openOrFocus did NOT start a new session: it either focused a tab a
+      // racing double-open just created (its `connect` runs there, not here) or
+      // declined at the tab cap. Either way the access acquired above by
+      // resolveSavedLocalRepoPath isn't backing a session, so release it —
+      // otherwise the native security-scoped grant leaks for the app's lifetime.
+      await ScopedAccess.instance.release(path);
+    }
   }
 
   Future<void> _deleteLocalRepo(

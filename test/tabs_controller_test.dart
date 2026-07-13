@@ -146,6 +146,27 @@ void main() {
     expect(c.activeId, t1.id);
   });
 
+  test('closing the active tab reassigns active synchronously — never null-active '
+      'during the disconnect await', () async {
+    final c = makeController();
+    addTearDown(c.dispose);
+    c.ensureInitialTab();
+    final t1 = c.openOrFocus(connectionId: 'c1', repoPath: '/a', connect: (_) {});
+    final t2 = c.openOrFocus(connectionId: 'c1', repoPath: '/b', connect: (_) {});
+    expect(c.activeId, t2.id);
+
+    // Do NOT await: disconnect() is async, so these assertions run DURING the
+    // teardown window. `active` must already point at the neighbor — TabsHost's
+    // MacosApp builder derefs `active!` on any rebuild (which a background tab's
+    // connection flip can trigger mid-close), so a transient null would crash.
+    final pending = c.close(t2.id);
+    expect(c.active, isNotNull, reason: 'no null-active window during disconnect');
+    expect(c.activeId, t1.id);
+    await pending;
+    expect(c.activeId, t1.id);
+    expect(c.tabs, hasLength(1));
+  });
+
   test('closing the last tab leaves a fresh blank landing tab', () async {
     final c = makeController();
     addTearDown(c.dispose);

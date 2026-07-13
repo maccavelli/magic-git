@@ -270,4 +270,60 @@ void main() {
     await deliverHubCall('execute', encodeExecuteRequest(_req('/b')));
     expect(execB.repos, ['/b']);
   });
+
+  test('execute prefers the pinned tab when it owns the repo, and never runs '
+      'against a session that does not own the repo', () async {
+    final execA = _FakeExecutor('A');
+    final execB = _FakeExecutor('B');
+    // Both tabs' sessions claim the SAME path /shared (same working-tree path on
+    // two different hosts) — a repo path is not globally unique.
+    final containerA = ProviderContainer(
+      overrides: [
+        connectionProvider
+            .overrideWith(() => _MutableConnection(_connected('/shared'))),
+        activeExecutorProvider.overrideWithValue(execA),
+      ],
+    );
+    final containerB = ProviderContainer(
+      overrides: [
+        connectionProvider
+            .overrideWith(() => _MutableConnection(_connected('/shared'))),
+        activeExecutorProvider.overrideWithValue(execB),
+      ],
+    );
+    final bridgeContainer = ProviderContainer();
+    addTearDown(containerA.dispose);
+    addTearDown(containerB.dispose);
+    addTearDown(bridgeContainer.dispose);
+
+    const activeTab = 'B';
+    final byTab = {'A': containerA, 'B': containerB};
+    final bridge = bridgeContainer.read(windowManagerBridgeProvider.notifier)
+      ..sessionContainerFor = ((t) => byTab[t])
+      ..activeTabId = (() => activeTab)
+      // containerForRepo returns tab A first for /shared (it's the first tab
+      // that holds the path) — the routing must NOT blindly trust this.
+      ..containerForRepo = ((repo) => repo == '/shared' ? containerA : null);
+
+    // History pop-out pinned to tab B.
+    await bridge.openHistory();
+    expect(bridge.state.single.tabId, 'B');
+
+    // /shared is owned by the pinned tab B → route to B, NOT to A (which
+    // containerForRepo would hand back first). Wrong-host hazard avoided.
+    await deliverHubCall('execute', encodeExecuteRequest(_req('/shared')));
+    expect(execB.repos, ['/shared'], reason: 'pinned owner wins the tie');
+    expect(execA.repos, isEmpty);
+
+    // A repo NO open session owns must NOT fall back to the pinned session
+    // (that would run git against the wrong repo/host) — it RELAY_DOWNs, so
+    // neither executor runs it.
+    try {
+      await deliverHubCall('execute', encodeExecuteRequest(_req('/gone')));
+    } catch (_) {
+      // RELAY_DOWN surfaces as a decode error on the reply — expected.
+    }
+    expect(execA.repos, isEmpty, reason: 'the unowned repo ran nowhere');
+    expect(execB.repos, ['/shared'], reason: 'only the earlier owned request ran');
+  });
 }

@@ -73,6 +73,14 @@ class KeepAliveLru<K> {
     }
   }
 
+  /// Drops [key], closing its [KeepAliveLink] so the provider is free to
+  /// autoDispose. Used to release a FAILED fetch: without it the link pins the
+  /// provider's `AsyncError`, and the immutable-tier caches (commit patches,
+  /// file history) never invalidate — so a transient network blip would make
+  /// re-selecting that commit return the cached failure forever instead of
+  /// retrying. A [key] not present is a no-op.
+  void evict(K key) => _evict(key);
+
   void _evict(K key) {
     _links.remove(key)?.close();
     _order.remove(key);

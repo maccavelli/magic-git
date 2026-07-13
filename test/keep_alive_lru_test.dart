@@ -101,6 +101,29 @@ void main() {
     expect(lru.totalBytes, 0);
   });
 
+  test('evict drops one key (closing its link + freeing its bytes) and is a '
+      'no-op for an absent key', () {
+    final lru = KeepAliveLru<String>(24, maxTotalBytes: 100000, maxEntryBytes: 100000);
+    final a = _FakeLink(), b = _FakeLink();
+    lru.touch('a', a);
+    lru.reportSize('a', 100);
+    lru.touch('b', b);
+    lru.reportSize('b', 40);
+
+    // Releasing a failed fetch: evicting 'a' closes its link so the errored
+    // provider can autoDispose (so a re-watch retries) and reclaims its bytes.
+    lru.evict('a');
+    expect(a.closed, isTrue);
+    expect(b.closed, isFalse);
+    expect(lru.length, 1);
+    expect(lru.totalBytes, 40, reason: "'a's 100 bytes were reclaimed");
+
+    // Evicting a key that isn't present must not corrupt accounting.
+    lru.evict('missing');
+    expect(lru.length, 1);
+    expect(lru.totalBytes, 40);
+  });
+
   test('clear closes every retained link and resets byte accounting', () {
     final lru = KeepAliveLru<String>(24);
     final a = _FakeLink(), b = _FakeLink();

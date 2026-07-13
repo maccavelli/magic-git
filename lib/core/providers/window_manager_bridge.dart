@@ -251,6 +251,12 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
       if (w.kind != WindowKind.history) continue;
       _pendingSubs.remove(w.id)?.close();
       if (ready) {
+        // Already following this exact tab+repo — skip the repin so a redundant
+        // call (e.g. the explicit re-home from TabsController.close when a
+        // non-active followed tab is closed, which fires alongside TabsHost's
+        // own activeId-changed retarget) doesn't re-push a snapshot and force
+        // the child to needlessly refetch.
+        if (w.tabId == tabId && w.repoPath == conn.repoPath) continue;
         _repinHistory(w.id, tabId!, container!, conn);
       } else if (!isBlank && container != null && tabId != null) {
         // A repo tab mid-connect — wait for it, then retarget (if it's still
@@ -487,13 +493,19 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
         final request = decodeExecuteRequest(
           call.arguments as Map<Object?, Object?>,
         );
-        // Route by the repo in the REQUEST, not the pinned tab: the child always
-        // knows which repo it's operating on, and during a follow-active switch
-        // its in-flight requests still carry the previous repo — sending those
-        // to the newly-pinned tab's session runs `git -C <other-repo>` against
-        // the wrong host and fails. Fall back to the pinned tab only when no open
-        // tab holds the repo.
-        final execContainer = containerForRepo(request.repoPath) ?? container;
+        // Resolve the session to run this on by the repo in the REQUEST (the
+        // child always knows its repo), not blindly by the pinned tab:
+        //  - prefer the pinned tab when its live session actually OWNS the repo
+        //    — this pins to the right host when the same path is open on two
+        //    connections, and is the normal fast path;
+        //  - otherwise the (first) open tab that holds the repo — this routes a
+        //    follow-active window's lagging request for the PREVIOUS repo to
+        //    whichever tab still has it, mid-switch;
+        //  - otherwise no live session owns the repo (its tab closed) → RELAY_DOWN.
+        // Crucially there is NO "fall back to the pinned tab regardless" branch:
+        // running `git -C <repo>` against a session that doesn't own it would hit
+        // the wrong host (or silently the wrong repo). RELAY_DOWN is the safe end.
+        final execContainer = _execContainerFor(container, request.repoPath);
         if (execContainer == null) throw _relayDown();
         try {
           // Read per call so a backend switch mid-session is honored.
@@ -589,6 +601,25 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
         return null;
     }
     return null;
+  }
+
+  /// Picks the session container to run a proxied `execute` for [repoPath] on.
+  /// See the routing comment in `_onHubCall`. Prefers [pinned] when its session
+  /// owns the repo, else any open tab that holds it, else null (RELAY_DOWN).
+  ProviderContainer? _execContainerFor(
+    ProviderContainer? pinned,
+    String repoPath,
+  ) {
+    if (pinned != null && _sessionOwns(pinned, repoPath)) return pinned;
+    return containerForRepo(repoPath);
+  }
+
+  /// Whether [container]'s live connection currently serves [repoPath] — its
+  /// active repo or one of the connection's known repos (a single host can hold
+  /// several). Used to keep a command on the session that actually owns its repo.
+  bool _sessionOwns(ProviderContainer container, String repoPath) {
+    final conn = container.read(connectionProvider);
+    return conn.repoPath == repoPath || conn.repoPaths.contains(repoPath);
   }
 
   PlatformException _relayDown() => PlatformException(

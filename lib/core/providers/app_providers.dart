@@ -1871,7 +1871,7 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   magicSnapshotsProvider,
 ];
 
-/// Clears the seven hash-keyed diff/blame/log LRUs — the LRU-clearing half of
+/// Clears the eight hash-keyed diff/blame/log LRUs — the LRU-clearing half of
 /// [ConnectionController._invalidateRepoState], exposed for callers that
 /// invalidate repo-scoped state WITHOUT going through the controller: the
 /// secondary (History pop-out) window's `_applySession` on a repo retarget.
@@ -1879,12 +1879,18 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
 /// just-disposed providers, and a subsequent FRESH fetch for a key can fail to
 /// deliver its result to the watching pane (already-cached entries still render,
 /// fresh ones stay stuck loading — the pop-out diff-on-switch bug).
+///
+/// Every LRU declared below must appear here: an omitted one recreates that same
+/// stuck-loading bug for its pane on a repo switch (the commit-range compare pane
+/// was such an omission — its LRU is in the immutable tier alongside the commit
+/// and commit-file diffs, all three of which must be cleared together).
 void clearHashKeyedRepoCaches() {
   _fileLogLru.clear();
   _blameLru.clear();
   _fileDiffLru.clear();
   _commitDiffLru.clear();
   _commitFileDiffLru.clear();
+  _commitRangeDiffLru.clear();
   _conflictFileLru.clear();
   _untrackedDiffLru.clear();
 }
@@ -2431,7 +2437,9 @@ final fileLogProvider = FutureProvider.autoDispose
           .log(repoPath, path: path, follow: true);
       future.then(
         (v) => _fileLogLru.reportSize(key, _estimateCommitListBytes(v)),
-        onError: (_) {},
+        // Release a failed fetch so a re-watch retries rather than serving the
+        // pinned error (see KeepAliveLru.evict).
+        onError: (_) => _fileLogLru.evict(key),
       );
       return future;
     });
@@ -2448,7 +2456,7 @@ final blameProvider = FutureProvider.autoDispose
       final future = ref.watch(gitServiceProvider).blame(repoPath, path);
       future.then(
         (v) => _blameLru.reportSize(key, _estimateBlameBytes(v)),
-        onError: (_) {},
+        onError: (_) => _blameLru.evict(key),
       );
       return future;
     });
@@ -2492,7 +2500,10 @@ final fileDiffProvider = FutureProvider.autoDispose
         ignoreWhitespace: ignoreWhitespace,
         context: context,
       );
-      future.then((d) => _fileDiffLru.reportSize(key, d.length), onError: (_) {});
+      future.then(
+        (d) => _fileDiffLru.reportSize(key, d.length),
+        onError: (_) => _fileDiffLru.evict(key),
+      );
       return future;
     });
 
@@ -2505,7 +2516,7 @@ final commitDiffProvider = FutureProvider.autoDispose
       final future = ref.watch(gitServiceProvider).showCommit(repoPath, hash);
       future.then(
         (d) => _commitDiffLru.reportSize(key, d.length),
-        onError: (_) {},
+        onError: (_) => _commitDiffLru.evict(key),
       );
       return future;
     });
@@ -2522,7 +2533,7 @@ final commitRangeDiffProvider = FutureProvider.autoDispose
           .diffRange(repoPath, '$older..$newer');
       future.then(
         (d) => _commitRangeDiffLru.reportSize(key, d.length),
-        onError: (_) {},
+        onError: (_) => _commitRangeDiffLru.evict(key),
       );
       return future;
     });
@@ -2540,7 +2551,7 @@ final commitFileDiffProvider = FutureProvider.autoDispose
           .showCommit(repoPath, hash, path: path);
       future.then(
         (d) => _commitFileDiffLru.reportSize(key, d.length),
-        onError: (_) {},
+        onError: (_) => _commitFileDiffLru.evict(key),
       );
       return future;
     });
@@ -2557,7 +2568,7 @@ final conflictFileProvider = FutureProvider.autoDispose
       final future = ref.watch(gitServiceProvider).conflictFile(repoPath, path);
       future.then(
         (d) => _conflictFileLru.reportSize(key, d.length),
-        onError: (_) {},
+        onError: (_) => _conflictFileLru.evict(key),
       );
       return future;
     });
@@ -2575,7 +2586,7 @@ final untrackedDiffProvider = FutureProvider.autoDispose
       final future = ref.watch(gitServiceProvider).diffUntracked(repoPath, path);
       future.then(
         (d) => _untrackedDiffLru.reportSize(key, d.length),
-        onError: (_) {},
+        onError: (_) => _untrackedDiffLru.evict(key),
       );
       return future;
     });
