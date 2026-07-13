@@ -980,6 +980,41 @@ class GitService {
     return parseGitLog(stdout);
   }
 
+  /// Which of [paths] git ignores — asked in one batch, over stdin, so a burst
+  /// of filesystem events costs a single round trip rather than one per path.
+  ///
+  /// Paths are repo-root-relative and need not exist: a deleted file still has
+  /// an answer, which matters because a deletion is exactly the kind of event
+  /// this is asked about. A *tracked* file is never reported, even when it
+  /// matches an ignore rule — which is the answer we want, since git will
+  /// happily report changes to it.
+  ///
+  /// Exit code 1 means "none of them are ignored". That is an answer, not a
+  /// failure, and conflating the two would make every unignored burst look like
+  /// a broken git.
+  Future<Set<String>> checkIgnore(String repoPath, List<String> paths) async {
+    if (paths.isEmpty) return const {};
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      // `-z`: NUL-delimited in both directions. A path may contain any byte a
+      // filesystem allows — spaces, quotes, even newlines — except NUL, so it
+      // is the only framing a filename cannot forge.
+      gitArgs: ['git', 'check-ignore', '-z', '--stdin'],
+      stdin: paths.join('\u0000'),
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    // Anything other than "some are ignored" (0) or "none are" (1) — a broken
+    // repo, a git that won't run — is reported as "nothing is ignored". That
+    // fails *open*: the caller refreshes more than it strictly must, which is
+    // the pre-existing behaviour, rather than silently ignoring real edits.
+    if (result.exitCode != 0) return const {};
+    return {
+      for (final path in result.stdout.split('\u0000'))
+        if (path.isNotEmpty) path,
+    };
+  }
+
   /// Expands a commit-hash prefix to the full object names it could mean.
   ///
   /// `git log` has no filter-by-hash-prefix flag, but it doesn't need one: the

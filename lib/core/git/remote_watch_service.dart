@@ -61,10 +61,21 @@ class RemoteWatchService {
     late Future<void> Function() start;
     late void Function() scheduleRestart;
 
+    // The paths seen since the last fire — see the identically-shaped buffer in
+    // LocalWatchService, and [RepoWatchEvent.paths] for why a tick that names
+    // what moved is worth this much more than one that doesn't.
+    final pending = <String>{};
+    const maxPaths = 512;
+    var overflowed = false;
+
     void emit() {
-      if (!controller.isClosed) {
-        controller.add(RepoWatchEvent(at: DateTime.now(), mode: mode));
-      }
+      if (controller.isClosed) return;
+      final paths = overflowed ? const <String>{} : Set<String>.from(pending);
+      pending.clear();
+      overflowed = false;
+      controller.add(
+        RepoWatchEvent(at: DateTime.now(), mode: mode, paths: paths),
+      );
     }
 
     void startPolling() {
@@ -172,7 +183,14 @@ class RemoteWatchService {
           while (idx >= 0) {
             final event = buffer.substring(0, idx);
             buffer = buffer.substring(idx + 1);
-            if (shouldTriggerWatch(event)) coalescer!.signal();
+            if (shouldTriggerWatch(event)) {
+              if (pending.length >= maxPaths) {
+                overflowed = true;
+                pending.clear();
+              }
+              if (!overflowed) pending.add(event);
+              coalescer!.signal();
+            }
             idx = buffer.indexOf(delimiter);
           }
           // Whatever remains is an unterminated partial record. If it has grown

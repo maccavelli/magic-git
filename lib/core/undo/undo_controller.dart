@@ -91,11 +91,13 @@ class UndoController {
 
   /// The standard post-mutation refresh (see the per-panel `_refresh`
   /// helpers): mark the mutation as our own so the watcher doesn't echo it,
-  /// bump the edit generation so the status memo can't swallow the refresh,
+  /// mark every path in the repo as possibly re-written,
   /// and invalidate the fetch families an undo can affect.
   void _refresh(String repoPath) {
     _ref.read(ownMutationTrackerProvider).mark(repoPath);
-    noteWorktreeEdit(repoPath);
+    // A mutation can rewrite any file's bytes while leaving its status record
+    // untouched (an undo restoring content, say) — unknown scope.
+    _ref.read(worktreeEditsProvider.notifier).noteRepo(repoPath);
     // Undo moves refs and consumes journal state the Recovery sheet renders;
     // reflog/snapshots are in the shared set so an open Recovery sheet stays
     // fresh. autoDispose makes any unwatched family free.

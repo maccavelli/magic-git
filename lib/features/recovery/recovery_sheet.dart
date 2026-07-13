@@ -48,7 +48,7 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
   /// The standard post-mutation refresh, plus this sheet's own two providers.
   void _refreshRepo(String repoPath) {
     ref.read(ownMutationTrackerProvider).mark(repoPath);
-    noteWorktreeEdit(repoPath);
+    ref.read(worktreeEditsProvider.notifier).noteRepo(repoPath);
     ref.invalidate(statusProvider(repoPath));
     ref.invalidate(logProvider(repoPath));
     ref.invalidate(refsProvider(repoPath));

@@ -103,4 +103,50 @@ void main() {
       expect(events.last.mode, WatchMode.eventDriven);
     },
   );
+
+  test('a tick names the paths the burst touched', () async {
+    // Without them a tick can only say "something, somewhere, moved", and every
+    // consumer has to assume the worst — which is how a build writing files git
+    // ignores ended up re-reading the whole repository several times a second.
+    final dir = Directory.systemTemp.createTempSync('watch_paths_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    Directory('${dir.path}/.git').createSync();
+    Directory('${dir.path}/lib').createSync();
+
+    final events = <RepoWatchEvent>[];
+    subs.add(LocalWatchService().watch(dir.path).listen(events.add));
+    await pumpUntil(() => events.isNotEmpty); // the start-up announce tick
+
+    // The announce tick has nothing to report and says so: an empty set means
+    // "scope unknown", which consumers read as "assume everything".
+    expect(events.first.isScoped, isFalse);
+
+    final afterAnnounce = events.length;
+    File('${dir.path}/lib/a.dart').writeAsStringSync('x');
+    await pumpUntil(() => events.length > afterAnnounce);
+
+    final tick = events.last;
+    expect(tick.isScoped, isTrue);
+    expect(tick.paths, contains('lib/a.dart'));
+    expect(tick.touchesGitState, isFalse);
+  });
+
+  test('a tick reports a move in git\'s own state as such', () async {
+    final dir = Directory.systemTemp.createTempSync('watch_gitstate_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    Directory('${dir.path}/.git').createSync();
+
+    final events = <RepoWatchEvent>[];
+    subs.add(LocalWatchService().watch(dir.path).listen(events.add));
+    await pumpUntil(() => events.isNotEmpty);
+    final afterAnnounce = events.length;
+
+    // Staging, committing, checking out — anything that moves the index. It
+    // belongs to no single file, and consumers must widen their scope for it.
+    File('${dir.path}/.git/index').writeAsStringSync('x');
+    await pumpUntil(() => events.length > afterAnnounce);
+
+    expect(events.last.paths, contains('.git/index'));
+    expect(events.last.touchesGitState, isTrue);
+  });
 }

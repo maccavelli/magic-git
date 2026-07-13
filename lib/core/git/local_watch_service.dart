@@ -56,10 +56,28 @@ class LocalWatchService {
           : path;
     }
 
+    // The paths seen since the last fire. Drained into the tick the coalescer
+    // eventually emits, so consumers learn *what* moved and not merely that
+    // something did. A poll/restart tick fires with this empty, which is
+    // exactly the "unknown scope" [RepoWatchEvent.paths] documents.
+    final pending = <String>{};
+
+    // A burst is unbounded (a `git clean`, a branch switch, a build emitting
+    // thousands of objects); the tick only needs enough of it to decide what to
+    // refresh. Past this many distinct paths the set stops being a useful
+    // description of the burst, so it is dropped and the tick degrades to
+    // unknown scope — which consumers already handle as "refresh everything".
+    const maxPaths = 512;
+    var overflowed = false;
+
     void emit() {
-      if (!controller.isClosed) {
-        controller.add(RepoWatchEvent(at: DateTime.now(), mode: mode));
-      }
+      if (controller.isClosed) return;
+      final paths = overflowed ? const <String>{} : Set<String>.from(pending);
+      pending.clear();
+      overflowed = false;
+      controller.add(
+        RepoWatchEvent(at: DateTime.now(), mode: mode, paths: paths),
+      );
     }
 
     void startPolling() {
@@ -131,9 +149,14 @@ class LocalWatchService {
           (event) {
             restarts = 0;
             mode = WatchMode.eventDriven;
-            if (shouldTriggerWatch(relativize(event.path))) {
-              coalescer!.signal();
+            final path = relativize(event.path);
+            if (!shouldTriggerWatch(path)) return;
+            if (pending.length >= maxPaths) {
+              overflowed = true;
+              pending.clear();
             }
+            if (!overflowed) pending.add(path);
+            coalescer!.signal();
           },
           onDone: scheduleRestart,
           onError: (Object _) => scheduleRestart(),

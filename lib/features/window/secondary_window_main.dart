@@ -468,7 +468,7 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       // providers — a stale link there breaks delivery of a later fresh fetch to
       // the diff pane (the pop-out "diff doesn't load after switching" bug).
       clearHashKeyedRepoCaches();
-      noteWorktreeEdit(session.repoPath!);
+      ref.read(worktreeEditsProvider.notifier).noteRepo(session.repoPath!);
       // Fresh repo, fresh suppression state — mirrors ConnectionController.
       ref.read(ownMutationTrackerProvider).clear();
       // An open Recovery sheet targets the old repo — close it rather than show
@@ -561,7 +561,7 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
   /// immediate is what the user expects mid-gaze).
   void _refreshAfterUndo(String repoPath) {
     ref.read(ownMutationTrackerProvider).mark(repoPath);
-    noteWorktreeEdit(repoPath);
+    ref.read(worktreeEditsProvider.notifier).noteRepo(repoPath);
     _invalidateRepoFamilies(repoPath);
   }
 
@@ -590,7 +590,20 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       return;
     }
     if (args['mode'] == WatchMode.eventDriven.name) {
-      noteWorktreeEdit(repoPath);
+      // The main window forwards which paths moved; an empty list means it
+      // couldn't say, and every path must be assumed edited.
+      final paths = (args['paths'] as List?)?.cast<String>() ?? const <String>[];
+      final tick = RepoWatchEvent(
+        at: at,
+        mode: WatchMode.eventDriven,
+        paths: paths.toSet(),
+      );
+      final edits = ref.read(worktreeEditsProvider.notifier);
+      if (tick.isScoped && !tick.touchesGitState) {
+        edits.noteFiles(repoPath, tick.paths);
+      } else {
+        edits.noteRepo(repoPath);
+      }
     }
     // Unlike the in-app tab (whose panels each refresh what they watch), the
     // tick is this window's ONLY freshness signal for main-window mutations.

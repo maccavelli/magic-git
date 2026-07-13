@@ -406,6 +406,11 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
       'repoPath': repoPath,
       'mode': event.mode.name,
       'atMs': event.at.millisecondsSinceEpoch,
+      // Carried across the isolate boundary so a pop-out window can scope its
+      // refresh the same way the main one does. An empty list means the tick's
+      // scope is unknown (poll/restart), not that nothing changed — see
+      // [RepoWatchEvent.paths].
+      'paths': event.paths.toList(),
     };
     for (final w in state) {
       if (w.repoPath == repoPath) {
@@ -593,7 +598,7 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
           // watcher echo is suppressed, bump the edit generation, and refresh
           // what a mutation can change — in the pinned tab's container.
           container.read(ownMutationTrackerProvider).mark(repoPath);
-          noteWorktreeEdit(repoPath);
+          container.read(worktreeEditsProvider.notifier).noteRepo(repoPath);
           for (final p in repoMutationFamilies(repoPath)) {
             container.invalidate(p);
           }

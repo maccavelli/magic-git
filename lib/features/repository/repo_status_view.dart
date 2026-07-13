@@ -873,15 +873,28 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
           .isRecent(repoPath, event.at, _ownMutationSuppressWindow)) {
         return;
       }
-      // An event-driven tick is a real filesystem change: record it so the
-      // status memo can't dedupe a content-only edit to an already-modified
-      // file (field-identical records, different bytes) — without this, the
-      // diff/blame/conflict caches would keep serving pre-edit content.
-      // Recorded even while the page is hidden (it's a local counter, no SSH
-      // round-trip) so the didUpdateWidget re-sync on return can't be
-      // swallowed by the memo either.
+      // An event-driven tick is a real filesystem change. Record it against the
+      // paths that actually moved: porcelain status can't see a content-only
+      // edit to an already-modified file (identical records, different bytes),
+      // so without this signal the diff/blame/conflict caches would go on
+      // serving pre-edit content — and with it recorded repo-wide, as it once
+      // was, every one of them for every file would be thrown away on any event
+      // at all. The tick has already been filtered of paths git ignores (see
+      // repoWatchProvider), so what arrives here is only ever real.
+      //
+      // Recorded even while the page is hidden (it's a local counter, no round
+      // trip) so the didUpdateWidget re-sync on return sees it.
       if (event.mode == WatchMode.eventDriven) {
-        noteWorktreeEdit(repoPath);
+        final edits = ref.read(worktreeEditsProvider.notifier);
+        // Unscoped (a poll, a watcher restart, a burst too large to enumerate)
+        // means "anything may have changed" — not "nothing did". So does a move
+        // in git's own state, which belongs to no single file (see
+        // [RepoWatchEvent.touchesGitState]).
+        if (event.isScoped && !event.touchesGitState) {
+          edits.noteFiles(repoPath, event.paths);
+        } else {
+          edits.noteRepo(repoPath);
+        }
       }
       // While this page is hidden (another tab is up) don't fire a `git status`
       // round-trip on every tick — in polling mode that's a fetch every few

@@ -15,6 +15,7 @@ import '../forge/forge.dart';
 import '../forge/forge_repo_summary.dart';
 import '../git/git_service.dart';
 import '../git/host_fs_service.dart';
+import '../git/ignore_oracle.dart';
 import '../git/local_watch_service.dart';
 import '../git/remote_watch_service.dart';
 import '../git/repo_tree.dart';
@@ -646,8 +647,11 @@ class ConnectionController extends Notifier<ConnectionState> {
     // would otherwise grow by one retained GitStatus per repo path, forever).
     ref.read(ownMutationTrackerProvider).clear();
     _lastLandedStatus.clear();
-    _worktreeEditGeneration.clear();
-    _lastLandedEditGeneration.clear();
+    // Same pure-repoPath keying, same reasoning: a stamp or an ignore verdict
+    // from the previous connection must not answer for the next one, and a
+    // reconnect is exactly when a repo's ignore rules may have changed under us.
+    ref.read(worktreeEditsProvider.notifier).state = const WorktreeEditStamps();
+    ref.read(ignoreOracleProvider).clear();
     // Undo records share that pure-repoPath keying — and undoing an operation
     // from a previous connection into a colliding path would be worse than a
     // suppressed refresh.
@@ -1936,42 +1940,100 @@ List<ProviderOrFamily> repoMutationFamilies(String repoPath) => [
 /// doesn't retain one full [GitStatus] per repo path ever opened.
 final _lastLandedStatus = <String, GitStatus>{};
 
-/// Monotonic per-repo edit counters backing [noteWorktreeEdit]. Same lifetime
-/// and clearing as [_lastLandedStatus].
-final _worktreeEditGeneration = <String, int>{};
-final _lastLandedEditGeneration = <String, int>{};
+/// A monotonic stamp per (repo, file), plus one per repo, marking on-disk
+/// *content* edits — the changes porcelain status cannot describe.
+///
+/// Two files can have byte-identical status records and different bytes on
+/// disk: re-editing an already-modified file changes nothing about `M  foo.c`.
+/// So content edits need a channel of their own, and this is it.
+///
+/// It is deliberately **per path**. The signal it replaced was per repo, which
+/// meant every filesystem event invalidated every cached diff, blame, conflict
+/// and untracked preview for every file — an edit to one file re-fetched all of
+/// them, and a build touching files git does not even track re-fetched all of
+/// them several times a second. A stamp per path lets each cache watch only the
+/// file it is actually about.
+class WorktreeEditStamps {
+  const WorktreeEditStamps({this.repos = const {}, this.files = const {}});
 
-/// Records that on-disk worktree *content* is known to have changed (an
-/// event-driven watcher tick — a real filesystem event, not a poll timer).
-///
-/// Porcelain status records carry no content hash, so re-editing an
-/// already-modified file produces a field-identical [GitStatus] — without
-/// this signal, [statusProvider]'s content-identity memo would hand back the
-/// previous instance and [_dependOnWorktreeState]'s cache invalidation would
-/// never fire, leaving diff/blame/untracked/conflict panes serving pre-edit
-/// content indefinitely. Bumping the generation forces the next landed status
-/// to be treated as new even when its records are unchanged.
-///
-/// Deliberately NOT called for polling-mode ticks: a poll fires every few
-/// seconds whether or not anything changed, and re-minting the status on each
-/// one is exactly the idle-session cache-nuking the memo exists to prevent.
-/// In polling mode a content-only edit is caught by the next record-level
-/// change (or a manual ⌘R) — a narrower blind spot than losing event-driven
-/// correctness everywhere.
-void noteWorktreeEdit(String repoPath) {
-  _worktreeEditGeneration[repoPath] =
-      (_worktreeEditGeneration[repoPath] ?? 0) + 1;
+  /// repoPath → stamp. Bumped when the *scope* of a change is unknown (a
+  /// polling tick, a watcher restart, a mutation this app performed): every
+  /// path in the repo must then be treated as possibly edited.
+  final Map<String, int> repos;
+
+  /// 'repoPath path' → stamp.
+  final Map<String, int> files;
+
+  static String _key(String repoPath, String path) => '$repoPath $path';
+
+  /// The pair a cache for [path] watches. A record, so Riverpod's `select`
+  /// compares it by value: the listener fires only when *this* file's stamp (or
+  /// its repo's) moves, not when some unrelated file is touched.
+  (int, int) stampFor(String repoPath, String path) =>
+      (repos[repoPath] ?? 0, files[_key(repoPath, path)] ?? 0);
 }
+
+/// Beyond this many remembered file stamps, the map is reset rather than grown
+/// without bound. Dropping a stamp is safe by construction: it changes the
+/// value a cache is watching, so the cache refetches once — costing a read, not
+/// correctness. (Growing forever, in a session that touches every file in a
+/// large repo, would cost memory that is never released.)
+const int _maxFileStamps = 8192;
+
+class WorktreeEditsNotifier extends Notifier<WorktreeEditStamps> {
+  @override
+  WorktreeEditStamps build() => const WorktreeEditStamps();
+
+  /// A content edit to [paths] — an event-driven watcher tick that named them.
+  void noteFiles(String repoPath, Iterable<String> paths) {
+    if (paths.isEmpty) return;
+    final files = Map<String, int>.from(
+      state.files.length > _maxFileStamps ? const {} : state.files,
+    );
+    for (final path in paths) {
+      final key = WorktreeEditStamps._key(repoPath, path);
+      files[key] = (files[key] ?? 0) + 1;
+    }
+    state = WorktreeEditStamps(repos: state.repos, files: files);
+  }
+
+  /// A change whose scope is unknown — everything in [repoPath] may have been
+  /// edited. A watcher that can't name what moved (polling, a restart, an
+  /// overflowing burst), or a mutation this app made.
+  void noteRepo(String repoPath) {
+    state = WorktreeEditStamps(
+      repos: {...state.repos, repoPath: (state.repos[repoPath] ?? 0) + 1},
+      files: state.files,
+    );
+  }
+
+  /// Drops [repoPath]'s stamps — connect/disconnect/repo-switch, alongside the
+  /// repo-scoped provider invalidations.
+  void forgetRepo(String repoPath) {
+    state = WorktreeEditStamps(
+      repos: {...state.repos}..remove(repoPath),
+      files: {...state.files}
+        ..removeWhere((k, _) => k.startsWith('$repoPath ')),
+    );
+  }
+}
+
+final worktreeEditsProvider =
+    NotifierProvider<WorktreeEditsNotifier, WorktreeEditStamps>(
+      WorktreeEditsNotifier.new,
+    );
+
+/// Decides which watched paths git actually cares about — see [GitIgnoreOracle].
+/// Held at the container root (not auto-disposed) because its whole value is the
+/// memory it accumulates: the verdict on `build/` should outlive any one pane.
+final ignoreOracleProvider = Provider<GitIgnoreOracle>(
+  (ref) => GitIgnoreOracle(ref.watch(gitServiceProvider)),
+);
 
 final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
   ref,
   repoPath,
 ) async {
-  // Snapshot the edit generation BEFORE the fetch: a [noteWorktreeEdit] that
-  // lands while the status round-trip is in flight must not be attributed to
-  // this (pre-edit) result, or the memo below would swallow the follow-up
-  // refresh and serve stale content.
-  final editGen = _worktreeEditGeneration[repoPath] ?? 0;
   final status = await ref.watch(gitServiceProvider).status(repoPath);
   // `parseWarnings` records any porcelain status record that failed its
   // expected field-count check and was dropped (e.g. output truncated by a
@@ -1988,24 +2050,26 @@ final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
   }
   // Content-identity memo: a refresh that found *nothing changed* hands back
   // the previous instance, so every select/identical-based listener — the
-  // worktree diff-cache invalidation ([_dependOnWorktreeState]), the
-  // structure-tree gate, diff prefetching — sees a no-op instead of a "new"
-  // status. Without this, every watcher tick/poll on an idle repo minted a
-  // fresh GitStatus, nuked all cached diffs, and re-prefetched them over
-  // SSH — the single biggest source of idle-session SSH churn.
+  // worktree cache invalidation ([_dependOnWorktreeState]), the structure-tree
+  // gate, diff prefetching — sees a no-op instead of a "new" status. Without
+  // this, every watcher tick on an idle repo minted a fresh GitStatus and
+  // re-fetched the world.
   //
-  // Field-equality alone can't see a content-only edit to an already-modified
-  // file (porcelain records carry no content hash), so the memo also requires
-  // the edit generation to be unchanged — [noteWorktreeEdit] bumps it on every
-  // event-driven watcher tick, forcing that refresh to land as a new instance.
+  // This is now a *pure* record comparison. It used to be deliberately poisoned
+  // by a per-repo "edit generation", bumped on every filesystem event, so that
+  // a content-only edit (which leaves porcelain records identical) could not be
+  // memoized away. That worked, but it made a status refresh the carrier for
+  // two unrelated facts, and the cost fell on everything downstream: any event
+  // anywhere — including one in a directory git ignores — landed as a brand-new
+  // status and invalidated every cached diff in the repo. Content edits now
+  // travel on their own per-path channel ([worktreeEditsProvider]), which says
+  // exactly which file changed, so this can go back to meaning only what it
+  // says: the records are the same, nothing here moved.
   final previous = _lastLandedStatus[repoPath];
-  if (previous != null &&
-      _lastLandedEditGeneration[repoPath] == editGen &&
-      previous.contentEquals(status)) {
+  if (previous != null && previous.contentEquals(status)) {
     return previous;
   }
   _lastLandedStatus[repoPath] = status;
-  _lastLandedEditGeneration[repoPath] = editGen;
   return status;
 });
 
@@ -2229,7 +2293,7 @@ final repoWatchProvider = StreamProvider.autoDispose
       // Keep the connection-scoped services alive while the watcher runs.
       // Exhaustive switch (no default) so a new backend can't silently fall
       // through to the SSH watcher.
-      return switch (backend) {
+      final raw = switch (backend) {
         ConnectionBackend.local => ref
             .watch(localWatchServiceProvider)
             .watch(repoPath),
@@ -2237,7 +2301,57 @@ final repoWatchProvider = StreamProvider.autoDispose
             .watch(remoteWatchServiceProvider)
             .watch(repoPath),
       };
+      final oracle = ref.watch(ignoreOracleProvider);
+      return _withoutIgnoredPaths(oracle, repoPath, raw);
     });
+
+/// Drops the paths git ignores from each tick — and the tick itself when
+/// nothing survives.
+///
+/// This is where a build stops costing anything. `build/` and `.dart_tool/`
+/// churn produces a filesystem event per artifact; unfiltered, each one lands as
+/// a repo change, refreshes status, and invalidates every cached diff. None of
+/// it is anything git will ever report. Filtered, the burst is recognized for
+/// what it is and the tick never leaves this stream: no `git status`, no
+/// invalidation, no round trip.
+///
+/// `asyncMap` (not a parallel map) so ticks stay strictly ordered — a tick that
+/// resolved from cache must not overtake one still waiting on git, or an older
+/// view of the repo would land last. Ticks are already coalesced, so the rate
+/// here is at most a few per second, and the oracle answers nearly all of them
+/// from memory.
+Stream<RepoWatchEvent> _withoutIgnoredPaths(
+  GitIgnoreOracle oracle,
+  String repoPath,
+  Stream<RepoWatchEvent> raw,
+) async* {
+  await for (final event in raw) {
+    // Unknown scope (a poll, a watcher restart, an overflowing burst). There is
+    // nothing to filter and nothing may be assumed — pass it through as the
+    // "refresh everything" signal it is.
+    if (!event.isScoped) {
+      yield event;
+      continue;
+    }
+    // An edited `.gitignore` changes the answers themselves, so every verdict
+    // derived from the old one is void.
+    if (event.paths.any(GitIgnoreOracle.isIgnoreSource)) {
+      oracle.forgetRepo(repoPath);
+    }
+    Set<String> visible;
+    try {
+      visible = await oracle.visible(repoPath, event.paths);
+    } catch (_) {
+      // Fail open: a burst we could not classify is treated as a real change.
+      // Refreshing when we needn't is a wasted read; the converse is a pane
+      // that silently stops updating.
+      yield event;
+      continue;
+    }
+    if (visible.isEmpty) continue; // the whole burst was noise git can't see
+    yield event.withPaths(visible);
+  }
+}
 
 /// Branches + remote-tracking refs for a repo.
 final refsProvider = FutureProvider.autoDispose.family<List<GitRef>, String>((
@@ -2317,27 +2431,45 @@ final logSearchProvider = FutureProvider.autoDispose
           );
     });
 
-/// Ties a **worktree-dependent** cached provider to the repo's most recently
-/// *landed* status, so its cached content can never go stale: every completed
-/// status refresh (a watcher tick reporting an external edit, this app's own
-/// post-mutation refresh, a manual ⌘R) produces a fresh [GitStatus] instance,
-/// which invalidates the dependent provider exactly once — an open pane
-/// refetches (live-updating its content), and a closed-but-LRU-cached entry is
-/// marked dirty so its next open refetches instead of serving stale bytes.
+/// Ties a **worktree-dependent** cache for one file to the two things that can
+/// actually change it, and to nothing else.
 ///
-/// `select((s) => s.value)` rather than the raw AsyncValue: Riverpod carries
-/// the previous data through the loading state (`.value` keeps returning it),
-/// so this fires once per completed refresh — not a second, wasted time on
-/// the loading transition.
+/// A cached diff / blame / conflict / untracked preview of `lib/a.dart` goes
+/// stale in exactly two ways:
+///
+///  1. **Its status record changed** — staged, unstaged, resolved, deleted — or
+///     HEAD moved under it (a commit, a checkout, a rebase), which changes what
+///     the file is being compared *against*. Both are visible in the landed
+///     [GitStatus], so both are read straight off it.
+///  2. **Its bytes changed with its record intact** — re-editing an
+///     already-modified file. Porcelain carries no content hash, so status
+///     cannot see this at all; it arrives on [worktreeEditsProvider], stamped
+///     with the path the watcher actually named.
+///
+/// Everything is keyed to [path]. The previous design keyed all of it to the
+/// repo: any filesystem event invalidated every worktree cache for every file,
+/// so editing one file re-fetched all of them, and a build writing into a
+/// directory git ignores re-fetched all of them several times a second.
+///
+/// **An in-flight fetch is never restarted.** Invalidating a provider whose
+/// fetch has not landed does not refresh it — it discards the in-flight read
+/// and restarts from a *bare* AsyncLoading, since there is no previous value for
+/// Riverpod to carry through a refresh. The pane drops to a spinner; and if the
+/// next change arrives before the restarted read finishes, that one is discarded
+/// too. A repo changing faster than a diff takes to fetch would then never show
+/// a diff at all — it would spin forever. So a change arriving mid-fetch is
+/// *remembered* and applied once, after the value lands. Nothing is lost: the
+/// read in flight is already reading the present worktree, and the single
+/// follow-up closes the only real gap (a read that raced the write). Forward
+/// progress is guaranteed at any rate of change.
 ///
 /// `ref.listen` + `invalidateSelf` rather than `ref.watch`: a select-based
-/// *watch* never observes the watched provider's errors, so if this cache
-/// entry happened to be [statusProvider]'s only subscriber (a kept-alive diff
-/// after the repo view unmounted, a viewer window on its own), a failed
-/// status refresh would surface as an *unhandled* error in the zone. The
-/// listener's `onError` swallows it deliberately — a failed status refresh is
-/// the status view's problem to display, not this cache's; the cached content
-/// simply stays as-is until a refresh lands.
+/// *watch* never observes the watched provider's errors, so if this cache entry
+/// happened to be [statusProvider]'s only subscriber (a kept-alive diff after
+/// the repo view unmounted, a viewer window on its own), a failed status refresh
+/// would surface as an *unhandled* error in the zone. The listener's `onError`
+/// swallows it deliberately — a failed status refresh is the status view's
+/// problem to display, not this cache's.
 ///
 /// Deliberately NOT applied to the hash-keyed caches ([commitDiffProvider] /
 /// [commitFileDiffProvider]): a commit's patch is immutable, which is exactly
@@ -2345,30 +2477,27 @@ final logSearchProvider = FutureProvider.autoDispose
 void _dependOnWorktreeState(
   Ref ref,
   String repoPath, {
+  required String path,
   required Future<Object?> content,
 }) {
   var landed = false;
   var disposed = false;
-  // A worktree change arrived while [content] was still in flight — see the
-  // deferral in the listener below.
+  // A change arrived while [content] was still in flight — see the deferral
+  // below.
   var refetchOnLanding = false;
 
   ref.onDispose(() => disposed = true);
 
-  // Deliberately a *microtask* hop off [content], not the completion callback
-  // itself. Riverpod publishes the fetched value in its own callback on this
-  // same future, and invalidating from a callback registered alongside it can
-  // tear the element down before the value is ever published — the fetch then
-  // completes over and over while the pane never leaves its spinner. Hopping a
-  // microtask orders this strictly after the publish, whichever callback ran
-  // first.
+  // Deliberately a *microtask* hop off [content], not a callback registered
+  // directly on it. Riverpod publishes the fetched value from its own callback
+  // on this same future, and invalidating from a callback sitting alongside it
+  // can tear the element down before the value is ever published — the fetch
+  // then completes over and over while the pane never leaves its spinner.
+  // Hopping a microtask orders this strictly after the publish, whichever
+  // callback happened to run first.
   void onLanded(Object? _) {
     Future.microtask(() {
       landed = true;
-      // The read in flight may have run before the change reached disk, so it
-      // can be one revision stale. Refetch exactly once, now that there IS a
-      // value: Riverpod carries it through the refresh, so this costs a
-      // background fetch rather than a spinner.
       if (refetchOnLanding && !disposed) {
         refetchOnLanding = false;
         ref.invalidateSelf();
@@ -2381,44 +2510,62 @@ void _dependOnWorktreeState(
   // is to put the provider into an error state.
   content.then(onLanded, onError: (Object _, StackTrace _) => onLanded(null));
 
+  void staleNow() {
+    if (!landed) {
+      refetchOnLanding = true;
+      return;
+    }
+    ref.invalidateSelf();
+  }
+
+  // (1) This file's record, and the commit it is diffed against.
   ref.listen(
-    statusProvider(repoPath).select((s) => s.value),
+    statusProvider(repoPath).select((s) => _fileStateOf(s.value, path)),
     (previous, next) {
-      // No prior *landed* status (this entry was built while the first
-      // status fetch was still in flight): the content just fetched and the
-      // status now landing both describe the same present worktree — nothing
-      // can have gone stale, so don't throw away a diff that very likely
-      // finished fetching milliseconds ago. Every first-open used to pay
-      // this as a guaranteed double fetch.
+      // Nothing has landed yet: the content being fetched and the status now
+      // landing describe the same present worktree, so there is nothing to have
+      // gone stale. (Every first open used to pay this as a guaranteed second
+      // fetch.)
       if (previous == null) return;
-      // The status provider hands back the identical instance when a refresh
-      // found no change (see its content-identity memo) — the select above
-      // then doesn't even fire. This guard is belt-and-braces for direct
-      // re-emissions of the same instance.
-      if (identical(previous, next)) return;
-      // Never restart a fetch that hasn't landed. Invalidating one that has no
-      // value yet doesn't refresh anything — it throws away the in-flight read
-      // and starts over from a *bare* AsyncLoading, because there is no
-      // previous value for Riverpod to carry through the refresh. The pane
-      // falls back to a spinner, and if the next change lands before the
-      // restarted read does, it is thrown away too. A repo that changes faster
-      // than a diff takes to fetch therefore never shows a diff at all: it
-      // spins forever. (A build writing into an ignored directory is enough —
-      // every filesystem event mints a new status, whether or not git can see
-      // the file that changed.)
-      //
-      // Deferring loses nothing: the read in flight is already reading the
-      // present worktree, and the listenSelf above closes the only genuine gap
-      // — a read that raced the write — with a single refetch once there IS a
-      // value to carry through it. Progress is then guaranteed at any tick rate.
-      if (!landed) {
-        refetchOnLanding = true;
-        return;
-      }
-      ref.invalidateSelf();
+      if (previous == next) return;
+      staleNow();
     },
     onError: (_, _) {},
   );
+
+  // (2) Bytes changed under an unchanged record.
+  ref.listen(
+    worktreeEditsProvider.select((s) => s.stampFor(repoPath, path)),
+    (previous, next) {
+      if (previous == null || previous == next) return;
+      staleNow();
+    },
+  );
+}
+
+/// Everything about [path] that a worktree cache for it depends on: the commit
+/// it is compared against, and its own status record. A value record, so
+/// `select` compares it by value and fires only when *this* file moves.
+///
+/// `null` while no status has landed. A path git reports nothing about (a clean,
+/// tracked file being blamed) yields a record with null status fields — still a
+/// value, and still sensitive to HEAD moving beneath it.
+({String? oid, String? x, String? y, String? oldPath})? _fileStateOf(
+  GitStatus? status,
+  String path,
+) {
+  if (status == null) return null;
+  for (final file in status.files) {
+    if (file.path == path) {
+      return (
+        oid: status.branch.oid,
+        x: file.statusX,
+        y: file.statusY,
+        oldPath: file.oldPath,
+      );
+    }
+  }
+  return (oid: status.branch.oid, x: null, y: null, oldPath: null);
 }
 
 // The bounded keep-alive LRUs backing the diff/blame/file-history caches live
@@ -2541,7 +2688,7 @@ final blameProvider = FutureProvider.autoDispose
       final future = ref.watch(gitServiceProvider).blame(repoPath, path);
       // Working-copy blame reads the file as it is on disk right now — an
       // external edit must invalidate it (see _dependOnWorktreeState).
-      _dependOnWorktreeState(ref, repoPath, content: future);
+      _dependOnWorktreeState(ref, repoPath, path: path, content: future);
       future.then(
         (v) => _blameLru.reportSize(key, _estimateBlameBytes(v)),
         onError: (_) => _blameLru.evict(key),
@@ -2587,7 +2734,7 @@ final fileDiffProvider = FutureProvider.autoDispose
       );
       // A worktree/index diff changes whenever the repo does — every landed
       // status refresh invalidates this so a cached diff can't go stale.
-      _dependOnWorktreeState(ref, repoPath, content: future);
+      _dependOnWorktreeState(ref, repoPath, path: path, content: future);
       future.then(
         (d) => _fileDiffLru.reportSize(key, d.length),
         onError: (_) => _fileDiffLru.evict(key),
@@ -2683,7 +2830,7 @@ final conflictFileProvider = FutureProvider.autoDispose
       final future = ref.watch(gitServiceProvider).conflictFile(repoPath, path);
       // Conflict markers change as the user (or another session) edits the
       // file — follow the landed status so the pane never shows stale markers.
-      _dependOnWorktreeState(ref, repoPath, content: future);
+      _dependOnWorktreeState(ref, repoPath, path: path, content: future);
       future.then(
         (d) => _conflictFileLru.reportSize(key, d.length),
         onError: (_) => _conflictFileLru.evict(key),
@@ -2701,7 +2848,7 @@ final untrackedDiffProvider = FutureProvider.autoDispose
       final future = ref.watch(gitServiceProvider).diffUntracked(repoPath, path);
       // An untracked file's contents are pure worktree state — follow the
       // landed status so the rendered "diff" tracks on-disk edits.
-      _dependOnWorktreeState(ref, repoPath, content: future);
+      _dependOnWorktreeState(ref, repoPath, path: path, content: future);
       future.then(
         (d) => _untrackedDiffLru.reportSize(key, d.length),
         onError: (_) => _untrackedDiffLru.evict(key),

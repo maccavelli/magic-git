@@ -185,6 +185,77 @@ void main() {
     expect(container.read(fileDiffProvider(key)).value, 'diff v2');
   });
 
+  test('an edit to one file leaves every other file\'s cache alone', () async {
+    // The invalidation is per path. It used to be per repo: any filesystem
+    // event refetched every cached diff, blame, conflict and untracked preview
+    // in the repository, so editing one file re-read all of them — and a build
+    // touching files git does not even track re-read all of them, repeatedly.
+    final git = _FakeGit();
+    final container = ProviderContainer(
+      overrides: [gitServiceProvider.overrideWithValue(git)],
+    );
+    addTearDown(container.dispose);
+
+    const repo = '/repo-staleness-d';
+    const edited = (repo, 'lib/edited.dart', false, false, 3);
+    const untouched = (repo, 'lib/untouched.dart', false, false, 3);
+
+    final statusSub = container.listen(statusProvider(repo), (_, _) {});
+    addTearDown(statusSub.close);
+    await container.read(statusProvider(repo).future);
+
+    final a = container.listen(fileDiffProvider(edited), (_, _) {});
+    final b = container.listen(fileDiffProvider(untouched), (_, _) {});
+    addTearDown(a.close);
+    addTearDown(b.close);
+    await container.read(fileDiffProvider(edited).future);
+    await container.read(fileDiffProvider(untouched).future);
+    final fetchesBefore = git.diffCalls;
+
+    // A content-only edit to one of them: same status records, different bytes.
+    container
+        .read(worktreeEditsProvider.notifier)
+        .noteFiles(repo, const ['lib/edited.dart']);
+    await Future<void>.delayed(Duration.zero);
+    await container.read(fileDiffProvider(edited).future);
+    await container.read(fileDiffProvider(untouched).future);
+
+    expect(
+      git.diffCalls,
+      fetchesBefore + 1,
+      reason: 'exactly one refetch: the file that was edited, and nothing else',
+    );
+  });
+
+  test('a move in git\'s own state refreshes every file', () async {
+    // An `git add -p` in a terminal rewrites the index while leaving both the
+    // file on disk and its porcelain record untouched — and yet every staged
+    // diff may now be different. A path-scoped signal cannot express that, so a
+    // `.git/` tick is deliberately repo-wide.
+    final git = _FakeGit();
+    final container = ProviderContainer(
+      overrides: [gitServiceProvider.overrideWithValue(git)],
+    );
+    addTearDown(container.dispose);
+
+    const repo = '/repo-staleness-e';
+    const key = (repo, 'lib/a.dart', true, false, 3); // the *staged* diff
+
+    final statusSub = container.listen(statusProvider(repo), (_, _) {});
+    addTearDown(statusSub.close);
+    await container.read(statusProvider(repo).future);
+    final sub = container.listen(fileDiffProvider(key), (_, _) {});
+    addTearDown(sub.close);
+    await container.read(fileDiffProvider(key).future);
+    final before = git.diffCalls;
+
+    container.read(worktreeEditsProvider.notifier).noteRepo(repo);
+    await Future<void>.delayed(Duration.zero);
+    await container.read(fileDiffProvider(key).future);
+
+    expect(git.diffCalls, before + 1);
+  });
+
   test('a commit patch cache is immutable — status refreshes never touch it',
       () async {
     final git = _FakeGit();
