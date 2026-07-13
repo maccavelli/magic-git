@@ -522,6 +522,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                 MacosTextField(
                   controller: controller,
                   placeholder: placeholder,
+                  placeholderStyle: kAppPlaceholderStyle,
                   autofocus: true,
                   decoration: kAppTextFieldDecoration,
                   focusedDecoration: kAppTextFieldFocusedDecoration,
@@ -1158,6 +1159,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               controller: _searchController,
               focusNode: _searchFocus,
               placeholder: 'Filter commits by message…',
+              placeholderStyle: kAppPlaceholderStyle,
               decoration: kAppTextFieldDecoration,
               focusedDecoration: kAppTextFieldFocusedDecoration,
               onChanged: (_) => _debounceFilters(),
@@ -1210,36 +1212,52 @@ class _HistoryViewState extends ConsumerState<HistoryView>
             Row(
               children: [
                 Expanded(
-                  child: MacosTextField(
-                    controller: _authorController,
-                    placeholder: 'Author',
-                    decoration: kAppTextFieldDecoration,
-                    focusedDecoration: kAppTextFieldFocusedDecoration,
-                    onChanged: (_) => _debounceFilters(),
+                  child: MacosTooltip(
+                    message: 'Show only commits by this author '
+                        '(matches part of a name or email)',
+                    child: MacosTextField(
+                      controller: _authorController,
+                      placeholder: 'Author name or email',
+                      placeholderStyle: kAppPlaceholderStyle,
+                      decoration: kAppTextFieldDecoration,
+                      focusedDecoration: kAppTextFieldFocusedDecoration,
+                      onChanged: (_) => _debounceFilters(),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 6),
                 SizedBox(
-                  width: 96,
-                  child: MacosTextField(
-                    controller: _afterController,
+                  width: 116,
+                  child: MacosTooltip(
                     // Passed verbatim to `git log --since`, which accepts
                     // dates and phrases ("2 weeks ago") alike.
-                    placeholder: 'After',
-                    decoration: kAppTextFieldDecoration,
-                    focusedDecoration: kAppTextFieldFocusedDecoration,
-                    onChanged: (_) => _debounceFilters(),
+                    message: 'Only commits after this date — '
+                        'e.g. 2024-01-31 or "2 weeks ago"',
+                    child: MacosTextField(
+                      controller: _afterController,
+                      placeholder: 'After date',
+                      placeholderStyle: kAppPlaceholderStyle,
+                      decoration: kAppTextFieldDecoration,
+                      focusedDecoration: kAppTextFieldFocusedDecoration,
+                      onChanged: (_) => _debounceFilters(),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 6),
                 SizedBox(
-                  width: 96,
-                  child: MacosTextField(
-                    controller: _beforeController,
-                    placeholder: 'Before',
-                    decoration: kAppTextFieldDecoration,
-                    focusedDecoration: kAppTextFieldFocusedDecoration,
-                    onChanged: (_) => _debounceFilters(),
+                  width: 116,
+                  child: MacosTooltip(
+                    // `git log --until`, same flexible date parsing.
+                    message: 'Only commits before this date — '
+                        'e.g. 2024-01-31 or "3 days ago"',
+                    child: MacosTextField(
+                      controller: _beforeController,
+                      placeholder: 'Before date',
+                      placeholderStyle: kAppPlaceholderStyle,
+                      decoration: kAppTextFieldDecoration,
+                      focusedDecoration: kAppTextFieldFocusedDecoration,
+                      onChanged: (_) => _debounceFilters(),
+                    ),
                   ),
                 ),
               ],
@@ -1248,12 +1266,17 @@ class _HistoryViewState extends ConsumerState<HistoryView>
             Row(
               children: [
                 Expanded(
-                  child: MacosTextField(
-                    controller: _pathController,
-                    placeholder: 'Path (e.g. src/)',
-                    decoration: kAppTextFieldDecoration,
-                    focusedDecoration: kAppTextFieldFocusedDecoration,
-                    onChanged: (_) => _debounceFilters(),
+                  child: MacosTooltip(
+                    message: 'Show only commits that touched this file '
+                        'or folder',
+                    child: MacosTextField(
+                      controller: _pathController,
+                      placeholder: 'Limit to a file or folder, e.g. lib/src/',
+                      placeholderStyle: kAppPlaceholderStyle,
+                      decoration: kAppTextFieldDecoration,
+                      focusedDecoration: kAppTextFieldFocusedDecoration,
+                      onChanged: (_) => _debounceFilters(),
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),

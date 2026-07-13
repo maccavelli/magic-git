@@ -552,15 +552,15 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.enterText(
-      find.widgetWithText(MacosTextField, 'Author'),
+      find.widgetWithText(MacosTextField, 'Author name or email'),
       'alice',
     );
     await tester.enterText(
-      find.widgetWithText(MacosTextField, 'After'),
+      find.widgetWithText(MacosTextField, 'After date'),
       '2026-01-01',
     );
     await tester.enterText(
-      find.widgetWithText(MacosTextField, 'Path (e.g. src/)'),
+      find.widgetWithText(MacosTextField, 'Limit to a file or folder, e.g. lib/src/'),
       'src/',
     );
     await tester.tap(find.byType(MacosCheckbox)); // hide merges
@@ -587,7 +587,9 @@ void main() {
     expect(find.text('Clear filters'), findsNothing);
     expect(
       tester
-          .widget<MacosTextField>(find.widgetWithText(MacosTextField, 'Author'))
+          .widget<MacosTextField>(
+            find.widgetWithText(MacosTextField, 'Author name or email'),
+          )
           .controller!
           .text,
       isEmpty,
