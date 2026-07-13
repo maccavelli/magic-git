@@ -109,7 +109,14 @@ class LocalCommandExecutor implements CommandExecutor {
     return SSHCommandExecutor.runWithRetries(
       () => _run(repoPath, gitArgs, extraEnv, stdin, timeout, lane),
       retries,
-      enqueue: (attempt) => _scheduler.run(lane, attempt),
+      // See SSHCommandExecutor.execute: the deadline is the attempt's own
+      // timeout plus a margin, a backstop against a body that never settles and
+      // so never gives its lane slot back.
+      enqueue: (attempt) => _scheduler.run(
+        lane,
+        attempt,
+        deadline: timeout + CommandLaneScheduler.watchdogMargin,
+      ),
     );
   }
 

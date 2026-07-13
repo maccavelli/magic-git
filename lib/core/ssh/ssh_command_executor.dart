@@ -360,7 +360,15 @@ class SSHCommandExecutor implements CommandExecutor {
         lane,
       ),
       retries,
-      enqueue: (attempt) => _scheduler.run(lane, attempt),
+      // One enqueued job per *attempt*, and an attempt is bounded by `timeout`
+      // (which also kills the channel/process). The scheduler's deadline is that
+      // plus a margin — a pure backstop against a body that never settles at
+      // all, which would otherwise hold its lane slot for the life of the app.
+      enqueue: (attempt) => _scheduler.run(
+        lane,
+        attempt,
+        deadline: timeout + CommandLaneScheduler.watchdogMargin,
+      ),
     );
   }
 

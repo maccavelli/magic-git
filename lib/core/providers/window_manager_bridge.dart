@@ -491,6 +491,19 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
   /// serve from — reply-expecting methods raise `RELAY_DOWN` (the child treats
   /// it as "window on its way out"); fire-and-forget ones are dropped.
   Future<Object?> _onHubCall(String id, MethodCall call) async {
+    // Liveness, and nothing else. A child window waiting on a proxied command
+    // has no other way to tell "the main window is busy running my `git`" apart
+    // from "the main window is never going to answer me" — a platform message
+    // that is dropped or whose handler is torn down simply never comes back. So
+    // it pings while it waits, and this answers.
+    //
+    // Deliberately before every lookup below, and touching no session, executor
+    // or scheduler: it must be answerable whatever the main window is doing, and
+    // it must mean exactly one thing — this hub is still wired up and reading its
+    // channel. A ping that could queue behind a command, or fail because a tab
+    // closed, would be answering some other question.
+    if (call.method == 'ping') return null;
+
     final handle = _handle(id);
     final container = handle == null ? null : sessionContainerFor(handle.tabId);
     switch (call.method) {

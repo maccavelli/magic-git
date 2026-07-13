@@ -114,15 +114,20 @@ Future<void> _bootSecondaryWindow() async {
         // transport is swapped for the per-window proxy. The exclusive-lane
         // callback marks our own-mutation tracker (so the forwarded watcher
         // tick doesn't double-refresh us) and tells the main window to refresh.
-        activeExecutorProvider.overrideWith(
-          (ref) => ProxyCommandExecutor.forWindow(
+        activeExecutorProvider.overrideWith((ref) {
+          final executor = ProxyCommandExecutor.forWindow(
             descriptor.windowId,
             onMutationCompleted: (repoPath) {
               ref.read(ownMutationTrackerProvider).mark(repoPath);
               sendHub('mutationPerformed', {'repoPath': repoPath});
             },
-          ),
-        ),
+          );
+          // Fails anything still waiting on the main window and drops the
+          // liveness probe, rather than leaving a timer pinging a channel this
+          // window no longer listens to.
+          ref.onDispose(executor.dispose);
+          return executor;
+        }),
         // Identical construction to the production gitServiceProvider except
         // undo records are forwarded to the main window's journal — the single
         // source of undo truth (this window's ⌘Z executes against it via

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 
 import '../ssh/ssh_command_executor.dart';
@@ -23,6 +25,9 @@ class ProxyCommandExecutor implements CommandExecutor {
   ProxyCommandExecutor({
     required this.channel,
     this.onMutationCompleted,
+    this.probeInterval = defaultProbeInterval,
+    this.probeTimeout = defaultProbeTimeout,
+    this.deadProbes = defaultDeadProbes,
   });
 
   /// Builds a proxy bound to [windowId]'s hub channel — the normal way a child
@@ -30,6 +35,9 @@ class ProxyCommandExecutor implements CommandExecutor {
   ProxyCommandExecutor.forWindow(
     String windowId, {
     this.onMutationCompleted,
+    this.probeInterval = defaultProbeInterval,
+    this.probeTimeout = defaultProbeTimeout,
+    this.deadProbes = defaultDeadProbes,
   }) : channel = MethodChannel(windowHubChannel(windowId));
 
   final MethodChannel channel;
@@ -41,6 +49,49 @@ class ProxyCommandExecutor implements CommandExecutor {
   /// catches every mutation path without touching GitService or HistoryView.
   final void Function(String repoPath)? onMutationCompleted;
 
+  /// How often the main window is pinged while this proxy is waiting on it.
+  static const Duration defaultProbeInterval = Duration(seconds: 5);
+
+  /// How long a single ping may take. A ping is answered off the main isolate's
+  /// command path — it doesn't queue behind anything — so a live main window
+  /// replies to one promptly even mid-`git`, and this can be tight.
+  static const Duration defaultProbeTimeout = Duration(seconds: 10);
+
+  /// Consecutive silent pings before the main window is declared gone. More than
+  /// one, so a single hiccup (a long frame, a stalled event loop) can't fail
+  /// commands that were about to succeed.
+  static const int defaultDeadProbes = 2;
+
+  /// Liveness-probe tuning. Overridable so a test can drive the real machinery
+  /// on a short clock instead of waiting out the production one.
+  final Duration probeInterval;
+  final Duration probeTimeout;
+  final int deadProbes;
+
+  /// One entry per `execute` still waiting on a reply. Completing one with an
+  /// error is how the liveness probe abandons a call that will never be answered.
+  final Set<Completer<Never>> _outstanding = {};
+
+  Timer? _probe;
+  int _silentProbes = 0;
+
+  /// Runs [gitArgs] on the main isolate, and — the whole point of the machinery
+  /// below — comes back *even if the main isolate never answers*.
+  ///
+  /// A platform message carries its own reply handle, so if the far side stops
+  /// answering (the window's hub handler is torn down between send and reply, the
+  /// native relay drops the message while a window is closing) there is nothing
+  /// to fail: the future simply never completes. The provider waiting on it never
+  /// leaves `AsyncLoading`, and the pane spins forever with no error anywhere.
+  ///
+  /// The fix is deliberately **not** a timeout on the command. A proxied command
+  /// can legitimately take an unbounded amount of wall-clock time — the main
+  /// isolate runs it through its lane scheduler, so a diff can sit queued behind
+  /// a five-minute commit before it even starts — and a clock long enough never to
+  /// kill that is far too long to be any use as a liveness signal. Those are two
+  /// different questions, and this asks the right one: not "is my command taking
+  /// too long?" but "is anyone still there?" — which is cheap and quick to
+  /// answer, whatever the command is doing.
   @override
   Future<SSHCommandResult> execute({
     required String repoPath,
@@ -62,21 +113,41 @@ class ProxyCommandExecutor implements CommandExecutor {
       lane: lane,
       compress: compress,
     );
+
+    final abandoned = Completer<Never>();
+    _outstanding.add(abandoned);
+    _probe ??= Timer.periodic(probeInterval, (_) => _pingOnce());
+
     final Map<Object?, Object?>? reply;
     try {
-      reply = await channel.invokeMethod<Map<Object?, Object?>>(
-        'execute',
-        encodeExecuteRequest(request),
-      );
+      reply = await Future.any<Map<Object?, Object?>?>([
+        channel.invokeMethod<Map<Object?, Object?>>(
+          'execute',
+          encodeExecuteRequest(request),
+        ),
+        // Completes only with an error, and only when the probe has given up.
+        abandoned.future,
+      ]);
     } on PlatformException catch (e) {
-      // The relay or the main-isolate handler is gone (window closing,
-      // bridge torn down). Surface something a human can read — the standard
-      // error dialogs show `$e` verbatim.
+      // The relay or the main-isolate handler answered with a failure (window
+      // closing, bridge torn down). Surface something a human can read — the
+      // standard error dialogs show `$e` verbatim.
       throw ProxyExecuteException(
-        'The main window could not run this command: '
-        '${e.message ?? e.code}',
+        'The main window could not run this command: ${e.message ?? e.code}',
       );
+    } on MissingPluginException {
+      // The window's hub channel has no handler any more: the main window has
+      // already forgotten this window (see WindowManagerBridge._forget). Not a
+      // PlatformException, so it used to escape the catch above as a raw,
+      // unreadable error.
+      throw const ProxyExecuteException(
+        'The main window is no longer accepting commands for this window.',
+      );
+    } finally {
+      _outstanding.remove(abandoned);
+      if (_outstanding.isEmpty) _stopProbing();
     }
+
     if (reply == null) {
       throw const ProxyExecuteException(
         'The main window returned no response for this command.',
@@ -87,6 +158,53 @@ class ProxyCommandExecutor implements CommandExecutor {
       onMutationCompleted?.call(repoPath);
     }
     return result;
+  }
+
+  /// One liveness ping. Cheap by construction: the main window's hub answers it
+  /// without touching a session, an executor or the lane scheduler, so it says
+  /// only what it is meant to say — "I am here and I am reading my channel".
+  Future<void> _pingOnce() async {
+    if (_outstanding.isEmpty) return;
+    try {
+      await channel.invokeMethod<void>('ping').timeout(probeTimeout);
+      _silentProbes = 0;
+    } catch (_) {
+      // Any failure counts as silence: a timeout, a dead relay, a hub with no
+      // handler left. What it is doesn't matter — that it isn't answering does.
+      if (++_silentProbes < deadProbes) return;
+      _abandonOutstanding(
+        'The main window stopped responding, so this command was abandoned. '
+        'It may still be running there.',
+      );
+    }
+  }
+
+  /// Fails every call still waiting on the main window. Their commands may well
+  /// still be running over there — this only stops *this* window waiting on an
+  /// answer that is never coming, which is the difference between an error the
+  /// user can act on and a pane that spins for the rest of the session.
+  void _abandonOutstanding(String message) {
+    final pending = _outstanding.toList();
+    _outstanding.clear();
+    _stopProbing();
+    for (final call in pending) {
+      if (!call.isCompleted) {
+        call.completeError(ProxyExecuteException(message), StackTrace.current);
+      }
+    }
+  }
+
+  void _stopProbing() {
+    _probe?.cancel();
+    _probe = null;
+    _silentProbes = 0;
+  }
+
+  /// Drops the liveness probe. Called when the window is going away — an
+  /// abandoned probe timer would otherwise keep firing at a channel nobody is
+  /// listening to.
+  void dispose() {
+    _abandonOutstanding('This window is closing.');
   }
 
   /// Never needed: `GitService`'s entire surface is request/response

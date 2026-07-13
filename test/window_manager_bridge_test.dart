@@ -218,6 +218,37 @@ void main() {
     );
   });
 
+  test('ping answers from the hub alone, whatever the session is doing',
+      () async {
+    // The child window's liveness probe rests entirely on this. A ping has to
+    // mean exactly one thing — "this hub is wired up and reading its channel" —
+    // so it must answer without touching a session, an executor or the lane
+    // scheduler. If it could queue behind a running command, or fail because the
+    // pinned tab had closed, the child would read a LIVE main window as dead and
+    // abandon commands that were about to succeed.
+    container = makeContainer(_connected);
+    await openHistory();
+
+    expect(await deliverHubCall('ping', null), isNull);
+    expect(
+      executor.calls,
+      isEmpty,
+      reason: 'a ping must not reach the executor at all',
+    );
+
+    // And with no session behind the window at all: `execute` would (rightly)
+    // come back RELAY_DOWN here, but the window itself is still very much alive
+    // and must not be mistaken for dead.
+    container = makeContainer(
+      const ConnectionState(phase: ConnectionPhase.disconnected),
+    );
+    expect(
+      await deliverHubCall('ping', null),
+      isNull,
+      reason: 'liveness is about the hub, not about what it can currently serve',
+    );
+  });
+
   test('requestState returns the window\'s pinned snapshot', () async {
     container = makeContainer(_connected);
     await openHistory();
