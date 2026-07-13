@@ -43,6 +43,7 @@ class _FakeGit extends GitService {
     String repoPath, {
     String revision = 'HEAD',
     int maxCount = 200,
+    int skip = 0,
     String? grep,
     String? author,
     String? since,

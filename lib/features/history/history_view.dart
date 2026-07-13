@@ -168,18 +168,6 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   bool _filtersExpanded = false;
   Timer? _searchDebounce;
 
-  /// How deep the log walk goes. Grows a page at a time as the list is
-  /// scrolled to its end; it's part of the provider key, so each step is one
-  /// atomic `git log` for the whole displayed prefix (no page-boundary
-  /// stitching) and the depth survives a post-mutation invalidation.
-  int _limit = kHistoryPageSize;
-
-  /// The last delivered page and the query that produced it — kept so a
-  /// deeper page (a NEW provider key, hence no data on its first frame) can
-  /// keep showing the rows already on screen instead of blanking to a spinner.
-  List<GitCommit>? _lastFetched;
-  LogQuery? _lastFetchedQuery;
-
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onHardwareKey);
@@ -222,7 +210,12 @@ class _HistoryViewState extends ConsumerState<HistoryView>
 
   bool get _filtering => _hasQueryFilters || _allBranches;
 
-  /// The provider key for the currently displayed history.
+  /// The provider key for the currently displayed history. The paging depth is
+  /// deliberately not part of it — it lives on [LogSearchNotifier], so scrolling
+  /// deeper extends the walk in place rather than minting a new key that
+  /// re-walks from the top. Changing any criterion here IS a new key, and so
+  /// correctly starts again at page one with a fresh spinner: rows the new
+  /// filter was never applied to must never linger on screen.
   LogQuery get _query => (
     repoPath: widget.repoPath,
     grep: _effGrep,
@@ -233,23 +226,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     sha: _effSha,
     noMerges: _hideMerges,
     all: _allBranches,
-    limit: _limit,
   );
-
-  /// Whether two queries ask the same question at different depths — the only
-  /// case where the previous rows are still valid to show while the next page
-  /// loads. A criteria change instead falls back to the loading state, so a
-  /// filter can never appear to match rows it hasn't been applied to.
-  static bool _sameExceptLimit(LogQuery a, LogQuery b) =>
-      a.repoPath == b.repoPath &&
-      a.grep == b.grep &&
-      a.author == b.author &&
-      a.since == b.since &&
-      a.until == b.until &&
-      a.path == b.path &&
-      a.sha == b.sha &&
-      a.noMerges == b.noMerges &&
-      a.all == b.all;
 
   GlobalKey _commitRowKeyFor(String hash) =>
       _commitRowKeys.putIfAbsent(hash, GlobalKey.new);
@@ -498,12 +475,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       _decorations = null;
       _densitySource = null;
       _density = null;
-      // A different repo's history is a different walk: drop the carried-over
-      // rows (they'd otherwise show for one frame under the new repo) and
-      // start again at page one.
-      _limit = kHistoryPageSize;
-      _lastFetched = null;
-      _lastFetchedQuery = null;
+      // The depth resets itself: a different repo is a different [LogQuery],
+      // hence a different notifier, which starts again at page one.
     }
   }
 
@@ -1021,7 +994,10 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       // Walked at least as deep as the panel currently displays: a commit the
       // user paged down to and selected must still be findable here, or
       // "rebase from here" would silently do nothing on deep history.
-      commits = await _git.log(repoPath, maxCount: _limit);
+      commits = await _git.log(
+        repoPath,
+        maxCount: ref.read(logSearchProvider(_query).notifier).depth,
+      );
     } catch (_) {
       return;
     }
@@ -1122,29 +1098,21 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       ref.watch(refsProvider(widget.repoPath)).value ?? const [],
     );
 
-    // A deeper page is a NEW provider key, so its first frame carries no data.
-    // Keep the rows (and the scroll offset) already on screen while it loads —
-    // but only for a same-question-deeper-walk; a criteria change must NOT
-    // keep showing rows the new filter was never applied to.
-    final delivered = logAsync.value;
-    if (delivered != null) {
-      _lastFetched = delivered;
-      _lastFetchedQuery = query;
-    }
-    final carried =
-        _lastFetchedQuery != null &&
-            _sameExceptLimit(_lastFetchedQuery!, query)
-        ? _lastFetched
-        : null;
-    final commits = delivered ?? carried;
-    // Fewer rows than asked for means the walk ran out: there is no next page.
-    // Sound only because every criterion is applied by git — the row count is
-    // what the query *matched*, not what survived a client-side pass over a
-    // full page. (It once wasn't: `sha:` filtered the fetched rows here, so a
-    // full page that narrowed to one row still read as "not exhausted", and the
-    // load-more sentinel — sitting right under that one row, hence permanently
-    // on screen — re-armed itself every frame and walked the entire repo.)
-    final exhausted = commits != null && commits.length < _limit;
+    // Loading a deeper page no longer changes the provider key, so the rows
+    // already on screen (and the scroll offset) survive it on their own: the
+    // notifier keeps the previous value under the AsyncLoading. A *criteria*
+    // change is still a new key, and so still blanks to a spinner — rows the new
+    // filter was never applied to must never linger.
+    final commits = logAsync.value;
+    // The walk ran out — there is no next page, so the load-more sentinel is not
+    // built at all. Decided by git's own row count (every criterion is applied
+    // by git, so a short page means "no more matches", not "the client filtered
+    // some out"), and tracked on the notifier because the count alone stops
+    // being conclusive once a page is stitched on: a boundary dedupe can shorten
+    // the list without meaning the history ended.
+    final exhausted =
+        commits != null &&
+        ref.watch(logSearchProvider(query).notifier).exhausted;
 
     final keymap = ref.watch(keymapProvider);
     final selectedHash = _soleSelectedHash;
@@ -1240,6 +1208,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       );
     }
     final graph = _graphFor(commits);
+    final log = ref.read(logSearchProvider(_query).notifier);
     return NotificationListener<ScrollMetricsNotification>(
       onNotification: (_) {
         _scrollMetricsTick.value++;
@@ -1254,9 +1223,14 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               graph,
               decorations,
               exhausted: exhausted,
-              // A page already in flight (or one that just failed) must not
-              // trigger another — see [_loadMoreRow].
-              canLoadMore: !logAsync.isLoading && !logAsync.hasError,
+              // A page already in flight (or one that just failed), and a whole
+              // log still loading or errored, must not trigger another — see
+              // [_loadMoreRow].
+              canLoadMore:
+                  !logAsync.isLoading &&
+                  !logAsync.hasError &&
+                  !log.loadingMore &&
+                  !log.pageFailed,
             ),
           ),
           HistoryMinimap(
@@ -1513,12 +1487,17 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   /// [canLoadMore] is false while a page is already in flight (or one just
   /// failed): the sentinel keeps being rebuilt for as long as it's on screen,
   /// and without that gate each rebuild would deepen the walk again.
+  ///
+  /// Not deepening the walk while a fetch is in flight is also what keeps
+  /// [LogSearchNotifier.loadMore]'s `--skip` honest: it offsets past the list it
+  /// is extending, so it must only ever run against a settled one.
   Widget _loadMoreRow(double rowHeight, bool canLoadMore) {
     if (canLoadMore) {
-      // Post-frame: this runs inside build, and deepening the query mutates
-      // provider-watching state.
+      // Post-frame: this runs inside build, and loadMore writes provider state.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _limit += kHistoryPageSize);
+        if (mounted) {
+          ref.read(logSearchProvider(_query).notifier).loadMore();
+        }
       });
     }
     return SizedBox(

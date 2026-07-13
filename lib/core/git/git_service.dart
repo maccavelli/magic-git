@@ -879,6 +879,7 @@ class GitService {
     String repoPath, {
     String revision = 'HEAD',
     int maxCount = 200,
+    int skip = 0,
     String? grep,
     String? author,
     String? since,
@@ -930,6 +931,11 @@ class GitService {
         '--no-show-signature',
         '--pretty=format:$format$recordSep',
         '--max-count=$maxCount',
+        // Drops the first [skip] matches of the *same* walk before counting, so
+        // a page can be fetched without re-formatting, re-transferring and
+        // re-parsing every commit above it. Git still walks the skipped prefix
+        // internally — cheap, and nothing to send over the wire.
+        if (skip > 0) '--skip=$skip',
         // The dialect the patterns from [globToRegExp] are written in.
         '--extended-regexp',
         if (grepPatterns.isNotEmpty || authorPattern != null)

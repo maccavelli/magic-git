@@ -61,8 +61,10 @@ class _OutputViewState extends ConsumerState<OutputView> {
   @override
   Widget build(BuildContext context) {
     // Autoscroll to the tail when new lines arrive and the user hasn't scrolled
-    // up to read history.
-    ref.listen(outputLogProvider.select((s) => s.lines.length), (_, _) {
+    // up to read history. Watches the revision, not the line count: once the
+    // scrollback caps out, every append also drops a line, so the count stops
+    // changing and this listener would never fire again.
+    ref.listen(outputLogProvider.select((s) => s.revision), (_, _) {
       if (!_stick) return;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         // The frame can land after this view is disposed (repo/tab switch,

@@ -2383,21 +2383,20 @@ final magicSnapshotsProvider = FutureProvider.autoDispose
     });
 
 /// How deep the History panel walks on first load, and how much further each
-/// "Load more" goes. Paging is expressed as a bigger [LogQuery.limit] rather
-/// than a `--skip` offset into a re-run walk: one `git log` invocation always
-/// produces the whole displayed prefix, so there are no page-boundary
-/// duplicates or drops when the repo changes mid-scroll, no dedupe pass, and
-/// the loaded depth survives an invalidation (the same deeper query refetches).
-/// The cost is re-walking the prefix per page — trivial next to the round trip.
+/// "Load more" goes.
 const int kHistoryPageSize = 500;
 
 /// A filtered/searched commit log. Keyed by a query record (structural equality
 /// gives correct caching — so every field here must stay a value type; a `List`
 /// would compare by identity and re-fetch on every rebuild). [all] walks every
 /// ref; the rest narrow the walk. Every criterion is applied by git itself, so
-/// results are complete up to [limit] rather than "whatever was already loaded"
-/// — including [sha], which is resolved against the object database and so
-/// finds a commit on any branch, at any depth.
+/// results are complete up to the walked depth rather than "whatever was already
+/// loaded" — including [sha], which is resolved against the object database and
+/// so finds a commit on any branch, at any depth.
+///
+/// The paging depth is deliberately NOT a key field. It lives on
+/// [LogSearchNotifier], so scrolling deeper extends the existing walk instead of
+/// minting a new provider that re-walks from the top — see [LogSearchNotifier].
 typedef LogQuery = ({
   String repoPath,
   String? grep,
@@ -2408,28 +2407,138 @@ typedef LogQuery = ({
   String? sha,
   bool noMerges,
   bool all,
-  int limit,
 });
 
-final logSearchProvider = FutureProvider.autoDispose
-    .family<List<GitCommit>, LogQuery>((ref, q) {
-      return ref
-          .watch(gitServiceProvider)
-          .log(
-            q.repoPath,
-            maxCount: q.limit,
-            grep: q.grep,
-            author: q.author,
-            since: q.since,
-            until: q.until,
-            // A typed `file:` term is a search term, not a literal path —
-            // `pathQuery`, never `path`.
-            pathQuery: q.path,
-            sha: q.sha,
-            noMerges: q.noMerges,
-            all: q.all,
-          );
-    });
+/// The History panel's commit list, walked a page at a time.
+///
+/// Two paths write the list, and they are deliberately different:
+///
+///  * **[build] — a refresh.** First load, ⌘R, or the invalidation every
+///    mutation fires. One `git log` produces the *whole* displayed prefix, so a
+///    refresh can never leave a page-boundary duplicate or drop behind, and the
+///    list is always a single consistent snapshot of one walk. The depth is a
+///    field on the notifier, and Riverpod re-runs `build` on the *same* notifier
+///    instance across an invalidation — so a commit made while scrolled 5,000
+///    deep refreshes all 5,000 rows and does not collapse the list back to one
+///    page. (`log_paging_test.dart` pins that; if a Riverpod upgrade ever
+///    recreates the instance instead, that test fails rather than the behaviour
+///    silently regressing to a snap-back.)
+///
+///  * **[loadMore] — scrolling off the end.** Fetches ONLY the next page, with
+///    `--skip` past what is already held, and appends. Paging used to be
+///    expressed as a bigger `--max-count` on a *new* provider key, which re-ran
+///    the whole walk: page 20 re-formatted, re-transferred and re-parsed the
+///    9,500 commits already on screen to show 500 more. That is quadratic in the
+///    scroll depth, and on the SSH backend it re-sends every one of those
+///    commits over the wire. The prefix it appends to is a settled value from a
+///    single walk, so the only seam is between pages.
+///
+/// The seam is why the append dedupes by hash: `--skip=N` is an offset into a
+/// walk that git re-runs, so a commit landing between two pages shifts the
+/// window under us and the next page can repeat a row already held. Dropping the
+/// repeat keeps the list well-formed; the row that shifted out of the window is
+/// picked up by the refresh that any such commit triggers anyway.
+final logSearchProvider = AsyncNotifierProvider.autoDispose
+    .family<LogSearchNotifier, List<GitCommit>, LogQuery>(LogSearchNotifier.new);
+
+class LogSearchNotifier extends AsyncNotifier<List<GitCommit>> {
+  LogSearchNotifier(this.query);
+
+  final LogQuery query;
+
+  /// How deep the walk currently goes. Survives an invalidation with the
+  /// notifier instance, so a refresh re-walks everything the user paged to.
+  int _depth = kHistoryPageSize;
+
+  /// The walk ran out: the last fetch returned fewer commits than it asked for,
+  /// so there is nothing below and [loadMore] is a no-op.
+  bool get exhausted => _exhausted;
+  bool _exhausted = false;
+
+  int get depth => _depth;
+
+  Future<List<GitCommit>> _walk(
+    GitService git, {
+    required int skip,
+    required int count,
+  }) {
+    return git.log(
+      query.repoPath,
+      maxCount: count,
+      skip: skip,
+      grep: query.grep,
+      author: query.author,
+      since: query.since,
+      until: query.until,
+      // A typed `file:` term is a search term, not a literal path —
+      // `pathQuery`, never `path`.
+      pathQuery: query.path,
+      sha: query.sha,
+      noMerges: query.noMerges,
+      all: query.all,
+    );
+  }
+
+  @override
+  Future<List<GitCommit>> build() async {
+    // Watched, not read: a new session's [GitService] (reconnect, backend
+    // switch) must re-walk this log rather than leave the previous host's
+    // commits on screen. [loadMore] reads instead — it runs outside a build,
+    // where a watch cannot be registered, and it always extends the list this
+    // build produced.
+    final git = ref.watch(gitServiceProvider);
+    final commits = await _walk(git, skip: 0, count: _depth);
+    _exhausted = commits.length < _depth;
+    return commits;
+  }
+
+  /// A page fetch is in flight. The list keeps its current value throughout —
+  /// this is an *extension*, not a refresh, so the rows on screen stay put and
+  /// there is nothing to show a spinner over except the trailing sentinel.
+  bool get loadingMore => _loadingMore;
+  bool _loadingMore = false;
+
+  /// The last page fetch failed. The rows already walked are still perfectly
+  /// good — a failed page is not a failed log — so the list is left alone and
+  /// only the paging stops, rather than an error blowing away history the user
+  /// is reading. Cleared by the next refresh, which re-walks from the top.
+  bool get pageFailed => _pageFailed;
+  bool _pageFailed = false;
+
+  /// Extends the walk by one page. Safe to call on every rebuild of the
+  /// load-more sentinel: it is a no-op unless there is a settled list to extend
+  /// and more history to find.
+  Future<void> loadMore() async {
+    final current = state.value;
+    if (current == null ||
+        state.isLoading ||
+        _loadingMore ||
+        _exhausted ||
+        _pageFailed) {
+      return;
+    }
+
+    _loadingMore = true;
+    try {
+      final next = await _walk(
+        ref.read(gitServiceProvider),
+        skip: current.length,
+        count: kHistoryPageSize,
+      );
+      // What git returned for the page it was actually asked for — the honest
+      // end-of-history signal. The merged length is not, because the dedupe
+      // below can shorten it without the history having ended.
+      _exhausted = next.length < kHistoryPageSize;
+      _depth = current.length + kHistoryPageSize;
+      final seen = {for (final c in current) c.hash};
+      state = AsyncData([...current, ...next.where((c) => seen.add(c.hash))]);
+    } catch (_) {
+      _pageFailed = true;
+    } finally {
+      _loadingMore = false;
+    }
+  }
+}
 
 /// Ties a **worktree-dependent** cache for one file to the two things that can
 /// actually change it, and to nothing else.

@@ -40,4 +40,42 @@ void main() {
     log.logFiles('Pulled', const ['', '   ']);
     expect(container.read(outputLogProvider).lines, isEmpty);
   });
+
+  test('appending still signals a change once the scrollback is full', () {
+    // The output view follows the tail by listening for a change to this signal.
+    // It used to listen on `lines.length` — which stops changing the moment the
+    // buffer caps, because every append then also drops a line. So after 2000
+    // lines (one long clone, or a busy session) the view silently stopped
+    // scrolling to new output: it was still arriving, just never followed.
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final log = container.read(outputLogProvider.notifier);
+
+    var notified = 0;
+    final sub = container.listen(
+      outputLogProvider.select((s) => s.revision),
+      (_, _) => notified++,
+    );
+    addTearDown(sub.close);
+
+    for (var i = 0; i < OutputLogNotifier.maxLines; i++) {
+      log.logInfo('line $i');
+    }
+    expect(
+      container.read(outputLogProvider).lines,
+      hasLength(OutputLogNotifier.maxLines),
+      reason: 'the buffer is now full — the line count can no longer grow',
+    );
+    final whenFull = notified;
+
+    for (var i = 0; i < 20; i++) {
+      log.logInfo('overflow $i');
+    }
+    expect(
+      notified - whenFull,
+      20,
+      reason: 'every appended line must still notify the tail-follower',
+    );
+    expect(container.read(outputLogProvider).lines.last.text, 'overflow 19');
+  });
 }

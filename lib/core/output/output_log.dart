@@ -18,13 +18,34 @@ class OutputLogState {
   final bool visible;
   final List<OutputLine> lines;
 
-  const OutputLogState({this.visible = false, this.lines = const []});
+  /// Bumped on every write to [lines]. It exists because [lines] `.length` is
+  /// NOT a usable "something was appended" signal: it stops changing the moment
+  /// the scrollback caps at [OutputLogNotifier.maxLines], since every append
+  /// then drops a line as it adds one. The output view watches this to follow
+  /// the tail — watching the length meant that after 2000 lines (a long clone,
+  /// a busy session) the view silently stopped scrolling to new output.
+  final int revision;
 
-  OutputLogState copyWith({bool? visible, List<OutputLine>? lines}) =>
-      OutputLogState(
-        visible: visible ?? this.visible,
-        lines: lines ?? this.lines,
-      );
+  const OutputLogState({
+    this.visible = false,
+    this.lines = const [],
+    this.revision = 0,
+  });
+
+  OutputLogState copyWith({
+    bool? visible,
+    List<OutputLine>? lines,
+    int? revision,
+  }) => OutputLogState(
+    visible: visible ?? this.visible,
+    lines: lines ?? this.lines,
+    revision: revision ?? this.revision,
+  );
+
+  /// [copyWith] with a new [lines] and the revision advanced — every write to
+  /// the buffer goes through this, so no caller can forget to bump it.
+  OutputLogState withLines(List<OutputLine> lines) =>
+      OutputLogState(visible: visible, lines: lines, revision: revision + 1);
 }
 
 /// App-wide buffer of operation output shown in the repository panel's output
@@ -47,7 +68,7 @@ class OutputLogNotifier extends Notifier<OutputLogState> {
   void toggle() => setVisible(!state.visible);
 
   void clear() {
-    if (state.lines.isNotEmpty) state = state.copyWith(lines: const []);
+    if (state.lines.isNotEmpty) state = state.withLines(const []);
   }
 
   void _add(List<OutputLine> incoming) {
@@ -66,7 +87,7 @@ class OutputLogNotifier extends Notifier<OutputLogState> {
         ...incoming,
       ];
     }
-    state = state.copyWith(lines: capped);
+    state = state.withLines(capped);
   }
 
   static List<OutputLine> _split(String text, OutputLineKind kind) {
@@ -126,7 +147,7 @@ class OutputLogNotifier extends Notifier<OutputLogState> {
     if (transient != null &&
         lines.isNotEmpty &&
         identical(lines.last, transient)) {
-      state = state.copyWith(lines: lines.sublist(0, lines.length - 1));
+      state = state.withLines(lines.sublist(0, lines.length - 1));
     }
     _add(incoming);
   }

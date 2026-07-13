@@ -15,24 +15,45 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// A git whose log honors `maxCount` against a synthetic history, and records
-/// how deep each walk was asked to go.
+/// One `git log` the panel asked for: the window it wanted out of the walk.
+typedef _Walk = ({int skip, int count});
+
+/// A git whose log honors `skip`/`maxCount` against a synthetic history, and
+/// records the window of every walk — so a test can tell a *page* fetch from a
+/// re-walk of the whole prefix.
 class _PagingGit extends GitService {
   _PagingGit(this.total) : super(SSHCommandExecutor(SSHClientManager()));
 
   /// How many commits this repo has in total.
-  final int total;
+  int total;
 
-  /// The `maxCount` of every log call, in order — the paging trail.
-  final List<int> walks = [];
+  /// The window of every log call, in order — the paging trail.
+  final List<_Walk> walks = [];
   final List<String?> greps = [];
   final List<String?> shas = [];
+
+  // 40-char hashes that differ in their LEADING characters (`c007ffff…`), so a
+  // `sha:` prefix can single one out — real hashes are distinctive up front, and
+  // a prefix match is only meaningful against that.
+  static String hashOf(int i) =>
+      'c${i.toString().padLeft(3, '0')}'.padRight(40, 'f');
+
+  GitCommit _commitAt(int i) => GitCommit(
+    hash: hashOf(i),
+    shortHash: hashOf(i).substring(0, 7),
+    authorName: 'Dev',
+    authorEmail: 'd@e',
+    date: '2026-07-04T10:00',
+    parents: i + 1 < total ? [hashOf(i + 1)] : [],
+    subject: 'commit $i',
+  );
 
   @override
   Future<List<GitCommit>> log(
     String repoPath, {
     String revision = 'HEAD',
     int maxCount = 200,
+    int skip = 0,
     String? grep,
     String? author,
     String? since,
@@ -44,23 +65,9 @@ class _PagingGit extends GitService {
     bool follow = false,
     bool noMerges = false,
   }) async {
-    walks.add(maxCount);
+    walks.add((skip: skip, count: maxCount));
     greps.add(grep);
     shas.add(sha);
-    final count = maxCount < total ? maxCount : total;
-    // 40-char hashes that differ in their LEADING characters (`c007ffff…`),
-    // so a `sha:` prefix can single one out — real hashes are distinctive up
-    // front, and a prefix match is only meaningful against that.
-    String hashOf(int i) => 'c${i.toString().padLeft(3, '0')}'.padRight(40, 'f');
-    GitCommit commitAt(int i, {required int of}) => GitCommit(
-      hash: hashOf(i),
-      shortHash: hashOf(i).substring(0, 7),
-      authorName: 'Dev',
-      authorEmail: 'd@e',
-      date: '2026-07-04T10:00',
-      parents: i + 1 < of ? [hashOf(i + 1)] : [],
-      subject: 'commit $i',
-    );
 
     // Git resolves a `sha:` against the object database and answers with the
     // commit itself, so the result is what the hash *matched* — not a page of
@@ -68,10 +75,14 @@ class _PagingGit extends GitService {
     if (sha != null) {
       return [
         for (var i = 0; i < total; i++)
-          if (hashOf(i).startsWith(sha.toLowerCase())) commitAt(i, of: total),
+          if (hashOf(i).startsWith(sha.toLowerCase())) _commitAt(i),
       ];
     }
-    return [for (var i = 0; i < count; i++) commitAt(i, of: count)];
+
+    // `--skip` drops the first N of the same walk before `--max-count` counts.
+    final start = skip < total ? skip : total;
+    final end = (start + maxCount) < total ? (start + maxCount) : total;
+    return [for (var i = start; i < end; i++) _commitAt(i)];
   }
 
   @override
@@ -89,7 +100,20 @@ class _PagingGit extends GitService {
       'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
 }
 
-Future<void> _pump(WidgetTester tester, _PagingGit git) async {
+/// The key the panel builds with no filters typed — the unfiltered HEAD walk.
+const LogQuery _defaultQuery = (
+  repoPath: '/srv/repo',
+  grep: null,
+  author: null,
+  since: null,
+  until: null,
+  path: null,
+  sha: null,
+  noMerges: false,
+  all: false,
+);
+
+Future<ProviderContainer> _pump(WidgetTester tester, _PagingGit git) async {
   SharedPreferences.setMockInitialValues({});
   final container = ProviderContainer(
     overrides: [gitServiceProvider.overrideWithValue(git)],
@@ -105,50 +129,133 @@ Future<void> _pump(WidgetTester tester, _PagingGit git) async {
     ),
   );
   await tester.pumpAndSettle();
+  return container;
 }
 
 ScrollController _listController(WidgetTester tester) =>
     tester.widget<ListView>(find.byType(ListView)).controller!;
 
 void main() {
+  const page = kHistoryPageSize;
+
   testWidgets('the first load walks exactly one page, however deep the repo', (
     tester,
   ) async {
-    final git = _PagingGit(kHistoryPageSize * 3);
+    final git = _PagingGit(page * 3);
     await _pump(tester, git);
-    expect(git.walks, [kHistoryPageSize]);
+    expect(git.walks, [(skip: 0, count: page)]);
   });
 
-  testWidgets('scrolling to the end walks deeper, then stops when exhausted', (
-    tester,
-  ) async {
-    // 700 commits: page one (500) leaves more to walk; page two (1000) runs
-    // out at 700 and ends the paging.
+  testWidgets('scrolling to the end fetches ONLY the next page', (tester) async {
+    // The regression this pins: paging used to be expressed as a bigger
+    // `--max-count` on a new provider key, so page two re-walked, re-sent and
+    // re-parsed the 500 commits already on screen to show 500 more — quadratic
+    // in the scroll depth, and on the SSH backend it re-sent every one of those
+    // commits over the wire. A page must cost a page.
+    //
+    // 700 commits: page one (500) leaves more; page two asks for 500 from 500,
+    // gets 200, and that short page is what ends the paging.
     final git = _PagingGit(700);
-    await _pump(tester, git);
-    expect(git.walks, [kHistoryPageSize], reason: 'one page on first load');
+    final container = await _pump(tester, git);
+    expect(
+      git.walks,
+      [(skip: 0, count: page)],
+      reason: 'one page on first load',
+    );
 
     final controller = _listController(tester);
     controller.jumpTo(controller.position.maxScrollExtent);
     await tester.pump(); // builds the trailing sentinel → asks for more
-    await tester.pumpAndSettle(); // the deeper walk lands
+    await tester.pumpAndSettle(); // the page lands
 
     expect(
       git.walks,
-      [kHistoryPageSize, kHistoryPageSize * 2],
-      reason: 'reaching the end deepens the walk by one page',
+      [(skip: 0, count: page), (skip: page, count: page)],
+      reason: 'the second walk skips past what is already held and asks for '
+          'one page — not 1000 commits from the top',
     );
+    // …and the page is stitched onto the list, not swapped in for it.
+    final commits = container.read(logSearchProvider(_defaultQuery)).value!;
+    expect(commits, hasLength(700));
+    expect(commits.first.subject, 'commit 0');
+    expect(commits.last.subject, 'commit 699');
 
-    // 700 < 1000 asked for: the history ran out, so there is no sentinel left
-    // to trigger a third walk however far the list is scrolled.
+    // 200 < 500 asked for: the history ran out, so there is no sentinel left to
+    // trigger a third walk however far the list is scrolled.
     final deeper = _listController(tester);
     deeper.jumpTo(deeper.position.maxScrollExtent);
     await tester.pumpAndSettle();
     expect(
       git.walks,
-      [kHistoryPageSize, kHistoryPageSize * 2],
+      [(skip: 0, count: page), (skip: page, count: page)],
       reason: 'an exhausted history is never re-walked',
     );
+  });
+
+  testWidgets('a refresh re-walks the whole displayed prefix in ONE call', (
+    tester,
+  ) async {
+    // Paging incrementally must not turn a refresh into a page-by-page restitch:
+    // a commit landing while the user is scrolled deep would then cost one round
+    // trip per page, and every page boundary would be a chance to duplicate or
+    // drop a row. So a refresh is still a single atomic walk of everything on
+    // screen — and the depth the user paged to survives it, rather than the list
+    // snapping back to one page under them.
+    final git = _PagingGit(page * 3);
+    final container = await _pump(tester, git);
+
+    final controller = _listController(tester);
+    controller.jumpTo(controller.position.maxScrollExtent);
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(git.walks.length, 2, reason: 'paged down to 1000');
+
+    git.walks.clear();
+    // Exactly what a commit/checkout/⌘R does — see repoMutationFamilies.
+    container.invalidate(logSearchProvider);
+    await tester.pumpAndSettle();
+
+    expect(
+      git.walks,
+      [(skip: 0, count: page * 2)],
+      reason: 'one walk, from the top, as deep as the user had paged',
+    );
+    final commits = container.read(logSearchProvider(_defaultQuery)).value!;
+    expect(
+      commits,
+      hasLength(page * 2),
+      reason: 'the depth the user paged to survives the refresh — the list does '
+          'not snap back to one page under them',
+    );
+  });
+
+  testWidgets('a commit landing between pages cannot duplicate a row', (
+    tester,
+  ) async {
+    // `--skip=N` is an offset into a walk git re-runs, so a commit arriving
+    // between two pages shifts the window down by one and the next page repeats
+    // the last row already held. A duplicate hash means duplicate widget keys
+    // and a corrupt graph, so the append dedupes.
+    final git = _PagingGit(700);
+    final container = await _pump(tester, git);
+
+    // A new commit lands on top: every index shifts by one, so `skip: 500` now
+    // points at the commit currently held as row 499.
+    git.total = 701;
+
+    final controller = _listController(tester);
+    controller.jumpTo(controller.position.maxScrollExtent);
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    final commits = container.read(logSearchProvider(_defaultQuery)).value!;
+    final hashes = [for (final c in commits) c.hash];
+    expect(
+      hashes.toSet().length,
+      hashes.length,
+      reason: 'the row at the page seam is held once, not twice',
+    );
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('a short history is exhausted immediately', (tester) async {
@@ -159,7 +266,11 @@ void main() {
     controller.jumpTo(controller.position.maxScrollExtent);
     await tester.pumpAndSettle();
 
-    expect(git.walks, [kHistoryPageSize], reason: 'nothing deeper to ask for');
+    expect(
+      git.walks,
+      [(skip: 0, count: page)],
+      reason: 'nothing deeper to ask for',
+    );
     expect(find.text('commit 0'), findsOneWidget);
     expect(find.text('commit 2'), findsOneWidget);
   });
@@ -208,6 +319,6 @@ void main() {
     // One walk for the sha query, and it stops there: the row count is what the
     // query matched, so the list knows it is complete.
     expect(git.walks.length, walksBefore + 1);
-    expect(git.walks.last, kHistoryPageSize);
+    expect(git.walks.last, (skip: 0, count: page));
   });
 }
