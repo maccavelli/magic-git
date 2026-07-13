@@ -2,10 +2,10 @@
 /// commit message, and `key:value` terms narrow by author, file, SHA, or date
 /// — e.g. `rename author:mac file:lib/core/ after:2026-01-01`.
 ///
-/// Every term but `sha:` maps 1:1 to a `git log` flag, so filtering stays
-/// server-side and complete (never "only what was already loaded"); `sha:`
-/// is a prefix match applied to the fetched rows, since git has no
-/// filter-by-hash-prefix flag.
+/// This library only *parses*; every term is then applied by git itself, so a
+/// result set is complete rather than "whatever was already loaded". What each
+/// term means to git — literal text with `*`/`?` wildcards, matched
+/// case-insensitively, paths at any depth — is [log_search]'s job.
 library;
 
 /// The parsed filter. Fields are null when the term wasn't given; a
@@ -16,8 +16,8 @@ class LogFilter {
   final String? author;
   final String? path;
 
-  /// A full or partial commit hash. Matched client-side, case-insensitively,
-  /// against the start of each commit's hash.
+  /// A full or partial commit hash, resolved against the object database — so
+  /// it finds the commit wherever it is, not only among the loaded rows.
   final String? sha;
 
   /// Git date expressions, passed through verbatim: git accepts both
@@ -150,19 +150,4 @@ List<String> _tokenize(String input) {
   }
   flush();
   return tokens;
-}
-
-/// Keeps the commits whose hash starts with [sha] (case-insensitive). The
-/// one client-side term — see the library docs.
-List<T> filterByShaPrefix<T>(
-  List<T> commits,
-  String? sha, {
-  required String Function(T) hashOf,
-}) {
-  if (sha == null || sha.isEmpty) return commits;
-  final prefix = sha.toLowerCase();
-  return [
-    for (final c in commits)
-      if (hashOf(c).toLowerCase().startsWith(prefix)) c,
-  ];
 }

@@ -8,6 +8,8 @@
 // not refetch the world. Commit (hash-keyed) caches deliberately do NOT
 // follow status: a commit's patch is immutable.
 
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
@@ -33,6 +35,11 @@ class _FakeGit extends GitService {
     return GitStatus(branch: GitBranchInfo(oid: oid), files: const []);
   }
 
+  /// When set, every diffFile call parks on a fresh completer the test finishes
+  /// by hand — so a fetch can be held *in flight* while status changes land.
+  final List<Completer<String>> pendingDiffs = [];
+  bool gateDiffs = false;
+
   @override
   Future<String> diffFile(
     String repoPath, {
@@ -40,9 +47,12 @@ class _FakeGit extends GitService {
     required bool staged,
     bool ignoreWhitespace = false,
     int? context,
-  }) async {
+  }) {
     diffCalls++;
-    return 'diff v$diffCalls';
+    if (!gateDiffs) return Future.value('diff v$diffCalls');
+    final completer = Completer<String>();
+    pendingDiffs.add(completer);
+    return completer.future;
   }
 
   @override
@@ -106,6 +116,73 @@ void main() {
       reason: 'the cached diff must refetch once changed status lands',
     );
     expect(git.diffCalls, 2);
+  });
+
+  test('worktree changes never restart a fetch that is still in flight',
+      () async {
+    // The regression: a status change used to invalidate a diff whose *first*
+    // fetch had not landed yet. That doesn't refresh anything — it throws the
+    // in-flight read away and starts over from a bare AsyncLoading, because
+    // there is no previous value for Riverpod to carry through the refresh. So
+    // the pane falls back to a spinner; and when the next change arrives before
+    // the restarted read finishes, that one is thrown away too. A repo that
+    // changes faster than a diff takes to fetch therefore never showed a diff
+    // at all — it span forever. (Writes into a gitignored build directory are
+    // enough to drive it: every filesystem event mints a new status, whether or
+    // not git can see the file that changed.)
+    final git = _FakeGit()..gateDiffs = true;
+    final container = ProviderContainer(
+      overrides: [gitServiceProvider.overrideWithValue(git)],
+    );
+    addTearDown(container.dispose);
+
+    const repo = '/repo-staleness-c';
+    const key = (repo, 'lib/a.dart', false, false, 3);
+
+    final statusSub = container.listen(statusProvider(repo), (_, _) {});
+    addTearDown(statusSub.close);
+    await container.read(statusProvider(repo).future);
+
+    // The user opens the diff: one fetch, held in flight.
+    final diffSub = container.listen(fileDiffProvider(key), (_, _) {});
+    addTearDown(diffSub.close);
+    await Future<void>.delayed(Duration.zero);
+    expect(git.pendingDiffs, hasLength(1));
+
+    // Three worktree changes land while that first read is still running.
+    for (final oid in ['edit-1', 'edit-2', 'edit-3']) {
+      git.oid = oid;
+      container.invalidate(statusProvider(repo));
+      await container.read(statusProvider(repo).future);
+      await Future<void>.delayed(Duration.zero);
+    }
+    expect(
+      git.pendingDiffs,
+      hasLength(1),
+      reason: 'the in-flight read must be left alone — restarting it on every '
+          'change is what starved it forever',
+    );
+
+    // It lands, and the value is actually published (not torn down first).
+    git.pendingDiffs.first.complete('diff v1');
+    await Future<void>.delayed(Duration.zero);
+    expect(container.read(fileDiffProvider(key)).value, 'diff v1');
+
+    // The changes that arrived mid-flight are not lost: they coalesce into
+    // exactly one follow-up read, which refreshes behind the value on screen.
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      git.pendingDiffs,
+      hasLength(2),
+      reason: 'three mid-flight changes must collapse to one refetch, not three',
+    );
+    // Riverpod carries the previous value through that refresh, so the pane
+    // keeps showing the diff rather than dropping back to a spinner.
+    expect(container.read(fileDiffProvider(key)).value, 'diff v1');
+
+    git.pendingDiffs.last.complete('diff v2');
+    await Future<void>.delayed(Duration.zero);
+    expect(container.read(fileDiffProvider(key)).value, 'diff v2');
   });
 
   test('a commit patch cache is immutable — status refreshes never touch it',

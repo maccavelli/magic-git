@@ -1,7 +1,7 @@
 // The History panel's depth: it walks one page at a time, deepening when the
 // list is scrolled to its end, and stops asking once git returns fewer commits
-// than it walked for. Also the one client-side filter term (`sha:`), which
-// narrows the loaded rows without changing what git was asked for.
+// than it walked for. Also `sha:`, which — like every other term — is a
+// criterion git applies, not a pass over the rows already on screen.
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -26,6 +26,7 @@ class _PagingGit extends GitService {
   /// The `maxCount` of every log call, in order — the paging trail.
   final List<int> walks = [];
   final List<String?> greps = [];
+  final List<String?> shas = [];
 
   @override
   Future<List<GitCommit>> log(
@@ -37,29 +38,40 @@ class _PagingGit extends GitService {
     String? since,
     String? until,
     String? path,
+    String? pathQuery,
+    String? sha,
     bool all = false,
     bool follow = false,
     bool noMerges = false,
   }) async {
     walks.add(maxCount);
     greps.add(grep);
+    shas.add(sha);
     final count = maxCount < total ? maxCount : total;
     // 40-char hashes that differ in their LEADING characters (`c007ffff…`),
     // so a `sha:` prefix can single one out — real hashes are distinctive up
     // front, and a prefix match is only meaningful against that.
     String hashOf(int i) => 'c${i.toString().padLeft(3, '0')}'.padRight(40, 'f');
-    return [
-      for (var i = 0; i < count; i++)
-        GitCommit(
-          hash: hashOf(i),
-          shortHash: hashOf(i).substring(0, 7),
-          authorName: 'Dev',
-          authorEmail: 'd@e',
-          date: '2026-07-04T10:00',
-          parents: i + 1 < count ? [hashOf(i + 1)] : [],
-          subject: 'commit $i',
-        ),
-    ];
+    GitCommit commitAt(int i, {required int of}) => GitCommit(
+      hash: hashOf(i),
+      shortHash: hashOf(i).substring(0, 7),
+      authorName: 'Dev',
+      authorEmail: 'd@e',
+      date: '2026-07-04T10:00',
+      parents: i + 1 < of ? [hashOf(i + 1)] : [],
+      subject: 'commit $i',
+    );
+
+    // Git resolves a `sha:` against the object database and answers with the
+    // commit itself, so the result is what the hash *matched* — not a page of
+    // history that then gets narrowed. Depth is irrelevant to it.
+    if (sha != null) {
+      return [
+        for (var i = 0; i < total; i++)
+          if (hashOf(i).startsWith(sha.toLowerCase())) commitAt(i, of: total),
+      ];
+    }
+    return [for (var i = 0; i < count; i++) commitAt(i, of: count)];
   }
 
   @override
@@ -152,7 +164,7 @@ void main() {
     expect(find.text('commit 2'), findsOneWidget);
   });
 
-  testWidgets('sha: narrows the loaded rows without re-asking git', (
+  testWidgets('sha: is a term git applies, and it singles out the commit', (
     tester,
   ) async {
     final git = _PagingGit(12);
@@ -164,15 +176,38 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400)); // filter debounce
     await tester.pumpAndSettle();
 
-    // `c001…` is commit 1's hash and no other's — commit 2's row is gone, and
-    // git was never asked to grep.
+    // `c001…` is commit 1's hash and no other's.
     expect(find.text('commit 1'), findsOneWidget);
     expect(find.text('commit 2'), findsNothing);
     expect(find.text('1 matching commit'), findsOneWidget);
-    expect(
-      git.greps,
-      everyElement(isNull),
-      reason: 'sha: is matched client-side; git has no hash-prefix flag',
-    );
+    // It reached git rather than being applied to the rows on screen — which
+    // is what lets it find a commit this walk never loaded (a hash on another
+    // branch, or one page-depths further back).
+    expect(git.shas, contains('c001'));
+    expect(git.greps, everyElement(isNull));
+  });
+
+  testWidgets('a sha: match in a deep repo does not stampede the walk', (
+    tester,
+  ) async {
+    // The regression: `sha:` used to narrow the *fetched* page, so "exhausted"
+    // was judged on the page (a full 500 → more to come) while the list showed
+    // the single row that survived. The load-more sentinel therefore sat right
+    // under that row — permanently on screen, re-arming itself every frame —
+    // and walked the entire repository a page at a time.
+    final git = _PagingGit(kHistoryPageSize * 4);
+    await _pump(tester, git);
+    final walksBefore = git.walks.length;
+
+    await tester.enterText(find.byType(MacosTextField).first, 'sha:c001');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(find.text('commit 1'), findsOneWidget);
+    expect(find.text('1 matching commit'), findsOneWidget);
+    // One walk for the sha query, and it stops there: the row count is what the
+    // query matched, so the list knows it is complete.
+    expect(git.walks.length, walksBefore + 1);
+    expect(git.walks.last, kHistoryPageSize);
   });
 }

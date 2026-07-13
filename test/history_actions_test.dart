@@ -48,6 +48,8 @@ class _FakeGit extends GitService {
     String? since,
     String? until,
     String? path,
+    String? pathQuery,
+    String? sha,
     bool all = false,
     bool follow = false,
     bool noMerges = false,
@@ -57,7 +59,11 @@ class _FakeGit extends GitService {
       'author': author,
       'since': since,
       'until': until,
-      'path': path,
+      // The panel's file field is a search term, not a literal path — it must
+      // arrive as `pathQuery` (compiled to fuzzy, case-insensitive pathspecs),
+      // never as `path` (an exact pathspec, which is file history's language).
+      'pathQuery': pathQuery,
+      'sha': sha,
       'all': all,
       'noMerges': noMerges,
     };
@@ -581,7 +587,8 @@ void main() {
       'author': 'alice',
       'since': '2026-01-01',
       'until': null,
-      'path': 'src/',
+      'pathQuery': 'src/',
+      'sha': null,
       'all': false,
       'noMerges': true,
     });

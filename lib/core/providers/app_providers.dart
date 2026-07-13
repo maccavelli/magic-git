@@ -2278,9 +2278,12 @@ final magicSnapshotsProvider = FutureProvider.autoDispose
 const int kHistoryPageSize = 500;
 
 /// A filtered/searched commit log. Keyed by a query record (structural equality
-/// gives correct caching). [all] walks every ref; the rest narrow the walk —
-/// each maps 1:1 to a `git log` flag, so filtering is always server-side and
-/// results are complete up to [limit] (never "only what was loaded").
+/// gives correct caching — so every field here must stay a value type; a `List`
+/// would compare by identity and re-fetch on every rebuild). [all] walks every
+/// ref; the rest narrow the walk. Every criterion is applied by git itself, so
+/// results are complete up to [limit] rather than "whatever was already loaded"
+/// — including [sha], which is resolved against the object database and so
+/// finds a commit on any branch, at any depth.
 typedef LogQuery = ({
   String repoPath,
   String? grep,
@@ -2288,6 +2291,7 @@ typedef LogQuery = ({
   String? since,
   String? until,
   String? path,
+  String? sha,
   bool noMerges,
   bool all,
   int limit,
@@ -2304,7 +2308,10 @@ final logSearchProvider = FutureProvider.autoDispose
             author: q.author,
             since: q.since,
             until: q.until,
-            path: q.path,
+            // A typed `file:` term is a search term, not a literal path —
+            // `pathQuery`, never `path`.
+            pathQuery: q.path,
+            sha: q.sha,
             noMerges: q.noMerges,
             all: q.all,
           );
@@ -2335,7 +2342,45 @@ final logSearchProvider = FutureProvider.autoDispose
 /// Deliberately NOT applied to the hash-keyed caches ([commitDiffProvider] /
 /// [commitFileDiffProvider]): a commit's patch is immutable, which is exactly
 /// what lets those caches be large and long-lived (see [KeepAliveLru]).
-void _dependOnWorktreeState(Ref ref, String repoPath) {
+void _dependOnWorktreeState(
+  Ref ref,
+  String repoPath, {
+  required Future<Object?> content,
+}) {
+  var landed = false;
+  var disposed = false;
+  // A worktree change arrived while [content] was still in flight — see the
+  // deferral in the listener below.
+  var refetchOnLanding = false;
+
+  ref.onDispose(() => disposed = true);
+
+  // Deliberately a *microtask* hop off [content], not the completion callback
+  // itself. Riverpod publishes the fetched value in its own callback on this
+  // same future, and invalidating from a callback registered alongside it can
+  // tear the element down before the value is ever published — the fetch then
+  // completes over and over while the pane never leaves its spinner. Hopping a
+  // microtask orders this strictly after the publish, whichever callback ran
+  // first.
+  void onLanded(Object? _) {
+    Future.microtask(() {
+      landed = true;
+      // The read in flight may have run before the change reached disk, so it
+      // can be one revision stale. Refetch exactly once, now that there IS a
+      // value: Riverpod carries it through the refresh, so this costs a
+      // background fetch rather than a spinner.
+      if (refetchOnLanding && !disposed) {
+        refetchOnLanding = false;
+        ref.invalidateSelf();
+      }
+    });
+  }
+
+  // The error arm is consumed here so this derived future can't surface the
+  // failure a second time — the original still reaches Riverpod, whose job it
+  // is to put the provider into an error state.
+  content.then(onLanded, onError: (Object _, StackTrace _) => onLanded(null));
+
   ref.listen(
     statusProvider(repoPath).select((s) => s.value),
     (previous, next) {
@@ -2351,6 +2396,25 @@ void _dependOnWorktreeState(Ref ref, String repoPath) {
       // then doesn't even fire. This guard is belt-and-braces for direct
       // re-emissions of the same instance.
       if (identical(previous, next)) return;
+      // Never restart a fetch that hasn't landed. Invalidating one that has no
+      // value yet doesn't refresh anything — it throws away the in-flight read
+      // and starts over from a *bare* AsyncLoading, because there is no
+      // previous value for Riverpod to carry through the refresh. The pane
+      // falls back to a spinner, and if the next change lands before the
+      // restarted read does, it is thrown away too. A repo that changes faster
+      // than a diff takes to fetch therefore never shows a diff at all: it
+      // spins forever. (A build writing into an ignored directory is enough —
+      // every filesystem event mints a new status, whether or not git can see
+      // the file that changed.)
+      //
+      // Deferring loses nothing: the read in flight is already reading the
+      // present worktree, and the listenSelf above closes the only genuine gap
+      // — a read that raced the write — with a single refetch once there IS a
+      // value to carry through it. Progress is then guaranteed at any tick rate.
+      if (!landed) {
+        refetchOnLanding = true;
+        return;
+      }
       ref.invalidateSelf();
     },
     onError: (_, _) {},
@@ -2474,10 +2538,10 @@ final blameProvider = FutureProvider.autoDispose
     .family<List<BlameLine>, (String, String)>((ref, key) {
       _blameLru.touch(key, ref.keepAlive());
       final (repoPath, path) = key;
+      final future = ref.watch(gitServiceProvider).blame(repoPath, path);
       // Working-copy blame reads the file as it is on disk right now — an
       // external edit must invalidate it (see _dependOnWorktreeState).
-      _dependOnWorktreeState(ref, repoPath);
-      final future = ref.watch(gitServiceProvider).blame(repoPath, path);
+      _dependOnWorktreeState(ref, repoPath, content: future);
       future.then(
         (v) => _blameLru.reportSize(key, _estimateBlameBytes(v)),
         onError: (_) => _blameLru.evict(key),
@@ -2514,9 +2578,6 @@ final fileDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, bool, bool, int)>((ref, key) {
       _fileDiffLru.touch(key, ref.keepAlive());
       final (repoPath, path, staged, ignoreWhitespace, context) = key;
-      // A worktree/index diff changes whenever the repo does — every landed
-      // status refresh invalidates this so a cached diff can't go stale.
-      _dependOnWorktreeState(ref, repoPath);
       final future = ref.watch(gitServiceProvider).diffFile(
         repoPath,
         path: path,
@@ -2524,6 +2585,9 @@ final fileDiffProvider = FutureProvider.autoDispose
         ignoreWhitespace: ignoreWhitespace,
         context: context,
       );
+      // A worktree/index diff changes whenever the repo does — every landed
+      // status refresh invalidates this so a cached diff can't go stale.
+      _dependOnWorktreeState(ref, repoPath, content: future);
       future.then(
         (d) => _fileDiffLru.reportSize(key, d.length),
         onError: (_) => _fileDiffLru.evict(key),
@@ -2616,10 +2680,10 @@ final conflictFileProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       _conflictFileLru.touch(key, ref.keepAlive());
       final (repoPath, path) = key;
+      final future = ref.watch(gitServiceProvider).conflictFile(repoPath, path);
       // Conflict markers change as the user (or another session) edits the
       // file — follow the landed status so the pane never shows stale markers.
-      _dependOnWorktreeState(ref, repoPath);
-      final future = ref.watch(gitServiceProvider).conflictFile(repoPath, path);
+      _dependOnWorktreeState(ref, repoPath, content: future);
       future.then(
         (d) => _conflictFileLru.reportSize(key, d.length),
         onError: (_) => _conflictFileLru.evict(key),
@@ -2634,10 +2698,10 @@ final untrackedDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       _untrackedDiffLru.touch(key, ref.keepAlive());
       final (repoPath, path) = key;
+      final future = ref.watch(gitServiceProvider).diffUntracked(repoPath, path);
       // An untracked file's contents are pure worktree state — follow the
       // landed status so the rendered "diff" tracks on-disk edits.
-      _dependOnWorktreeState(ref, repoPath);
-      final future = ref.watch(gitServiceProvider).diffUntracked(repoPath, path);
+      _dependOnWorktreeState(ref, repoPath, content: future);
       future.then(
         (d) => _untrackedDiffLru.reportSize(key, d.length),
         onError: (_) => _untrackedDiffLru.evict(key),

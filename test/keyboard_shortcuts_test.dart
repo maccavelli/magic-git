@@ -119,6 +119,8 @@ class _FakeGit extends GitService {
     String? since,
     String? until,
     String? path,
+    String? pathQuery,
+    String? sha,
     bool all = false,
     bool follow = false,
     bool noMerges = false,

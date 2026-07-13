@@ -82,17 +82,11 @@ void main() {
     expect(parseLogFilter('Author:Mac').author, 'Mac');
   });
 
-  test('sha: prefix-matches hashes case-insensitively', () {
-    const commits = ['ABC123def', 'abc999', 'ffff01'];
-    expect(
-      filterByShaPrefix(commits, 'abc', hashOf: (c) => c),
-      ['ABC123def', 'abc999'],
-    );
-    // No prefix → the list passes through untouched (same instance, so the
-    // caller's identity-keyed memos still hit).
-    expect(
-      filterByShaPrefix(commits, null, hashOf: (c) => c),
-      same(commits),
-    );
+  test('sha: is parsed as a term — resolving it is git\'s job', () {
+    // It used to be filtered out of the already-fetched rows here; it is now a
+    // `git log` criterion like every other term, so a hash is found wherever it
+    // lives. What that resolution means is covered in log_search_test.dart.
+    expect(parseLogFilter('sha:A90916F').sha, 'A90916F');
+    expect(parseLogFilter('commit:a90916f').sha, 'a90916f');
   });
 }

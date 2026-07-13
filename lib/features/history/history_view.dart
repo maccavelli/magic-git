@@ -206,7 +206,6 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   String? get _effUntil => _typed.until ?? (_until.isEmpty ? null : _until);
   String? get _effPath => _typed.path ?? (_path.isEmpty ? null : _path);
 
-  /// The one client-side criterion: git has no filter-by-hash-prefix flag.
   String? get _effSha => _typed.sha;
 
   /// True when any narrowing criterion is active. The all-branches toggle is
@@ -231,6 +230,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     since: _effSince,
     until: _effUntil,
     path: _effPath,
+    sha: _effSha,
     noMerges: _hideMerges,
     all: _allBranches,
     limit: _limit,
@@ -247,6 +247,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       a.since == b.since &&
       a.until == b.until &&
       a.path == b.path &&
+      a.sha == b.sha &&
       a.noMerges == b.noMerges &&
       a.all == b.all;
 
@@ -431,30 +432,6 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     });
   }
 
-  // The sha:-prefix filter, memoized on (source list identity, prefix) so the
-  // displayed list keeps a stable identity across rebuilds — [_graphFor] and
-  // [_decorationsFor] both memo on identity, and a freshly-built list every
-  // build would re-lay-out the whole lane graph on every keystroke or hover.
-  List<GitCommit>? _shaSource;
-  String? _shaPrefix;
-  List<GitCommit>? _shaFiltered;
-
-  List<GitCommit>? _applyShaFilter(List<GitCommit>? commits, String? sha) {
-    if (commits == null || sha == null || sha.isEmpty) return commits;
-    if (identical(commits, _shaSource) &&
-        sha == _shaPrefix &&
-        _shaFiltered != null) {
-      return _shaFiltered;
-    }
-    _shaSource = commits;
-    _shaPrefix = sha;
-    return _shaFiltered = filterByShaPrefix(
-      commits,
-      sha,
-      hashOf: (c) => c.hash,
-    );
-  }
-
   // Memoized lane graph + ref decorations. Both are recomputed only when their
   // source list *instance* changes (Riverpod hands back the same list across
   // rebuilds until the provider is invalidated), so merely selecting a commit
@@ -527,8 +504,6 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       _limit = kHistoryPageSize;
       _lastFetched = null;
       _lastFetchedQuery = null;
-      _shaSource = null;
-      _shaFiltered = null;
     }
   }
 
@@ -1161,12 +1136,15 @@ class _HistoryViewState extends ConsumerState<HistoryView>
             _sameExceptLimit(_lastFetchedQuery!, query)
         ? _lastFetched
         : null;
-    final fetched = delivered ?? carried;
+    final commits = delivered ?? carried;
     // Fewer rows than asked for means the walk ran out: there is no next page.
-    // Measured before the client-side sha: filter, which narrows what's shown
-    // without changing how deep git walked.
-    final exhausted = fetched != null && fetched.length < _limit;
-    final commits = _applyShaFilter(fetched, _effSha);
+    // Sound only because every criterion is applied by git — the row count is
+    // what the query *matched*, not what survived a client-side pass over a
+    // full page. (It once wasn't: `sha:` filtered the fetched rows here, so a
+    // full page that narrowed to one row still read as "not exhausted", and the
+    // load-more sentinel — sitting right under that one row, hence permanently
+    // on screen — re-armed itself every frame and walked the entire repo.)
+    final exhausted = commits != null && commits.length < _limit;
 
     final keymap = ref.watch(keymapProvider);
     final selectedHash = _soleSelectedHash;
@@ -1339,6 +1317,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   'Filter by message, or use terms: author: file: sha: '
                   'after: before:\n'
                   'e.g. rename author:mac file:lib/core/ after:2026-01-01\n'
+                  'Words must all match; * and ? are wildcards (file:*.dart)\n'
                   'Quote values with spaces: author:"Mac Smith"',
               child: MacosTextField(
                 controller: _searchController,

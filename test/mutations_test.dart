@@ -639,8 +639,15 @@ void main() {
       );
       await git.log('/repo', grep: 'fix bug', author: 'jane', all: true);
       final args = exec.calls.single;
-      expect(args, containsAllInOrder(['--grep=fix bug', '-i']));
+      // One --grep per word, ANDed: a two-word search means "mentions both",
+      // not "contains this exact phrase" (which is all a joined pattern can
+      // ever match, and why typing two words used to find nothing).
+      expect(args, containsAll(['--grep=fix', '--grep=bug', '--all-match']));
       expect(args, contains('--author=jane'));
+      // Case-insensitive whenever there is a pattern at all — not only when a
+      // message term happens to be present alongside the author.
+      expect(args, contains('--regexp-ignore-case'));
+      expect(args, contains('--extended-regexp'));
       expect(args, contains('--all'));
       expect(args, isNot(contains('HEAD')));
       // Required by CommitGraph.build's lane algorithm, which assumes a

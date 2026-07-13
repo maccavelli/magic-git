@@ -5,6 +5,7 @@ import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../undo/undo_types.dart';
 import '../utils/git_porcelain_parser.dart';
+import 'log_search.dart';
 import 'repo_tree.dart';
 
 /// How `git pull` integrates upstream work.
@@ -836,10 +837,33 @@ class GitService {
   }
 
   /// Commit history for [revision] (default HEAD), most recent first, with
-  /// optional filters: [grep] (subject/body, case-insensitive), [author],
-  /// [since]/[until] (any git date expression), and a [path] to limit to commits
-  /// touching it. [all] walks every ref instead of [revision]; [follow] tracks a
-  /// single [path] across renames (file history).
+  /// optional filters, ANDed: [grep] (message text), [author], [since]/[until]
+  /// (any git date expression), [sha] (a commit-hash prefix), and a path.
+  /// [all] walks every ref instead of [revision]; [follow] tracks a single
+  /// [path] across renames (file history).
+  ///
+  /// The two path parameters are different languages, and mixing them up is a
+  /// bug either way round:
+  ///   * [path] is an **exact** pathspec — one real path, spelled from the repo
+  ///     root. It's what file history passes, and what `--follow` requires
+  ///     (git rejects `--follow` with anything but a single pathspec).
+  ///   * [pathQuery] is a **search term** a user typed. It's compiled by
+  ///     [searchPathspecs] into several case-insensitive pathspecs so that a
+  ///     bare filename or folder name matches at any depth — which a raw,
+  ///     root-rooted pathspec never does.
+  ///
+  /// [grep] and [author] are likewise user terms, not regexes: they're compiled
+  /// by [globToRegExp] so that regex metacharacters (`[WIP]`) match literally
+  /// instead of aborting the walk, and `*`/`?` behave as glob wildcards. A
+  /// multi-word [grep] becomes one `--grep` per word plus `--all-match`, so it
+  /// means "mentions all of these words" rather than "contains this exact
+  /// phrase".
+  ///
+  /// [sha] is resolved against the object database rather than filtered out of
+  /// the walked rows, so a hash is found wherever it lives — on an unchecked-out
+  /// branch, or far deeper than the current page. The walk is replaced by
+  /// `--no-walk` over the resolved commits, so [all] and [revision] no longer
+  /// apply; every other filter still narrows the result.
   ///
   /// Always requests `--topo-order`: [CommitGraph.build]'s lane algorithm
   /// requires that a commit never appears before any of its parents. Git's
@@ -860,11 +884,34 @@ class GitService {
     String? since,
     String? until,
     String? path,
+    String? pathQuery,
+    String? sha,
     bool all = false,
     bool follow = false,
     bool noMerges = false,
   }) async {
     final format = ['%H', '%h', '%an', '%ae', '%aI', '%P', '%s'].join(fieldSep);
+
+    // A `sha:` term names its commits outright, so it replaces the walk. Given
+    // a prefix git can't resolve to any object, the answer is "no such commit"
+    // — an empty result, not an unfiltered log.
+    var noWalk = false;
+    var revisions = <String>[];
+    if (sha != null && sha.trim().isNotEmpty) {
+      final resolved = await resolveShaPrefix(repoPath, sha);
+      if (resolved.isEmpty) return const [];
+      noWalk = true;
+      revisions = resolved;
+    } else if (!all) {
+      revisions = [revision];
+    }
+
+    final grepPatterns = messageGrepPatterns(grep);
+    final authorPattern = authorGrepPattern(author);
+    final pathspecs = <String>[
+      if (path != null && path.isNotEmpty) path,
+      ...searchPathspecs(pathQuery),
+    ];
 
     final result = await _executor.execute(
       repoPath: repoPath,
@@ -883,25 +930,28 @@ class GitService {
         '--no-show-signature',
         '--pretty=format:$format$recordSep',
         '--max-count=$maxCount',
-        if (grep != null && grep.trim().isNotEmpty) ...[
-          '--grep=${grep.trim()}',
-          '-i',
-        ],
-        if (author != null && author.trim().isNotEmpty)
-          '--author=${author.trim()}',
+        // The dialect the patterns from [globToRegExp] are written in.
+        '--extended-regexp',
+        if (grepPatterns.isNotEmpty || authorPattern != null)
+          '--regexp-ignore-case',
+        for (final pattern in grepPatterns) '--grep=$pattern',
+        // Git ORs multiple `--grep`s; the words of one search are an AND.
+        if (grepPatterns.length > 1) '--all-match',
+        if (authorPattern != null) '--author=$authorPattern',
         if (since != null && since.trim().isNotEmpty) '--since=${since.trim()}',
         if (until != null && until.trim().isNotEmpty) '--until=${until.trim()}',
         if (noMerges) '--no-merges',
         // `--follow` is only valid with exactly one pathspec; git errors out
         // otherwise (and it also rejects `--follow --all`).
-        if (follow && !all && path != null && path.isNotEmpty) '--follow',
-        if (all) '--all',
+        if (follow && !all && pathspecs.length == 1) '--follow',
+        if (noWalk) '--no-walk',
+        if (all && !noWalk) '--all',
         // Everything after this is a revision/pathspec, never an option — so a
         // branch literally named `-p` (or any leading-dash ref) can't be parsed
         // as a git flag.
         '--end-of-options',
-        if (!all) revision,
-        if (path != null && path.isNotEmpty) ...['--', path],
+        ...revisions,
+        if (pathspecs.isNotEmpty) ...['--', ...pathspecs],
       ],
       retries: _readRetries,
       lane: ExecLane.read,
@@ -928,6 +978,44 @@ class GitService {
       return Isolate.run(() => parseGitLog(stdout));
     }
     return parseGitLog(stdout);
+  }
+
+  /// Expands a commit-hash prefix to the full object names it could mean.
+  ///
+  /// `git log` has no filter-by-hash-prefix flag, but it doesn't need one: the
+  /// object database can be asked directly, and the answer covers the whole
+  /// repository rather than whatever the current walk happened to reach.
+  ///
+  /// Returns every object with the prefix, which includes blobs and trees —
+  /// they're left in deliberately. `git log --no-walk` ignores a non-commit
+  /// object rather than failing on it, so passing them through costs nothing
+  /// and saves a round trip spent asking `cat-file` for types we'd only use to
+  /// discard rows git already discards.
+  ///
+  /// Empty for anything git can't disambiguate ([isResolvableShaPrefix]) — a
+  /// non-hex term, or a prefix too short to name an object — and empty for a
+  /// prefix that matches nothing. Callers read that as "no such commit".
+  Future<List<String>> resolveShaPrefix(String repoPath, String sha) async {
+    final prefix = sha.trim().toLowerCase();
+    if (!isResolvableShaPrefix(prefix)) return const [];
+
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: [
+        'git',
+        'rev-parse',
+        '--disambiguate=$prefix',
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    // A prefix naming nothing is an ordinary "no results", not an error worth
+    // failing the whole History list over.
+    if (!result.isSuccess) return const [];
+    return [
+      for (final line in result.stdout.split('\n'))
+        if (line.trim().isNotEmpty) line.trim(),
+    ];
   }
 
   /// HEAD's reflog — the Recovery sheet's raw material. Same wire format and
