@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,17 +12,16 @@ import 'patch_model.dart';
 /// hunks reveal the code git left out (it emits only three context lines, so a
 /// hunk routinely ends mid-expression and reads as if the diff were cut off).
 ///
-/// Structurally this mirrors [DiffView] — one fixed-height row per line, a
-/// single shared horizontal scroll so every line's tail is reachable, one
-/// [SelectionArea] over the lot — because that shape is already proven here.
-/// What it adds is a typed row model, so a row can be an interactive expander
-/// rather than only text.
+/// Structurally this is the same shape as [DiffView] — one fixed-height row per
+/// line, a single shared horizontal pan so every line's tail is reachable, one
+/// [SelectionArea] over the lot. What it adds is a typed row model, so a row can
+/// be an interactive expander rather than only text.
 ///
 /// Expansion reads the file as the commit left it ([blobLinesProvider]) and
-/// splices those lines in as context — but only after
-/// [verifyBlobMatchesHunks] confirms the blob really is the one the hunks were
-/// computed against. If it isn't, this shows the patch unexpanded rather than
-/// render lines it cannot vouch for.
+/// splices those lines in as context — but only after [verifyBlobMatchesHunks]
+/// confirms the blob really is the one the hunks were computed against. If it
+/// isn't, this shows the patch unexpanded rather than render lines it cannot
+/// vouch for.
 class CommitPatchView extends ConsumerStatefulWidget {
   final String repoPath;
 
@@ -49,33 +46,92 @@ class CommitPatchView extends ConsumerStatefulWidget {
 }
 
 class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
-  static const double _hPad = 12;
+  /// A commit patch is the biggest thing this app renders — a vendored
+  /// dependency bump or a regenerated lockfile runs to tens of thousands of
+  /// lines — and it used to be parsed inline, on the UI thread, straight from a
+  /// field initializer. [DiffParser] moves exactly those off thread, and leaves
+  /// the ordinary commit parsing inline where it belongs.
+  final DiffParser<CommitPatch> _parser = DiffParser(parseCommitPatch);
 
   final ScrollController _vertical = ScrollController();
   final ScrollController _horizontal = ScrollController();
 
+  CommitPatch? _patch;
+  bool _loading = false;
+
   /// How far each gap has been opened. Keyed by (file, gap) so it survives the
-  /// rebuild an expansion itself triggers; cleared when the commit changes.
+  /// rebuild an expansion itself triggers; cleared when the patch changes.
   Map<ExpandRequest, GapExpansion> _expansions = {};
 
   /// Files whose blob the user has actually asked for. Fetching every file's
-  /// blob up front would be a command per file on every commit selection — so
-  /// a file's blob is only fetched once its expander is clicked.
+  /// blob up front would be a command per file on every commit selection — so a
+  /// file's blob is only fetched once its expander is clicked.
   Set<int> _wanted = {};
 
-  late CommitPatch _patch = parseCommitPatch(widget.diff);
+  /// Files whose blob was asked for and could not be had — so the expander can
+  /// say so instead of sitting there as a control that silently does nothing.
+  Set<int> _blobFailed = {};
+
+  /// The rendered rows, and the width of the widest of them.
+  ///
+  /// Both are O(patch) to derive, and both are a pure function of (patch,
+  /// expansions, blobs) — so they are derived when one of those actually moves,
+  /// and reused otherwise. They used to be rebuilt on every `build` (which is
+  /// every expander click, on a patch that can run to tens of thousands of rows)
+  /// and the width was measured inside the `LayoutBuilder`, so it was re-walked
+  /// on every layout pass of every frame of a window resize.
+  List<PatchRow> _rows = const [];
+  double _maxLineWidth = 0;
+
+  // The inputs the cached rows were built from. Compared by identity: the patch
+  // is replaced only by a re-parse, and [_expansions] is rewritten wholesale on
+  // every change rather than mutated, so identity is exactly the right question.
+  CommitPatch? _rowsPatch;
+  Map<ExpandRequest, GapExpansion>? _rowsExpansions;
+  Map<int, List<String>?> _rowsBlobs = const {};
+
+  void _deriveRows(CommitPatch patch, Map<int, List<String>?> blobs) {
+    if (identical(_rowsPatch, patch) &&
+        identical(_rowsExpansions, _expansions) &&
+        _sameBlobs(blobs)) {
+      return;
+    }
+    _rowsPatch = patch;
+    _rowsExpansions = _expansions;
+    _rowsBlobs = blobs;
+    _rows = buildPatchRows(patch, expansions: _expansions, blobs: blobs);
+    _maxLineWidth = measureDiffWidth(_rowTexts(_rows));
+  }
+
+  /// Riverpod hands back the *same* list instance for a blob until it is
+  /// refetched, so identity per entry answers "did any blob actually change?".
+  bool _sameBlobs(Map<int, List<String>?> blobs) {
+    if (blobs.length != _rowsBlobs.length) return false;
+    for (final entry in blobs.entries) {
+      if (!identical(_rowsBlobs[entry.key], entry.value)) return false;
+    }
+    return true;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _startParse(widget.diff, initial: true);
+  }
 
   @override
   void didUpdateWidget(CommitPatchView old) {
     super.didUpdateWidget(old);
-    if (old.diff != widget.diff) {
-      _patch = parseCommitPatch(widget.diff);
-    }
-    if (old.hash != widget.hash) {
-      // A different commit: its gaps and blobs have nothing to do with the
-      // previous one's.
+    if (old.diff != widget.diff || old.hash != widget.hash) {
+      // A different patch: its gaps and blobs have nothing to do with the
+      // previous one's. Reset on the *diff* changing too, not only the hash —
+      // gap indices are positions in a particular hunk layout, and re-parsing
+      // gives a different one, so carrying them across would show gaps opened
+      // that the user never opened.
       _expansions = {};
       _wanted = {};
+      _blobFailed = {};
+      _startParse(widget.diff, initial: false);
     }
   }
 
@@ -86,25 +142,73 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
     super.dispose();
   }
 
+  void _startParse(String diff, {required bool initial}) {
+    final inline = _parser.parse(
+      diff,
+      onDone: (patch) {
+        if (!mounted) return;
+        setState(() {
+          _patch = patch;
+          _loading = false;
+        });
+      },
+      // Parse failed, or the isolate never spawned. A commit patch that cannot
+      // be parsed still has to render: fall through to the flat [DiffView] (see
+      // build) rather than leave the pane spinning on nothing.
+      onFailed: () {
+        if (!mounted) return;
+        setState(() {
+          _patch = null;
+          _loading = false;
+        });
+      },
+    );
+
+    // Null means it went off-thread and hasn't landed: show the spinner. During
+    // initState the imminent first build reads the fields directly.
+    if (initial) {
+      inline == null ? _loading = true : _patch = inline.result;
+      return;
+    }
+    setState(() {
+      _patch = inline?.result;
+      _loading = inline == null;
+    });
+  }
+
   /// The post-image lines for [fileIndex], or null when they aren't available:
   /// not requested, still loading, failed, or — the case that matters — a blob
   /// that doesn't match the hunks, which must never be spliced.
-  List<String>? _blobFor(int fileIndex) {
+  List<String>? _blobFor(int fileIndex, CommitPatch patch) {
     if (!_wanted.contains(fileIndex)) return null;
-    final file = _patch.files[fileIndex];
+    final file = patch.files[fileIndex];
     final path = file.newPath;
     if (!file.canExpand || path == null) return null;
 
     final async = ref.watch(
       blobLinesProvider((widget.repoPath, widget.hash, path)),
     );
-    final lines = async.value;
-    if (lines == null) return null;
-    // The check that stops this lying: if the blob isn't the one these hunks
-    // were computed against, splicing it would inject unrelated source lines
-    // into the diff and present them as real.
-    if (!verifyBlobMatchesHunks(file, lines)) return null;
-    return lines;
+
+    // A blob that failed to read (or that the hunks disagree with) leaves the
+    // expander as a control that does nothing when clicked, forever, with no
+    // explanation. Record it so the row can say what happened instead.
+    final failed =
+        async.hasError ||
+        (async.hasValue && !verifyBlobMatchesHunks(file, async.value!));
+    if (failed != _blobFailed.contains(fileIndex)) {
+      // Not during build: this is a render-time discovery about async state.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        setState(() {
+          failed
+              ? _blobFailed.add(fileIndex)
+              : _blobFailed.remove(fileIndex);
+        });
+      });
+    }
+    if (failed) return null;
+
+    return async.value;
   }
 
   void _expand(ExpandRequest request, ExpandDirection direction, int hidden) {
@@ -125,53 +229,49 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.diff.trim().isEmpty) {
-      return Center(
-        child: Text('No changes', style: MacosTheme.of(context).typography.body),
-      );
-    }
+    if (widget.diff.trim().isEmpty) return const DiffEmpty();
+    if (_loading) return const DiffPending();
 
+    final patch = _patch;
+    // Unparseable: still show the user their diff, just without the expanders.
+    if (patch == null) return DiffView(diff: widget.diff, wrap: widget.wrap);
+
+    // Watching the blobs is what can change the rows out from under us, so this
+    // is where the rows are derived — but only when something they depend on has
+    // actually moved.
     final blobs = <int, List<String>?>{
-      for (var i = 0; i < _patch.files.length; i++) i: _blobFor(i),
+      for (var i = 0; i < patch.files.length; i++) i: _blobFor(i, patch),
     };
-    final rows = buildPatchRows(
-      _patch,
-      expansions: _expansions,
-      blobs: blobs,
-    );
+    _deriveRows(patch, blobs);
 
     final defaultColor =
         MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
 
-    return widget.wrap
-        ? _buildList(rows, defaultColor, null)
-        : LayoutBuilder(
-            builder: (context, constraints) {
-              final lineWidth = _measureMaxWidth(rows) + _hPad * 2;
-              final overflows = lineWidth > constraints.maxWidth;
-              final contentWidth = math.max(constraints.maxWidth, lineWidth);
-              return Scrollbar(
-                controller: _vertical,
-                notificationPredicate: (n) => n.depth == 1,
-                child: Scrollbar(
-                  controller: _horizontal,
-                  thumbVisibility: overflows,
-                  child: SingleChildScrollView(
-                    controller: _horizontal,
-                    scrollDirection: Axis.horizontal,
-                    child: SizedBox(
-                      width: contentWidth,
-                      height: constraints.maxHeight,
-                      child: _buildList(rows, defaultColor, contentWidth),
-                    ),
-                  ),
-                ),
-              );
-            },
-          );
+    if (widget.wrap) return _list(defaultColor, null);
+    return DiffPan(
+      vertical: _vertical,
+      horizontal: _horizontal,
+      maxLineWidth: _maxLineWidth,
+      builder: (context, _, viewportWidth) => _list(defaultColor, viewportWidth),
+    );
   }
 
-  Widget _buildList(List<PatchRow> rows, Color defaultColor, double? width) {
+  static Iterable<String> _rowTexts(List<PatchRow> rows) sync* {
+    for (final row in rows) {
+      switch (row) {
+        case PreambleRow(:final text):
+        case FileHeaderRow(:final text):
+        case HunkHeaderRow(:final text):
+        case CodeRow(:final text):
+          yield text;
+        case ExpanderRow():
+        case CollapseRow():
+          break; // a control, not a line — it never sets the width
+      }
+    }
+  }
+
+  Widget _list(Color defaultColor, double? viewportWidth) {
     return SelectionArea(
       child: ListView.builder(
         controller: _vertical,
@@ -180,29 +280,42 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
         // its own business. Every row (expanders included) is one line tall, so
         // the O(1) scroll math holds.
         itemExtent: widget.wrap ? null : kDiffLineExtent,
-        itemCount: rows.length,
+        itemCount: _rows.length,
         itemBuilder: (context, index) =>
-            _row(rows[index], defaultColor),
+            _row(_rows[index], defaultColor, viewportWidth),
       ),
     );
   }
 
-  Widget _row(PatchRow row, Color defaultColor) => switch (row) {
-    ExpanderRow() => _expander(row),
-    CollapseRow() => _collapser(row),
-    PreambleRow(:final text) ||
-    FileHeaderRow(:final text) ||
-    HunkHeaderRow(:final text) ||
-    CodeRow(:final text) => _text(text, defaultColor, row),
-  };
+  Widget _row(PatchRow row, Color defaultColor, double? viewportWidth) =>
+      switch (row) {
+        ExpanderRow() => _pin(_expander(row), viewportWidth),
+        CollapseRow() => _pin(_collapser(row), viewportWidth),
+        PreambleRow(:final text) ||
+        FileHeaderRow(:final text) ||
+        HunkHeaderRow(:final text) ||
+        CodeRow(:final text) => _text(text, defaultColor, row),
+      };
+
+  /// Gap rows are controls, so they hold still while the diff pans beneath them
+  /// (see [DiffPinnedRow]) — panning right to read a long line must not carry
+  /// "Show 16 lines" off the screen. In wrapped mode there is no pan, so there
+  /// is nothing to pin against.
+  Widget _pin(Widget child, double? viewportWidth) => viewportWidth == null
+      ? child
+      : DiffPinnedRow(
+          horizontal: _horizontal,
+          viewportWidth: viewportWidth,
+          child: child,
+        );
 
   Widget _text(String text, Color defaultColor, PatchRow row) {
-    // An expanded line is unchanged code: color it as context, and tint its
+    // An expanded line is unchanged code: colour it as context, and tint its
     // background faintly so it reads as "revealed", not "part of the change".
     final expanded = row is CodeRow && row.fromExpansion;
     return Container(
       color: expanded ? const Color(0x0DFFFFFF) : null,
-      padding: const EdgeInsets.symmetric(horizontal: _hPad),
+      padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
       alignment: Alignment.centerLeft,
       child: Text(
         text,
@@ -216,7 +329,18 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
   /// The row that opens a gap: one chevron, pointing **down** — "reveal what's
   /// hidden here". One click takes the whole gap unless it's enormous, in which
   /// case it walks [kExpandStep] lines at a time and says so.
+  ///
+  /// If the blob could not be read, it says *that* instead, and stops offering a
+  /// click that cannot do anything.
   Widget _expander(ExpanderRow row) {
+    if (_blobFailed.contains(row.request.fileIndex)) {
+      return _gapRow(
+        icon: CupertinoIcons.exclamationmark_triangle,
+        label: "Can't show more — this file couldn't be read at this commit",
+        color: MacosColors.systemGrayColor,
+        onTap: null,
+      );
+    }
     final hidden = row.hiddenLines;
     final label = switch (hidden) {
       null => 'Show more',
@@ -226,8 +350,7 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
     return _gapRow(
       icon: CupertinoIcons.chevron_down,
       label: label,
-      onTap: () =>
-          _expand(row.request, row.direction, hidden ?? kExpandStep),
+      onTap: () => _expand(row.request, row.direction, hidden ?? kExpandStep),
     );
   }
 
@@ -256,32 +379,34 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
   Widget _gapRow({
     required IconData icon,
     required String label,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
+    Color color = MacosColors.systemBlueColor,
   }) {
     return SelectionContainer.disabled(
       child: MouseRegion(
-        cursor: SystemMouseCursors.click,
+        cursor: onTap == null
+            ? SystemMouseCursors.basic
+            : SystemMouseCursors.click,
         child: GestureDetector(
           onTap: onTap,
           behavior: HitTestBehavior.opaque,
           child: Container(
-            color: const Color(0x14007AFF),
-            padding: const EdgeInsets.symmetric(horizontal: _hPad),
+            color: onTap == null
+                ? MacosColors.systemGrayColor.withValues(alpha: 0.08)
+                : const Color(0x14007AFF),
+            padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
             alignment: Alignment.centerLeft,
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                MacosIcon(
-                  icon,
-                  size: 11,
-                  color: MacosColors.systemBlueColor,
-                ),
+                MacosIcon(icon, size: 11, color: color),
                 const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: kDiffMono.copyWith(
-                    color: MacosColors.systemBlueColor,
-                    fontSize: 11,
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: kDiffMono.copyWith(color: color, fontSize: 11),
                   ),
                 ),
               ],
@@ -290,27 +415,5 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
         ),
       ),
     );
-  }
-
-  /// Widest row, measured on the single longest line — same approach (and same
-  /// monospace assumption) as [DiffView].
-  double _measureMaxWidth(List<PatchRow> rows) {
-    var longest = '';
-    for (final row in rows) {
-      final text = switch (row) {
-        PreambleRow(:final text) ||
-        FileHeaderRow(:final text) ||
-        HunkHeaderRow(:final text) ||
-        CodeRow(:final text) => text,
-        ExpanderRow() || CollapseRow() => '',
-      };
-      if (text.length > longest.length) longest = text;
-    }
-    if (longest.isEmpty) return 0;
-    return (TextPainter(
-      text: TextSpan(text: longest, style: kDiffMono),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-    )..layout()).width;
   }
 }

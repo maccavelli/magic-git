@@ -542,8 +542,8 @@ class _StashViewState extends ConsumerState<StashView> {
     }
     final diffAsync = ref.watch(stashDiffProvider((repoPath, selected)));
     return diffAsync.when(
-      loading: () => const Center(child: ProgressCircle()),
-      error: (err, _) => _error(context, err),
+      loading: () => const DiffPending(),
+      error: (err, _) => DiffFailure(err),
       data: (diff) => DiffView(diff: diff),
     );
   }

@@ -1,8 +1,19 @@
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/unified_diff.dart';
+
+/// Shared vocabulary for every diff surface in the app.
+///
+/// Four widgets render diffs — [DiffView] (flat, read-only), `HunkDiffView`
+/// (unified, per-hunk staging), `SplitDiffView` (side-by-side) and
+/// `CommitPatchView` (a commit's patch, with context expanders). They had drifted
+/// into disagreeing about things a user reads as one feature: what green means,
+/// whether a long line pans the whole diff or only itself, whether a huge patch
+/// is parsed off the UI thread, and what a pane looks like while it loads. Each
+/// of those now has exactly one definition, and it lives here.
 
 /// Monospace text style shared by the diff views.
 const kDiffMono = TextStyle(
@@ -19,16 +30,38 @@ const kDiffMono = TextStyle(
 /// without changing the layout, since it equals each line's intrinsic height.
 const double kDiffLineExtent = 12 * 1.35; // = 16.2
 
-/// Per-line syntax color for a unified-diff line, shared by [DiffView] and the
-/// hunk-staging view.
+/// Horizontal inset on every diff line, in every renderer.
+const double kDiffHPad = 12;
+
+// ---------------------------------------------------------------------------
+// Colour
+// ---------------------------------------------------------------------------
+
+/// What a diff line's *kind* looks like. The single source of truth for the
+/// palette: an addition is this green and a removal is this red everywhere.
 ///
-/// Header/hunk-header lines (`diff --git`, `index`, `@@ …`, etc.) are a
-/// concern specific to rendering a *flat* diff — [DiffLineKind] intentionally
-/// only classifies lines *within* an already-parsed hunk body, so those are
-/// still handled here directly. For the overlap (add/remove/context) this
-/// defers to [diffLineKind] rather than re-testing the leading character
-/// independently, so there's exactly one place that decides what `+`/`-`/` `
-/// mean.
+/// Kept separate from [diffLineColor] because not every renderer still has the
+/// leading `+`/`-` to look at — the side-by-side view strips the marker and
+/// derives the kind from which column a line landed in. That is a different
+/// question ("what kind is this row?") with the same answer ("so it is this
+/// colour"), and routing both through here is what stops the two from drifting.
+Color diffKindColor(DiffLineKind kind, Color defaultColor) => switch (kind) {
+  DiffLineKind.add => MacosColors.systemGreenColor,
+  DiffLineKind.remove => MacosColors.systemRedColor,
+  DiffLineKind.context ||
+  DiffLineKind.noNewline ||
+  DiffLineKind.other => defaultColor,
+};
+
+/// Per-line syntax colour for a *raw* unified-diff line — one that still carries
+/// its leading marker.
+///
+/// Header/hunk-header lines (`diff --git`, `index`, `@@ …`) are a concern
+/// specific to rendering a flat diff — [DiffLineKind] intentionally only
+/// classifies lines *within* an already-parsed hunk body — so those are handled
+/// here. Everything else defers to [diffLineKind] + [diffKindColor], so there is
+/// exactly one place that decides what `+`/`-`/` ` mean and exactly one that
+/// decides what they look like.
 Color diffLineColor(String line, Color defaultColor) {
   if (line.startsWith('@@')) return MacosColors.systemTealColor;
   if (line.startsWith('diff ') ||
@@ -41,26 +74,288 @@ Color diffLineColor(String line, Color defaultColor) {
       line.startsWith('similarity ')) {
     return MacosColors.systemGrayColor;
   }
-  return switch (diffLineKind(line)) {
-    DiffLineKind.add => MacosColors.systemGreenColor,
-    DiffLineKind.remove => MacosColors.systemRedColor,
-    DiffLineKind.context ||
-    DiffLineKind.noNewline ||
-    DiffLineKind.other => defaultColor,
-  };
+  return diffKindColor(diffLineKind(line), defaultColor);
 }
 
+/// The teal a `@@ … @@` hunk header is drawn in, wherever one is rendered as a
+/// row of its own rather than as a line of raw diff text.
+const Color kDiffHunkHeaderColor = MacosColors.systemTealColor;
+
+// ---------------------------------------------------------------------------
+// Parsing a patch into rows, off the UI thread when it is big
+// ---------------------------------------------------------------------------
+
+/// Above this many lines, a patch is parsed on a background isolate.
+///
+/// Below it, parsing runs inline: an isolate spawn's own overhead would dwarf
+/// the work for the overwhelming majority of diffs, and going async would cost
+/// the common case a frame of spinner for nothing. Only a genuinely huge patch —
+/// a regenerated lockfile, a minified bundle, a vendored dependency bump; tens of
+/// thousands of lines — crosses this and moves off thread so selecting it cannot
+/// jank a frame.
+const int kDiffIsolateLineThreshold = 20000;
+
+int diffLineCount(String diff) => '\n'.allMatches(diff).length + 1;
+
+/// Turns raw patch text into a renderer's row model, on a background isolate
+/// when the patch is large enough that parsing it inline would drop frames.
+///
+/// [parse] is handed to `Isolate.run`, so it **must** be a top-level or static
+/// function — a closure over widget state is not sendable.
+///
+/// Every renderer that parses a patch owns one of these. Before, three of them
+/// hand-rolled the same threshold, the same line count and the same
+/// supersede-by-request-id dance — and two of them hand-rolled it with no error
+/// arm at all, so a parse that failed (or an isolate that never spawned, which is
+/// likeliest on exactly the giant patches that take this path) left the pane's
+/// spinner up with nothing left alive to clear it.
+class DiffParser<T> {
+  DiffParser(this._parse);
+
+  final T Function(String) _parse;
+
+  /// Bumped per parse, so a result superseded by a newer one is dropped rather
+  /// than clobbering state the widget has already moved past.
+  int _requestId = 0;
+
+  /// Parses [diff], superseding any parse already in flight.
+  ///
+  /// Returns the result **synchronously** when it ran inline (the common case,
+  /// and why this isn't just a `Future`). Returns null when it went off-thread:
+  /// exactly one of [onDone] / [onFailed] then runs later, unless a newer parse
+  /// supersedes it first, in which case neither does.
+  ///
+  /// The result is wrapped in a record rather than returned bare, so "ran
+  /// inline" and "went off-thread" stay distinguishable when `T` is itself
+  /// nullable — `null` is a perfectly ordinary inline result (a binary diff has
+  /// no rows), and conflating the two made a binary file render as a spinner.
+  ///
+  /// [onFailed] is not optional and not decoration — it is the difference
+  /// between a pane that degrades and a pane that spins forever.
+  ({T result})? parse(
+    String diff, {
+    required void Function(T result) onDone,
+    required void Function() onFailed,
+  }) {
+    final id = ++_requestId;
+    if (diffLineCount(diff) <= kDiffIsolateLineThreshold) {
+      return (result: _parse(diff));
+    }
+
+    Isolate.run(() => _parse(diff)).then(
+      (result) {
+        if (id == _requestId) onDone(result);
+      },
+      onError: (Object _, StackTrace _) {
+        if (id == _requestId) onFailed();
+      },
+    );
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Layout
+// ---------------------------------------------------------------------------
+
+/// The exact rendered width of the widest line in [lines], which is what sizes a
+/// diff's shared horizontal scroll extent.
+///
+/// Only the single longest line (by character count — the font is monospace) is
+/// actually laid out, so this stays cheap on a huge patch; measuring the real
+/// glyph run rather than estimating char-count × advance means the extent is
+/// never a hair short, so a long line's tail always scrolls fully into view.
+///
+/// The monospace assumption is where this is approximate: a line of CJK or a line
+/// full of tabs renders wider than its character count suggests, so a *shorter*
+/// line could in principle out-measure the one picked here. It has never bitten,
+/// and the alternative — laying out every line — is not worth paying on every
+/// patch to fix it.
+double measureDiffWidth(Iterable<String> lines) {
+  var longest = '';
+  for (final line in lines) {
+    if (line.length > longest.length) longest = line;
+  }
+  if (longest.isEmpty) return 0;
+  return (TextPainter(
+    text: TextSpan(text: longest, style: kDiffMono),
+    textDirection: TextDirection.ltr,
+    maxLines: 1,
+  )..layout()).width;
+}
+
+/// The scroll shape every unwrapped diff shares: a vertical list, and **one**
+/// horizontal pan across the whole diff.
+///
+/// One pan, not one per line. The hunk and split views used to give every line
+/// (and every split cell) its own [SingleChildScrollView], so scrolling
+/// horizontally moved that one line and left the rest behind — the diff came
+/// apart, and there was no way to read the ends of a run of long lines together.
+/// Here the inner list is as wide as the widest line and the whole thing pans as
+/// a unit, so every line's tail arrives in lockstep.
+///
+/// [builder] is given the width its rows must fill — so a row's background band
+/// spans the whole diff rather than stopping at the viewport edge — and the
+/// viewport's own width, so a row that is a *control* rather than text can hold
+/// still with [DiffPinnedRow].
+class DiffPan extends StatelessWidget {
+  const DiffPan({
+    super.key,
+    required this.vertical,
+    required this.horizontal,
+    required this.maxLineWidth,
+    required this.builder,
+  });
+
+  final ScrollController vertical;
+  final ScrollController horizontal;
+
+  /// Widest rendered line, *excluding* the [kDiffHPad] on either side of it.
+  final double maxLineWidth;
+
+  final Widget Function(
+    BuildContext context,
+    double contentWidth,
+    double viewportWidth,
+  )
+  builder;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final lineWidth = maxLineWidth + kDiffHPad * 2;
+        final overflows = lineWidth > constraints.maxWidth;
+        final contentWidth = math.max(constraints.maxWidth, lineWidth);
+        return Scrollbar(
+          controller: vertical,
+          // The vertical list sits one viewport deeper than the horizontal
+          // scroll, so its notifications arrive at depth 1 here; the default
+          // depth-0 predicate would otherwise track the horizontal axis.
+          notificationPredicate: (notification) => notification.depth == 1,
+          child: Scrollbar(
+            controller: horizontal,
+            // Keep the bottom bar visible whenever lines run past the edge, so
+            // the "there's more to the right" affordance is never hidden.
+            thumbVisibility: overflows,
+            child: SingleChildScrollView(
+              controller: horizontal,
+              scrollDirection: Axis.horizontal,
+              child: SizedBox(
+                width: contentWidth,
+                height: constraints.maxHeight,
+                child: builder(context, contentWidth, constraints.maxWidth),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// A row inside a [DiffPan] that stays put in the viewport while the diff pans
+/// horizontally beneath it.
+///
+/// For rows that are **controls**, not text: a hunk header carrying Stage /
+/// Unstage / Discard, or a `⋯` gap expander. Panning right to read the end of a
+/// long line would otherwise carry those buttons off the screen with it, leaving
+/// the diff's own actions unreachable exactly when the diff is widest. Text rows
+/// pan; controls hold still.
+class DiffPinnedRow extends StatelessWidget {
+  const DiffPinnedRow({
+    super.key,
+    required this.horizontal,
+    required this.viewportWidth,
+    required this.child,
+  });
+
+  final ScrollController horizontal;
+  final double viewportWidth;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: horizontal,
+      builder: (context, child) {
+        // Shift by exactly the pan, so the row lands back where the viewport is.
+        final dx = horizontal.hasClients ? horizontal.offset : 0.0;
+        return Transform.translate(
+          offset: Offset(dx, 0),
+          child: SizedBox(width: viewportWidth, child: child),
+        );
+      },
+      child: child,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Chrome
+// ---------------------------------------------------------------------------
+
+/// The spinner every diff surface shows while its patch is being fetched.
+class DiffPending extends StatelessWidget {
+  const DiffPending({super.key});
+
+  @override
+  Widget build(BuildContext context) =>
+      const Center(child: ProgressCircle());
+}
+
+/// The message every diff surface shows when its patch could not be fetched.
+/// One definition, so a failure looks the same whether it happened in the
+/// Repository panel, a pop-out, History, a stash preview or the recovery sheet.
+class DiffFailure extends StatelessWidget {
+  const DiffFailure(this.error, {super.key});
+
+  final Object error;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Text(
+        '$error',
+        style: MacosTheme.of(
+          context,
+        ).typography.body.copyWith(color: MacosColors.systemRedColor),
+      ),
+    ),
+  );
+}
+
+/// What a diff surface shows when there is nothing to show.
+class DiffEmpty extends StatelessWidget {
+  const DiffEmpty({super.key, this.message = 'No changes'});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Text(message, style: MacosTheme.of(context).typography.body),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The flat renderer
+// ---------------------------------------------------------------------------
+
 /// Renders a raw unified diff (from `git diff` / `git show`) with per-line
-/// syntax coloring in a monospace font. Uses [ListView.builder] so large patches
+/// syntax colouring in a monospace font. Uses [ListView.builder] so large patches
 /// stay responsive.
 ///
 /// [wrap] chooses the line-length behavior:
 ///  * false (default): every line stays on one line and the whole diff shares
-///    ONE horizontal scrollbar along the bottom, so you can scroll all lines
-///    together to reach their ends. Uniform row height keeps the fixed
-///    [kDiffLineExtent] item extent (O(1) jump-scroll on large patches).
+///    ONE horizontal pan (see [DiffPan]), so you can scroll all lines together
+///    to reach their ends. Uniform row height keeps the fixed [kDiffLineExtent]
+///    item extent (O(1) jump-scroll on large patches).
 ///  * true: long lines wrap to the viewport width (variable row heights, no
 ///    horizontal scroll).
+///
+/// This is also the fallback every richer renderer degrades to when it cannot
+/// parse a patch into hunks — so it must always be able to show the diff.
 class DiffView extends StatefulWidget {
   final String diff;
   final bool wrap;
@@ -72,46 +367,23 @@ class DiffView extends StatefulWidget {
 }
 
 class _DiffViewState extends State<DiffView> {
-  static const _mono = kDiffMono;
-  static const double _hPad = 12;
-
   // Separate controllers so the two nested scrollbars (vertical list, shared
   // horizontal pan) each drive an unambiguous axis.
   final ScrollController _vertical = ScrollController();
   final ScrollController _horizontal = ScrollController();
 
   late List<String> _lines = const LineSplitter().convert(widget.diff);
-  late double _maxLineWidth = _measureMaxWidth(_lines);
-
-  /// The exact rendered width of the widest line, sizing the shared horizontal
-  /// scroll extent. Only the single longest line (by char count — the font is
-  /// monospace) is laid out, so this stays cheap on large patches; measuring
-  /// the real glyph run — rather than estimating char-count × advance — means
-  /// the extent is never a hair short, so a long line's tail always scrolls
-  /// fully into view.
-  static double _measureMaxWidth(List<String> lines) {
-    var longest = '';
-    for (final line in lines) {
-      if (line.length > longest.length) longest = line;
-    }
-    if (longest.isEmpty) return 0;
-    return (TextPainter(
-      text: TextSpan(text: longest, style: kDiffMono),
-      textDirection: TextDirection.ltr,
-      maxLines: 1,
-    )..layout()).width;
-  }
+  late double _maxLineWidth = measureDiffWidth(_lines);
 
   @override
   void didUpdateWidget(DiffView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Skip re-splitting when nothing actually changed — sibling diff views
-    // (HunkDiffView/SplitDiffView) already do the equivalent for their own
-    // parse step, and diff providers commonly hand back the same content
-    // across otherwise-unrelated rebuilds (a theme change, a parent resize).
+    // Skip re-splitting when nothing actually changed — diff providers commonly
+    // hand back the same content across otherwise-unrelated rebuilds (a theme
+    // change, a parent resize).
     if (oldWidget.diff != widget.diff) {
       _lines = const LineSplitter().convert(widget.diff);
-      _maxLineWidth = _measureMaxWidth(_lines);
+      _maxLineWidth = measureDiffWidth(_lines);
     }
   }
 
@@ -124,106 +396,48 @@ class _DiffViewState extends State<DiffView> {
 
   @override
   Widget build(BuildContext context) {
-    if (widget.diff.trim().isEmpty) {
-      return Center(
-        child: Text(
-          'No changes',
-          style: MacosTheme.of(context).typography.body,
-        ),
-      );
-    }
+    if (widget.diff.trim().isEmpty) return const DiffEmpty();
 
     final defaultColor =
         MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
 
-    return widget.wrap
-        ? _buildWrapped(defaultColor)
-        : _buildUnwrapped(defaultColor);
+    if (widget.wrap) return _list(defaultColor);
+    return DiffPan(
+      vertical: _vertical,
+      horizontal: _horizontal,
+      maxLineWidth: _maxLineWidth,
+      builder: (context, _, _) => _list(defaultColor),
+    );
   }
 
   // One SelectionArea over plain Text lines (not per-line SelectableText):
   // selection state doesn't span separate SelectableText widgets, so the old
   // shape made it impossible to drag-copy a multi-line hunk. This is the same
   // pattern the blame sheet uses, and each row is lighter too.
-
-  Widget _buildWrapped(Color defaultColor) {
-    return Scrollbar(
-      controller: _vertical,
-      child: SelectionArea(
-        child: ListView.builder(
-          controller: _vertical,
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          // Wrapped lines have variable height, so no fixed itemExtent — the
-          // builder still lazily measures only the visible rows.
-          itemCount: _lines.length,
-          itemBuilder: (context, index) {
-            final line = _lines[index];
-            return Padding(
-              padding: const EdgeInsets.symmetric(horizontal: _hPad),
-              child: Text(
-                line,
-                style: _mono.copyWith(color: diffLineColor(line, defaultColor)),
-              ),
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildUnwrapped(Color defaultColor) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final lineWidth = _maxLineWidth + _hPad * 2;
-        final overflows = lineWidth > constraints.maxWidth;
-        // The inner list is as wide as the widest line (never narrower than the
-        // viewport), so the single horizontal scroll below reveals every line's
-        // end in lockstep.
-        final contentWidth = math.max(constraints.maxWidth, lineWidth);
-        return Scrollbar(
-          controller: _vertical,
-          // The vertical list sits one viewport deeper than the horizontal
-          // scroll, so its notifications arrive at depth 1 here; the default
-          // depth-0 predicate would otherwise track the horizontal axis.
-          notificationPredicate: (notification) => notification.depth == 1,
-          child: Scrollbar(
-            controller: _horizontal,
-            // Keep the bottom bar visible whenever lines run past the edge, so
-            // the "there's more to the right" affordance is never hidden.
-            thumbVisibility: overflows,
-            child: SingleChildScrollView(
-              controller: _horizontal,
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: contentWidth,
-                height: constraints.maxHeight,
-                child: SelectionArea(
-                  child: ListView.builder(
-                    controller: _vertical,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                    itemExtent: kDiffLineExtent,
-                    itemCount: _lines.length,
-                    itemBuilder: (context, index) {
-                      final line = _lines[index];
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: _hPad),
-                        child: Text(
-                          line,
-                          maxLines: 1,
-                          softWrap: false,
-                          style: _mono.copyWith(
-                            color: diffLineColor(line, defaultColor),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ),
+  Widget _list(Color defaultColor) {
+    return SelectionArea(
+      child: ListView.builder(
+        controller: _vertical,
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        // Wrapped lines have variable height, so no fixed extent then — the
+        // builder still lazily measures only the visible rows.
+        itemExtent: widget.wrap ? null : kDiffLineExtent,
+        itemCount: _lines.length,
+        itemBuilder: (context, index) {
+          final line = _lines[index];
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
+            child: Text(
+              line,
+              maxLines: widget.wrap ? null : 1,
+              softWrap: widget.wrap,
+              style: kDiffMono.copyWith(
+                color: diffLineColor(line, defaultColor),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 }

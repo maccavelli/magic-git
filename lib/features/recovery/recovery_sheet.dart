@@ -367,8 +367,8 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
         Container(height: 1, color: MacosColors.separatorColor),
         Expanded(
           child: diffAsync.when(
-            loading: () => const Center(child: ProgressCircle()),
-            error: (err, _) => _errorText('$err'),
+            loading: () => const DiffPending(),
+            error: (err, _) => DiffFailure(err),
             data: (diff) => DiffView(diff: diff),
           ),
         ),

@@ -149,18 +149,8 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
       commitFileDiffProvider((widget.repoPath, hash, widget.path)),
     );
     return async.when(
-      loading: () => const Center(child: ProgressCircle()),
-      error: (err, _) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(
-            '$err',
-            style: MacosTheme.of(
-              context,
-            ).typography.body.copyWith(color: MacosColors.systemRedColor),
-          ),
-        ),
-      ),
+      loading: () => const DiffPending(),
+      error: (err, _) => DiffFailure(err),
       data: (patch) => DiffView(diff: patch),
     );
   }

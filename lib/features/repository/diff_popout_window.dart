@@ -239,17 +239,8 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
                   Container(height: 1, color: MacosColors.separatorColor),
                   Expanded(
                     child: diffAsync.when(
-                      loading: () => const Center(child: ProgressCircle()),
-                      error: (err, _) => Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Text(
-                            '$err',
-                            style: MacosTheme.of(context).typography.body
-                                .copyWith(color: MacosColors.systemRedColor),
-                          ),
-                        ),
-                      ),
+                      loading: () => const DiffPending(),
+                      error: (err, _) => DiffFailure(err),
                       data: (diff) {
                         if (_split) return SplitDiffView(diff: diff);
                         if (widget.untracked || _ignoreWs) {

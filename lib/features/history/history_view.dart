@@ -14,6 +14,7 @@ import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/commit_patch_view.dart';
 import '../common/context_menu.dart';
+import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/list_keyboard_nav.dart';
@@ -1686,7 +1687,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         Expanded(
           child: diffAsync.when(
             loading: () => const Center(child: ProgressCircle()),
-            error: (err, _) => _error(context, err),
+            error: (err, _) => DiffFailure(err),
             data: (diff) => CommitPatchView(
               repoPath: widget.repoPath,
               hash: hash,
@@ -1763,7 +1764,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         Expanded(
           child: diffAsync.when(
             loading: () => const Center(child: ProgressCircle()),
-            error: (err, _) => _error(context, err),
+            error: (err, _) => DiffFailure(err),
             data: (diff) => diff.trim().isEmpty
                 ? Center(
                     child: Text(
@@ -2000,18 +2001,8 @@ class CommitDiffSheet extends ConsumerWidget {
             Container(height: 1, color: MacosColors.separatorColor),
             Expanded(
               child: diffAsync.when(
-                loading: () => const Center(child: ProgressCircle()),
-                error: (err, _) => Center(
-                  child: Padding(
-                    padding: const EdgeInsets.all(24),
-                    child: Text(
-                      '$err',
-                      style: typography.body.copyWith(
-                        color: MacosColors.systemRedColor,
-                      ),
-                    ),
-                  ),
-                ),
+                loading: () => const DiffPending(),
+                error: (err, _) => DiffFailure(err),
                 data: (diff) => CommitPatchView(
                   repoPath: repoPath,
                   hash: hash,
