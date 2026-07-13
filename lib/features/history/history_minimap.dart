@@ -4,11 +4,9 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/commit_graph.dart';
 import '../../core/git/git_service.dart';
 
-/// An annotated scroll track beside the commit list: a viewport band you can
-/// click or scrub, plus per-commit markers for HEAD / branches / tags and
-/// the current selection. The GitLens-research verdict distilled — the
-/// markers-and-jump half of a minimap carries nearly all the utility; the
-/// activity histogram half is decoration, deliberately omitted.
+/// An annotated scroll track beside the commit list: an activity silhouette
+/// (how busy each commit's day was), per-commit markers for HEAD / branches /
+/// tags and the current selection, and a viewport band you can click or scrub.
 ///
 /// Geometry is exact because the list has a fixed item extent: row i maps to
 /// `(i + 0.5) / rowCount` of the track, no layout information needed.
@@ -24,6 +22,12 @@ class HistoryMinimap extends StatelessWidget {
   final Map<String, List<GitRef>> decorations;
   final Set<String> selected;
 
+  /// Per-row activity in 0..1, parallel to `graph.rows` — the share of the
+  /// busiest day's commit count that this row's day carried. Memoized by the
+  /// owner (this widget rebuilds on every scroll tick; the silhouette must
+  /// not be recomputed at that rate).
+  final List<double> density;
+
   const HistoryMinimap({
     super.key,
     required this.controller,
@@ -31,9 +35,10 @@ class HistoryMinimap extends StatelessWidget {
     required this.graph,
     required this.decorations,
     required this.selected,
+    required this.density,
   });
 
-  static const double width = 14;
+  static const double width = 18;
 
   @override
   Widget build(BuildContext context) {
@@ -68,6 +73,7 @@ class HistoryMinimap extends StatelessWidget {
                   graph: graph,
                   decorations: decorations,
                   selected: selected,
+                  density: density,
                 ),
               ),
             ),
@@ -95,6 +101,7 @@ class _MinimapPainter extends CustomPainter {
   final CommitGraph graph;
   final Map<String, List<GitRef>> decorations;
   final Set<String> selected;
+  final List<double> density;
 
   _MinimapPainter({
     required this.controller,
@@ -102,6 +109,7 @@ class _MinimapPainter extends CustomPainter {
     required this.graph,
     required this.decorations,
     required this.selected,
+    required this.density,
   }) : super(repaint: Listenable.merge([controller, metricsTick]));
 
   @override
@@ -116,6 +124,28 @@ class _MinimapPainter extends CustomPainter {
     );
 
     double yFor(int index) => (index + 0.5) / rows.length * size.height;
+
+    // Activity silhouette: each row's bar runs as far across the track as its
+    // day was busy, relative to the busiest day in the loaded history. Built
+    // as ONE path and filled once — thousands of separately-drawn translucent
+    // rects would compound their alpha wherever sub-pixel rows overlap, and
+    // read as arbitrary banding rather than density.
+    if (density.length == rows.length) {
+      final rowHeight = size.height / rows.length;
+      final silhouette = Path();
+      var any = false;
+      for (var i = 0; i < rows.length; i++) {
+        final d = density[i];
+        if (d <= 0) continue;
+        any = true;
+        silhouette.addRect(
+          Rect.fromLTWH(0, i * rowHeight, size.width * d, rowHeight),
+        );
+      }
+      if (any) {
+        canvas.drawPath(silhouette, Paint()..color = const Color(0x18FFFFFF));
+      }
+    }
 
     // Ref markers (left-inset ticks) and selection markers (right-inset), so
     // a selected, decorated row shows both side by side.
@@ -188,5 +218,6 @@ class _MinimapPainter extends CustomPainter {
   bool shouldRepaint(covariant _MinimapPainter oldDelegate) =>
       oldDelegate.graph != graph ||
       oldDelegate.decorations != decorations ||
-      oldDelegate.selected != selected;
+      oldDelegate.selected != selected ||
+      oldDelegate.density != density;
 }

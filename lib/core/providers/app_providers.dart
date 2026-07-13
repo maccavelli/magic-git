@@ -1911,6 +1911,13 @@ void clearHashKeyedRepoCaches() {
 List<ProviderOrFamily> repoMutationFamilies(String repoPath) => [
   statusProvider(repoPath),
   logProvider(repoPath),
+  // The History panel's own list — keyed by the whole [LogQuery] (filters,
+  // scope, paging depth), which a mutation site has no way to reconstruct, so
+  // the FAMILY goes in and every cached query refetches. Instances for other
+  // repos are autoDispose and unwatched, so invalidating them costs nothing;
+  // leaving the family out is what used to strand a *filtered* History panel
+  // on pre-mutation results until some unrelated refresh happened to fire.
+  logSearchProvider,
   refsProvider(repoPath),
   stashesProvider(repoPath),
   reflogProvider(repoPath),
@@ -2260,10 +2267,19 @@ final magicSnapshotsProvider = FutureProvider.autoDispose
       return ref.watch(gitServiceProvider).snapshotRefs(repoPath);
     });
 
+/// How deep the History panel walks on first load, and how much further each
+/// "Load more" goes. Paging is expressed as a bigger [LogQuery.limit] rather
+/// than a `--skip` offset into a re-run walk: one `git log` invocation always
+/// produces the whole displayed prefix, so there are no page-boundary
+/// duplicates or drops when the repo changes mid-scroll, no dedupe pass, and
+/// the loaded depth survives an invalidation (the same deeper query refetches).
+/// The cost is re-walking the prefix per page — trivial next to the round trip.
+const int kHistoryPageSize = 500;
+
 /// A filtered/searched commit log. Keyed by a query record (structural equality
 /// gives correct caching). [all] walks every ref; the rest narrow the walk —
 /// each maps 1:1 to a `git log` flag, so filtering is always server-side and
-/// results are complete up to the fetch cap (never "only what was loaded").
+/// results are complete up to [limit] (never "only what was loaded").
 typedef LogQuery = ({
   String repoPath,
   String? grep,
@@ -2273,6 +2289,7 @@ typedef LogQuery = ({
   String? path,
   bool noMerges,
   bool all,
+  int limit,
 });
 
 final logSearchProvider = FutureProvider.autoDispose
@@ -2281,6 +2298,7 @@ final logSearchProvider = FutureProvider.autoDispose
           .watch(gitServiceProvider)
           .log(
             q.repoPath,
+            maxCount: q.limit,
             grep: q.grep,
             author: q.author,
             since: q.since,

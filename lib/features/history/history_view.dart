@@ -22,6 +22,7 @@ import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'commit_graph_view.dart';
 import 'history_minimap.dart';
+import 'log_filter.dart';
 import 'rebase_sheet.dart';
 import 'ref_chip.dart';
 
@@ -153,7 +154,11 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     }
   }
 
-  String _grep = '';
+  /// The filter field's parsed grammar: free text plus `author:` / `file:` /
+  /// `sha:` / `after:` / `before:` terms (see [parseLogFilter]). Where a typed
+  /// term and the matching structured field are both set, the typed term wins
+  /// — it's the one the user is looking at as they type.
+  LogFilter _typed = LogFilter.empty;
   String _author = '';
   String _since = '';
   String _until = '';
@@ -162,6 +167,18 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   bool _allBranches = false;
   bool _filtersExpanded = false;
   Timer? _searchDebounce;
+
+  /// How deep the log walk goes. Grows a page at a time as the list is
+  /// scrolled to its end; it's part of the provider key, so each step is one
+  /// atomic `git log` for the whole displayed prefix (no page-boundary
+  /// stitching) and the depth survives a post-mutation invalidation.
+  int _limit = kHistoryPageSize;
+
+  /// The last delivered page and the query that produced it — kept so a
+  /// deeper page (a NEW provider key, hence no data on its first frame) can
+  /// keep showing the rows already on screen instead of blanking to a spinner.
+  List<GitCommit>? _lastFetched;
+  LogQuery? _lastFetchedQuery;
 
   @override
   void dispose() {
@@ -181,18 +198,57 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     super.dispose();
   }
 
+  // The effective criteria: a typed `key:` term overrides the structured
+  // field of the same name, which supplies the value when no term was typed.
+  String? get _effGrep => _typed.message;
+  String? get _effAuthor => _typed.author ?? (_author.isEmpty ? null : _author);
+  String? get _effSince => _typed.since ?? (_since.isEmpty ? null : _since);
+  String? get _effUntil => _typed.until ?? (_until.isEmpty ? null : _until);
+  String? get _effPath => _typed.path ?? (_path.isEmpty ? null : _path);
+
+  /// The one client-side criterion: git has no filter-by-hash-prefix flag.
+  String? get _effSha => _typed.sha;
+
   /// True when any narrowing criterion is active. The all-branches toggle is
   /// a view *scope* rather than a filter, but both route the panel through
   /// [logSearchProvider] and disqualify the top row as HEAD.
   bool get _hasQueryFilters =>
-      _grep.isNotEmpty ||
-      _author.isNotEmpty ||
-      _since.isNotEmpty ||
-      _until.isNotEmpty ||
-      _path.isNotEmpty ||
+      _effGrep != null ||
+      _effAuthor != null ||
+      _effSince != null ||
+      _effUntil != null ||
+      _effPath != null ||
+      _effSha != null ||
       _hideMerges;
 
   bool get _filtering => _hasQueryFilters || _allBranches;
+
+  /// The provider key for the currently displayed history.
+  LogQuery get _query => (
+    repoPath: widget.repoPath,
+    grep: _effGrep,
+    author: _effAuthor,
+    since: _effSince,
+    until: _effUntil,
+    path: _effPath,
+    noMerges: _hideMerges,
+    all: _allBranches,
+    limit: _limit,
+  );
+
+  /// Whether two queries ask the same question at different depths — the only
+  /// case where the previous rows are still valid to show while the next page
+  /// loads. A criteria change instead falls back to the loading state, so a
+  /// filter can never appear to match rows it hasn't been applied to.
+  static bool _sameExceptLimit(LogQuery a, LogQuery b) =>
+      a.repoPath == b.repoPath &&
+      a.grep == b.grep &&
+      a.author == b.author &&
+      a.since == b.since &&
+      a.until == b.until &&
+      a.path == b.path &&
+      a.noMerges == b.noMerges &&
+      a.all == b.all;
 
   GlobalKey _commitRowKeyFor(String hash) =>
       _commitRowKeys.putIfAbsent(hash, GlobalKey.new);
@@ -347,7 +403,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     _searchDebounce = Timer(const Duration(milliseconds: 350), () {
       if (!mounted) return;
       setState(() {
-        _grep = _searchController.text.trim();
+        _typed = parseLogFilter(_searchController.text);
         _author = _authorController.text.trim();
         _since = _afterController.text.trim();
         _until = _beforeController.text.trim();
@@ -366,13 +422,37 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     _beforeController.clear();
     _pathController.clear();
     setState(() {
-      _grep = '';
+      _typed = LogFilter.empty;
       _author = '';
       _since = '';
       _until = '';
       _path = '';
       _hideMerges = false;
     });
+  }
+
+  // The sha:-prefix filter, memoized on (source list identity, prefix) so the
+  // displayed list keeps a stable identity across rebuilds — [_graphFor] and
+  // [_decorationsFor] both memo on identity, and a freshly-built list every
+  // build would re-lay-out the whole lane graph on every keystroke or hover.
+  List<GitCommit>? _shaSource;
+  String? _shaPrefix;
+  List<GitCommit>? _shaFiltered;
+
+  List<GitCommit>? _applyShaFilter(List<GitCommit>? commits, String? sha) {
+    if (commits == null || sha == null || sha.isEmpty) return commits;
+    if (identical(commits, _shaSource) &&
+        sha == _shaPrefix &&
+        _shaFiltered != null) {
+      return _shaFiltered;
+    }
+    _shaSource = commits;
+    _shaPrefix = sha;
+    return _shaFiltered = filterByShaPrefix(
+      commits,
+      sha,
+      hashOf: (c) => c.hash,
+    );
   }
 
   // Memoized lane graph + ref decorations. Both are recomputed only when their
@@ -400,6 +480,36 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     return _decorations!;
   }
 
+  CommitGraph? _densitySource;
+  List<double>? _density;
+
+  /// Per-row activity for the minimap's silhouette: how busy the calendar day
+  /// each commit landed on was, as a share of the busiest day in the loaded
+  /// history (0..1). Memoized on graph identity — the minimap rebuilds on
+  /// every scroll tick, and this walks the whole list.
+  List<double> _densityFor(CommitGraph graph) {
+    if (identical(graph, _densitySource) && _density != null) return _density!;
+    final rows = graph.rows;
+    final days = List<String>.filled(rows.length, '');
+    final perDay = <String, int>{};
+    for (var i = 0; i < rows.length; i++) {
+      // The date is ISO 8601 (`%aI`), so the calendar day is its first 10
+      // characters — no parsing needed.
+      final date = rows[i].commit.date;
+      final day = date.length >= 10 ? date.substring(0, 10) : date;
+      days[i] = day;
+      perDay[day] = (perDay[day] ?? 0) + 1;
+    }
+    var busiest = 0;
+    for (final count in perDay.values) {
+      if (count > busiest) busiest = count;
+    }
+    _densitySource = graph;
+    return _density = busiest == 0
+        ? List<double>.filled(rows.length, 0)
+        : [for (final day in days) (perDay[day] ?? 0) / busiest];
+  }
+
   @override
   void didUpdateWidget(HistoryView oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -409,6 +519,16 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       _graph = null;
       _lastRefs = null;
       _decorations = null;
+      _densitySource = null;
+      _density = null;
+      // A different repo's history is a different walk: drop the carried-over
+      // rows (they'd otherwise show for one frame under the new repo) and
+      // start again at page one.
+      _limit = kHistoryPageSize;
+      _lastFetched = null;
+      _lastFetchedQuery = null;
+      _shaSource = null;
+      _shaFiltered = null;
     }
   }
 
@@ -923,13 +1043,27 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     if (_busy || _rebaseSheetOpen || commit.parents.isEmpty) return;
     List<GitCommit> commits;
     try {
-      commits = await ref.read(logProvider(repoPath).future);
+      // Walked at least as deep as the panel currently displays: a commit the
+      // user paged down to and selected must still be findable here, or
+      // "rebase from here" would silently do nothing on deep history.
+      commits = await _git.log(repoPath, maxCount: _limit);
     } catch (_) {
       return;
     }
     if (!mounted) return;
     final idx = commits.indexWhere((c) => c.hash == commit.hash);
-    if (idx < 0) return;
+    if (idx < 0) {
+      // Not an ancestor of HEAD (reachable only via the all-branches view), or
+      // deeper than the walk above. Either way the HEAD..commit range this
+      // rebase would rewrite doesn't exist — say so instead of no-op'ing.
+      await showErrorDialog(
+        context,
+        '${commit.shortHash} isn\'t part of the current branch\'s history. '
+        'Interactive rebase rewrites the commits between HEAD and the one you '
+        'pick, so pick a commit that HEAD descends from.',
+      );
+      return;
+    }
     // commits[0..idx] are HEAD..selected (newest first); the todo is oldest-first.
     final slice = commits.sublist(0, idx + 1);
     // git rejects `pick <merge-hash>` outright, which would strand the repo in
@@ -993,36 +1127,41 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   @override
   Widget build(BuildContext context) {
     final filtering = _filtering;
-    // Warm the patch cache as fresh (unfiltered) history lands — the newest
-    // commits are the ones overwhelmingly likely to be inspected.
-    ref.listen(logProvider(widget.repoPath), (previous, next) {
+    final query = _query;
+    // Warm the patch cache as fresh history lands — the newest commits are the
+    // ones overwhelmingly likely to be inspected.
+    ref.listen(logSearchProvider(query), (previous, next) {
       _prefetchCommitPatches(next.value);
     });
-    final logAsync = filtering
-        ? ref.watch(
-            logSearchProvider((
-              repoPath: widget.repoPath,
-              grep: _grep.isEmpty ? null : _grep,
-              author: _author.isEmpty ? null : _author,
-              since: _since.isEmpty ? null : _since,
-              until: _until.isEmpty ? null : _until,
-              path: _path.isEmpty ? null : _path,
-              noMerges: _hideMerges,
-              all: _allBranches,
-            )),
-          )
-        : ref.watch(logProvider(widget.repoPath));
+    final logAsync = ref.watch(logSearchProvider(query));
     // Ref decorations are best-effort: if for-each-ref fails, show a bare graph.
     final decorations = _decorationsFor(
       ref.watch(refsProvider(widget.repoPath)).value ?? const [],
     );
 
+    // A deeper page is a NEW provider key, so its first frame carries no data.
+    // Keep the rows (and the scroll offset) already on screen while it loads —
+    // but only for a same-question-deeper-walk; a criteria change must NOT
+    // keep showing rows the new filter was never applied to.
+    final delivered = logAsync.value;
+    if (delivered != null) {
+      _lastFetched = delivered;
+      _lastFetchedQuery = query;
+    }
+    final carried =
+        _lastFetchedQuery != null &&
+            _sameExceptLimit(_lastFetchedQuery!, query)
+        ? _lastFetched
+        : null;
+    final fetched = delivered ?? carried;
+    // Fewer rows than asked for means the walk ran out: there is no next page.
+    // Measured before the client-side sha: filter, which narrows what's shown
+    // without changing how deep git walked.
+    final exhausted = fetched != null && fetched.length < _limit;
+    final commits = _applyShaFilter(fetched, _effSha);
+
     final keymap = ref.watch(keymapProvider);
     final selectedHash = _soleSelectedHash;
-    // Preconditions from the log value this same build renders — _lastCommits
-    // is only refreshed inside the data branch below, so reading it here
-    // lagged one build behind right after a load or filter change.
-    final commits = logAsync.value ?? _lastCommits;
     final selectedCommit = _selectedCommitIn(commits);
     final hasCommits = commits?.isNotEmpty ?? false;
 
@@ -1063,47 +1202,18 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               _filterBar(context, filtering),
               Container(height: 1, color: MacosColors.separatorColor),
               Expanded(
-                child: logAsync.when(
-                  loading: () => const Center(child: ProgressCircle()),
-                  error: (err, _) => _error(context, err),
-                  data: (commits) => commits.isEmpty
-                      ? Center(
-                          child: Text(
-                            filtering ? 'No matching commits' : 'No commits',
-                            style: MacosTheme.of(context).typography.body
-                                .copyWith(color: MacosColors.systemGrayColor),
-                          ),
-                        )
-                      : NotificationListener<ScrollMetricsNotification>(
-                          onNotification: (_) {
-                            _scrollMetricsTick.value++;
-                            return false;
-                          },
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Expanded(
-                                child: _commitList(
-                                  context,
-                                  _graphFor(commits),
-                                  decorations,
-                                ),
-                              ),
-                              HistoryMinimap(
-                                controller: _commitScroll,
-                                metricsTick: _scrollMetricsTick,
-                                graph: _graphFor(commits),
-                                decorations: decorations,
-                                selected: _selectedHashes,
-                              ),
-                            ],
-                          ),
-                        ),
+                child: _historyBody(
+                  context,
+                  logAsync: logAsync,
+                  commits: commits,
+                  exhausted: exhausted,
+                  decorations: decorations,
+                  filtering: filtering,
                 ),
               ),
               if (_hasQueryFilters) ...[
                 Container(height: 1, color: MacosColors.separatorColor),
-                _filterFooter(context, logAsync),
+                _filterFooter(context, commits, exhausted),
               ],
             ],
           ),
@@ -1111,6 +1221,67 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         Container(width: 1, color: MacosColors.separatorColor),
         Expanded(child: _rightPane(context, commits)),
       ],
+      ),
+    );
+  }
+
+  /// The commit list and its minimap — or the spinner/error/empty state when
+  /// there's nothing to draw. [commits] is null only while the first page of a
+  /// query is in flight (or after it failed); a *deeper* page keeps the
+  /// already-loaded rows on screen and shows its progress in the list's
+  /// trailing row instead.
+  Widget _historyBody(
+    BuildContext context, {
+    required AsyncValue<List<GitCommit>> logAsync,
+    required List<GitCommit>? commits,
+    required bool exhausted,
+    required Map<String, List<GitRef>> decorations,
+    required bool filtering,
+  }) {
+    if (commits == null) {
+      return logAsync.hasError
+          ? _error(context, logAsync.error!)
+          : const Center(child: ProgressCircle());
+    }
+    if (commits.isEmpty) {
+      return Center(
+        child: Text(
+          filtering ? 'No matching commits' : 'No commits',
+          style: MacosTheme.of(
+            context,
+          ).typography.body.copyWith(color: MacosColors.systemGrayColor),
+        ),
+      );
+    }
+    final graph = _graphFor(commits);
+    return NotificationListener<ScrollMetricsNotification>(
+      onNotification: (_) {
+        _scrollMetricsTick.value++;
+        return false;
+      },
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: _commitList(
+              context,
+              graph,
+              decorations,
+              exhausted: exhausted,
+              // A page already in flight (or one that just failed) must not
+              // trigger another — see [_loadMoreRow].
+              canLoadMore: !logAsync.isLoading && !logAsync.hasError,
+            ),
+          ),
+          HistoryMinimap(
+            controller: _commitScroll,
+            metricsTick: _scrollMetricsTick,
+            graph: graph,
+            decorations: decorations,
+            selected: _selectedHashes,
+            density: _densityFor(graph),
+          ),
+        ],
       ),
     );
   }
@@ -1155,14 +1326,21 @@ class _HistoryViewState extends ConsumerState<HistoryView>
           Row(
         children: [
           Expanded(
-            child: MacosTextField(
-              controller: _searchController,
-              focusNode: _searchFocus,
-              placeholder: 'Filter commits by message…',
-              placeholderStyle: kAppPlaceholderStyle,
-              decoration: kAppTextFieldDecoration,
-              focusedDecoration: kAppTextFieldFocusedDecoration,
-              onChanged: (_) => _debounceFilters(),
+            child: MacosTooltip(
+              message:
+                  'Filter by message, or use terms: author: file: sha: '
+                  'after: before:\n'
+                  'e.g. rename author:mac file:lib/core/ after:2026-01-01\n'
+                  'Quote values with spaces: author:"Mac Smith"',
+              child: MacosTextField(
+                controller: _searchController,
+                focusNode: _searchFocus,
+                placeholder: 'Filter — message, author:, file:, sha:…',
+                placeholderStyle: kAppPlaceholderStyle,
+                decoration: kAppTextFieldDecoration,
+                focusedDecoration: kAppTextFieldFocusedDecoration,
+                onChanged: (_) => _debounceFilters(),
+              ),
             ),
           ),
           const SizedBox(width: 6),
@@ -1300,18 +1478,21 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     );
   }
 
-  /// Compact status line under a filtered list: the match count (flagging
-  /// the fetch cap when it's hit) plus a one-click reset of every criterion.
+  /// Compact status line under a filtered list: the match count (flagging when
+  /// more history is still unwalked) plus a one-click reset of every criterion.
   Widget _filterFooter(
     BuildContext context,
-    AsyncValue<List<GitCommit>> logAsync,
+    List<GitCommit>? commits,
+    bool exhausted,
   ) {
     final typography = MacosTheme.of(context).typography;
-    final count = logAsync.value?.length;
+    final count = commits?.length;
     final label = count == null
         ? 'Filtering…'
-        : count >= 200
-        ? 'First $count matching commits'
+        : !exhausted
+        // The walk stopped at the current depth, so the count is a floor, not
+        // a total — scrolling to the end walks further.
+        ? 'First $count matching commits — scroll for more'
         : '$count matching ${count == 1 ? 'commit' : 'commits'}';
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 4, 8, 4),
@@ -1338,11 +1519,34 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     );
   }
 
+  /// The list's trailing row while more history remains unwalked. Building it
+  /// means the user scrolled to the end of what's loaded, so it asks for the
+  /// next page — the request IS the scroll, so there's no button to hunt for.
+  ///
+  /// [canLoadMore] is false while a page is already in flight (or one just
+  /// failed): the sentinel keeps being rebuilt for as long as it's on screen,
+  /// and without that gate each rebuild would deepen the walk again.
+  Widget _loadMoreRow(double rowHeight, bool canLoadMore) {
+    if (canLoadMore) {
+      // Post-frame: this runs inside build, and deepening the query mutates
+      // provider-watching state.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _limit += kHistoryPageSize);
+      });
+    }
+    return SizedBox(
+      height: rowHeight,
+      child: const Center(child: ProgressCircle(radius: 8)),
+    );
+  }
+
   Widget _commitList(
     BuildContext context,
     CommitGraph graph,
-    Map<String, List<GitRef>> decorations,
-  ) {
+    Map<String, List<GitRef>> decorations, {
+    required bool exhausted,
+    required bool canLoadMore,
+  }) {
     final typography = MacosTheme.of(context).typography;
     // The zoom factor scales the whole list coherently: row extent, lane
     // geometry, node dot, and (via the TextScaler below) the text. Watched
@@ -1411,8 +1615,11 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       controller: _commitScroll,
       itemExtent: rowHeight,
       physics: _metaDown ? const NeverScrollableScrollPhysics() : null,
-      itemCount: graph.rows.length,
+      itemCount: graph.rows.length + (exhausted ? 0 : 1),
       itemBuilder: (context, index) {
+        if (index >= graph.rows.length) {
+          return _loadMoreRow(rowHeight, canLoadMore);
+        }
         final row = graph.rows[index];
         final commit = row.commit;
         final selected = _selectedHashes.contains(commit.hash);

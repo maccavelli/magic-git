@@ -1,0 +1,168 @@
+/// The History filter field's little query language: free text narrows by
+/// commit message, and `key:value` terms narrow by author, file, SHA, or date
+/// — e.g. `rename author:mac file:lib/core/ after:2026-01-01`.
+///
+/// Every term but `sha:` maps 1:1 to a `git log` flag, so filtering stays
+/// server-side and complete (never "only what was already loaded"); `sha:`
+/// is a prefix match applied to the fetched rows, since git has no
+/// filter-by-hash-prefix flag.
+library;
+
+/// The parsed filter. Fields are null when the term wasn't given; a
+/// null-everywhere filter ([isEmpty]) narrows nothing.
+class LogFilter {
+  /// Free text — the words that carried no recognized `key:` prefix.
+  final String? message;
+  final String? author;
+  final String? path;
+
+  /// A full or partial commit hash. Matched client-side, case-insensitively,
+  /// against the start of each commit's hash.
+  final String? sha;
+
+  /// Git date expressions, passed through verbatim: git accepts both
+  /// `2026-01-31` and phrases like `2 weeks ago`.
+  final String? since;
+  final String? until;
+
+  const LogFilter({
+    this.message,
+    this.author,
+    this.path,
+    this.sha,
+    this.since,
+    this.until,
+  });
+
+  static const empty = LogFilter();
+
+  bool get isEmpty =>
+      message == null &&
+      author == null &&
+      path == null &&
+      sha == null &&
+      since == null &&
+      until == null;
+
+  @override
+  bool operator ==(Object other) =>
+      other is LogFilter &&
+      other.message == message &&
+      other.author == author &&
+      other.path == path &&
+      other.sha == sha &&
+      other.since == since &&
+      other.until == until;
+
+  @override
+  int get hashCode => Object.hash(message, author, path, sha, since, until);
+
+  @override
+  String toString() =>
+      'LogFilter(message: $message, author: $author, path: $path, '
+      'sha: $sha, since: $since, until: $until)';
+}
+
+/// The recognized prefixes, each mapped to the field it fills. Aliases exist
+/// where two names are equally natural (`file:`/`path:`, `after:`/`since:`).
+///
+/// Deliberately a closed set: an *unrecognized* `word:` term is NOT a
+/// malformed filter, it's ordinary message text — conventional-commit
+/// subjects are full of it (`feat: …`, `fix: …`), and typing `fix: history`
+/// must search for the literal text, not silently filter on a `fix` key.
+const _keys = <String, _Field>{
+  'author': _Field.author,
+  'file': _Field.path,
+  'path': _Field.path,
+  'sha': _Field.sha,
+  'commit': _Field.sha,
+  'after': _Field.since,
+  'since': _Field.since,
+  'before': _Field.until,
+  'until': _Field.until,
+};
+
+enum _Field { author, path, sha, since, until }
+
+/// Parses the filter field. Values may be quoted to include spaces
+/// (`author:"Mac Smith"`); a repeated key keeps the last occurrence.
+LogFilter parseLogFilter(String input) {
+  if (input.trim().isEmpty) return LogFilter.empty;
+
+  final words = <String>[];
+  final values = <_Field, String>{};
+
+  for (final token in _tokenize(input)) {
+    final colon = token.indexOf(':');
+    if (colon > 0) {
+      final field = _keys[token.substring(0, colon).toLowerCase()];
+      final value = token.substring(colon + 1).trim();
+      if (field != null && value.isNotEmpty) {
+        values[field] = value;
+        continue;
+      }
+    }
+    // Bare word, unknown key, or an empty value (`author:` mid-typing —
+    // narrowing on it would blank the list on the way to a real value).
+    words.add(token);
+  }
+
+  final message = words.join(' ').trim();
+  return LogFilter(
+    message: message.isEmpty ? null : message,
+    author: values[_Field.author],
+    path: values[_Field.path],
+    sha: values[_Field.sha],
+    since: values[_Field.since],
+    until: values[_Field.until],
+  );
+}
+
+/// Splits on whitespace, honoring quotes so a quoted value stays one token.
+/// Quotes are structural, never literal: `author:"Mac Smith"` yields the
+/// single token `author:Mac Smith`.
+List<String> _tokenize(String input) {
+  final tokens = <String>[];
+  final buffer = StringBuffer();
+  String? quote;
+
+  void flush() {
+    if (buffer.isNotEmpty) {
+      tokens.add(buffer.toString());
+      buffer.clear();
+    }
+  }
+
+  for (final ch in input.split('')) {
+    if (quote != null) {
+      if (ch == quote) {
+        quote = null;
+      } else {
+        buffer.write(ch);
+      }
+    } else if (ch == '"' || ch == "'") {
+      quote = ch;
+    } else if (ch == ' ' || ch == '\t') {
+      flush();
+    } else {
+      buffer.write(ch);
+    }
+  }
+  flush();
+  return tokens;
+}
+
+/// Keeps the commits whose hash starts with [sha] (case-insensitive). The
+/// one client-side term — see the library docs.
+List<T> filterByShaPrefix<T>(
+  List<T> commits,
+  String? sha, {
+  required String Function(T) hashOf,
+}) {
+  if (sha == null || sha.isEmpty) return commits;
+  final prefix = sha.toLowerCase();
+  return [
+    for (final c in commits)
+      if (hashOf(c).toLowerCase().startsWith(prefix)) c,
+  ];
+}
