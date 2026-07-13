@@ -49,6 +49,13 @@ class AppSettings {
   /// scrollbar for reaching line ends.
   final bool historyDiffWrap;
 
+  /// Whether the History diff views show widened context around each hunk.
+  /// git's default patch carries only 3 lines either side, so a hunk routinely
+  /// ends mid-expression and reads as if the diff were truncated; this widens
+  /// it to [AppSettingsNotifier.expandedDiffContext]. Mirrors the Repository
+  /// view's expand-context toggle, which has always had this.
+  final bool historyDiffExpandContext;
+
   const AppSettings({
     this.networkTimeout = GitService.defaultNetworkTimeout,
     this.commitTimeout = GitService.defaultCommitTimeout,
@@ -60,6 +67,7 @@ class AppSettings {
     this.binaryOverrides = const {},
     this.historyZoom = 1.0,
     this.historyDiffWrap = false,
+    this.historyDiffExpandContext = false,
   });
 
   AppSettings copyWith({
@@ -73,6 +81,7 @@ class AppSettings {
     Map<String, String>? binaryOverrides,
     double? historyZoom,
     bool? historyDiffWrap,
+    bool? historyDiffExpandContext,
   }) => AppSettings(
     networkTimeout: networkTimeout ?? this.networkTimeout,
     commitTimeout: commitTimeout ?? this.commitTimeout,
@@ -84,6 +93,8 @@ class AppSettings {
     binaryOverrides: binaryOverrides ?? this.binaryOverrides,
     historyZoom: historyZoom ?? this.historyZoom,
     historyDiffWrap: historyDiffWrap ?? this.historyDiffWrap,
+    historyDiffExpandContext:
+        historyDiffExpandContext ?? this.historyDiffExpandContext,
   );
 
   // Value equality so a cross-tab [reloadFromDisk] that re-reads the same value
@@ -101,6 +112,7 @@ class AppSettings {
       other.autoFetchMinutes == autoFetchMinutes &&
       other.historyZoom == historyZoom &&
       other.historyDiffWrap == historyDiffWrap &&
+      other.historyDiffExpandContext == historyDiffExpandContext &&
       _mapEquals(other.binaryOverrides, binaryOverrides);
 
   @override
@@ -114,6 +126,7 @@ class AppSettings {
     autoFetchMinutes,
     historyZoom,
     historyDiffWrap,
+    historyDiffExpandContext,
     Object.hashAllUnordered(
       binaryOverrides.entries.map((e) => Object.hash(e.key, e.value)),
     ),
@@ -144,6 +157,7 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   static const _binPrefix = 'binPath_';
   static const _historyZoomKey = 'historyZoom';
   static const _historyDiffWrapKey = 'historyDiffWrap';
+  static const _historyDiffExpandContextKey = 'historyDiffExpandContext';
 
   /// Set true by any setter the moment the user explicitly changes a setting.
   /// [build] kicks [_load] fire-and-forget and returns defaults immediately, so
@@ -233,6 +247,7 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
           ?.clamp(minHistoryZoom, maxHistoryZoom)
           .toDouble(),
       historyDiffWrap: prefs.getBool(_historyDiffWrapKey),
+      historyDiffExpandContext: prefs.getBool(_historyDiffExpandContextKey),
     );
   }
 
@@ -373,6 +388,23 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     state = state.copyWith(historyDiffWrap: wrap);
     await _persist((prefs) => prefs.setBool(_historyDiffWrapKey, wrap));
   }
+
+  /// Toggles and persists whether History diff views widen hunk context.
+  /// Shared by both windows — the sync path is the same as [setHistoryZoom]'s.
+  Future<void> setHistoryDiffExpandContext(bool expand) async {
+    if (expand == state.historyDiffExpandContext) return;
+    _userEdited = true;
+    state = state.copyWith(historyDiffExpandContext: expand);
+    await _persist(
+      (prefs) => prefs.setBool(_historyDiffExpandContextKey, expand),
+    );
+  }
+
+  /// git's own default context (`-U3`) and the widened one, matching the
+  /// Repository view's expand-context toggle so both diff surfaces agree on
+  /// what "expanded" means.
+  static const int defaultDiffContext = 3;
+  static const int expandedDiffContext = 25;
 
   static const _minTimeout = Duration(seconds: 5);
 

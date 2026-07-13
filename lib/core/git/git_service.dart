@@ -1069,10 +1069,16 @@ class GitService {
   /// the diff to that file only — used by the file-history view, where
   /// otherwise selecting a commit would fetch (and show) every file it
   /// touched, not just the one file whose history is being inspected.
+  ///
+  /// [context] overrides the surrounding context lines (`-U<n>`), the same knob
+  /// [diffFile]/[diffRange] take. Worth having: at git's default of 3, a hunk
+  /// routinely ends mid-expression, which reads as a truncated diff rather than
+  /// as the end of the patch.
   Future<String> showCommit(
     String repoPath,
     String hash, {
     String? path,
+    int? context,
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
@@ -1085,6 +1091,7 @@ class GitService {
         'show',
         '--no-color',
         '--no-show-signature',
+        if (context != null) '-U$context',
         '--end-of-options',
         hash,
         if (path != null && path.isNotEmpty) ...['--', path],

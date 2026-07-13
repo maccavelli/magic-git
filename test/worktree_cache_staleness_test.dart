@@ -46,7 +46,12 @@ class _FakeGit extends GitService {
   }
 
   @override
-  Future<String> showCommit(String repoPath, String hash, {String? path}) async {
+  Future<String> showCommit(
+    String repoPath,
+    String hash, {
+    String? path,
+    int? context,
+  }) async {
     showCalls++;
     return 'patch v$showCalls';
   }
@@ -112,7 +117,7 @@ void main() {
     addTearDown(container.dispose);
 
     const repo = '/repo-staleness-b';
-    const key = (repo, 'abc123');
+    const key = (repo, 'abc123', 3);
 
     expect(await container.read(commitDiffProvider(key).future), 'patch v1');
     await container.read(statusProvider(repo).future);

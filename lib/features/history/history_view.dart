@@ -1117,10 +1117,17 @@ class _HistoryViewState extends ConsumerState<HistoryView>
 
   void _prefetchCommitPatches(List<GitCommit>? commits) {
     if (commits == null || !widget.isActive) return;
+    // `read`, not `watch`: this runs outside build, and the context in force
+    // when the prefetch fires is the one the user would land on.
+    final context = _contextFor(
+      ref.read(appSettingsProvider).historyDiffExpandContext,
+    );
     for (final c in commits.take(_prefetchMaxCommits)) {
       // `.ignore()`: a prefetch failure must never surface — selecting the
       // commit simply fetches it live, exactly as before.
-      ref.read(commitDiffProvider((widget.repoPath, c.hash)).future).ignore();
+      ref
+          .read(commitDiffProvider((widget.repoPath, c.hash, context)).future)
+          .ignore();
     }
   }
 
@@ -1704,7 +1711,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   }
 
   Widget _commitDiff(BuildContext context, String hash) {
-    final diffAsync = ref.watch(commitDiffProvider((widget.repoPath, hash)));
+    final diffAsync = ref.watch(
+      commitDiffProvider((widget.repoPath, hash, _diffContext)),
+    );
     final wrap = ref.watch(appSettingsProvider.select((s) => s.historyDiffWrap));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1734,6 +1743,40 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         ref.read(appSettingsProvider.notifier).setHistoryDiffWrap(!wrap),
   );
 
+  /// How many context lines the History diffs ask git for. git's default of 3
+  /// leaves every hunk ending mid-expression — the patch is complete, but it
+  /// doesn't look it — so this widens it on demand.
+  static int _contextFor(bool expanded) => expanded
+      ? AppSettingsNotifier.expandedDiffContext
+      : AppSettingsNotifier.defaultDiffContext;
+
+  int get _diffContext => _contextFor(
+    ref.watch(appSettingsProvider.select((s) => s.historyDiffExpandContext)),
+  );
+
+  /// The shared expand-context toggle, persisted like [_wrapToggle] so every
+  /// diff surface and both windows agree. Same 3 ↔ 25 pair the Repository
+  /// view's expand-context toggle uses.
+  Widget _contextToggle() {
+    final expanded = ref.watch(
+      appSettingsProvider.select((s) => s.historyDiffExpandContext),
+    );
+    return ToolIconButton(
+      icon: expanded
+          ? CupertinoIcons.arrow_down_right_arrow_up_left
+          : CupertinoIcons.arrow_up_left_arrow_down_right,
+      tooltip: expanded
+          ? 'Show less context around changes'
+          : 'Show more context around changes '
+                '(git shows only 3 lines, so hunks end mid-line)',
+      size: 15,
+      color: expanded ? MacosColors.systemBlueColor : null,
+      onPressed: () => ref
+          .read(appSettingsProvider.notifier)
+          .setHistoryDiffExpandContext(!expanded),
+    );
+  }
+
   /// The diff between exactly two selected commits — what [newer] adds on
   /// top of [older] (`git diff older..newer`). The pane appears the moment a
   /// second commit is ⌘/⇧-selected, matching Fork/Tower's compare-two flow.
@@ -1745,7 +1788,12 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     final typography = MacosTheme.of(context).typography;
     final wrap = ref.watch(appSettingsProvider.select((s) => s.historyDiffWrap));
     final diffAsync = ref.watch(
-      commitRangeDiffProvider((widget.repoPath, older.hash, newer.hash)),
+      commitRangeDiffProvider((
+        widget.repoPath,
+        older.hash,
+        newer.hash,
+        _diffContext,
+      )),
     );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1764,6 +1812,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              _contextToggle(),
+              const SizedBox(width: 2),
               _wrapToggle(wrap),
               const SizedBox(width: 2),
               ToolIconButton(
@@ -1869,6 +1919,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          _contextToggle(),
+          const SizedBox(width: 2),
           _wrapToggle(wrap),
           const SizedBox(width: 2),
           ToolIconButton(
@@ -1956,8 +2008,15 @@ class CommitDiffSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final typography = MacosTheme.of(context).typography;
-    final diffAsync = ref.watch(commitDiffProvider((repoPath, hash)));
-    final wrap = ref.watch(appSettingsProvider.select((s) => s.historyDiffWrap));
+    final settings = ref.watch(appSettingsProvider);
+    final diffAsync = ref.watch(
+      commitDiffProvider((
+        repoPath,
+        hash,
+        _HistoryViewState._contextFor(settings.historyDiffExpandContext),
+      )),
+    );
+    final wrap = settings.historyDiffWrap;
     final short = hash.length > 12 ? hash.substring(0, 12) : hash;
     final screen = MediaQuery.sizeOf(context);
 
@@ -1982,6 +2041,24 @@ class CommitDiffSheet extends ConsumerWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
+                  ToolIconButton(
+                    icon: settings.historyDiffExpandContext
+                        ? CupertinoIcons.arrow_down_right_arrow_up_left
+                        : CupertinoIcons.arrow_up_left_arrow_down_right,
+                    tooltip: settings.historyDiffExpandContext
+                        ? 'Show less context around changes'
+                        : 'Show more context around changes',
+                    size: 16,
+                    color: settings.historyDiffExpandContext
+                        ? MacosColors.systemBlueColor
+                        : null,
+                    onPressed: () => ref
+                        .read(appSettingsProvider.notifier)
+                        .setHistoryDiffExpandContext(
+                          !settings.historyDiffExpandContext,
+                        ),
+                  ),
+                  const SizedBox(width: 2),
                   ToolIconButton(
                     icon: CupertinoIcons.arrow_turn_down_left,
                     tooltip: wrap ? 'Turn off word wrap' : 'Wrap long lines',

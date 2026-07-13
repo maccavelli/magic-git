@@ -68,7 +68,12 @@ class _PagingGit extends GitService {
   /// The panel prefetches the newest few commits' patches; without this the
   /// real implementation would reach for the (absent) SSH executor.
   @override
-  Future<String> showCommit(String repoPath, String hash, {String? path}) async =>
+  Future<String> showCommit(
+    String repoPath,
+    String hash, {
+    String? path,
+    int? context,
+  }) async =>
       'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
 }
 

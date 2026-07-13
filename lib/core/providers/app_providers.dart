@@ -2377,7 +2377,7 @@ void _dependOnWorktreeState(Ref ref, String repoPath) {
 const int _mib = 1024 * 1024;
 
 // Immutable tier.
-final _commitDiffLru = KeepAliveLru<(String, String)>(
+final _commitDiffLru = KeepAliveLru<(String, String, int)>(
   512,
   maxTotalBytes: 256 * _mib,
   maxEntryBytes: 16 * _mib,
@@ -2387,7 +2387,7 @@ final _commitFileDiffLru = KeepAliveLru<(String, String, String)>(
   maxTotalBytes: 128 * _mib,
   maxEntryBytes: 8 * _mib,
 );
-final _commitRangeDiffLru = KeepAliveLru<(String, String, String)>(
+final _commitRangeDiffLru = KeepAliveLru<(String, String, String, int)>(
   64,
   maxTotalBytes: 64 * _mib,
   maxEntryBytes: 16 * _mib,
@@ -2525,13 +2525,17 @@ final fileDiffProvider = FutureProvider.autoDispose
       return future;
     });
 
-/// Full patch for a commit. Keyed by (repoPath, hash). Kept alive (bounded
-/// LRU) — see [KeepAliveLru].
+/// Full patch for a commit. Keyed by (repoPath, hash, contextLines) — the
+/// context is part of the key because the same commit at `-U3` and at `-U25`
+/// are two different patches, and a shared key would serve whichever landed
+/// first. Kept alive (bounded LRU) — see [KeepAliveLru].
 final commitDiffProvider = FutureProvider.autoDispose
-    .family<String, (String, String)>((ref, key) {
+    .family<String, (String, String, int)>((ref, key) {
       _commitDiffLru.touch(key, ref.keepAlive());
-      final (repoPath, hash) = key;
-      final future = ref.watch(gitServiceProvider).showCommit(repoPath, hash);
+      final (repoPath, hash, context) = key;
+      final future = ref
+          .watch(gitServiceProvider)
+          .showCommit(repoPath, hash, context: context);
       future.then(
         (d) => _commitDiffLru.reportSize(key, d.length),
         onError: (_) => _commitDiffLru.evict(key),
@@ -2540,15 +2544,16 @@ final commitDiffProvider = FutureProvider.autoDispose
     });
 
 /// The diff between two commits — what `newer` adds on top of `older`
-/// (`git diff older..newer`). Keyed by (repoPath, olderHash, newerHash);
-/// immutable like a commit patch, so it shares the hash-keyed LRU treatment.
+/// (`git diff older..newer`). Keyed by (repoPath, olderHash, newerHash,
+/// contextLines); immutable like a commit patch, so it shares the hash-keyed
+/// LRU treatment.
 final commitRangeDiffProvider = FutureProvider.autoDispose
-    .family<String, (String, String, String)>((ref, key) {
+    .family<String, (String, String, String, int)>((ref, key) {
       _commitRangeDiffLru.touch(key, ref.keepAlive());
-      final (repoPath, older, newer) = key;
+      final (repoPath, older, newer, context) = key;
       final future = ref
           .watch(gitServiceProvider)
-          .diffRange(repoPath, '$older..$newer');
+          .diffRange(repoPath, '$older..$newer', context: context);
       future.then(
         (d) => _commitRangeDiffLru.reportSize(key, d.length),
         onError: (_) => _commitRangeDiffLru.evict(key),

@@ -22,7 +22,12 @@ class _FakeGit extends GitService {
   final List<(String hash, String? path)> showCommitCalls = [];
 
   @override
-  Future<String> showCommit(String repoPath, String hash, {String? path}) async {
+  Future<String> showCommit(
+    String repoPath,
+    String hash, {
+    String? path,
+    int? context,
+  }) async {
     showCommitCalls.add((hash, path));
     return 'diff for $hash scoped to $path';
   }

@@ -5,6 +5,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/app_settings.dart';
 import '../common/actions.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
@@ -330,7 +331,13 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
         ),
       );
     }
-    final diffAsync = ref.watch(commitDiffProvider((repoPath, hash)));
+    final diffAsync = ref.watch(
+      commitDiffProvider((
+        repoPath,
+        hash,
+        AppSettingsNotifier.defaultDiffContext,
+      )),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

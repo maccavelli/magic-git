@@ -68,7 +68,12 @@ class _FakeGit extends GitService {
   Future<List<GitRef>> refs(String repoPath) async => const [];
 
   @override
-  Future<String> showCommit(String repoPath, String hash, {String? path}) async =>
+  Future<String> showCommit(
+    String repoPath,
+    String hash, {
+    String? path,
+    int? context,
+  }) async =>
       'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
 
   @override
