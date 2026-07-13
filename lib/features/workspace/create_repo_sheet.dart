@@ -1247,6 +1247,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           MacosTextField(
             controller: _name,
             placeholder: 'my-project',
+            placeholderStyle: kAppPlaceholderStyle,
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
             onChanged: (_) => setState(() {}),
@@ -1264,6 +1265,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         MacosTextField(
           controller: _branch,
           placeholder: 'main',
+          placeholderStyle: kAppPlaceholderStyle,
           decoration: kAppTextFieldDecoration,
           focusedDecoration: kAppTextFieldFocusedDecoration,
           onChanged: (_) => setState(() {}),
@@ -1310,6 +1312,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             MacosTextField(
               controller: _localLabel,
               placeholder: 'Label (optional)',
+              placeholderStyle: kAppPlaceholderStyle,
               decoration: kAppTextFieldDecoration,
               focusedDecoration: kAppTextFieldFocusedDecoration,
             ),
@@ -1381,6 +1384,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               child: MacosTextField(
                 controller: _folder,
                 placeholder: '/srv/app',
+                placeholderStyle: kAppPlaceholderStyle,
                 decoration: kAppTextFieldDecoration,
                 focusedDecoration: kAppTextFieldFocusedDecoration,
                 onChanged: (_) => setState(() {}),
@@ -1461,6 +1465,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               child: MacosTextField(
                 controller: _parent,
                 placeholder: '/srv/git',
+                placeholderStyle: kAppPlaceholderStyle,
                 decoration: kAppTextFieldDecoration,
                 focusedDecoration: kAppTextFieldFocusedDecoration,
                 onChanged: (_) => setState(() {}),
@@ -1550,6 +1555,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           MacosTextField(
             controller: _remoteUrl,
             placeholder: 'git@host:owner/repo.git or https://…',
+            placeholderStyle: kAppPlaceholderStyle,
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
             onChanged: (_) => setState(() {}),
@@ -1584,6 +1590,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           MacosTextField(
             controller: _host,
             placeholder: _defaultHost,
+            placeholderStyle: kAppPlaceholderStyle,
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
             // An empty field hands control back to the prefill; anything
@@ -1603,6 +1610,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           MacosTextField(
             controller: _description,
             placeholder: 'Description (optional)',
+            placeholderStyle: kAppPlaceholderStyle,
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
           ),

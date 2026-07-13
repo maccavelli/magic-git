@@ -221,6 +221,7 @@ class _KeyboardMappingsSheetState
                 MacosTextField(
                   controller: _search,
                   placeholder: 'Filter shortcuts',
+                  placeholderStyle: kAppPlaceholderStyle,
                   decoration: kAppTextFieldDecoration,
                   focusedDecoration: kAppTextFieldFocusedDecoration,
                   onChanged: (_) => setState(() {}),

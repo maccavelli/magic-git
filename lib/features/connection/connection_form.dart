@@ -291,6 +291,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
                       child: MacosTextField(
                         controller: _label,
                         placeholder: 'Label (optional)',
+                        placeholderStyle: kAppPlaceholderStyle,
                         decoration: kAppTextFieldDecoration,
                         focusedDecoration: kAppTextFieldFocusedDecoration,
                       ),

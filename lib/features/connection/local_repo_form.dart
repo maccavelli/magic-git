@@ -246,6 +246,7 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
                       child: MacosTextField(
                         controller: _label,
                         placeholder: 'Label (optional)',
+                        placeholderStyle: kAppPlaceholderStyle,
                         decoration: kAppTextFieldDecoration,
                         focusedDecoration: kAppTextFieldFocusedDecoration,
                       ),

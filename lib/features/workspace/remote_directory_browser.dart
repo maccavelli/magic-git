@@ -159,6 +159,7 @@ class _RemoteDirectoryBrowserSheetState
                     child: MacosTextField(
                       controller: _pathField,
                       placeholder: '/absolute/path',
+                      placeholderStyle: kAppPlaceholderStyle,
                       decoration: kAppTextFieldDecoration,
                       focusedDecoration: kAppTextFieldFocusedDecoration,
                       onSubmitted: (v) {

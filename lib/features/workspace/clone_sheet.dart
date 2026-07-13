@@ -610,6 +610,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           MacosTextField(
             controller: _url,
             placeholder: 'https://github.com/owner/repo.git',
+            placeholderStyle: kAppPlaceholderStyle,
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
             onChanged: (v) {
@@ -681,6 +682,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
               child: MacosTextField(
                 controller: _host,
                 placeholder: _defaultHost,
+                placeholderStyle: kAppPlaceholderStyle,
                 decoration: kAppTextFieldDecoration,
                 focusedDecoration: kAppTextFieldFocusedDecoration,
                 // Track edits without rebuilding per keystroke — the browse
@@ -714,6 +716,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
         MacosTextField(
           controller: _filter,
           placeholder: 'Filter…',
+          placeholderStyle: kAppPlaceholderStyle,
           decoration: kAppTextFieldDecoration,
           focusedDecoration: kAppTextFieldFocusedDecoration,
           onChanged: (_) => setState(() {}),
@@ -788,6 +791,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
         MacosTextField(
           controller: _name,
           placeholder: 'my-repo',
+          placeholderStyle: kAppPlaceholderStyle,
           decoration: kAppTextFieldDecoration,
           focusedDecoration: kAppTextFieldFocusedDecoration,
           onChanged: (_) => setState(() {}),
@@ -854,6 +858,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           MacosTextField(
             controller: _localLabel,
             placeholder: 'Label (optional)',
+            placeholderStyle: kAppPlaceholderStyle,
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
           ),
@@ -878,6 +883,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
               child: MacosTextField(
                 controller: _parent,
                 placeholder: '/srv/git',
+                placeholderStyle: kAppPlaceholderStyle,
                 decoration: kAppTextFieldDecoration,
                 focusedDecoration: kAppTextFieldFocusedDecoration,
                 onChanged: (_) => setState(() {}),

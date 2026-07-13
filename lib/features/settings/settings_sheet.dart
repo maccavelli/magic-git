@@ -468,6 +468,7 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
               placeholder: resolved != null && resolved.isNotEmpty
                   ? resolved
                   : '/path/to/$bin (optional)',
+              placeholderStyle: kAppPlaceholderStyle,
               decoration: kAppTextFieldDecoration,
               focusedDecoration: kAppTextFieldFocusedDecoration,
             ),
@@ -550,6 +551,7 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
           child: MacosTextField(
             controller: controller,
             placeholder: hint,
+            placeholderStyle: kAppPlaceholderStyle,
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
           ),

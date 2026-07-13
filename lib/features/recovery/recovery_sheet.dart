@@ -559,6 +559,7 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
                 MacosTextField(
                   controller: controller,
                   placeholder: 'branch name',
+                  placeholderStyle: kAppPlaceholderStyle,
                   autofocus: true,
                   decoration: kAppTextFieldDecoration,
                   focusedDecoration: kAppTextFieldFocusedDecoration,

@@ -265,6 +265,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
                   focusNode: _fieldFocus,
                   autofocus: true,
                   placeholder: 'Type a command or branch…',
+                  placeholderStyle: kAppPlaceholderStyle,
                   prefix: const Padding(
                     padding: EdgeInsets.only(left: 6),
                     child: MacosIcon(CupertinoIcons.search, size: 14),

@@ -237,6 +237,7 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
                     readOnly: !_editable,
                     autofocus: _editable,
                     placeholder: _generated ? null : 'Commit message',
+                    placeholderStyle: kAppPlaceholderStyle,
                     style: _messageStyle(typography),
                     minLines: 1,
                     maxLines: 12,

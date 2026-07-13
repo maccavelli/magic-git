@@ -6,6 +6,7 @@ import 'package:re_highlight/styles/atom-one-dark.dart';
 import 'package:re_highlight/styles/github.dart';
 import '../common/diff_view.dart' show kDiffMono;
 import '../common/escape_dismissible.dart';
+import '../common/field_styles.dart';
 import 'file_content.dart';
 import 'highlight_worker.dart';
 import 'syntax_highlighter.dart';
@@ -449,6 +450,7 @@ class _CodeViewState extends State<CodeView> {
                 controller: _findCtrl,
                 focusNode: _findFocus,
                 placeholder: 'Find in file',
+                placeholderStyle: kAppPlaceholderStyle,
                 onChanged: _recomputeMatches,
                 onSubmitted: (_) => _step(1),
               ),

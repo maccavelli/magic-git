@@ -39,6 +39,7 @@ class LabeledTextField extends StatelessWidget {
           MacosTextField(
             controller: controller,
             placeholder: placeholder,
+            placeholderStyle: kAppPlaceholderStyle,
             obscureText: obscure,
             maxLines: maxLines,
             decoration: kAppTextFieldDecoration,

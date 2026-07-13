@@ -1085,6 +1085,7 @@ class _AddRepositorySheetState extends State<AddRepositorySheet> {
               MacosTextField(
                 controller: _path,
                 placeholder: '/srv/git/another-project',
+                placeholderStyle: kAppPlaceholderStyle,
                 decoration: kAppTextFieldDecoration,
                 focusedDecoration: kAppTextFieldFocusedDecoration,
                 onChanged: (_) => setState(() {}),
