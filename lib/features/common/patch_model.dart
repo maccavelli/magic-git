@@ -51,34 +51,49 @@ class CodeRow extends PatchRow {
   const CodeRow(this.text, {this.fromExpansion = false});
 }
 
-/// A clickable `⋯` row standing for lines that exist in the file but aren't in
-/// the patch. Tapping it asks for [ExpandRequest].
+/// A clickable row standing for lines that exist in the file but aren't in the
+/// patch. Tapping it opens the gap ([ExpandRequest]).
+///
+/// It carries a single chevron, pointing **down**: one control, one direction,
+/// one meaning — "reveal what's below this line". Its counterpart once the gap
+/// is open is [CollapseRow], whose chevron points up. Two arrows on one row said
+/// nothing about what a click would do.
 class ExpanderRow extends PatchRow {
-  /// How many post-image lines are hidden in this gap. `null` means "unknown,
-  /// runs to the end of the file" — only for the trailing expander, before the
-  /// blob has been fetched.
+  /// How many post-image lines are still hidden in this gap. `null` means
+  /// "unknown, runs to the end of the file" — only for the trailing expander,
+  /// before the blob has been fetched.
   final int? hiddenLines;
 
-  /// Which directions make sense here. A gap between two hunks can be walked
-  /// from either end, or filled entirely; the gap above the first hunk can only
-  /// be walked up; below the last, only down.
-  final bool canUp;
-  final bool canDown;
+  /// True when one click reveals the rest of the gap. False only for a gap so
+  /// large that filling it would build tens of thousands of rows in a frame
+  /// (see [kExpandAllMaxLines]); those are walked [kExpandStep] at a time.
+  final bool expandsAll;
 
-  /// True when the whole gap is small enough to reveal in one click, so the row
-  /// offers "expand all N lines" instead of directional arrows. Matches GitHub,
-  /// and it's most of the perceived polish.
-  final bool canAll;
+  /// What a click does. [ExpandDirection.all] fills the gap; otherwise it walks
+  /// from the end nearest the code being read — down from the hunk above, or up
+  /// from the hunk below when there is no hunk above (the leading gap).
+  final ExpandDirection direction;
 
   final ExpandRequest request;
 
   const ExpanderRow({
     required this.hiddenLines,
-    required this.canUp,
-    required this.canDown,
-    required this.canAll,
+    required this.expandsAll,
+    required this.direction,
     required this.request,
   });
+}
+
+/// The chevron-up twin of [ExpanderRow]: it sits at the head of the lines a gap
+/// has revealed, and closes them again. Revealing must be undoable — an opened
+/// gap that can't be shut just buries the change the reader came for.
+class CollapseRow extends PatchRow {
+  /// How many lines this gap is currently showing.
+  final int revealedLines;
+
+  final ExpandRequest request;
+
+  const CollapseRow({required this.revealedLines, required this.request});
 }
 
 /// Which gap an expansion applies to: the gap *before* hunk [hunkIndex] of file
@@ -102,15 +117,12 @@ class ExpandRequest {
 /// Which way a gap is being opened.
 enum ExpandDirection { up, down, all }
 
-/// How many lines one directional click reveals — GitHub's is 20.
+/// How many lines one click reveals when a gap is too big to open whole.
 const int kExpandStep = 20;
 
-/// A gap at or below this many lines is offered as a single "expand all"
-/// instead of directional arrows: walking a 6-line gap 20 at a time is silly.
-const int kSmallGapThreshold = 20;
-
-/// Guards "expand all" on a pathological file: revealing 40k lines at once
-/// would build 40k rows in one frame. Above this, the gap keeps its arrows.
+/// Guards "reveal the rest" on a pathological file: filling a 40k-line gap at
+/// once would build 40k rows in a single frame. Above this, the gap is walked
+/// [kExpandStep] lines per click instead.
 const int kExpandAllMaxLines = 2000;
 
 /// How much of a gap has been revealed, from each end.
@@ -123,7 +135,11 @@ class GapExpansion {
 
   const GapExpansion({this.fromTop = 0, this.fromBottom = 0});
 
-  GapExpansion plus(ExpandDirection direction, int gapSize) => switch (direction) {
+  /// Opens the gap further. [hidden] is what's *still* hidden right now, which
+  /// is the only thing [ExpandDirection.all] needs to finish the job — adding it
+  /// to whatever is already shown covers the gap exactly, whether this is the
+  /// first click or the last of a long walk.
+  GapExpansion plus(ExpandDirection direction, int hidden) => switch (direction) {
     // "Up" means revealing the lines just above the hunk below — i.e. growing
     // from the BOTTOM of the gap upward.
     ExpandDirection.up => GapExpansion(
@@ -134,7 +150,10 @@ class GapExpansion {
       fromTop: fromTop + kExpandStep,
       fromBottom: fromBottom,
     ),
-    ExpandDirection.all => GapExpansion(fromTop: gapSize, fromBottom: 0),
+    ExpandDirection.all => GapExpansion(
+      fromTop: fromTop + hidden,
+      fromBottom: fromBottom,
+    ),
   };
 
   /// True once the two ends have met — the gap is fully revealed.
@@ -223,8 +242,9 @@ List<PatchRow> buildPatchRows(
   return rows;
 }
 
-/// Emits one gap: the revealed lines (from either end) plus an expander row for
-/// whatever remains hidden. Nothing is emitted for an empty, fully-closed gap.
+/// Emits one gap: a collapse row if anything is revealed, the revealed lines
+/// themselves, and an expander for whatever is still hidden. Nothing is emitted
+/// for an empty gap (two hunks that touch).
 void _emitGap(
   List<PatchRow> rows, {
   required int fileIndex,
@@ -242,6 +262,11 @@ void _emitGap(
 
   final request = ExpandRequest(fileIndex, gapIndex);
 
+  // Which end a stepped click walks from: the one against the code being read.
+  // The leading gap has no hunk above it, so it grows upward from the hunk
+  // below; every other gap grows downward from the hunk above.
+  final step = isLeading ? ExpandDirection.up : ExpandDirection.down;
+
   // Blob absent: show the affordance, reveal nothing. It resolves the moment
   // the blob lands — the row is here so the gap is visibly openable, which is
   // the whole point (a hunk that just stops looks truncated).
@@ -249,9 +274,11 @@ void _emitGap(
     rows.add(
       ExpanderRow(
         hiddenLines: unknownSize ? null : gapSize,
-        canUp: !isTrailing,
-        canDown: !isLeading,
-        canAll: !unknownSize && gapSize <= kSmallGapThreshold,
+        // Size unknown → can't promise to open the whole thing in one click.
+        expandsAll: !unknownSize && gapSize <= kExpandAllMaxLines,
+        direction: (!unknownSize && gapSize <= kExpandAllMaxLines)
+            ? ExpandDirection.all
+            : step,
         request: request,
       ),
     );
@@ -260,7 +287,13 @@ void _emitGap(
 
   final shownTop = expansion.fromTop.clamp(0, gapSize);
   final shownBottom = expansion.fromBottom.clamp(0, gapSize - shownTop);
-  final hidden = gapSize - shownTop - shownBottom;
+  final shown = shownTop + shownBottom;
+  final hidden = gapSize - shown;
+
+  // The way back. It heads the revealed block so it's found where the gap was.
+  if (shown > 0) {
+    rows.add(CollapseRow(revealedLines: shown, request: request));
+  }
 
   // Lines revealed from the top of the gap, downward.
   for (var i = 0; i < shownTop; i++) {
@@ -268,14 +301,12 @@ void _emitGap(
   }
 
   if (hidden > 0) {
+    final all = hidden <= kExpandAllMaxLines;
     rows.add(
       ExpanderRow(
         hiddenLines: hidden,
-        // A leading gap can only be walked upward from the hunk below it; a
-        // trailing gap only downward from the hunk above.
-        canUp: !isTrailing,
-        canDown: !isLeading,
-        canAll: hidden <= kSmallGapThreshold || hidden <= kExpandAllMaxLines,
+        expandsAll: all,
+        direction: all ? ExpandDirection.all : step,
         request: request,
       ),
     );

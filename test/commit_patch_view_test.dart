@@ -2,6 +2,7 @@
 // lines, an expander, a click, and the real surrounding code appearing — read
 // from the file's blob at that commit.
 
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -51,6 +52,11 @@ class _BlobGit extends GitService {
     return _blob;
   }
 }
+
+/// The gap controls draw with [MacosIcon], which `find.byIcon` (an `Icon`
+/// finder) doesn't see.
+Finder _chevron(IconData icon) =>
+    find.byWidgetPredicate((w) => w is MacosIcon && w.icon == icon);
 
 Future<_BlobGit> _pump(WidgetTester tester) async {
   final git = _BlobGit();
@@ -120,6 +126,49 @@ void main() {
     // 24-40) instead of the vague "Show more" it offered before, and — being
     // small — offers to swallow it in one click.
     expect(find.textContaining('Show 17 lines'), findsOneWidget);
+  });
+
+  testWidgets('what a click opens, a click closes', (tester) async {
+    await _pump(tester);
+
+    // Down-chevron to open…
+    expect(_chevron(CupertinoIcons.chevron_down), findsWidgets);
+    expect(_chevron(CupertinoIcons.chevron_up), findsNothing);
+
+    await tester.tap(find.textContaining('Show 16 lines'));
+    await tester.pumpAndSettle();
+    expect(find.text(' line 16'), findsOneWidget);
+
+    // …and an up-chevron to close, which is the only signal the user gets that
+    // the click will minimize rather than expand.
+    expect(_chevron(CupertinoIcons.chevron_up), findsOneWidget);
+    expect(find.textContaining('Hide 16 lines'), findsOneWidget);
+    await tester.tap(find.textContaining('Hide 16 lines'));
+    await tester.pumpAndSettle();
+
+    expect(find.text(' line 16'), findsNothing);
+    expect(find.text(' line 1'), findsNothing);
+    // Back to where it started: offered again, not consumed.
+    expect(find.textContaining('Show 16 lines'), findsOneWidget);
+    expect(find.text('+line 20'), findsOneWidget);
+  });
+
+  testWidgets('the whole expander row is the click target', (tester) async {
+    await _pump(tester);
+
+    // Not the chevron — the far end of the row, well past the label. Inside a
+    // SelectionArea a Text installs its own I-beam cursor, which made the row
+    // look (and, for the icon-only hit target, behave) as though only the 11px
+    // chevron was live.
+    final row = find.ancestor(
+      of: find.textContaining('Show 16 lines'),
+      matching: find.byType(GestureDetector),
+    );
+    final box = tester.getRect(row.first);
+    await tester.tapAt(Offset(box.right - 4, box.center.dy));
+    await tester.pumpAndSettle();
+
+    expect(find.text(' line 16'), findsOneWidget);
   });
 
   testWidgets('a stale blob is never spliced', (tester) async {

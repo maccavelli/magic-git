@@ -107,14 +107,19 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
     return lines;
   }
 
-  void _expand(ExpandRequest request, ExpandDirection direction, int gapSize) {
+  void _expand(ExpandRequest request, ExpandDirection direction, int hidden) {
     setState(() {
       _wanted = {..._wanted, request.fileIndex};
       final current = _expansions[request] ?? const GapExpansion();
-      _expansions = {
-        ..._expansions,
-        request: current.plus(direction, gapSize),
-      };
+      _expansions = {..._expansions, request: current.plus(direction, hidden)};
+    });
+  }
+
+  /// Shuts a gap again. The blob stays in [_wanted] — it's already fetched and
+  /// cached, and the user who opened this gap once will likely open it again.
+  void _collapse(ExpandRequest request) {
+    setState(() {
+      _expansions = {..._expansions}..remove(request);
     });
   }
 
@@ -184,6 +189,7 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
 
   Widget _row(PatchRow row, Color defaultColor) => switch (row) {
     ExpanderRow() => _expander(row),
+    CollapseRow() => _collapser(row),
     PreambleRow(:final text) ||
     FileHeaderRow(:final text) ||
     HunkHeaderRow(:final text) ||
@@ -207,80 +213,84 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
     );
   }
 
-  /// The `⋯` row. Arrows walk the gap [kExpandStep] lines at a time; a gap
-  /// small enough to swallow whole offers a single click instead.
+  /// The row that opens a gap: one chevron, pointing **down** — "reveal what's
+  /// hidden here". One click takes the whole gap unless it's enormous, in which
+  /// case it walks [kExpandStep] lines at a time and says so.
   Widget _expander(ExpanderRow row) {
     final hidden = row.hiddenLines;
-    final gapSize = hidden ?? kExpandStep;
-    final label = hidden == null
-        ? 'Show more'
-        : (row.canAll && hidden <= kSmallGapThreshold
-              ? 'Show $hidden ${hidden == 1 ? "line" : "lines"}'
-              : '$hidden hidden lines');
+    final label = switch (hidden) {
+      null => 'Show more',
+      _ when row.expandsAll => 'Show $hidden ${hidden == 1 ? "line" : "lines"}',
+      _ => 'Show $kExpandStep of $hidden lines',
+    };
+    return _gapRow(
+      icon: CupertinoIcons.chevron_down,
+      label: label,
+      onTap: () =>
+          _expand(row.request, row.direction, hidden ?? kExpandStep),
+    );
+  }
 
-    // The whole row is the target, not just the arrows — a 11px chevron is a
-    // miserable thing to hit. Clicking the row does the obvious thing: swallow
-    // a small gap whole, otherwise walk it from the nearest end.
-    final rowAction = row.canAll && hidden != null
-        ? ExpandDirection.all
-        : (row.canDown ? ExpandDirection.down : ExpandDirection.up);
+  /// The row that shuts it again: the same chevron, flipped to point up. The
+  /// direction *is* the affordance — it says which way the lines are about to
+  /// move, so expanding and minimizing can never be mistaken for one another.
+  Widget _collapser(CollapseRow row) {
+    final n = row.revealedLines;
+    return _gapRow(
+      icon: CupertinoIcons.chevron_up,
+      label: 'Hide $n ${n == 1 ? "line" : "lines"}',
+      onTap: () => _collapse(row.request),
+    );
+  }
 
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: () => _expand(row.request, rowAction, gapSize),
-        child: Container(
-          color: const Color(0x14007AFF),
-          padding: const EdgeInsets.symmetric(horizontal: _hPad),
-          alignment: Alignment.centerLeft,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (row.canUp)
-                _expandButton(
-                  CupertinoIcons.chevron_up,
-                  'Show $kExpandStep lines above',
-                  () => _expand(row.request, ExpandDirection.up, gapSize),
-                ),
-              if (row.canDown)
-                _expandButton(
-                  CupertinoIcons.chevron_down,
-                  'Show $kExpandStep lines below',
-                  () => _expand(row.request, ExpandDirection.down, gapSize),
-                ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: kDiffMono.copyWith(
+  /// One gap control. The whole row is the hit target — an 11px chevron is a
+  /// miserable thing to aim at, and a click anywhere on the band should do the
+  /// obvious thing.
+  ///
+  /// [SelectionContainer.disabled] is what makes that legible: inside a
+  /// [SelectionArea], a [Text] wraps *itself* in a text-cursor [MouseRegion]
+  /// deeper than this one, so the pointer stayed an I-beam over the label and
+  /// the row read as dead — clickable only on the icon. Disabling selection here
+  /// drops that cursor (and keeps "Show 16 lines" out of copied diff text, which
+  /// it had no business being in either).
+  Widget _gapRow({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return SelectionContainer.disabled(
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: GestureDetector(
+          onTap: onTap,
+          behavior: HitTestBehavior.opaque,
+          child: Container(
+            color: const Color(0x14007AFF),
+            padding: const EdgeInsets.symmetric(horizontal: _hPad),
+            alignment: Alignment.centerLeft,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                MacosIcon(
+                  icon,
+                  size: 11,
                   color: MacosColors.systemBlueColor,
-                  fontSize: 11,
                 ),
-              ),
-            ],
+                const SizedBox(width: 6),
+                Text(
+                  label,
+                  style: kDiffMono.copyWith(
+                    color: MacosColors.systemBlueColor,
+                    fontSize: 11,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
-
-  Widget _expandButton(IconData icon, String tooltip, VoidCallback onTap) =>
-      MacosTooltip(
-        message: tooltip,
-        child: MouseRegion(
-          cursor: SystemMouseCursors.click,
-          child: GestureDetector(
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 3),
-              child: MacosIcon(
-                icon,
-                size: 11,
-                color: MacosColors.systemBlueColor,
-              ),
-            ),
-          ),
-        ),
-      );
 
   /// Widest row, measured on the single longest line — same approach (and same
   /// monospace assumption) as [DiffView].
@@ -292,7 +302,7 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
         FileHeaderRow(:final text) ||
         HunkHeaderRow(:final text) ||
         CodeRow(:final text) => text,
-        ExpanderRow() => '',
+        ExpanderRow() || CollapseRow() => '',
       };
       if (text.length > longest.length) longest = text;
     }

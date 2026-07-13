@@ -1638,7 +1638,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               _handleRowSecondaryTap(commit, d.globalPosition),
           child: Container(
             color: selected
-                ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
+                ? MacosColors.systemBlueColor.withValues(alpha: 0.32)
                 : const Color(0x00000000),
             height: rowHeight,
             child: Row(
