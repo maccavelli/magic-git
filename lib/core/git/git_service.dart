@@ -1170,6 +1170,33 @@ class GitService {
     return result.stdout;
   }
 
+  /// The contents of [path] **as of [rev]** (`git show <rev>:<path>`) — the
+  /// blob, not the worktree file [readFile] returns.
+  ///
+  /// This is what the diff viewer's context expansion reads: to show the lines
+  /// around a hunk, it needs the file exactly as that commit left it. The
+  /// `:`-joined form is a revision, not two arguments, so [path] must be
+  /// repo-relative and `--end-of-options` guards a leading `-`.
+  Future<String> showBlob(String repoPath, String rev, String path) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: [
+        'git',
+        'show',
+        '--no-color',
+        '--end-of-options',
+        '$rev:$path',
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
+    );
+    if (!result.isSuccess) {
+      throw GitException('reading file at revision failed', result);
+    }
+    return result.stdout;
+  }
+
   /// The raw bytes of [path], base64-encoded, for content that isn't text —
   /// images the viewer renders (`Image.memory` after decoding). Piped through
   /// `base64` (reading the file via a shell redirection, which works the same

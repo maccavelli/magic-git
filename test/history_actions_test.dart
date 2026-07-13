@@ -15,7 +15,7 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
-import 'package:remote_magic_git/features/common/diff_view.dart';
+import 'package:remote_magic_git/features/common/commit_patch_view.dart';
 import 'package:remote_magic_git/features/common/sheet_chrome.dart';
 import 'package:remote_magic_git/features/history/commit_graph_view.dart'
     show kGraphRowHeight;
@@ -358,7 +358,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(tester.widget<DiffView>(find.byType(DiffView)).wrap, isTrue);
+    expect(
+      tester.widget<CommitPatchView>(find.byType(CommitPatchView)).wrap,
+      isTrue,
+    );
   });
 
   testWidgets('a lost ⌘ key-up is recovered — app deactivation unfreezes the '

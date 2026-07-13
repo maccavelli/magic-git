@@ -1891,6 +1891,7 @@ void clearHashKeyedRepoCaches() {
   _commitDiffLru.clear();
   _commitFileDiffLru.clear();
   _commitRangeDiffLru.clear();
+  _blobLru.clear();
   _conflictFileLru.clear();
   _untrackedDiffLru.clear();
 }
@@ -2387,6 +2388,11 @@ final _commitFileDiffLru = KeepAliveLru<(String, String, String)>(
   maxTotalBytes: 128 * _mib,
   maxEntryBytes: 8 * _mib,
 );
+final _blobLru = KeepAliveLru<(String, String, String)>(
+  128,
+  maxTotalBytes: 64 * _mib,
+  maxEntryBytes: 8 * _mib,
+);
 final _commitRangeDiffLru = KeepAliveLru<(String, String, String, int)>(
   64,
   maxTotalBytes: 64 * _mib,
@@ -2559,6 +2565,31 @@ final commitRangeDiffProvider = FutureProvider.autoDispose
         onError: (_) => _commitRangeDiffLru.evict(key),
       );
       return future;
+    });
+
+/// A file's contents **as of a commit** (`git show <rev>:<path>`), split into
+/// lines. Keyed by (repoPath, rev, path) — hash-keyed and therefore immutable,
+/// so it lives in the hard-cached tier alongside commit patches.
+///
+/// This is what the diff viewer's context expansion reads: revealing the lines
+/// around a hunk means fetching the file as that commit left it. Split here
+/// (not at each call site) so the line list is computed once per blob and the
+/// expansion engine can index it directly.
+final blobLinesProvider = FutureProvider.autoDispose
+    .family<List<String>, (String, String, String)>((ref, key) async {
+      _blobLru.touch(key, ref.keepAlive());
+      final (repoPath, rev, path) = key;
+      try {
+        final content = await ref
+            .watch(gitServiceProvider)
+            .showBlob(repoPath, rev, path);
+        _blobLru.reportSize(key, content.length);
+        final lines = const LineSplitter().convert(content);
+        return lines;
+      } catch (_) {
+        _blobLru.evict(key);
+        rethrow;
+      }
     });
 
 /// A commit's patch scoped to a single file. Keyed by (repoPath, hash, path)

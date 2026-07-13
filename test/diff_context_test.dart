@@ -70,7 +70,7 @@ void main() {
     addTearDown(container.dispose);
 
     const narrow = AppSettingsNotifier.defaultDiffContext;
-    const wide = AppSettingsNotifier.expandedDiffContext;
+    const wide = 25;
 
     final a = await container.read(
       commitDiffProvider(('/repo', 'abc123', narrow)).future,
@@ -86,10 +86,10 @@ void main() {
     expect(exec.commands, hasLength(2), reason: 'each width fetched once');
   });
 
-  test('expanded context is the wider of the two', () {
-    expect(
-      AppSettingsNotifier.expandedDiffContext,
-      greaterThan(AppSettingsNotifier.defaultDiffContext),
-    );
+  test('the fetch context is git\'s own default', () {
+    // The viewer expands context inline (per hunk, from the blob) rather than
+    // re-fetching wider — but the value must stay KNOWN, because the gaps
+    // between hunks are computed from the headers this -U produces.
+    expect(AppSettingsNotifier.defaultDiffContext, 3);
   });
 }

@@ -149,27 +149,147 @@ DiffFile? parseUnifiedDiff(String raw) {
   // `git diff` output ends with a newline, so split leaves a trailing '' — drop
   // it so it isn't re-emitted as a spurious blank line.
   if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
+  return _parseFileAt(lines, 0, lines.length);
+}
 
+/// Parses `lines[from..to)` — one file's diff — into a [DiffFile].
+DiffFile? _parseFileAt(List<String> lines, int from, int to) {
   final header = <String>[];
-  var i = 0;
-  while (i < lines.length && !lines[i].startsWith('@@')) {
+  var i = from;
+  while (i < to && !lines[i].startsWith('@@')) {
     header.add(lines[i]);
     i++;
   }
-  if (i >= lines.length) return null; // no hunks at all
+  if (i >= to) return null; // no hunks at all (binary, mode-only, empty)
 
   final hunks = <DiffHunk>[];
-  while (i < lines.length) {
+  while (i < to) {
     final hunkHeader = lines[i];
     i++;
     final body = <String>[];
-    while (i < lines.length && !lines[i].startsWith('@@')) {
+    while (i < to && !lines[i].startsWith('@@')) {
       body.add(lines[i]);
       i++;
     }
-    hunks.add(DiffHunk(hunkHeader, body));
+    hunks.add(
+      DiffHunk(hunkHeader, body, range: parseHunkHeader(hunkHeader)),
+    );
   }
-  return hunks.isEmpty ? null : DiffFile(header, hunks);
+  if (hunks.isEmpty) return null;
+
+  final (oldPath, newPath, change) = _classify(header);
+  return DiffFile(
+    header,
+    hunks,
+    oldPath: oldPath,
+    newPath: newPath,
+    change: change,
+  );
+}
+
+/// Reads the paths and the kind of change out of a file's header block.
+///
+/// Paths come from the `---`/`+++` lines rather than `diff --git`, because the
+/// latter is ambiguous for paths containing spaces while the former are one
+/// path each. `/dev/null` on either side is what marks an add or a delete.
+(String?, String?, DiffFileChange) _classify(List<String> header) {
+  String? oldPath;
+  String? newPath;
+  var renamed = false;
+  var binary = false;
+
+  for (final line in header) {
+    if (line.startsWith('--- ')) {
+      final p = line.substring(4);
+      oldPath = p == '/dev/null' ? null : _stripPathPrefix(p);
+    } else if (line.startsWith('+++ ')) {
+      final p = line.substring(4);
+      newPath = p == '/dev/null' ? null : _stripPathPrefix(p);
+    } else if (line.startsWith('rename from ') ||
+        line.startsWith('rename to ')) {
+      renamed = true;
+    } else if (line.startsWith('Binary files ') ||
+        line.startsWith('GIT binary patch')) {
+      binary = true;
+    }
+  }
+
+  final change = switch (null) {
+    _ when binary => DiffFileChange.binary,
+    _ when oldPath == null && newPath != null => DiffFileChange.added,
+    _ when newPath == null && oldPath != null => DiffFileChange.deleted,
+    _ when renamed => DiffFileChange.renamed,
+    _ when oldPath == null && newPath == null => DiffFileChange.modeOnly,
+    _ => DiffFileChange.modified,
+  };
+  return (oldPath, newPath, change);
+}
+
+/// Strips git's `a/`/`b/` prefix and any trailing tab-separated timestamp.
+String _stripPathPrefix(String path) {
+  var p = path;
+  final tab = p.indexOf('\t');
+  if (tab >= 0) p = p.substring(0, tab);
+  if (p.startsWith('a/') || p.startsWith('b/')) p = p.substring(2);
+  return p;
+}
+
+/// A whole `git show` patch: the commit preamble (the `commit`/`Author`/`Date`
+/// lines and the indented message — everything before the first `diff --git`)
+/// followed by one [DiffFile] per file touched.
+///
+/// A merge commit shown without `-m`/`--cc` has a preamble and NO files, which
+/// is a valid, complete result — not a parse failure.
+class CommitPatch {
+  final List<String> preamble;
+  final List<DiffFile> files;
+  const CommitPatch(this.preamble, this.files);
+}
+
+/// Splits a full `git show` patch into its preamble and per-file diffs. Files
+/// that carry no hunks (binary, mode-only) are kept — they still render, they
+/// just can't expand.
+CommitPatch parseCommitPatch(String raw) {
+  final lines = raw.split('\n');
+  if (lines.isNotEmpty && lines.last.isEmpty) lines.removeLast();
+
+  // Every file's diff begins at a `diff …` line; the preamble is whatever
+  // precedes the first one. A merge shown with `--cc`/`--combined` heads its
+  // files with `diff --cc <path>` rather than `diff --git a/… b/…`, so match
+  // both — otherwise a merge's files would be swallowed into the preamble and
+  // silently never render.
+  final starts = <int>[
+    for (var i = 0; i < lines.length; i++)
+      if (lines[i].startsWith('diff --git ') ||
+          lines[i].startsWith('diff --cc ') ||
+          lines[i].startsWith('diff --combined '))
+        i,
+  ];
+  if (starts.isEmpty) return CommitPatch(lines, const []);
+
+  final files = <DiffFile>[];
+  for (var f = 0; f < starts.length; f++) {
+    final from = starts[f];
+    final to = f + 1 < starts.length ? starts[f + 1] : lines.length;
+    final file = _parseFileAt(lines, from, to);
+    if (file != null) {
+      files.add(file);
+    } else {
+      // Hunkless (binary / mode-only): keep it so it still renders.
+      final header = lines.sublist(from, to);
+      final (oldPath, newPath, change) = _classify(header);
+      files.add(
+        DiffFile(
+          header,
+          const [],
+          oldPath: oldPath,
+          newPath: newPath,
+          change: change,
+        ),
+      );
+    }
+  }
+  return CommitPatch(lines.sublist(0, starts.first), files);
 }
 
 /// Rebuilds a minimal patch containing [file]'s header and exactly one [hunk],
