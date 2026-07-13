@@ -4,6 +4,7 @@
 // just because they fit under the count cap. Eviction closes the KeepAliveLink
 // so the entry is free to autoDispose.
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/providers/keep_alive_lru.dart';
 import 'package:riverpod/misc.dart' show KeepAliveLink;
@@ -30,19 +31,70 @@ void main() {
 
   test('touch refreshes recency so a re-touched key survives eviction', () {
     final lru = KeepAliveLru<String>(2);
-    // A rebuild for the same key passes a *fresh* ref.keepAlive() link, so the
-    // prior link for that key is closed and replaced — model that with a2.
+    // A rebuild for the same key passes a *fresh* ref.keepAlive() link — model
+    // that with a2. The link it supersedes (a1) is DROPPED, never closed; the
+    // next test is about why that distinction is the whole ballgame.
     final a1 = _FakeLink(), a2 = _FakeLink(), b = _FakeLink(), c = _FakeLink();
     lru.touch('a', a1);
     lru.touch('b', b);
-    lru.touch('a', a2); // 'a' becomes most-recent (a1 replaced); 'b' now LRU
+    lru.touch('a', a2); // 'a' becomes most-recent (a1 superseded); 'b' now LRU
     lru.touch('c', c); // over capacity → evict 'b'
 
-    expect(a1.closed, isTrue); // replaced by a2
+    expect(a1.closed, isFalse); // superseded, not closed
     expect(b.closed, isTrue); // evicted as LRU
     expect(a2.closed, isFalse); // survives — it was re-touched
     expect(c.closed, isFalse);
     expect(lru.length, 2);
+  });
+
+  test('a superseded link is never closed — closing one killed the live element',
+      () {
+    // The invariant a _FakeLink cannot check, which is exactly how the bug lived
+    // here: a fake link records `closed` and nothing else, so it agreed happily
+    // that closing the superseded link was fine. Against a REAL KeepAliveLink it
+    // is not.
+    //
+    // `Ref.keepAlive()` binds its link to the build that created it — close()
+    // closes over *that build's* link list, and Riverpod discards the list on
+    // every rebuild. `touch` only ever runs from a build body, so a second touch
+    // for a key means that provider rebuilt, and the link being replaced is
+    // already void. Closing it anyway ran Riverpod's disposal bookkeeping
+    // against the dead build and tore down the freshly-built element. The read
+    // in flight then landed on a disposed element, its value was never
+    // published, and the pane sat on AsyncLoading forever — the diff view that
+    // spins and never loads.
+    final lru = KeepAliveLru<String>(8);
+    var builds = 0;
+    final provider = Provider.autoDispose<int>((ref) {
+      builds++;
+      lru.touch('k', ref.keepAlive());
+      return builds;
+    });
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+
+    // Build it, then look away: the LRU alone is holding it up now.
+    container.listen(provider, (_, _) {}).close();
+    expect(builds, 1);
+
+    // Rebuild it while unwatched — the state the filesystem watcher puts every
+    // cached-but-off-screen diff into when it marks one stale.
+    container.invalidate(provider);
+    container.read(provider);
+    final settled = builds;
+
+    // Reading again must not rebuild: the element is alive and kept alive. Had
+    // touch closed the superseded link, that element would have been disposed
+    // out from under itself, and every read would build another one.
+    container.read(provider);
+    container.read(provider);
+    expect(
+      builds,
+      settled,
+      reason: 'the rebuilt element must stay alive — the thrashing '
+          'dispose/rebuild loop is what left the pane spinning',
+    );
   });
 
   test('an entry over maxEntryBytes is released immediately', () {

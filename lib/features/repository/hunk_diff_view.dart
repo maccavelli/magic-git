@@ -235,14 +235,34 @@ class _HunkDiffViewState extends State<HunkDiffView> {
     } else {
       setState(() => _loading = true);
     }
-    Isolate.run(() => _parseAndBuild(diff)).then((parsed) {
-      if (!mounted || requestId != _requestId) return;
-      setState(() {
-        _file = parsed.file;
-        _items = parsed.items;
-        _loading = false;
-      });
-    });
+    Isolate.run(() => _parseAndBuild(diff)).then(
+      (parsed) {
+        if (!mounted || requestId != _requestId) return;
+        setState(() {
+          _file = parsed.file;
+          _items = parsed.items;
+          _loading = false;
+        });
+      },
+      // Without this arm, a parse that failed on the isolate — or an isolate
+      // that failed to spawn at all, which is a live possibility precisely
+      // because this path is reserved for the biggest diffs — left [_loading]
+      // true with nothing left to clear it. The pane spun forever and the error
+      // went out as an unhandled async error, where no user could see it.
+      //
+      // Degrade instead of hanging: fall back to the plain read-only [DiffView],
+      // which is the same thing `build` already shows for a diff it cannot parse
+      // into hunks. Per-hunk staging is lost for this one diff; the diff itself
+      // still renders, which is what the user came for.
+      onError: (Object _, StackTrace _) {
+        if (!mounted || requestId != _requestId) return;
+        setState(() {
+          _file = null;
+          _items = const [];
+          _loading = false;
+        });
+      },
+    );
   }
 
   @override

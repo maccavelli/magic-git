@@ -118,4 +118,43 @@ void main() {
       isNull,
     );
   });
+
+  test('a hunk count too large for an int is malformed, not an exception', () {
+    // The pattern matches `(\d+)` with no length bound, so a header can carry a
+    // number no 64-bit int can hold, and `int.parse` throws FormatException on
+    // it. That exception had nowhere good to land: parsed inline it came flying
+    // out of a widget's initState, and parsed on the background isolate that
+    // huge diffs use it completed the future with an error nobody listened for,
+    // so the pane's spinner stayed up forever.
+    //
+    // A number this code cannot represent IS malformed, so it takes the null
+    // branch — and null already means something sane downstream.
+    expect(
+      parseHunkHeader('@@ -1,99999999999999999999 +1,1 @@'),
+      isNull,
+      reason: 'unrepresentable count → malformed → null, never a throw',
+    );
+    expect(parseHunkHeader('@@ -99999999999999999999 +1 @@'), isNull);
+
+    // And the whole-file parse survives it: the diff still renders in full, it
+    // just cannot expand its context (canExpand needs every range to have
+    // parsed). Refusing to expand is right — the line arithmetic is exactly
+    // what we could not trust.
+    const diff = 'diff --git a/x.txt b/x.txt\n'
+        '--- a/x.txt\n'
+        '+++ b/x.txt\n'
+        '@@ -1,99999999999999999999 +1,1 @@\n'
+        ' keep\n'
+        '+added\n';
+    final file = parseUnifiedDiff(diff);
+    expect(file, isNotNull);
+    expect(file!.hunks, hasLength(1));
+    expect(file.hunks.single.range, isNull);
+    expect(file.hunks.single.lines, [' keep', '+added']);
+    expect(
+      file.canExpand,
+      isFalse,
+      reason: 'a hunk whose line numbers did not parse must not drive a splice',
+    );
+  });
 }

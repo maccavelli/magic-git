@@ -41,8 +41,31 @@ class KeepAliveLru<K> {
   final _sizes = <K, int>{}; // reported payload sizes (code units)
   int _totalBytes = 0;
 
+  /// Records [link] as [key]'s keep-alive, evicting to [capacity].
+  ///
+  /// The link this *replaces* is dropped, never closed — and that distinction is
+  /// load-bearing. [touch] is only ever called from a provider's build body, so
+  /// a second touch for the same key means that provider **rebuilt**, and a
+  /// [KeepAliveLink] is bound to the build that created it: `Ref.keepAlive()`
+  /// closes over that build's link list, and Riverpod discards the list on every
+  /// rebuild (`runOnDispose` nulls it, and it runs before the body re-runs). The
+  /// link being replaced here is therefore already void — Riverpod released it
+  /// the moment the rebuild began, and [link] is the one now holding the element
+  /// up.
+  ///
+  /// Closing it anyway ran Riverpod's `mayNeedDispose()` bookkeeping against the
+  /// superseded build, which tore the freshly-built element down. The read in
+  /// flight then landed on a dead element and its value was never published, so
+  /// the provider sat in `AsyncLoading` forever — a diff pane that spins and
+  /// never loads. The way in was ordinary: open file A's diff, click file B (A
+  /// is now unwatched, but still pinned here), let anything touch A on disk — a
+  /// build, a formatter, an editor autosave — so the watcher marks it stale and
+  /// invalidates it while unwatched; then click back to A. Permanent spinner.
+  ///
+  /// [_evict] still closes, and must: there the link is the *current* build's,
+  /// and releasing it is the entire point of this class.
   void touch(K key, KeepAliveLink link) {
-    _links.remove(key)?.close();
+    _links.remove(key);
     _order.remove(key);
     _order.add(key);
     _links[key] = link;

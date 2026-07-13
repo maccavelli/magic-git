@@ -66,16 +66,39 @@ final _hunkHeaderPattern = RegExp(
 
 /// Parses a hunk header's ranges, or null if [header] isn't a plain two-sided
 /// `@@` header (a combined/merge hunk, or something malformed).
+///
+/// **Total by contract: this never throws.** The pattern matches `(\d+)` with no
+/// length bound, so a header can carry a number too large for a 64-bit int, and
+/// `int.parse` would throw `FormatException` on it. That exception had nowhere
+/// good to land: on the inline parse path it was raised straight out of a
+/// widget's `initState`, and on the background-isolate path the huge diffs take
+/// (see `HunkDiffView`/`SplitDiffView`) it completed the parse future with an
+/// error nobody was listening for — leaving the pane's spinner up forever.
+///
+/// A number this code cannot represent is exactly what "malformed" means here,
+/// so it takes the null branch the signature already promises, and the caller's
+/// existing degradation does the rest: [DiffFile.canExpand] goes false, so the
+/// file renders in full and simply cannot expand its context.
 HunkRange? parseHunkHeader(String header) {
   final m = _hunkHeaderPattern.firstMatch(header);
   if (m == null) return null;
+  final oldStart = int.tryParse(m.group(1)!);
+  // An omitted count means 1 line ("@@ -5 +5 @@"); a count of 0 is legal too
+  // (a pure insertion into an empty file) and must survive as 0.
+  final oldCount = m.group(2) == null ? 1 : int.tryParse(m.group(2)!);
+  final newStart = int.tryParse(m.group(3)!);
+  final newCount = m.group(4) == null ? 1 : int.tryParse(m.group(4)!);
+  if (oldStart == null ||
+      oldCount == null ||
+      newStart == null ||
+      newCount == null) {
+    return null;
+  }
   return HunkRange(
-    oldStart: int.parse(m.group(1)!),
-    // An omitted count means 1 line ("@@ -5 +5 @@"); a count of 0 is legal too
-    // (a pure insertion into an empty file) and must survive as 0.
-    oldCount: m.group(2) == null ? 1 : int.parse(m.group(2)!),
-    newStart: int.parse(m.group(3)!),
-    newCount: m.group(4) == null ? 1 : int.parse(m.group(4)!),
+    oldStart: oldStart,
+    oldCount: oldCount,
+    newStart: newStart,
+    newCount: newCount,
   );
 }
 

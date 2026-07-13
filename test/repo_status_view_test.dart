@@ -94,6 +94,15 @@ class _FakeGitService extends GitService {
     resolved.add((path: path, useOurs: useOurs));
   }
 
+  /// The conflict pane's content. Stubbed because a mutation now marks the
+  /// worktree-backed caches stale (see RepoStatusView._refresh), so the pane
+  /// re-reads the file after a resolve — which is the point: `git checkout
+  /// --ours` rewrites it, and the markers have to go. Without this the fake
+  /// fell through to the real SSH executor and left its retry timer pending.
+  @override
+  Future<String> conflictFile(String repoPath, String path) async =>
+      '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n';
+
   @override
   Future<void> discard(String repoPath, String path) async {
     discarded.add(path);

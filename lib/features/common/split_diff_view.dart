@@ -109,13 +109,26 @@ class _SplitDiffViewState extends State<SplitDiffView> {
     } else {
       setState(() => _loading = true);
     }
-    Isolate.run(() => _buildSplitItems(diff)).then((items) {
-      if (!mounted || requestId != _requestId) return;
-      setState(() {
-        _items = items;
-        _loading = false;
-      });
-    });
+    Isolate.run(() => _buildSplitItems(diff)).then(
+      (items) {
+        if (!mounted || requestId != _requestId) return;
+        setState(() {
+          _items = items;
+          _loading = false;
+        });
+      },
+      // See HunkDiffView._startLoad: with no error arm, a failed parse (or an
+      // isolate that never spawned) left [_loading] true forever — a pane that
+      // spins and never renders. Fall back to the plain [DiffView], exactly as
+      // `build` does for a diff with no parseable hunks.
+      onError: (Object _, StackTrace _) {
+        if (!mounted || requestId != _requestId) return;
+        setState(() {
+          _items = null;
+          _loading = false;
+        });
+      },
+    );
   }
 
   @override

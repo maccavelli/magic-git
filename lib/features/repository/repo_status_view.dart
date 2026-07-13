@@ -302,20 +302,47 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     ref.invalidate(logProvider(repoPath));
     ref.invalidate(refsProvider(repoPath));
     ref.invalidate(stashesProvider(repoPath));
-    // The open diff panel isn't covered by the invalidations above — every
-    // mutating action that routes through here (stage/unstage/discard/
-    // resolve/abort/continue) can change the currently-viewed file's diff, so
-    // refresh whichever key the panel is actually showing.
-    final sel = _selected;
-    if (sel != null) {
-      final (:path, :staged, :untracked) = sel;
-      if (untracked) {
-        ref.invalidate(untrackedDiffProvider((repoPath, path)));
-      } else {
-        ref.invalidate(
-          fileDiffProvider((repoPath, path, staged, _diffIgnoreWs, _diffCtx)),
-        );
-      }
+    // The open file's worktree-backed caches — its diff at every key, its
+    // conflict content, its blame — go stale through the edit stamp rather than
+    // a direct `ref.invalidate` of the one key this panel happens to be
+    // rendering. Two reasons, both load-bearing:
+    //
+    //  * An invalidate is immediate, and a diff whose FIRST read is still in
+    //    flight has no value for Riverpod to carry through it — so the read is
+    //    discarded and the pane restarts from a bare spinner. Since this runs
+    //    after every mutation (and on the toolbar's Refresh button), a mutation
+    //    landing while a slow diff was still loading killed that load and began
+    //    it again; keep that up — stage hunk after hunk, or just hold Refresh —
+    //    and the pane never gets to show anything. Worse, Riverpod dropping the
+    //    future does not cancel the `git diff` behind it: it runs to completion
+    //    unheard, still holding one of the six read slots in
+    //    CommandLaneScheduler, so the reads that were meant to replace it queue
+    //    behind the ones they orphaned. The stamp instead routes through
+    //    _dependOnWorktreeState, which holds a stale-mark arriving mid-fetch
+    //    until that fetch lands and then refetches exactly once — forward
+    //    progress at any rate of change.
+    //
+    //  * A stamp is per (repo, path), so it reaches EVERY cached view of the
+    //    file — staged and unstaged, `-w` and not, every context width, and the
+    //    pop-out window's own key. The old invalidate named a single key built
+    //    from this panel's own toggles, so a popped-out diff (which carries its
+    //    own ignore-whitespace toggle, and so can be showing a different key
+    //    entirely) was never refreshed by any mutation at all.
+    //
+    // Only the selected paths, not the whole repo: everything else a mutation
+    // touches moves that file's status record — or HEAD, which is in the record
+    // too (see _fileStateOf) — and _dependOnWorktreeState already watches those.
+    // The one thing a record cannot show is a content change that leaves the
+    // record identical: discard one hunk of a modified file and it is still
+    // exactly `.M`. That file is the selected one, and this is what covers it.
+    //
+    // Same channel the filesystem watcher uses for external edits (see the
+    // repoWatchProvider listener), which is the point — one way for a file's
+    // content to be declared stale, whoever changed it.
+    if (_selectedPaths.isNotEmpty) {
+      ref
+          .read(worktreeEditsProvider.notifier)
+          .noteFiles(repoPath, _selectedPaths);
     }
   }
 
