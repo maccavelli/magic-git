@@ -1,0 +1,141 @@
+// Branch rows for branches checked out in ANOTHER worktree: badge, "switch to
+// worktree" in place of checkout, and a delete that is disabled (git refuses,
+// with no override flag). Regression guard for the row still being selectable —
+// the badge and the extra button sit in the same Row as the name.
+import 'package:flutter/cupertino.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:macos_ui/macos_ui.dart';
+
+import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/branches/branches_view.dart';
+
+const _repo = '/Users/x/wt-demo/app';
+
+/// Mirrors the demo repo: `main` checked out here, `feature/auth` and `gonebr`
+/// checked out in linked worktrees, `hotfix/login` free.
+const _refs = [
+  GitRef(
+    name: 'refs/heads/main',
+    oid: 'aaa',
+    isHead: true,
+    subject: 's',
+    worktreePath: _repo,
+  ),
+  GitRef(
+    name: 'refs/heads/feature/auth',
+    oid: 'bbb',
+    isHead: false,
+    subject: 's',
+    worktreePath: '/Users/x/wt-demo/app-feature-auth',
+  ),
+  GitRef(
+    name: 'refs/heads/gonebr',
+    oid: 'ccc',
+    isHead: false,
+    subject: 's',
+    worktreePath: '/Users/x/wt-demo/app-gone',
+  ),
+  GitRef(
+    name: 'refs/heads/hotfix/login',
+    oid: 'ddd',
+    isHead: false,
+    subject: 's',
+  ),
+];
+
+class _FakeGit extends GitService {
+  _FakeGit() : super(SSHCommandExecutor(SSHClientManager()));
+}
+
+Future<void> pump(WidgetTester tester) async {
+  tester.view.physicalSize = const Size(1600, 1200);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+
+  final container = ProviderContainer(
+    overrides: [
+      gitServiceProvider.overrideWithValue(_FakeGit()),
+      refsProvider(_repo).overrideWith((ref) async => _refs),
+    ],
+  );
+  addTearDown(container.dispose);
+
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: const MacosApp(
+        debugShowCheckedModeBanner: false,
+        home: BranchesView(repoPath: _repo),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+void main() {
+  testWidgets('every branch row is selectable, badged or not', (tester) async {
+    await pump(tester);
+
+    // All four render.
+    expect(find.text('main'), findsOneWidget);
+    expect(find.text('feature/auth'), findsOneWidget);
+    expect(find.text('gonebr'), findsOneWidget);
+    expect(find.text('hotfix/login'), findsOneWidget);
+
+    // Selecting a badged branch must work — the badge and the extra "switch to
+    // worktree" button live in the same Row as the name, and must not swallow
+    // the row's tap or throw during layout.
+    await tester.tap(find.text('feature/auth'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    // And a plain one.
+    await tester.tap(find.text('hotfix/login'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+
+    // And back to a badged one.
+    await tester.tap(find.text('gonebr'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a branch checked out elsewhere shows a worktree badge', (
+    tester,
+  ) async {
+    await pump(tester);
+
+    // The badge names the worktree by its leaf directory.
+    expect(find.text('app-feature-auth'), findsOneWidget);
+    expect(find.text('app-gone'), findsOneWidget);
+
+    // `main` is checked out HERE. git reports a worktreepath for it too (its
+    // docs claim otherwise), so a naive check would badge the current branch.
+    expect(find.text('app'), findsNothing);
+  });
+
+  testWidgets('checkout is replaced by switch-to-worktree; delete disabled', (
+    tester,
+  ) async {
+    await pump(tester);
+
+    // Two badged branches get "switch to worktree"; the one free branch gets
+    // checkout + "new worktree from this branch".
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.square_arrow_right,
+      ),
+      findsNWidgets(2),
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.square_arrow_down,
+      ),
+      findsOneWidget,
+    );
+  });
+}

@@ -59,7 +59,16 @@ class AddWorktreeSheet extends ConsumerStatefulWidget {
 
 class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
   final _branch = TextEditingController();
-  final _location = TextEditingController();
+
+  /// The folder the worktree will be created *inside*. This is the folder macOS
+  /// authorizes — a sandbox grant covers a folder and its contents, and `git
+  /// worktree add` has to create a new directory, so the permission has to be on
+  /// the parent. Kept as its own field precisely so that is visible.
+  final _parent = TextEditingController();
+
+  /// The worktree's own directory name.
+  final _folderName = TextEditingController();
+
   final _copyGlobs = TextEditingController(text: '.env*');
   final _postCreate = TextEditingController();
 
@@ -71,13 +80,12 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
   bool _openAfter = true;
   bool _submitting = false;
 
-  /// True once the user has edited the location themselves, after which we stop
-  /// overwriting it as they type a branch name.
-  bool _locationEdited = false;
+  /// True once the user has renamed the folder themselves, after which we stop
+  /// re-deriving it from the branch name as they type.
+  bool _nameEdited = false;
 
-  /// The folder the user granted through the picker, if any. Under the sandbox
-  /// this is what makes the destination writable at all — `git worktree add`
-  /// creates a directory, and the app may only write where it has been let in.
+  /// The folder the user has actually granted through the picker. Until this
+  /// matches [_parent], we hold no permission to create anything there.
   String? _grantedParent;
 
   @override
@@ -91,29 +99,41 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
       _basis = _Basis.existingBranch;
       _existingBranch = widget.initialCommitish;
     }
-    _syncLocation();
+    _parent.text = _defaultParent();
+    _syncFolderName();
   }
 
   @override
   void dispose() {
     _branch.dispose();
-    _location.dispose();
+    _parent.dispose();
+    _folderName.dispose();
     _copyGlobs.dispose();
     _postCreate.dispose();
     super.dispose();
   }
 
-  /// The conventional default: a sibling of the repo named after the branch.
+  /// The full destination: the folder git will create and check the worktree
+  /// into. Composed, never typed — see the two fields it is built from.
+  String get _destination {
+    final parent = _parent.text.trim();
+    final name = _folderName.text.trim();
+    if (parent.isEmpty || name.isEmpty) return '';
+    return '${parent.endsWith('/') ? parent.substring(0, parent.length - 1) : parent}/$name';
+  }
+
+  /// Re-derives the folder name from the branch, until the user renames it.
   ///
-  ///   ~/code/myapp          <- main worktree
-  ///   ~/code/myapp-feat-auth
+  /// The conventional default is a sibling of the repo named after the branch:
+  ///
+  ///   ~/code/myapp             <- main worktree
+  ///   ~/code/myapp-feat-auth   <- the worktree
   ///
   /// A sibling, never a subdirectory: a worktree nested inside the main repo
   /// pollutes its `git status` with a second checkout's files and confuses every
   /// tool that walks up looking for a repo root.
-  void _syncLocation() {
-    if (_locationEdited) return;
-    final parent = _defaultParent();
+  void _syncFolderName() {
+    if (_nameEdited) return;
     final slug = _slug(
       switch (_basis) {
         _Basis.newBranch => _branch.text,
@@ -122,11 +142,11 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
       },
     );
     final repoName = widget.repoPath.split('/').last;
-    _location.text = slug.isEmpty ? '' : '$parent/$repoName-$slug';
+    _folderName.text = slug.isEmpty ? '' : '$repoName-$slug';
   }
 
+  /// The repo's own parent — where a sibling worktree conventionally goes.
   String _defaultParent() {
-    if (_grantedParent != null) return _grantedParent!;
     final parts = widget.repoPath.split('/')..removeLast();
     return parts.join('/');
   }
@@ -140,7 +160,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
       .replaceAll(RegExp(r'^-+|-+$'), '');
 
   bool get _valid {
-    if (_location.text.trim().isEmpty) return false;
+    if (_destination.isEmpty) return false;
     return switch (_basis) {
       _Basis.newBranch => _branch.text.trim().isNotEmpty,
       _Basis.existingBranch => _existingBranch != null,
@@ -152,32 +172,48 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
   /// it and leave you with a nested checkout whose files show up as untracked
   /// noise in the parent's status.
   String? get _locationProblem {
-    final path = _location.text.trim();
+    final path = _destination;
     if (path.isEmpty) return null;
     final repo = widget.repoPath;
     if (path == repo || path.startsWith('$repo/')) {
       return 'Choose a folder outside the repository — a worktree inside it '
           "would show up as untracked files in the repository's own status.";
     }
-    if (!path.startsWith('/')) return 'Choose an absolute path.';
+    if (!path.startsWith('/')) {
+      return 'The folder to create in must be an absolute path.';
+    }
+    if (_folderName.text.contains('/')) {
+      return 'The folder name cannot contain "/".';
+    }
     return null;
   }
 
-  Future<void> _pickLocation() async {
-    // Under the sandbox the picker is not a convenience, it is the only way to
-    // gain write access to the destination. The user picks the PARENT folder;
-    // `git worktree add` then creates the worktree directory inside it, under
-    // the grant we just received.
+  /// Whether we hold a sandbox grant covering the folder we're about to create
+  /// in. A grant covers a folder and everything under it, so an ancestor counts.
+  bool get _parentGranted {
+    final granted = _grantedParent;
+    if (granted == null) return false;
+    final parent = _parent.text.trim();
+    return parent == granted || parent.startsWith('$granted/');
+  }
+
+  /// Asks macOS for permission to the "Create in" folder. The picker IS the
+  /// grant — there is no other way for a sandboxed app to gain write access — so
+  /// this is a required step, not a convenience, and whatever the user picks
+  /// becomes the folder we create in.
+  Future<bool> _grantParent() async {
     final picked = await getDirectoryPath(
-      confirmButtonText: 'Choose',
-      initialDirectory: _defaultParent(),
+      confirmButtonText: 'Grant Access',
+      initialDirectory: _parent.text.trim().isEmpty
+          ? _defaultParent()
+          : _parent.text.trim(),
     );
-    if (picked == null || !mounted) return;
+    if (picked == null || !mounted) return false;
     setState(() {
       _grantedParent = picked;
-      _locationEdited = false;
-      _syncLocation();
+      _parent.text = picked;
     });
+    return true;
   }
 
   Future<void> _submit() async {
@@ -187,10 +223,27 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
       await showErrorDialog(context, problem);
       return;
     }
+
+    // The pre-filled parent is a suggestion, not a permission. `git worktree
+    // add` has to CREATE a directory there, and a sandboxed app can only write
+    // inside folders the user has picked — the repo's own grant does NOT extend
+    // to its parent. So get the grant before running git, rather than letting it
+    // fail with a raw "permission denied".
+    if (ref.read(connectionProvider).isLocal && !_parentGranted) {
+      final granted = await _grantParent();
+      if (!granted || !mounted) return;
+      // The folder they picked may not be the one we suggested — re-check that
+      // the worktree still isn't landing inside the repository.
+      final finalProblem = _locationProblem;
+      if (finalProblem != null) {
+        await showErrorDialog(context, finalProblem);
+        return;
+      }
+    }
+    final path = _destination;
     setState(() => _submitting = true);
 
     final git = ref.read(gitServiceProvider);
-    final path = _location.text.trim();
     final repoPath = widget.repoPath;
 
     final ok = await runAction(context, () async {
@@ -276,7 +329,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
                 label: 'New branch name',
                 controller: _branch,
                 placeholder: 'feature/auth',
-                onChanged: () => setState(_syncLocation),
+                onChanged: () => setState(_syncFolderName),
               ),
             if (_basis == _Basis.detached)
               LabeledTextField(
@@ -354,24 +407,27 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
           ),
         ),
         const SizedBox(height: 4),
-        Row(
+        // Wrap, not Row: the three labels are wider than the sheet at this size
+        // and a Row overflows them off the right edge. Wrapping is also the
+        // right behaviour if a label is ever localised into something longer.
+        Wrap(
+          spacing: 6,
+          runSpacing: 6,
           children: [
             for (final (basis, label) in const [
               (_Basis.newBranch, 'New branch'),
               (_Basis.existingBranch, 'Existing branch'),
               (_Basis.detached, 'Detached'),
-            ]) ...[
+            ])
               PushButton(
                 controlSize: ControlSize.regular,
                 secondary: _basis != basis,
                 onPressed: () => setState(() {
                   _basis = basis;
-                  _syncLocation();
+                  _syncFolderName();
                 }),
                 child: Text(label),
               ),
-              const SizedBox(width: 6),
-            ],
           ],
         ),
         if (_basis == _Basis.existingBranch) ...[
@@ -388,7 +444,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
             ],
             onChanged: (v) => setState(() {
               _existingBranch = v;
-              _syncLocation();
+              _syncFolderName();
             }),
           ),
           if (taken > 0)
@@ -402,51 +458,81 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
   }
 
   Widget _locationField(BuildContext context, String? problem) {
+    final typography = MacosTheme.of(context).typography;
+    final isLocal = ref.read(connectionProvider).isLocal;
+    final label = typography.caption1.copyWith(
+      color: MacosColors.systemGrayColor,
+    );
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Location',
-          style: MacosTheme.of(context).typography.caption1.copyWith(
-            color: MacosColors.systemGrayColor,
-          ),
-        ),
+        // The folder that gets AUTHORIZED, kept as its own field so it is the
+        // thing you look at and pick. A macOS grant covers a folder and its
+        // contents; `git worktree add` creates a NEW directory, so the
+        // permission has to sit on the parent — which is invisible if the only
+        // field is a full destination path.
+        Text('Create in', style: label),
         const SizedBox(height: 4),
         Row(
           children: [
             Expanded(
               child: MacosTextField(
-                controller: _location,
-                placeholder: '/path/to/myapp-feature',
+                controller: _parent,
+                placeholder: '/Users/you/code',
                 decoration: kAppTextFieldDecoration,
                 focusedDecoration: kAppTextFieldFocusedDecoration,
                 placeholderStyle: kAppPlaceholderStyle,
-                onChanged: (_) => setState(() => _locationEdited = true),
+                onChanged: (_) => setState(() {}),
               ),
             ),
             const SizedBox(width: 6),
             PushButton(
               controlSize: ControlSize.regular,
               secondary: true,
-              onPressed: _pickLocation,
+              onPressed: _grantParent,
               child: const Text('Choose…'),
             ),
           ],
         ),
+        if (isLocal)
+          FieldHint(
+            _parentGranted
+                ? '✓ macOS access granted to this folder.'
+                : 'macOS will ask you to authorize this folder — it is the only '
+                      'way the app can create the worktree inside it.',
+          ),
+
+        const SizedBox(height: 8),
+        Text('Folder name', style: label),
+        const SizedBox(height: 4),
+        MacosTextField(
+          controller: _folderName,
+          placeholder: 'myapp-feature',
+          decoration: kAppTextFieldDecoration,
+          focusedDecoration: kAppTextFieldFocusedDecoration,
+          placeholderStyle: kAppPlaceholderStyle,
+          onChanged: (_) => setState(() => _nameEdited = true),
+        ),
+
+        const SizedBox(height: 6),
         if (problem != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              problem,
-              style: MacosTheme.of(context).typography.caption1.copyWith(
-                color: MacosColors.systemRedColor,
-              ),
+          Text(
+            problem,
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemRedColor,
             ),
           )
-        else if (ref.read(connectionProvider).isLocal && _grantedParent == null)
-          const FieldHint(
-            'macOS will ask you to choose the destination folder — that is how '
-            'the app is granted permission to create the worktree there.',
+        else if (_destination.isNotEmpty)
+          // The composed result, so there is never any doubt where it lands.
+          Text(
+            '→ $_destination',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemGrayColor,
+              fontWeight: FontWeight.w600,
+            ),
           ),
       ],
     );

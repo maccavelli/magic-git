@@ -1115,13 +1115,20 @@ class GitService {
     required List<String> globs,
   }) async {
     if (globs.isEmpty) return;
-    final dest = ShellEscaper.escape(to);
     final pathspecs = globs.map(ShellEscaper.escape).join(' ');
+    // [ShellEscaper.escape] returns a value that is ALREADY a complete shell
+    // token — it wraps the path in single quotes. Interpolating that into a
+    // double-quoted string ("$dest/…") would nest the quotes and make them part
+    // of the path: `cp` then wrote to a directory literally named `'` inside the
+    // source repo. So bind it to a shell variable via a bare assignment (where
+    // the quoting is exactly right) and dereference it as "$dest" from then on.
+    final destAssign = 'dest=${ShellEscaper.escape(to)}';
     // -z + `read -d ''` so a filename with a space or newline survives.
     final script =
+        '$destAssign; '
         'git ls-files -z --others --ignored --exclude-standard -- $pathspecs | '
         'while IFS= read -r -d "" f; do '
-        'mkdir -p "$dest/\$(dirname "\$f")" && cp -R "\$f" "$dest/\$f"; '
+        'mkdir -p "\$dest/\$(dirname "\$f")" && cp -R "\$f" "\$dest/\$f"; '
         'done';
     await _runVoid(
       from,

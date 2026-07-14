@@ -284,6 +284,109 @@ void main() {
     });
   });
 
+  group('copyIgnoredFiles', () {
+    setUp(() async {
+      // The thing `worktree add` leaves behind: gitignored config the project
+      // needs to run at all.
+      File('$repo/.gitignore').writeAsStringSync('.env\n.env.local\nbuild/\n');
+      File('$repo/.env').writeAsStringSync('DATABASE_URL=postgres://dev\n');
+      File('$repo/.env.local').writeAsStringSync('DEBUG=1\n');
+      await raw(['add', '.gitignore']);
+      await raw(['commit', '-q', '-m', 'ignore env']);
+    });
+
+    test('copies gitignored files INTO the worktree', () async {
+      await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
+      // `worktree add` checks out tracked files only — so the new worktree is
+      // missing .env and the project would fail on first run.
+      expect(File('$wtRoot/w/.env').existsSync(), isFalse);
+
+      await git.copyIgnoredFiles(
+        from: repo,
+        to: '$wtRoot/w',
+        globs: ['.env*'],
+      );
+
+      expect(File('$wtRoot/w/.env').readAsStringSync(), contains('postgres'));
+      expect(File('$wtRoot/w/.env.local').readAsStringSync(), contains('DEBUG'));
+    });
+
+    test('writes nothing into the SOURCE repo', () async {
+      // The bug this pins: the destination came back from ShellEscaper already
+      // single-quoted, and was then interpolated into a double-quoted shell
+      // string — so the quotes became part of the path and `cp` created a
+      // directory literally named `'` inside the source repo, with the .env
+      // buried under it. The copy "succeeded" (exit 0) and the worktree was
+      // empty, which is exactly why asserting on the exit code is not enough.
+      await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
+      final before = Directory(repo).listSync().map((e) => e.path).toSet();
+
+      await git.copyIgnoredFiles(
+        from: repo,
+        to: '$wtRoot/w',
+        globs: ['.env*'],
+      );
+
+      final after = Directory(repo).listSync().map((e) => e.path).toSet();
+      expect(
+        after.difference(before),
+        isEmpty,
+        reason: 'copying into a worktree must not create anything in the repo',
+      );
+    });
+
+    test('a destination path with spaces survives', () async {
+      await git.addWorktree(repo, path: '$wtRoot/my worktree', newBranch: 'sp');
+
+      await git.copyIgnoredFiles(
+        from: repo,
+        to: '$wtRoot/my worktree',
+        globs: ['.env*'],
+      );
+
+      expect(File('$wtRoot/my worktree/.env').existsSync(), isTrue);
+      expect(Directory(repo).listSync().map((e) => e.path), isNot(contains("'")));
+    });
+
+    test('a glob matching nothing is not an error', () async {
+      await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
+
+      // A repo with no .env should still create a worktree.
+      await expectLater(
+        git.copyIgnoredFiles(
+          from: repo,
+          to: '$wtRoot/w',
+          globs: ['.nothing-matches-this*'],
+        ),
+        completes,
+      );
+    });
+
+    test('a TRACKED file matching the glob is not copied over', () async {
+      // `ls-files --others --ignored` only ever yields files git is deliberately
+      // NOT tracking — which is exactly the set `worktree add` left behind. A
+      // tracked file is already in the worktree, checked out by git.
+      File('$repo/.env.example').writeAsStringSync('DATABASE_URL=\n');
+      await raw(['add', '-f', '.env.example']);
+      await raw(['commit', '-q', '-m', 'add example']);
+      await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
+      File('$wtRoot/w/.env.example').writeAsStringSync('EDITED LOCALLY\n');
+
+      await git.copyIgnoredFiles(
+        from: repo,
+        to: '$wtRoot/w',
+        globs: ['.env*'],
+      );
+
+      // The tracked one is untouched; only the ignored ones came across.
+      expect(
+        File('$wtRoot/w/.env.example').readAsStringSync(),
+        'EDITED LOCALLY\n',
+      );
+      expect(File('$wtRoot/w/.env').existsSync(), isTrue);
+    });
+  });
+
   group('branch occupancy via %(worktreepath)', () {
     test('reports which worktree holds each branch, including the current one',
         () async {
