@@ -247,8 +247,36 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
     await _run(() => git.pruneWorktrees(repoPath));
   }
 
+  /// Re-links a worktree whose folder was moved behind git's back (dragged in
+  /// Finder), leaving the admin entry pointing at the old location.
+  ///
+  /// git must be told where the folder is NOW: `git worktree repair` takes the
+  /// new path as an operand. Without one it only re-checks the paths already on
+  /// record — verified against git 2.55: it exits 0 having fixed nothing, which
+  /// is exactly the moved-folder case this button exists for. On macOS the
+  /// folder picker doubles as the sandbox grant git needs to read the moved
+  /// folder's `.git` file.
   Future<void> _repair(GitWorktree wt) async {
-    await _run(() => ref.read(gitServiceProvider).repairWorktrees(repoPath));
+    final isLocal = ref.read(connectionProvider).isLocal;
+    final String? newPath;
+    if (isLocal) {
+      newPath = await getDirectoryPath(
+        confirmButtonText: 'Repair',
+        initialDirectory: _parentOf(wt.path),
+      );
+    } else {
+      newPath = await _promptPath(
+        title: 'Repair worktree',
+        message: 'Where is "${wt.name}" now?',
+        initial: wt.path,
+        confirmLabel: 'Repair',
+      );
+    }
+    if (newPath == null || !mounted) return;
+    final path = newPath;
+    await _run(
+      () => ref.read(gitServiceProvider).repairWorktrees(repoPath, [path]),
+    );
   }
 
   /// Relocates a worktree with `git worktree move`, which rewrites BOTH halves
@@ -332,6 +360,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
     required String title,
     required String message,
     required String initial,
+    String confirmLabel = 'Move',
   }) async {
     final controller = TextEditingController(text: initial);
     final result = await showMacosAlertDialog<String>(
@@ -356,7 +385,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
           controlSize: ControlSize.large,
           onPressed: () =>
               Navigator.of(context).pop(controller.text.trim()),
-          child: const Text('Move'),
+          child: Text(confirmLabel),
         ),
         secondaryButton: PushButton(
           controlSize: ControlSize.large,
@@ -433,7 +462,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
       if (wt.isPrunable)
         ContextMenuItem(
           icon: CupertinoIcons.wrench,
-          label: 'Repair',
+          label: 'Repair…',
           onTap: () => _repair(wt),
         ),
       const ContextMenuDivider(),

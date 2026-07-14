@@ -80,6 +80,13 @@ String fieldText(WidgetTester tester, int index) => tester
     .controller!
     .text;
 
+PushButton createButton(WidgetTester tester) => tester.widget<PushButton>(
+  find.ancestor(
+    of: find.text('Create Worktree'),
+    matching: find.byType(PushButton),
+  ),
+);
+
 void main() {
   testWidgets('the parent folder and the folder name are separate fields', (
     tester,
@@ -141,6 +148,44 @@ void main() {
       ),
     );
     expect(create.onPressed, isNull);
+  });
+
+  testWidgets('a typed detached revision is kept, and enables Create', (
+    tester,
+  ) async {
+    // The bug this pins: the Revision field was built with a FRESH controller
+    // on every build and a no-op onChanged, so typed text never reached state
+    // and was wiped by the next rebuild — Create could never enable, making
+    // Detached mode entirely unusable from the standalone Add flow.
+    await pump(tester);
+
+    await tester.tap(find.text('Detached'));
+    await tester.pumpAndSettle();
+    // No revision yet — nothing to check out, so Create must be off.
+    expect(createButton(tester).onPressed, isNull);
+
+    // The Revision field sits where the branch field does in the other modes.
+    await tester.enterText(find.byType(MacosTextField).at(0), 'v2.1.0');
+    await tester.pumpAndSettle();
+
+    expect(fieldText(tester, 0), 'v2.1.0');
+    // The folder name derives from the revision, like it does from a branch.
+    expect(fieldText(tester, _folderNameField), 'app-v2.1.0');
+    expect(createButton(tester).onPressed, isNotNull);
+  });
+
+  testWidgets('Detached pre-fills the revision it was opened with', (
+    tester,
+  ) async {
+    // Opened from a branch/commit context ("Checkout in New Worktree…"), then
+    // switched to Detached: the starting point carries over as the revision.
+    await pump(tester, initialCommitish: 'hotfix/login');
+
+    await tester.tap(find.text('Detached'));
+    await tester.pumpAndSettle();
+
+    expect(fieldText(tester, 0), 'hotfix/login');
+    expect(createButton(tester).onPressed, isNotNull);
   });
 
   testWidgets('a branch checked out elsewhere is not offered', (tester) async {

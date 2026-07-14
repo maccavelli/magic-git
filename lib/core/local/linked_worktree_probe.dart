@@ -2,22 +2,29 @@ import 'dart:io';
 
 /// What a linked worktree's `.git` file points at.
 class LinkedWorktreeInfo {
-  /// This worktree's private git dir — `<main>/.git/worktrees/<id>`, absolute.
+  /// This worktree's private git dir — `<common>/worktrees/<id>`, absolute.
   /// Holds this checkout's own HEAD, index, ORIG_HEAD and in-progress-op state.
   final String gitDir;
 
-  /// The main repository's working-tree root. This is the folder that needs the
-  /// second security-scoped grant.
-  final String mainRepoPath;
-
-  const LinkedWorktreeInfo({required this.gitDir, required this.mainRepoPath});
-
-  /// The shared git dir — `<main>/.git`. Holds the objects, the shared refs and
+  /// The shared git dir — `<main>/.git` for an ordinary main repo, or the git
+  /// dir itself when the main repo is bare (`<repo>.git`) or uses
+  /// `--separate-git-dir`. Holds the objects, the shared refs and
   /// `packed-refs`, and every worktree's admin directory.
   ///
   /// Note [gitDir] is *inside* this, which is what lets a single recursive watch
   /// of it observe this worktree's HEAD and index as well as the shared refs.
-  String get gitCommonDir => '$mainRepoPath/.git';
+  final String gitCommonDir;
+
+  /// The folder that needs the second security-scoped grant: the main
+  /// repository's working-tree root when there is one, otherwise (bare or
+  /// separate git dir) [gitCommonDir] itself.
+  final String mainRepoPath;
+
+  const LinkedWorktreeInfo({
+    required this.gitDir,
+    required this.gitCommonDir,
+    required this.mainRepoPath,
+  });
 }
 
 /// Why a folder can't be opened as a local repo, when we can tell without git.
@@ -104,22 +111,36 @@ LocalRepoProbe probeLocalRepo(String repoPath) {
     return const LocalRepoProbe(LocalRepoKind.submodule);
   }
 
-  // A linked worktree's git dir is `<main>/.git/worktrees/<id>`. Everything
-  // before `/.git/worktrees/` is the main repository's working-tree root — the
-  // folder whose grant we need.
-  const marker = '/.git/worktrees/';
-  final at = gitDir.indexOf(marker);
-  if (at > 0) {
+  // A linked worktree's git dir is `<common>/worktrees/<id>` — that shape is
+  // what git guarantees, NOT that the common dir is named `.git`: a worktree of
+  // a bare repo points into `<repo>.git/worktrees/<id>`, and one of a
+  // `--separate-git-dir` repo into `<gitdir>/worktrees/<id>`. So classify by
+  // the penultimate path segment, then derive the two folders from it. (In
+  // principle a `--separate-git-dir` target could itself sit inside a folder a
+  // user named `worktrees` and land here wrongly — the sandbox forbids
+  // stat'ing outside the grant, so the shape is all we have. `GitService.
+  // repoLayout` remains the authority once granted, and a wrong guess costs a
+  // redundant watch root, not correctness.)
+  final segments = gitDir.split('/').where((s) => s.isNotEmpty).toList();
+  if (segments.length >= 3 && segments[segments.length - 2] == 'worktrees') {
+    final commonDir = '/${segments.sublist(0, segments.length - 2).join('/')}';
     return LocalRepoProbe(
       LocalRepoKind.linkedWorktree,
       LinkedWorktreeInfo(
         gitDir: gitDir,
-        mainRepoPath: gitDir.substring(0, at),
+        gitCommonDir: commonDir,
+        // `<main>/.git` means there is a main working tree to grant; a bare or
+        // separate git dir has no working tree, so the git dir itself is the
+        // folder the grant must cover.
+        mainRepoPath: commonDir.endsWith('/.git')
+            ? commonDir.substring(0, commonDir.length - '/.git'.length)
+            : commonDir,
       ),
     );
   }
 
-  // A gitfile pointing somewhere else entirely (`--separate-git-dir`). Not
+  // A gitfile pointing somewhere else entirely — the `--separate-git-dir`
+  // layout of the repo ITSELF (its gitdir has no `worktrees/<id>` tail). Not
   // something we can bootstrap a grant for.
   return const LocalRepoProbe(LocalRepoKind.unknown);
 }

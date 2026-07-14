@@ -152,6 +152,27 @@ void main() {
     expect(event.touchesGitState, isFalse);
   });
 
+  test('a worktree of a BARE repo sees git-state changes too', () async {
+    // The admin dir of a bare repo's worktree is `<repo>.git/worktrees/<id>` —
+    // no `.git` segment anywhere in the path. Classifying by the literal
+    // `/.git/worktrees/` marker misses it, the watcher then gets no second
+    // root, and a commit made in the worktree (which writes nothing inside the
+    // worktree directory) is invisible: branches and History sit stale.
+    final bare = '${tmp.path}/bare.git';
+    await git_(['clone', '-q', '--bare', main, bare], tmp.path);
+    final bareWt = '${tmp.path}/bare-feature';
+    await git_(['worktree', 'add', '-q', bareWt, '-b', 'bare-feature'], bare);
+
+    final events = await quietWatcher(bareWt);
+
+    File('$bareWt/a.txt').writeAsStringSync('changed in bare worktree\n');
+    await git_(['add', 'a.txt'], bareWt);
+    await git_(['commit', '-q', '-m', 'from the bare worktree'], bareWt);
+
+    final event = await waitFor(events, (e) => e.touchesGitState);
+    expect(event.touchesGitState, isTrue);
+  });
+
   test('an ordinary repo watches exactly one root, as before', () async {
     // The main worktree's `.git` is already inside the folder, so nothing about
     // its behaviour changes — no second root, no remapping.

@@ -64,6 +64,51 @@ void main() {
       probe.worktree!.gitDir,
       '${await _canon(root)}/.git/worktrees/feature',
     );
+    // And this is the folder the watcher's second root must cover.
+    expect(probe.worktree!.gitCommonDir, '${await _canon(root)}/.git');
+  });
+
+  test('a worktree of a BARE repo resolves its git dir', () async {
+    // The admin dir is `<repo>.git/worktrees/<id>` — no `.git` path segment
+    // anywhere. String-matching the literal `/.git/worktrees/` marker misses
+    // it, the watcher then never gets its second root, and HEAD/ref changes in
+    // the worktree silently stop refreshing the UI.
+    final bare = '${tmp.path}/bare.git';
+    await git_(['clone', '-q', '--bare', root, bare], tmp.path);
+    final wt = '${tmp.path}/bare-feature';
+    await git_(['worktree', 'add', '-q', wt, '-b', 'feature'], bare);
+
+    final probe = probeLocalRepo(wt);
+
+    expect(probe.kind, LocalRepoKind.linkedWorktree);
+    expect(probe.worktree!.gitDir, '${await _canon(bare)}/worktrees/bare-feature');
+    expect(probe.worktree!.gitCommonDir, await _canon(bare));
+    // No main working tree exists — the bare dir itself is what needs the
+    // second grant.
+    expect(probe.worktree!.mainRepoPath, await _canon(bare));
+  });
+
+  test('a worktree of a --separate-git-dir repo resolves its git dir',
+      () async {
+    final sep = '${tmp.path}/sepmain';
+    final gitDir = '${tmp.path}/sep-gitdir';
+    await git_(
+      ['init', '-q', '--separate-git-dir', gitDir, sep],
+      tmp.path,
+    );
+    await git_(['config', 'user.email', 't@t'], sep);
+    await git_(['config', 'user.name', 't'], sep);
+    await git_(['commit', '-q', '--allow-empty', '-m', 'init'], sep);
+    final wt = '${tmp.path}/sep-feature';
+    await git_(['worktree', 'add', '-q', wt, '-b', 'feature'], sep);
+
+    final probe = probeLocalRepo(wt);
+
+    expect(probe.kind, LocalRepoKind.linkedWorktree);
+    expect(probe.worktree!.gitCommonDir, await _canon(gitDir));
+    // The git dir holds everything shared; it is the folder to grant. (The
+    // separate main WORKING tree can't be derived from the gitdir path at all.)
+    expect(probe.worktree!.mainRepoPath, await _canon(gitDir));
   });
 
   test('a worktree with a RELATIVE gitdir resolves too', () async {

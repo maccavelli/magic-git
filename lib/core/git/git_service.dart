@@ -240,8 +240,9 @@ class GitWorktree {
   /// A worktree created with `--orphan`, or any repo with no commits yet: git
   /// reports an all-zero HEAD. Note it still emits a `branch` line in this
   /// case, so [branch] is non-null and [isDetached] is false — the null OID is
-  /// the only signal.
-  bool get isUnborn => headOid == null;
+  /// the only signal. A bare entry also has no HEAD line, which is why this
+  /// must exclude [isBare] rather than test [headOid] alone.
+  bool get isUnborn => !isBare && headOid == null;
 
   /// The directory name, which is what the UI labels a worktree with. Full
   /// paths are too long to scan and branch names alone are ambiguous.
@@ -668,6 +669,14 @@ class GitService {
 
   static const Duration defaultCommitTimeout = Duration(minutes: 5);
   static const Duration defaultNetworkTimeout = Duration(minutes: 3);
+
+  /// Ceiling for user-supplied hooks ([runInWorktree]): a cold-cache `pnpm
+  /// install` legitimately outlives [defaultCommitTimeout], and on
+  /// [ExecLane.isolated] a long hook no longer holds anything else up — so the
+  /// bound only needs to catch a hook that has actually wedged (a dead
+  /// registry, a prompt waiting for input that will never come), visibly
+  /// rather than never.
+  static const Duration defaultHookTimeout = Duration(minutes: 30);
 
   /// A commit may fire a slow prepare-commit-msg (AI) hook; network ops cross a
   /// possibly-slow link. These get generous per-command timeouts so the executor
@@ -1109,12 +1118,19 @@ class GitService {
   /// Directories are copied recursively, and parents are created as needed, so a
   /// glob like `config/*.local` works. Missing matches are not an error: a repo
   /// with no `.env` should create a worktree, not fail.
-  Future<void> copyIgnoredFiles({
+  ///
+  /// Returns the raw result so the caller can put it in the Output view: each
+  /// copied file is reported on stdout, each failed one on stderr. Any failed
+  /// copy throws — a worktree silently missing half its `.env` files is exactly
+  /// the confusing state this feature exists to prevent.
+  Future<SSHCommandResult> copyIgnoredFiles({
     required String from,
     required String to,
     required List<String> globs,
   }) async {
-    if (globs.isEmpty) return;
+    if (globs.isEmpty) {
+      return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+    }
     final pathspecs = globs.map(ShellEscaper.escape).join(' ');
     // [ShellEscaper.escape] returns a value that is ALREADY a complete shell
     // token — it wraps the path in single quotes. Interpolating that into a
@@ -1124,13 +1140,25 @@ class GitService {
     // the quoting is exactly right) and dereference it as "$dest" from then on.
     final destAssign = 'dest=${ShellEscaper.escape(to)}';
     // -z + `read -d ''` so a filename with a space or newline survives.
+    //
+    // A pipeline's exit status is its LAST command's, and a `while` loop's is
+    // its last iteration's — so without care a failed `git ls-files`, or a
+    // `cp` that failed on any file but the final one, reports success. Hence:
+    // pipefail (guarded — `read -d ''` already assumes a bash-like sh, but a
+    // shell without the option must not die on the `set` itself) surfaces the
+    // ls-files side, and the loop records its own failures in `fail` and exits
+    // with it — one bad copy fails the whole step, after still attempting the
+    // rest.
     final script =
         '$destAssign; '
+        'set -o pipefail 2>/dev/null; fail=0; '
         'git ls-files -z --others --ignored --exclude-standard -- $pathspecs | '
-        'while IFS= read -r -d "" f; do '
-        'mkdir -p "\$dest/\$(dirname "\$f")" && cp -R "\$f" "\$dest/\$f"; '
-        'done';
-    await _runVoid(
+        '{ while IFS= read -r -d "" f; do '
+        'if mkdir -p "\$dest/\$(dirname "\$f")" && cp -R "\$f" "\$dest/\$f"; '
+        'then printf \'copied %s\\n\' "\$f"; '
+        'else printf \'failed %s\\n\' "\$f" >&2; fail=1; fi; '
+        'done; exit "\$fail"; }';
+    return _run(
       from,
       ['sh', '-c', script],
       'Copy ignored files into the worktree',
@@ -1145,6 +1173,12 @@ class GitService {
   /// Returns the raw result so the caller can put it in the Output view; a
   /// non-zero exit throws, because a failed `install` means the worktree is not
   /// actually usable and the user needs to know.
+  ///
+  /// Runs on [ExecLane.isolated]: the hook operates on a brand-new checkout
+  /// nothing else touches, and it can legitimately run for minutes — on the
+  /// exclusive lane it acted as a barrier and every background refresh in the
+  /// app (auto-fetch, watch-triggered status) stalled until the install
+  /// finished.
   Future<SSHCommandResult> runInWorktree(
     String worktreePath,
     String command,
@@ -1152,7 +1186,8 @@ class GitService {
     worktreePath,
     ['sh', '-c', command],
     'Post-create command',
-    timeout: defaultCommitTimeout,
+    timeout: defaultHookTimeout,
+    lane: ExecLane.isolated,
   );
 
   static const List<String> _refsFormat = [

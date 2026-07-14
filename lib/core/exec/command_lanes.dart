@@ -24,10 +24,31 @@ enum ExecLane {
   sync,
 
   /// An index/worktree mutation (stage, commit, checkout, pull, rebase, …).
-  /// Runs strictly alone: it waits for every in-flight read/sync to finish,
-  /// nothing else starts until it completes, and — because it acts as a FIFO
-  /// barrier — commands enqueued after it never jump ahead of it.
+  /// Runs strictly alone among the git lanes: it waits for every in-flight
+  /// read/sync to finish, nothing else starts until it completes, and —
+  /// because it acts as a FIFO barrier — commands enqueued after it never
+  /// jump ahead of it. Only [isolated] jobs are exempt, in both directions.
   exclusive,
+
+  /// A command whose effects are disjoint from everything the other lanes
+  /// protect: it touches neither the repo's index, working tree or refs, nor
+  /// the network resources [sync] serializes. It overlaps EVERYTHING —
+  /// including a running [exclusive] — and takes no part in the exclusive
+  /// barrier in either direction: an exclusive neither waits for it nor holds
+  /// it back.
+  ///
+  /// This is the lane for long-running side work. The canonical case is a
+  /// worktree post-create hook (`pnpm install`) running inside a brand-new
+  /// checkout nothing else is operating on: on the exclusive lane it held the
+  /// barrier for its whole duration, and every background refresh in the app
+  /// stalled behind a package install.
+  ///
+  /// The isolation is asserted by the CALL SITE, not checked by the scheduler
+  /// — a mislabelled mutation here races the very locks [exclusive] exists to
+  /// protect. When in doubt, this is the wrong lane. Bounded by
+  /// [CommandLaneScheduler.maxConcurrentIsolated] so a pile of hooks cannot
+  /// swamp a remote host.
+  isolated,
 }
 
 /// A job held a lane slot past its deadline and the scheduler took the slot back.
@@ -78,6 +99,12 @@ class _Job {
 ///   after it starts until it has finished. Two exclusives therefore still
 ///   run in strict FIFO order — the exact serialization guarantee the old
 ///   single-chain queue provided for mutations.
+/// - [ExecLane.isolated] jobs live entirely outside that world: their own
+///   queue, their own bound ([maxConcurrentIsolated]), overlapping every
+///   other lane including a running exclusive. A separate queue is load-
+///   bearing, not a convenience: in the shared queue, an isolated job held
+///   at its cap would sit in front of an exclusive and stall it on exactly
+///   the lane that exists never to stall anything.
 /// - Jobs never start synchronously inside the enqueue call: each body is
 ///   deferred to a microtask, so state changed immediately after enqueuing
 ///   (e.g. a generation bump from a disconnect) is observed by the job.
@@ -85,7 +112,10 @@ class _Job {
 ///   never wedges on a failed job.
 /// - **A job cannot hold its slot forever.** See [watchdogMargin].
 class CommandLaneScheduler {
-  CommandLaneScheduler({this.maxConcurrentReads = 6});
+  CommandLaneScheduler({
+    this.maxConcurrentReads = 6,
+    this.maxConcurrentIsolated = 2,
+  });
 
   /// Grace period a job gets *beyond its own deadline* before the scheduler
   /// reclaims its slot.
@@ -111,18 +141,30 @@ class CommandLaneScheduler {
   /// low enough not to swamp a remote host with parallel processes.
   final int maxConcurrentReads;
 
+  /// Ceiling on concurrently running [ExecLane.isolated] jobs. These are
+  /// long-lived by nature (package installs), so the bound is what keeps a
+  /// burst of them from becoming a process pile-up on a remote host.
+  final int maxConcurrentIsolated;
+
   final _queue = <_Job>[];
+
+  /// [ExecLane.isolated] jobs wait here, never in [_queue] — see the class
+  /// doc for why sharing the queue would let one stall an exclusive.
+  final _isolatedQueue = <_Job>[];
+
   int _activeReads = 0;
   int _activeSyncs = 0;
   int _activeExclusives = 0;
+  int _activeIsolated = 0;
 
   /// Currently running jobs — for tests/diagnostics.
   int get activeReads => _activeReads;
   int get activeSyncs => _activeSyncs;
   int get activeExclusives => _activeExclusives;
+  int get activeIsolated => _activeIsolated;
 
   /// Number of jobs waiting to start — for tests/diagnostics.
-  int get queued => _queue.length;
+  int get queued => _queue.length + _isolatedQueue.length;
 
   /// Enqueues [body] on [lane] and completes with its result.
   ///
@@ -135,7 +177,7 @@ class CommandLaneScheduler {
     required Duration deadline,
   }) {
     final completer = Completer<T>();
-    _queue.add(
+    (lane == ExecLane.isolated ? _isolatedQueue : _queue).add(
       _Job(
         lane,
         deadline,
@@ -164,14 +206,21 @@ class CommandLaneScheduler {
   }
 
   void _pump() {
+    // The isolated queue first, unconditionally: nothing in the main queue can
+    // hold these back, by definition of the lane. Plain FIFO under its cap.
+    while (_isolatedQueue.isNotEmpty && _activeIsolated < maxConcurrentIsolated) {
+      _start(_isolatedQueue.removeAt(0));
+    }
+
     var i = 0;
     while (i < _queue.length) {
       final job = _queue[i];
       switch (job.lane) {
         case ExecLane.exclusive:
-          // Starts only from the very head of the queue with nothing active;
-          // and while it waits there, nothing behind it may start either
-          // (the barrier that keeps mutations strictly ordered).
+          // Starts only from the very head of the queue with nothing active —
+          // active on the GIT lanes, that is; an isolated job is invisible to
+          // the barrier. And while it waits here, nothing behind it may start
+          // either (the barrier that keeps mutations strictly ordered).
           if (i == 0 &&
               _activeReads == 0 &&
               _activeSyncs == 0 &&
@@ -194,6 +243,9 @@ class CommandLaneScheduler {
             continue;
           }
           i++;
+        case ExecLane.isolated:
+          // Unreachable: `run` routes isolated jobs to [_isolatedQueue].
+          throw StateError('an isolated job can never be in the main queue');
       }
     }
   }
@@ -206,6 +258,8 @@ class CommandLaneScheduler {
         _activeSyncs++;
       case ExecLane.exclusive:
         _activeExclusives++;
+      case ExecLane.isolated:
+        _activeIsolated++;
     }
 
     // The slot is given back exactly once, by whichever comes first: the body
@@ -221,6 +275,8 @@ class CommandLaneScheduler {
           _activeSyncs--;
         case ExecLane.exclusive:
           _activeExclusives--;
+        case ExecLane.isolated:
+          _activeIsolated--;
       }
       _pump();
     }

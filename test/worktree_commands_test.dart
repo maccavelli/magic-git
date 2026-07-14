@@ -11,8 +11,34 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_magic_git/core/exec/command_lanes.dart';
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart'
+    show SSHCommandExecutor, SSHCommandResult;
+
+/// Captures the lane and timeout each command was scheduled with — the one
+/// thing the real-git tests above cannot see.
+class _LaneCapturingExecutor extends LocalCommandExecutor {
+  ExecLane? lastLane;
+  Duration? lastTimeout;
+
+  @override
+  Future<SSHCommandResult> execute({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    String? stdin,
+    Duration timeout = SSHCommandExecutor.defaultTimeout,
+    int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
+  }) async {
+    lastLane = lane;
+    lastTimeout = timeout;
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+}
 
 void main() {
   late Directory tempDir;
@@ -302,6 +328,21 @@ void main() {
       expect(wt.isPrunable, isFalse);
       expect(wt.path, '$wtRoot/r-moved');
     });
+
+    test('ARGLESS repair cannot fix a moved worktree — the path is required',
+        () async {
+      // Why the UI's per-row Repair must ask where the folder went: without an
+      // operand, `git worktree repair` only re-checks the paths already on
+      // record — and a moved folder is precisely what those don't cover. It
+      // exits 0 having fixed nothing, so nothing throws; the entry just stays
+      // prunable.
+      await git.addWorktree(repo, path: '$wtRoot/n', newBranch: 'n');
+      Directory('$wtRoot/n').renameSync('$wtRoot/n-moved');
+
+      await git.repairWorktrees(repo);
+
+      expect((await git.gitWorktrees(repo))[1].isPrunable, isTrue);
+    });
   });
 
   group('copyIgnoredFiles', () {
@@ -382,6 +423,55 @@ void main() {
       );
     });
 
+    test('reports each copied file on stdout, for the Output view', () async {
+      await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
+
+      final result = await git.copyIgnoredFiles(
+        from: repo,
+        to: '$wtRoot/w',
+        globs: ['.env*'],
+      );
+
+      // The Output view is the only place a user can see that a glob quietly
+      // matched nothing — so success must say what it did.
+      expect(result.stdout, contains('copied .env'));
+      expect(result.stdout, contains('copied .env.local'));
+    });
+
+    test('a failed copy FAILS the step, even when a later file succeeds',
+        () async {
+      // The bug this pins: the pipeline's exit status was the `while` loop's,
+      // which is its LAST iteration's — so `.env` failing while `.env.local`
+      // then copied fine reported overall success, and the worktree was
+      // silently missing half its config.
+      await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
+      // Make the FIRST file (ls-files output is sorted) uncopyable: cp opens
+      // the destination for writing, and a read-only file refuses that.
+      File('$wtRoot/w/.env').writeAsStringSync('stale\n');
+      await Process.run('chmod', ['444', '$wtRoot/w/.env']);
+      addTearDown(() => Process.run('chmod', ['644', '$wtRoot/w/.env']));
+
+      await expectLater(
+        git.copyIgnoredFiles(
+          from: repo,
+          to: '$wtRoot/w',
+          globs: ['.env*'],
+        ),
+        throwsA(
+          isA<GitException>().having(
+            (e) => e.result.stderr,
+            'stderr',
+            contains('failed .env'),
+          ),
+        ),
+      );
+      // One bad file must not abandon the rest: the later one still arrived.
+      expect(
+        File('$wtRoot/w/.env.local').readAsStringSync(),
+        contains('DEBUG'),
+      );
+    });
+
     test('a TRACKED file matching the glob is not copied over', () async {
       // `ls-files --others --ignored` only ever yields files git is deliberately
       // NOT tracking — which is exactly the set `worktree add` left behind. A
@@ -441,6 +531,24 @@ void main() {
       final ghost = refs.firstWhere((r) => r.name == 'refs/heads/ghost');
       expect(ghost.worktreePath, '$wtRoot/ghost');
       expect(Directory(ghost.worktreePath!).existsSync(), isFalse);
+    });
+  });
+
+  group('runInWorktree scheduling', () {
+    test('the post-create hook runs OUTSIDE the exclusive barrier', () async {
+      // A hook is minutes long by nature (`pnpm install`). On the exclusive
+      // lane it was a barrier: every background refresh in the app queued
+      // behind the install. It operates on a brand-new checkout nothing else
+      // touches, which is exactly what ExecLane.isolated is for — and it gets
+      // the hook timeout, because a cold-cache install legitimately outlives
+      // the 5-minute mutation ceiling.
+      final exec = _LaneCapturingExecutor();
+      final capturing = GitService(exec);
+
+      await capturing.runInWorktree('/wt', 'pnpm install');
+
+      expect(exec.lastLane, ExecLane.isolated);
+      expect(exec.lastTimeout, GitService.defaultHookTimeout);
     });
   });
 }

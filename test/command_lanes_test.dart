@@ -160,6 +160,115 @@ void main() {
     expect(started, isTrue);
   });
 
+  group('the isolated lane lives outside the exclusive barrier', () {
+    // The lane exists for long-running side work (a worktree post-create
+    // `pnpm install`) whose effects are disjoint from everything the git lanes
+    // protect. On the exclusive lane such a command WAS the barrier: every
+    // background refresh in the app queued behind a package install.
+
+    test('an isolated job overlaps a running exclusive — both directions',
+        () async {
+      final s = CommandLaneScheduler();
+      final excl = _Gate();
+      final iso = _Gate();
+      final futures = [
+        s.run0(ExecLane.exclusive, excl.body),
+        s.run0(ExecLane.isolated, iso.body),
+      ];
+      await _tick();
+
+      // Nothing overlaps an exclusive — except this.
+      expect(excl.started.isCompleted, isTrue);
+      expect(iso.started.isCompleted, isTrue);
+
+      // And the reverse: a still-running isolated job must not delay the next
+      // exclusive, or a 20-minute install re-creates the stall lane-by-lane.
+      final excl2 = _Gate();
+      futures.add(s.run0(ExecLane.exclusive, excl2.body));
+      excl.release.complete();
+      await _tick();
+      expect(iso.release.isCompleted, isFalse, reason: 'install still going');
+      expect(excl2.started.isCompleted, isTrue);
+
+      iso.release.complete();
+      excl2.release.complete();
+      await Future.wait(futures);
+    });
+
+    test('an isolated job passes the barrier that holds reads back', () async {
+      final s = CommandLaneScheduler();
+      final read = _Gate();
+      final excl = _Gate();
+      final readAfter = _Gate();
+      final iso = _Gate();
+      final futures = [
+        s.run0(ExecLane.read, read.body),
+        // Waits on the in-flight read, and bars everything queued after it…
+        s.run0(ExecLane.exclusive, excl.body),
+        s.run0(ExecLane.read, readAfter.body),
+        // …except an isolated job, which no barrier applies to.
+        s.run0(ExecLane.isolated, iso.body),
+      ];
+      await _tick();
+
+      expect(excl.started.isCompleted, isFalse);
+      expect(readAfter.started.isCompleted, isFalse, reason: 'barred');
+      expect(iso.started.isCompleted, isTrue);
+
+      read.release.complete();
+      await _tick();
+      expect(excl.started.isCompleted, isTrue, reason: 'isolated is invisible');
+
+      excl.release.complete();
+      await _tick();
+      readAfter.release.complete();
+      iso.release.complete();
+      await Future.wait(futures);
+    });
+
+    test('bounded by maxConcurrentIsolated, FIFO within the lane', () async {
+      final s = CommandLaneScheduler(maxConcurrentIsolated: 2);
+      final gates = List.generate(3, (_) => _Gate());
+      final futures = [
+        for (final g in gates) s.run0(ExecLane.isolated, g.body),
+      ];
+      await _tick();
+
+      expect(gates[0].started.isCompleted, isTrue);
+      expect(gates[1].started.isCompleted, isTrue);
+      expect(gates[2].started.isCompleted, isFalse, reason: 'over the cap');
+      expect(s.activeIsolated, 2);
+
+      gates[0].release.complete();
+      await _tick();
+      expect(gates[2].started.isCompleted, isTrue);
+
+      gates[1].release.complete();
+      gates[2].release.complete();
+      await Future.wait(futures);
+      expect(s.activeIsolated, 0);
+      expect(s.queued, 0);
+    });
+
+    test('a wedged isolated job is reclaimed like any other', () async {
+      final s = CommandLaneScheduler(maxConcurrentIsolated: 1);
+      final wedged = s.run<void>(
+        ExecLane.isolated,
+        () => Completer<void>().future,
+        deadline: const Duration(milliseconds: 50),
+      );
+      // Queued behind the wedged one at cap 1 — only the watchdog frees it.
+      final next = s.run0(ExecLane.isolated, () async => 42);
+
+      await expectLater(wedged, throwsA(isA<CommandLaneOverrun>()));
+      await expectLater(
+        next.timeout(const Duration(seconds: 2)),
+        completion(42),
+      );
+      expect(s.activeIsolated, 0);
+    });
+  });
+
   group('a job that never settles cannot wedge the app', () {
     // Everything here used to rest on an invariant the scheduler never checked:
     // that a job body always settles. It does today — both executors wrap their

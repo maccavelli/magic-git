@@ -67,6 +67,9 @@ void main() {
       expect(wts.first.branch, isNull);
       expect(wts.first.isDetached, isFalse);
       expect(wts.first.branchLabel, 'bare');
+      // No HEAD line means a null OID — the same signal an unborn worktree
+      // gives. Bare is not unborn; isUnborn must tell them apart.
+      expect(wts.first.isUnborn, isFalse);
     });
 
     test('locked without a reason is a bare flag', () {

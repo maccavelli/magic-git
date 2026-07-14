@@ -79,6 +79,13 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
   final _copyGlobs = TextEditingController();
   final _postCreate = TextEditingController();
 
+  /// The revision for a detached checkout. Its own controller, deliberately NOT
+  /// [_commitish]: that one is the start point handed in by the opener (a
+  /// branch's "Checkout in New Worktree…", a commit's "Branch from here…") and
+  /// stays fixed — typing a detached revision must not silently rewrite where a
+  /// new branch would start from if the user then switches basis back.
+  final _revision = TextEditingController();
+
   _Basis _basis = _Basis.newBranch;
   String? _existingBranch;
   String? _commitish;
@@ -105,6 +112,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     _runPostCreate = settings.worktreePostCreateEnabled;
 
     _commitish = widget.initialCommitish;
+    _revision.text = widget.initialCommitish ?? '';
     if (widget.initialBranchName != null) {
       _branch.text = widget.initialBranchName!;
     }
@@ -123,6 +131,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     _folderName.dispose();
     _copyGlobs.dispose();
     _postCreate.dispose();
+    _revision.dispose();
     super.dispose();
   }
 
@@ -151,7 +160,8 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
       switch (_basis) {
         _Basis.newBranch => _branch.text,
         _Basis.existingBranch => _existingBranch ?? '',
-        _Basis.detached => _commitish ?? 'detached',
+        _Basis.detached =>
+          _revision.text.trim().isEmpty ? 'detached' : _revision.text,
       },
     );
     final repoName = widget.repoPath.split('/').last;
@@ -177,7 +187,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     return switch (_basis) {
       _Basis.newBranch => _branch.text.trim().isNotEmpty,
       _Basis.existingBranch => _existingBranch != null,
-      _Basis.detached => (_commitish ?? '').trim().isNotEmpty,
+      _Basis.detached => _revision.text.trim().isNotEmpty,
     };
   }
 
@@ -281,7 +291,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
         commitish: switch (_basis) {
           _Basis.newBranch => _commitish,
           _Basis.existingBranch => _existingBranch,
-          _Basis.detached => _commitish,
+          _Basis.detached => _revision.text.trim(),
         },
         detach: _basis == _Basis.detached,
       );
@@ -290,15 +300,28 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
       // project actually needs to run — without this the new worktree is a
       // checkout you still have to hand-configure before it will start.
       if (_copyIgnored && _copyGlobs.text.trim().isNotEmpty) {
-        await git.copyIgnoredFiles(
-          from: repoPath,
-          to: path,
-          globs: _copyGlobs.text
-              .split(',')
-              .map((g) => g.trim())
-              .where((g) => g.isNotEmpty)
-              .toList(),
-        );
+        // Into the Output view like the post-create command below: the result
+        // names every file copied (and any that failed), which is the only
+        // place you can see that a glob quietly matched nothing.
+        final label = 'Copy ignored files (${_copyGlobs.text.trim()})';
+        final log = ref.read(outputLogProvider.notifier);
+        try {
+          log.logResult(
+            label,
+            await git.copyIgnoredFiles(
+              from: repoPath,
+              to: path,
+              globs: _copyGlobs.text
+                  .split(',')
+                  .map((g) => g.trim())
+                  .where((g) => g.isNotEmpty)
+                  .toList(),
+            ),
+          );
+        } on GitException catch (e) {
+          log.logResult(label, e.result);
+          rethrow;
+        }
       }
 
       if (_runPostCreate && _postCreate.text.trim().isNotEmpty) {
@@ -371,9 +394,9 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
             if (_basis == _Basis.detached)
               LabeledTextField(
                 label: 'Revision',
-                controller: TextEditingController(text: _commitish ?? ''),
+                controller: _revision,
                 placeholder: 'a commit, tag, or branch',
-                onChanged: () {},
+                onChanged: () => setState(_syncFolderName),
               ),
 
             const SizedBox(height: 12),
