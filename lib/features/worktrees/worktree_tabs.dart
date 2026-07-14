@@ -1,4 +1,33 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../tabs/tab_ui_providers.dart';
+import 'worktree_access.dart';
+
+/// Sidebar index of the Worktrees panel — defined once, here, next to the
+/// navigation helper that uses it. (It used to be re-declared privately in
+/// each feature that navigates here, with a comment lamenting the circular
+/// import that forced the copy.)
+const int kWorktreesPageIndex = 6;
+
+/// THE way to bring a worktree's workspace forward from anywhere in the app:
+/// sandbox grant first (prompts once, then never again — a worktree lives
+/// outside the main repo's grant), then open its tab, then surface the
+/// Worktrees panel. app_shell (the command palette's path) and the Branches
+/// panel each hand-rolled this trio and drifted on the page-selection half.
+Future<void> switchToWorktree(
+  BuildContext context,
+  WidgetRef ref,
+  String worktreePath,
+) async {
+  final ok = await ref
+      .read(worktreeAccessProvider)
+      .ensure(context, worktreePath);
+  if (!ok || !context.mounted) return;
+  ref.read(worktreeTabsProvider.notifier).open(worktreePath);
+  ref.read(pageIndexProvider.notifier).select(kWorktreesPageIndex);
+  ref.read(visitedPagesProvider.notifier).visit(kWorktreesPageIndex);
+}
 
 /// The Worktrees panel's own tab strip: an always-present **Overview** (the
 /// management table) plus one tab per worktree the user has opened.

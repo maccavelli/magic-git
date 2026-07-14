@@ -76,11 +76,7 @@ class RefChip extends StatelessWidget {
 
   const RefChip({super.key, required this.gitRef});
 
-  /// Checked out in a worktree OTHER than this one. `%(worktreepath)` is set for
-  /// the current worktree too (git's docs say otherwise, but it is), so [isHead]
-  /// — which means "checked out *here*" — is what excludes it.
-  bool get _inOtherWorktree =>
-      gitRef.isLocalBranch && !gitRef.isHead && gitRef.worktreePath != null;
+  bool get _inOtherWorktree => gitRef.isCheckedOutElsewhere;
 
   @override
   Widget build(BuildContext context) {

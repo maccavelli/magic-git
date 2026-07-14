@@ -2023,6 +2023,24 @@ List<ProviderOrFamily> repoMutationFamilies(String repoPath) => [
   gitWorktreesProvider,
 ];
 
+/// THE post-mutation refresh — the one thing a feature calls after mutating a
+/// repo, instead of hand-rolling the two steps it wraps:
+///
+///  1. mark the mutation as our own, so the filesystem watcher's echo of the
+///     very write we just made is suppressed instead of triggering a second,
+///     redundant refetch moments later (see [OwnMutationTracker]);
+///  2. invalidate the shared [repoMutationFamilies] set.
+///
+/// This used to be copy-pasted across five features, and the copies drifted:
+/// the branch and history panels forgot step 1, so every branch switch —
+/// which rewrites much of the working tree — paid for its refresh twice.
+void refreshAfterMutation(WidgetRef ref, String repoPath) {
+  ref.read(ownMutationTrackerProvider).mark(repoPath);
+  for (final p in repoMutationFamilies(repoPath)) {
+    ref.invalidate(p);
+  }
+}
+
 /// Working-tree status for a repo path, keyed so multiple repos can coexist.
 /// autoDispose so it's discarded when [RepoStatusView] unmounts on disconnect
 /// (and explicitly invalidated on connect/disconnect) — a reconnect never

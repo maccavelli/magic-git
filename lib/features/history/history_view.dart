@@ -13,6 +13,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
+import '../common/branch_switch.dart';
 import '../common/commit_patch_view.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
@@ -20,7 +21,7 @@ import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
-import '../common/sized_sheet.dart';
+import '../common/prompt_text_sheet.dart';
 import '../common/tool_icon_button.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import 'commit_graph_view.dart';
@@ -489,11 +490,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     // `_run` calls this right after an awaited op with no further check of
     // its own, and touching `ref` after the widget is disposed throws.
     if (!mounted) return;
-    // The shared post-mutation set (see repoMutationFamilies) — includes
+    // The shared post-mutation refresh (see refreshAfterMutation) — includes
     // reflog/snapshots so an open Recovery sheet reflects a tab-side mutation.
-    for (final p in repoMutationFamilies(repoPath)) {
-      ref.invalidate(p);
-    }
+    refreshAfterMutation(ref, repoPath);
   }
 
   /// Runs a mutating op, refreshing on success. [movesHead] clears the diff
@@ -563,75 +562,20 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       _lastCommits?.isNotEmpty == true &&
       _lastCommits!.first.hash == hash;
 
-  /// A single-field text prompt (branch name, mainline number). Returns the
-  /// trimmed value, or null if cancelled / empty.
+  /// A single-field text prompt (branch name, mainline number) — the shared
+  /// sheet, see [promptText].
   Future<String?> _promptText(
     String title, {
     required String placeholder,
     String initial = '',
     String? description,
-  }) async {
-    final controller = TextEditingController(text: initial);
-    final value = await showMacosSheet<String>(
-      context: context,
-      builder: (sheetContext) => EscapeDismissible(
-        child: SizedSheet(
-        width: kSheetWidth,
-        child: SizedBox(
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  title,
-                  style: MacosTheme.of(sheetContext).typography.title3,
-                ),
-                if (description != null) SheetDescription(description),
-                const SizedBox(height: 14),
-                MacosTextField(
-                  controller: controller,
-                  placeholder: placeholder,
-                  placeholderStyle: kAppPlaceholderStyle,
-                  autofocus: true,
-                  decoration: kAppTextFieldDecoration,
-                  focusedDecoration: kAppTextFieldFocusedDecoration,
-                  onSubmitted: (v) => Navigator.of(
-                    sheetContext,
-                  ).pop(v.trim().isEmpty ? null : v),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    PushButton(
-                      controlSize: ControlSize.large,
-                      secondary: true,
-                      onPressed: () => Navigator.of(sheetContext).pop(),
-                      child: const Text('Cancel'),
-                    ),
-                    const SizedBox(width: 10),
-                    PushButton(
-                      controlSize: ControlSize.large,
-                      onPressed: () => Navigator.of(sheetContext).pop(
-                        controller.text.trim().isEmpty ? null : controller.text,
-                      ),
-                      child: const Text('OK'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-      ),
-    );
-    controller.dispose();
-    final trimmed = value?.trim();
-    return (trimmed == null || trimmed.isEmpty) ? null : trimmed;
-  }
+  }) => promptText(
+    context,
+    title,
+    placeholder: placeholder,
+    initial: initial,
+    description: description,
+  );
 
   /// Resolves the mainline parent for a merge commit: prompts (default 1) when
   /// [commit] is a merge, otherwise returns null (no `-m`).
@@ -674,7 +618,28 @@ class _HistoryViewState extends ConsumerState<HistoryView>
           'to keep any new commits.',
       confirmLabel: 'Checkout',
     );
-    if (ok) await _run(() => _git.checkout(repoPath, hash), movesHead: true);
+    if (!ok || _busy || !mounted) return;
+    // The same dirty-tree guardrail a branch checkout gets (stash / carry /
+    // cancel): a detached checkout overwrites the working tree just the same,
+    // and this path used to skip the guard — the user got git's raw
+    // "would be overwritten" error instead of the stash offer.
+    setState(() => _busy = true);
+    try {
+      final switched = await guardedBranchSwitch(
+        context,
+        ref,
+        repoPath,
+        () => _git.checkout(repoPath, hash),
+      );
+      if (switched && mounted) setState(_clearSelection);
+    } finally {
+      if (mounted) {
+        // Refresh regardless: the guard's stash step can succeed while the
+        // checkout fails, and that intermediate state must land on screen.
+        _refresh();
+        setState(() => _busy = false);
+      }
+    }
   }
 
   Future<void> _actBranchFrom(String hash) async {

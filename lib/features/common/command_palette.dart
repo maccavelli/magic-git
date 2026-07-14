@@ -196,7 +196,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
       // A branch checked out in ANOTHER worktree can't be checked out here —
       // git refuses. Offer to go to the worktree that has it instead, so the
       // palette never lists an action that is guaranteed to fail.
-      final elsewhere = r.isHead ? null : r.worktreePath;
+      final elsewhere = r.elsewhereWorktreePath;
       commands.add(
         elsewhere == null
             ? _PaletteCommand(

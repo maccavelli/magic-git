@@ -566,7 +566,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     final repoPath = this.repoPath;
     final gh = ref.read(ghServiceProvider);
     setState(() => _checkingOutPrs.add(pr.number));
-    final switched = await guardedBranchSwitch(
+    await guardedBranchSwitch(
       context,
       ref,
       repoPath,
@@ -574,11 +574,10 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     );
     if (!mounted) return;
     setState(() => _checkingOutPrs.remove(pr.number));
-    if (switched) {
-      for (final p in repoMutationFamilies(repoPath)) {
-        ref.invalidate(p);
-      }
-    }
+    // Refresh even when the switch didn't complete: the guard's stash step
+    // can succeed while the checkout itself fails, and the panel must show
+    // that intermediate state rather than pretend nothing happened.
+    refreshAfterMutation(ref, repoPath);
   }
 
   Future<void> _rerun(int id) async {

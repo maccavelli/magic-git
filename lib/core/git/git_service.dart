@@ -66,6 +66,30 @@ class GitException implements Exception {
 
   const GitException(this.message, this.result);
 
+  // ---- Failure classification -------------------------------------------
+  //
+  // The one place git's English error prose is matched. UIs branch on these
+  // to escalate (offer force, offer remove-the-worktree) instead of
+  // dead-ending on the raw message; a wording change in a future git breaks
+  // one line here, not a scattering of string literals.
+
+  /// `git branch -d/-D` refused because a worktree has the branch checked
+  /// out (there is no `--ignore-other-worktrees` for branch deletion — the
+  /// worktree must be removed first).
+  bool get branchHeldByWorktree =>
+      result.stderr.contains('used by worktree at');
+
+  /// `git branch -d` refused an unmerged branch; `-D` overrides.
+  bool get branchNotFullyMerged => result.stderr.contains('not fully merged');
+
+  /// `git worktree remove` refused a dirty worktree; one `--force` overrides.
+  bool get worktreeDirty =>
+      result.stderr.contains('contains modified or untracked files');
+
+  /// `git worktree remove`/`move` refused a locked worktree; remove needs
+  /// `--force --force`, move has no override.
+  bool get worktreeLocked => result.stderr.contains('locked working tree');
+
   @override
   String toString() =>
       'GitException: $message (exit ${result.exitCode})\n${result.stderr}';
@@ -119,6 +143,17 @@ class GitRef {
   /// assume it exists on disk.
   final String? worktreePath;
 
+  /// Commits this branch has that its upstream doesn't / vice versa, from
+  /// `%(upstream:track)`. Both zero when in sync, untracked, or when the
+  /// upstream is [upstreamGone]. Only meaningful for local branches.
+  final int ahead;
+  final int behind;
+
+  /// The configured upstream no longer exists (`[gone]`) — its remote branch
+  /// was deleted and a pruning fetch removed the tracking ref. The classic
+  /// sign of a stale local branch left behind by a merged PR.
+  final bool upstreamGone;
+
   const GitRef({
     required this.name,
     required this.oid,
@@ -127,11 +162,27 @@ class GitRef {
     required this.subject,
     this.peeledOid,
     this.worktreePath,
+    this.ahead = 0,
+    this.behind = 0,
+    this.upstreamGone = false,
   });
 
   bool get isRemote => name.startsWith('refs/remotes/');
   bool get isTag => name.startsWith('refs/tags/');
   bool get isLocalBranch => name.startsWith('refs/heads/');
+
+  /// Checked out in a worktree OTHER than the current one — the one canonical
+  /// spelling of this test. `%(worktreepath)` is also set for the *current*
+  /// worktree (git's own docs get this wrong — see [worktreePath]), so
+  /// [isHead] is what excludes "checked out here". git refuses both checkout
+  /// and delete for such a branch, which is why every UI branches on it.
+  bool get isCheckedOutElsewhere =>
+      isLocalBranch && !isHead && worktreePath != null;
+
+  /// [worktreePath] when [isCheckedOutElsewhere], else null — the nullable
+  /// form the UIs actually switch on.
+  String? get elsewhereWorktreePath =>
+      isCheckedOutElsewhere ? worktreePath : null;
 
   /// The commit this ref decorates — the peeled commit for annotated tags,
   /// otherwise the object itself.
@@ -640,6 +691,11 @@ List<GitRef> parseRefs(String raw, String fieldSep) {
     // format atom back verbatim. Requiring a leading `/` rejects that (and any
     // other non-path) without needing a version probe here.
     final wt = f.length >= 7 ? f[6] : '';
+    // `%(upstream:track)`: `[ahead 2, behind 1]` (either half alone), `[gone]`,
+    // or empty. Parsed by shape, so an old git echoing the atom back verbatim
+    // reads as "no tracking data" rather than garbage — same defense as the
+    // worktreepath field above.
+    final track = f.length >= 8 ? f[7] : '';
     refs.add(
       GitRef(
         isHead: f[0] == '*',
@@ -649,10 +705,18 @@ List<GitRef> parseRefs(String raw, String fieldSep) {
         subject: _stripSeps(f[4]),
         peeledOid: peeled.isEmpty ? null : peeled,
         worktreePath: wt.startsWith('/') ? wt : null,
+        ahead: _trackCount(track, 'ahead'),
+        behind: _trackCount(track, 'behind'),
+        upstreamGone: track == '[gone]',
       ),
     );
   }
   return refs;
+}
+
+int _trackCount(String track, String key) {
+  final match = RegExp('$key (\\d+)').firstMatch(track);
+  return match == null ? 0 : int.parse(match.group(1)!);
 }
 
 /// Drives remote `git` through the shared [SSHCommandExecutor], returning typed
@@ -1204,6 +1268,11 @@ class GitService {
     // format string, which parses harmlessly as a non-path and is filtered by
     // the absolute-path check in [parseRefs].
     '%(worktreepath)',
+    // Divergence from upstream: `[ahead 2, behind 1]` / `[gone]` / empty —
+    // see [GitRef.ahead]/[GitRef.upstreamGone]. Appended last, same index
+    // reasoning as above; parsed by shape, so an old git echoing the atom
+    // reads as "no tracking data".
+    '%(upstream:track)',
   ];
 
   // A plain `git am` and an am-based rebase both create `$d/rebase-apply`, so
@@ -2355,6 +2424,42 @@ class GitService {
             ),
     );
   }
+
+  /// Renames a local branch (`git branch -m`). git carries the reflog and
+  /// upstream config across, and updates the HEAD of any worktree that has
+  /// the branch checked out — so this is safe for the current branch and for
+  /// one held elsewhere alike. Not journaled: nothing is destroyed, and
+  /// renaming back IS the undo.
+  Future<void> renameBranch(
+    String repoPath,
+    String oldName,
+    String newName,
+  ) => _runVoid(repoPath, [
+    'git',
+    'branch',
+    '-m',
+    '--end-of-options',
+    oldName,
+    newName,
+  ], 'git branch -m');
+
+  /// Deletes [branch] on [remote] (`git push --delete`) — the remote sibling
+  /// of [deleteBranch]. Deliberately NOT journaled: the commits may exist
+  /// nowhere but the remote, and resurrecting a remote ref is a push the
+  /// user must own — the caller's confirm dialog is the guard.
+  Future<SSHCommandResult> deleteRemoteBranch(
+    String repoPath,
+    String remote,
+    String branch,
+  ) => _run(
+    repoPath,
+    ['git', 'push', '--delete', '--end-of-options', remote, branch],
+    'git push --delete',
+    timeout: networkTimeout,
+    // Sync lane, like every push: updates the remote and the local tracking
+    // ref, never the index/worktree.
+    lane: ExecLane.sync,
+  );
 
   /// Discards working-tree changes to a path (`git restore`). Undoable via a
   /// pre-op snapshot — see [_discardCaptured].

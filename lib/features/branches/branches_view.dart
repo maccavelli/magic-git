@@ -11,15 +11,10 @@ import '../common/branch_switch.dart';
 import '../common/field_styles.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/prompt_text_sheet.dart';
 import '../common/tool_icon_button.dart';
-import '../tabs/tab_ui_providers.dart';
 import '../worktrees/add_worktree_sheet.dart';
-import '../worktrees/worktree_access.dart';
 import '../worktrees/worktree_tabs.dart';
-
-/// Sidebar index of the Worktrees panel. Kept next to its only use rather than
-/// exported from app_shell, which would be a circular import.
-const int _worktreesPage = 6;
 
 /// Source-control pane: local branches (checkout/delete/create), remote-tracking
 /// branches, and tags. Stashes have their own top-level namespace (StashView).
@@ -140,12 +135,10 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
   }
 
   void _refresh() {
-    // A branch op moves refs and can move HEAD — the whole shared set, not a
-    // list copied here that will fall behind the app (see
-    // [repoMutationFamilies]).
-    for (final p in repoMutationFamilies(repoPath)) {
-      ref.invalidate(p);
-    }
+    // A branch op moves refs and can move HEAD — the shared helper, not a
+    // loop copied here that will fall behind the app (and would forget the
+    // own-mutation mark, as this copy once did).
+    refreshAfterMutation(ref, repoPath);
   }
 
   Future<void> _run(Future<void> Function() op) async {
@@ -212,16 +205,9 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
   ///
   /// Offered instead of Checkout when a branch is checked out elsewhere: git
   /// refuses to check it out twice, and going to where it already lives is what
-  /// the user actually wants.
-  Future<void> _switchToWorktree(String worktreePath) async {
-    final ok = await ref
-        .read(worktreeAccessProvider)
-        .ensure(context, worktreePath);
-    if (!ok || !mounted) return;
-    ref.read(worktreeTabsProvider.notifier).open(worktreePath);
-    ref.read(pageIndexProvider.notifier).select(_worktreesPage);
-    ref.read(visitedPagesProvider.notifier).visit(_worktreesPage);
-  }
+  /// the user actually wants. Delegates to the shared [switchToWorktree].
+  Future<void> _switchToWorktree(String worktreePath) =>
+      switchToWorktree(context, ref, worktreePath);
 
   /// Takes this branch into a NEW checkout, without disturbing the one you are
   /// in — the single most-requested worktree flow across every client's tracker.
@@ -369,10 +355,8 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
   Widget _localRow(BuildContext context, GitService git, GitRef branch) {
     final typography = MacosTheme.of(context).typography;
     final selected = _selectedBranch == branch.shortName;
-    // The worktree this branch is checked out in, if it is checked out in one
-    // OTHER than this checkout. `%(worktreepath)` is also set for the current
-    // worktree — git's own docs get this wrong — so `isHead` is what excludes it.
-    final elsewhere = branch.isHead ? null : branch.worktreePath;
+    // Checked out in ANOTHER worktree — see [GitRef.isCheckedOutElsewhere].
+    final elsewhere = branch.elsewhereWorktreePath;
     // A single click selects (so ↑/↓, Enter, ⌘⇧M and ⌘⌫ target it); checkout is
     // its own button (below) and Enter, so selecting can't accidentally switch
     // branches. The current branch keeps its green tint.
@@ -458,6 +442,53 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
                 ),
               ),
             ],
+            // Divergence from upstream: the glanceable "does this need a
+            // push/pull" signal, and — for [gone] — the classic "merged PR
+            // left this behind" marker.
+            if (branch.upstreamGone) ...[
+              const SizedBox(width: 6),
+              MacosTooltip(
+                message:
+                    'The upstream branch was deleted (merged or removed on '
+                    'the remote) — this local branch is likely stale',
+                child: Text(
+                  'gone',
+                  style: typography.caption1.copyWith(
+                    color: MacosColors.systemOrangeColor,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ] else if (branch.ahead > 0 || branch.behind > 0) ...[
+              const SizedBox(width: 6),
+              MacosTooltip(
+                message:
+                    '${branch.ahead} commit${branch.ahead == 1 ? '' : 's'} '
+                    'ahead, ${branch.behind} behind ${branch.upstream}',
+                child: Text(
+                  [
+                    if (branch.ahead > 0) '↑${branch.ahead}',
+                    if (branch.behind > 0) '↓${branch.behind}',
+                  ].join(' '),
+                  style: typography.caption1.copyWith(
+                    color: MacosColors.systemBlueColor,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+            // Rename applies to every local branch — including the current
+            // one (`branch -m` follows HEAD) and one held by another worktree
+            // (git updates that worktree's HEAD too).
+            const SizedBox(width: 4),
+            ToolIconButton(
+              icon: CupertinoIcons.pencil,
+              tooltip: 'Rename branch',
+              size: 14,
+              onPressed: _busy
+                  ? null
+                  : () => _renameBranch(git, branch.shortName),
+            ),
             if (!branch.isHead) ...[
               const SizedBox(width: 4),
               if (elsewhere != null)
@@ -505,6 +536,11 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
                     title: const Text('Merge (no fast-forward)'),
                     onTap: () =>
                         _mergeBranch(git, branch.shortName, MergeMode.noFf),
+                  ),
+                  MacosPulldownMenuItem(
+                    title: const Text('Merge (fast-forward only)'),
+                    onTap: () =>
+                        _mergeBranch(git, branch.shortName, MergeMode.ffOnly),
                   ),
                   MacosPulldownMenuItem(
                     title: const Text('Squash merge'),
@@ -560,7 +596,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
       // switch, but not on branch — so the ONLY way through is to remove the
       // worktree first. Offer exactly that, instead of dead-ending on git's
       // message. (Tower shipped a hang here; Fork added this option in 2.63.)
-      if (e.result.stderr.contains('used by worktree at')) {
+      if (e.branchHeldByWorktree) {
         final worktree = _worktreePathFor(name);
         final removeToo = await confirmAction(
           context,
@@ -581,7 +617,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
         });
         return;
       }
-      if (!e.result.stderr.contains('not fully merged')) {
+      if (!e.branchNotFullyMerged) {
         await showErrorDialog(context, e.toString());
         return;
       }
@@ -777,9 +813,64 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
             size: 15,
             onPressed: _busy ? null : () => _checkout(git, localName),
           ),
+          const SizedBox(width: 4),
+          ToolIconButton(
+            icon: CupertinoIcons.trash,
+            tooltip: 'Delete branch on the remote',
+            size: 14,
+            color: MacosColors.systemRedColor,
+            onPressed: _busy
+                ? null
+                : () => _deleteRemoteBranch(git, branch.shortName),
+          ),
         ],
       ),
     );
+  }
+
+  /// Deletes a branch on its remote (`git push --delete`). Destructive and
+  /// NOT undoable from here — the commits may exist nowhere but the remote —
+  /// so the confirm is explicit about both.
+  Future<void> _deleteRemoteBranch(GitService git, String shortName) async {
+    final slash = shortName.indexOf('/');
+    if (slash <= 0) return; // not remote/branch shaped — nothing to target
+    final remote = shortName.substring(0, slash);
+    final branch = shortName.substring(slash + 1);
+    final ok = await confirmAction(
+      context,
+      title: 'Delete remote branch',
+      message:
+          'Delete "$branch" on "$remote"? This removes it for everyone who '
+          'uses the remote, and it cannot be undone from here.',
+      confirmLabel: 'Delete on Remote',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    await _runLogged('git push --delete', (log) async {
+      log.logResult(
+        'git push --delete $remote $branch',
+        await git.deleteRemoteBranch(repoPath, remote, branch),
+      );
+    });
+  }
+
+  /// Renames a local branch via the shared name prompt. git carries reflog,
+  /// upstream config, and any worktree HEADs across — see
+  /// [GitService.renameBranch].
+  Future<void> _renameBranch(GitService git, String oldName) async {
+    final newName = await promptText(
+      context,
+      'Rename branch',
+      placeholder: 'new name',
+      initial: oldName,
+    );
+    if (newName == null || newName == oldName || !mounted) return;
+    await _run(() => git.renameBranch(repoPath, oldName, newName));
+    // Follow the rename in the selection, so ↑/↓/Enter keep working on the
+    // row the user was just acting on.
+    if (mounted && _selectedBranch == oldName) {
+      setState(() => _selectedBranch = newName);
+    }
   }
 
   Widget _sectionHeader(BuildContext context, String title) => Padding(

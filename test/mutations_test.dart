@@ -145,6 +145,30 @@ void main() {
       );
     });
 
+    test('renameBranch moves the ref with --end-of-options', () async {
+      await git.renameBranch('/repo', 'old-name', 'new-name');
+      expect(exec.calls.single, [
+        'git',
+        'branch',
+        '-m',
+        '--end-of-options',
+        'old-name',
+        'new-name',
+      ]);
+    });
+
+    test('deleteRemoteBranch pushes a delete to the named remote', () async {
+      await git.deleteRemoteBranch('/repo', 'origin', 'feature');
+      expect(exec.calls.single, [
+        'git',
+        'push',
+        '--delete',
+        '--end-of-options',
+        'origin',
+        'feature',
+      ]);
+    });
+
     test('discard restores the working tree path', () async {
       await git.discard('/repo', 'a.dart');
       final script = expectCapturedScript(

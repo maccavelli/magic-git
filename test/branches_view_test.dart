@@ -68,8 +68,11 @@ class _FakeGit extends GitService {
   }
 }
 
-Finder get _deleteBranchIcon =>
-    find.byWidgetPredicate((w) => w is MacosIcon && w.icon == CupertinoIcons.trash);
+// `.first`: local rows render above remote rows, and the remote row now has
+// its own (delete-on-remote) trash icon.
+Finder get _deleteBranchIcon => find
+    .byWidgetPredicate((w) => w is MacosIcon && w.icon == CupertinoIcons.trash)
+    .first;
 
 Future<_FakeGit> _pump(WidgetTester tester) async {
   final git = _FakeGit();

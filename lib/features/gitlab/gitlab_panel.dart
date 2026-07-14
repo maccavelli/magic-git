@@ -639,7 +639,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     // after, but that dialog is just as modal, so re-entry during it is
     // already blocked by the same barrier; see _approve.
     setState(() => _checkingOutMrs.add(mr.iid));
-    final switched = await guardedBranchSwitch(
+    await guardedBranchSwitch(
       context,
       ref,
       repoPath,
@@ -650,11 +650,10 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     // connection dropped) before `ref` is touched again.
     if (!mounted) return;
     setState(() => _checkingOutMrs.remove(mr.iid));
-    if (switched) {
-      for (final p in repoMutationFamilies(repoPath)) {
-        ref.invalidate(p);
-      }
-    }
+    // Refresh even when the switch didn't complete: the guard's stash step
+    // can succeed while the checkout itself fails, and the panel must show
+    // that intermediate state rather than pretend nothing happened.
+    refreshAfterMutation(ref, repoPath);
   }
 
   Future<void> _retry(int id) async {

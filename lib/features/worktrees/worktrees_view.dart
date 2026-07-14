@@ -101,15 +101,10 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
     super.dispose();
   }
 
-  /// Every worktree mutation refreshes through the ONE shared set — a worktree
-  /// added or removed here changes `<common>/.git/worktrees/`, which every other
-  /// worktree of this repo reads. See [repoMutationFamilies].
-  void _refresh() {
-    ref.read(ownMutationTrackerProvider).mark(repoPath);
-    for (final p in repoMutationFamilies(repoPath)) {
-      ref.invalidate(p);
-    }
-  }
+  /// Every worktree mutation refreshes through the ONE shared helper — a
+  /// worktree added or removed here changes `<common>/.git/worktrees/`, which
+  /// every other worktree of this repo reads. See [refreshAfterMutation].
+  void _refresh() => refreshAfterMutation(ref, repoPath);
 
   Future<void> _run(Future<void> Function() op) async {
     if (_busy) return;
@@ -182,9 +177,8 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
         // git refuses to remove a worktree with uncommitted or untracked files
         // (and, separately, a locked one). Rather than dead-ending on git's raw
         // message, name the situation and offer the override it is asking for.
-        final stderr = e.result.stderr;
-        final dirty = stderr.contains('contains modified or untracked files');
-        final locked = stderr.contains('locked working tree');
+        final dirty = e.worktreeDirty;
+        final locked = e.worktreeLocked;
         if (!dirty && !locked) rethrow;
         if (!mounted) rethrow;
         final force = await confirmAction(
@@ -329,7 +323,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
       } on GitException catch (e) {
         // git refuses to move a LOCKED worktree (it may live on a volume that
         // isn't mounted). Say so, rather than handing over the raw message.
-        if (!e.result.stderr.contains('locked working tree')) rethrow;
+        if (!e.worktreeLocked) rethrow;
         if (!mounted) rethrow;
         await showErrorDialog(
           context,

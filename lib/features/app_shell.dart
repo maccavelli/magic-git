@@ -37,7 +37,6 @@ import 'viewer/viewer_host.dart';
 import 'viewer/viewer_providers.dart';
 import 'workspace/clone_sheet.dart';
 import 'workspace/create_repo_sheet.dart';
-import 'worktrees/worktree_access.dart';
 import 'worktrees/worktree_tabs.dart';
 import 'worktrees/worktrees_view.dart';
 
@@ -299,17 +298,10 @@ class _AppShellState extends ConsumerState<AppShell> {
     );
   }
 
-  /// Opens a worktree in the Worktrees panel, acquiring its sandbox grant first
-  /// if we've never been given one (a worktree lives outside the main repo's
-  /// grant, so working in it needs its own).
-  Future<void> _openWorktree(BuildContext context, String worktreePath) async {
-    final ok = await ref
-        .read(worktreeAccessProvider)
-        .ensure(context, worktreePath);
-    if (!ok || !mounted) return;
-    ref.read(worktreeTabsProvider.notifier).open(worktreePath);
-    _selectPage(6);
-  }
+  /// Opens a worktree in the Worktrees panel — the shared grant-then-open-
+  /// then-navigate helper (see [switchToWorktree]).
+  Future<void> _openWorktree(BuildContext context, String worktreePath) =>
+      switchToWorktree(context, ref, worktreePath);
 
   Future<void> _checkoutBranch(
     BuildContext context,
