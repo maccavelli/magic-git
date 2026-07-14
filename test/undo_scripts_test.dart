@@ -214,6 +214,26 @@ void main() {
         reason: 'unrelated staged work is untouched by the scoped restore');
   });
 
+  test('discarding a hunk snapshots the file, and undo restores it', () async {
+    // The hunk-scoped sibling of the discard above: before discardHunk
+    // existed this went through a bare `git apply -R` with no snapshot, and
+    // the confirm dialog honestly said "cannot be undone".
+    await write('a.txt', 'CHANGED\n');
+    final patch = await git.diffFile(repo, path: 'a.txt', staged: false);
+
+    await git.discardHunk(repo, patch, path: 'a.txt');
+    expect(await File('$repo/a.txt').readAsString(), 'one\n');
+
+    final record = records.single;
+    expect(record.snapshotOid, isNotEmpty);
+    expect(record.description, contains('hunk'));
+
+    await git.undoExecute(record);
+    expect(await File('$repo/a.txt').readAsString(), 'CHANGED\n');
+    expect(await porcelain(['a.txt']), ' M a.txt',
+        reason: 'back as an unstaged modification, exactly as before');
+  });
+
   test('a discard undo refuses to overwrite newer edits unless forced',
       () async {
     await write('a.txt', 'modified\n');

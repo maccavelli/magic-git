@@ -46,6 +46,8 @@ class _FakeGitService extends GitService {
   final List<String> discardedStaged = [];
   final List<String> gitignored = [];
   bool stageAllCalled = false;
+  bool unstageAllCalled = false;
+  bool amendCalled = false;
   bool mergeAbortCalled = false;
   final List<({String path, bool useOurs})> resolved = [];
   PendingOp pendingOp0 = PendingOp.none;
@@ -78,6 +80,16 @@ class _FakeGitService extends GitService {
   @override
   Future<void> stageAll(String repoPath) async {
     stageAllCalled = true;
+  }
+
+  @override
+  Future<void> unstageAll(String repoPath) async {
+    unstageAllCalled = true;
+  }
+
+  @override
+  Future<void> amendCommit(String repoPath, {String? message}) async {
+    amendCalled = true;
   }
 
   @override
@@ -324,6 +336,63 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(git.stageAllCalled, isTrue);
+  });
+
+  testWidgets('Unstage All mirrors Stage All, enabled only when something '
+      'is staged', (tester) async {
+    final git = await _pump(
+      tester,
+      status: _statusWith(
+        staged: const [
+          GitFileStatus(path: 'lib/a.dart', statusX: 'M', statusY: '.'),
+        ],
+      ),
+    );
+
+    await tester.tap(find.text('Unstage All'));
+    await tester.pumpAndSettle();
+
+    expect(git.unstageAllCalled, isTrue);
+  });
+
+  testWidgets('Unstage All is disabled with nothing staged', (tester) async {
+    final git = await _pump(
+      tester,
+      status: _statusWith(
+        unstaged: const [
+          GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+        ],
+      ),
+    );
+
+    await tester.tap(find.text('Unstage All'));
+    await tester.pumpAndSettle();
+
+    expect(git.unstageAllCalled, isFalse);
+  });
+
+  testWidgets('Amend last commit confirms, then amends', (tester) async {
+    final git = await _pump(
+      tester,
+      status: _statusWith(
+        staged: const [
+          GitFileStatus(path: 'lib/a.dart', statusX: 'M', statusY: '.'),
+        ],
+      ),
+    );
+
+    // In the header's pulldown menu.
+    await tester.tap(find.byType(MacosPulldownButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Amend last commit'));
+    await tester.pumpAndSettle();
+
+    // Nothing runs until the rewrite is confirmed.
+    expect(git.amendCalled, isFalse);
+    await tester.tap(find.text('Amend'));
+    await tester.pumpAndSettle();
+
+    expect(git.amendCalled, isTrue);
   });
 
   testWidgets(

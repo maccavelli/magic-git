@@ -72,7 +72,10 @@ void main() {
 
     test('stage', () async {
       await git.stage('/repo', 'lib/main.dart');
-      expect(exec.calls.single, ['git', 'add', '--', 'lib/main.dart']);
+      expect(
+        exec.calls.single,
+        ['git', 'add', '--', ':(literal)lib/main.dart'],
+      );
     });
 
     test('unstage uses restore --staged', () async {
@@ -82,7 +85,7 @@ void main() {
         'restore',
         '--staged',
         '--',
-        'lib/main.dart',
+        ':(literal)lib/main.dart',
       ]);
     });
 
@@ -146,7 +149,7 @@ void main() {
       await git.discard('/repo', 'a.dart');
       final script = expectCapturedScript(
         exec.calls.single,
-        "'git' 'restore' '--' 'a.dart'",
+        "'git' 'restore' '--' ':(literal)a.dart'",
       );
       // A flavor-A snapshot (stash create, anchored on a hidden ref) is taken
       // in the same invocation, before the restore destroys the content.
@@ -155,6 +158,26 @@ void main() {
       expect(script, contains('GIT_AUTHOR_NAME=magic-git'));
       expect(script, contains("git for-each-ref 'refs/magic-git/snapshots'"),
           reason: 'expiry pruning piggybacks on every snapshot');
+    });
+
+    test('discardHunk reverse-applies from stdin with a flavor-A snapshot',
+        () async {
+      await git.discardHunk('/repo', 'PATCH-TEXT', path: 'a.dart');
+      final script = expectCapturedScript(
+        exec.calls.single,
+        "'git' 'apply' '-R' '--recount' '--whitespace=nowarn' '-'",
+      );
+      // Snapshotted before the reverse-apply destroys the hunk — the same
+      // ⌘Z net every other worktree discard has.
+      expect(script, contains(r'git stash create 2>/dev/null'));
+      expect(exec.stdins.single, 'PATCH-TEXT',
+          reason: 'the patch travels on stdin, never argv');
+    });
+
+    test('unstageAll uses a bare reset — the one form that also works on an '
+        'unborn HEAD', () async {
+      await git.unstageAll('/repo');
+      expect(exec.calls.single, ['git', 'reset', '-q']);
     });
 
     test('deleteFile removes any path via rm -f, guarded by --', () async {
@@ -170,7 +193,7 @@ void main() {
       // the snapshot is flavor B: a temp-index plumbing commit of the doomed
       // paths.
       expect(script, contains('GIT_INDEX_FILE="\$idx" git add -f -- '
-          "'lib/main.dart' 2>/dev/null"));
+          "':(literal)lib/main.dart' 2>/dev/null"));
       expect(script, contains(r'git write-tree'));
       expect(script, contains(r'git commit-tree "$t" ${pre:+-p "$pre"}'));
       expect(script, contains("git update-ref 'refs/magic-git/snapshots/"));
@@ -235,7 +258,7 @@ void main() {
       await git.discardStaged('/repo', 'a.dart');
       final script = expectCapturedScript(
         exec.calls.single,
-        "'git' 'restore' '--staged' '--worktree' '--source=HEAD' '--' 'a.dart'",
+        "'git' 'restore' '--staged' '--worktree' '--source=HEAD' '--' ':(literal)a.dart'",
       );
       expect(script, contains(r'git stash create 2>/dev/null'),
           reason: 'flavor-A snapshot taken before the destroy');
@@ -262,7 +285,13 @@ void main() {
       final paths = ['a.dart', 'b.dart'];
 
       await git.stageMany('/repo', paths);
-      expect(exec.calls.single, ['git', 'add', '--', 'a.dart', 'b.dart']);
+      expect(exec.calls.single, [
+        'git',
+        'add',
+        '--',
+        ':(literal)a.dart',
+        ':(literal)b.dart',
+      ]);
       exec.calls.clear();
 
       await git.unstageMany('/repo', paths);
@@ -271,26 +300,28 @@ void main() {
         'restore',
         '--staged',
         '--',
-        'a.dart',
-        'b.dart',
+        ':(literal)a.dart',
+        ':(literal)b.dart',
       ]);
       exec.calls.clear();
 
       await git.discardMany('/repo', paths);
       expectCapturedScript(
         exec.calls.single,
-        "'git' 'restore' '--' 'a.dart' 'b.dart'",
+        "'git' 'restore' '--' ':(literal)a.dart' ':(literal)b.dart'",
       );
       exec.calls.clear();
 
       await git.removeUntrackedFilesMany('/repo', paths);
       final cleanScript = expectCapturedScript(
         exec.calls.single,
-        "'git' 'clean' '-f' '--' 'a.dart' 'b.dart'",
+        "'git' 'clean' '-f' '--' ':(literal)a.dart' ':(literal)b.dart'",
       );
       expect(
         cleanScript,
-        contains("git add -f -- 'a.dart' 'b.dart' 2>/dev/null"),
+        contains(
+          "git add -f -- ':(literal)a.dart' ':(literal)b.dart' 2>/dev/null",
+        ),
         reason: 'flavor-B snapshot covers every doomed path',
       );
       exec.calls.clear();
@@ -299,7 +330,7 @@ void main() {
       expectCapturedScript(
         exec.calls.single,
         "'git' 'restore' '--staged' '--worktree' '--source=HEAD' '--' "
-        "'a.dart' 'b.dart'",
+        "':(literal)a.dart' ':(literal)b.dart'",
       );
       exec.calls.clear();
 
@@ -325,13 +356,16 @@ void main() {
         '-w',
         '-U25',
         '--',
-        'a.dart',
+        ':(literal)a.dart',
       ]);
     });
 
     test('diffFile with defaults omits -w and -U', () async {
       await git.diffFile('/repo', path: 'a.dart', staged: false);
-      expect(exec.calls.single, ['git', 'diff', '--no-color', '--', 'a.dart']);
+      expect(
+        exec.calls.single,
+        ['git', 'diff', '--no-color', '--', ':(literal)a.dart'],
+      );
     });
 
     test('diffRange diffs a ref range for the MR preview', () async {
@@ -663,7 +697,7 @@ void main() {
       await git.log('/repo', path: 'lib/x.dart', follow: true);
       final a2 = exec.calls.single;
       expect(a2, contains('--follow'));
-      expect(a2, containsAllInOrder(['--', 'lib/x.dart']));
+      expect(a2, containsAllInOrder(['--', ':(literal)lib/x.dart']));
       expect(a2, contains('HEAD'));
       expect(a2, contains('--topo-order'));
     });
@@ -802,7 +836,7 @@ void main() {
         '--end-of-options',
         'abc123',
         '--',
-        'lib/a.dart',
+        ':(literal)lib/a.dart',
       ]);
     });
 
@@ -878,14 +912,26 @@ void main() {
 
     test('resolveConflict --ours then stages', () async {
       await git.resolveConflict('/repo', 'a.dart', useOurs: true);
-      expect(exec.calls[0], ['git', 'checkout', '--ours', '--', 'a.dart']);
-      expect(exec.calls[1], ['git', 'add', '--', 'a.dart']);
+      expect(exec.calls[0], [
+        'git',
+        'checkout',
+        '--ours',
+        '--',
+        ':(literal)a.dart',
+      ]);
+      expect(exec.calls[1], ['git', 'add', '--', ':(literal)a.dart']);
     });
 
     test('resolveConflict --theirs then stages', () async {
       await git.resolveConflict('/repo', 'a.dart', useOurs: false);
-      expect(exec.calls[0], ['git', 'checkout', '--theirs', '--', 'a.dart']);
-      expect(exec.calls[1], ['git', 'add', '--', 'a.dart']);
+      expect(exec.calls[0], [
+        'git',
+        'checkout',
+        '--theirs',
+        '--',
+        ':(literal)a.dart',
+      ]);
+      expect(exec.calls[1], ['git', 'add', '--', ':(literal)a.dart']);
     });
 
     test(
@@ -901,10 +947,16 @@ void main() {
           'checkout',
           '--ours',
           '--',
-          'a.dart',
-          'b.dart',
+          ':(literal)a.dart',
+          ':(literal)b.dart',
         ]);
-        expect(exec.calls[1], ['git', 'add', '--', 'a.dart', 'b.dart']);
+        expect(exec.calls[1], [
+          'git',
+          'add',
+          '--',
+          ':(literal)a.dart',
+          ':(literal)b.dart',
+        ]);
         expect(exec.calls, hasLength(2));
       },
     );

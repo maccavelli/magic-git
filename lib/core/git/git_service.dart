@@ -1492,7 +1492,11 @@ class GitService {
     final grepPatterns = messageGrepPatterns(grep);
     final authorPattern = authorGrepPattern(author);
     final pathspecs = <String>[
-      if (path != null && path.isNotEmpty) path,
+      // Exact path (file history) — literal, so `pages/[id].tsx` is ONE
+      // file's history, not a glob over its siblings. `--follow` accepts a
+      // magic pathspec (verified against git 2.55). [pathQuery] stays as
+      // compiled: its wildcards are the point.
+      if (path != null && path.isNotEmpty) _literal(path),
       ...searchPathspecs(pathQuery),
     ];
 
@@ -1705,7 +1709,7 @@ class GitService {
         if (ignoreWhitespace) '-w',
         if (context != null) '-U$context',
         '--',
-        path,
+        _literal(path),
       ],
       retries: _readRetries,
       lane: ExecLane.read,
@@ -1805,7 +1809,7 @@ class GitService {
         if (context != null) '-U$context',
         '--end-of-options',
         hash,
-        if (path != null && path.isNotEmpty) ...['--', path],
+        if (path != null && path.isNotEmpty) ...['--', _literal(path)],
       ],
       retries: _readRetries,
       lane: ExecLane.read,
@@ -1838,6 +1842,9 @@ class GitService {
         '--line-porcelain',
         '--end-of-options',
         ?rev,
+        // Plain path, NOT [_literal]: blame takes exactly one real path, not
+        // a pathspec — no glob matching happens, and `:(literal)` is rejected
+        // with "no such path" (verified against git 2.55).
         '--',
         path,
       ],
@@ -2023,13 +2030,33 @@ class GitService {
   // races a concurrent read. Each throws [GitException] on non-zero exit.
 
   /// Stages a path (`git add`).
+  /// Wraps an exact path in `:(literal)` pathspec magic.
+  ///
+  /// Every path handed to a pathspec slot in this file names EXACTLY one file
+  /// the UI showed the user — but a bare pathspec is a glob-active pattern:
+  /// `*`, `?` and `[…]` all match, so `pages/[id].tsx` (a routing filename on
+  /// half the JS frameworks) also matches `pages/i.tsx`, and a discard aimed
+  /// at the one file destroys another file's edits — verified against git
+  /// 2.55. A leading `:` is worse still: git reads it as pathspec magic and
+  /// the file can't be named at all. `:(literal)` switches both off.
+  ///
+  /// Applies to every command that takes a *pathspec* (add, restore, clean,
+  /// checkout, diff, show, blame, log). It must NOT be used where git expects
+  /// a plain path or a real file (`diff --no-index`, `rm`, `cat`), and not
+  /// where the caller's input is deliberately a pattern ([log]'s search
+  /// pathspecs, [copyIgnoredFiles]' globs).
+  static String _literal(String path) => ':(literal)$path';
+
   Future<void> stage(String repoPath, String path) =>
-      _runVoid(repoPath, ['git', 'add', '--', path], 'git add');
+      _runVoid(repoPath, ['git', 'add', '--', _literal(path)], 'git add');
 
   /// Stages every path in [paths] with a single `git add` invocation —
   /// the multi-select bulk equivalent of [stage].
-  Future<void> stageMany(String repoPath, List<String> paths) =>
-      _runVoid(repoPath, ['git', 'add', '--', ...paths], 'git add');
+  Future<void> stageMany(String repoPath, List<String> paths) => _runVoid(
+    repoPath,
+    ['git', 'add', '--', ...paths.map(_literal)],
+    'git add',
+  );
 
   /// Applies a unified-diff [patch] via `git apply`, reading it from stdin (so it
   /// never touches argv). [cached] targets the index (staging); [reverse] applies
@@ -2059,9 +2086,52 @@ class GitService {
     }
   }
 
+  /// Discards a single worktree hunk by reverse-applying [patch] — the
+  /// hunk-scoped sibling of [discard], with the same flavor-A snapshot taken
+  /// in the same invocation so ⌘Z brings the pre-discard content back. Plain
+  /// [applyPatch] deliberately records nothing (staging moves content between
+  /// index and worktree, destroying neither); a worktree discard is the one
+  /// apply that destroys, so it is the one that snapshots.
+  ///
+  /// [path] is the file the hunk belongs to. Undo restores that file from
+  /// the snapshot whole — the same granularity every other path-scoped undo
+  /// uses, and the honest one: the hunk's surroundings may have changed since,
+  /// and a textual re-apply could land in the wrong place silently.
+  Future<void> discardHunk(
+    String repoPath,
+    String patch, {
+    required String path,
+  }) async {
+    final refName = _newSnapshotRef();
+    await _runCaptured(
+      repoPath,
+      ['git', 'apply', '-R', '--recount', '--whitespace=nowarn', '-'],
+      'git apply',
+      stdin: patch,
+      extraCaptures: [_snapshotCaptureA(refName)],
+      record: (c) => c.extras[0].isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.discardPaths,
+              description: 'Discard of a hunk in $path',
+              snapshotOid: c.extras[0],
+              paths: [path],
+            ),
+    );
+  }
+
   /// Stages everything (`git add -A`).
   Future<void> stageAll(String repoPath) =>
       _runVoid(repoPath, ['git', 'add', '-A'], 'git add -A');
+
+  /// Unstages everything, leaving every working-tree change intact — the
+  /// mirror of [stageAll]. A bare `git reset` rather than `restore --staged
+  /// :/`: they are equivalent on a normal HEAD, but only reset also works on
+  /// an unborn one (first commit being assembled), where restore fails with
+  /// "could not resolve 'HEAD'" — verified against git 2.55.
+  Future<void> unstageAll(String repoPath) =>
+      _runVoid(repoPath, ['git', 'reset', '-q'], 'git reset');
 
   /// Unstages a path, leaving the working-tree change intact
   /// (`git restore --staged`).
@@ -2070,14 +2140,14 @@ class GitService {
     'restore',
     '--staged',
     '--',
-    path,
+    _literal(path),
   ], 'git restore');
 
   /// Unstages every path in [paths] with a single invocation — the
   /// multi-select bulk equivalent of [unstage].
   Future<void> unstageMany(String repoPath, List<String> paths) => _runVoid(
     repoPath,
-    ['git', 'restore', '--staged', '--', ...paths],
+    ['git', 'restore', '--staged', '--', ...paths.map(_literal)],
     'git restore',
   );
 
@@ -2151,7 +2221,7 @@ class GitService {
     // Exit 3 signals "no hook" so we can fall back to manual entry. The hook's
     // own stdout/stderr are discarded; only the message file content is emitted.
     const script =
-        // See hasPrepareCommitMsgHook: resolve the hooks dir via
+        // Prefer core.hooksPath; otherwise resolve the hooks dir via
         // `git rev-parse --git-path hooks` (respecting core.hooksPath first) so
         // a linked worktree/submodule — where `.git` is a file — still finds it.
         'hp=\$(git config --get core.hooksPath 2>/dev/null); '
@@ -2305,7 +2375,7 @@ class GitService {
     final refName = _newSnapshotRef();
     await _runCaptured(
       repoPath,
-      ['git', 'restore', '--', ...paths],
+      ['git', 'restore', '--', ...paths.map(_literal)],
       'git restore',
       extraCaptures: [_snapshotCaptureA(refName)],
       record: (c) => c.extras[0].isEmpty
@@ -2330,14 +2400,22 @@ class GitService {
   /// in this file is hardened against a leading `-` — see [discard]/[stage].
   /// Undoable via a flavor-B snapshot — see [_removeCaptured].
   Future<void> removeUntrackedFile(String repoPath, String path) =>
-      _removeCaptured(repoPath, ['git', 'clean', '-f', '--', path], [path]);
+      _removeCaptured(
+        repoPath,
+        ['git', 'clean', '-f', '--', _literal(path)],
+        [path],
+      );
 
   /// Removes every untracked path in [paths] with a single invocation — the
   /// multi-select bulk equivalent of [removeUntrackedFile]. Same scoping
   /// rationale: `git clean` still refuses to touch anything tracked, so this
   /// can only ever delete the untracked files the caller named.
   Future<void> removeUntrackedFilesMany(String repoPath, List<String> paths) =>
-      _removeCaptured(repoPath, ['git', 'clean', '-f', '--', ...paths], paths);
+      _removeCaptured(
+        repoPath,
+        ['git', 'clean', '-f', '--', ...paths.map(_literal)],
+        paths,
+      );
 
   /// Untracked (and ignored) content is invisible to `stash create`, so
   /// deletions snapshot the doomed [paths] with flavor B — a temp-index
@@ -2415,7 +2493,7 @@ class GitService {
         '--worktree',
         '--source=HEAD',
         '--',
-        ...paths,
+        ...paths.map(_literal),
       ],
       'git restore',
       extraCaptures: [_snapshotCaptureA(refName)],
@@ -2703,9 +2781,9 @@ class GitService {
       'checkout',
       useOurs ? '--ours' : '--theirs',
       '--',
-      path,
+      _literal(path),
     ], 'git checkout --ours/--theirs');
-    await _runVoid(repoPath, ['git', 'add', '--', path], 'git add');
+    await _runVoid(repoPath, ['git', 'add', '--', _literal(path)], 'git add');
   }
 
   /// Resolves every conflicted path in [paths] the same way as
@@ -2722,9 +2800,13 @@ class GitService {
       'checkout',
       useOurs ? '--ours' : '--theirs',
       '--',
-      ...paths,
+      ...paths.map(_literal),
     ], 'git checkout --ours/--theirs');
-    await _runVoid(repoPath, ['git', 'add', '--', ...paths], 'git add');
+    await _runVoid(
+      repoPath,
+      ['git', 'add', '--', ...paths.map(_literal)],
+      'git add',
+    );
   }
 
   /// Aborts an in-progress merge (`git merge --abort`).
@@ -3235,7 +3317,8 @@ class GitService {
   /// the [_runCaptured] prologue this runs inside). The `$$`-suffixed temp
   /// index can't collide: mutations are serialized on the exclusive lane.
   String _snapshotCaptureB(String refName, List<String> paths) {
-    final pathArgs = paths.map(ShellEscaper.escape).join(' ');
+    final pathArgs =
+        paths.map((p) => ShellEscaper.escape(_literal(p))).join(' ');
     return 'idx="\$(git rev-parse --git-dir)/magicgit-snapidx.\$\$"; '
         'rm -f "\$idx"; '
         'GIT_INDEX_FILE="\$idx" git add -f -- $pathArgs 2>/dev/null && '
@@ -3550,7 +3633,9 @@ class GitService {
         // those files back" means. Only the affected paths are guarded: any
         // change under them since the destroy (an edit, a recreated file)
         // would be overwritten — exit 43 unless the user confirmed.
-        final pathArgs = r.paths.map(esc).join(' ');
+        // `:(literal)`: same exact-path hardening as the mutations that
+        // recorded these paths — see [_literal].
+        final pathArgs = r.paths.map((p) => esc(_literal(p))).join(' ');
         final dirtyGuard = force
             ? ''
             : '[ -z "\$(git status --porcelain -- $pathArgs)" ] || exit 43; ';

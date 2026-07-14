@@ -416,6 +416,31 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     await _guardedAction(() => git.stageAll(repoPath));
   }
 
+  /// The mirror of [_stageAll]. No confirmation: unstaging destroys nothing —
+  /// every change stays in the working tree, and Stage All puts it back.
+  Future<void> _unstageAll() async {
+    final git = ref.read(gitServiceProvider);
+    await _guardedAction(() => git.unstageAll(repoPath));
+  }
+
+  /// Folds the currently staged changes into HEAD, keeping its message — the
+  /// same confirm-then-amend flow History offers, brought to the panel where
+  /// staging actually happens ("staged the fix, meant it for the last
+  /// commit"). Undoable: [GitService.amendCommit] records a reset-soft entry.
+  Future<void> _amend() async {
+    final ok = await confirmAction(
+      context,
+      title: 'Amend last commit',
+      message:
+          'Amend HEAD with the currently staged changes? This rewrites the '
+          'commit — avoid it if the commit is already pushed.',
+      confirmLabel: 'Amend',
+    );
+    if (!ok || !mounted) return;
+    final git = ref.read(gitServiceProvider);
+    await _guardedAction(() => git.amendCommit(repoPath));
+  }
+
   Future<void> _openCommitDialog(int stagedCount) async {
     // The dialog pops with `true` when the user chose Commit & Push (⌘⇧↩), so
     // the push runs here — after the sheet closes — through the panel's own
@@ -655,6 +680,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
           'snapshotted first — press ⌘Z to undo, or restore it later from '
           'the Recovery view.',
       confirmLabel: 'Discard',
+      destructive: true,
     );
     if (ok) {
       await _run(() => ref.read(gitServiceProvider).discard(repoPath, path));
@@ -676,6 +702,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
           'first — press ⌘Z to undo, or restore it later from the Recovery '
           'view.',
       confirmLabel: 'Delete',
+      destructive: true,
     );
     if (ok) {
       await _run(
@@ -703,6 +730,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
           'last-committed state (or removes it entirely if it was never '
           'committed). The content is snapshotted first — press ⌘Z to undo.',
       confirmLabel: 'Discard',
+      destructive: true,
     );
     if (ok) {
       await _run(
@@ -749,6 +777,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
           'Discard working-tree changes to ${_fileListSummary(paths)}? '
           'The content is snapshotted first — press ⌘Z to undo.',
       confirmLabel: 'Discard',
+      destructive: true,
     );
     if (!ok) return;
     await _run(() => ref.read(gitServiceProvider).discardMany(repoPath, paths));
@@ -762,6 +791,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
           'Delete ${_fileListSummary(paths)}? Their content is snapshotted '
           'first — press ⌘Z to undo.',
       confirmLabel: 'Delete',
+      destructive: true,
     );
     if (!ok) return;
     await _run(
@@ -777,6 +807,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
           'Discard staged changes to ${_fileListSummary(paths)}? The '
           'content is snapshotted first — press ⌘Z to undo.',
       confirmLabel: 'Discard',
+      destructive: true,
     );
     if (!ok) return;
     await _run(
@@ -1167,6 +1198,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
           const Spacer(),
           PushButton(
             controlSize: ControlSize.large,
+            secondary: true,
+            // The mirror of Stage All — nothing staged, nothing to do.
+            onPressed: stagedCount > 0 ? _unstageAll : null,
+            child: const Text('Unstage All'),
+          ),
+          const SizedBox(width: 8),
+          PushButton(
+            controlSize: ControlSize.large,
             secondary: !hasUnstaged,
             onPressed: _stageAll,
             child: const Text('Stage All'),
@@ -1425,9 +1464,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
         context,
         title: 'Discard hunk',
         message:
-            'Discard this hunk from the working tree? This cannot be '
-            'undone.',
+            'Discard this hunk from the working tree? The file is '
+            'snapshotted first — press ⌘Z to undo, or restore it later from '
+            'the Recovery view.',
         confirmLabel: 'Discard',
+        destructive: true,
       );
       if (!ok) return;
     }
@@ -1440,7 +1481,13 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
         case HunkAction.unstage:
           return git.applyPatch(repoPath, patch, cached: true, reverse: true);
         case HunkAction.discard:
-          return git.applyPatch(repoPath, patch, cached: false, reverse: true);
+          // The one apply that destroys content — snapshotted, so it is
+          // ⌘Z-able like every other discard (see [GitService.discardHunk]).
+          return git.discardHunk(
+            repoPath,
+            patch,
+            path: file.newPath ?? file.oldPath ?? _selected!.path,
+          );
       }
     });
     // _guardedAction's `finally` now runs _refresh() unconditionally (success
@@ -1639,6 +1686,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
                   title: const Text('Sync (pull then push)'),
                   onTap: () =>
                       _sync(ref.read(appSettingsProvider).defaultPullMode),
+                ),
+                const MacosPulldownMenuDivider(),
+                MacosPulldownMenuItem(
+                  title: const Text('Amend last commit'),
+                  onTap: _amend,
                 ),
               ],
             ),
