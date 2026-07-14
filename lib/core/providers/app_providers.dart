@@ -17,6 +17,7 @@ import '../git/git_service.dart';
 import '../git/host_fs_service.dart';
 import '../git/ignore_oracle.dart';
 import '../git/local_watch_service.dart';
+import '../git/log_search.dart';
 import '../git/remote_watch_service.dart';
 import '../git/repo_tree.dart';
 import '../git/watch_event.dart';
@@ -2598,6 +2599,17 @@ class LogSearchNotifier extends AsyncNotifier<List<GitCommit>> {
     );
   }
 
+  /// A single free-text token that could be a commit-hash prefix: five or
+  /// more hex digits. Four is git's own disambiguation minimum, but at four
+  /// too many ordinary words fit the hex alphabet ('dead', 'face', 'cafe');
+  /// at five, shadowing a message search additionally requires an actual
+  /// COMMIT bearing the prefix — which [build] verifies before committing to
+  /// the hash reading.
+  static bool _readsAsShaPrefix(String? grep) {
+    final text = grep?.trim() ?? '';
+    return text.length >= 5 && isResolvableShaPrefix(text);
+  }
+
   @override
   Future<List<GitCommit>> build() async {
     // Watched, not read: a new session's [GitService] (reconnect, backend
@@ -2606,6 +2618,31 @@ class LogSearchNotifier extends AsyncNotifier<List<GitCommit>> {
     // where a watch cannot be registered, and it always extends the list this
     // build produced.
     final git = ref.watch(gitServiceProvider);
+
+    // A bare hash pasted into the search box means "find this commit", but it
+    // is indistinguishable from a message word until the object database has
+    // been asked — so ask it first. Only a prefix that names a real commit
+    // wins; hex-shaped words ('added') resolve to nothing and fall through to
+    // the ordinary message search. Every other criterion still narrows the
+    // hash reading, exactly as it would an explicit `sha:` term.
+    if (query.sha == null && _readsAsShaPrefix(query.grep)) {
+      final byHash = await git.log(
+        query.repoPath,
+        maxCount: _depth,
+        sha: query.grep!.trim(),
+        author: query.author,
+        since: query.since,
+        until: query.until,
+        pathQuery: query.path,
+        noMerges: query.noMerges,
+      );
+      if (byHash.isNotEmpty) {
+        // The object database answered in full — there is no deeper page.
+        _exhausted = true;
+        return byHash;
+      }
+    }
+
     final commits = await _walk(git, skip: 0, count: _depth);
     _exhausted = commits.length < _depth;
     return commits;

@@ -298,6 +298,43 @@ void main() {
     expect(git.greps, everyElement(isNull));
   });
 
+  testWidgets('a BARE hash prefix finds its commit without the sha: key', (
+    tester,
+  ) async {
+    // Pasting a hash into the search box means "find this commit" — nobody
+    // spells it `sha:`-first. The old pipeline read it as message text, so
+    // five characters of a real hash found nothing: the original "search is
+    // completely broken" report.
+    final git = _PagingGit(12);
+    await _pump(tester, git);
+
+    await tester.enterText(find.byType(MacosTextField).first, 'c001f');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(find.text('commit 1'), findsOneWidget);
+    expect(find.text('commit 2'), findsNothing);
+    expect(find.text('1 matching commit'), findsOneWidget);
+    expect(git.shas, contains('c001f'));
+  });
+
+  testWidgets('a hex-shaped WORD still searches messages', (tester) async {
+    // 'added' is five hex digits, but no commit hash here bears it — the
+    // object database says so, and the term falls through to the ordinary
+    // message search instead of shadowing it with an empty result.
+    final git = _PagingGit(12);
+    await _pump(tester, git);
+
+    await tester.enterText(find.byType(MacosTextField).first, 'added');
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(git.shas, contains('added'), reason: 'the hash reading was tried');
+    expect(git.greps, contains('added'), reason: 'and fell back to message');
+    // The fake applies no grep narrowing, so the full page proves the walk ran.
+    expect(find.text('commit 1'), findsOneWidget);
+  });
+
   testWidgets('a sha: match in a deep repo does not stampede the walk', (
     tester,
   ) async {

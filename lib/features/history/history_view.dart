@@ -1326,6 +1326,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   'Filter by message, or use terms: author: file: sha: '
                   'after: before:\n'
                   'e.g. rename author:mac file:lib/core/ after:2026-01-01\n'
+                  'A bare commit hash (5+ characters) finds that commit\n'
                   'Words must all match; * and ? are wildcards (file:*.dart)\n'
                   'Quote values with spaces: author:"Mac Smith"',
               child: MacosTextField(

@@ -44,12 +44,23 @@ void main() {
     );
   }
 
-  Future<void> commitFile(String path, String content, String message) async {
+  Future<void> commitFile(
+    String path,
+    String content,
+    String message, {
+    String? author,
+  }) async {
     final file = File('$repo/$path');
     file.parent.createSync(recursive: true);
     file.writeAsStringSync(content);
     await raw(['add', '--all']);
-    await raw(['commit', '-q', '-m', message]);
+    await raw([
+      'commit',
+      '-q',
+      '-m',
+      message,
+      if (author != null) '--author=$author',
+    ]);
   }
 
   LogQuery query({String? grep, String? path, String? sha}) => (
@@ -87,6 +98,14 @@ void main() {
     await commitFile('lib/a.dart', 'a\n', 'feat: first feature');
     await commitFile('lib/b.dart', 'b\n', 'fix [WIP] patch collapse');
     await commitFile('docs/c.md', 'c\n', 'docs: user guide');
+    // 'decade' is all hex digits — the bare-hash fallback's word case — and
+    // the distinct author feeds the spaced `author:` form.
+    await commitFile(
+      'lib/d.dart',
+      'd\n',
+      'perf: decade of cleanup',
+      author: 'Other Dev <other@example.com>',
+    );
 
     container = ProviderContainer(
       overrides: [
@@ -210,7 +229,7 @@ void main() {
     final prefix = (await tester.runAsync(() async {
       final r = await Process.run(
         'git',
-        ['rev-parse', 'HEAD~1'],
+        ['rev-parse', 'HEAD~2'],
         workingDirectory: repo,
       );
       return (r.stdout as String).trim().substring(0, 8);
@@ -223,6 +242,60 @@ void main() {
 
     expect(find.text('fix [WIP] patch collapse'), findsOneWidget);
     expect(find.text('docs: user guide'), findsNothing);
+    expect(find.text('1 matching commit'), findsOneWidget);
+  });
+
+  testWidgets('a BARE hash prefix finds its commit — no sha: key needed', (
+    tester,
+  ) async {
+    final prefix = (await tester.runAsync(() async {
+      final r = await Process.run(
+        'git',
+        ['rev-parse', 'HEAD~2'],
+        workingDirectory: repo,
+      );
+      return (r.stdout as String).trim().substring(0, 5);
+    }))!;
+
+    await pump(tester);
+    await warm(tester, query(grep: prefix));
+
+    await filter(tester, prefix);
+
+    expect(find.text('fix [WIP] patch collapse'), findsOneWidget);
+    expect(find.text('1 matching commit'), findsOneWidget);
+  });
+
+  testWidgets('a hex-shaped word still searches messages', (tester) async {
+    await pump(tester);
+    await warm(tester, query(grep: 'decade'));
+
+    await filter(tester, 'decade');
+
+    expect(find.text('perf: decade of cleanup'), findsOneWidget);
+    expect(find.text('1 matching commit'), findsOneWidget);
+  });
+
+  testWidgets('author: with a space after the colon narrows by author', (
+    tester,
+  ) async {
+    await pump(tester);
+    await warm(tester, (
+      repoPath: repo,
+      grep: null,
+      author: 'other',
+      since: null,
+      until: null,
+      path: null,
+      sha: null,
+      noMerges: false,
+      all: false,
+    ));
+
+    await filter(tester, 'author: other');
+
+    expect(find.text('perf: decade of cleanup'), findsOneWidget);
+    expect(find.text('feat: first feature'), findsNothing);
     expect(find.text('1 matching commit'), findsOneWidget);
   });
 }

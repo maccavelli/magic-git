@@ -86,13 +86,24 @@ enum _Field { author, path, sha, since, until }
 
 /// Parses the filter field. Values may be quoted to include spaces
 /// (`author:"Mac Smith"`); a repeated key keeps the last occurrence.
+///
+/// A space after the colon is honored: `author: samuel` means exactly what
+/// `author:samuel` does, with the next token bound as the value. People type
+/// the spaced form constantly — it is how the phrase is written in prose —
+/// and the previous grammar silently demoted it to *message text*, so the
+/// search looked applied and found nothing. A recognized key with no value at
+/// the very end of the input (`author:` mid-typing) narrows nothing at all:
+/// it is dropped rather than searched for literally, so the list holds still
+/// on the way to a real value.
 LogFilter parseLogFilter(String input) {
   if (input.trim().isEmpty) return LogFilter.empty;
 
   final words = <String>[];
   final values = <_Field, String>{};
 
-  for (final token in _tokenize(input)) {
+  final tokens = _tokenize(input);
+  for (var i = 0; i < tokens.length; i++) {
+    final token = tokens[i];
     final colon = token.indexOf(':');
     if (colon > 0) {
       final field = _keys[token.substring(0, colon).toLowerCase()];
@@ -101,9 +112,26 @@ LogFilter parseLogFilter(String input) {
         values[field] = value;
         continue;
       }
+      if (field != null) {
+        // `author: samuel` — the value landed in the next token. Bind it,
+        // unless it reads as a key:value term itself (`author: file:x` —
+        // taking `file:x` as an author would eat a real term).
+        final next = i + 1 < tokens.length ? tokens[i + 1] : null;
+        final nextColon = next?.indexOf(':') ?? -1;
+        final nextIsTerm =
+            nextColon > 0 &&
+            _keys.containsKey(next!.substring(0, nextColon).toLowerCase());
+        if (next != null && !nextIsTerm) {
+          values[field] = next;
+          i++;
+          continue;
+        }
+        // Trailing (or key-followed) valueless key: still being typed.
+        continue;
+      }
     }
-    // Bare word, unknown key, or an empty value (`author:` mid-typing —
-    // narrowing on it would blank the list on the way to a real value).
+    // Bare word or unknown key — ordinary message text (`fix: history` must
+    // search for the literal text, not silently filter on a `fix` key).
     words.add(token);
   }
 

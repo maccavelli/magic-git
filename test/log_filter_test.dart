@@ -68,10 +68,44 @@ void main() {
     expect(parseLogFilter('feat(history): zoom').message, 'feat(history): zoom');
   });
 
-  test('a key with no value yet is text — typing must not blank the list', () {
-    final filter = parseLogFilter('author:');
-    expect(filter.author, isNull);
-    expect(filter.message, 'author:');
+  test('a key with no value yet narrows NOTHING — typing must not blank the '
+      'list', () {
+    // The old grammar demoted a trailing `author:` to message text — but a
+    // message search for the literal word "author:" blanks the list just as
+    // surely as an empty author filter would. Dropping the token is the only
+    // reading that actually holds the list still mid-typing.
+    expect(parseLogFilter('author:'), LogFilter.empty);
+    expect(parseLogFilter('fix author:'), const LogFilter(message: 'fix'));
+  });
+
+  test('a space after the colon binds the next token as the value', () {
+    // `author: samuel` is how the phrase is written in prose, and it is what
+    // users actually type. The old grammar silently demoted BOTH tokens to
+    // message text, so the search looked applied and found nothing — the
+    // original "history search is completely broken" report.
+    expect(
+      parseLogFilter('author: samuel'),
+      const LogFilter(author: 'samuel'),
+    );
+    expect(parseLogFilter('sha: 14791'), const LogFilter(sha: '14791'));
+    expect(
+      parseLogFilter('author: "Mac Smith"'),
+      const LogFilter(author: 'Mac Smith'),
+    );
+    expect(
+      parseLogFilter('rename author: mac after: 2026-01-01'),
+      const LogFilter(
+        message: 'rename',
+        author: 'mac',
+        since: '2026-01-01',
+      ),
+    );
+    // …but never at the cost of eating a real term: a recognized key:value
+    // following a valueless key stays a term, and the dangling key is dropped.
+    expect(
+      parseLogFilter('author: file:lib'),
+      const LogFilter(path: 'lib'),
+    );
   });
 
   test('a repeated key keeps the last value', () {
