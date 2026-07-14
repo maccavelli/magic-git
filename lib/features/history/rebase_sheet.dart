@@ -122,9 +122,9 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
       // unit: the sheet can be gone (repo switch, disconnect) by the time
       // this rebase resolves, and `ref` throws if touched after disposal.
       if (mounted) {
-        ref.invalidate(logProvider(widget.repoPath));
-        ref.invalidate(refsProvider(widget.repoPath));
-        ref.invalidate(statusProvider(widget.repoPath));
+        for (final p in repoMutationFamilies(widget.repoPath)) {
+          ref.invalidate(p);
+        }
         Navigator.of(context).pop();
       }
     }

@@ -109,9 +109,12 @@ class _StashViewState extends ConsumerState<StashView> {
   }
 
   void _refresh() {
-    ref.invalidate(stashesProvider(repoPath));
-    // Stash push/pop mutate the working tree, so the status pane must refresh.
-    ref.invalidate(statusProvider(repoPath));
+    // A stash push/pop/drop moves `refs/stash` and the working tree — git state,
+    // not just the file list — so it takes the shared set every mutation takes
+    // (see [repoMutationFamilies]) rather than a pair named here.
+    for (final p in repoMutationFamilies(repoPath)) {
+      ref.invalidate(p);
+    }
   }
 
   // Apply/pop a specific stash — shared by the per-card icon buttons and the

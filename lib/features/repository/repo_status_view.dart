@@ -296,12 +296,20 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     // Marks this moment so the watch-tick listener below can recognize its
     // own subsequent tick (for this very mutation) as redundant.
     ref.read(ownMutationTrackerProvider).mark(repoPath);
-    // sequencerStateProvider follows statusProvider, so invalidating status
-    // refreshes it too — no separate invalidation needed.
-    ref.invalidate(statusProvider(repoPath));
-    ref.invalidate(logProvider(repoPath));
-    ref.invalidate(refsProvider(repoPath));
-    ref.invalidate(stashesProvider(repoPath));
+    // The one definition of "this repo changed" (see [repoMutationFamilies]) —
+    // not a list spelled out here. Spelling it out here is exactly what broke:
+    // this named `logProvider`, and when History moved to the paged, searchable
+    // `logSearchProvider`, nothing updated this site. So a commit refreshed the
+    // refs but left History on the pre-commit walk — and the branch/HEAD chip,
+    // now pointing at a commit that was not in the list, had no row to land on
+    // and vanished entirely. A set that every mutation site must remember to
+    // copy will drift; one that they all read cannot.
+    //
+    // sequencerStateProvider follows statusProvider, so it refreshes with it —
+    // no separate invalidation needed.
+    for (final p in repoMutationFamilies(repoPath)) {
+      ref.invalidate(p);
+    }
     // The open file's worktree-backed caches — its diff at every key, its
     // conflict content, its blame — go stale through the edit stamp rather than
     // a direct `ref.invalidate` of the one key this panel happens to be
@@ -929,9 +937,29 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       // (so the watcher stays alive) but skip the refetch; didUpdateWidget
       // re-syncs once when the page becomes visible again.
       if (!widget.isActive) return;
-      // Refresh status; the structure tree, status overlay, and sequencer
-      // state all follow from it (the tree only re-fetches when its shape
-      // changes — see repoStructureProvider).
+      // A tick that moved git's own state — a commit, checkout, branch, rebase
+      // or fetch run in a terminal or another tool — moved more than the file
+      // list: HEAD, the refs, the stashes and the reflog can all be somewhere
+      // else now. Refreshing status alone left History showing a walk that
+      // predates the commit you just made outside the app, with the branch chip
+      // still on the old tip, until you hit ⌘R. It is the same question a
+      // mutation of our own asks, so it gets the same answer.
+      //
+      // Deliberately gated on [RepoWatchEvent.touchesGitState] (an event-driven
+      // tick naming a path under `.git`), not on every tick: a polling tick is a
+      // blind heartbeat that fires every few seconds whether or not anything
+      // happened, and re-walking the whole log on each of those would be a
+      // round trip per poll for nothing.
+      if (event.mode == WatchMode.eventDriven &&
+          (event.touchesGitState || !event.isScoped)) {
+        for (final p in repoMutationFamilies(repoPath)) {
+          ref.invalidate(p);
+        }
+        return;
+      }
+      // Otherwise only the working tree moved. Refresh status; the structure
+      // tree, status overlay, and sequencer state all follow from it (the tree
+      // only re-fetches when its shape changes — see repoStructureProvider).
       ref.invalidate(statusProvider(repoPath));
     });
     // If the selected conflict was resolved outside this session (another

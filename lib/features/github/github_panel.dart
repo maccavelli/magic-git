@@ -575,9 +575,9 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     if (!mounted) return;
     setState(() => _checkingOutPrs.remove(pr.number));
     if (switched) {
-      ref.invalidate(statusProvider(repoPath));
-      ref.invalidate(refsProvider(repoPath));
-      ref.invalidate(logProvider(repoPath));
+      for (final p in repoMutationFamilies(repoPath)) {
+        ref.invalidate(p);
+      }
     }
   }
 

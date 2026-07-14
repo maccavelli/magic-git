@@ -753,8 +753,12 @@ class ConnectionController extends Notifier<ConnectionState> {
       await ref.read(gitServiceProvider).fetch(repoPath);
       if (attempt != _attempt || !ref.mounted) return;
       ref.read(ownMutationTrackerProvider).mark(repoPath);
-      ref.invalidate(refsProvider(repoPath));
-      ref.invalidate(statusProvider(repoPath));
+      // A fetch moves the remote-tracking refs and can bring commits down with
+      // them, so it is a change to the repo like any other — the shared set,
+      // not a hand-picked pair (see [repoMutationFamilies]).
+      for (final p in repoMutationFamilies(repoPath)) {
+        ref.invalidate(p);
+      }
     } catch (e) {
       if (attempt != _attempt || !ref.mounted) return;
       ref
@@ -2134,8 +2138,12 @@ final autoFetchProvider = Provider.autoDispose<void>((ref) {
       // after disposal throws; onDispose(timer.cancel) only stops *future* ticks.
       if (!ref.mounted) return;
       ref.read(ownMutationTrackerProvider).mark(repoPath);
-      ref.invalidate(refsProvider(repoPath));
-      ref.invalidate(statusProvider(repoPath));
+      // Same reasoning as the post-commit fetch: new remote refs, and possibly
+      // new commits behind them, are a change to the repo (see
+      // [repoMutationFamilies]).
+      for (final p in repoMutationFamilies(repoPath)) {
+        ref.invalidate(p);
+      }
     } catch (e) {
       // Best-effort — the next tick just retries — but a persistent failure
       // (expired credentials, revoked key) should be discoverable instead of

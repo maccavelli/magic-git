@@ -133,9 +133,12 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
     if (!mounted) return;
     setState(() => _committing = false);
     if (ok) {
-      ref.invalidate(statusProvider(repoPath));
-      ref.invalidate(logProvider(repoPath));
-      ref.invalidate(refsProvider(repoPath));
+      // The shared set — see [repoMutationFamilies]. A commit moves HEAD, the
+      // refs, and the log History reads; naming them here is how they drifted
+      // apart in the first place.
+      for (final p in repoMutationFamilies(repoPath)) {
+        ref.invalidate(p);
+      }
       // Best-effort — refreshes ahead/behind right away instead of leaving it
       // to the next manual/auto fetch. Routed through the connection
       // controller (not this dialog's own `ref`) since it outlives the sheet

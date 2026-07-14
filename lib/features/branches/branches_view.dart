@@ -132,9 +132,12 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
   }
 
   void _refresh() {
-    ref.invalidate(refsProvider(repoPath));
-    ref.invalidate(statusProvider(repoPath));
-    ref.invalidate(logProvider(repoPath));
+    // A branch op moves refs and can move HEAD — the whole shared set, not a
+    // list copied here that will fall behind the app (see
+    // [repoMutationFamilies]).
+    for (final p in repoMutationFamilies(repoPath)) {
+      ref.invalidate(p);
+    }
   }
 
   Future<void> _run(Future<void> Function() op) async {

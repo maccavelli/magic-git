@@ -651,9 +651,9 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     if (!mounted) return;
     setState(() => _checkingOutMrs.remove(mr.iid));
     if (switched) {
-      ref.invalidate(statusProvider(repoPath));
-      ref.invalidate(refsProvider(repoPath));
-      ref.invalidate(logProvider(repoPath));
+      for (final p in repoMutationFamilies(repoPath)) {
+        ref.invalidate(p);
+      }
     }
   }
 

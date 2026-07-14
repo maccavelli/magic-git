@@ -49,12 +49,9 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
   void _refreshRepo(String repoPath) {
     ref.read(ownMutationTrackerProvider).mark(repoPath);
     ref.read(worktreeEditsProvider.notifier).noteRepo(repoPath);
-    ref.invalidate(statusProvider(repoPath));
-    ref.invalidate(logProvider(repoPath));
-    ref.invalidate(refsProvider(repoPath));
-    ref.invalidate(stashesProvider(repoPath));
-    ref.invalidate(reflogProvider(repoPath));
-    ref.invalidate(magicSnapshotsProvider(repoPath));
+    for (final p in repoMutationFamilies(repoPath)) {
+      ref.invalidate(p);
+    }
   }
 
   Future<void> _run(String repoPath, Future<void> Function() op) async {

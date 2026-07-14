@@ -169,10 +169,13 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
     setState(() => _submitting = false);
     if (ok) {
       ref.invalidate(pullRequestsProvider(widget.repoPath));
-      // The push set upstream / advanced the remote branch — refresh the
-      // working-tree views so ahead/behind and refs reflect it.
-      ref.invalidate(statusProvider(widget.repoPath));
-      ref.invalidate(refsProvider(widget.repoPath));
+      // The push set upstream / advanced the remote branch — refresh the repo
+      // views so ahead/behind and refs reflect it. The shared set, so nothing
+      // here has to stay in step with what each panel happens to read (see
+      // [repoMutationFamilies]).
+      for (final p in repoMutationFamilies(widget.repoPath)) {
+        ref.invalidate(p);
+      }
       if (context.mounted) Navigator.of(context).pop();
     }
   }
