@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,7 +7,9 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/git/git_service.dart';
 import '../../core/local/security_scoped_bookmark.dart';
+import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/app_settings.dart';
 import '../common/actions.dart';
 import '../common/field_styles.dart';
 import '../common/labeled_text_field.dart';
@@ -69,14 +73,17 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
   /// The worktree's own directory name.
   final _folderName = TextEditingController();
 
-  final _copyGlobs = TextEditingController(text: '.env*');
+  // Seeded from the persisted defaults in initState — the globs and the
+  // post-create command are the same nearly every time, and retyping them per
+  // worktree is exactly the friction that makes the feature feel like a chore.
+  final _copyGlobs = TextEditingController();
   final _postCreate = TextEditingController();
 
   _Basis _basis = _Basis.newBranch;
   String? _existingBranch;
   String? _commitish;
-  bool _copyIgnored = true;
-  bool _runPostCreate = false;
+  late bool _copyIgnored;
+  late bool _runPostCreate;
   bool _openAfter = true;
   bool _submitting = false;
 
@@ -91,6 +98,12 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
   @override
   void initState() {
     super.initState();
+    final settings = ref.read(appSettingsProvider);
+    _copyGlobs.text = settings.worktreeCopyGlobs;
+    _copyIgnored = settings.worktreeCopyEnabled;
+    _postCreate.text = settings.worktreePostCreate;
+    _runPostCreate = settings.worktreePostCreateEnabled;
+
     _commitish = widget.initialCommitish;
     if (widget.initialBranchName != null) {
       _branch.text = widget.initialBranchName!;
@@ -243,6 +256,20 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     final path = _destination;
     setState(() => _submitting = true);
 
+    // Remember what they actually used, so the next worktree starts from it
+    // rather than from the factory default. Fire-and-forget: a failed
+    // preferences write must not block creating the worktree.
+    unawaited(
+      ref
+          .read(appSettingsProvider.notifier)
+          .setWorktreeDefaults(
+            copyGlobs: _copyGlobs.text,
+            copyEnabled: _copyIgnored,
+            postCreate: _postCreate.text,
+            postCreateEnabled: _runPostCreate,
+          ),
+    );
+
     final git = ref.read(gitServiceProvider);
     final repoPath = widget.repoPath;
 
@@ -275,7 +302,17 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
       }
 
       if (_runPostCreate && _postCreate.text.trim().isNotEmpty) {
-        await git.runInWorktree(path, _postCreate.text.trim());
+        final command = _postCreate.text.trim();
+        // Into the Output view, like every other command whose output matters:
+        // a `pnpm install` that fails is something you need to be able to READ,
+        // not just be told about — and on success you still want the log.
+        final log = ref.read(outputLogProvider.notifier);
+        try {
+          log.logResult(command, await git.runInWorktree(path, command));
+        } on GitException catch (e) {
+          log.logResult(command, e.result);
+          rethrow;
+        }
       }
     });
     if (!ok || !mounted) {
@@ -564,7 +601,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
           const FieldHint(
             'git checks out tracked files only, so a new worktree has no .env '
             'and the project fails on first run. These patterns are copied '
-            'across. Comma-separated.',
+            'across. Comma-separated, and remembered for next time.',
           ),
         ],
       ],
@@ -595,7 +632,8 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
             placeholderStyle: kAppPlaceholderStyle,
           ),
           const FieldHint(
-            'Runs inside the new worktree. Output appears in the Output view.',
+            'Runs inside the new worktree, and is remembered for next time. '
+            'Output appears in the Output view.',
           ),
         ],
       ],

@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +12,7 @@ import '../../core/providers/window_manager_bridge.dart';
 import '../branches/branches_view.dart';
 import '../common/actions.dart';
 import '../common/context_menu.dart';
+import '../common/field_styles.dart';
 import '../common/tool_icon_button.dart';
 import '../history/history_view.dart';
 import '../repository/repo_status_view.dart';
@@ -249,6 +251,125 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
     await _run(() => ref.read(gitServiceProvider).repairWorktrees(repoPath));
   }
 
+  /// Relocates a worktree with `git worktree move`, which rewrites BOTH halves
+  /// of the two-way link (the worktree's `.git` file, and the `gitdir` file in
+  /// the main repo's admin directory).
+  ///
+  /// This is why it exists as an action rather than leaving the user to drag the
+  /// folder in Finder: moving it behind git's back breaks the link, and the
+  /// worktree then shows up here as "missing" needing a Repair.
+  Future<void> _move(GitWorktree wt) async {
+    final isLocal = ref.read(connectionProvider).isLocal;
+    String? destination;
+
+    if (isLocal) {
+      // The sandbox again: git has to CREATE the directory at the new location,
+      // so we need a grant on the folder it goes into. The picker IS the grant.
+      final parent = await getDirectoryPath(
+        confirmButtonText: 'Move Here',
+        initialDirectory: _parentOf(wt.path),
+      );
+      if (parent == null || !mounted) return;
+      destination = '$parent/${wt.name}';
+    } else {
+      destination = await _promptPath(
+        title: 'Move worktree',
+        message: 'New location for "${wt.name}".',
+        initial: wt.path,
+      );
+      if (destination == null || !mounted) return;
+    }
+
+    if (destination == wt.path) return;
+    // A worktree inside the repository shows up as untracked noise in the
+    // repository's own status — the same rule the Add sheet enforces.
+    if (destination == repoPath || destination.startsWith('$repoPath/')) {
+      await showErrorDialog(
+        context,
+        'Move it outside the repository — a worktree inside it would show up '
+        "as untracked files in the repository's own status.",
+      );
+      return;
+    }
+
+    final from = wt.path;
+    final to = destination;
+    await _run(() async {
+      final git = ref.read(gitServiceProvider);
+      try {
+        await git.moveWorktree(repoPath, from, to);
+      } on GitException catch (e) {
+        // git refuses to move a LOCKED worktree (it may live on a volume that
+        // isn't mounted). Say so, rather than handing over the raw message.
+        if (!e.result.stderr.contains('locked working tree')) rethrow;
+        if (!mounted) rethrow;
+        await showErrorDialog(
+          context,
+          'This worktree is locked${wt.lockReason?.isNotEmpty ?? false ? ' (${wt.lockReason})' : ''} '
+          'and cannot be moved. Unlock it first.',
+        );
+        return;
+      }
+      // The tab (and its sandbox grant) pointed at the OLD path, which no longer
+      // exists — reopen it at the new one rather than leaving a dead tab behind.
+      final wasOpen = ref.read(worktreeTabsProvider).open.contains(from);
+      await ref.read(worktreeAccessProvider).release(from);
+      ref.read(worktreeTabsProvider.notifier).close(from);
+      if (wasOpen && mounted) {
+        final ok = await ref.read(worktreeAccessProvider).ensure(context, to);
+        if (ok) ref.read(worktreeTabsProvider.notifier).open(to);
+      }
+    });
+  }
+
+  static String _parentOf(String path) {
+    final parts = path.split('/')..removeLast();
+    return parts.join('/');
+  }
+
+  /// A plain path prompt, for the SSH backend where there is no folder picker.
+  Future<String?> _promptPath({
+    required String title,
+    required String message,
+    required String initial,
+  }) async {
+    final controller = TextEditingController(text: initial);
+    final result = await showMacosAlertDialog<String>(
+      context: context,
+      builder: (context) => MacosAlertDialog(
+        appIcon: const MacosIcon(CupertinoIcons.folder, size: 56),
+        title: Text(title),
+        message: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            MacosTextField(
+              controller: controller,
+              decoration: kAppTextFieldDecoration,
+              focusedDecoration: kAppTextFieldFocusedDecoration,
+              placeholderStyle: kAppPlaceholderStyle,
+            ),
+          ],
+        ),
+        primaryButton: PushButton(
+          controlSize: ControlSize.large,
+          onPressed: () =>
+              Navigator.of(context).pop(controller.text.trim()),
+          child: const Text('Move'),
+        ),
+        secondaryButton: PushButton(
+          controlSize: ControlSize.large,
+          secondary: true,
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+      ),
+    );
+    controller.dispose();
+    return (result?.isEmpty ?? true) ? null : result;
+  }
+
   Future<void> _toggleLock(GitWorktree wt) async {
     final git = ref.read(gitServiceProvider);
     if (wt.isLocked) {
@@ -342,6 +463,19 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
           icon: wt.isLocked ? CupertinoIcons.lock_open : CupertinoIcons.lock,
           label: wt.isLocked ? 'Unlock' : 'Lock',
           onTap: () => _toggleLock(wt),
+        ),
+        // `git worktree move` rewrites both halves of the two-way link. Dragging
+        // the folder in Finder instead breaks it, and the worktree then turns up
+        // here as "missing" needing a Repair — so this is the safe way to do it.
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_right_arrow_left,
+          label: 'Move…',
+          // Nothing to move: the directory is already gone. Repair is the fix.
+          enabled: !wt.isPrunable && !wt.isLocked,
+          disabledTooltip: wt.isPrunable
+              ? "This worktree's folder is missing — use Repair or Prune"
+              : 'A locked worktree cannot be moved — unlock it first',
+          onTap: () => _move(wt),
         ),
         const ContextMenuDivider(),
         ContextMenuItem(

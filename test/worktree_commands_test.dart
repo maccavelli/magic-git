@@ -269,6 +269,26 @@ void main() {
       expect(layout.gitCommonDir, '$repo/.git');
     });
 
+    test('move refuses a LOCKED worktree', () async {
+      // Locking normally means the worktree lives on a volume that isn't always
+      // mounted, so moving it out from under the lock is exactly what must not
+      // happen silently. The UI surfaces this and offers to unlock.
+      await git.addWorktree(repo, path: '$wtRoot/lk', newBranch: 'lk');
+      await git.lockWorktree(repo, '$wtRoot/lk', reason: 'on a usb stick');
+
+      await expectLater(
+        git.moveWorktree(repo, '$wtRoot/lk', '$wtRoot/lk-moved'),
+        throwsA(
+          isA<GitException>().having(
+            (e) => e.result.stderr,
+            'stderr',
+            contains('locked working tree'),
+          ),
+        ),
+      );
+      expect(Directory('$wtRoot/lk').existsSync(), isTrue);
+    });
+
     test('repair re-links a worktree moved behind git\'s back', () async {
       await git.addWorktree(repo, path: '$wtRoot/r', newBranch: 'r');
 

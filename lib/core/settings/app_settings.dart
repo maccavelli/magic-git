@@ -50,6 +50,27 @@ class AppSettings {
   /// scrollbar for reaching line ends.
   final bool historyDiffWrap;
 
+  /// Comma-separated globs of **gitignored** files to copy into a newly created
+  /// worktree.
+  ///
+  /// `git worktree add` checks out *tracked* files only, so a fresh worktree has
+  /// no `.env` and the project fails on first run with an error that says nothing
+  /// about worktrees. This is the same set of patterns nearly every time, so it
+  /// is a setting rather than something to retype per worktree. Empty disables
+  /// the copy.
+  final String worktreeCopyGlobs;
+
+  /// Whether the copy is on by default in the Add Worktree sheet.
+  final bool worktreeCopyEnabled;
+
+  /// Command run inside a newly created worktree (e.g. `pnpm install`), so it is
+  /// ready to work in rather than ready to configure. Empty = none.
+  final String worktreePostCreate;
+
+  /// Whether [worktreePostCreate] runs by default. Kept separate from the string
+  /// so a user can park a command without arming it.
+  final bool worktreePostCreateEnabled;
+
   const AppSettings({
     this.networkTimeout = GitService.defaultNetworkTimeout,
     this.commitTimeout = GitService.defaultCommitTimeout,
@@ -61,6 +82,10 @@ class AppSettings {
     this.binaryOverrides = const {},
     this.historyZoom = 1.0,
     this.historyDiffWrap = false,
+    this.worktreeCopyGlobs = '.env*',
+    this.worktreeCopyEnabled = true,
+    this.worktreePostCreate = '',
+    this.worktreePostCreateEnabled = false,
   });
 
   AppSettings copyWith({
@@ -74,6 +99,10 @@ class AppSettings {
     Map<String, String>? binaryOverrides,
     double? historyZoom,
     bool? historyDiffWrap,
+    String? worktreeCopyGlobs,
+    bool? worktreeCopyEnabled,
+    String? worktreePostCreate,
+    bool? worktreePostCreateEnabled,
   }) => AppSettings(
     networkTimeout: networkTimeout ?? this.networkTimeout,
     commitTimeout: commitTimeout ?? this.commitTimeout,
@@ -85,6 +114,11 @@ class AppSettings {
     binaryOverrides: binaryOverrides ?? this.binaryOverrides,
     historyZoom: historyZoom ?? this.historyZoom,
     historyDiffWrap: historyDiffWrap ?? this.historyDiffWrap,
+    worktreeCopyGlobs: worktreeCopyGlobs ?? this.worktreeCopyGlobs,
+    worktreeCopyEnabled: worktreeCopyEnabled ?? this.worktreeCopyEnabled,
+    worktreePostCreate: worktreePostCreate ?? this.worktreePostCreate,
+    worktreePostCreateEnabled:
+        worktreePostCreateEnabled ?? this.worktreePostCreateEnabled,
   );
 
   // Value equality so a cross-tab [reloadFromDisk] that re-reads the same value
@@ -102,6 +136,10 @@ class AppSettings {
       other.autoFetchMinutes == autoFetchMinutes &&
       other.historyZoom == historyZoom &&
       other.historyDiffWrap == historyDiffWrap &&
+      other.worktreeCopyGlobs == worktreeCopyGlobs &&
+      other.worktreeCopyEnabled == worktreeCopyEnabled &&
+      other.worktreePostCreate == worktreePostCreate &&
+      other.worktreePostCreateEnabled == worktreePostCreateEnabled &&
       _mapEquals(other.binaryOverrides, binaryOverrides);
 
   @override
@@ -115,6 +153,10 @@ class AppSettings {
     autoFetchMinutes,
     historyZoom,
     historyDiffWrap,
+    worktreeCopyGlobs,
+    worktreeCopyEnabled,
+    worktreePostCreate,
+    worktreePostCreateEnabled,
     Object.hashAllUnordered(
       binaryOverrides.entries.map((e) => Object.hash(e.key, e.value)),
     ),
@@ -145,6 +187,10 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   static const _binPrefix = 'binPath_';
   static const _historyZoomKey = 'historyZoom';
   static const _historyDiffWrapKey = 'historyDiffWrap';
+  static const _wtCopyGlobsKey = 'worktreeCopyGlobs';
+  static const _wtCopyEnabledKey = 'worktreeCopyEnabled';
+  static const _wtPostCreateKey = 'worktreePostCreate';
+  static const _wtPostCreateEnabledKey = 'worktreePostCreateEnabled';
 
   /// Set true by any setter the moment the user explicitly changes a setting.
   /// [build] kicks [_load] fire-and-forget and returns defaults immediately, so
@@ -232,6 +278,10 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
           ?.clamp(minHistoryZoom, maxHistoryZoom)
           .toDouble(),
       historyDiffWrap: prefs.getBool(_historyDiffWrapKey),
+      worktreeCopyGlobs: prefs.getString(_wtCopyGlobsKey),
+      worktreeCopyEnabled: prefs.getBool(_wtCopyEnabledKey),
+      worktreePostCreate: prefs.getString(_wtPostCreateKey),
+      worktreePostCreateEnabled: prefs.getBool(_wtPostCreateEnabledKey),
     );
   }
 
@@ -371,6 +421,34 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     _userEdited = true;
     state = state.copyWith(historyDiffWrap: wrap);
     await _persist((prefs) => prefs.setBool(_historyDiffWrapKey, wrap));
+  }
+
+  /// Persists the Add Worktree sheet's defaults, so the same `.env*` globs and
+  /// the same `pnpm install` don't have to be retyped for every worktree — the
+  /// answer is the same nearly every time, and per-worktree friction is exactly
+  /// what makes the feature feel like a chore.
+  Future<void> setWorktreeDefaults({
+    String? copyGlobs,
+    bool? copyEnabled,
+    String? postCreate,
+    bool? postCreateEnabled,
+  }) async {
+    _userEdited = true;
+    state = state.copyWith(
+      worktreeCopyGlobs: copyGlobs?.trim(),
+      worktreeCopyEnabled: copyEnabled,
+      worktreePostCreate: postCreate?.trim(),
+      worktreePostCreateEnabled: postCreateEnabled,
+    );
+    await _persist((prefs) async {
+      await prefs.setString(_wtCopyGlobsKey, state.worktreeCopyGlobs);
+      await prefs.setBool(_wtCopyEnabledKey, state.worktreeCopyEnabled);
+      await prefs.setString(_wtPostCreateKey, state.worktreePostCreate);
+      await prefs.setBool(
+        _wtPostCreateEnabledKey,
+        state.worktreePostCreateEnabled,
+      );
+    });
   }
 
   /// The context width the History diffs fetch at (`-U3`, git's own default).
