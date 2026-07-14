@@ -1092,6 +1092,62 @@ class GitService {
     );
   }
 
+  /// Copies gitignored files matching [globs] from [from] into a freshly-created
+  /// worktree at [to].
+  ///
+  /// This closes the single biggest real-world hole in `git worktree`:
+  /// `worktree add` checks out **tracked** files only. So the new worktree has
+  /// no `.env`, no `.env.local`, none of the untracked-but-essential config the
+  /// project needs — and it fails on first run with an error that says nothing
+  /// about worktrees. Every developer hits this; no desktop Git GUI fixes it.
+  ///
+  /// Uses `git ls-files --others --ignored` so the source of truth is git's own
+  /// ignore rules: only files git is deliberately *not* tracking are eligible,
+  /// which is exactly the set `worktree add` left behind. A glob that matches a
+  /// tracked file therefore copies nothing — the file is already there.
+  ///
+  /// Directories are copied recursively, and parents are created as needed, so a
+  /// glob like `config/*.local` works. Missing matches are not an error: a repo
+  /// with no `.env` should create a worktree, not fail.
+  Future<void> copyIgnoredFiles({
+    required String from,
+    required String to,
+    required List<String> globs,
+  }) async {
+    if (globs.isEmpty) return;
+    final dest = ShellEscaper.escape(to);
+    final pathspecs = globs.map(ShellEscaper.escape).join(' ');
+    // -z + `read -d ''` so a filename with a space or newline survives.
+    final script =
+        'git ls-files -z --others --ignored --exclude-standard -- $pathspecs | '
+        'while IFS= read -r -d "" f; do '
+        'mkdir -p "$dest/\$(dirname "\$f")" && cp -R "\$f" "$dest/\$f"; '
+        'done';
+    await _runVoid(
+      from,
+      ['sh', '-c', script],
+      'Copy ignored files into the worktree',
+      timeout: defaultCommitTimeout,
+    );
+  }
+
+  /// Runs [command] inside a worktree — the post-create hook (`pnpm install`,
+  /// `bundle install`), so a new worktree is ready to work in rather than ready
+  /// to configure.
+  ///
+  /// Returns the raw result so the caller can put it in the Output view; a
+  /// non-zero exit throws, because a failed `install` means the worktree is not
+  /// actually usable and the user needs to know.
+  Future<SSHCommandResult> runInWorktree(
+    String worktreePath,
+    String command,
+  ) => _run(
+    worktreePath,
+    ['sh', '-c', command],
+    'Post-create command',
+    timeout: defaultCommitTimeout,
+  );
+
   static const List<String> _refsFormat = [
     '%(HEAD)',
     '%(refname)',

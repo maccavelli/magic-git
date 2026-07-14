@@ -48,6 +48,11 @@ class CommandPalette extends ConsumerStatefulWidget {
   /// shell's stable context — the palette is already gone by the time this runs.
   final void Function(String branch) onCheckoutBranch;
 
+  /// Opens a worktree in the Worktrees panel. Takes the shell's context for the
+  /// same reason as [onCheckoutBranch] — it may need to prompt for a sandbox
+  /// grant on the worktree's folder.
+  final void Function(String worktreePath) onOpenWorktree;
+
   const CommandPalette({
     super.key,
     required this.repoPath,
@@ -60,6 +65,7 @@ class CommandPalette extends ConsumerStatefulWidget {
     required this.onCreateRepository,
     required this.onOpenHistoryWindow,
     required this.onCheckoutBranch,
+    required this.onOpenWorktree,
   });
 
   @override
@@ -110,6 +116,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
       (3, CupertinoIcons.tray_2, 'Stashes'),
       (4, CupertinoIcons.cloud, 'Forge'),
       (5, CupertinoIcons.cube_box, 'Project'),
+      (6, CupertinoIcons.square_split_2x1, 'Worktrees'),
     ];
 
     final commands = <_PaletteCommand>[
@@ -186,12 +193,39 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
     // detaches HEAD — offer the local ones the guard can switch to cleanly).
     final refs = ref.watch(refsProvider(widget.repoPath)).value ?? const [];
     for (final r in refs.where((r) => r.isLocalBranch)) {
+      // A branch checked out in ANOTHER worktree can't be checked out here —
+      // git refuses. Offer to go to the worktree that has it instead, so the
+      // palette never lists an action that is guaranteed to fail.
+      final elsewhere = r.isHead ? null : r.worktreePath;
+      commands.add(
+        elsewhere == null
+            ? _PaletteCommand(
+                icon: CupertinoIcons.arrow_branch,
+                label: 'Checkout ${r.shortName}',
+                hint: 'Branch',
+                run: () => widget.onCheckoutBranch(r.shortName),
+              )
+            : _PaletteCommand(
+                icon: CupertinoIcons.square_split_2x1,
+                label: 'Switch to worktree for ${r.shortName}',
+                hint: 'Worktree',
+                run: () => widget.onOpenWorktree(elsewhere),
+              ),
+      );
+    }
+
+    // Worktrees by their own name — how anyone with more than a handful of them
+    // actually navigates.
+    final worktrees =
+        ref.watch(gitWorktreesProvider(widget.repoPath)).value ?? const [];
+    for (final wt in worktrees) {
+      if (wt.isMain || wt.isPrunable) continue;
       commands.add(
         _PaletteCommand(
-          icon: CupertinoIcons.arrow_branch,
-          label: 'Checkout ${r.shortName}',
-          hint: 'Branch',
-          run: () => widget.onCheckoutBranch(r.shortName),
+          icon: CupertinoIcons.square_split_2x1,
+          label: 'Open worktree ${wt.name}',
+          hint: 'Worktree',
+          run: () => widget.onOpenWorktree(wt.path),
         ),
       );
     }

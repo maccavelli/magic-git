@@ -65,7 +65,14 @@ void main() {
 
     var lastSeen = DateTime.now();
     final probe = events.listen((_) => lastSeen = DateTime.now());
-    while (DateTime.now().difference(lastSeen) < const Duration(seconds: 1)) {
+    // Bounded: under a loaded, parallel test run the machine may never go a full
+    // second without an FSEvent, and an unbounded wait would then hang until the
+    // 10-minute suite timeout — which is what it did. Settling is an
+    // optimisation (it keeps setUp's own churn out of the assertions), not a
+    // correctness requirement, so give up after a while and proceed.
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (DateTime.now().difference(lastSeen) < const Duration(seconds: 1) &&
+        DateTime.now().isBefore(deadline)) {
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
     await probe.cancel();

@@ -12,6 +12,14 @@ import '../common/field_styles.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/tool_icon_button.dart';
+import '../tabs/tab_ui_providers.dart';
+import '../worktrees/add_worktree_sheet.dart';
+import '../worktrees/worktree_access.dart';
+import '../worktrees/worktree_tabs.dart';
+
+/// Sidebar index of the Worktrees panel. Kept next to its only use rather than
+/// exported from app_shell, which would be a circular import.
+const int _worktreesPage = 6;
 
 /// Source-control pane: local branches (checkout/delete/create), remote-tracking
 /// branches, and tags. Stashes have their own top-level namespace (StashView).
@@ -191,6 +199,43 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
     }
   }
 
+  /// Where [branch] is checked out, from the refs we already have loaded — no
+  /// extra git call, since `%(worktreepath)` rides the existing snapshot.
+  String? _worktreePathFor(String branch) {
+    for (final r in _locals) {
+      if (r.shortName == branch) return r.worktreePath;
+    }
+    return null;
+  }
+
+  /// Opens the Worktrees panel on the worktree holding this branch.
+  ///
+  /// Offered instead of Checkout when a branch is checked out elsewhere: git
+  /// refuses to check it out twice, and going to where it already lives is what
+  /// the user actually wants.
+  Future<void> _switchToWorktree(String worktreePath) async {
+    final ok = await ref
+        .read(worktreeAccessProvider)
+        .ensure(context, worktreePath);
+    if (!ok || !mounted) return;
+    ref.read(worktreeTabsProvider.notifier).open(worktreePath);
+    ref.read(pageIndexProvider.notifier).select(_worktreesPage);
+    ref.read(visitedPagesProvider.notifier).visit(_worktreesPage);
+  }
+
+  /// Takes this branch into a NEW checkout, without disturbing the one you are
+  /// in — the single most-requested worktree flow across every client's tracker.
+  Future<void> _checkoutInNewWorktree(String branch) async {
+    await showMacosSheet<void>(
+      context: context,
+      builder: (_) => AddWorktreeSheet(
+        repoPath: repoPath,
+        initialCommitish: branch,
+      ),
+    );
+    if (mounted) _refresh();
+  }
+
   /// Checks out [ref] behind the dirty-tree guardrail (stash / carry / cancel),
   /// refreshing regardless of outcome (see the `finally` block).
   Future<void> _checkout(GitService git, String ref) async {
@@ -324,6 +369,10 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
   Widget _localRow(BuildContext context, GitService git, GitRef branch) {
     final typography = MacosTheme.of(context).typography;
     final selected = _selectedBranch == branch.shortName;
+    // The worktree this branch is checked out in, if it is checked out in one
+    // OTHER than this checkout. `%(worktreepath)` is also set for the current
+    // worktree — git's own docs get this wrong — so `isHead` is what excludes it.
+    final elsewhere = branch.isHead ? null : branch.worktreePath;
     // A single click selects (so ↑/↓, Enter, ⌘⇧M and ⌘⌫ target it); checkout is
     // its own button (below) and Enter, so selecting can't accidentally switch
     // branches. The current branch keeps its green tint.
@@ -360,21 +409,89 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            if (branch.upstream != null)
+            // Checked out in ANOTHER worktree. `isHead` already means "checked
+            // out here", so a worktreePath alongside a false isHead is the exact
+            // test. git will refuse both checkout and delete for such a branch,
+            // so say so up front instead of letting the user find out from a raw
+            // error.
+            if (elsewhere != null) ...[
+              const SizedBox(width: 6),
+              MacosTooltip(
+                message: 'Checked out in the worktree at $elsewhere',
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 1,
+                  ),
+                  decoration: BoxDecoration(
+                    color: MacosColors.systemPurpleColor.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const MacosIcon(
+                        CupertinoIcons.square_split_2x1,
+                        size: 10,
+                        color: MacosColors.systemPurpleColor,
+                      ),
+                      const SizedBox(width: 3),
+                      Text(
+                        elsewhere.split('/').last,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: MacosColors.systemPurpleColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            if (branch.upstream != null) ...[
+              const SizedBox(width: 6),
               Text(
                 branch.upstream!,
                 style: typography.caption1.copyWith(
                   color: MacosColors.systemGrayColor,
                 ),
               ),
+            ],
             if (!branch.isHead) ...[
               const SizedBox(width: 4),
-              ToolIconButton(
-                icon: CupertinoIcons.square_arrow_down,
-                tooltip: 'Checkout branch',
-                size: 15,
-                onPressed: _busy ? null : () => _checkout(git, branch.shortName),
-              ),
+              if (elsewhere != null)
+                // git refuses to check this out here ("already used by worktree
+                // at …") and there is no sensible override, so offer the thing
+                // the user actually wants: go to where it IS checked out.
+                ToolIconButton(
+                  icon: CupertinoIcons.square_arrow_right,
+                  tooltip: 'Switch to its worktree',
+                  size: 15,
+                  onPressed: _busy ? null : () => _switchToWorktree(elsewhere),
+                )
+              else ...[
+                ToolIconButton(
+                  icon: CupertinoIcons.square_arrow_down,
+                  tooltip: 'Checkout branch',
+                  size: 15,
+                  onPressed: _busy
+                      ? null
+                      : () => _checkout(git, branch.shortName),
+                ),
+                const SizedBox(width: 4),
+                // The most-requested worktree flow in every client's issue
+                // tracker: take this branch into a new checkout in one step,
+                // instead of switching away from what you are doing.
+                ToolIconButton(
+                  icon: CupertinoIcons.square_split_2x1,
+                  tooltip: 'Checkout in a new worktree…',
+                  size: 15,
+                  onPressed: _busy
+                      ? null
+                      : () => _checkoutInNewWorktree(branch.shortName),
+                ),
+              ],
               const SizedBox(width: 4),
               MacosPulldownButton(
                 icon: CupertinoIcons.arrow_merge,
@@ -399,10 +516,15 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
               const SizedBox(width: 4),
               ToolIconButton(
                 icon: CupertinoIcons.trash,
-                tooltip: 'Delete branch',
+                tooltip: elsewhere == null
+                    ? 'Delete branch'
+                    // git refuses outright, and unlike checkout there is NO
+                    // override flag for this — the worktree has to go first.
+                    : 'Checked out in the worktree "${elsewhere.split('/').last}" '
+                          '— remove that worktree first',
                 size: 14,
                 color: MacosColors.systemRedColor,
-                onPressed: _busy
+                onPressed: _busy || elsewhere != null
                     ? null
                     : () => _deleteBranch(git, branch.shortName),
               ),
@@ -433,6 +555,32 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
       await git.deleteBranch(repoPath, name);
     } on GitException catch (e) {
       if (!mounted) return;
+      // "cannot delete branch 'x' used by worktree at '/path'". There is no
+      // override for this — `--ignore-other-worktrees` exists on checkout and
+      // switch, but not on branch — so the ONLY way through is to remove the
+      // worktree first. Offer exactly that, instead of dead-ending on git's
+      // message. (Tower shipped a hang here; Fork added this option in 2.63.)
+      if (e.result.stderr.contains('used by worktree at')) {
+        final worktree = _worktreePathFor(name);
+        final removeToo = await confirmAction(
+          context,
+          title: 'Branch is checked out in a worktree',
+          message: worktree == null
+              ? 'This branch is checked out in another worktree. Remove that '
+                    'worktree before deleting the branch.'
+              : 'This branch is checked out in the worktree at\n$worktree\n\n'
+                    'Git cannot delete a branch that is checked out. Remove the '
+                    'worktree as well?',
+          confirmLabel: 'Remove Worktree and Delete',
+          destructive: true,
+        );
+        if (!removeToo || worktree == null || !mounted) return;
+        await runAction(context, () async {
+          await git.removeWorktree(repoPath, worktree, force: true);
+          await git.deleteBranch(repoPath, name, force: true);
+        });
+        return;
+      }
       if (!e.result.stderr.contains('not fully merged')) {
         await showErrorDialog(context, e.toString());
         return;

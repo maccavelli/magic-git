@@ -37,6 +37,9 @@ import 'viewer/viewer_host.dart';
 import 'viewer/viewer_providers.dart';
 import 'workspace/clone_sheet.dart';
 import 'workspace/create_repo_sheet.dart';
+import 'worktrees/worktree_access.dart';
+import 'worktrees/worktree_tabs.dart';
+import 'worktrees/worktrees_view.dart';
 
 /// Top-level per-tab content shell. Content is driven by connection state: the
 /// connection form until a session is established, then the feature panels
@@ -290,9 +293,22 @@ class _AppShellState extends ConsumerState<AppShell> {
           onOpenHistoryWindow: () => WindowManagerBridge.current?.openHistory(),
           onCheckoutBranch: (branch) =>
               _checkoutBranch(context, repoPath, branch),
+          onOpenWorktree: (path) => _openWorktree(context, path),
         ),
       ),
     );
+  }
+
+  /// Opens a worktree in the Worktrees panel, acquiring its sandbox grant first
+  /// if we've never been given one (a worktree lives outside the main repo's
+  /// grant, so working in it needs its own).
+  Future<void> _openWorktree(BuildContext context, String worktreePath) async {
+    final ok = await ref
+        .read(worktreeAccessProvider)
+        .ensure(context, worktreePath);
+    if (!ok || !mounted) return;
+    ref.read(worktreeTabsProvider.notifier).open(worktreePath);
+    _selectPage(6);
   }
 
   Future<void> _checkoutBranch(
@@ -569,6 +585,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       'global.panel4': connected ? () => _selectPage(3) : null,
       'global.panel5': connected ? () => _selectPage(4) : null,
       'global.panel6': connected ? () => _selectPage(5) : null,
+      'global.panel7': connected ? () => _selectPage(6) : null,
     });
 
     return CallbackShortcuts(
@@ -649,6 +666,10 @@ class _AppShellState extends ConsumerState<AppShell> {
                 leading: MacosIcon(CupertinoIcons.cube_box),
                 label: Text('Project'),
               ),
+              SidebarItem(
+                leading: MacosIcon(CupertinoIcons.square_split_2x1),
+                label: Text('Worktrees'),
+              ),
             ],
           );
         },
@@ -716,6 +737,9 @@ class _AppShellState extends ConsumerState<AppShell> {
             : const SizedBox.shrink(),
         visitedPages.contains(5)
             ? ForgeProjectPanel(repoPath: repoPath, isActive: pageIndex == 5)
+            : const SizedBox.shrink(),
+        visitedPages.contains(6)
+            ? WorktreesView(repoPath: repoPath, isActive: pageIndex == 6)
             : const SizedBox.shrink(),
       ],
     );

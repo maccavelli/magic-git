@@ -21,6 +21,7 @@ import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
+import '../worktrees/add_worktree_sheet.dart';
 import 'commit_graph_view.dart';
 import 'history_minimap.dart';
 import 'log_filter.dart';
@@ -688,6 +689,22 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     }
   }
 
+  /// Branch from a commit into a NEW checkout, leaving this one untouched — the
+  /// "I need to look at this without losing my place" flow.
+  Future<void> _actWorktreeFrom(String hash) async {
+    await showMacosSheet<void>(
+      context: context,
+      builder: (_) => AddWorktreeSheet(
+        repoPath: repoPath,
+        initialCommitish: hash,
+        // Non-null so the sheet opens on "new branch" (the commit is the start
+        // point, not a branch to check out) with the name left for the user.
+        initialBranchName: '',
+      ),
+    );
+    if (mounted) _refresh();
+  }
+
   Future<void> _actCherryPick(GitCommit commit) async {
     final label = 'git cherry-pick ${commit.shortHash}';
     if (commit.isMerge) {
@@ -881,6 +898,14 @@ class _HistoryViewState extends ConsumerState<HistoryView>
           label: 'Branch from $short…',
           enabled: canAct,
           onTap: () => _actBranchFrom(hash),
+        ),
+        // Same as above, but into a separate checkout — so you can start from
+        // this commit without abandoning whatever is in your working tree.
+        ContextMenuItem(
+          icon: CupertinoIcons.square_split_2x1,
+          label: 'Branch from $short in a new worktree…',
+          enabled: canAct,
+          onTap: () => _actWorktreeFrom(hash),
         ),
         const ContextMenuDivider(),
         ContextMenuItem(

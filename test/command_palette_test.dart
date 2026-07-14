@@ -26,19 +26,30 @@ const _refs = [
   ),
 ];
 
+const _worktrees = [
+  GitWorktree(path: _repo, headOid: 'aaa', branch: 'refs/heads/main', isMain: true),
+];
+
 class _Recorder {
   int cloneOpened = 0;
   int createOpened = 0;
   int historyWindowOpened = 0;
   int? panel;
   String? checkedOut;
+  String? openedWorktree;
   int refreshed = 0;
 }
 
 Future<void> _open(WidgetTester tester, _Recorder rec) async {
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [refsProvider(_repo).overrideWith((ref) async => _refs)],
+      overrides: [
+        refsProvider(_repo).overrideWith((ref) async => _refs),
+        // The palette lists worktrees by name too. Without this it would reach
+        // for a real git through the unconnected executor and leave its retry
+        // timer pending past the test.
+        gitWorktreesProvider(_repo).overrideWith((ref) async => _worktrees),
+      ],
       child: MacosApp(
         debugShowCheckedModeBanner: false,
         home: Builder(
@@ -62,6 +73,7 @@ Future<void> _open(WidgetTester tester, _Recorder rec) async {
                     onCreateRepository: () => rec.createOpened++,
                     onOpenHistoryWindow: () => rec.historyWindowOpened++,
                     onCheckoutBranch: (b) => rec.checkedOut = b,
+                    onOpenWorktree: (p) => rec.openedWorktree = p,
                   ),
                 ),
               ),
