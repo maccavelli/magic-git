@@ -104,6 +104,21 @@ class GitRef {
   final String subject; // Tip commit / tag subject
   final String? peeledOid; // For annotated tags: the underlying commit
 
+  /// Absolute path of the worktree this branch is checked out in, or null if
+  /// it isn't checked out anywhere. From `%(worktreepath)`.
+  ///
+  /// Note git's own documentation is wrong about this field: it claims the path
+  /// is only reported for *linked* worktrees, but it is in fact populated for
+  /// the main and current worktree too (verified against git 2.55). So a
+  /// non-null value does NOT by itself mean "checked out somewhere else" —
+  /// compare against the current worktree's toplevel ([RepoLayout.toplevel])
+  /// to decide that. [isHead] remains the test for "checked out *here*".
+  ///
+  /// The path may also point at a worktree whose directory has been deleted
+  /// (git still reports it until `worktree prune` runs), so callers must not
+  /// assume it exists on disk.
+  final String? worktreePath;
+
   const GitRef({
     required this.name,
     required this.oid,
@@ -111,6 +126,7 @@ class GitRef {
     this.upstream,
     required this.subject,
     this.peeledOid,
+    this.worktreePath,
   });
 
   bool get isRemote => name.startsWith('refs/remotes/');
@@ -125,6 +141,214 @@ class GitRef {
       .replaceFirst('refs/heads/', '')
       .replaceFirst('refs/remotes/', '')
       .replaceFirst('refs/tags/', '');
+}
+
+/// Where a repository's git data actually lives, from one `git rev-parse`.
+///
+/// The only correct test for "am I in a linked worktree" is
+/// [isLinkedWorktree] — `gitDir != gitCommonDir`. Do NOT test whether `.git` is
+/// a file: submodules use a gitfile too, and for a submodule these two dirs are
+/// equal.
+class RepoLayout {
+  /// The working-tree root (`--show-toplevel`), absolute and symlink-resolved.
+  final String toplevel;
+
+  /// This worktree's private git dir. For a linked worktree that is
+  /// `<main>/.git/worktrees/<id>`; for the main worktree it equals
+  /// [gitCommonDir].
+  final String gitDir;
+
+  /// The shared git dir — always the main repository's `.git`. Holds the
+  /// objects, the shared refs, and every worktree's admin directory.
+  final String gitCommonDir;
+
+  const RepoLayout({
+    required this.toplevel,
+    required this.gitDir,
+    required this.gitCommonDir,
+  });
+
+  bool get isLinkedWorktree => gitDir != gitCommonDir;
+
+  /// A submodule's git dir lives under the superproject's `.git/modules/…`.
+  /// Unlike a linked worktree, its git dir and common dir are the *same*, so
+  /// this is the only thing distinguishing the two cases.
+  bool get isSubmodule => !isLinkedWorktree && gitDir.contains('/.git/modules/');
+
+  /// The main repository's working-tree root — the parent of [gitCommonDir].
+  ///
+  /// Only meaningful for a conventional `<repo>/.git` layout. It is null for a
+  /// bare repo, `--separate-git-dir`, or a `$GIT_DIR` override, where the
+  /// common dir is not a `.git` inside the main worktree. Callers that need
+  /// this to be exact should read the first record of
+  /// [GitService.gitWorktrees] instead, which git documents as always being the
+  /// main worktree.
+  String? get mainWorktreePath {
+    if (!gitCommonDir.endsWith('/.git')) return null;
+    return gitCommonDir.substring(0, gitCommonDir.length - '/.git'.length);
+  }
+}
+
+/// A worktree from `git worktree list --porcelain`.
+///
+/// Named `GitWorktree`, not `Worktree`, because "worktree" already means *the
+/// working tree* throughout this codebase (`WorktreeEditStamps`,
+/// `git restore --worktree`). This type is the `git worktree` concept: one of
+/// several checkouts sharing a single repository.
+class GitWorktree {
+  /// Absolute, symlink-resolved path (git realpath's these, so it compares
+  /// safely against `rev-parse --path-format=absolute` output but may not
+  /// string-match a path the user typed).
+  final String path;
+
+  /// Tip commit, or null when HEAD is unborn — see [isUnborn].
+  final String? headOid;
+
+  /// Full refname (`refs/heads/foo`), or null when detached or bare.
+  final String? branch;
+
+  final bool isDetached;
+  final bool isBare;
+
+  /// True for the main worktree, which git always lists first. It can never be
+  /// removed or pruned.
+  final bool isMain;
+
+  final bool isLocked;
+
+  /// Why it's locked. Empty string when locked without a reason — which is why
+  /// this can't double as the locked flag; use [isLocked].
+  final String? lockReason;
+
+  /// Why git considers this prunable (e.g. "gitdir file points to non-existent
+  /// location" — i.e. someone deleted the directory). Null when healthy. Never
+  /// reported for the main worktree.
+  final String? prunableReason;
+
+  const GitWorktree({
+    required this.path,
+    this.headOid,
+    this.branch,
+    this.isDetached = false,
+    this.isBare = false,
+    this.isMain = false,
+    this.isLocked = false,
+    this.lockReason,
+    this.prunableReason,
+  });
+
+  /// A worktree created with `--orphan`, or any repo with no commits yet: git
+  /// reports an all-zero HEAD. Note it still emits a `branch` line in this
+  /// case, so [branch] is non-null and [isDetached] is false — the null OID is
+  /// the only signal.
+  bool get isUnborn => headOid == null;
+
+  /// The directory name, which is what the UI labels a worktree with. Full
+  /// paths are too long to scan and branch names alone are ambiguous.
+  String get name {
+    final parts = path.split('/').where((s) => s.isNotEmpty).toList();
+    return parts.isEmpty ? path : parts.last;
+  }
+
+  /// Short branch name for display, or a short OID when detached.
+  String get branchLabel {
+    if (branch != null) return branch!.replaceFirst('refs/heads/', '');
+    if (isBare) return 'bare';
+    final oid = headOid;
+    if (oid == null) return 'unborn';
+    return '(detached ${oid.substring(0, oid.length < 7 ? oid.length : 7)})';
+  }
+
+  /// The directory is gone (or its admin dir is corrupt), so the entry is a
+  /// tombstone: offer Prune (forget it) or Repair (point it at the moved dir).
+  bool get isPrunable => prunableReason != null;
+}
+
+/// The all-zero object id git reports for an unborn HEAD.
+const String _nullOid = '0000000000000000000000000000000000000000';
+
+/// Parses `git worktree list --porcelain -z`.
+///
+/// Records are separated by an empty field (`\0\0`); within a record each line
+/// is a `\0`-terminated field whose first word is the key. The first field is
+/// always `worktree <path>`, and the first *record* is always the main
+/// worktree. Verified against git 2.55 output — the shapes are:
+///
+/// ```
+///   worktree PATH / bare                                 (bare main repo)
+///   worktree PATH / HEAD OID   / branch refs/heads/x     (normal)
+///   worktree PATH / HEAD OID   / detached                (detached)
+///   worktree PATH / HEAD 000…0 / branch refs/heads/x     (unborn / --orphan)
+/// ```
+/// …plus an optional trailing `locked [reason]` and/or `prunable REASON`.
+///
+/// Note the unborn shape: `--orphan` still emits a `branch` line, so the
+/// all-zero OID is the *only* signal that HEAD is unborn.
+///
+/// `-z` is required, not a nicety: git does not quote paths in the newline form
+/// (only lock reasons), so a path containing a newline silently corrupts it.
+List<GitWorktree> parseWorktreeList(String raw) {
+  final worktrees = <GitWorktree>[];
+  // Escapes, not literal NUL bytes: raw control bytes in a source file make
+  // it register as binary to grep, which is already a papercut in this file.
+  // Deliberately no `.trim()` on fields — a trailing space is legal in a path.
+  const nul = '\u0000';
+  for (final record in raw.split('$nul$nul')) {
+    final fields = record.split(nul).where((f) => f.isNotEmpty).toList();
+    if (fields.isEmpty) continue;
+
+    String? path;
+    String? headOid;
+    String? branch;
+    var isDetached = false;
+    var isBare = false;
+    var isLocked = false;
+    String? lockReason;
+    String? prunableReason;
+
+    for (final field in fields) {
+      final sp = field.indexOf(' ');
+      final key = sp == -1 ? field : field.substring(0, sp);
+      final value = sp == -1 ? '' : field.substring(sp + 1);
+      switch (key) {
+        case 'worktree':
+          path = value;
+        case 'HEAD':
+          // An unborn HEAD is reported as the null OID, not omitted.
+          headOid = value == _nullOid ? null : value;
+        case 'branch':
+          branch = value;
+        case 'detached':
+          isDetached = true;
+        case 'bare':
+          isBare = true;
+        case 'locked':
+          // `locked` alone (no reason) is a bare flag; the reason is optional.
+          isLocked = true;
+          lockReason = value;
+        case 'prunable':
+          // Always carries a reason when emitted.
+          prunableReason = value;
+      }
+    }
+    if (path == null || path.isEmpty) continue;
+
+    worktrees.add(
+      GitWorktree(
+        path: path,
+        headOid: headOid,
+        branch: branch,
+        isDetached: isDetached,
+        isBare: isBare,
+        // Documented invariant: git always lists the main worktree first.
+        isMain: worktrees.isEmpty,
+        isLocked: isLocked,
+        lockReason: lockReason,
+        prunableReason: prunableReason,
+      ),
+    );
+  }
+  return worktrees;
 }
 
 /// An entry from `git stash list`.
@@ -411,6 +635,10 @@ List<GitRef> parseRefs(String raw, String fieldSep) {
     final f = line.split(fieldSep);
     if (f.length < 5) continue;
     final peeled = f.length >= 6 ? f[5] : '';
+    // A git older than 2.23 doesn't know `%(worktreepath)` and echoes the
+    // format atom back verbatim. Requiring a leading `/` rejects that (and any
+    // other non-path) without needing a version probe here.
+    final wt = f.length >= 7 ? f[6] : '';
     refs.add(
       GitRef(
         isHead: f[0] == '*',
@@ -419,6 +647,7 @@ List<GitRef> parseRefs(String raw, String fieldSep) {
         upstream: f[3].isEmpty ? null : f[3],
         subject: _stripSeps(f[4]),
         peeledOid: peeled.isEmpty ? null : peeled,
+        worktreePath: wt.startsWith('/') ? wt : null,
       ),
     );
   }
@@ -524,19 +753,30 @@ class GitService {
 
   /// Extra validation for the **local** backend only (never the SSH path, where
   /// opening a subdirectory of a repo is perfectly valid): confirms the picked
-  /// folder is the repository's own working-tree root AND that git's real git
-  /// directory lives inside it.
+  /// folder is a repository root the sandbox can actually work in, and reports
+  /// its [RepoLayout] so the caller knows what kind it is.
   ///
-  /// Under the macOS App Sandbox the app may read only the exact folder the user
-  /// granted through the picker. A picked subdirectory, a linked worktree (git
-  /// dir under `<main>/.git/worktrees/…`), or a submodule (git dir under
-  /// `<super>/.git/modules/…`) all pass [validateRepoPath]'s plain
-  /// `--is-inside-work-tree` check and would then fail every real read with a
-  /// raw, confusing permission error. Detect it up front and fail with a clear,
-  /// actionable message instead. Fails *open* on anything it can't determine
-  /// (e.g. a git too old for `--path-format`), since [validateRepoPath] already
-  /// confirmed a work tree and a genuine permission error would still surface.
-  Future<void> validateLocalRepoRoot(String repoPath) async {
+  /// Under the macOS App Sandbox the app may read only the folders the user
+  /// granted through a picker. A picked *subdirectory*, a *submodule* (git dir
+  /// under `<super>/.git/modules/…`), and a `--separate-git-dir` repo all pass
+  /// [validateRepoPath]'s plain `--is-inside-work-tree` check and would then
+  /// fail every real read with a raw, confusing permission error — so they are
+  /// rejected here with an actionable message.
+  ///
+  /// A **linked worktree** is the one case that looks the same but is legitimate.
+  /// Its git data also lives outside the picked folder (in
+  /// `<main>/.git/worktrees/…`), but it is a first-class checkout the user
+  /// deliberately created, so instead of rejecting it this returns the layout
+  /// with [RepoLayout.isLinkedWorktree] set. The caller
+  /// (`ConnectionController._connectLocal`) is then responsible for holding a
+  /// SECOND security-scoped grant on the main repository before any git runs —
+  /// see `ScopedAccess`, which refcounts exactly that.
+  ///
+  /// Returns null when it cannot determine the layout (e.g. a git too old for
+  /// `--path-format`). That is a deliberate fail-*open*: [validateRepoPath] has
+  /// already confirmed a work tree, and a genuine permission error would still
+  /// surface on the first real read.
+  Future<RepoLayout?> validateLocalRepoRoot(String repoPath) async {
     final result = await _executor.execute(
       repoPath: repoPath,
       // --path-format=absolute forces --git-dir/--git-common-dir to absolute,
@@ -554,13 +794,13 @@ class GitService {
       retries: _readRetries,
       lane: ExecLane.read,
     );
-    if (!result.isSuccess) return;
+    if (!result.isSuccess) return null;
     final lines = const LineSplitter()
         .convert(result.stdout)
         .map((l) => l.trim())
         .where((l) => l.isNotEmpty)
         .toList();
-    if (lines.length < 3) return;
+    if (lines.length < 3) return null;
 
     // Resolve symlinks on both sides so a granted `/tmp/x` (→ `/private/tmp/x`)
     // can't false-mismatch git's canonical output. On failure (e.g. a git dir
@@ -585,16 +825,35 @@ class GitService {
         result,
       );
     }
-    for (final gitDir in [lines[1], lines[2]]) {
-      if (!within(repoRoot, canonical(gitDir))) {
-        throw GitException(
-          "This looks like a linked worktree or submodule whose git data lives "
-          "outside the selected folder — the app sandbox can't reach it. Open "
-          "the main repository's top-level folder instead.",
-          result,
-        );
-      }
+
+    final layout = RepoLayout(
+      toplevel: repoRoot,
+      gitDir: canonical(lines[1]),
+      gitCommonDir: canonical(lines[2]),
+    );
+
+    // A linked worktree: git dir differs from common dir. Legitimate — the
+    // caller acquires the main repo's grant too. This is the ONLY correct test;
+    // "is `.git` a file" would also match a submodule.
+    if (layout.isLinkedWorktree) return layout;
+
+    // Everything else must keep its git data inside the folder we were granted,
+    // or no read will work. This catches submodules (`.git/modules/…`) and
+    // `--separate-git-dir`, whose git dir is unreachable and — unlike a linked
+    // worktree — has no main-repo path we could ask the user to grant.
+    if (!within(repoRoot, layout.gitCommonDir)) {
+      throw GitException(
+        layout.isSubmodule
+            ? 'This is a submodule — its git data lives inside the parent '
+                  "repository, which the app sandbox can't reach from here. "
+                  'Open the parent repository instead.'
+            : "This repository's git data is stored outside the selected "
+                  "folder, which the app sandbox can't reach. Open a repository "
+                  'whose `.git` lives inside it.',
+        result,
+      );
     }
+    return layout;
   }
 
   /// Working-tree + branch status via porcelain v2. `--no-optional-locks` (also
@@ -615,6 +874,224 @@ class GitService {
   Future<PendingOp> pendingOp(String repoPath) async =>
       (await _snapshot(repoPath)).pendingOp;
 
+  // ---------------------------------------------------------------------------
+  // git worktree
+  //
+  // Read commands take ExecLane.read; every mutation takes ExecLane.exclusive
+  // because they write `<common>/.git/worktrees/…` and, for add/remove, the
+  // working tree itself.
+  //
+  // Deliberately NOT routed through [_runCaptured]: the undo journal restores a
+  // moved HEAD/branch tip, and no worktree command moves HEAD in the repo it's
+  // run from. Undoing `worktree add` means removing a directory, which isn't an
+  // UndoRecord this model can express. The safety net is git's own: `remove`
+  // refuses a dirty or locked worktree unless forced, and the UI confirms first.
+  // ---------------------------------------------------------------------------
+
+  /// Where this repo's git data lives — the one call that answers "is this a
+  /// linked worktree, and if so where is the main repository".
+  ///
+  /// `--path-format=absolute` is what makes the result usable: without it git
+  /// returns a *relative* `.git` for `--git-dir`/`--git-common-dir` in the main
+  /// worktree but absolute paths in a linked one, so the two could never be
+  /// compared. It also symlink-resolves, which matters on macOS (`/tmp` →
+  /// `/private/tmp`).
+  Future<RepoLayout> repoLayout(String repoPath) async {
+    final result = await _run(
+      repoPath,
+      [
+        'git',
+        'rev-parse',
+        '--path-format=absolute',
+        '--show-toplevel',
+        '--git-dir',
+        '--git-common-dir',
+      ],
+      'Resolve repository layout',
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    final lines = const LineSplitter()
+        .convert(result.stdout)
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    if (lines.length < 3) {
+      throw GitException('Could not resolve the repository layout', result);
+    }
+    return RepoLayout(
+      toplevel: lines[0],
+      gitDir: lines[1],
+      gitCommonDir: lines[2],
+    );
+  }
+
+  /// All worktrees of this repository, main worktree first.
+  ///
+  /// Requires git 2.36 for `-z`, which is not optional: git does not quote
+  /// paths in the newline porcelain form, so a path containing a newline
+  /// silently corrupts the parse. Callers gate on the probed git version and
+  /// show an explanatory empty state rather than parsing a riskier format.
+  Future<List<GitWorktree>> gitWorktrees(String repoPath) async {
+    final result = await _run(
+      repoPath,
+      ['git', 'worktree', 'list', '--porcelain', '-z'],
+      'List worktrees',
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    return parseWorktreeList(result.stdout);
+  }
+
+  /// Creates a worktree at [path].
+  ///
+  /// Exactly one of [newBranch] (create a branch), [detach], or neither (check
+  /// out the existing [commitish]) applies. [force] overrides "branch is
+  /// already used by another worktree" and "path is registered but missing" —
+  /// it does NOT override a path that simply already exists.
+  Future<void> addWorktree(
+    String repoPath, {
+    required String path,
+    String? newBranch,
+    bool resetBranch = false,
+    String? commitish,
+    bool detach = false,
+    bool? track,
+    bool lock = false,
+    String? lockReason,
+    bool force = false,
+  }) async {
+    final args = ['git', 'worktree', 'add'];
+    if (force) args.add('--force');
+    if (detach) args.add('--detach');
+    if (newBranch != null) {
+      // -B resets an existing branch to the start point; -b refuses if it
+      // exists. Never both.
+      args.addAll([resetBranch ? '-B' : '-b', newBranch]);
+    }
+    if (track == true) args.add('--track');
+    if (track == false) args.add('--no-track');
+    if (lock) {
+      args.add('--lock');
+      // A reason is only meaningful alongside --lock, and git rejects it alone.
+      if (lockReason != null && lockReason.isNotEmpty) {
+        args.addAll(['--reason', lockReason]);
+      }
+    }
+    // `git worktree add` accepts neither `--end-of-options` nor `--` (both exit
+    // 129 with a usage dump — verified against git 2.55), unlike every other
+    // worktree subcommand. So there is no way to tell it "the rest are
+    // operands", and a leading `-` would be parsed as a flag. Every path the UI
+    // produces is absolute (folder picker or path template) and every commit-ish
+    // comes from a ref list, so this is unreachable in practice — but it must
+    // fail loudly rather than turn into a misparsed git invocation.
+    if (path.startsWith('-') || (commitish?.startsWith('-') ?? false)) {
+      throw ArgumentError(
+        'worktree add cannot take a path or revision starting with "-" '
+        '(git provides no end-of-options for this subcommand)',
+      );
+    }
+    args.add(path);
+    if (commitish != null && commitish.isNotEmpty) args.add(commitish);
+    await _runVoid(
+      repoPath,
+      args,
+      'Add worktree',
+      timeout: defaultCommitTimeout,
+    );
+  }
+
+  /// Removes the worktree at [path] — deletes its directory AND its admin dir.
+  ///
+  /// Refuses when it has modified or untracked files, and (separately) when it
+  /// is locked. [force] once overrides the dirty case; git needs `--force`
+  /// *twice* to remove a locked worktree, which is what [force] + [locked]
+  /// produces. The main worktree can never be removed.
+  Future<void> removeWorktree(
+    String repoPath,
+    String path, {
+    bool force = false,
+    bool locked = false,
+  }) async {
+    final args = ['git', 'worktree', 'remove'];
+    if (force) args.add('--force');
+    if (force && locked) args.add('--force');
+    args.addAll(['--end-of-options', path]);
+    await _runVoid(
+      repoPath,
+      args,
+      'Remove worktree',
+      timeout: defaultCommitTimeout,
+    );
+  }
+
+  /// Forgets admin entries whose worktree directory is gone. Never deletes a
+  /// working tree. With [dryRun], reports what it *would* prune so the UI can
+  /// show the user the list before they commit to it.
+  Future<List<String>> pruneWorktrees(
+    String repoPath, {
+    bool dryRun = false,
+  }) async {
+    final args = ['git', 'worktree', 'prune', '--verbose'];
+    if (dryRun) args.add('--dry-run');
+    final result = await _run(repoPath, args, 'Prune worktrees');
+    // `--verbose` reports one line per entry ("Removing worktrees/x: <reason>")
+    // on **stderr**, not stdout — verified against git 2.55, and true for the
+    // real run as well as `--dry-run`. Read both so a future git that moves it
+    // to stdout doesn't silently produce an empty preview.
+    return const LineSplitter()
+        .convert('${result.stdout}\n${result.stderr}')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+  }
+
+  /// Marks a worktree as not-prunable and not-removable — the mechanism for one
+  /// living on removable media or a network share, which would otherwise be
+  /// silently reaped by `gc`'s auto-prune while unmounted.
+  Future<void> lockWorktree(
+    String repoPath,
+    String path, {
+    String? reason,
+  }) async {
+    final args = ['git', 'worktree', 'lock'];
+    if (reason != null && reason.isNotEmpty) args.addAll(['--reason', reason]);
+    args.addAll(['--end-of-options', path]);
+    await _runVoid(repoPath, args, 'Lock worktree');
+  }
+
+  Future<void> unlockWorktree(String repoPath, String path) => _runVoid(
+    repoPath,
+    ['git', 'worktree', 'unlock', '--end-of-options', path],
+    'Unlock worktree',
+  );
+
+  /// Moves a worktree, rewriting both halves of the two-way link. Cannot move
+  /// the main worktree.
+  Future<void> moveWorktree(String repoPath, String from, String to) async {
+    await _runVoid(
+      repoPath,
+      ['git', 'worktree', 'move', '--end-of-options', from, to],
+      'Move worktree',
+      timeout: defaultCommitTimeout,
+    );
+  }
+
+  /// Re-links worktrees whose directories were moved outside git (e.g. dragged
+  /// in Finder), which is what leaves an entry `prunable` with "gitdir file
+  /// points to non-existent location". Passing the new [paths] repairs links
+  /// pointing *at* them; passing none repairs links *from* this repo.
+  Future<void> repairWorktrees(
+    String repoPath, [
+    List<String> paths = const [],
+  ]) async {
+    await _runVoid(
+      repoPath,
+      ['git', 'worktree', 'repair', '--end-of-options', ...paths],
+      'Repair worktrees',
+    );
+  }
+
   static const List<String> _refsFormat = [
     '%(HEAD)',
     '%(refname)',
@@ -622,6 +1099,13 @@ class GitService {
     '%(upstream:short)',
     '%(contents:subject)',
     '%(*objectname)', // peeled commit for annotated tags (empty otherwise)
+    // Which worktree (if any) has this branch checked out — see
+    // [GitRef.worktreePath]. Appended last so the field indices of everything
+    // above are unchanged. Empty for refs that aren't checked out, and for
+    // remotes/tags. Available since git 2.23; older gits emit the literal
+    // format string, which parses harmlessly as a non-path and is filtered by
+    // the absolute-path check in [parseRefs].
+    '%(worktreepath)',
   ];
 
   // A plain `git am` and an am-based rebase both create `$d/rebase-apply`, so

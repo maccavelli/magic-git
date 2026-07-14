@@ -950,15 +950,21 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     }
     // Keep the panel OPEN across resolution (don't pop first): a failed resolve
     // shows an error dialog, which needs this context still mounted.
-    final path = await resolveSavedLocalRepoPath(context, repo);
-    if (path == null) return; // access could not be restored; dialog shown
+    final grants = await resolveSavedLocalRepo(context, repo);
+    if (grants == null) return; // access could not be restored; dialog shown
+    final path = grants.repoPath;
     // Resolution succeeded — now dismiss the panel and open the repo.
     if (context.mounted) Navigator.of(context).pop();
     final label = repo.label.isEmpty ? null : repo.label;
     if (tabs == null) {
       await ref
           .read(connectionProvider.notifier)
-          .connectLocal(path, label: label, id: repo.id);
+          .connectLocal(
+            path,
+            label: label,
+            id: repo.id,
+            mainRepoPath: grants.mainRepoPath,
+          );
       return;
     }
     var connected = false;
@@ -969,16 +975,24 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
         connected = true;
         container
             .read(connectionProvider.notifier)
-            .connectLocal(path, label: label, id: repo.id);
+            .connectLocal(
+              path,
+              label: label,
+              id: repo.id,
+              mainRepoPath: grants.mainRepoPath,
+            );
       },
     );
     if (!connected) {
       // openOrFocus did NOT start a new session: it either focused a tab a
       // racing double-open just created (its `connect` runs there, not here) or
       // declined at the tab cap. Either way the access acquired above by
-      // resolveSavedLocalRepoPath isn't backing a session, so release it —
+      // resolveSavedLocalRepo isn't backing a session, so release it —
       // otherwise the native security-scoped grant leaks for the app's lifetime.
+      // A linked worktree acquired TWO grants; both leak if only one is freed.
       await ScopedAccess.instance.release(path);
+      final main = grants.mainRepoPath;
+      if (main != null) await ScopedAccess.instance.release(main);
     }
   }
 

@@ -45,7 +45,7 @@ class _FetchCountingGit extends GitService {
   Future<void> validateRepoPath(String repoPath) async {}
 
   @override
-  Future<void> validateLocalRepoRoot(String repoPath) async {}
+  Future<RepoLayout?> validateLocalRepoRoot(String repoPath) async => null;
 
   @override
   Future<SSHCommandResult> fetch(String repoPath) async {

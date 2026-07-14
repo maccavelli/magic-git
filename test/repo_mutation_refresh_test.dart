@@ -165,6 +165,72 @@ void main() {
     );
   });
 
+  test('a mutation in a linked worktree refreshes the SHARED state of every '
+      'other worktree, but not their private working trees', () async {
+    // Worktrees of one repo share objects, refs, the stash and the reflog (all
+    // in the common git dir); only the working tree, index and HEAD are
+    // private. So committing in a worktree moves a branch the MAIN repo's
+    // Branches panel is showing — under a repoPath the mutating site never
+    // sees. Shared state therefore goes into the set as whole families.
+    const main = '/srv/repo';
+    const worktree = '/srv/repo-feat';
+
+    final refsReads = <String>[];
+    final statusReads = <String>[];
+
+    final container = ProviderContainer(
+      overrides: [
+        for (final repo in const [main, worktree]) ...[
+          refsProvider(repo).overrideWith((ref) async {
+            refsReads.add(repo);
+            return const <GitRef>[];
+          }),
+          statusProvider(repo).overrideWith((ref) async {
+            statusReads.add(repo);
+            return GitStatus(branch: const GitBranchInfo(), files: const []);
+          }),
+        ],
+      ],
+    );
+    addTearDown(container.dispose);
+
+    // Both worktrees are open and have read their state once.
+    for (final repo in const [main, worktree]) {
+      container.listen(refsProvider(repo), (_, _) {});
+      container.listen(statusProvider(repo), (_, _) {});
+    }
+    expect(refsReads, [main, worktree]);
+    expect(statusReads, [main, worktree]);
+    refsReads.clear();
+    statusReads.clear();
+
+    // Something commits INSIDE the linked worktree.
+    for (final p in repoMutationFamilies(worktree)) {
+      container.invalidate(p);
+    }
+    // Riverpod recomputes an invalidated provider on the next microtask, not
+    // synchronously — let the scheduler run before asserting who re-read.
+    await Future<void>.delayed(Duration.zero);
+
+    // Refs are shared, so BOTH must re-read — the main repo's Branches panel
+    // would otherwise show a stale tip for a branch that just moved.
+    expect(
+      refsReads,
+      containsAll(const [main, worktree]),
+      reason: 'refs live in the common git dir and are shared by every '
+          'worktree, so a commit in one moves a branch every other is showing',
+    );
+
+    // The working tree is private, so only the worktree that changed re-reads.
+    // Re-running the main repo's status would be pure waste.
+    expect(
+      statusReads,
+      const [worktree],
+      reason: "each worktree has its own index and working tree — committing "
+          "in one does not touch another's file list",
+    );
+  });
+
   test('no feature hand-rolls the post-mutation invalidation set', () {
     // One definition of "the repo changed", used by everyone. A site that lists
     // the providers itself will always drift: it did, silently, the moment
@@ -189,6 +255,11 @@ void main() {
         'stashesProvider',
         'reflogProvider',
         'magicSnapshotsProvider',
+        // Shared by every worktree of a repo: `worktree add/remove` run from
+        // any one of them rewrites `<common>/.git/worktrees/`, so a site that
+        // refreshed only its own repoPath would leave every other worktree's
+        // list stale.
+        'gitWorktreesProvider',
       ]) {
         if (source.contains('invalidate($family(')) {
           offenders.add('${entity.path}: invalidate($family(…))');

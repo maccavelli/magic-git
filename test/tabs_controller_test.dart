@@ -22,7 +22,12 @@ class _Recorder extends ConnectionController {
   }
 
   @override
-  Future<void> connectLocal(String repoPath, {String? label, String? id}) async {
+  Future<void> connectLocal(
+    String repoPath, {
+    String? label,
+    String? id,
+    String? mainRepoPath,
+  }) async {
     calls.add('local:$repoPath:$id');
   }
 

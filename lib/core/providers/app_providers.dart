@@ -522,6 +522,35 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// Resolved by [acceptHostKeyChange]/[rejectHostKeyChange] — the only way
   /// [_verifyHostKey] ever returns while a mismatch prompt is showing. Null
   /// whenever no prompt is currently awaiting a decision.
+  /// Security-scoped grants this local session holds *in addition to* its own
+  /// repo folder (which is released by path at each teardown site below).
+  ///
+  /// Today that means exactly one thing: a linked worktree also needs its **main
+  /// repository** granted, because git reads the shared objects/refs and this
+  /// worktree's own HEAD/index out of `<main>/.git`. Both grants must be held
+  /// for the whole session — a spawned `git` child only inherits them while
+  /// they're open — and both must be released together.
+  ///
+  /// The UI acquires them (it owns the folder picker and the saved bookmarks;
+  /// see `resolveSavedLocalRepoPath`) and hands the paths to [connectLocal];
+  /// this controller owns the session lifetime, so it does the releasing. That
+  /// is the same split already used for the primary grant. Keeping the extras in
+  /// one list is what stops the four teardown paths from each having to remember
+  /// a new grant — and leaking it when they don't.
+  final List<String> _auxGrants = [];
+
+  /// Releases every *additional* grant held by the current local session.
+  /// Idempotent: [ScopedAccess.release] refcounts and no-ops on an untracked
+  /// path, so calling this on a session that had none costs nothing.
+  Future<void> _releaseAuxGrants() async {
+    if (_auxGrants.isEmpty) return;
+    final held = List<String>.from(_auxGrants);
+    _auxGrants.clear();
+    for (final path in held) {
+      await ScopedAccess.instance.release(path);
+    }
+  }
+
   Completer<bool>? _hostKeyDecision;
 
   /// The attempt token of the [connect] call whose host-key mismatch prompt the
@@ -799,6 +828,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     // a bookmark-backed local one.
     if (state.isLocal && state.repoPath != null) {
       await ScopedAccess.instance.release(state.repoPath!);
+      await _releaseAuxGrants();
     }
     // While reconnecting, keep the popup up (and its attempt number) across this
     // transient connecting phase instead of falling back to the landing card.
@@ -1126,7 +1156,23 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// [ConnectionPhase] machinery as [connect] so `app_shell.dart`'s routing —
   /// and every repo-scoped provider — needs zero changes to serve a local
   /// session.
-  Future<void> connectLocal(String repoPath, {String? label, String? id}) async {
+  /// Opens a repo on this machine's filesystem.
+  ///
+  /// [mainRepoPath] is set only when [repoPath] is a **linked worktree**: it is
+  /// the main repository's folder, for which the caller must ALREADY hold a
+  /// security-scoped grant (see `resolveSavedLocalRepoPath` /
+  /// `grantMainRepoAccess` — the UI owns the picker and the saved bookmarks, so
+  /// it does the acquiring). Git cannot run in a linked worktree without it: a
+  /// bare `git status` there reads this worktree's HEAD and index out of
+  /// `<main>/.git/worktrees/<id>`, and every object and ref out of
+  /// `<main>/.git`. Passing it here transfers ownership — this controller
+  /// releases it when the session ends.
+  Future<void> connectLocal(
+    String repoPath, {
+    String? label,
+    String? id,
+    String? mainRepoPath,
+  }) async {
     final attempt = ++_attempt;
     // Session-scoped dashboard metrics start over with the session.
     CommandTelemetry.instance.reset();
@@ -1156,6 +1202,13 @@ class ConnectionController extends Notifier<ConnectionState> {
     _forgeAuthGate = Completer<void>()..complete();
     // Release the *previous* session's transport before starting the new one —
     // the switcher lets the user jump straight here with no explicit disconnect.
+    //
+    // The prior session's EXTRA grants go unconditionally, even when the primary
+    // is kept below (same repoPath): the incoming caller has already acquired
+    // whatever this session needs, so the refcount never dips to zero and no
+    // command loses its grant mid-flight. Not releasing them would leak one
+    // hold per reconnect.
+    await _releaseAuxGrants();
     if (state.isLocal) {
       // local → local: release the prior repo's security-scoped access. Safe/
       // no-op if that session was never bookmark-backed.
@@ -1178,6 +1231,12 @@ class ConnectionController extends Notifier<ConnectionState> {
     // `backend: local` is set immediately — before anything below reads
     // `activeExecutorProvider` (via `gitServiceProvider`) — so every command
     // this attempt issues routes to `LocalCommandExecutor`, not the SSH one.
+    // Take ownership of the main repo's grant BEFORE any git runs. It has to be
+    // held for the whole session, not per-command: a spawned `git` child only
+    // inherits the sandbox grant while it is open.
+    if (mainRepoPath != null && mainRepoPath.isNotEmpty) {
+      _auxGrants.add(mainRepoPath);
+    }
     state = ConnectionState(
       phase: ConnectionPhase.connecting,
       backend: ConnectionBackend.local,
@@ -1199,10 +1258,15 @@ class ConnectionController extends Notifier<ConnectionState> {
       await ref.read(gitServiceProvider).validateRepoPath(repoPath);
       if (attempt != _attempt || !ref.mounted) return;
 
-      // Local-only: the sandbox grant covers just this folder, so reject a
-      // picked subdirectory / linked worktree / submodule whose real git dir is
-      // outside it now, with a clear message, rather than a raw permission error
-      // on the first real read.
+      // Local-only: the sandbox grant covers only the folders we were given, so
+      // reject a picked subdirectory / submodule / separate-git-dir repo whose
+      // real git dir is unreachable — with a clear message, rather than a raw
+      // permission error on the first real read.
+      //
+      // A linked worktree is NOT rejected: it is returned classified, and by
+      // this point we are already holding its main repository's grant (see
+      // [mainRepoPath] above), which is what makes the git calls here succeed
+      // at all.
       await ref.read(gitServiceProvider).validateLocalRepoRoot(repoPath);
       if (attempt != _attempt || !ref.mounted) return;
 
@@ -1528,6 +1592,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     _hostKeyDecision = null;
     if (state.isLocal && state.repoPath != null) {
       await ScopedAccess.instance.release(state.repoPath!);
+      await _releaseAuxGrants();
     }
 
     _lastProfile = profile;
@@ -1742,6 +1807,8 @@ class ConnectionController extends Notifier<ConnectionState> {
       if (repoPath != null) {
         await ScopedAccess.instance.release(repoPath);
       }
+      // …and, for a linked worktree, the main repository's grant too.
+      await _releaseAuxGrants();
     } else {
       ref.read(executorProvider).resetEnvironment();
       await ref.read(sshClientManagerProvider).disconnect();
@@ -1877,6 +1944,8 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   githubProjectDashboardProvider,
   reflogProvider,
   magicSnapshotsProvider,
+  gitWorktreesProvider,
+  repoLayoutProvider,
 ];
 
 /// Clears the eight hash-keyed diff/blame/log LRUs — the LRU-clearing half of
@@ -1917,20 +1986,40 @@ void clearHashKeyedRepoCaches() {
 /// the affected repo's entries are dropped. Invalidating an unwatched instance
 /// is a harmless no-op — hence reflog/snapshots are always included so an open
 /// Recovery sheet can never show a pre-mutation reflog.
+/// A note on instances vs whole families here, which git's own layout dictates.
+///
+/// A repository's worktrees SHARE their objects, refs, stash and reflog (all of
+/// it lives in the common git dir); only the working tree, the index and HEAD
+/// are private to each. So a commit made in a linked worktree moves a branch
+/// that the main repo's Branches panel is showing, and adds a commit that its
+/// History is showing — under a DIFFERENT repoPath key, which the mutating site
+/// has no way to enumerate (it knows only the worktree it ran in).
+///
+/// Hence the split below: **shared** state goes in as the whole FAMILY, so every
+/// open worktree of the repo refetches it; **per-worktree** state goes in keyed
+/// by [repoPath], because no other worktree's copy of it changed.
+///
+/// Passing a family invalidates all of its keyed instances. That is not a
+/// scattergun: each tab owns its own root ProviderContainer, so the only
+/// instances that exist in this one are this repo and its worktrees — exactly
+/// the set that shares the state. For a repo with no worktrees open it is
+/// identical to invalidating the single instance, so nothing changes there.
+/// (This is the same reasoning that already puts [logSearchProvider] in as a
+/// family — it is keyed by a whole [LogQuery] no mutation site can rebuild.)
 List<ProviderOrFamily> repoMutationFamilies(String repoPath) => [
+  // ---- per-worktree: the working tree and index are this checkout's alone ----
   statusProvider(repoPath),
-  logProvider(repoPath),
-  // The History panel's own list — keyed by the whole [LogQuery] (filters,
-  // scope, paging depth), which a mutation site has no way to reconstruct, so
-  // the FAMILY goes in and every cached query refetches. Instances for other
-  // repos are autoDispose and unwatched, so invalidating them costs nothing;
-  // leaving the family out is what used to strand a *filtered* History panel
-  // on pre-mutation results until some unrelated refresh happened to fire.
+
+  // ---- shared across every worktree of this repository ----
+  logProvider,
   logSearchProvider,
-  refsProvider(repoPath),
-  stashesProvider(repoPath),
-  reflogProvider(repoPath),
-  magicSnapshotsProvider(repoPath),
+  refsProvider,
+  stashesProvider,
+  reflogProvider,
+  magicSnapshotsProvider,
+  // The worktree list itself: `worktree add/remove/lock` from any worktree
+  // rewrites `<common>/.git/worktrees/`, which every other worktree reads.
+  gitWorktreesProvider,
 ];
 
 /// Working-tree status for a repo path, keyed so multiple repos can coexist.
@@ -2362,6 +2451,28 @@ Stream<RepoWatchEvent> _withoutIgnoredPaths(
 }
 
 /// Branches + remote-tracking refs for a repo.
+/// Every worktree of this repository, main worktree first.
+///
+/// Keyed by repoPath like every other repo-scoped fetch, but note the result is
+/// a property of the *repository*, not of the particular worktree asked: any
+/// worktree of a repo returns the same list. See [repoMutationFamilies] for why
+/// that means it is invalidated as a whole family.
+final gitWorktreesProvider = FutureProvider.autoDispose
+    .family<List<GitWorktree>, String>((ref, repoPath) {
+      return ref.watch(gitServiceProvider).gitWorktrees(repoPath);
+    });
+
+/// Where this repo's git data lives — and specifically whether [repoPath] is a
+/// linked worktree, and if so where its main repository is.
+///
+/// Not in [repoMutationFamilies]: the layout of a checkout is fixed for as long
+/// as it is open. Only `worktree move`/`repair` can change it, and both go
+/// through a full refresh anyway.
+final repoLayoutProvider = FutureProvider.autoDispose
+    .family<RepoLayout, String>((ref, repoPath) {
+      return ref.watch(gitServiceProvider).repoLayout(repoPath);
+    });
+
 final refsProvider = FutureProvider.autoDispose.family<List<GitRef>, String>((
   ref,
   repoPath,

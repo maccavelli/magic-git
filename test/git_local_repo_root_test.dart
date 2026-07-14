@@ -45,7 +45,12 @@ void main() {
 
   test('accepts the repository top-level folder', () async {
     final root = await initRepo('main');
-    await expectLater(git.validateLocalRepoRoot(root), completes);
+
+    final layout = await git.validateLocalRepoRoot(root);
+
+    expect(layout, isNotNull);
+    expect(layout!.isLinkedWorktree, isFalse);
+    expect(layout.isSubmodule, isFalse);
   });
 
   test('rejects a subdirectory whose repo root is an ancestor', () async {
@@ -57,13 +62,57 @@ void main() {
     );
   });
 
-  test('rejects a linked worktree (git dir lives in the main repo)', () async {
+  test('ACCEPTS a linked worktree and reports where its main repo is', () async {
+    // This used to be rejected outright. A linked worktree's git data does live
+    // outside the picked folder — but unlike a submodule it is a first-class
+    // checkout, and the main repo it points at is a real path we can ask the
+    // user to grant. So classify it and let connectLocal take the second
+    // security-scoped grant, rather than refusing the feature.
     final root = await initRepo('main');
     final wt = '${tmp.path}/wt';
     await git_(['worktree', 'add', '-q', '--detach', wt, 'HEAD'], root);
+
+    final layout = await git.validateLocalRepoRoot(wt);
+
+    expect(layout, isNotNull);
+    expect(layout!.isLinkedWorktree, isTrue);
+    expect(layout.isSubmodule, isFalse);
+    // The second grant the sandbox needs — the main repo's working tree, whose
+    // `.git` holds this worktree's HEAD/index and all the shared objects/refs.
+    expect(layout.gitCommonDir, '${await _canon(root)}/.git');
+    expect(layout.mainWorktreePath, await _canon(root));
+  });
+
+  test('still rejects a submodule, which has no grantable main repo', () async {
+    // A submodule also uses a `.git` FILE, so "is .git a file" would have
+    // misclassified it as a worktree. Its git dir equals its common dir
+    // (`<super>/.git/modules/sub`), which is what separates the two.
+    final superRepo = await initRepo('super');
+    final child = await initRepo('child');
+    await git_([
+      '-c',
+      'protocol.file.allow=always',
+      'submodule',
+      'add',
+      '-q',
+      child,
+      'sub',
+    ], superRepo);
+
     await expectLater(
-      git.validateLocalRepoRoot(wt),
-      throwsA(isA<GitException>()),
+      git.validateLocalRepoRoot('$superRepo/sub'),
+      throwsA(
+        isA<GitException>().having(
+          (e) => e.message,
+          'message',
+          contains('submodule'),
+        ),
+      ),
     );
   });
 }
+
+/// git reports symlink-resolved paths; on macOS the temp dir is under /var,
+/// which is a symlink to /private/var.
+Future<String> _canon(String path) =>
+    Directory(path).resolveSymbolicLinks();

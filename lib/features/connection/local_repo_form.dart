@@ -2,6 +2,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+import '../../core/local/linked_worktree_probe.dart';
 import '../../core/local/scoped_access.dart';
 import '../../core/local/security_scoped_bookmark.dart';
 import '../../core/providers/app_providers.dart';
@@ -11,36 +12,146 @@ import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 
+/// The sandbox grants needed to open one local repo.
+///
+/// [mainRepoPath] is non-null only for a **linked worktree**, whose git data
+/// lives in the main repository — so it needs that folder granted too, and both
+/// grants held for the whole session. Hand this straight to
+/// `ConnectionController.connectLocal`, which takes ownership of releasing them.
+class LocalOpenGrants {
+  final String repoPath;
+  final String? mainRepoPath;
+
+  /// A freshly-minted bookmark for the main repo, when one had to be granted
+  /// through the picker just now. Persist it on [SavedLocalRepo] so reopening
+  /// doesn't prompt again. Null when it came from an already-saved bookmark.
+  final String? newMainRepoBookmark;
+
+  const LocalOpenGrants(
+    this.repoPath, {
+    this.mainRepoPath,
+    this.newMainRepoBookmark,
+  });
+}
+
+/// Ensures every sandbox grant needed to open [repoPath] is held, prompting for
+/// the main repository if [repoPath] turns out to be a linked worktree we don't
+/// already have access to. Returns null if the user cancels or access fails.
+///
+/// Why this is necessary, and why it reads the `.git` file rather than asking
+/// git: a linked worktree's HEAD, index and every object/ref live in the MAIN
+/// repository's `.git`. Under the App Sandbox we may only read folders the user
+/// picked, so without a second grant even `git status` fails. But we can't learn
+/// that we need the grant by running git — running git is the thing that needs
+/// it. [probeLocalRepo] breaks the cycle by reading the worktree's own `.git`
+/// file, which is inside the grant we already have.
+Future<LocalOpenGrants?> ensureLocalRepoGrants(
+  BuildContext context,
+  String repoPath, {
+  String savedMainRepoBookmark = '',
+}) async {
+  final probe = probeLocalRepo(repoPath);
+  if (probe.kind != LocalRepoKind.linkedWorktree) {
+    // Ordinary repo (or something connectLocal's own validation will reject
+    // with a clear message) — the one grant we hold is enough.
+    return LocalOpenGrants(repoPath);
+  }
+
+  final mainRepoPath = probe.worktree!.mainRepoPath;
+
+  // Reopening a saved worktree: we persisted the main repo's bookmark, so no
+  // prompt.
+  if (savedMainRepoBookmark.isNotEmpty) {
+    final resolved = await ScopedAccess.instance.acquire(savedMainRepoBookmark);
+    if (resolved != null) {
+      return LocalOpenGrants(repoPath, mainRepoPath: resolved);
+    }
+    // Bookmark went stale (main repo moved/deleted) — fall through and re-ask.
+  }
+
+  if (!context.mounted) return null;
+  final proceed = await confirmAction(
+    context,
+    title: 'Grant access to the main repository',
+    message:
+        'This is a linked worktree. Its branches, commits and history are '
+        'stored in the main repository at:\n\n$mainRepoPath\n\n'
+        'macOS requires you to select that folder before this app can read it.',
+    confirmLabel: 'Choose Folder…',
+  );
+  if (!proceed || !context.mounted) return null;
+
+  final picked = await getDirectoryPath(initialDirectory: mainRepoPath);
+  if (picked == null || !context.mounted) return null;
+
+  // The picker grants whatever the user actually chose, which may not be the
+  // folder we asked for. Anything git needs lives under the main repo, so a
+  // grant on an ancestor works too — but a sibling or an unrelated folder does
+  // not, and would fail later with a raw permission error. Check now.
+  if (!_grants(picked, mainRepoPath)) {
+    await showErrorDialog(
+      context,
+      'That folder does not contain the main repository.\n\n'
+      'Please choose:\n$mainRepoPath',
+    );
+    return null;
+  }
+
+  final bookmark = await SecurityScopedBookmark.create(picked);
+  return LocalOpenGrants(
+    repoPath,
+    mainRepoPath: picked,
+    newMainRepoBookmark: bookmark,
+  );
+}
+
+/// Whether a sandbox grant on [granted] covers [needed] — true when it IS the
+/// folder, or an ancestor of it (a grant extends to the whole subtree).
+bool _grants(String granted, String needed) =>
+    needed == granted || needed.startsWith('$granted/');
+
 /// Resolves [repo]'s macOS security-scoped bookmark to a path this process can
 /// currently read, or shows an error dialog and returns null when access can't
 /// be restored (the folder was moved/deleted, or the sandbox grant revoked).
 /// Returns the stored path unchanged for a repo saved without a bookmark.
+///
+/// For a linked worktree this also re-acquires the **main repository's** grant,
+/// which is equally required — see [ensureLocalRepoGrants]. The result carries
+/// it through to `connectLocal`.
 ///
 /// Shared by the landing card's Recent Workspaces menu and the connection
 /// switcher so a stale bookmark is handled identically in both. Does not
 /// connect or dismiss any UI — the caller opens via `connectLocal` and manages
 /// its own panel/sheet, and must NOT dismiss before calling this (the error
 /// dialog needs a still-mounted context).
-Future<String?> resolveSavedLocalRepoPath(
+Future<LocalOpenGrants?> resolveSavedLocalRepo(
   BuildContext context,
   SavedLocalRepo repo,
 ) async {
-  if (repo.bookmarkData.isEmpty) return repo.repoPath;
-  // Refcounted so concurrent tabs on the same folder don't pull the shared
-  // native grant out from under each other on the first one's disconnect.
-  final resolved = await ScopedAccess.instance.acquire(repo.bookmarkData);
-  if (resolved == null) {
-    if (context.mounted) {
-      await showErrorDialog(
-        context,
-        "Can't access this repository anymore — it may have been moved, "
-        'deleted, or its access permission revoked. Remove it and add it '
-        'again via the folder picker.',
-      );
+  var path = repo.repoPath;
+  if (repo.bookmarkData.isNotEmpty) {
+    // Refcounted so concurrent tabs on the same folder don't pull the shared
+    // native grant out from under each other on the first one's disconnect.
+    final resolved = await ScopedAccess.instance.acquire(repo.bookmarkData);
+    if (resolved == null) {
+      if (context.mounted) {
+        await showErrorDialog(
+          context,
+          "Can't access this repository anymore — it may have been moved, "
+          'deleted, or its access permission revoked. Remove it and add it '
+          'again via the folder picker.',
+        );
+      }
+      return null;
     }
-    return null;
+    path = resolved;
   }
-  return resolved;
+  if (!context.mounted) return null;
+  return ensureLocalRepoGrants(
+    context,
+    path,
+    savedMainRepoBookmark: repo.mainRepoBookmarkData,
+  );
 }
 
 /// Sheet for opening a repo on this machine's own filesystem. Much simpler
@@ -98,12 +209,19 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
       // entry in the switcher panel.
       final id = DateTime.now().microsecondsSinceEpoch.toString();
       final label = _label.text.trim();
+      // The picked folder may be a linked worktree, whose git data lives in the
+      // main repository — a second grant, without which no git command works.
+      // Ask for it BEFORE connecting, since connectLocal's own validation runs
+      // git and would otherwise fail with a raw permission error.
+      final grants = await ensureLocalRepoGrants(context, path);
+      if (!mounted || grants == null) return;
       await ref
           .read(connectionProvider.notifier)
           .connectLocal(
             path,
             label: label.isEmpty ? null : label,
             id: _save ? id : null,
+            mainRepoPath: grants.mainRepoPath,
           );
       if (!mounted) return;
       // connectLocal surfaced an error (not a git repo, permission denied,
@@ -134,6 +252,11 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
                   label: label,
                   repoPath: path,
                   bookmarkData: bookmark ?? '',
+                  // Both empty for an ordinary repo. For a linked worktree these
+                  // persist the main repository's grant, so reopening it later
+                  // doesn't prompt for the folder a second time.
+                  mainRepoPath: grants.mainRepoPath ?? '',
+                  mainRepoBookmarkData: grants.newMainRepoBookmark ?? '',
                   fsmonitorEnabled: _fsmonitor,
                 ),
               );

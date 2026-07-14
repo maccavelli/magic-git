@@ -18,6 +18,23 @@ class SavedLocalRepo {
   /// folder via the Finder panel instead of resolving silently.
   final String bookmarkData;
 
+  /// For a **linked worktree**: the main repository's working-tree root, whose
+  /// `.git` holds this worktree's HEAD/index and all the shared objects and
+  /// refs. Empty for an ordinary repo.
+  ///
+  /// A linked worktree needs TWO security-scoped grants to be usable under the
+  /// sandbox — its own folder and the main repo's — because a bare `git status`
+  /// in it reads both. [mainRepoBookmarkData] is the second grant;
+  /// `ConnectionController` acquires both through `ScopedAccess`, which
+  /// refcounts them so two tabs on the same main repo can't revoke each other's.
+  final String mainRepoPath;
+
+  /// Base64 security-scoped bookmark for [mainRepoPath]. Empty when this isn't
+  /// a linked worktree, or when the grant couldn't be persisted — in which case
+  /// reopening re-prompts for the main repo folder rather than failing with a
+  /// raw permission error.
+  final String mainRepoBookmarkData;
+
   /// Whether git fsmonitor is enabled for this repo — a perf feature
   /// independent of transport, so it's just as meaningful for a local repo as
   /// an SSH one.
@@ -32,13 +49,21 @@ class SavedLocalRepo {
     required this.label,
     required this.repoPath,
     this.bookmarkData = '',
+    this.mainRepoPath = '',
+    this.mainRepoBookmarkData = '',
     this.fsmonitorEnabled = false,
     this.lastConnectedAt,
   });
 
+  /// True when this entry is a linked worktree — i.e. it names a main repo that
+  /// must be granted alongside it.
+  bool get isLinkedWorktree => mainRepoPath.isNotEmpty;
+
   SavedLocalRepo copyWith({
     String? label,
     String? bookmarkData,
+    String? mainRepoPath,
+    String? mainRepoBookmarkData,
     bool? fsmonitorEnabled,
     DateTime? lastConnectedAt,
   }) => SavedLocalRepo(
@@ -46,6 +71,8 @@ class SavedLocalRepo {
     label: label ?? this.label,
     repoPath: repoPath,
     bookmarkData: bookmarkData ?? this.bookmarkData,
+    mainRepoPath: mainRepoPath ?? this.mainRepoPath,
+    mainRepoBookmarkData: mainRepoBookmarkData ?? this.mainRepoBookmarkData,
     fsmonitorEnabled: fsmonitorEnabled ?? this.fsmonitorEnabled,
     lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,
   );
@@ -55,6 +82,11 @@ class SavedLocalRepo {
     'label': label,
     'repoPath': repoPath,
     'bookmarkData': bookmarkData,
+    // Omitted entirely for an ordinary repo, so existing entries round-trip
+    // byte-identical and nothing else has to know about worktrees.
+    if (mainRepoPath.isNotEmpty) 'mainRepoPath': mainRepoPath,
+    if (mainRepoBookmarkData.isNotEmpty)
+      'mainRepoBookmarkData': mainRepoBookmarkData,
     'fsmonitorEnabled': fsmonitorEnabled,
     if (lastConnectedAt != null)
       'lastConnectedAt': lastConnectedAt!.toIso8601String(),
@@ -66,6 +98,10 @@ class SavedLocalRepo {
         label: json['label'] as String? ?? '',
         repoPath: json['repoPath'] as String? ?? '',
         bookmarkData: json['bookmarkData'] as String? ?? '',
+        // Absent in every entry persisted before worktrees existed — defaulting
+        // to empty migrates them silently as ordinary repos.
+        mainRepoPath: json['mainRepoPath'] as String? ?? '',
+        mainRepoBookmarkData: json['mainRepoBookmarkData'] as String? ?? '',
         fsmonitorEnabled: json['fsmonitorEnabled'] as bool? ?? false,
         lastConnectedAt: DateTime.tryParse(
           json['lastConnectedAt'] as String? ?? '',

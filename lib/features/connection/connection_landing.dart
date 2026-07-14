@@ -266,15 +266,17 @@ class _RecentConnectionsButtonState
         await ref.read(connectionProvider.notifier).connectToSaved(connection);
       case RecentLocalRepo(:final repo):
         // Mirror the switcher's saved-local open: resolve the security-scoped
-        // bookmark (surfacing a dialog if the folder is gone) before connecting.
-        final path = await resolveSavedLocalRepoPath(context, repo);
-        if (path == null || !mounted) return;
+        // bookmark (surfacing a dialog if the folder is gone) before connecting
+        // — plus, for a linked worktree, the main repository's grant.
+        final grants = await resolveSavedLocalRepo(context, repo);
+        if (grants == null || !mounted) return;
         await ref
             .read(connectionProvider.notifier)
             .connectLocal(
-              path,
+              grants.repoPath,
               label: repo.label.isEmpty ? null : repo.label,
               id: repo.id,
+              mainRepoPath: grants.mainRepoPath,
             );
     }
   }
