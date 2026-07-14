@@ -1,11 +1,13 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart' hide Label;
+
 import '../../core/gitlab/models.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/async_views.dart';
+import '../common/dashboard_warning_banner.dart';
+import '../common/label_colors.dart';
 import '../common/tool_icon_button.dart';
-import 'status_color.dart';
 
 /// Read-only GitLab project overview: one GraphQL round-trip for issues, labels,
 /// milestones, and releases.
@@ -25,6 +27,10 @@ class ProjectPanel extends ConsumerWidget {
       return const NoRemoteNotice('project features');
     }
     final dashboard = ref.watch(projectDashboardProvider(repoPath));
+    // Non-fatal partial-data warning — see the GitHub twin.
+    final warning = dashboard.hasValue
+        ? ref.read(glabServiceProvider).lastGraphqlWarning
+        : null;
 
     return dashboard.when(
       loading: () => const Center(child: ProgressCircle()),
@@ -32,6 +38,11 @@ class ProjectPanel extends ConsumerWidget {
       data: (data) => ListView(
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
+          if (warning != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DashboardWarningBanner(warning),
+            ),
           _header(context, 'Issues', () {
             ref.invalidate(projectDashboardProvider(repoPath));
           }),

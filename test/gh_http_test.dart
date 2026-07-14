@@ -56,7 +56,7 @@ void main() {
       final argv = exec.calls.single;
       expect(argv.take(3), ['gh', 'pr', 'list']);
       expect(argv, containsAllInOrder(['--state', 'open']));
-      expect(argv, containsAllInOrder(['--limit', '50']));
+      expect(argv, containsAllInOrder(['--limit', '600']));
       final jsonIdx = argv.indexOf('--json');
       expect(jsonIdx, greaterThanOrEqualTo(0));
       final fields = argv[jsonIdx + 1];
@@ -129,6 +129,34 @@ void main() {
       expect(emissions.first.single.runState, GhRunState.running);
       expect(emissions.last.single.runState, GhRunState.success);
       expect(exec.calls, hasLength(2));
+    });
+
+    test('runJobsStream gives up after sustained empty answers instead of '
+        'polling forever', () async {
+      // A run that never yields jobs (deleted mid-queue, API hiccup) used to
+      // poll every 3s until the view closed.
+      exec.results.addAll([
+        _ok('{"jobs":[]}'),
+        _ok('{"jobs":[]}'),
+        _ok('{"jobs":[]}'),
+      ]);
+      final emissions = await gh
+          .runJobsStream(
+            '/repo',
+            7,
+            pollInterval: Duration.zero,
+            maxEmptyPolls: 3,
+          )
+          .toList();
+      expect(emissions, hasLength(3));
+      expect(emissions, everyElement(isEmpty));
+      expect(exec.calls, hasLength(3), reason: 'stops at the cap');
+    });
+
+    test('the PR list ceiling matches the GitLab paginated ceiling', () async {
+      exec.next = _ok('[]');
+      await gh.pullRequests('/repo');
+      expect(exec.calls.single, containsAllInOrder(['--limit', '600']));
     });
 
     test('a non-array list response throws (malformed, not empty)', () async {

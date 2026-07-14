@@ -6,9 +6,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/github/gh_service.dart';
 import 'package:remote_magic_git/core/github/models.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/github/github_panel.dart';
+
+class _MergeCapturingGh extends GhService {
+  _MergeCapturingGh() : super(SSHCommandExecutor(SSHClientManager()));
+  final List<(int, String)> merges = [];
+
+  @override
+  Future<void> mergePullRequest(
+    String repoPath,
+    int number, {
+    String method = 'merge',
+  }) async {
+    merges.add((number, method));
+  }
+}
 
 const _repo = '/repo';
 
@@ -60,9 +77,10 @@ final _remoteRefs = [
   ),
 ];
 
-Future<void> _pump(WidgetTester tester) async {
+Future<void> _pump(WidgetTester tester, {GhService? gh}) async {
   final container = ProviderContainer(
     overrides: [
+      if (gh != null) ghServiceProvider.overrideWithValue(gh),
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
       pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
       workflowRunsProvider(_repo).overrideWith((ref) async => _runs),
@@ -131,4 +149,25 @@ void main() {
     expect(find.text('Head'), findsOneWidget);
     expect(find.text('Base'), findsOneWidget);
   });
+  testWidgets('the merge pulldown offers squash, confirmed with its own verb',
+      (tester) async {
+    // gh pr merge always supported --squash/--rebase; the UI only ever sent
+    // the default. The pulldown beside Merge closes that gap.
+    final gh = _MergeCapturingGh();
+    await _pump(tester, gh: gh);
+
+    await tester.tap(find.text('Add the parser'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(MacosPulldownButton).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Squash and merge'));
+    await tester.pumpAndSettle();
+
+    expect(gh.merges, isEmpty, reason: 'nothing before the confirm');
+    await tester.tap(find.text('Squash-merge'));
+    await tester.pumpAndSettle();
+
+    expect(gh.merges, [(7, 'squash')]);
+  });
+
 }

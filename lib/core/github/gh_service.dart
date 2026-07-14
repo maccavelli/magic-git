@@ -1,5 +1,6 @@
 import 'dart:convert';
 import '../forge/forge.dart';
+import '../forge/forge_json.dart';
 import '../forge/forge_repo_summary.dart';
 import '../ssh/ssh_command_executor.dart';
 import 'models.dart';
@@ -299,7 +300,15 @@ class GhService {
   }
 
   /// Open pull requests for the current repo, via `gh pr list --json`.
-  Future<List<PullRequest>> pullRequests(String repoPath, {int limit = 50}) async {
+  ///
+  /// [limit] matches the GitLab side's paginated ceiling (20 pages × 30 —
+  /// see `GlabService.mergeRequests`), so neither forge silently shows a
+  /// shorter list than the other. It was 50 by accident of history, which
+  /// silently truncated busy repos.
+  Future<List<PullRequest>> pullRequests(
+    String repoPath, {
+    int limit = 600,
+  }) async {
     final decoded = await _runJson(repoPath, [
       'gh',
       'pr',
@@ -314,8 +323,13 @@ class GhService {
     return _mapList(decoded, PullRequest.fromJson, label: 'gh pr list');
   }
 
-  /// Recent GitHub Actions workflow runs, via `gh run list --json`.
-  Future<List<WorkflowRun>> workflowRuns(String repoPath, {int limit = 30}) async {
+  /// Recent GitHub Actions workflow runs, via `gh run list --json`. [limit]
+  /// matches the GitLab side's pipeline page size — see
+  /// `GlabService.pipelines`.
+  Future<List<WorkflowRun>> workflowRuns(
+    String repoPath, {
+    int limit = 30,
+  }) async {
     final decoded = await _runJson(repoPath, [
       'gh',
       'run',
@@ -352,17 +366,28 @@ class GhService {
   /// update as the run progresses, and completed-job logs are fetched
   /// separately via [runJobLog]. Stops once all jobs report `completed`; the
   /// caller's `autoDispose` provider cancels it when the view closes.
+  ///
+  /// A run that never reports any jobs (deleted mid-queue, a workflow that
+  /// produces none, an API hiccup that keeps answering `[]`) must not poll
+  /// forever: after [maxEmptyPolls] consecutive empty answers the stream ends
+  /// — the view's manual refresh restarts it if the user still cares.
   Stream<List<GhJob>> runJobsStream(
     String repoPath,
     int runId, {
     Duration pollInterval = const Duration(seconds: 3),
+    int maxEmptyPolls = 40,
   }) async* {
+    var emptyPolls = 0;
     while (true) {
       final jobs = await runJobs(repoPath, runId);
       yield jobs;
-      final allDone =
-          jobs.isNotEmpty && jobs.every((j) => j.status == 'completed');
-      if (allDone) break;
+      if (jobs.isEmpty) {
+        emptyPolls++;
+        if (emptyPolls >= maxEmptyPolls) break;
+      } else {
+        emptyPolls = 0;
+        if (jobs.every((j) => j.status == 'completed')) break;
+      }
       await Future<void>.delayed(pollInterval);
     }
   }
@@ -512,18 +537,10 @@ query($owner: String!, $name: String!) {
 }
 ''';
 
-  /// Extracts a joined message from a GraphQL response's `errors` array, or null
-  /// when there are none.
-  static String? graphqlErrorMessage(Map<String, dynamic> decoded) {
-    final errors = decoded['errors'];
-    if (errors is! List || errors.isEmpty) return null;
-    final joined = errors
-        .map((e) => e is Map ? e['message']?.toString() : e?.toString())
-        .whereType<String>()
-        .where((s) => s.isNotEmpty)
-        .join('; ');
-    return joined.isEmpty ? 'unknown GraphQL error' : joined;
-  }
+  /// Extracts a joined message from a GraphQL response's `errors` array, or
+  /// null when there are none — see [joinedGraphqlErrors].
+  static String? graphqlErrorMessage(Map<String, dynamic> decoded) =>
+      joinedGraphqlErrors(decoded);
 
   /// Runs a GraphQL [query] with [variables] and returns its `data` object.
   ///
@@ -681,21 +698,18 @@ query($owner: String!, $name: String!) {
     }
   }
 
-  /// Maps a decoded JSON list through [from]. A `null` decode is an empty
-  /// result; a non-list (a malformed response) throws, so "no rows" is
-  /// distinguishable from "something is broken" — mirrors `GlabService`.
+  /// Shared list mapping (see [mapJsonList]) throwing this service's typed
+  /// exception on a malformed response.
   List<T> _mapList<T>(
     dynamic decoded,
     T Function(Map<String, dynamic>) from, {
     String label = 'gh response',
-  }) {
-    if (decoded == null) return const [];
-    if (decoded is! List) {
-      throw GhException(
-        '$label: expected a JSON array, got ${decoded.runtimeType}',
-        const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
-      );
-    }
-    return decoded.whereType<Map<String, dynamic>>().map(from).toList();
-  }
+  }) => mapJsonList(
+    decoded,
+    from,
+    onMalformed: (m) => throw GhException(
+      '$label: $m',
+      const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+    ),
+  );
 }

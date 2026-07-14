@@ -21,18 +21,5 @@ Color ghRunStateColor(GhRunState state) => switch (state) {
     MacosColors.systemOrangeColor,
 };
 
-/// Parses a GitHub label color (`#RRGGBB`; GhLabel already prefixes the `#`)
-/// into a [Color], defaulting to gray. See GitLab's `parseLabelColor`.
-Color parseLabelColor(String hex) {
-  final h = hex.replaceFirst('#', '').trim();
-  if (h.length != 6) return MacosColors.systemGrayColor;
-  final value = int.tryParse(h, radix: 16);
-  return value == null
-      ? MacosColors.systemGrayColor
-      : Color(0xFF000000 | value);
-}
-
-/// Chooses readable foreground (black/white) for a label background color.
-Color labelTextColor(Color background) => background.computeLuminance() > 0.5
-    ? const Color(0xFF000000)
-    : const Color(0xFFFFFFFF);
+// Label color parsing lives in features/common/label_colors.dart — it was
+// byte-identical across both forges.

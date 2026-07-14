@@ -1,11 +1,13 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/github/models.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/async_views.dart';
+import '../common/dashboard_warning_banner.dart';
+import '../common/label_colors.dart';
 import '../common/tool_icon_button.dart';
-import 'status_color.dart';
 
 /// Read-only GitHub repository overview: one GraphQL round-trip for issues,
 /// labels, milestones, and releases. Mirrors GitLab's `ProjectPanel`.
@@ -16,7 +18,22 @@ class GitHubProjectPanel extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // No remote at all → the gh-backed dashboard can't work; show a friendly
+    // notice rather than a raw gh error. Null (refs still loading) falls
+    // through to the normal load. Mirrors the GitLab ProjectPanel, which had
+    // this guard while this twin was missing it.
+    final refs = ref.watch(refsProvider(repoPath)).value;
+    if (refs != null && !refs.any((r) => r.isRemote)) {
+      return const NoRemoteNotice('project features');
+    }
     final dashboard = ref.watch(githubProjectDashboardProvider(repoPath));
+
+    // Non-fatal partial-data warning from the dashboard's GraphQL query —
+    // the sheets surfaced this while the panels silently rendered the
+    // incomplete data. Only read once a dashboard actually landed.
+    final warning = dashboard.hasValue
+        ? ref.read(ghServiceProvider).lastGraphqlWarning
+        : null;
 
     return dashboard.when(
       loading: () => const Center(child: ProgressCircle()),
@@ -24,6 +41,11 @@ class GitHubProjectPanel extends ConsumerWidget {
       data: (data) => ListView(
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
+          if (warning != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: DashboardWarningBanner(warning),
+            ),
           _header(context, 'Issues', () {
             ref.invalidate(githubProjectDashboardProvider(repoPath));
           }),

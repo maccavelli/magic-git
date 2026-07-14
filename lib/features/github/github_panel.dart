@@ -466,17 +466,40 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   }
 
   /// The "Merge" action, disabled with an explanatory tooltip when [pr] is a
-  /// draft — GitHub rejects merging a draft PR, so this catches it client-side.
+  /// draft — GitHub rejects merging a draft PR, so this catches it
+  /// client-side. The pulldown beside it offers the squash/rebase methods
+  /// `gh pr merge` always supported but the UI never exposed.
   Widget _mergeButton(PullRequest pr) {
-    final button = PushButton(
-      controlSize: ControlSize.large,
-      onPressed: pr.draft ? null : () => _merge(pr.number),
-      child: const Text('Merge'),
+    final row = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        PushButton(
+          controlSize: ControlSize.large,
+          onPressed: pr.draft ? null : () => _merge(pr.number),
+          child: const Text('Merge'),
+        ),
+        if (!pr.draft) ...[
+          const SizedBox(width: 4),
+          MacosPulldownButton(
+            icon: CupertinoIcons.chevron_down,
+            items: [
+              MacosPulldownMenuItem(
+                title: const Text('Squash and merge'),
+                onTap: () => _merge(pr.number, method: 'squash'),
+              ),
+              MacosPulldownMenuItem(
+                title: const Text('Rebase and merge'),
+                onTap: () => _merge(pr.number, method: 'rebase'),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
-    if (!pr.draft) return button;
+    if (!pr.draft) return row;
     return MacosTooltip(
       message: "Draft pull requests can't be merged — mark it ready first.",
-      child: button,
+      child: row,
     );
   }
 
@@ -535,21 +558,26 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     }
   }
 
-  Future<void> _merge(int number) async {
+  Future<void> _merge(int number, {String method = 'merge'}) async {
     if (_mergingPrs.contains(number)) return;
     final repoPath = this.repoPath;
+    final verb = switch (method) {
+      'squash' => 'Squash-merge',
+      'rebase' => 'Rebase-merge',
+      _ => 'Merge',
+    };
     final ok = await confirmAction(
       context,
       title: 'Merge pull request',
-      message: 'Merge #$number into its base branch?',
-      confirmLabel: 'Merge',
+      message: '$verb #$number into its base branch?',
+      confirmLabel: verb,
     );
     if (!ok || !mounted) return;
     setState(() => _mergingPrs.add(number));
     final gh = ref.read(ghServiceProvider);
     final success = await runAction(
       context,
-      () => gh.mergePullRequest(repoPath, number),
+      () => gh.mergePullRequest(repoPath, number, method: method),
     );
     if (!mounted) return;
     setState(() => _mergingPrs.remove(number));

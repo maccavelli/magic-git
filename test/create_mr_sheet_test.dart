@@ -10,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/gitlab/glab_service.dart';
 import 'package:remote_magic_git/core/gitlab/models.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -19,9 +20,46 @@ import 'package:remote_magic_git/features/gitlab/create_mr_sheet.dart';
 
 const _repo = '/repo';
 
+class _FakeGlab extends GlabService {
+  _FakeGlab() : super(SSHCommandExecutor(SSHClientManager()));
+  final List<String> created = [];
+
+  @override
+  Future<void> createMergeRequest(
+    String repoPath, {
+    required String sourceBranch,
+    required String targetBranch,
+    required String title,
+    String description = '',
+    bool draft = false,
+    List<String> reviewers = const [],
+    List<String> assignees = const [],
+    List<String> labels = const [],
+    String? milestone,
+    bool squash = false,
+    bool removeSourceBranch = false,
+  }) async {
+    created.add('$sourceBranch->$targetBranch:$title');
+  }
+}
+
 class _FakeGit extends GitService {
   _FakeGit() : super(SSHCommandExecutor(SSHClientManager()));
   final List<String> ranges = [];
+  final List<(String?, String?, bool)> pushes = [];
+
+  @override
+  Future<SSHCommandResult> push(
+    String repoPath, {
+    String? remote,
+    String? branch,
+    bool setUpstream = false,
+    PushForce force = PushForce.none,
+    bool followTags = false,
+  }) async {
+    pushes.add((remote, branch, setUpstream));
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
 
   @override
   Future<String> diffRange(
@@ -35,7 +73,7 @@ class _FakeGit extends GitService {
   }
 }
 
-Future<_FakeGit> _pump(WidgetTester tester) async {
+Future<(_FakeGit, _FakeGlab)> _pump(WidgetTester tester) async {
   // The sheet's full content (title + scrollable form + button row) doesn't
   // fit the default 800x600 test surface, which both spams overflow warnings
   // and can leave lower content unhittable.
@@ -45,9 +83,11 @@ Future<_FakeGit> _pump(WidgetTester tester) async {
   addTearDown(tester.view.resetDevicePixelRatio);
 
   final git = _FakeGit();
+  final glab = _FakeGlab();
   final container = ProviderContainer(
     overrides: [
       gitServiceProvider.overrideWithValue(git),
+      glabServiceProvider.overrideWithValue(glab),
       statusProvider(_repo).overrideWith(
         (ref) async =>
             GitStatus(branch: const GitBranchInfo(head: 'feature'), files: const []),
@@ -70,7 +110,7 @@ Future<_FakeGit> _pump(WidgetTester tester) async {
     ),
   );
   await tester.pumpAndSettle();
-  return git;
+  return (git, glab);
 }
 
 void main() {
@@ -78,7 +118,7 @@ void main() {
     'editing the target branch while the preview is open refreshes it, not '
     'just on the next manual toggle',
     (tester) async {
-      final git = await _pump(tester);
+      final (git, _) = await _pump(tester);
 
       // Source is prefilled from the current branch ('feature'); target
       // defaults to 'main'. Fields appear in form order: Source, Target, ...
@@ -108,7 +148,7 @@ void main() {
     'editing branches while the preview is closed does not fetch a preview '
     'at all',
     (tester) async {
-      final git = await _pump(tester);
+      final (git, _) = await _pump(tester);
 
       final targetField = find.byType(MacosTextField).at(1);
       await tester.enterText(targetField, 'develop');
@@ -122,7 +162,7 @@ void main() {
     'rapid keystrokes while the preview is open are debounced into a single '
     'diff fetch, not one per keystroke',
     (tester) async {
-      final git = await _pump(tester);
+      final (git, _) = await _pump(tester);
       final targetField = find.byType(MacosTextField).at(1);
 
       await tester.ensureVisible(find.text('Preview changes'));
@@ -154,4 +194,23 @@ void main() {
       );
     },
   );
+  testWidgets('Create pushes the source branch (with upstream) BEFORE the MR '
+      'is created', (tester) async {
+    // The GitLab API needs the branch on the remote first; `glab mr create`
+    // only pushes behind an opt-in flag this sheet never passes — an unpushed
+    // branch used to die with a raw API error.
+    final (git, glab) = await _pump(tester);
+
+    await tester.enterText(
+      find.byType(MacosTextField).at(2), // title — source/target prefilled
+      'My change',
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(PushButton, 'Create'));
+    await tester.pumpAndSettle();
+
+    expect(git.pushes, [('origin', 'feature', true)]);
+    expect(glab.created, ['feature->main:My change']);
+  });
+
 }

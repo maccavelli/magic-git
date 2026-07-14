@@ -9,6 +9,7 @@ import 'package:flutter/widgets.dart' show Color;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/gitlab/models.dart';
+import 'package:remote_magic_git/features/common/label_colors.dart';
 import 'package:remote_magic_git/features/gitlab/status_color.dart';
 
 // Exercise the full wire-string → CiStatus → color path, matching how the

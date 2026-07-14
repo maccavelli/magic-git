@@ -4,20 +4,19 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 // Hide macos_ui's `Label` widget — we use the GitLab `Label` model here.
 import 'package:macos_ui/macos_ui.dart' hide Label;
+
 import '../../core/gitlab/models.dart';
 // Hide the app's connection-phase `ConnectionState` so FutureBuilder's
 // framework `ConnectionState` (waiting/done) resolves unambiguously.
 import '../../core/providers/app_providers.dart' hide ConnectionState;
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
+import '../common/dashboard_warning_banner.dart';
 import '../common/diff_view.dart';
+import '../common/label_colors.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
 
-/// Sheet for creating a merge request. Source defaults to the current branch.
-/// Beyond title/description it exposes the fields reviewers reach for most —
-/// draft/WIP, reviewers, assignees, labels, milestone, squash, and
-/// remove-source-branch — plus a pre-create diff preview of the change.
 class CreateMrSheet extends ConsumerStatefulWidget {
   final String repoPath;
 
@@ -154,11 +153,23 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
         break;
       }
     }
-    final ok = await runAction(
-      context,
-      () => glab.createMergeRequest(
+    final git = ref.read(gitServiceProvider);
+    final source = _source.text.trim();
+    final ok = await runAction(context, () async {
+      // The GitLab API creates an MR from a branch that already exists on the
+      // remote — `glab mr create` only pushes with an opt-in `--push` flag
+      // this sheet never passes, so an unpushed branch used to die with a raw
+      // API error. Push first (`-u` sets upstream); an already-pushed branch
+      // is a no-op ("Everything up-to-date"). Mirrors the PR sheet.
+      await git.push(
         widget.repoPath,
-        sourceBranch: _source.text.trim(),
+        remote: 'origin',
+        branch: source,
+        setUpstream: true,
+      );
+      await glab.createMergeRequest(
+        widget.repoPath,
+        sourceBranch: source,
         targetBranch: _target.text.trim(),
         title: _title.text.trim(),
         description: _description.text.trim(),
@@ -169,12 +180,16 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
         milestone: milestoneTitle,
         squash: _squash,
         removeSourceBranch: _removeSource,
-      ),
-    );
+      );
+    });
     if (!mounted) return;
     setState(() => _submitting = false);
     if (ok) {
       ref.invalidate(mergeRequestsProvider(widget.repoPath));
+      // The push set upstream / advanced the remote branch — refresh the repo
+      // views so ahead/behind and refs reflect it (the shared helper, like
+      // every other mutation).
+      refreshAfterMutation(ref, widget.repoPath);
       if (context.mounted) Navigator.of(context).pop();
     }
   }
@@ -217,7 +232,7 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
                 'below before anything is created.',
               ),
               if (dashboardWarning != null)
-                _dashboardWarningBanner(dashboardWarning),
+                DashboardWarningBanner(dashboardWarning),
               const SizedBox(height: 16),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 460),
@@ -319,37 +334,6 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
     onChanged: () => setState(() => onExtraChanged?.call()),
   );
 
-  /// Non-fatal warning shown when the labels/milestones fetched for this
-  /// sheet may be incomplete — see [GlabService.lastGraphqlWarning]. Mirrors
-  /// [repo_status_view.dart]'s `_warningBanner` styling (orange, full-width,
-  /// with a triangle icon) so a non-fatal warning reads the same way
-  /// throughout the app.
-  Widget _dashboardWarningBanner(String message) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Container(
-        width: double.infinity,
-        color: MacosColors.systemOrangeColor.withValues(alpha: 0.15),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          children: [
-            const MacosIcon(
-              CupertinoIcons.exclamationmark_triangle,
-              size: 14,
-              color: MacosColors.systemOrangeColor,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Some project data may be incomplete: $message',
-                style: MacosTheme.of(context).typography.caption1,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _labelsField(List<Label> labels, MacosTypography typography) {
     return Padding(
@@ -376,7 +360,8 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
 
   Widget _labelChip(Label label) {
     final selected = _labels.contains(label.name);
-    final color = _hexColor(label.color) ?? MacosColors.systemBlueColor;
+    final color =
+        tryParseLabelColor(label.color) ?? MacosColors.systemBlueColor;
     return GestureDetector(
       onTap: () => setState(() {
         selected ? _labels.remove(label.name) : _labels.add(label.name);
@@ -504,12 +489,4 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
     );
   }
 
-  /// Parses a GitLab `#RRGGBB` label color into a [Color]; null when malformed.
-  static Color? _hexColor(String hex) {
-    var h = hex.trim();
-    if (h.startsWith('#')) h = h.substring(1);
-    if (h.length != 6) return null;
-    final v = int.tryParse(h, radix: 16);
-    return v == null ? null : Color(0xFF000000 | v);
-  }
 }

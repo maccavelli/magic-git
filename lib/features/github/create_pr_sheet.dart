@@ -3,20 +3,19 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/github/models.dart';
 // Hide the app's connection-phase `ConnectionState` so FutureBuilder's
 // framework `ConnectionState` (waiting/done) resolves unambiguously.
 import '../../core/providers/app_providers.dart' hide ConnectionState;
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
+import '../common/dashboard_warning_banner.dart';
 import '../common/diff_view.dart';
+import '../common/label_colors.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
 
-/// Sheet for creating a pull request. Head defaults to the current branch.
-/// Beyond title/body it exposes draft, reviewers, assignees, labels, and
-/// milestone, plus a pre-create diff preview of the change. Mirrors GitLab's
-/// `CreateMrSheet`.
 class CreatePrSheet extends ConsumerStatefulWidget {
   final String repoPath;
 
@@ -141,11 +140,11 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
       }
     }
     final ok = await runAction(context, () async {
-      // `gh pr create --head` assumes the branch already exists on the remote —
-      // unlike `glab mr create`, which pushes the source branch implicitly. So
-      // push it first (`-u` sets upstream); an already-pushed branch is a no-op
-      // ("Everything up-to-date"), and a non-fast-forward push surfaces its own
-      // error rather than a confusing "No commits between…" from the API.
+      // `gh pr create --head` assumes the branch already exists on the
+      // remote. So push it first (`-u` sets upstream); an already-pushed
+      // branch is a no-op ("Everything up-to-date"), and a non-fast-forward
+      // push surfaces its own error rather than a confusing "No commits
+      // between…" from the API. The MR sheet mirrors this.
       await git.push(
         widget.repoPath,
         remote: 'origin',
@@ -170,12 +169,9 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
     if (ok) {
       ref.invalidate(pullRequestsProvider(widget.repoPath));
       // The push set upstream / advanced the remote branch — refresh the repo
-      // views so ahead/behind and refs reflect it. The shared set, so nothing
-      // here has to stay in step with what each panel happens to read (see
-      // [repoMutationFamilies]).
-      for (final p in repoMutationFamilies(widget.repoPath)) {
-        ref.invalidate(p);
-      }
+      // views so ahead/behind and refs reflect it (the shared helper, like
+      // every other mutation).
+      refreshAfterMutation(ref, widget.repoPath);
       if (context.mounted) Navigator.of(context).pop();
     }
   }
@@ -210,7 +206,7 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
                 'below before anything is created.',
               ),
               if (dashboardWarning != null)
-                _dashboardWarningBanner(dashboardWarning),
+                DashboardWarningBanner(dashboardWarning),
               const SizedBox(height: 16),
               ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 460),
@@ -302,34 +298,6 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
     onChanged: () => setState(() => onExtraChanged?.call()),
   );
 
-  /// Non-fatal warning shown when the labels/milestones fetched for this sheet
-  /// may be incomplete — see [GhService.lastGraphqlWarning].
-  Widget _dashboardWarningBanner(String message) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Container(
-        width: double.infinity,
-        color: MacosColors.systemOrangeColor.withValues(alpha: 0.15),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          children: [
-            const MacosIcon(
-              CupertinoIcons.exclamationmark_triangle,
-              size: 14,
-              color: MacosColors.systemOrangeColor,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Some project data may be incomplete: $message',
-                style: MacosTheme.of(context).typography.caption1,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 
   Widget _labelsField(List<GhLabel> labels, MacosTypography typography) {
     return Padding(
@@ -356,7 +324,8 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
 
   Widget _labelChip(GhLabel label) {
     final selected = _labels.contains(label.name);
-    final color = _hexColor(label.color) ?? MacosColors.systemBlueColor;
+    final color =
+        tryParseLabelColor(label.color) ?? MacosColors.systemBlueColor;
     return GestureDetector(
       onTap: () => setState(() {
         selected ? _labels.remove(label.name) : _labels.add(label.name);
@@ -487,12 +456,4 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
     );
   }
 
-  /// Parses a `#RRGGBB` label color into a [Color]; null when malformed.
-  static Color? _hexColor(String hex) {
-    var h = hex.trim();
-    if (h.startsWith('#')) h = h.substring(1);
-    if (h.length != 6) return null;
-    final v = int.tryParse(h, radix: 16);
-    return v == null ? null : Color(0xFF000000 | v);
-  }
 }

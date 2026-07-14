@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import '../forge/forge_json.dart';
 import '../forge/forge_repo_summary.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../utils/bounded_tail.dart';
@@ -364,7 +365,7 @@ class GlabService {
 
   /// Recent CI/CD pipelines via the REST passthrough (`:id` is resolved from the
   /// repo's working directory by glab).
-  Future<List<Pipeline>> pipelines(String repoPath, {int perPage = 20}) async {
+  Future<List<Pipeline>> pipelines(String repoPath, {int perPage = 30}) async {
     final decoded = await api(
       repoPath,
       'projects/:id/pipelines',
@@ -440,16 +441,8 @@ query($path: ID!) {
   /// when there are none. GraphQL reports query failures **in the body with HTTP
   /// 200**, so callers must inspect this rather than trusting the HTTP status or
   /// glab's (unreliable) exit code.
-  static String? graphqlErrorMessage(Map<String, dynamic> decoded) {
-    final errors = decoded['errors'];
-    if (errors is! List || errors.isEmpty) return null;
-    final joined = errors
-        .map((e) => e is Map ? e['message']?.toString() : e?.toString())
-        .whereType<String>()
-        .where((s) => s.isNotEmpty)
-        .join('; ');
-    return joined.isEmpty ? 'unknown GraphQL error' : joined;
-  }
+  static String? graphqlErrorMessage(Map<String, dynamic> decoded) =>
+      joinedGraphqlErrors(decoded);
 
   /// Runs a GraphQL [query] with [variables] and returns its `data` object.
   ///
@@ -625,16 +618,14 @@ query($path: ID!) {
     dynamic decoded,
     T Function(Map<String, dynamic>) from, {
     String label = 'glab response',
-  }) {
-    if (decoded == null) return const [];
-    if (decoded is! List) {
-      throw GlabException(
-        '$label: expected a JSON array, got ${decoded.runtimeType}',
-        const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
-      );
-    }
-    return decoded.whereType<Map<String, dynamic>>().map(from).toList();
-  }
+  }) => mapJsonList(
+    decoded,
+    from,
+    onMalformed: (m) => throw GlabException(
+      '$label: $m',
+      const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+    ),
+  );
 
   /// Jobs belonging to a pipeline.
   ///

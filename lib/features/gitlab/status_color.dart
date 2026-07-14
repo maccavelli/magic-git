@@ -25,22 +25,5 @@ Color ciStatusColor(CiStatus status) => switch (status) {
   CiStatus.unknown => MacosColors.systemOrangeColor,
 };
 
-/// Parses a GitLab label color (`#RRGGBB`) into a [Color], defaulting to gray.
-Color parseLabelColor(String hex) {
-  final h = hex.replaceFirst('#', '').trim();
-  // Only a full 6-digit RRGGBB is a valid GitLab label color; force it opaque
-  // (0xFF alpha). Anything else (e.g. a 3-digit `#abc` shorthand) would parse
-  // *without* an alpha byte — `Color(0x00000abc)`, fully transparent → an
-  // invisible chip — so fall back to gray instead. Mirrors the correct
-  // length==6 gate in create_mr_sheet.dart's `_hexColor`.
-  if (h.length != 6) return MacosColors.systemGrayColor;
-  final value = int.tryParse(h, radix: 16);
-  return value == null
-      ? MacosColors.systemGrayColor
-      : Color(0xFF000000 | value);
-}
-
-/// Chooses readable foreground (black/white) for a label background color.
-Color labelTextColor(Color background) => background.computeLuminance() > 0.5
-    ? const Color(0xFF000000)
-    : const Color(0xFFFFFFFF);
+// Label color parsing lives in features/common/label_colors.dart — it was
+// byte-identical across both forges.
