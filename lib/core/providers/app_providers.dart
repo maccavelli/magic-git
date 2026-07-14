@@ -2986,11 +2986,13 @@ final stashesProvider = FutureProvider.autoDispose
     });
 
 /// The patch a single stash holds, for the stash preview pane. Keyed by
-/// (repoPath, index).
+/// (repoPath, oid) — the stash's stable identity, so a list that shifts
+/// under the preview can never show the wrong stash's patch (see
+/// [GitStash.oid]), and the hash-keyed cache stays valid across shifts.
 final stashDiffProvider = FutureProvider.autoDispose
-    .family<String, (String, int)>((ref, key) {
-      final (repoPath, index) = key;
-      return ref.watch(gitServiceProvider).stashShow(repoPath, index);
+    .family<String, (String, String)>((ref, key) {
+      final (repoPath, oid) = key;
+      return ref.watch(gitServiceProvider).stashShow(repoPath, oid);
     });
 
 /// Whether the repo has a prepare-commit-msg hook (message becomes optional /

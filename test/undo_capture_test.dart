@@ -182,14 +182,15 @@ void main() {
       stdout: captured(
         pre: 'a' * 40,
         preref: 'main',
-        extras: ['c' * 40, 'On main: wip thing'],
+        extras: ['On main: wip thing'],
         mutOut: 'Dropped stash@{1}\n',
         post: 'a' * 40,
         postref: 'main',
       ),
       stderr: '',
     );
-    final result = await git.stashDrop('/repo', 1);
+    final result =
+        await git.stashDrop('/repo', 1, expectedOid: 'c' * 40);
     expect(result.stdout, 'Dropped stash@{1}\n',
         reason: 'capture fields must be stripped from the surfaced result');
     final r = records.single;

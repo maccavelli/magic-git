@@ -624,6 +624,7 @@ void main() {
       await pump(tester, const [
         GitStash(
           index: 0,
+          oid: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
           branch: 'main',
           message: 'WIP on main: tweak parser',
           relativeDate: '2 hours ago',

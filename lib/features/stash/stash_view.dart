@@ -10,6 +10,7 @@ import '../common/actions.dart';
 import '../common/diff_view.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/prompt_text_sheet.dart';
 import '../common/tool_icon_button.dart';
 
 /// The **Stashes** namespace — stash management lifted out of the Branches pane
@@ -35,7 +36,12 @@ class StashView extends ConsumerStatefulWidget {
 }
 
 class _StashViewState extends ConsumerState<StashView> {
-  int? _selected;
+  /// The selected stash's OID — its STABLE identity. Selecting by position
+  /// (`stash@{n}`) broke whenever the list shifted (a drop, a pop, an
+  /// auto-stash from a branch switch): the highlight and preview silently
+  /// moved to whatever slid into the old slot. An OID either still names the
+  /// same stash or names nothing, so no re-targeting bookkeeping exists.
+  String? _selected;
 
   // Serializes mutating stash operations. All of them (apply/pop/drop/clear,
   // stash push) route through [_runLogged], which shares this single flag —
@@ -50,7 +56,7 @@ class _StashViewState extends ConsumerState<StashView> {
   // then ↑/↓ walk _selected through the stashes (⌥⌘A/⌥⌘P/⌘⌫ then act on it).
   final FocusNode _stashFocus = FocusNode(debugLabel: 'stash-list');
   final ScrollController _stashScroll = ScrollController();
-  final Map<int, GlobalKey> _stashRowKeys = {};
+  final Map<String, GlobalKey> _stashRowKeys = {};
 
   String get repoPath => widget.repoPath;
 
@@ -61,8 +67,8 @@ class _StashViewState extends ConsumerState<StashView> {
     super.dispose();
   }
 
-  GlobalKey _stashRowKeyFor(int index) =>
-      _stashRowKeys.putIfAbsent(index, GlobalKey.new);
+  GlobalKey _stashRowKeyFor(String oid) =>
+      _stashRowKeys.putIfAbsent(oid, GlobalKey.new);
 
   void _moveStashSelection(int dir) {
     final stashes = ref.read(stashesProvider(repoPath)).value ?? const [];
@@ -70,15 +76,15 @@ class _StashViewState extends ConsumerState<StashView> {
     var current = -1;
     if (_selected != null) {
       for (var i = 0; i < stashes.length; i++) {
-        if (stashes[i].index == _selected) {
+        if (stashes[i].oid == _selected) {
           current = i;
           break;
         }
       }
     }
     final next = stepSelection(current, dir, stashes.length);
-    setState(() => _selected = stashes[next].index);
-    ensureRowVisible(_stashRowKeyFor(stashes[next].index));
+    setState(() => _selected = stashes[next].oid);
+    ensureRowVisible(_stashRowKeyFor(stashes[next].oid));
   }
 
   KeyEventResult _onStashKey(FocusNode node, KeyEvent event) {
@@ -99,22 +105,19 @@ class _StashViewState extends ConsumerState<StashView> {
   @override
   void didUpdateWidget(StashView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // `_selected` is a stash *index* (stash@{N}), meaningless across repos: this
-    // State survives a repo switch (only the widget's repoPath changes), so a
-    // stale index would otherwise preview/act on a different repo's stash at
-    // that slot. Mirrors HistoryView / RepoStatusView.
+    // `_selected` is a stash OID from another repo's object database: this
+    // State survives a repo switch (only the widget's repoPath changes), so
+    // it can never match here — clear it. Mirrors HistoryView / RepoStatusView.
     if (oldWidget.repoPath != widget.repoPath) {
       _selected = null;
     }
   }
 
   void _refresh() {
-    // A stash push/pop/drop moves `refs/stash` and the working tree — git state,
-    // not just the file list — so it takes the shared set every mutation takes
-    // (see [repoMutationFamilies]) rather than a pair named here.
-    for (final p in repoMutationFamilies(repoPath)) {
-      ref.invalidate(p);
-    }
+    // The shared post-mutation refresh — this view's hand-rolled copy was the
+    // sixth to drift (it forgot the own-mutation mark, so every stash op paid
+    // for its refresh twice via the watcher echo).
+    refreshAfterMutation(ref, repoPath);
   }
 
   // Apply/pop a specific stash — shared by the per-card icon buttons and the
@@ -123,7 +126,8 @@ class _StashViewState extends ConsumerState<StashView> {
     'git stash apply ${stash.ref}',
     (log) async => log.logResult(
       'git stash apply ${stash.ref}',
-      await git.stashApply(repoPath, stash.index),
+      // By OID: immune to the list shifting since render.
+      await git.stashApply(repoPath, stash.oid),
     ),
   );
 
@@ -131,7 +135,9 @@ class _StashViewState extends ConsumerState<StashView> {
     'git stash pop ${stash.ref}',
     (log) async => log.logResult(
       'git stash pop ${stash.ref}',
-      await git.stashPop(repoPath, stash.index),
+      // The OID guard: pops only if stash@{n} still IS this stash —
+      // otherwise StashStaleException, and nothing was touched.
+      await git.stashPop(repoPath, stash.index, expectedOid: stash.oid),
     ),
   );
 
@@ -157,14 +163,13 @@ class _StashViewState extends ConsumerState<StashView> {
     try {
       await body(log);
       success = true;
-      // The view can be torn down (disconnect, repo/tab switch) while a slow
-      // pop/apply is in flight; touching `ref` after disposal throws. The error
-      // branches already guard `mounted` — the success path must too.
-      if (!mounted) return success;
-      if (_selected != null) {
-        ref.invalidate(stashDiffProvider((repoPath, _selected!)));
+    } on StashStaleException catch (e) {
+      // The guard refused: the list shifted since it was rendered and the
+      // positional ref no longer names what the user clicked. Nothing was
+      // modified; the finally-refresh below brings the real list in.
+      if (mounted) {
+        await showErrorDialog(context, '$e The list has been refreshed.');
       }
-      _refresh();
     } on GitException catch (e) {
       log.logResult(title, e.result);
       if (mounted) await showErrorDialog(context, e.toString());
@@ -172,7 +177,19 @@ class _StashViewState extends ConsumerState<StashView> {
       log.logError(title, e.toString());
       if (mounted) await showErrorDialog(context, e.toString());
     } finally {
-      if (mounted) setState(() => _busy = false);
+      // Refresh on FAILURE too — a conflicting pop/apply throws GitException
+      // but has already rewritten the working tree, and the status/pendingOp
+      // providers must pick that up now, not on some later unrelated refresh
+      // (the same fix repo_status and history landed; this copy predated it).
+      // `mounted` guards the whole block: the view can be torn down while a
+      // slow pop is in flight, and touching `ref` after disposal throws.
+      if (mounted) {
+        if (_selected != null) {
+          ref.invalidate(stashDiffProvider((repoPath, _selected!)));
+        }
+        _refresh();
+        setState(() => _busy = false);
+      }
     }
     return success;
   }
@@ -188,7 +205,7 @@ class _StashViewState extends ConsumerState<StashView> {
     GitStash? selEntry;
     if (_selected != null) {
       for (final s in stashesAsync.value ?? const <GitStash>[]) {
-        if (s.index == _selected) {
+        if (s.oid == _selected) {
           selEntry = s;
           break;
         }
@@ -220,11 +237,10 @@ class _StashViewState extends ConsumerState<StashView> {
             error: (err, _) => _error(context, err),
             data: (stashes) {
               if (stashes.isEmpty) return _empty(context);
-              // Keep the selection valid as the list shrinks (pop/drop/clear).
+              // A selection is valid only while its stash still exists — an
+              // OID match, never a position-vs-count comparison.
               final selected =
-                  (_selected != null && _selected! < stashes.length)
-                  ? _selected
-                  : null;
+                  stashes.any((s) => s.oid == _selected) ? _selected : null;
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -241,7 +257,7 @@ class _StashViewState extends ConsumerState<StashView> {
                           context,
                           git,
                           stashes[i],
-                          stashes[i].index == selected,
+                          stashes[i].oid == selected,
                         ),
                       ),
                     ),
@@ -335,33 +351,26 @@ class _StashViewState extends ConsumerState<StashView> {
           ),
           MacosPulldownMenuItem(
             title: Text(
+              'Stash with message\u2026',
+              style: _busy ? _disabledStyle(context) : null,
+            ),
+            onTap: _busy ? null : () => _stashWithMessage(git),
+          ),
+          MacosPulldownMenuItem(
+            title: Text(
               'Apply latest stash',
               style: canApplyOrPop ? null : _disabledStyle(context),
             ),
-            onTap: canApplyOrPop
-                ? () => _runLogged(
-                    'git stash apply stash@{0}',
-                    (log) async => log.logResult(
-                      'git stash apply stash@{0}',
-                      await git.stashApply(repoPath, 0),
-                    ),
-                  )
-                : null,
+            // Read at tap time, not render time — "latest" means the top of
+            // the list as it exists NOW.
+            onTap: canApplyOrPop ? () => _actOnLatest(git, pop: false) : null,
           ),
           MacosPulldownMenuItem(
             title: Text(
               'Pop latest stash',
               style: canApplyOrPop ? null : _disabledStyle(context),
             ),
-            onTap: canApplyOrPop
-                ? () => _runLogged(
-                    'git stash pop stash@{0}',
-                    (log) async => log.logResult(
-                      'git stash pop stash@{0}',
-                      await git.stashPop(repoPath, 0),
-                    ),
-                  )
-                : null,
+            onTap: canApplyOrPop ? () => _actOnLatest(git, pop: true) : null,
           ),
           MacosPulldownMenuItem(
             title: Text(
@@ -377,6 +386,38 @@ class _StashViewState extends ConsumerState<StashView> {
     );
   }
 
+  /// Applies or pops whatever is at the TOP of the list right now — read at
+  /// tap time so "latest" can't mean a stale render's idea of latest.
+  Future<void> _actOnLatest(GitService git, {required bool pop}) async {
+    final latest = ref.read(stashesProvider(repoPath)).value?.firstOrNull;
+    if (latest == null) return;
+    return pop ? _pop(git, latest) : _apply(git, latest);
+  }
+
+  /// Stash with a user-supplied name — the `-m` git always had but no UI
+  /// exposed. Includes untracked files: naming a stash signals intent to keep
+  /// it a while, and silently omitting untracked work from a kept stash is
+  /// the footgun guardedBranchSwitch documents.
+  Future<void> _stashWithMessage(GitService git) async {
+    final message = await promptText(
+      context,
+      'Stash with message',
+      placeholder: 'what this stash holds',
+    );
+    if (message == null || !mounted) return;
+    await _runLogged(
+      'git stash push -m',
+      (log) async => log.logResult(
+        'git stash push -m "$message"',
+        await git.stashPush(
+          repoPath,
+          message: message,
+          includeUntracked: true,
+        ),
+      ),
+    );
+  }
+
   TextStyle _disabledStyle(BuildContext context) =>
       const TextStyle(color: MacosColors.systemGrayColor);
 
@@ -385,9 +426,11 @@ class _StashViewState extends ConsumerState<StashView> {
       context,
       title: 'Clear all stashes',
       message:
-          'Permanently drop every stash in this repository? This cannot be '
-          'undone.',
+          'Drop every stash in this repository? They are recorded first — '
+          'press \u2318Z to undo, or restore them later from the Recovery '
+          'view.',
       confirmLabel: 'Clear All',
+      destructive: true,
     );
     if (!ok) return;
     setState(() => _selected = null);
@@ -406,10 +449,10 @@ class _StashViewState extends ConsumerState<StashView> {
   ) {
     final typography = MacosTheme.of(context).typography;
     return GestureDetector(
-      key: _stashRowKeyFor(stash.index),
+      key: _stashRowKeyFor(stash.oid),
       onTap: () {
         _stashFocus.requestFocus();
-        setState(() => _selected = stash.index);
+        setState(() => _selected = stash.oid);
       },
       child: Container(
         color: selected
@@ -506,33 +549,26 @@ class _StashViewState extends ConsumerState<StashView> {
     final ok = await confirmAction(
       context,
       title: 'Drop stash',
-      message: 'Permanently drop ${stash.ref}?',
+      message:
+          'Drop ${stash.ref}? It is recorded first — press \u2318Z to undo, '
+          'or restore it later from the Recovery view.',
       confirmLabel: 'Drop',
+      destructive: true,
     );
     if (!ok) return;
-    final droppedIndex = stash.index;
-    final success = await _runLogged(
+    await _runLogged(
       'git stash drop ${stash.ref}',
       (log) async => log.logResult(
         'git stash drop ${stash.ref}',
-        await git.stashDrop(repoPath, stash.index),
+        await git.stashDrop(repoPath, stash.index, expectedOid: stash.oid),
       ),
     );
-    if (!success || !mounted) return;
-    // Stash indices are positional, so dropping `droppedIndex` shifts every
-    // later stash (stash@{n+1} becomes stash@{n}, etc). Re-target `_selected`
-    // so it keeps tracking the same logical stash the user was previewing,
-    // rather than silently pointing at whatever slid into its old slot.
-    setState(() {
-      if (_selected == droppedIndex) {
-        _selected = null;
-      } else if (_selected != null && _selected! > droppedIndex) {
-        _selected = _selected! - 1;
-      }
-    });
+    // No selection re-targeting: `_selected` is an OID, which either still
+    // names a surviving stash or matches nothing — positions shifting under
+    // it cannot move the highlight onto the wrong entry.
   }
 
-  Widget _preview(BuildContext context, int? selected) {
+  Widget _preview(BuildContext context, String? selected) {
     if (selected == null) {
       return Center(
         child: Text(

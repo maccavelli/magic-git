@@ -95,6 +95,19 @@ class GitException implements Exception {
       'GitException: $message (exit ${result.exitCode})\n${result.stderr}';
 }
 
+/// The stash list changed between the UI rendering it and the user acting:
+/// the positional `stash@{n}` the user aimed at is no longer the entry they
+/// saw, so the operation refused to run and NOTHING was modified. Callers
+/// refresh the list and let the user re-aim. See [GitStash.oid].
+class StashStaleException implements Exception {
+  const StashStaleException();
+
+  @override
+  String toString() =>
+      'The stash list changed before the action could run — nothing was '
+      'modified.';
+}
+
 /// Parsed `git count-objects -vH` — the repo's object-store footprint, for
 /// the dashboard. Sizes are git's own human-readable strings.
 class RepoFootprint {
@@ -406,12 +419,20 @@ List<GitWorktree> parseWorktreeList(String raw) {
 /// An entry from `git stash list`.
 class GitStash {
   final int index;
+
+  /// The stash commit's OID — the entry's STABLE identity. [index] is merely
+  /// positional: every push or drop re-numbers all entries, so anything that
+  /// acts on a stash later than the render must aim by [oid] (apply, show) or
+  /// verify against it before acting (pop, drop — see [StashStaleException]).
+  final String oid;
+
   final String branch; // Branch the stash was made on
   final String message;
   final String relativeDate; // e.g. "2 hours ago"; '' when unknown
 
   const GitStash({
     required this.index,
+    required this.oid,
     required this.branch,
     required this.message,
     this.relativeDate = '',
@@ -3234,41 +3255,116 @@ class GitService {
     if (message != null && message.isNotEmpty) ...['-m', message],
   ], 'git stash push');
 
-  Future<SSHCommandResult> stashPop(String repoPath, int index) => _run(
-    repoPath,
-    ['git', 'stash', 'pop', 'stash@{$index}'],
-    'git stash pop',
-  );
+  /// The stale-index guard both destructive stash ops run behind, and why:
+  ///
+  /// `pop` and `drop` can only address a stash positionally (`stash@{n}` — a
+  /// raw OID is "not a stash reference" to either, verified against git
+  /// 2.55), but positions shift under ANY concurrent push or drop: an
+  /// auto-stash from a branch switch, another worktree's panel, a terminal.
+  /// An unguarded `stash@{n}` would then destroy a DIFFERENT stash than the
+  /// one the user clicked. So the mutation runs in the same shell invocation
+  /// as a check that `stash@{n}` still resolves to the OID the UI rendered —
+  /// atomically, since the exclusive lane serializes the whole script. Exit
+  /// 42 (the same stale convention the undo scripts use) becomes
+  /// [StashStaleException], and nothing has been touched.
+  ///
+  /// (`apply` and `show` don't need this: they accept the OID itself.)
+  static String _stashGuardedScript(
+    String selector,
+    String expectedOid,
+    String subcommand,
+  ) {
+    final sel = ShellEscaper.escape(selector);
+    final oid = ShellEscaper.escape(expectedOid);
+    // Subshell, so the guard's `exit 42` leaves _runCaptured's outer script
+    // (which must still print its post-state fields) intact.
+    return '( [ "\$(git rev-parse -q --verify $sel)" = $oid ] || exit 42; '
+        'git stash $subcommand $sel )';
+  }
 
-  Future<SSHCommandResult> stashApply(String repoPath, int index) => _run(
+  /// Rethrows the guard's exit 42 as [StashStaleException]; anything else is
+  /// the mutation's own failure and stays a [GitException].
+  static Never _rethrowStale(GitException e) {
+    if (e.result.exitCode == 42) throw const StashStaleException();
+    throw e;
+  }
+
+  /// Applies and drops `stash@{index}` — after verifying atomically that it
+  /// is still the entry the user aimed at ([expectedOid], see
+  /// [_stashGuardedScript]). Undo-captured like [stashDrop]: a clean pop
+  /// deletes the entry, and while the applied changes stay in the worktree,
+  /// the stash itself would otherwise be unrecoverable.
+  Future<SSHCommandResult> stashPop(
+    String repoPath,
+    int index, {
+    required String expectedOid,
+  }) async {
+    final selector = ShellEscaper.escape('stash@{$index}');
+    try {
+      return await _runCaptured(
+        repoPath,
+        const [], // unused — mutationScript below
+        'git stash pop',
+        mutationScript: _stashGuardedScript(
+          'stash@{$index}',
+          expectedOid,
+          'pop',
+        ),
+        extraCaptures: ['git log -1 --format=%s $selector 2>/dev/null'],
+        record: (c) => c.toRecord(
+          repoPath: repoPath,
+          kind: UndoOpKind.stashDrop,
+          description: 'Stash pop',
+          deletedOid: expectedOid,
+          stashSubject: c.extras[0],
+        ),
+      );
+    } on GitException catch (e) {
+      _rethrowStale(e);
+    }
+  }
+
+  /// Applies a stash without dropping it. Addressed by [oid], not index — an
+  /// OID names the same stash no matter how the list has shifted since it
+  /// was rendered, so apply needs no staleness guard at all.
+  Future<SSHCommandResult> stashApply(String repoPath, String oid) => _run(
     repoPath,
-    ['git', 'stash', 'apply', 'stash@{$index}'],
+    ['git', 'stash', 'apply', '--end-of-options', oid],
     'git stash apply',
   );
 
-  Future<SSHCommandResult> stashDrop(String repoPath, int index) {
-    // Capture the doomed stash commit's OID and subject before the drop, so
-    // undo can `stash store` it back (the commit stays in the object DB until
-    // gc prunes unreachables — weeks, by default).
+  Future<SSHCommandResult> stashDrop(
+    String repoPath,
+    int index, {
+    required String expectedOid,
+  }) async {
+    // Capture the doomed stash commit's subject before the drop, so undo can
+    // `stash store` it back (the commit stays in the object DB until gc
+    // prunes unreachables — weeks, by default). The OID is already known and
+    // verified by the guard.
     final selector = ShellEscaper.escape('stash@{$index}');
-    return _runCaptured(
-      repoPath,
-      ['git', 'stash', 'drop', 'stash@{$index}'],
-      'git stash drop',
-      extraCaptures: [
-        'git rev-parse -q --verify $selector',
-        'git log -1 --format=%s $selector 2>/dev/null',
-      ],
-      record: (c) => c.extras[0].isEmpty
-          ? null
-          : c.toRecord(
-              repoPath: repoPath,
-              kind: UndoOpKind.stashDrop,
-              description: 'Stash drop',
-              deletedOid: c.extras[0],
-              stashSubject: c.extras[1],
-            ),
-    );
+    try {
+      return await _runCaptured(
+        repoPath,
+        const [], // unused — mutationScript below
+        'git stash drop',
+        mutationScript: _stashGuardedScript(
+          'stash@{$index}',
+          expectedOid,
+          'drop',
+        ),
+        extraCaptures: ['git log -1 --format=%s $selector 2>/dev/null'],
+        record: (c) => c.toRecord(
+          repoPath: repoPath,
+          kind: UndoOpKind.stashDrop,
+          description: 'Stash drop',
+          deletedOid: expectedOid,
+          stashSubject: c.extras[0],
+        ),
+      );
+    } on GitException catch (e) {
+      _rethrowStale(e);
+    }
   }
 
   /// Drops every stash (`git stash clear`). Undoable: every stash commit's
@@ -3303,11 +3399,25 @@ class GitService {
   );
 
   /// The full patch a stash holds (`git stash show -p`), for previewing its
-  /// contents. Read-only.
-  Future<String> stashShow(String repoPath, int index) async {
+  /// contents. Read-only. Addressed by [oid] (see [stashApply]).
+  ///
+  /// `--include-untracked`: a stash made with `-u` keeps its untracked files
+  /// in a third parent that the plain form silently omits — the preview would
+  /// then show less than apply/pop will actually restore (verified against
+  /// git 2.55; the flag exists since 2.32).
+  Future<String> stashShow(String repoPath, String oid) async {
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: ['git', 'stash', 'show', '-p', '--no-color', 'stash@{$index}'],
+      gitArgs: [
+        'git',
+        'stash',
+        'show',
+        '-p',
+        '--include-untracked',
+        '--no-color',
+        '--end-of-options',
+        oid,
+      ],
       retries: _readRetries,
       lane: ExecLane.read,
       compress: true,
@@ -3318,11 +3428,17 @@ class GitService {
     return result.stdout;
   }
 
-  /// Lists stashes (`git stash list`), carrying each stash's relative age.
+  /// Lists stashes (`git stash list`), carrying each stash's OID (its stable
+  /// identity — see [GitStash.oid]) and relative age.
   Future<List<GitStash>> stashList(String repoPath) async {
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: ['git', 'stash', 'list', '--format=%gd$fieldSep%gs$fieldSep%cr'],
+      gitArgs: [
+        'git',
+        'stash',
+        'list',
+        '--format=%gd$fieldSep%H$fieldSep%gs$fieldSep%cr',
+      ],
       retries: _readRetries,
       lane: ExecLane.read,
     );
@@ -3333,19 +3449,20 @@ class GitService {
     for (final line in result.stdout.split('\n')) {
       if (line.trim().isEmpty) continue;
       final f = line.split(fieldSep);
-      if (f.length < 2) continue;
+      if (f.length < 3) continue;
       // %gd is like "stash@{0}"; extract the index.
       final match = RegExp(r'stash@\{(\d+)\}').firstMatch(f[0]);
       final index = match != null ? int.parse(match.group(1)!) : stashes.length;
       // %gs is like "WIP on main: <subject>" or "On main: <message>".
-      final desc = f[1];
+      final desc = f[2];
       final branchMatch = RegExp(r'(?:WIP on|On) ([^:]+):').firstMatch(desc);
       stashes.add(
         GitStash(
           index: index,
+          oid: f[1],
           branch: branchMatch?.group(1) ?? '',
           message: desc,
-          relativeDate: f.length >= 3 ? f[2].trim() : '',
+          relativeDate: f.length >= 4 ? f[3].trim() : '',
         ),
       );
     }

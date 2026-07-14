@@ -797,20 +797,32 @@ void main() {
       expect(exec.calls.single, ['git', 'stash', 'push', '-m', 'wip']);
     });
 
-    test('stashDrop captures the doomed stash before dropping', () async {
-      await git.stashDrop('/repo', 1);
-      final script = expectCapturedScript(
-        exec.calls.single,
-        "'git' 'stash' 'drop' 'stash@{1}'",
-      );
-      // OID + subject captured pre-drop so undo can `stash store` it back.
+    test('stashDrop drops behind the stale-OID guard, capturing the subject '
+        'first', () async {
+      await git.stashDrop('/repo', 1, expectedOid: 'dddddddddddddddddddddddddddddddddddddddd');
+      final call = exec.calls.single;
+      expect(call.sublist(0, 2), ['sh', '-c']);
+      final script = call[2];
+      // The guard: stash@{1} must still BE the stash the UI rendered, or the
+      // subshell exits 42 and nothing is touched.
       expect(
         script,
-        contains(r"x0=$(git rev-parse -q --verify 'stash@{1}'); "),
+        contains('( [ "\$(git rev-parse -q --verify ' "'stash@{1}')\" = "
+            "'dddddddddddddddddddddddddddddddddddddddd' ] || exit 42; git stash drop 'stash@{1}' )"),
       );
+      // Subject captured pre-drop so undo can `stash store` it back.
       expect(
         script,
-        contains(r"x1=$(git log -1 --format=%s 'stash@{1}' 2>/dev/null); "),
+        contains(r"x0=$(git log -1 --format=%s 'stash@{1}' 2>/dev/null); "),
+      );
+    });
+
+    test('a stale drop surfaces StashStaleException, not a raw git error',
+        () async {
+      exec.next = const SSHCommandResult(exitCode: 42, stdout: '', stderr: '');
+      await expectLater(
+        git.stashDrop('/repo', 1, expectedOid: 'dddddddddddddddddddddddddddddddddddddddd'),
+        throwsA(isA<StashStaleException>()),
       );
     });
 
@@ -891,9 +903,15 @@ void main() {
       },
     );
 
-    test('stashPop targets the indexed stash', () async {
-      await git.stashPop('/repo', 2);
-      expect(exec.calls.single, ['git', 'stash', 'pop', 'stash@{2}']);
+    test('stashPop runs behind the same stale-OID guard and journals the '
+        'popped stash', () async {
+      await git.stashPop('/repo', 2, expectedOid: 'dddddddddddddddddddddddddddddddddddddddd');
+      final call = exec.calls.single;
+      expect(call.sublist(0, 2), ['sh', '-c']);
+      expect(
+        call[2],
+        contains("|| exit 42; git stash pop 'stash@{2}' )"),
+      );
     });
 
     test('stashPush --include-untracked', () async {
@@ -922,15 +940,28 @@ void main() {
       );
     });
 
-    test('stashShow requests the stash patch', () async {
-      await git.stashShow('/repo', 3);
+    test('stashShow requests the patch by OID, untracked included', () async {
+      await git.stashShow('/repo', 'dddddddddddddddddddddddddddddddddddddddd');
       expect(exec.calls.single, [
         'git',
         'stash',
         'show',
         '-p',
+        '--include-untracked',
         '--no-color',
-        'stash@{3}',
+        '--end-of-options',
+        'dddddddddddddddddddddddddddddddddddddddd',
+      ]);
+    });
+
+    test('stashApply addresses the stash by OID', () async {
+      await git.stashApply('/repo', 'dddddddddddddddddddddddddddddddddddddddd');
+      expect(exec.calls.single, [
+        'git',
+        'stash',
+        'apply',
+        '--end-of-options',
+        'dddddddddddddddddddddddddddddddddddddddd',
       ]);
     });
 
@@ -1007,13 +1038,16 @@ void main() {
       exec.next = const SSHCommandResult(
         exitCode: 0,
         stdout:
-            'stash@{0}${us}WIP on main: abc1234 tweak${us}2 hours ago\n'
-            'stash@{1}${us}On feature: manual note${us}3 days ago\n',
+            'stash@{0}${us}aaa111${us}WIP on main: abc1234 tweak'
+            '${us}2 hours ago\n'
+            'stash@{1}${us}bbb222${us}On feature: manual note'
+            '${us}3 days ago\n',
         stderr: '',
       );
       final stashes = await git.stashList('/repo');
       expect(stashes, hasLength(2));
       expect(stashes[0].index, 0);
+      expect(stashes[0].oid, 'aaa111');
       expect(stashes[0].branch, 'main');
       expect(stashes[0].message, contains('tweak'));
       expect(stashes[0].relativeDate, '2 hours ago');
@@ -1025,14 +1059,15 @@ void main() {
       expect(stashes[1].subject, 'manual note');
     });
 
-    test('stashList tolerates the legacy 2-field format (no date)', () async {
+    test('stashList tolerates a missing date field', () async {
       const us = GitService.fieldSep;
       exec.next = const SSHCommandResult(
         exitCode: 0,
-        stdout: 'stash@{0}${us}WIP on main: abc1234 tweak\n',
+        stdout: 'stash@{0}${us}ccc333${us}WIP on main: abc1234 tweak\n',
         stderr: '',
       );
       final stashes = await git.stashList('/repo');
+      expect(stashes.single.oid, 'ccc333');
       expect(stashes.single.relativeDate, '');
       expect(stashes.single.subject, 'tweak');
     });
@@ -1045,7 +1080,9 @@ void main() {
           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
       exec.next = const SSHCommandResult(
         exitCode: 0,
-        stdout: 'stash@{0}${us}WIP on main: $sha256 tweak${us}2 hours ago\n',
+        stdout:
+            'stash@{0}${us}ddd444${us}WIP on main: $sha256 tweak'
+            '${us}2 hours ago\n',
         stderr: '',
       );
       final stashes = await git.stashList('/repo');

@@ -2,7 +2,7 @@
 // selected-stash preview. UI/UX polish is validated on macOS; this pins the
 // data→render wiring and provider overrides.
 
-import 'package:flutter/material.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -29,17 +29,60 @@ class _FakeExecutor extends SSHCommandExecutor {
   }) async => const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
 }
 
+/// Captures the view's mutation wiring — which identity each action hands
+/// the service — without touching SSH.
+class _ActionGit extends GitService {
+  _ActionGit() : super(SSHCommandExecutor(SSHClientManager()));
+
+  final List<(int, String)> drops = [];
+  final List<String> applies = [];
+  final List<(String?, bool)> pushes = [];
+  bool stale = false;
+
+  @override
+  Future<SSHCommandResult> stashDrop(
+    String repoPath,
+    int index, {
+    required String expectedOid,
+  }) async {
+    if (stale) throw const StashStaleException();
+    drops.add((index, expectedOid));
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+
+  @override
+  Future<SSHCommandResult> stashApply(String repoPath, String oid) async {
+    applies.add(oid);
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+
+  @override
+  Future<SSHCommandResult> stashPush(
+    String repoPath, {
+    String? message,
+    bool includeUntracked = false,
+  }) async {
+    pushes.add((message, includeUntracked));
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+}
+
 const _repo = '/repo';
+
+const _oidA = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _oidB = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
 final _stashes = [
   const GitStash(
     index: 0,
+    oid: _oidA,
     branch: 'main',
     message: 'WIP on main: abc1234 tweak the parser',
     relativeDate: '2 hours ago',
   ),
   const GitStash(
     index: 1,
+    oid: _oidB,
     branch: 'feature',
     message: 'On feature: manual note',
     relativeDate: '3 days ago',
@@ -49,13 +92,14 @@ final _stashes = [
 Future<ProviderContainer> _pump(
   WidgetTester tester, {
   required List<GitStash> stashes,
+  GitService? git,
   String stashDiff = 'diff --git a/x b/x\n@@ -1 +1 @@\n-old\n+new\n',
 }) async {
   final container = ProviderContainer(
     overrides: [
-      gitServiceProvider.overrideWithValue(GitService(_FakeExecutor())),
+      gitServiceProvider.overrideWithValue(git ?? GitService(_FakeExecutor())),
       stashesProvider(_repo).overrideWith((ref) async => stashes),
-      stashDiffProvider((_repo, 0)).overrideWith((ref) async => stashDiff),
+      stashDiffProvider((_repo, _oidA)).overrideWith((ref) async => stashDiff),
     ],
   );
   addTearDown(container.dispose);
@@ -101,6 +145,75 @@ void main() {
     await _pump(tester, stashes: const []);
     expect(find.text('No stashes'), findsOneWidget);
     expect(find.textContaining('stash your current changes'), findsOneWidget);
+  });
+
+  testWidgets('drop confirms destructively, then hands the service the '
+      'index AND the rendered OID', (tester) async {
+    final git = _ActionGit();
+    await _pump(tester, stashes: _stashes, git: git);
+
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.trash,
+      ).first,
+    );
+    await tester.pumpAndSettle();
+
+    expect(git.drops, isEmpty, reason: 'nothing before the confirm');
+    await tester.tap(find.text('Drop'));
+    await tester.pumpAndSettle();
+
+    expect(git.drops, [(0, _oidA)]);
+  });
+
+  testWidgets('a stale drop explains itself instead of a raw git error', (
+    tester,
+  ) async {
+    final git = _ActionGit()..stale = true;
+    await _pump(tester, stashes: _stashes, git: git);
+
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.trash,
+      ).first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Drop'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('stash list changed'), findsOneWidget);
+    expect(git.drops, isEmpty);
+  });
+
+  testWidgets('apply addresses the stash by OID', (tester) async {
+    final git = _ActionGit();
+    await _pump(tester, stashes: _stashes, git: git);
+
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.tray_arrow_up,
+      ).last,
+    );
+    await tester.pumpAndSettle();
+
+    expect(git.applies, [_oidB]);
+  });
+
+  testWidgets('Stash with message prompts, then pushes with untracked '
+      'included', (tester) async {
+    final git = _ActionGit();
+    await _pump(tester, stashes: _stashes, git: git);
+
+    await tester.tap(find.byType(MacosPulldownButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Stash with message\u2026'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(MacosTextField).last, 'my parked work');
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+
+    expect(git.pushes, [('my parked work', true)]);
   });
 
   testWidgets('selecting a stash previews its patch', (tester) async {

@@ -561,8 +561,9 @@ void main() {
     await write('a.txt', 'wip\n');
     await raw(['stash', 'push', '-q', '-m', 'my wip']);
     final subject = await raw(['log', '-1', '--format=%s', 'stash@{0}']);
+    final oid = await raw(['rev-parse', 'stash@{0}']);
 
-    await git.stashDrop(repo, 0);
+    await git.stashDrop(repo, 0, expectedOid: oid);
     expect(await raw(['stash', 'list']), '');
 
     await git.undoExecute(records.single);

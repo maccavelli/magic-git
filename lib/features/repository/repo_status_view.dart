@@ -530,10 +530,17 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
 
   Future<void> _stashPush() async {
     final git = ref.read(gitServiceProvider);
+    // `--include-untracked`, for the same reason guardedBranchSwitch forces
+    // it: this panel counts untracked files as changes, so a user with an
+    // untracked-only tree who clicks Stash would otherwise get a silent
+    // "No local changes to save" no-op and believe the work was parked. The
+    // Stashes panel's menu still offers the tracked-only variant explicitly.
     await _runLogged(
       'git stash push',
-      (log) async =>
-          log.logResult('git stash push', await git.stashPush(repoPath)),
+      (log) async => log.logResult(
+        'git stash push --include-untracked',
+        await git.stashPush(repoPath, includeUntracked: true),
+      ),
     );
   }
 
