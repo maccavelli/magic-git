@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -300,9 +301,33 @@ class _HunkDiffViewState extends State<HunkDiffView> {
           // Unstage/Discard buttons inside keep their own taps.
           onTap: () => _focusHunk(index),
           child: Container(
-            color: focused
-                ? MacosColors.systemBlueColor.withValues(alpha: 0.22)
-                : MacosColors.systemGrayColor.withValues(alpha: 0.10),
+            decoration: BoxDecoration(
+              // A banded gutter rather than a flat grey stripe: the header is
+              // the seam between two hunks, so it gets a hairline top and bottom
+              // and a shallow gradient that reads as a recess in the listing.
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: focused
+                    ? [
+                        MacosColors.systemBlueColor.withValues(alpha: 0.26),
+                        MacosColors.systemBlueColor.withValues(alpha: 0.16),
+                      ]
+                    : [
+                        MacosColors.systemGrayColor.withValues(alpha: 0.14),
+                        MacosColors.systemGrayColor.withValues(alpha: 0.07),
+                      ],
+              ),
+              border: Border.symmetric(
+                horizontal: BorderSide(
+                  color: (focused
+                          ? MacosColors.systemBlueColor
+                          : MacosColors.systemGrayColor)
+                      .withValues(alpha: 0.18),
+                  width: 0.5,
+                ),
+              ),
+            ),
             padding: const EdgeInsets.fromLTRB(kDiffHPad, 4, 6, 4),
             child: Row(
               children: [
@@ -315,19 +340,28 @@ class _HunkDiffViewState extends State<HunkDiffView> {
                   ),
                 ),
                 if (widget.staged)
-                  _btn(
-                    'Unstage',
-                    () => widget.onAction(file, hunk, HunkAction.unstage),
+                  DiffActionButton(
+                    label: 'Unstage',
+                    icon: CupertinoIcons.minus,
+                    onPressed: () =>
+                        widget.onAction(file, hunk, HunkAction.unstage),
                   )
                 else ...[
-                  _btn(
-                    'Stage',
-                    () => widget.onAction(file, hunk, HunkAction.stage),
+                  DiffActionButton(
+                    label: 'Stage',
+                    icon: CupertinoIcons.plus,
+                    onPressed: () =>
+                        widget.onAction(file, hunk, HunkAction.stage),
                   ),
                   const SizedBox(width: 6),
-                  _btn(
-                    'Discard',
-                    () => widget.onAction(file, hunk, HunkAction.discard),
+                  DiffActionButton(
+                    label: 'Discard',
+                    icon: CupertinoIcons.arrow_uturn_left,
+                    // Throws the hunk's work away — it gets the red, and the
+                    // hover that says so before the click, not after.
+                    tone: DiffActionTone.destructive,
+                    onPressed: () =>
+                        widget.onAction(file, hunk, HunkAction.discard),
                   ),
                 ],
               ],
@@ -351,11 +385,4 @@ class _HunkDiffViewState extends State<HunkDiffView> {
       ),
     );
   }
-
-  Widget _btn(String label, VoidCallback onPressed) => PushButton(
-    controlSize: ControlSize.small,
-    secondary: true,
-    onPressed: onPressed,
-    child: Text(label),
-  );
 }

@@ -292,6 +292,162 @@ class DiffPinnedRow extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+/// How an action reads: an ordinary one, or one that throws work away.
+enum DiffActionTone { normal, destructive }
+
+/// The button a diff row offers for an action on the thing it labels — Stage,
+/// Unstage, Discard on a hunk header.
+///
+/// These sit *inside* the diff, on a coloured band, at 18px tall, and the stock
+/// [PushButton] was the wrong instrument for that: a chrome-grey slab with a hard
+/// border that reads as a Windows dialog button dropped into a code listing. It
+/// also gave no hover feedback at all and left the pointer a plain arrow, so the
+/// only way to discover the thing was live was to click it and see.
+///
+/// So: a capsule that is nearly invisible at rest and lights up in the action's
+/// own colour under the pointer — the accent for Stage/Unstage (the *system*
+/// accent, so it matches whatever the user picked in System Settings), red for
+/// Discard, which is the one that destroys work. The pointer becomes a hand, the
+/// surface brightens, the border finds its colour and the whole thing lifts a
+/// hair; pressing it presses *in*. Every one of those is a separate, redundant
+/// signal that this is a live control, because the complaint that produced this
+/// widget was that it looked dead.
+class DiffActionButton extends StatefulWidget {
+  const DiffActionButton({
+    super.key,
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+    this.tone = DiffActionTone.normal,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
+  final DiffActionTone tone;
+
+  @override
+  State<DiffActionButton> createState() => _DiffActionButtonState();
+}
+
+class _DiffActionButtonState extends State<DiffActionButton> {
+  bool _hovered = false;
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = MacosTheme.of(context);
+    final dark = theme.brightness.isDark;
+    final accent = switch (widget.tone) {
+      DiffActionTone.normal => theme.primaryColor,
+      DiffActionTone.destructive => MacosColors.systemRedColor,
+    };
+
+    // At rest the capsule is just a faint pane of glass over the header band —
+    // present, legible, but not competing with the code. Under the pointer it
+    // becomes the accent; held down, more of it.
+    final (Color fill, Color border, Color fg) = switch ((_pressed, _hovered)) {
+      (true, _) => (
+        accent.withValues(alpha: dark ? 0.55 : 0.85),
+        accent,
+        dark ? MacosColors.white : MacosColors.white,
+      ),
+      (_, true) => (
+        accent.withValues(alpha: dark ? 0.32 : 0.16),
+        accent.withValues(alpha: dark ? 0.75 : 0.55),
+        dark ? MacosColors.white : accent,
+      ),
+      _ => (
+        dark
+            ? MacosColors.white.withValues(alpha: 0.10)
+            : MacosColors.white.withValues(alpha: 0.75),
+        dark
+            ? MacosColors.white.withValues(alpha: 0.16)
+            : MacosColors.black.withValues(alpha: 0.14),
+        theme.typography.body.color ?? MacosColors.textColor,
+      ),
+    };
+
+    return MouseRegion(
+      // The signal the old button never gave. Note this MouseRegion has to sit
+      // *outside* everything: a Text under a SelectionArea wraps itself in an
+      // I-beam MouseRegion, and the deepest annotation under the pointer is the
+      // one that wins — which is exactly how the pointer stayed an I-beam over a
+      // perfectly live button. Callers keep these out of the selection scope
+      // (see SelectionContainer.disabled); this is the belt to that's braces.
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() {
+        _hovered = false;
+        _pressed = false;
+      }),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTapDown: (_) => setState(() => _pressed = true),
+        onTapUp: (_) => setState(() => _pressed = false),
+        onTapCancel: () => setState(() => _pressed = false),
+        onTap: widget.onPressed,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 110),
+          curve: Curves.easeOut,
+          height: 18,
+          padding: const EdgeInsets.symmetric(horizontal: 7),
+          decoration: BoxDecoration(
+            // A vertical sheen rather than a flat fill — the thing that makes a
+            // small macOS control look like a physical surface catching light
+            // from above instead of a rectangle of colour.
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color.alphaBlend(
+                  MacosColors.white.withValues(alpha: dark ? 0.08 : 0.35),
+                  fill,
+                ),
+                fill,
+              ],
+            ),
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: border, width: 0.5),
+            boxShadow: [
+              // Lifted while hovered, sunk while pressed, resting otherwise.
+              if (!_pressed)
+                BoxShadow(
+                  color: MacosColors.black.withValues(
+                    alpha: _hovered ? 0.22 : 0.10,
+                  ),
+                  blurRadius: _hovered ? 3 : 1,
+                  offset: Offset(0, _hovered ? 1 : 0.5),
+                ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              MacosIcon(widget.icon, size: 9, color: fg),
+              const SizedBox(width: 4),
+              Text(
+                widget.label,
+                style: theme.typography.body.copyWith(
+                  fontSize: 11,
+                  height: 1.0,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.1,
+                  color: fg,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Chrome
 // ---------------------------------------------------------------------------
 

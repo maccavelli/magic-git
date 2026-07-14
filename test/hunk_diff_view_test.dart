@@ -1,12 +1,15 @@
 // HunkDiffView: worktree diffs offer Stage/Discard per hunk, index (staged)
 // diffs offer Unstage, and tapping a button hands back the parsed file + hunk.
 
+import 'package:flutter/gestures.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import 'package:remote_magic_git/core/git/unified_diff.dart';
+import 'package:remote_magic_git/features/common/diff_view.dart';
 import 'package:remote_magic_git/features/repository/hunk_diff_view.dart';
 
 const _diff =
@@ -252,4 +255,81 @@ void main() {
       expect(find.text('+new'), findsOneWidget);
     },
   );
+
+  group('a hunk action looks and feels like a live control', () {
+    // The buttons worked, but nothing about them said so: the pointer stayed an
+    // I-beam over the label (a Text under a SelectionArea wraps itself in a
+    // text-cursor MouseRegion, and the deepest annotation under the pointer
+    // wins), and hovering changed nothing at all. They read as disabled chrome.
+
+    /// The cursor macOS would actually be showing right now.
+    MouseCursor cursorNow() =>
+        RendererBinding.instance.mouseTracker.debugDeviceActiveCursor(1)!;
+
+    Future<TestGesture> hover(WidgetTester tester, Finder target) async {
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+      await tester.pump();
+      await gesture.moveTo(tester.getCenter(target));
+      await tester.pumpAndSettle();
+      return gesture;
+    }
+
+    /// The button's animated skin, as currently painted.
+    BoxDecoration skinOf(WidgetTester tester, String label) {
+      final container = tester.widget<Container>(
+        find.descendant(
+          of: find.widgetWithText(DiffActionButton, label),
+          matching: find.byType(Container),
+        ),
+      );
+      return container.decoration! as BoxDecoration;
+    }
+
+    testWidgets('the pointer over one is a hand, not an I-beam', (tester) async {
+      await _pump(tester, staged: false);
+
+      await hover(tester, find.text('Stage'));
+      expect(cursorNow(), SystemMouseCursors.click);
+    });
+
+    testWidgets('while the diff text it sits on still selects as text', (
+      tester,
+    ) async {
+      // The hand must not be bought by killing selection on the diff itself.
+      await _pump(tester, staged: false);
+
+      await hover(tester, find.text('+new'));
+      expect(cursorNow(), SystemMouseCursors.text);
+    });
+
+    testWidgets('it lights up under the pointer', (tester) async {
+      await _pump(tester, staged: false);
+
+      final atRest = skinOf(tester, 'Stage');
+      await hover(tester, find.text('Stage'));
+      final hovered = skinOf(tester, 'Stage');
+
+      expect(
+        hovered.border,
+        isNot(atRest.border),
+        reason: 'hovering must visibly change the control',
+      );
+      // ...in the accent's colour (blue by default), not just "some grey".
+      final lit = (hovered.border! as Border).top.color;
+      expect(lit.b, greaterThan(lit.r));
+    });
+
+    testWidgets('and Discard lights up red, because it destroys work', (
+      tester,
+    ) async {
+      await _pump(tester, staged: false);
+
+      await hover(tester, find.text('Discard'));
+      final lit = (skinOf(tester, 'Discard').border! as Border).top.color;
+      expect(lit.r, greaterThan(lit.b));
+      expect(lit.r, greaterThan(lit.g));
+    });
+  });
 }
