@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../settings/tool_catalog.dart';
 import 'shell_escaper.dart';
 import 'ssh_command_executor.dart';
 
@@ -72,15 +73,6 @@ class RemoteEnvironment {
   };
 }
 
-/// The external binaries Magic Git depends on and lets the user override.
-const List<String> kOverridableBinaries = [
-  'git',
-  'glab',
-  'gh',
-  'fswatch',
-  'inotifywait',
-];
-
 /// Probes the remote host once per connection to discover its OS, an augmented
 /// PATH, and the absolute location of each required binary — searching common
 /// user paths (per OS) before system paths, and honoring settings overrides.
@@ -102,7 +94,7 @@ class EnvironmentResolver {
     String repoPath, {
     Map<String, String> overrides = const {},
   }) async {
-    const script = _probeScript;
+    final script = _probeScript;
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['sh', '-c', script],
@@ -270,7 +262,12 @@ class EnvironmentResolver {
   // only — no tool is actually spawned (see [probeVersions] for the deferred
   // `--version` pass), keeping this connect-blocking round trip as close to
   // shell-builtin speed as the login-shell PATH capture allows.
-  static const String _probeScript =
+  //
+  // The binary list is generated from [kProbedBinaries] — the catalog plus its
+  // capabilities — rather than written out here. A hand-written list is how a
+  // tool ends up overridable in Settings but never actually looked for on the
+  // host (or looked for, and missing from the doctor panel).
+  static final String _probeScript =
       'os=\$(uname -s 2>/dev/null || echo unknown); '
       // Prefer the user's login shell (sources their profile, e.g. Homebrew's
       // `brew shellenv`), falling back to sh.
@@ -283,10 +280,9 @@ class EnvironmentResolver {
       'aug="\$c:\$lp:\$PATH:/usr/bin:/bin:/usr/sbin:/sbin"; '
       'echo "OS=\$os"; '
       'echo "PATH=\$aug"; '
-      // `gzip` isn't user-overridable — it's probed so the executor knows it
-      // may compress large reads on the wire (see CommandFormatter's
-      // compressOutput); a host without it just runs uncompressed.
-      'for b in git glab gh fswatch inotifywait stdbuf gzip; do '
+      // Bare names, unquoted, in a `for` list: safe because every entry is a
+      // catalog binary name (a plain identifier), never user input.
+      'for b in ${kProbedBinaries.join(' ')}; do '
       'p=\$(PATH="\$aug" command -v "\$b" 2>/dev/null || true); '
       'echo "BIN=\$b=\$p"; '
       'done';

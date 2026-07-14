@@ -7,7 +7,7 @@ import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
-import '../../core/settings/tool_catalog.dart';
+import '../../core/settings/tool_health.dart';
 import '../../core/ssh/environment_probe.dart';
 import '../../core/storage/known_hosts_store.dart';
 import '../common/actions.dart';

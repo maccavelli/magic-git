@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../git/git_service.dart';
 import 'settings_bus.dart';
+import 'tool_catalog.dart';
 
 /// User-tunable knobs persisted across sessions:
 ///  * the two generous per-command timeouts, so a legitimately slow push/commit
@@ -162,14 +163,12 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   /// zoom gesture mid-write, or an in-flight Settings-sheet save).
   int _pendingWrites = 0;
 
-  /// Binaries the user may override a path for.
-  static const List<String> overridableBinaries = [
-    'git',
-    'glab',
-    'gh',
-    'fswatch',
-    'inotifywait',
-  ];
+  /// Binaries the user may override a path for — [kOverridableBinaries], which
+  /// is derived from the tool catalog. Kept as an alias so the persisted-key
+  /// loops below read in terms of settings, but it is not a second list: a tool
+  /// added to the catalog becomes overridable here, probed on the host, and
+  /// shown in the doctor, all from that one edit.
+  static List<String> get overridableBinaries => kOverridableBinaries;
 
   @override
   AppSettings build() {

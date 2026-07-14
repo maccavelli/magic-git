@@ -2,7 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
-import '../../core/settings/tool_catalog.dart';
+import '../../core/settings/tool_health.dart';
 import '../common/escape_dismissible.dart';
 import '../common/tool_icon_button.dart';
 import 'environment_health_sheet.dart';

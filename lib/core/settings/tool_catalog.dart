@@ -1,13 +1,16 @@
 /// The external command-line tools Magic Git depends on, what each is for, the
 /// minimum version we rely on, and how to install it per platform. This is the
-/// single source of truth behind both environment detection (min-version
-/// checks) and the Environment health / "doctor" panel (status + install
-/// guidance). Keeping it in one place means adding a tool (e.g. `gh` for the
-/// upcoming GitHub support) is a one-line catalog edit, not a scatter of
-/// hard-coded strings across probing and UI.
+/// single source of truth behind environment detection (which binaries the
+/// connect-time probe looks for, and their min-version checks), the set of
+/// binaries the user may point somewhere else, and the Environment health /
+/// "doctor" panel. Adding a tool is a one-line [kToolCatalog] edit — the probe
+/// script, the settings overrides and the doctor all derive from it.
+///
+/// Deliberately dependency-free: [EnvironmentResolver] imports *this* to build
+/// its probe, so anything here that reached back for a `RemoteEnvironment`
+/// would be a cycle. Interpreting a probe result against the catalog lives one
+/// layer up, in `tool_health.dart`.
 library;
-
-import '../ssh/environment_probe.dart';
 
 /// A parsed `major.minor.patch` version, for comparing a detected tool version
 /// against a minimum. Tolerant: a missing minor/patch is treated as 0, and any
@@ -175,6 +178,32 @@ ToolSpec? toolSpecFor(String bin) {
   return null;
 }
 
+/// Binaries the connect-time probe resolves for a *capability*, not because the
+/// user ever names them: they are never `argv[0]` of a command we build, never
+/// shown in the doctor, and never overridable.
+///
+///  * `gzip` — load-bearing. Its presence in the probe's `found` map is what
+///    lets the executor compress large reads on the wire; a host without it
+///    just transfers uncompressed (see `SSHCommandExecutor`'s `compress`).
+///  * `stdbuf` — probed so the augmented PATH is known to cover it. The remote
+///    watcher runs `stdbuf -oL inotifywait` *inside* an `sh -c` script and
+///    falls back to bare `inotifywait` when it's missing, so it resolves by
+///    name at run time rather than through `argv[0]` rewriting.
+const List<String> kProbedCapabilities = ['stdbuf', 'gzip'];
+
+/// The binaries the user may override a path for — every tool in the catalog,
+/// and only those. A capability ([kProbedCapabilities]) is not something the
+/// user names, so it is not overridable.
+final List<String> kOverridableBinaries = [for (final t in kToolCatalog) t.bin];
+
+/// Everything the connect-time probe looks for: the catalog plus the
+/// capabilities. The probe script is generated from this — it is not a
+/// hand-written list that has to be kept in step.
+final List<String> kProbedBinaries = [
+  ...kOverridableBinaries,
+  ...kProbedCapabilities,
+];
+
 /// A labeled, copy-pasteable install command block.
 class InstallHint {
   final String label;
@@ -208,67 +237,6 @@ List<InstallHint> _macHints(String bin) => switch (bin) {
   // inotifywait is Linux-only; nothing to install on macOS.
   _ => const [],
 };
-
-/// How serious the overall tool situation is, for a one-line summary.
-enum ToolHealthLevel { ok, warning, error }
-
-/// A single-line summary of tool health for the current host, shared by the
-/// Settings summary line and the main-window banner so both read identically.
-class ToolHealthReport {
-  final ToolHealthLevel level;
-  final String message;
-  const ToolHealthReport(this.level, this.message);
-}
-
-/// Distills [env] into one actionable line. Order of concern: disconnected →
-/// ok (nothing to check yet), a missing required tool → error, a missing
-/// feature tool → warning, an outdated tool → warning, else ok. Only relevant
-/// tools for the detected OS are considered (a Linux host is never faulted for
-/// lacking macOS's fswatch).
-ToolHealthReport summarizeToolHealth(RemoteEnvironment env) {
-  if (env.os == 'unknown') {
-    return const ToolHealthReport(
-      ToolHealthLevel.ok,
-      'Connect to a repository to check installed tools.',
-    );
-  }
-  final relevant = kToolCatalog.where((t) => t.relevantOn(env.os));
-  ToolSpec? missingEssential, missingFeature, outdated;
-  for (final spec in relevant) {
-    if (!env.has(spec.bin)) {
-      if (spec.tier == ToolTier.essential) {
-        missingEssential ??= spec;
-      } else if (spec.tier == ToolTier.feature) {
-        missingFeature ??= spec;
-      }
-      continue;
-    }
-    final vStr = env.versionOf(spec.bin);
-    final v = vStr == null ? null : ToolVersion.parse(vStr);
-    if (spec.minVersion != null && v != null && v < spec.minVersion!) {
-      outdated ??= spec;
-    }
-  }
-  if (missingEssential != null) {
-    return ToolHealthReport(
-      ToolHealthLevel.error,
-      '${missingEssential.bin} is not installed — required.',
-    );
-  }
-  if (missingFeature != null) {
-    return ToolHealthReport(
-      ToolHealthLevel.warning,
-      '${missingFeature.bin} is not installed — some features unavailable.',
-    );
-  }
-  if (outdated != null) {
-    return ToolHealthReport(
-      ToolHealthLevel.warning,
-      '${outdated.bin} is out of date.',
-    );
-  }
-  return const ToolHealthReport(ToolHealthLevel.ok, 'All tools detected.');
-}
 
 List<InstallHint> _linuxHints(String bin) => switch (bin) {
   'git' => const [
