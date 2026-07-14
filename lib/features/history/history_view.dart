@@ -1657,10 +1657,23 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                             ),
                             const SizedBox(width: 4),
                           ],
-                          for (final r
-                              in decorations[commit.hash] ?? const <GitRef>[])
-                            RefChip(gitRef: r),
+                          // Flexible, not a bare Row of chips: the chips are
+                          // intrinsically sized, so beside an Expanded subject
+                          // their surplus width had nowhere to go and spilled
+                          // past the pane's right edge. Bounded to ~half the row
+                          // (flex 2 against the subject's 3), the strip shrinks
+                          // its chips — and collapses the tail into `+N` — so
+                          // the subject always keeps a readable share.
+                          if ((decorations[commit.hash] ?? const <GitRef>[])
+                              .isNotEmpty)
+                            Flexible(
+                              flex: 2,
+                              child: RefChipStrip(
+                                refs: decorations[commit.hash]!,
+                              ),
+                            ),
                           Expanded(
+                            flex: 3,
                             child: Text(
                               commit.subject,
                               style: typography.body,
