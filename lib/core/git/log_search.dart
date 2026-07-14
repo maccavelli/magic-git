@@ -121,3 +121,36 @@ bool isResolvableShaPrefix(String? sha) {
   final text = sha?.trim() ?? '';
   return RegExp(r'^[0-9a-fA-F]{4,40}$').hasMatch(text);
 }
+
+/// A human-readable problem with a `since:`/`until:` date term, or null when
+/// the term is fine to hand to git.
+///
+/// git's date parser NEVER rejects input — verified against git 2.55:
+/// unparseable text is coerced to *now*, a year outside 1970–2099 is coerced
+/// to the *current* year, and an out-of-range month is reinterpreted as a day
+/// (`2026-13-01` quietly reads as Jan 13 2026). For a search filter every one
+/// of those is silent wrongness: `until:` with a mistyped date shows
+/// everything while looking applied, and `since:` shows nothing while looking
+/// like an empty result. So the one shape that CAN be checked — a term that
+/// looks like a calendar date — is checked here; anything else is git's
+/// phrase grammar ("2 weeks ago", "yesterday") and passes through untouched.
+String? dateTermProblem(String? term) {
+  final text = term?.trim() ?? '';
+  if (text.isEmpty) return null;
+  final match = RegExp(
+    r'^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:\b|$)',
+  ).firstMatch(text);
+  if (match == null) return null;
+  final year = int.parse(match.group(1)!);
+  final month = int.parse(match.group(2)!);
+  final day = int.parse(match.group(3)!);
+  if (year < 1970 || year > 2099) {
+    return '"$text" — git only understands years 1970–2099, and silently '
+        'reads anything outside that as the current year.';
+  }
+  if (month < 1 || month > 12 || day < 1 || day > 31) {
+    return '"$text" is not a real calendar date — git would silently '
+        'reinterpret it instead of rejecting it.';
+  }
+  return null;
+}

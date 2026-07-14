@@ -76,6 +76,27 @@ void main() {
       expect(isResolvableShaPrefix(''), isFalse);
       expect(isResolvableShaPrefix(null), isFalse);
     });
+
+    test('a date git would silently misread is flagged', () {
+      // git never rejects a date — it coerces (year → current year, bad month
+      // → reinterpreted, garbage → now; see log_search_integration_test), so
+      // this is the only chance to tell the user their filter isn't doing
+      // what it looks like it's doing.
+      expect(dateTermProblem('2990-01-01'), contains('1970–2099'));
+      expect(dateTermProblem('1969-12-31'), contains('1970–2099'));
+      expect(dateTermProblem('2026-13-01'), contains('not a real calendar'));
+      expect(dateTermProblem('2026-02-45'), contains('not a real calendar'));
+
+      // Sound dates and git's phrase grammar pass untouched.
+      expect(dateTermProblem('2026-01-31'), isNull);
+      expect(dateTermProblem('2026-1-5'), isNull);
+      expect(dateTermProblem('2026/01/31'), isNull);
+      expect(dateTermProblem('2026-01-31 10:30'), isNull);
+      expect(dateTermProblem('2 weeks ago'), isNull);
+      expect(dateTermProblem('yesterday'), isNull);
+      expect(dateTermProblem(''), isNull);
+      expect(dateTermProblem(null), isNull);
+    });
   });
 
   group('against a real repository', () {

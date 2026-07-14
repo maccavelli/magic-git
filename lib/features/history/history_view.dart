@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/commit_graph.dart';
 import '../../core/git/git_service.dart';
+import '../../core/git/log_search.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
@@ -1304,6 +1305,14 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         _until.isNotEmpty ||
         _path.isNotEmpty ||
         _hideMerges;
+    // A date git would silently misread (see [dateTermProblem]) — flagged
+    // here rather than rejected, because the walk has already run with git's
+    // reading and THIS is the explanation for its otherwise baffling result
+    // (an unfiltered list for `until:`, an empty one for `since:`). Checked on
+    // the effective values, so a typed `after:`/`before:` term is covered even
+    // while the advanced row is collapsed.
+    final dateProblem =
+        dateTermProblem(_effSince) ?? dateTermProblem(_effUntil);
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
       child: Column(
@@ -1458,6 +1467,15 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   ),
                 ),
               ],
+            ),
+          ],
+          if (dateProblem != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              dateProblem,
+              style: MacosTheme.of(context).typography.caption1.copyWith(
+                color: MacosColors.systemRedColor,
+              ),
             ),
           ],
         ],
