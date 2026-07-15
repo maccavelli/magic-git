@@ -18,10 +18,14 @@
 	<string>Magic Git</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<!-- Placeholders — the real version is stamped at build time by
+	     macos/scripts/stamp_version.sh from the newest reachable v-tag plus
+	     the commits-since-tag count (v1.2.22 + 5 commits -> 1.2.22.5).
+	     Seeing 0.0.0 in About means the stamp phase did not run. -->
 	<key>CFBundleShortVersionString</key>
-	<string>1.2.1.1</string>
+	<string>0.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>1.2.1.1</string>
+	<string>0.0.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>LSMinimumSystemVersion</key>
