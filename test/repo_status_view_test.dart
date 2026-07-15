@@ -1462,4 +1462,29 @@ void main() {
       },
     );
   });
+
+  testWidgets(
+    'toolbar actions stay flush right with the SSH status chip present — a '
+    'loose Flexible sibling must not split the free space with the trailing '
+    'cluster and drag the buttons toward the middle',
+    (tester) async {
+      await _pump(
+        tester,
+        status: GitStatus(branch: const GitBranchInfo(), files: const []),
+        refs: _remoteRefs, // SSH backend is the default here → chip renders
+      );
+
+      // The hamburger overflow menu is the toolbar's last child.
+      final hamburger = _icon(CupertinoIcons.line_horizontal_3);
+      expect(hamburger, findsOneWidget);
+      final paneWidth = tester.getSize(find.byType(RepoStatusView)).width;
+      // 16px toolbar padding plus the pulldown's own inset; anything much
+      // wider means the trailing cluster lost its claim on the free space.
+      expect(
+        paneWidth - tester.getTopRight(hamburger).dx,
+        lessThan(40),
+        reason: 'toolbar overflow menu must hug the right margin',
+      );
+    },
+  );
 }

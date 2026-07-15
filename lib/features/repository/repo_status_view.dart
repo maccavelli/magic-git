@@ -1678,55 +1678,69 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       child: Row(
         children: [
-          MacosTooltip(
-            message: watchHint,
-            child: MacosIcon(
-              CupertinoIcons.circle_fill,
-              size: 8,
-              color: dotColor,
+          // The whole informational cluster shares ONE Expanded, with the
+          // shrinkable pieces (branch name, SSH status) Flexible inside it:
+          // when the pane runs narrow they truncate instead of painting an
+          // overflow stripe, and when it's wide the leftover space stays
+          // inside this cluster so the action buttons keep their flush-right
+          // alignment. (A Spacer alongside loose Flexible siblings would
+          // instead split the free space with them — flex allocations a loose
+          // child declines are NOT handed back — pulling the buttons toward
+          // the middle.)
+          Expanded(
+            child: Row(
+              children: [
+                MacosTooltip(
+                  message: watchHint,
+                  child: MacosIcon(
+                    CupertinoIcons.circle_fill,
+                    size: 8,
+                    color: dotColor,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const MacosIcon(CupertinoIcons.arrow_branch, size: 18),
+                const SizedBox(width: 6),
+                // The branch name is the one unbounded piece of user data in
+                // this toolbar — it truncates first.
+                Flexible(
+                  child: Text(
+                    label,
+                    style: typography.headline,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (branch != null && branch.hasUpstream) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    '↑${branch.ahead} ↓${branch.behind}',
+                    style: typography.caption1,
+                  ),
+                ],
+                if (!hasRemote) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    'No remote detected',
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemYellowColor,
+                    ),
+                  ),
+                ],
+                // SSH latency + connection status (ambient shell row is
+                // hidden on this page so the strip lives only on the
+                // toolbar). Hidden for local sessions — skip the gap too so
+                // layout stays tight. Flexible: ambient info yields
+                // (truncates) when the pane runs narrow.
+                if (!ref.watch(
+                  connectionProvider.select((c) => c.isLocal),
+                )) ...[
+                  const SizedBox(width: 12),
+                  const Flexible(child: SshLinkStatusRow()),
+                ],
+              ],
             ),
           ),
-          const SizedBox(width: 8),
-          const MacosIcon(CupertinoIcons.arrow_branch, size: 18),
-          const SizedBox(width: 6),
-          // Flexible: the branch name is the one unbounded piece of user data
-          // in this toolbar — it must truncate rather than push the action
-          // buttons off the pane (the Row has no other shrinkable child, so
-          // without this ANY tight width paints an overflow stripe).
-          Flexible(
-            child: Text(
-              label,
-              style: typography.headline,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          if (branch != null && branch.hasUpstream) ...[
-            const SizedBox(width: 8),
-            Text(
-              '↑${branch.ahead} ↓${branch.behind}',
-              style: typography.caption1,
-            ),
-          ],
-          if (!hasRemote) ...[
-            const SizedBox(width: 8),
-            Text(
-              'No remote detected',
-              style: typography.caption1.copyWith(
-                color: MacosColors.systemYellowColor,
-              ),
-            ),
-          ],
-          // SSH latency + connection status (ambient shell row is hidden on
-          // this page so the strip lives only on the toolbar). Hidden for
-          // local sessions — skip the gap too so layout stays tight.
-          // Flexible: ambient info yields (truncates) before the action
-          // buttons do when the pane runs narrow.
-          if (!ref.watch(connectionProvider.select((c) => c.isLocal))) ...[
-            const SizedBox(width: 12),
-            const Flexible(child: SshLinkStatusRow()),
-          ],
-          const Spacer(),
           _toolButton(
             CupertinoIcons.cloud_download,
             'Fetch',

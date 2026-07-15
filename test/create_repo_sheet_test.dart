@@ -292,7 +292,7 @@ void main() {
   );
 
   /// API-only create → missing origin → cloneUrl → remote add → verify.
-  void _queueGithubOriginWire(
+  void queueGithubOriginWire(
     _FakeExecutor exec, {
     required String name,
     bool push = false,
@@ -311,7 +311,7 @@ void main() {
     exec.results.add(_ok('https://github.com/me/$name.git\n')); // verify
   }
 
-  void _queueGitlabOriginWire(
+  void queueGitlabOriginWire(
     _FakeExecutor exec, {
     required String name,
     bool push = false,
@@ -356,7 +356,7 @@ void main() {
 
       exec.results.add(_ok('absent')); // probe
       exec.results.add(_ok('')); // git init
-      _queueGithubOriginWire(exec, name: 'new-proj');
+      queueGithubOriginWire(exec, name: 'new-proj');
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
@@ -406,7 +406,7 @@ void main() {
       exec.results.add(_ok('')); // git init
       exec.results.add(_ok('')); // git add
       exec.results.add(_ok('')); // git commit
-      _queueGithubOriginWire(exec, name: 'new-proj', push: true);
+      queueGithubOriginWire(exec, name: 'new-proj', push: true);
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
@@ -500,7 +500,7 @@ void main() {
       exec.results.add(_ok('')); // git init
       exec.results.add(_ok('')); // git add
       exec.results.add(_ok('')); // git commit
-      _queueGitlabOriginWire(exec, name: 'new-proj', push: true);
+      queueGitlabOriginWire(exec, name: 'new-proj', push: true);
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
@@ -706,7 +706,7 @@ void main() {
       exec.results.add(notARepo); // classify: not a repo
       exec.results.add(_ok('')); // git init (in place)
       exec.results.add(unbornHead); // HEAD doesn't resolve — nothing to push
-      _queueGithubOriginWire(exec, name: 'app-repo');
+      queueGithubOriginWire(exec, name: 'app-repo');
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
@@ -743,7 +743,7 @@ void main() {
       exec.results.add(_ok('/srv/app\n')); // classify: repo root
       exec.results.add(noOrigin); // origin guard: nothing wired yet
       exec.results.add(_ok('abc123\n')); // HEAD resolves — history exists
-      _queueGithubOriginWire(exec, name: 'app-repo', push: true);
+      queueGithubOriginWire(exec, name: 'app-repo', push: true);
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
@@ -812,7 +812,7 @@ void main() {
       exec.results.add(_ok('git@old-host:me/app.git\n')); // origin exists
       exec.results.add(_ok('')); // git remote remove origin
       exec.results.add(_ok('abc123\n')); // HEAD resolves
-      _queueGithubOriginWire(exec, name: 'app-repo', push: true);
+      queueGithubOriginWire(exec, name: 'app-repo', push: true);
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
