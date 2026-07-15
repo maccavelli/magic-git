@@ -16,7 +16,18 @@ String _line({
   String peeled = '',
   String worktree = '',
   String track = '',
-}) => [head, name, oid, upstream, subject, peeled, worktree, track].join(_sep);
+  String created = '',
+}) => [
+  head,
+  name,
+  oid,
+  upstream,
+  subject,
+  peeled,
+  worktree,
+  track,
+  created,
+].join(_sep);
 
 void main() {
   group('upstream:track parsing', () {
@@ -86,6 +97,33 @@ void main() {
     test('a pre-2.23 git echoing %(worktreepath) is filtered by shape', () {
       final refs = parseRefs(_line(worktree: '%(worktreepath)'), _sep);
       expect(refs.single.worktreePath, isNull);
+    });
+  });
+
+  group('creatordate parsing', () {
+    test('epoch seconds parse; the tags list sorts on them newest-first', () {
+      final refs = parseRefs(
+        [
+          _line(name: 'refs/tags/v1', created: '1000'),
+          _line(name: 'refs/tags/v2', created: '3000'),
+        ].join('\n'),
+        _sep,
+      );
+      expect(refs[0].creatorDate, 1000);
+      expect(refs[1].creatorDate, 3000);
+    });
+
+    test('a pre-2.7 git echoing the atom reads as no date', () {
+      final refs = parseRefs(_line(created: '%(creatordate:unix)'), _sep);
+      expect(refs.single.creatorDate, isNull);
+    });
+
+    test('an eight-field line (git without the atom) still parses', () {
+      final refs = parseRefs(
+        [' ', 'refs/tags/v1', 'aaa', '', 's', '', '', ''].join(_sep),
+        _sep,
+      );
+      expect(refs.single.creatorDate, isNull);
     });
   });
 }

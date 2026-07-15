@@ -45,11 +45,16 @@ class SshLinkStatusRow extends ConsumerWidget {
     final status = sshUiConnectionStatus(connection);
     if (status == null) return const SizedBox.shrink();
 
+    // Flexible on both chips: this row rides inside toolbars that get
+    // arbitrarily narrow, so each chip must shrink (its label ellipsizes)
+    // instead of forcing the parent Row into a painted overflow.
     final child = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const LinkStatusChip(compact: true),
-        ConnectionStatusChip(status: status, host: connection.host),
+        const Flexible(child: LinkStatusChip(compact: true)),
+        Flexible(
+          child: ConnectionStatusChip(status: status, host: connection.host),
+        ),
       ],
     );
 
@@ -100,7 +105,14 @@ class LinkStatusChip extends ConsumerWidget {
         children: [
           Icon(CupertinoIcons.waveform_path, size: 12, color: color),
           const SizedBox(width: 4),
-          Text(label, style: typography.caption1.copyWith(color: color)),
+          Flexible(
+            child: Text(
+              label,
+              style: typography.caption1.copyWith(color: color),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           if (compact) const SizedBox(width: 10),
         ],
       ),
@@ -150,7 +162,14 @@ class ConnectionStatusChip extends StatelessWidget {
         children: [
           Icon(CupertinoIcons.circle_fill, size: 8, color: color),
           const SizedBox(width: 4),
-          Text(label, style: typography.caption1.copyWith(color: color)),
+          Flexible(
+            child: Text(
+              label,
+              style: typography.caption1.copyWith(color: color),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
         ],
       ),
     );

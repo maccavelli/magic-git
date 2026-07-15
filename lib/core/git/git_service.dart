@@ -168,6 +168,14 @@ class GitRef {
   /// sign of a stale local branch left behind by a merged PR.
   final bool upstreamGone;
 
+  /// When this ref was created, as unix epoch seconds, from
+  /// `%(creatordate:unix)`. For an annotated tag this is the tagger date; for
+  /// a lightweight tag (which stores no date of its own) git resolves it to
+  /// the pointed-at commit's committer date — verified against real git, so
+  /// both kinds sort together chronologically. Null when the remote git
+  /// echoed the atom back (pre-2.7) or the field is missing.
+  final int? creatorDate;
+
   const GitRef({
     required this.name,
     required this.oid,
@@ -179,6 +187,7 @@ class GitRef {
     this.ahead = 0,
     this.behind = 0,
     this.upstreamGone = false,
+    this.creatorDate,
   });
 
   bool get isRemote => name.startsWith('refs/remotes/');
@@ -718,6 +727,10 @@ List<GitRef> parseRefs(String raw, String fieldSep) {
     // reads as "no tracking data" rather than garbage — same defense as the
     // worktreepath field above.
     final track = f.length >= 8 ? f[7] : '';
+    // `%(creatordate:unix)`: epoch seconds, or the echoed atom on a pre-2.7
+    // git — int.tryParse turns that (and any other non-number) into null, the
+    // same no-probe defense as the fields above.
+    final created = f.length >= 9 ? int.tryParse(f[8].trim()) : null;
     refs.add(
       GitRef(
         isHead: f[0] == '*',
@@ -730,6 +743,7 @@ List<GitRef> parseRefs(String raw, String fieldSep) {
         ahead: _trackCount(track, 'ahead'),
         behind: _trackCount(track, 'behind'),
         upstreamGone: track == '[gone]',
+        creatorDate: created,
       ),
     );
   }
@@ -1309,6 +1323,11 @@ class GitService {
     // reasoning as above; parsed by shape, so an old git echoing the atom
     // reads as "no tracking data".
     '%(upstream:track)',
+    // Creation time in epoch seconds — the tags list's newest-first sort key
+    // (tagger date for annotated tags, committer date for lightweight ones;
+    // see [GitRef.creatorDate]). Appended last, same index reasoning; a
+    // pre-2.7 git echoing the atom parses as null via int.tryParse.
+    '%(creatordate:unix)',
   ];
 
   // A plain `git am` and an am-based rebase both create `$d/rebase-apply`, so

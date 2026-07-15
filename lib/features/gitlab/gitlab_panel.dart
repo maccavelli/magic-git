@@ -9,6 +9,7 @@ import '../common/async_views.dart';
 import '../common/branch_switch.dart';
 import '../common/escape_dismissible.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/show_more_row.dart';
 import '../common/tool_icon_button.dart';
 import 'create_mr_sheet.dart';
 import 'pipeline_jobs_view.dart';
@@ -37,6 +38,11 @@ class GitLabPanel extends ConsumerStatefulWidget {
 }
 
 class _GitLabPanelState extends ConsumerState<GitLabPanel> {
+  /// Pipelines shown before the "Show more" row expands the list to full
+  /// history — CI history is effectively unbounded, and the newest few are
+  /// what the panel is for.
+  static const int _collapsedPipelineCount = 10;
+
   // Exactly one of these is non-null: the selected left-pane item.
   int? _selectedMrIid;
   int? _selectedPipelineId;
@@ -185,6 +191,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     AsyncValue<List<Pipeline>> pipelines,
     Map<String, Pipeline> pipeByRef,
   ) {
+    final fullHistory = ref.watch(pipelinesScopeProvider(repoPath));
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
@@ -205,11 +212,24 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
           'Pipelines',
           () => ref.invalidate(pipelinesProvider(repoPath)),
         ),
+        // Newest 10 by default; "Show more" flips the scope notifier, which
+        // re-fetches this same provider with the full (bounded) history —
+        // skipLoadingOnReload keeps the current rows up while that runs, and
+        // the busy row below is the only loading signal.
         asyncListSection(
           pipelines,
           'No recent pipelines',
           (p) => _pipelineRow(p),
+          skipLoadingOnReload: true,
+          limit: fullHistory ? null : _collapsedPipelineCount,
+          overflow: (hidden) => ShowMoreRow(
+            label: 'Show all pipelines',
+            onTap: () =>
+                ref.read(pipelinesScopeProvider(repoPath).notifier).expand(),
+          ),
         ),
+        if (fullHistory && pipelines.isLoading)
+          const ShowMoreRow(label: 'Loading pipeline history…', busy: true),
       ],
     );
   }

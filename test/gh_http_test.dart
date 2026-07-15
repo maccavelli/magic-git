@@ -159,6 +159,19 @@ void main() {
       expect(exec.calls.single, containsAllInOrder(['--limit', '600']));
     });
 
+    test('workflowRuns allHistory raises --limit to the full-history ceiling '
+        '(= the GitLab side\'s 20 pages of 100)', () async {
+      exec.next = _ok('[]');
+      await gh.workflowRuns('/repo', allHistory: true);
+      expect(exec.calls.single, containsAllInOrder(['--limit', '2000']));
+
+      // The everyday fetch stays one small page.
+      exec.calls.clear();
+      exec.next = _ok('[]');
+      await gh.workflowRuns('/repo');
+      expect(exec.calls.single, containsAllInOrder(['--limit', '30']));
+    });
+
     test('a non-array list response throws (malformed, not empty)', () async {
       exec.next = _ok('{"unexpected":"object"}');
       expect(gh.pullRequests('/repo'), throwsA(isA<GhException>()));

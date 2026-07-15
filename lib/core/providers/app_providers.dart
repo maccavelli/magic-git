@@ -3190,12 +3190,36 @@ final mergeRequestsProvider = FutureProvider.autoDispose
       return glab.mergeRequests(repoPath);
     });
 
-/// Recent CI/CD pipelines for the connected project.
+/// Whether a Forge-tab CI list (pipelines / workflow runs) has been expanded
+/// to full history via its "Show more" row. One-way per session: nothing
+/// collapses it back except the provider's own auto-dispose.
+class CiHistoryScope extends Notifier<bool> {
+  CiHistoryScope(this.repoPath);
+  final String repoPath;
+
+  @override
+  bool build() => false;
+
+  void expand() => state = true;
+}
+
+/// Whether the Forge tab's pipelines list has been expanded to full history
+/// (its "Show more" row). Deliberately a dependency [pipelinesProvider]
+/// watches rather than part of its family key: flipping it re-fetches the
+/// SAME provider instance in place, so the panel keeps the current rows on
+/// screen (`skipLoadingOnReload`) instead of flashing a spinner while the
+/// deeper fetch runs. Auto-resets with the provider's own lifecycle.
+final pipelinesScopeProvider = NotifierProvider.autoDispose
+    .family<CiHistoryScope, bool, String>(CiHistoryScope.new);
+
+/// Recent CI/CD pipelines for the connected project — one newest page by
+/// default, the bounded full history once [pipelinesScopeProvider] is set.
 final pipelinesProvider = FutureProvider.autoDispose
     .family<List<Pipeline>, String>((ref, repoPath) async {
       final glab = ref.watch(glabServiceProvider);
+      final allHistory = ref.watch(pipelinesScopeProvider(repoPath));
       await _forgeAuthReady(ref);
-      return glab.pipelines(repoPath);
+      return glab.pipelines(repoPath, allHistory: allHistory);
     });
 
 /// Jobs of a pipeline. Keyed by (repoPath, pipelineId).
@@ -3427,12 +3451,21 @@ final pullRequestsProvider = FutureProvider.autoDispose
       return gh.pullRequests(repoPath);
     });
 
-/// Recent GitHub Actions workflow runs for the connected repo.
+/// Whether the Forge tab's workflow-runs list has been expanded to full
+/// history — the GitHub twin of [pipelinesScopeProvider] (see there for why
+/// this is a watched dependency, not a family key).
+final workflowRunsScopeProvider = NotifierProvider.autoDispose
+    .family<CiHistoryScope, bool, String>(CiHistoryScope.new);
+
+/// Recent GitHub Actions workflow runs for the connected repo — one newest
+/// page by default, the bounded full history once
+/// [workflowRunsScopeProvider] is set.
 final workflowRunsProvider = FutureProvider.autoDispose
     .family<List<WorkflowRun>, String>((ref, repoPath) async {
       final gh = ref.watch(ghServiceProvider);
+      final allHistory = ref.watch(workflowRunsScopeProvider(repoPath));
       await _forgeAuthReady(ref);
-      return gh.workflowRuns(repoPath);
+      return gh.workflowRuns(repoPath, allHistory: allHistory);
     });
 
 /// Live jobs of a workflow run, keyed by (repoPath, runId). Polls until the run

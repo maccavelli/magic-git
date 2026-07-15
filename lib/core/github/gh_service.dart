@@ -40,6 +40,12 @@ class GhException implements Exception {
 /// `gh` infers the owner/repo and (Enterprise) host from the repo's `origin`
 /// remote, since every command runs with the working directory set to the repo.
 class GhService {
+  /// Ceiling for [workflowRuns]'s full-history mode: 2000 = the GitLab side's
+  /// own hard stop (20 pages × 100 — `GlabService._maxListPages`), so neither
+  /// forge's "Show more" fetches deeper than the other. A bound, not a page
+  /// walk, because `gh run list --limit` paginates internally.
+  static const int fullHistoryLimit = 2000;
+
   final CommandExecutor _executor;
 
   GhService(this._executor);
@@ -326,11 +332,15 @@ class GhService {
 
   /// Recent GitHub Actions workflow runs, via `gh run list --json`. [limit]
   /// matches the GitLab side's pipeline page size — see
-  /// `GlabService.pipelines`.
+  /// `GlabService.pipelines`. [allHistory] (the Forge panel's "Show more")
+  /// raises it to [fullHistoryLimit] instead; gh pages the API internally,
+  /// so a single big `--limit` is the whole mechanism.
   Future<List<WorkflowRun>> workflowRuns(
     String repoPath, {
     int limit = 30,
+    bool allHistory = false,
   }) async {
+    if (allHistory) limit = fullHistoryLimit;
     final decoded = await _runJson(repoPath, [
       'gh',
       'run',

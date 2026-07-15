@@ -310,9 +310,10 @@ class GlabService {
     );
   }
 
-  /// Safety bound on the manual page walks ([mergeRequests], [jobs]) — far
-  /// beyond any realistic project's open-MR or pipeline-job count, but a hard
-  /// stop so a bug (or a pathological project) can't loop fetching forever.
+  /// Safety bound on the manual page walks ([mergeRequests], [jobs], and
+  /// [pipelines]'s full-history mode) — far beyond any realistic project's
+  /// open-MR or pipeline-job count, but a hard stop so a bug (or a
+  /// pathological project) can't loop fetching forever.
   static const int _maxListPages = 20;
 
   /// Parses the HTTP status from `glab api -i` output. Returns null when no
@@ -366,13 +367,39 @@ class GlabService {
 
   /// Recent CI/CD pipelines via the REST passthrough (`:id` is resolved from the
   /// repo's working directory by glab).
-  Future<List<Pipeline>> pipelines(String repoPath, {int perPage = 30}) async {
-    final decoded = await api(
-      repoPath,
-      'projects/:id/pipelines',
-      fields: ['per_page=$perPage'],
-    );
-    return _mapList(decoded, Pipeline.fromJson, label: 'projects/:id/pipelines');
+  ///
+  /// The default is one page of the newest [perPage] — the Forge panel's
+  /// everyday view. [allHistory] instead walks pages of 100 (newest-first is
+  /// the endpoint's default order) for the panel's "Show more", capped at
+  /// [_maxListPages] like the other page walks so a huge project can't loop
+  /// fetching forever.
+  Future<List<Pipeline>> pipelines(
+    String repoPath, {
+    int perPage = 30,
+    bool allHistory = false,
+  }) async {
+    const label = 'projects/:id/pipelines';
+    if (!allHistory) {
+      final decoded = await api(
+        repoPath,
+        'projects/:id/pipelines',
+        fields: ['per_page=$perPage'],
+      );
+      return _mapList(decoded, Pipeline.fromJson, label: label);
+    }
+    const fullPage = 100; // the REST API's per_page ceiling
+    final all = <Pipeline>[];
+    for (var page = 1; page <= _maxListPages; page++) {
+      final decoded = await api(
+        repoPath,
+        'projects/:id/pipelines',
+        fields: ['per_page=$fullPage', 'page=$page'],
+      );
+      final batch = _mapList(decoded, Pipeline.fromJson, label: label);
+      all.addAll(batch);
+      if (batch.length < fullPage) break; // last (short) page reached
+    }
+    return all;
   }
 
   /// Project path (`group/sub/project`) from a git remote URL, for GraphQL

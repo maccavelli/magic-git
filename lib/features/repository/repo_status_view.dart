@@ -1689,7 +1689,18 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           const SizedBox(width: 8),
           const MacosIcon(CupertinoIcons.arrow_branch, size: 18),
           const SizedBox(width: 6),
-          Text(label, style: typography.headline),
+          // Flexible: the branch name is the one unbounded piece of user data
+          // in this toolbar — it must truncate rather than push the action
+          // buttons off the pane (the Row has no other shrinkable child, so
+          // without this ANY tight width paints an overflow stripe).
+          Flexible(
+            child: Text(
+              label,
+              style: typography.headline,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           if (branch != null && branch.hasUpstream) ...[
             const SizedBox(width: 8),
             Text(
@@ -1709,9 +1720,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           // SSH latency + connection status (ambient shell row is hidden on
           // this page so the strip lives only on the toolbar). Hidden for
           // local sessions — skip the gap too so layout stays tight.
+          // Flexible: ambient info yields (truncates) before the action
+          // buttons do when the pane runs narrow.
           if (!ref.watch(connectionProvider.select((c) => c.isLocal))) ...[
             const SizedBox(width: 12),
-            const SshLinkStatusRow(),
+            const Flexible(child: SshLinkStatusRow()),
           ],
           const Spacer(),
           _toolButton(

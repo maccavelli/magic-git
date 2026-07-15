@@ -137,6 +137,42 @@ void main() {
       expect(exec.calls[0], containsAllInOrder(['--page', '1']));
       expect(exec.calls[1], containsAllInOrder(['--page', '2']));
     });
+
+    test('pipelines default is a single newest page, no walk', () async {
+      String pipeRow(int id) =>
+          '{"id":$id,"status":"success","ref":"main","sha":"aaa","web_url":""}';
+      // A full default page must NOT trigger a second fetch — depth beyond it
+      // is the "Show more" (allHistory) path's job.
+      exec.next = _ok(_jsonRows(30, 1, pipeRow));
+
+      final pipes = await glab.pipelines('/repo');
+
+      expect(pipes, hasLength(30));
+      expect(exec.calls, hasLength(1));
+      expect(exec.calls.single, containsAllInOrder(['-f', 'per_page=30']));
+    });
+
+    test('pipelines allHistory walks pages of 100 until a short page', () async {
+      String pipeRow(int id) =>
+          '{"id":$id,"status":"success","ref":"main","sha":"aaa","web_url":""}';
+      exec.results.addAll([
+        _ok(_jsonRows(100, 1, pipeRow)),
+        _ok(_jsonRows(7, 101, pipeRow)),
+      ]);
+
+      final pipes = await glab.pipelines('/repo', allHistory: true);
+
+      expect(pipes, hasLength(107),
+          reason: 'history past page 1 must accumulate');
+      expect(exec.calls, hasLength(2));
+      expect(
+        exec.calls[0],
+        containsAllInOrder(['-f', 'per_page=100', '-f', 'page=1']),
+      );
+      expect(exec.calls[1], containsAllInOrder(['-f', 'page=2']));
+      // A manual page walk, never `--paginate` (kept bounded per selection).
+      expect(exec.calls.every((c) => !c.contains('--paginate')), isTrue);
+    });
   });
 
   group('GlabService.graphqlArgs', () {

@@ -13,6 +13,7 @@ import '../common/label_chip.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
+import '../common/show_more_row.dart';
 import '../common/tool_icon_button.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
@@ -50,11 +51,28 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   // button so the mouse-only path doesn't depend on the keyboard.
   String? _selectedBranch;
   List<GitRef> _locals = const [];
+
+  /// Tags shown before the "Show more" row expands the list. Tags accrete
+  /// forever (unlike branches, nothing prunes them), so a mature repo buries
+  /// the section under hundreds of historical releases — the newest few are
+  /// what anyone comes here for.
+  static const int _collapsedTagCount = 10;
+  bool _showAllTags = false;
   final FocusNode _branchFocus = FocusNode(debugLabel: 'branch-list');
   final ScrollController _branchScroll = ScrollController();
   final Map<String, GlobalKey> _branchRowKeys = {};
 
   String get repoPath => widget.repoPath;
+
+  @override
+  void didUpdateWidget(BranchesView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repoPath != widget.repoPath) {
+      // Same State survives a repo switch (the panel isn't keyed by repoPath)
+      // — an expanded tag list from the old repo shouldn't leak into the new.
+      setState(() => _showAllTags = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -213,6 +231,19 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           final locals = refs.where((r) => r.isLocalBranch).toList();
           final remotes = refs.where((r) => r.isRemote).toList();
           final tags = refs.where((r) => r.isTag).toList();
+          // Newest first: for-each-ref's default order is refname-ascending,
+          // which for release tags reads oldest-to-newest — backwards from
+          // what anyone scanning for the latest release wants. Dateless refs
+          // (a pre-2.7 remote git) sink to the end; name breaks ties (and
+          // keeps the order deterministic — List.sort isn't stable).
+          tags.sort((a, b) {
+            final cmp = (b.creatorDate ?? -1).compareTo(a.creatorDate ?? -1);
+            return cmp != 0 ? cmp : a.shortName.compareTo(b.shortName);
+          });
+          final visibleTags = _showAllTags
+              ? tags
+              : tags.take(_collapsedTagCount).toList();
+          final hiddenTags = tags.length - visibleTags.length;
           // Cache for the arrow-key handler (which runs outside build).
           _locals = locals;
           // A flat descriptor list, not built Widgets — ListView.builder below
@@ -226,7 +257,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
             for (final b in remotes) _BranchRow(b, remote: true),
             _HeaderRow('Tags (${tags.length})'),
             const _CreateTagRow(),
-            for (final t in tags) _TagRefRow(t),
+            for (final t in visibleTags) _TagRefRow(t),
+            if (hiddenTags > 0) _ShowMoreTagsRow(hiddenTags),
           ];
           return Focus(
             focusNode: _branchFocus,
@@ -242,6 +274,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                     ? _remoteRow(context, git, branch)
                     : _localRow(context, git, branch),
                 _TagRefRow(:final tag) => _tagRow(context, git, tag),
+                _ShowMoreTagsRow(:final hidden) => ShowMoreRow(
+                  label: 'Show $hidden more ${hidden == 1 ? "tag" : "tags"}',
+                  onTap: () => setState(() => _showAllTags = true),
+                ),
               },
             ),
           );
@@ -830,4 +866,9 @@ class _BranchRow extends _Row {
 class _TagRefRow extends _Row {
   final GitRef tag;
   const _TagRefRow(this.tag);
+}
+
+class _ShowMoreTagsRow extends _Row {
+  final int hidden;
+  const _ShowMoreTagsRow(this.hidden);
 }

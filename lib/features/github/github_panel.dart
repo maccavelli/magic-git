@@ -9,6 +9,7 @@ import '../common/async_views.dart';
 import '../common/branch_switch.dart';
 import '../common/escape_dismissible.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/show_more_row.dart';
 import '../common/tool_icon_button.dart';
 import 'create_pr_sheet.dart';
 import 'run_jobs_view.dart';
@@ -34,6 +35,10 @@ class GitHubPanel extends ConsumerStatefulWidget {
 }
 
 class _GitHubPanelState extends ConsumerState<GitHubPanel> {
+  /// Runs shown before the "Show more" row expands the list to full history —
+  /// mirrors `GitLabPanel`'s collapsed pipeline count.
+  static const int _collapsedRunCount = 10;
+
   // Exactly one of these is non-null: the selected left-pane item.
   int? _selectedPrNumber;
   int? _selectedRunId;
@@ -147,6 +152,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     AsyncValue<List<WorkflowRun>> runs,
     Map<String, WorkflowRun> runByBranch,
   ) {
+    final fullHistory = ref.watch(workflowRunsScopeProvider(repoPath));
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
@@ -167,7 +173,24 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
           'Workflow Runs',
           () => ref.invalidate(workflowRunsProvider(repoPath)),
         ),
-        asyncListSection(runs, 'No recent workflow runs', (r) => _runRow(r)),
+        // Newest 10 by default; "Show more" re-fetches the same provider with
+        // the full (bounded) history — see GitLabPanel._leftPane for the
+        // skipLoadingOnReload / busy-row reasoning.
+        asyncListSection(
+          runs,
+          'No recent workflow runs',
+          (r) => _runRow(r),
+          skipLoadingOnReload: true,
+          limit: fullHistory ? null : _collapsedRunCount,
+          overflow: (hidden) => ShowMoreRow(
+            label: 'Show all workflow runs',
+            onTap: () => ref
+                .read(workflowRunsScopeProvider(repoPath).notifier)
+                .expand(),
+          ),
+        ),
+        if (fullHistory && runs.isLoading)
+          const ShowMoreRow(label: 'Loading run history…', busy: true),
       ],
     );
   }

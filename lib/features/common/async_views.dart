@@ -96,16 +96,34 @@ class NoRemoteNotice extends StatelessWidget {
 /// Renders a list-bearing [AsyncValue] as a vertical section: a padded spinner
 /// while loading, a red message on error, a grey [emptyMessage] when the list is
 /// empty, otherwise the mapped [row]s stacked in a Column.
+///
+/// With [limit] set, only the first [limit] items are rendered and [overflow]
+/// (given the hidden count) supplies a trailing row — the "Show more"
+/// affordance. [skipLoadingOnReload] keeps the current rows on screen while a
+/// dependency-triggered re-fetch runs (e.g. the Forge panels expanding a list
+/// to full history) instead of collapsing the section to a spinner.
 Widget asyncListSection<T>(
   AsyncValue<List<T>> async,
   String emptyMessage,
-  Widget Function(T) row,
-) {
+  Widget Function(T) row, {
+  bool skipLoadingOnReload = false,
+  int? limit,
+  Widget Function(int hidden)? overflow,
+}) {
   return async.when(
+    skipLoadingOnReload: skipLoadingOnReload,
     loading: () => const SectionLoading(),
     error: (err, _) => SectionError(err),
-    data: (items) => items.isEmpty
-        ? SectionEmpty(emptyMessage)
-        : Column(children: items.map(row).toList()),
+    data: (items) {
+      if (items.isEmpty) return SectionEmpty(emptyMessage);
+      final visible = limit == null ? items : items.take(limit).toList();
+      final hidden = items.length - visible.length;
+      return Column(
+        children: [
+          ...visible.map(row),
+          if (hidden > 0 && overflow != null) overflow(hidden),
+        ],
+      );
+    },
   );
 }

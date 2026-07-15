@@ -109,9 +109,9 @@ void main() {
               () => _StubPingSamples(samples),
             ),
           ],
-          child: MacosApp(
+          child: const MacosApp(
             home: MacosWindow(
-              child: const ContentArea(
+              child: ContentArea(
                 builder: _content,
               ),
             ),
