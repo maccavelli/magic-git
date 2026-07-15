@@ -110,18 +110,14 @@ class RefChipStrip extends StatelessWidget {
     final shown = visible.take(maxVisible).toList();
     final hidden = visible.sublist(shown.length);
 
-    // Flexible chips share the strip's max width so two long names ellipsize
-    // instead of overflowing the history row (the strip itself sits in a
-    // Flexible in HistoryView). +N stays intrinsic — it's always short.
+    // Intrinsic row: each chip caps its own width ([maxChipWidth]) and long
+    // names ellipsize inside. Do NOT wrap chips in Flexible here — a flex
+    // child of a min-sized / right-aligned strip can collapse to zero width
+    // (the history pop-out showed subjects with no badges at all).
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        for (final r in shown)
-          Flexible(
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: RefChip(gitRef: r),
-            ),
-          ),
+        for (final r in shown) RefChip(gitRef: r),
         if (hidden.isNotEmpty)
           MacosTooltip(
             message: hidden
@@ -158,9 +154,9 @@ class RefChip extends StatelessWidget {
   Widget build(BuildContext context) {
     final (color, icon) = _style(gitRef);
     final label = refDecorationLabel(gitRef);
-    // Width is capped both by [RefChipStrip.maxChipWidth] and by any Flex
-    // ancestor; the label ellipsizes rather than vanishing into an icon-only
-    // badge. Full name always lives on the tooltip.
+    // Width is hard-capped by [RefChipStrip.maxChipWidth]; the label
+    // ellipsizes rather than vanishing into an icon-only badge. Full name
+    // always lives on the tooltip.
     final chip = _RefChipChrome(
       color: color,
       child: Row(
@@ -221,13 +217,12 @@ class _RefChipChrome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Bounded max width is what lets the inner Row's Flexible text ellipsize
+    // without a flex ancestor on the strip itself.
     return Container(
       margin: const EdgeInsets.only(left: 4),
       constraints: const BoxConstraints(
         maxWidth: RefChipStrip.maxChipWidth,
-        // Keep a readable floor so a squeezed Flexible still shows more than
-        // an icon (tooltip carries the full name either way).
-        minWidth: 36,
       ),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(

@@ -417,6 +417,14 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   List<GitRef>? _lastRefs;
   Map<String, List<GitRef>>? _decorations;
 
+  /// Last successfully loaded refs for this repo. [refsProvider] is autoDispose
+  /// and is invalidated on every git-state tick; during the reload
+  /// `AsyncValue.value` is often null, and the history pop-out used to paint
+  /// a bare list (`?? const []`) for the whole round trip — or forever if the
+  /// proxied for-each-ref failed. Keep the last good list so branch/tag chips
+  /// stay visible.
+  List<GitRef> _stableRefs = const [];
+
   CommitGraph _graphFor(List<GitCommit> commits) {
     if (!identical(commits, _lastCommits) || _graph == null) {
       _lastCommits = commits;
@@ -431,6 +439,18 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       _decorations = refsByCommit(refs);
     }
     return _decorations!;
+  }
+
+  /// Prefer the latest successful [refsProvider] payload; fall back to the
+  /// last good list while loading/errored so decorations don't blink out.
+  List<GitRef> _refsForDecorations() {
+    final async = ref.watch(refsProvider(widget.repoPath));
+    final latest = async.value;
+    if (latest != null) {
+      _stableRefs = latest;
+      return latest;
+    }
+    return _stableRefs;
   }
 
   CommitGraph? _densitySource;
@@ -472,6 +492,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       _graph = null;
       _lastRefs = null;
       _decorations = null;
+      _stableRefs = const [];
       _densitySource = null;
       _density = null;
       // The depth resets itself: a different repo is a different [LogQuery],
@@ -1056,10 +1077,10 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       _prefetchCommitPatches(next.value);
     });
     final logAsync = ref.watch(logSearchProvider(query));
-    // Ref decorations are best-effort: if for-each-ref fails, show a bare graph.
-    final decorations = _decorationsFor(
-      ref.watch(refsProvider(widget.repoPath)).value ?? const [],
-    );
+    // Ref decorations are best-effort: if for-each-ref never lands, show a bare
+    // graph — but keep the last successful list across reloads (pop-out ticks
+    // invalidate refs often; see [_refsForDecorations]).
+    final decorations = _decorationsFor(_refsForDecorations());
 
     // Loading a deeper page no longer changes the provider key, so the rows
     // already on screen (and the scroll offset) survive it on their own: the
@@ -1613,11 +1634,10 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                             const SizedBox(width: 4),
                           ],
                           // Subject first (Tower / Fork / GitHub Desktop): the
-                          // message is the primary signal. Ref chips follow as
-                          // secondary labels with real names + tooltips; the
-                          // strip is Flexible only so a long name ellipsizes
-                          // inside its max chip width instead of overflowing
-                          // the fixed-height row. Empty after filter → no strip.
+                          // message is primary. Chips are intrinsically sized
+                          // (capped per chip + maxVisible) so they never compete
+                          // with the subject for flex space and collapse to
+                          // zero width — the pop-out bug that hid every badge.
                           Expanded(
                             child: Text(
                               commit.subject,
@@ -1627,15 +1647,12 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                             ),
                           ),
                           if ((decorations[commit.hash] ?? const <GitRef>[])
-                              .isNotEmpty)
-                            Flexible(
-                              child: Align(
-                                alignment: Alignment.centerRight,
-                                child: RefChipStrip(
-                                  refs: decorations[commit.hash]!,
-                                ),
-                              ),
+                              .isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            RefChipStrip(
+                              refs: decorations[commit.hash]!,
                             ),
+                          ],
                         ],
                       ),
                       const SizedBox(height: 2),

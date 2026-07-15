@@ -594,15 +594,19 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
         .isRecent(repoPath, at, _ownMutationSuppressWindow)) {
       return;
     }
-    if (args['mode'] == WatchMode.eventDriven.name) {
-      // The main window forwards which paths moved; an empty list means it
-      // couldn't say, and every path must be assumed edited.
-      final paths = (args['paths'] as List?)?.cast<String>() ?? const <String>[];
-      final tick = RepoWatchEvent(
-        at: at,
-        mode: WatchMode.eventDriven,
-        paths: paths.toSet(),
-      );
+    final modeName = args['mode'] as String? ?? '';
+    final mode =
+        WatchMode.values.asNameMap()[modeName] ?? WatchMode.stopped;
+    // The main window forwards which paths moved; an empty list means it
+    // couldn't say, and every path must be assumed edited.
+    final paths =
+        (args['paths'] as List?)?.cast<String>() ?? const <String>[];
+    final tick = RepoWatchEvent(
+      at: at,
+      mode: mode,
+      paths: paths.toSet(),
+    );
+    if (mode == WatchMode.eventDriven) {
       final edits = ref.read(worktreeEditsProvider.notifier);
       if (tick.isScoped && !tick.touchesGitState) {
         edits.noteFiles(repoPath, tick.paths);
@@ -610,9 +614,23 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
         edits.noteRepo(repoPath);
       }
     }
-    // Unlike the in-app tab (whose panels each refresh what they watch), the
-    // tick is this window's ONLY freshness signal for main-window mutations.
-    _invalidateRepoFamilies(repoPath);
+    // Mirror RepoStatusView's tick policy — NOT "invalidate everything on
+    // every heartbeat". The history pop-out used to re-run log + for-each-ref
+    // on pure working-tree edits (and polling ticks), racing the proxied
+    // snapshot and leaving `refsProvider` in AsyncLoading/error with
+    // `value == null`, so branch/tag chips never stayed on screen.
+    //
+    // Full shared-state refresh only when git's own state may have moved
+    // (commit/checkout/fetch/…) or the tick is unscoped. Working-tree-only
+    // edits matter for a detached *repo* window (status), not for History.
+    if (mode == WatchMode.eventDriven &&
+        (tick.touchesGitState || !tick.isScoped)) {
+      _invalidateRepoFamilies(repoPath);
+      return;
+    }
+    if (_kind == WindowKind.detachedRepo) {
+      ref.invalidate(statusProvider(repoPath));
+    }
   }
 
   @override

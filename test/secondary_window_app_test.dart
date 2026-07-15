@@ -17,6 +17,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/window/window_channels.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
+import 'package:remote_magic_git/features/history/ref_chip.dart';
 import 'package:remote_magic_git/features/window/secondary_window_main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -54,16 +55,38 @@ class _FakeExecutor extends SSHCommandExecutor {
 /// test, which needs a selectable row (the executor-level fake can't produce
 /// git's log wire format).
 class _FakeGit extends GitService {
-  _FakeGit() : super(SSHCommandExecutor(SSHClientManager()));
+  _FakeGit({this.withRefs = false})
+    : super(SSHCommandExecutor(SSHClientManager()));
+
+  /// When true, decorate the head commit with a local HEAD branch + a tag —
+  /// enough to prove the history pop-out paints ref chips.
+  final bool withRefs;
+
+  static const headHash =
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
   static const headCommit = GitCommit(
-    hash: 'aaaaaaa1111111',
+    hash: headHash,
     shortHash: 'aaaaaaa',
     authorName: 'Dev',
     authorEmail: 'd@e',
     date: '2026-07-04T10:00',
     parents: [],
     subject: 'head commit',
+  );
+
+  static const headBranch = GitRef(
+    name: 'refs/heads/master',
+    oid: headHash,
+    isHead: true,
+    subject: 'head commit',
+  );
+
+  static const releaseTag = GitRef(
+    name: 'refs/tags/v1.0.0',
+    oid: headHash,
+    isHead: false,
+    subject: 'release',
   );
 
   @override
@@ -85,7 +108,8 @@ class _FakeGit extends GitService {
   }) async => const [headCommit];
 
   @override
-  Future<List<GitRef>> refs(String repoPath) async => const [];
+  Future<List<GitRef>> refs(String repoPath) async =>
+      withRefs ? const [headBranch, releaseTag] : const [];
 
   @override
   Future<String> showCommit(
@@ -303,7 +327,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(executor.calls.length, before, reason: 'own echo → no refetch');
 
-    // A tick well outside the suppression window refreshes normally.
+    // A git-state tick well outside the suppression window refreshes.
+    // Unscoped (no paths) counts as "anything may have moved".
     await pushHubEvent('repoTick', {
       'repoPath': '/srv/repo',
       'mode': 'eventDriven',
@@ -313,6 +338,47 @@ void main() {
     });
     await tester.pumpAndSettle();
     expect(executor.calls.length, greaterThan(before));
+  });
+
+  testWidgets(
+    'a working-tree-only tick does not re-walk history/refs in a History window',
+    (tester) async {
+      mockChannels(_connected('/srv/repo'));
+      final executor = _FakeExecutor();
+      await pump(tester, executor);
+      final before = executor.calls.length;
+
+      await pushHubEvent('repoTick', {
+        'repoPath': '/srv/repo',
+        'mode': 'eventDriven',
+        'paths': ['lib/foo.dart'],
+        'atMs': DateTime.now()
+            .add(const Duration(seconds: 10))
+            .millisecondsSinceEpoch,
+      });
+      await tester.pumpAndSettle();
+      expect(
+        executor.calls.length,
+        before,
+        reason: 'pure file edit must not invalidate log/refs for History',
+      );
+    },
+  );
+
+  testWidgets('history pop-out paints branch and tag ref chips', (
+    tester,
+  ) async {
+    mockChannels(_connected('/srv/repo'));
+    await pump(
+      tester,
+      _FakeExecutor(),
+      gitService: _FakeGit(withRefs: true),
+    );
+
+    expect(find.text('head commit'), findsOneWidget);
+    expect(find.byType(RefChip), findsNWidgets(2));
+    expect(find.text('master'), findsOneWidget);
+    expect(find.text('v1.0.0'), findsOneWidget);
   });
 
   testWidgets('the Recovery button opens the sheet locally in this window', (
