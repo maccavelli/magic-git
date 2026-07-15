@@ -621,6 +621,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       'git fetch --all --prune',
       (log) async =>
           log.logResult('git fetch --all --prune', await git.fetch(repoPath)),
+      dock: true,
     );
     // The fetch talked to the remote anyway — mark the cached remote-tag
     // listing refetchable (lazy: the ls-remote runs on the next actual read).
@@ -656,7 +657,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       final before = await git.revParse(repoPath, 'HEAD');
       log.logResult(label, await git.pull(repoPath, mode: mode));
       await _logPulled(log, git, before);
-    });
+    }, dock: true);
   }
 
   Future<void> _push({
@@ -732,7 +733,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         ),
       );
       await _logPushed(log, git, base);
-    });
+    }, dock: true);
     // A --follow-tags push may have just put local tags on the remote — the
     // cached remote-tag listing is stale.
     if (followTags && mounted) refreshRemoteTags(ref, repoPath);
@@ -750,7 +751,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       final pushBase = await git.revParse(repoPath, '@{upstream}');
       log.logResult('git push', await git.push(repoPath));
       await _logPushed(log, git, pushBase);
-    });
+    }, dock: true);
   }
 
   // Logs the files a pull brought in (HEAD moved from [before] to now).

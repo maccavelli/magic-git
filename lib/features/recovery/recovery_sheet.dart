@@ -538,67 +538,10 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
     await _run(repoPath, () => git.deleteSnapshot(repoPath, snapshot));
   }
 
-  Future<String?> _promptBranchName() {
-    final controller = TextEditingController();
-    return showMacosSheet<String>(
-      context: context,
-      builder: (sheetContext) => EscapeDismissible(
-        child: SizedSheet(
-          width: kSheetWidth,
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  'New branch from this state',
-                  style: MacosTheme.of(sheetContext).typography.title3,
-                ),
-                const SheetDescription(
-                  'Creates a branch starting at the selected reflog entry '
-                  'and checks it out.',
-                ),
-                const SizedBox(height: 14),
-                MacosTextField(
-                  controller: controller,
-                  placeholder: 'branch name',
-                  placeholderStyle: kAppPlaceholderStyle,
-                  autofocus: true,
-                  decoration: kAppTextFieldDecoration,
-                  focusedDecoration: kAppTextFieldFocusedDecoration,
-                  onSubmitted: (v) => Navigator.of(
-                    sheetContext,
-                  ).pop(v.trim().isEmpty ? null : v.trim()),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    PushButton(
-                      controlSize: ControlSize.large,
-                      secondary: true,
-                      onPressed: () => Navigator.of(sheetContext).pop(),
-                      child: const Text('Cancel'),
-                    ),
-                    const SizedBox(width: 10),
-                    PushButton(
-                      controlSize: ControlSize.large,
-                      onPressed: () {
-                        final v = controller.text.trim();
-                        Navigator.of(sheetContext).pop(v.isEmpty ? null : v);
-                      },
-                      child: const Text('Create'),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Future<String?> _promptBranchName() => showMacosSheet<String>(
+    context: context,
+    builder: (_) => const _BranchNamePrompt(),
+  );
 
   Widget _errorText(String message) => Center(
     child: Padding(
@@ -612,4 +555,84 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
       ),
     ),
   );
+}
+
+/// The branch-name prompt, its own widget so the [TextEditingController] has
+/// an owner that disposes it. The caller can't: showMacosSheet's future
+/// resolves at pop, while the sheet (and the text field holding the
+/// controller) lives on through the exit animation.
+class _BranchNamePrompt extends StatefulWidget {
+  const _BranchNamePrompt();
+
+  @override
+  State<_BranchNamePrompt> createState() => _BranchNamePromptState();
+}
+
+class _BranchNamePromptState extends State<_BranchNamePrompt> {
+  final _name = TextEditingController();
+
+  @override
+  void dispose() {
+    _name.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final v = _name.text.trim();
+    Navigator.of(context).pop(v.isEmpty ? null : v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return EscapeDismissible(
+      child: SizedSheet(
+        width: kSheetWidth,
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'New branch from this state',
+                style: MacosTheme.of(context).typography.title3,
+              ),
+              const SheetDescription(
+                'Creates a branch starting at the selected reflog entry '
+                'and checks it out.',
+              ),
+              const SizedBox(height: 14),
+              MacosTextField(
+                controller: _name,
+                placeholder: 'branch name',
+                placeholderStyle: kAppPlaceholderStyle,
+                autofocus: true,
+                decoration: kAppTextFieldDecoration,
+                focusedDecoration: kAppTextFieldFocusedDecoration,
+                onSubmitted: (_) => _submit(),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  PushButton(
+                    controlSize: ControlSize.large,
+                    secondary: true,
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 10),
+                  PushButton(
+                    controlSize: ControlSize.large,
+                    onPressed: _submit,
+                    child: const Text('Create'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

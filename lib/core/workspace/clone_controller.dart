@@ -4,6 +4,7 @@ import '../forge/forge.dart';
 import '../git/host_fs_service.dart';
 import '../github/gh_service.dart';
 import '../gitlab/glab_service.dart';
+import '../local/dock_progress.dart';
 import '../output/output_log.dart';
 import '../providers/app_providers.dart';
 import '../ssh/ssh_command_executor.dart';
@@ -139,6 +140,17 @@ class CloneJobController extends Notifier<CloneJobState> {
   /// when no job is running (guarded); terminal states allow a re-run.
   Future<bool> run(CloneRequest request) async {
     if (state.isRunning) return false;
+    // The Dock mirrors the job: indeterminate until git's transfer
+    // percentages arrive, determinate after (see [cloneFractionFor]).
+    final dock = DockProgress.instance;
+    try {
+      return await dock.track(() => _run(request));
+    } finally {
+      dock.clearFraction();
+    }
+  }
+
+  Future<bool> _run(CloneRequest request) async {
     _cancelled = false;
     _createdByThisJob = false;
 
@@ -240,6 +252,8 @@ class CloneJobController extends Notifier<CloneJobState> {
         final frame = _latestFrame(chunk);
         if (frame.isNotEmpty) {
           state = state.copyWith(progressLine: frame);
+          final fraction = cloneFractionFor(frame);
+          if (fraction != null) DockProgress.instance.setFraction(fraction);
         }
       }).asFuture<void>().catchError((_) {});
 
@@ -339,6 +353,20 @@ class CloneJobController extends Notifier<CloneJobState> {
   bool _finishCancelled() {
     state = state.copyWith(phase: CloneJobPhase.cancelled);
     return false;
+  }
+
+  /// Maps a git progress frame to a Dock fraction: "Receiving objects" is
+  /// the transfer bulk (0–90% of the bar), "Resolving deltas" the tail
+  /// (90–100%). Anything else — remote-side counting/compressing, banner
+  /// lines — returns null and the Dock stays on its previous value
+  /// (indeterminate until the first transfer percentage).
+  static double? cloneFractionFor(String frame) {
+    final m = RegExp(
+      r'^(Receiving objects|Resolving deltas):\s+(\d+)%',
+    ).firstMatch(frame);
+    if (m == null) return null;
+    final pct = int.parse(m.group(2)!) / 100.0;
+    return m.group(1) == 'Receiving objects' ? 0.9 * pct : 0.9 + 0.1 * pct;
   }
 
   /// The last `\r`- or `\n`-delimited frame in [chunk] with content — what a

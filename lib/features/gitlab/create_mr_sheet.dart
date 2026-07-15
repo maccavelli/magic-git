@@ -180,7 +180,7 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
         squash: _squash,
         removeSourceBranch: _removeSource,
       );
-    });
+    }, dock: true);
     if (!mounted) return;
     setState(() => _submitting = false);
     if (ok) {

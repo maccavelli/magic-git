@@ -165,7 +165,7 @@ class _CreateTagSheetState extends ConsumerState<CreateTagSheet> {
           log.logResult(label, e.result);
           rethrow;
         }
-      });
+      }, dock: true);
       if (!mounted) return;
       refreshRemoteTags(ref, widget.repoPath);
     }

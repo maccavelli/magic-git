@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/git/git_service.dart';
+import '../../core/local/dock_progress.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import 'actions.dart';
@@ -83,17 +84,25 @@ mixin BusyActionState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
   /// [describeError] lets a view translate a domain error into friendlier
   /// dialog copy (e.g. the stash panel's [StashStaleException]); returning
   /// null falls through to the standard handling.
+  ///
+  /// [dock] marks a network operation: the macOS Dock icon shows an
+  /// indeterminate progress bar for [body]'s whole span (see [DockProgress]).
   Future<bool> runLogged(
     String title,
     Future<void> Function(OutputLogNotifier log) body, {
     String? Function(Object error)? describeError,
+    bool dock = false,
   }) async {
     if (_busy) return false;
     setState(() => _busy = true);
     final log = ref.read(outputLogProvider.notifier);
     var success = false;
     try {
-      await body(log);
+      if (dock) {
+        await DockProgress.instance.track(() => body(log));
+      } else {
+        await body(log);
+      }
       success = true;
     } catch (e) {
       final custom = describeError?.call(e);

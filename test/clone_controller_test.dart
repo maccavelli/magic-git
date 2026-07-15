@@ -8,6 +8,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
+import 'package:remote_magic_git/core/local/dock_progress.dart';
 import 'package:remote_magic_git/core/output/output_log.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -149,6 +150,37 @@ void main() {
     expect(exec.calls, hasLength(2));
     expect(exec.calls.last, ['git', 'remote', 'get-url', 'origin'],
         reason: 'a successful clone validates its origin is in place');
+  });
+
+  test('the Dock mirrors the clone: indeterminate, then transfer fractions, '
+      'then hidden', () async {
+    final dock = DockProgress.instance;
+    dock.reset();
+    addTearDown(dock.reset);
+    final sent = <double>[];
+    dock.sendOverride = (v) async => sent.add(v);
+
+    exec.results.add(_ok('absent'));
+    final fut = job.run(_req);
+    await pumpEventQueue();
+    expect(sent, [DockProgress.indeterminate],
+        reason: 'busy but honestly indeterminate until git reports numbers');
+
+    exec.handle.emitErr('Receiving objects:  50% (1000/2000)');
+    await pumpEventQueue();
+    expect(sent.last, closeTo(0.45, 1e-9),
+        reason: 'the transfer occupies the first 90% of the bar');
+
+    exec.handle.emitErr('\rResolving deltas: 100% (50/50), done.\n');
+    await pumpEventQueue();
+    expect(sent.last, closeTo(1.0, 1e-9));
+
+    exec.results.add(_ok('https://github.com/mac/magic-git.git\n')); // verify
+    await exec.handle.finish(0);
+    expect(await fut, isTrue);
+    await pumpEventQueue();
+    expect(sent.last, DockProgress.hidden,
+        reason: 'a finished job never leaves a stale bar on the Dock');
   });
 
   test('an existing destination fails before any stream or delete', () async {

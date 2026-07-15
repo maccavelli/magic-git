@@ -8,6 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/common/diff_view.dart';
 import 'package:remote_magic_git/features/recovery/recovery_sheet.dart';
 
@@ -18,6 +20,22 @@ class _StubConnection extends ConnectionController {
     repoPath: '/repo',
     host: 'h',
   );
+}
+
+class _FakeGit extends GitService {
+  _FakeGit() : super(SSHCommandExecutor(SSHClientManager()));
+
+  final branched = <(String name, String startPoint)>[];
+
+  @override
+  Future<void> branchFrom(
+    String repoPath,
+    String name,
+    String startPoint, {
+    bool checkout = true,
+  }) async {
+    branched.add((name, startPoint));
+  }
 }
 
 const _entries = [
@@ -62,10 +80,12 @@ Future<void> pump(
   WidgetTester tester, {
   List<ReflogEntry> entries = _entries,
   List<SnapshotRef> snapshots = _snapshots,
+  GitService? git,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        if (git != null) gitServiceProvider.overrideWithValue(git),
         connectionProvider.overrideWith(_StubConnection.new),
         reflogProvider.overrideWith((ref, repoPath) async => entries),
         magicSnapshotsProvider.overrideWith((ref, repoPath) async => snapshots),
@@ -110,6 +130,50 @@ void main() {
     expect(find.text('Restore…'), findsOneWidget);
     expect(find.text('aaaaaaaaaa'), findsOneWidget,
         reason: 'detail header shows the short hash prefix');
+  });
+
+  testWidgets('Create branch here… prompts for a name, creates the branch at '
+      'the selected hash, and the prompt closes cleanly', (tester) async {
+    final git = _FakeGit();
+    await pump(tester, git: git);
+
+    await tester.tap(find.text('add feature'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Restore…'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create branch here…'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('New branch from this state'), findsOneWidget);
+    await tester.enterText(find.byType(MacosTextField), 'rescue/feature');
+    await tester.tap(find.widgetWithText(PushButton, 'Create'));
+    // Settle fully: the prompt's exit animation runs with the text field
+    // still holding its (widget-owned) controller — this is where a
+    // caller-disposed controller used to be a landmine.
+    await tester.pumpAndSettle();
+
+    expect(git.branched, [
+      ('rescue/feature', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+    ]);
+    expect(find.text('New branch from this state'), findsNothing);
+  });
+
+  testWidgets('cancelling the branch prompt creates nothing', (tester) async {
+    final git = _FakeGit();
+    await pump(tester, git: git);
+
+    await tester.tap(find.text('add feature'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Restore…'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create branch here…'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(PushButton, 'Cancel'));
+    await tester.pumpAndSettle();
+
+    expect(git.branched, isEmpty);
+    expect(find.text('New branch from this state'), findsNothing);
   });
 
   testWidgets('selecting a snapshot shows snapshot actions', (tester) async {

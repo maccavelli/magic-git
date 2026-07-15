@@ -1,16 +1,25 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show Dialog;
 import 'package:macos_ui/macos_ui.dart';
+import '../../core/local/dock_progress.dart';
 import 'escape_dismissible.dart';
 
 /// Runs a mutating [action], surfacing any failure in a macOS error dialog.
 /// Returns true on success — callers use this to decide whether to refresh.
+///
+/// [dock] marks a network operation: the macOS Dock icon shows an
+/// indeterminate progress bar for [action]'s whole span (see [DockProgress]).
 Future<bool> runAction(
   BuildContext context,
-  Future<void> Function() action,
-) async {
+  Future<void> Function() action, {
+  bool dock = false,
+}) async {
   try {
-    await action();
+    if (dock) {
+      await DockProgress.instance.track(action);
+    } else {
+      await action();
+    }
     return true;
   } catch (e) {
     if (context.mounted) {

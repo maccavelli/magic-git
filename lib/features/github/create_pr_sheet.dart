@@ -163,7 +163,7 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
         labels: _labels.toList(),
         milestone: milestoneTitle,
       );
-    });
+    }, dock: true);
     if (!mounted) return;
     setState(() => _submitting = false);
     if (ok) {

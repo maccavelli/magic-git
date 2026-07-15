@@ -792,7 +792,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     final label = 'git push $remote refs/tags/$name';
     await runLogged(label, (log) async {
       log.logResult(label, await git.pushTag(repoPath, name, remote: remote));
-    });
+    }, dock: true);
     if (mounted) refreshRemoteTags(ref, repoPath);
   }
 
@@ -833,7 +833,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
             'git push --delete $remote refs/tags/$name',
             await git.deleteRemoteTag(repoPath, remote, name),
           );
-        });
+        }, dock: true);
         if (mounted) refreshRemoteTags(ref, repoPath);
       }
       return;
@@ -908,7 +908,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         'git push $remote ${names.map((n) => 'refs/tags/$n').join(' ')}',
         await git.pushTags(repoPath, names, remote: remote),
       );
-    });
+    }, dock: true);
     if (mounted) refreshRemoteTags(ref, repoPath);
   }
 
@@ -980,7 +980,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         'git push --delete $remote $branch',
         await git.deleteRemoteBranch(repoPath, remote, branch),
       );
-    });
+    }, dock: true);
   }
 
   /// Renames a local branch via the shared name prompt. git carries reflog,
