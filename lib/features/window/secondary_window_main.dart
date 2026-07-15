@@ -66,6 +66,32 @@ void _native(String method, [Object? arguments]) {
   _bootstrap.invokeMethod<void>(method, arguments).catchError((_) {});
 }
 
+/// Forwards every provider failure to the native side's hw-debug.log.
+///
+/// This engine has no visible console, and a failed FutureProvider is
+/// invisible wherever the UI deliberately reads it as best-effort (History's
+/// ref decorations render a bare graph on `.value ?? const []`) — a fetch
+/// that dies here otherwise leaves no trace anywhere. Same rationale as the
+/// FlutterError/uncaught-zone forwarding in [_bootSecondaryWindow]: only
+/// fires on an actual error, so it is not gated by [kWindowDiagnostics].
+final class _ProviderFailureLogObserver extends ProviderObserver {
+  const _ProviderFailureLogObserver();
+
+  @override
+  void providerDidFail(
+    ProviderObserverContext context,
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    final provider = context.provider;
+    _native(
+      'debugLog',
+      'provider failed: ${provider.name ?? provider.runtimeType}'
+      '(${provider.argument ?? ''}): $error\n$stackTrace',
+    );
+  }
+}
+
 /// Entrypoint body — called by `secondaryWindowMain()` in lib/main.dart (the
 /// `@pragma('vm:entry-point')` stub must live in the root library, because
 /// macOS `FlutterEngine.run(withEntrypoint:)` resolves names there).
@@ -109,6 +135,7 @@ Future<void> _bootSecondaryWindow() async {
       // Same rationale as the main isolate: git failures are deterministic,
       // surface them instead of hiding them behind Riverpod's default retry.
       retry: (_, _) => null,
+      observers: const [_ProviderFailureLogObserver()],
       overrides: [
         // THE seam: every provider below GitService runs unchanged; only the
         // transport is swapped for the per-window proxy. The exclusive-lane
