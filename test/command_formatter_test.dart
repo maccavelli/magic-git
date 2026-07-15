@@ -60,6 +60,21 @@ void main() {
       );
     });
 
+    test('rejects a neutralizeEnv name with shell metacharacters', () {
+      // Unset names are interpolated raw into the shell string, so they get
+      // the same defense-in-depth validation as env keys — a name carrying
+      // metacharacters must throw, never reach the command string.
+      expect(
+        () => CommandFormatter.format(
+          repoPath: '/r',
+          gitArgs: ['git', 'fetch'],
+          env: {},
+          neutralizeEnv: const ['GH_TOKEN; rm -rf /'],
+        ),
+        throwsArgumentError,
+      );
+    });
+
     test('merges custom env over defaults when passed via executor path', () {
       // CommandFormatter itself replaces env wholesale; executor merges.
       final cmd = CommandFormatter.format(

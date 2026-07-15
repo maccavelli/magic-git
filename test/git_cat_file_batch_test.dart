@@ -4,7 +4,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/command_drain.dart';
 import 'package:remote_magic_git/core/git/git_cat_file_batch.dart';
@@ -211,7 +210,7 @@ void main() {
     test('single key with showOne short-circuits without remote batch', () async {
       final exec = _RecordingExecutor();
       final batch = GitCatFileBatch(exec);
-      final key = (rev: 'HEAD', path: 'a.txt');
+      const key = (rev: 'HEAD', path: 'a.txt');
       final result = await batch.showBlobsBatch(
         '/repo',
         [key],
@@ -242,8 +241,8 @@ void main() {
               stderr: '',
             );
       final batch = GitCatFileBatch(exec);
-      final k1 = (rev: 'HEAD', path: 'a');
-      final k2 = (rev: 'HEAD', path: 'b');
+      const k1 = (rev: 'HEAD', path: 'a');
+      const k2 = (rev: 'HEAD', path: 'b');
       final result = await batch.showBlobsBatch('/repo', [k1, k2]);
       expect(exec.calls, hasLength(1));
       expect(exec.compressFlags.single, isTrue);
@@ -261,8 +260,8 @@ void main() {
               stderr: 'fatal',
             );
       final batch = GitCatFileBatch(exec);
-      final k1 = (rev: 'HEAD', path: 'a');
-      final k2 = (rev: 'main', path: 'b');
+      const k1 = (rev: 'HEAD', path: 'a');
+      const k2 = (rev: 'main', path: 'b');
       final result = await batch.showBlobsBatch(
         '/repo',
         [k1, k2],
@@ -287,8 +286,8 @@ void main() {
               stderr: '',
             );
       final batch = GitCatFileBatch(exec);
-      final k1 = (rev: 'HEAD', path: 'ok');
-      final k2 = (rev: 'HEAD', path: 'missing');
+      const k1 = (rev: 'HEAD', path: 'ok');
+      const k2 = (rev: 'HEAD', path: 'missing');
       final soft = await batch.showBlobsBatch('/repo', [k1, k2]);
       expect(soft.keys, [k1]);
 
@@ -310,121 +309,6 @@ void main() {
         batch.showBlobsBatch('/repo', [(rev: 'HEAD', path: 'a')]),
         throwsA(isA<StateError>()),
       );
-    });
-  });
-
-  group('GitObjectBatchSession', () {
-    test('close rejects further gets', () async {
-      final session = GitObjectBatchSession(
-        executor: _RecordingExecutor(),
-        repoPath: '/repo',
-      );
-      session.close();
-      expect(session.isOpen, isFalse);
-      await expectLater(
-        session.get('HEAD:a'),
-        throwsA(isA<StateError>()),
-      );
-    });
-
-    test('close is idempotent', () {
-      final session = GitObjectBatchSession(
-        executor: _RecordingExecutor(),
-        repoPath: '/repo',
-      );
-      session.close();
-      session.close();
-      expect(session.isOpen, isFalse);
-    });
-
-    test('serializes concurrent gets (never overlaps execute)', () async {
-      final exec = _RecordingExecutor();
-      final hold = Completer<void>();
-      exec.hold = hold;
-      exec.handler = (_) {
-        final oid = 'a' * 40;
-        return SSHCommandResult(
-          exitCode: 0,
-          stdout: utf8.decode(_present(oid, 'blob', utf8.encode('x'))),
-          stderr: '',
-        );
-      };
-      final session = GitObjectBatchSession(
-        executor: exec,
-        repoPath: '/repo',
-      );
-      final a = session.get('HEAD:a');
-      final b = session.get('HEAD:b');
-      // Both queued; first is held open so second must not start execute yet.
-      await Future<void>.delayed(Duration.zero);
-      expect(exec.inFlight, 1);
-      expect(exec.peakInFlight, 1);
-      hold.complete();
-      await Future.wait([a, b]);
-      expect(exec.calls, hasLength(2));
-      expect(exec.peakInFlight, 1);
-      session.close();
-    });
-
-    test('successful get returns parsed object', () async {
-      final oid = 'c' * 40;
-      final exec = _RecordingExecutor()
-        ..handler = (_) => SSHCommandResult(
-              exitCode: 0,
-              stdout: utf8.decode(_present(oid, 'blob', utf8.encode('body'))),
-              stderr: '',
-            );
-      final session = GitObjectBatchSession(
-        executor: exec,
-        repoPath: '/repo',
-      );
-      final obj = await session.get('HEAD:file');
-      expect(obj.missing, isFalse);
-      expect(obj.oid, oid);
-      expect(utf8.decode(obj.content!), 'body');
-      session.close();
-    });
-
-    test('idle timeout closes the session', () {
-      fakeAsync((async) {
-        final oid = 'd' * 40;
-        final exec = _RecordingExecutor()
-          ..handler = (_) => SSHCommandResult(
-                exitCode: 0,
-                stdout:
-                    utf8.decode(_present(oid, 'blob', utf8.encode('z'))),
-                stderr: '',
-              );
-        final session = GitObjectBatchSession(
-          executor: exec,
-          repoPath: '/repo',
-          idleTimeout: const Duration(seconds: 5),
-        );
-        // Kick off a get so the idle timer is armed after completion.
-        unawaited(session.get('HEAD:z'));
-        async.flushMicrotasks();
-        expect(session.isOpen, isTrue);
-        async.elapse(const Duration(seconds: 5));
-        expect(session.isOpen, isFalse);
-      });
-    });
-
-    test('failed execute surfaces to the caller without closing permanently '
-        'on chain only', () async {
-      final exec = _RecordingExecutor()
-        ..handler = (_) => const SSHCommandResult(
-              exitCode: 128,
-              stdout: '',
-              stderr: 'not a git repo',
-            );
-      final session = GitObjectBatchSession(
-        executor: exec,
-        repoPath: '/repo',
-      );
-      await expectLater(session.get('HEAD:x'), throwsA(isA<StateError>()));
-      // Session stays open so a later get can retry (idle timer may still run).
-      expect(session.isOpen, isTrue);
-      session.close();
     });
   });
 

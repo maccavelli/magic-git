@@ -24,6 +24,15 @@ void main() {
         throwsA(isA<SSHOutputExceeded>()),
       );
     });
+
+    test('output exactly at the ceiling is allowed', () async {
+      final out = await collectBounded(
+        Stream.fromIterable(['aaaaa']),
+        'git log',
+        maxChars: 5,
+      );
+      expect(out, 'aaaaa');
+    });
   });
 
   group('OutputByteBudget', () {
@@ -41,6 +50,8 @@ void main() {
   });
 
   group('boundedBytes', () {
+    List<int> bytes(int n) => List<int>.filled(n, 0x61);
+
     test('yields chunks while under budget', () async {
       final budget = OutputByteBudget(10);
       final out = await boundedBytes(
@@ -56,6 +67,54 @@ void main() {
         [3],
       ]);
       expect(budget.used, 3);
+    });
+
+    test('aborts with SSHOutputExceeded once the byte budget is crossed',
+        () async {
+      final budget = OutputByteBudget(5);
+      await expectLater(
+        boundedBytes(
+          Stream.fromIterable([bytes(4), bytes(4)]),
+          budget,
+          'git log',
+        ).toList(),
+        throwsA(isA<SSHOutputExceeded>()),
+      );
+    });
+
+    test('a single shared budget bounds stdout + stderr *combined*', () async {
+      // 4 + 3 = 7 bytes across two streams sharing a 6-byte budget → the
+      // combined total trips it, even though neither stream alone would.
+      final budget = OutputByteBudget(6);
+      final out = boundedBytes(
+        Stream.fromIterable([bytes(4)]),
+        budget,
+        'cmd',
+      ).toList();
+      final err = boundedBytes(
+        Stream.fromIterable([bytes(3)]),
+        budget,
+        'cmd',
+      ).toList();
+      await expectLater(
+        Future.wait([out, err], eagerError: true),
+        throwsA(isA<SSHOutputExceeded>()),
+      );
+    });
+
+    test('counts bytes, not decoded code units (multi-byte UTF-8)', () async {
+      // "é" is 2 UTF-8 bytes but 1 code unit; a byte budget must charge 2.
+      final budget = OutputByteBudget(1);
+      await expectLater(
+        boundedBytes(
+          Stream.fromIterable([
+            [0xC3, 0xA9], // 'é' in UTF-8
+          ]),
+          budget,
+          'cmd',
+        ).toList(),
+        throwsA(isA<SSHOutputExceeded>()),
+      );
     });
   });
 

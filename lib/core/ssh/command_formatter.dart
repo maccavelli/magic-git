@@ -118,9 +118,21 @@ class CommandFormatter {
             }
             return '${e.key}=${ShellEscaper.escape(e.value)}';
           }).join(' ')}; ';
+    // Same validation as env keys above: unset names are interpolated raw
+    // into the shell string, so they get the same defense-in-depth gate (only
+    // the token-var constants are passed today).
     final unset = neutralizeEnv.isEmpty
         ? ''
-        : 'unset ${neutralizeEnv.join(' ')}; ';
+        : 'unset ${neutralizeEnv.map((name) {
+            if (!_validEnvKey.hasMatch(name)) {
+              throw ArgumentError.value(
+                name,
+                'neutralizeEnv',
+                'invalid environment variable name',
+              );
+            }
+            return name;
+          }).join(' ')}; ';
     if (!compressOutput) {
       return '$unset$prelude$cd && exec $escapedArgs';
     }

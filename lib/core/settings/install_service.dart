@@ -89,7 +89,8 @@ class InstallService {
     final base = filename.split(RegExp(r'[\\/]')).last;
     final remotePath = '$tmp/$base';
 
-    // 2. Upload (SFTP over SSH, or a filesystem write locally).
+    // 2. Upload (an exec-channel `cat` over SSH, or a filesystem write
+    // locally).
     await _executor.uploadBytes(remotePath, bytes);
 
     // 3. Extract/install into ~/.local/bin, cleanup, arch sanity-check. Inputs

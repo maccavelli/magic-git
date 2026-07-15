@@ -3,11 +3,12 @@ import 'dart:convert';
 import 'dart:io' show SocketException, gzip;
 import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
-import '../exec/command_drain.dart' as drain;
+import '../exec/command_drain.dart';
 import '../exec/command_lanes.dart';
 import '../exec/command_telemetry.dart';
 import 'adaptive_read_concurrency.dart';
 import 'command_formatter.dart';
+import 'shell_escaper.dart';
 import 'ssh_client_manager.dart';
 
 // Re-export drain types so existing imports of this library keep working.
@@ -20,11 +21,6 @@ export '../exec/command_drain.dart'
         maxCommandOutputChars,
         maxCommandOutputBytes;
 export '../exec/command_lanes.dart' show ExecLane;
-
-// Local aliases used throughout this file (prefix import avoids name clash
-// with the static forwarders below).
-typedef OutputByteBudget = drain.OutputByteBudget;
-typedef SSHOutputExceeded = drain.SSHOutputExceeded;
 
 /// Transport-agnostic command result. [SSHCommandResult] remains as a
 /// compatibility typedef — both the SSH and local executors return this shape.
@@ -110,10 +106,11 @@ typedef SSHStreamHandle = CommandStreamHandle;
 /// coexists with request/response commands without blocking them.
 class _SshSessionStreamHandle implements CommandStreamHandle {
   final SSHSession _session;
+  late final int _telemetryEpoch;
   bool _closed = false;
 
   _SshSessionStreamHandle(this._session) {
-    CommandTelemetry.instance.streamOpened();
+    _telemetryEpoch = CommandTelemetry.instance.streamOpened();
     // Count natural channel death the same as cancel (watcher restart path).
     unawaited(
       _session.done.then((_) {}, onError: (_) {}).whenComplete(_noteClosed),
@@ -123,7 +120,7 @@ class _SshSessionStreamHandle implements CommandStreamHandle {
   void _noteClosed() {
     if (_closed) return;
     _closed = true;
-    CommandTelemetry.instance.streamClosed();
+    CommandTelemetry.instance.streamClosed(_telemetryEpoch);
   }
 
   /// The stream transform carries decoder state across chunk boundaries, so
@@ -219,13 +216,6 @@ class SSHCommandExecutor implements CommandExecutor {
   /// callers can override per command.
   static const Duration defaultTimeout = Duration(seconds: 60);
 
-  /// Post-decode backstop — see [drain.maxCommandOutputChars].
-  /// Kept as a static for call sites that use [SSHCommandExecutor.maxCommandOutputChars].
-  static const int maxCommandOutputChars = drain.maxCommandOutputChars;
-
-  /// Primary byte ceiling — see [drain.maxCommandOutputBytes].
-  static const int maxCommandOutputBytes = drain.maxCommandOutputBytes;
-
   /// Lane-aware scheduler: reads run concurrently (and alongside a fetch/push
   /// on the sync lane), mutations run strictly alone — see [ExecLane] /
   /// [CommandLaneScheduler]. Replaces the old single serialized chain, which
@@ -294,50 +284,43 @@ class SSHCommandExecutor implements CommandExecutor {
     resetAdaptiveReads();
   }
 
-  /// Streams [bytes] to [remotePath] over SFTP on the active session. Not on the
-  /// command lane scheduler — it's a distinct SFTP channel — but still
-  /// generation-pinned and timed so a disconnect/reconnect mid-upload refuses
-  /// cleanly and a hung SFTP never stalls install forever. The [SftpClient] is
-  /// always closed so repeated sideloads don't leak channels.
+  /// Writes [bytes] to [remotePath] as an ordinary exec-channel command
+  /// (`cat > path`, the raw bytes on stdin) — NOT over SFTP. dartssh2's
+  /// `SftpClient.close()` ends the SFTP protocol session but never closes the
+  /// channel underneath it (verified against the library source; channels die
+  /// only with the whole client), so the previous SFTP implementation leaked
+  /// one of the host's `MaxSessions` slots per sideload until disconnect. The
+  /// exec channel gets the full command lifecycle for free: lane scheduling,
+  /// generation pinning, the timeout's TERM→KILL cleanup, and guaranteed
+  /// channel close. [ExecLane.isolated] because a sideload touches neither
+  /// the repo nor the resources the sync lane serializes.
   @override
   Future<void> uploadBytes(String remotePath, Uint8List bytes) async {
     final gen = _clientManager.generation;
-    final client = _clientManager.client;
-    if (client == null) {
-      throw StateError('cannot upload: no active SSH connection');
-    }
-    if (_clientManager.clientGeneration != gen) {
-      throw SSHCommandSuperseded('sftp put $remotePath');
-    }
-
-    Future<void> openAndWrite() async {
-      if (_clientManager.generation != gen ||
-          _clientManager.clientGeneration != gen) {
-        throw SSHCommandSuperseded('sftp put $remotePath');
-      }
-      final sftp = await client.sftp();
-      try {
-        final file = await sftp.open(
-          remotePath,
-          mode:
-              SftpFileOpenMode.create |
-              SftpFileOpenMode.write |
-              SftpFileOpenMode.truncate,
-        );
-        try {
-          await file.write(Stream<Uint8List>.value(bytes)).done;
-        } finally {
-          await file.close();
-        }
-      } finally {
-        sftp.close();
-      }
-    }
-
-    try {
-      await openAndWrite().timeout(defaultTimeout);
-    } on TimeoutException {
-      throw SSHCommandTimeout('sftp put $remotePath');
+    final gitArgs = ['sh', '-c', 'cat > ${ShellEscaper.escape(remotePath)}'];
+    final result = await runWithRetries(
+      () => _run(
+        gen,
+        '/',
+        gitArgs,
+        null,
+        bytes,
+        defaultTimeout,
+        false,
+        ExecLane.isolated,
+      ),
+      0,
+      enqueue: (attempt) => _scheduler.run(
+        ExecLane.isolated,
+        attempt,
+        deadline: defaultTimeout + CommandLaneScheduler.watchdogMargin,
+      ),
+    );
+    if (!result.isSuccess) {
+      throw Exception(
+        'upload to $remotePath failed (exit ${result.exitCode}): '
+        '${result.stderr.trim()}',
+      );
     }
   }
 
@@ -385,13 +368,15 @@ class SSHCommandExecutor implements CommandExecutor {
     // every retry, so a re-enqueued attempt still refuses to run against a
     // newer generation rather than adopting the current one.
     final gen = _clientManager.generation;
+    final stdinBytes =
+        stdin == null ? null : Uint8List.fromList(utf8.encode(stdin));
     return runWithRetries(
       () => _run(
         gen,
         repoPath,
         gitArgs,
         extraEnv,
-        stdin,
+        stdinBytes,
         timeout,
         compress,
         lane,
@@ -495,25 +480,6 @@ class SSHCommandExecutor implements CommandExecutor {
     return false;
   }
 
-  /// Accumulates a decoded stream into a single String with a char ceiling.
-  /// Prefer importing [drain.collectBounded]; this static forwarder preserves
-  /// existing `SSHCommandExecutor.collectBounded` call sites.
-  static Future<String> collectBounded(
-    Stream<String> chunks,
-    String command, {
-    int maxChars = drain.maxCommandOutputChars,
-  }) =>
-      drain.collectBounded(chunks, command, maxChars: maxChars);
-
-  /// Charges raw bytes against [budget] before decode. Static forwarder for
-  /// existing `SSHCommandExecutor.boundedBytes` call sites.
-  static Stream<List<int>> boundedBytes(
-    Stream<List<int>> bytes,
-    OutputByteBudget budget,
-    String command,
-  ) =>
-      drain.boundedBytes(bytes, budget, command);
-
   /// Merges the resolved PATH and [extraEnv] over the formatter's default
   /// prelude (later entries win).
   Map<String, String> _mergedEnv(Map<String, String>? extraEnv) => {
@@ -546,7 +512,9 @@ class SSHCommandExecutor implements CommandExecutor {
     String repoPath,
     List<String> gitArgs,
     Map<String, String>? extraEnv,
-    String? stdin,
+    // Raw bytes, not a String: execute() UTF-8-encodes its text stdin, while
+    // uploadBytes feeds file content through unmangled.
+    Uint8List? stdin,
     Duration timeout,
     bool compress,
     ExecLane lane,
@@ -590,15 +558,50 @@ class SSHCommandExecutor implements CommandExecutor {
     // fires later (during drain) can still reach it for cleanup below. A
     // local (not instance) variable — concurrent commands each get their own.
     SSHSession? session;
+    // Hoisted out of openAndDrain so the failure paths below can record what
+    // the command consumed before it died — a dashboard that only sees
+    // successes reports a healthy session while every read is timing out.
+    final budget = OutputByteBudget();
+    // Counts stdout's on-the-wire size *before* any decompression — with the
+    // budget's (post-decompression) total this is what lets the dashboard
+    // report real gzip savings per session.
+    var stdoutWireBytes = 0;
+    void recordFailureSample() {
+      CommandTelemetry.instance.record(
+        CommandSample(
+          lane: lane,
+          duration: sw.elapsed,
+          bytes: budget.used,
+          wireBytes: stdoutWireBytes,
+          compressed: compressed,
+          success: false,
+        ),
+      );
+    }
+    // Set when the client-side timeout fires. Checked immediately after the
+    // channel opens: a timeout that fired *while the open was still pending*
+    // found a null session with nothing to kill, and the command it launched
+    // would otherwise run on unattended — for a command that never exits (and
+    // so never settles this attempt), forever, until disconnect.
+    var timedOut = false;
 
     Future<SSHCommandResult> openAndDrain() async {
       session = await client.execute(command);
       final s = session!;
+      if (timedOut) {
+        await killAndCloseSession(s);
+        throw SSHCommandTimeout(gitArgs.join(' '));
+      }
 
       if (stdin != null) {
-        s.write(Uint8List.fromList(utf8.encode(stdin)));
-        await s.stdin.close();
+        s.write(stdin);
       }
+      // Always close stdin — with or without data — mirroring
+      // LocalCommandExecutor's contract. dartssh2 turns this into a channel
+      // EOF only (output keeps flowing), and without it a remote command that
+      // unexpectedly reads stdin blocks on it forever: it never exits, its
+      // streams never close, and this attempt never settles.
+      await s.stdin.close();
 
       // Drain both streams; they close when the process exits.
       // `allowMalformed: true` so non-UTF-8 bytes (binary content, non-UTF-8
@@ -612,11 +615,6 @@ class SSHCommandExecutor implements CommandExecutor {
       // bounds what this process actually buffers (the decompressed size) —
       // the wire saving is the point, but a gzip bomb must not be.
       final label = gitArgs.join(' ');
-      final budget = OutputByteBudget();
-      // Counts stdout's on-the-wire size *before* any decompression — with
-      // the budget's (post-decompression) total this is what lets the
-      // dashboard report real gzip savings per session.
-      var stdoutWireBytes = 0;
       final rawStdout = s.stdout.cast<List<int>>().map((chunk) {
         stdoutWireBytes += chunk.length;
         return chunk;
@@ -643,9 +641,8 @@ class SSHCommandExecutor implements CommandExecutor {
       // stream too — which, for a remote process whose stdout we just
       // stopped draining, may never close on its own (the process can be
       // stuck blocked on a full SSH flow-control window, so it never exits
-      // and its stderr channel never closes either). The outer `finally`
-      // below still closes the session either way, unblocking/killing the
-      // remote process.
+      // and its stderr channel never closes either). The catch below then
+      // TERM-kills the remote process — a bare close() would not (see there).
       final drained = await Future.wait([
         stdoutFuture,
         stderrFuture,
@@ -697,22 +694,30 @@ class SSHCommandExecutor implements CommandExecutor {
     try {
       return await attempt.timeout(timeout);
     } on TimeoutException {
+      // If the open itself was the slow part, `session` is still null here
+      // and there is nothing to kill yet — the flag makes openAndDrain kill
+      // the channel itself the moment the open finally resolves, rather than
+      // letting the command run on unattended. (A cleanup keyed on `attempt`
+      // settling would not do: a never-exiting command never settles it.)
+      timedOut = true;
       _killAndClose(session);
-      // If the open itself was the slow part, `session` may still be null
-      // here. Once `attempt` eventually settles in the background (the
-      // channel finally opens, or the command finally exits), make sure
-      // whatever session it produced gets terminated too, instead of running
-      // on unattended forever.
-      unawaited(
-        attempt.then((_) {}, onError: (_) {}).whenComplete(() {
-          _killAndClose(session);
-        }),
-      );
+      recordFailureSample();
       throw SSHCommandTimeout(gitArgs.join(' '));
+    } catch (_) {
+      // Any other drain failure — canonically SSHOutputExceeded from the byte
+      // budget — leaves the remote process alive and still streaming. The
+      // `finally` close() is NOT enough here: dartssh2's close() only sends
+      // channel EOF and then waits for the remote side to close, while the
+      // session keeps buffering the incoming data (now listenerless) without
+      // bound — the exact OOM the budget exists to prevent, just moved one
+      // layer down. Kill the process like the timeout path does; the local
+      // executor's `finally { process?.kill(); }` is this same rule.
+      _killAndClose(session);
+      recordFailureSample();
+      rethrow;
     } finally {
-      // Covers the success path and any non-timeout exception: close the
-      // channel promptly rather than relying on it being collected once the
-      // process exits.
+      // Covers the success path: close the channel promptly rather than
+      // relying on it being collected once the process exits.
       session?.close();
     }
   }

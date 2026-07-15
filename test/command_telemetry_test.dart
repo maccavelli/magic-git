@@ -71,8 +71,8 @@ void main() {
     t.recordChannelOpenError();
     t.recordChannelOpenError();
     t.streamOpened();
-    t.streamOpened();
-    t.streamClosed();
+    final epoch = t.streamOpened();
+    t.streamClosed(epoch);
     expect(t.channelOpenErrors, 2);
     expect(t.openStreams, 1);
     expect(t.peakOpenStreams, 2);
@@ -82,23 +82,30 @@ void main() {
     expect(t.peakOpenStreams, 0);
   });
 
-  test('streamClosed never drives openStreams negative', () {
+  test("a previous session's late streamClosed cannot misattribute", () {
     final t = CommandTelemetry.instance;
-    t.streamClosed();
-    t.streamClosed();
+    // A watcher stream opened under session A...
+    final oldEpoch = t.streamOpened();
+    // ...still tearing down while a reconnect resets the dashboard and the
+    // new session opens its own stream.
+    t.reset();
+    final newEpoch = t.streamOpened();
+    // The old handle's close must not decrement the new session's count.
+    t.streamClosed(oldEpoch);
+    expect(t.openStreams, 1);
+    t.streamClosed(newEpoch);
     expect(t.openStreams, 0);
-    expect(t.peakOpenStreams, 0);
   });
 
   test('peakOpenStreams is sticky across closes until reset', () {
     final t = CommandTelemetry.instance;
-    t.streamOpened();
-    t.streamOpened();
-    t.streamOpened();
+    final e1 = t.streamOpened();
+    final e2 = t.streamOpened();
+    final e3 = t.streamOpened();
     expect(t.peakOpenStreams, 3);
-    t.streamClosed();
-    t.streamClosed();
-    t.streamClosed();
+    t.streamClosed(e1);
+    t.streamClosed(e2);
+    t.streamClosed(e3);
     expect(t.openStreams, 0);
     expect(t.peakOpenStreams, 3);
   });

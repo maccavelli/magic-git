@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
 import '../local/linked_worktree_probe.dart';
-import 'coalescer.dart';
 import 'watch_event.dart';
+import 'watch_lifecycle.dart';
 import 'watch_path_filter.dart';
 
 /// One directory this watcher subscribes to, plus how to turn the absolute paths
@@ -47,12 +47,6 @@ class _WatchRoot {
 /// consumer's refresh gating then work on a linked worktree **unmodified**,
 /// instead of growing a parallel code path.
 class LocalWatchService {
-  /// Maximum consecutive (re)start attempts before degrading to polling — a
-  /// watch stream that keeps erroring (e.g. a flaky network-mounted volume
-  /// misbehaving under FSEvents) must never leave the UI silently
-  /// un-refreshed. Mirrors [RemoteWatchService]'s reasoning.
-  static const int _maxRestarts = 3;
-
   /// Strips [root] from an absolute event path, yielding a root-relative one.
   ///
   /// [prefix] is prepended to the result, which is what maps an event in the
@@ -113,171 +107,58 @@ class LocalWatchService {
     Duration pollInterval = const Duration(seconds: 5),
     Duration recoveryInterval = const Duration(minutes: 3),
   }) {
-    late final StreamController<RepoWatchEvent> controller;
-    final subs = <StreamSubscription<FileSystemEvent>>[];
-    Timer? pollTimer;
-    Timer? restartTimer;
-    Timer? recoveryTimer;
-    Coalescer? coalescer;
-    var mode = WatchMode.stopped;
-    var cancelled = false;
-    var restarts = 0;
-    late Future<void> Function() start;
-    late void Function() scheduleRestart;
-
     // Resolved once per watch, not per restart: the layout of a checkout can't
     // change while it's open (only `worktree move`/`repair` does that, and both
     // go through a full reconnect).
     final roots = _rootsFor(repoPath);
 
-    // The paths seen since the last fire. Drained into the tick the coalescer
-    // eventually emits, so consumers learn *what* moved and not merely that
-    // something did. A poll/restart tick fires with this empty, which is
-    // exactly the "unknown scope" [RepoWatchEvent.paths] documents.
-    final pending = <String>{};
-
-    // A burst is unbounded (a `git clean`, a branch switch, a build emitting
-    // thousands of objects); the tick only needs enough of it to decide what to
-    // refresh. Past this many distinct paths the set stops being a useful
-    // description of the burst, so it is dropped and the tick degrades to
-    // unknown scope — which consumers already handle as "refresh everything".
-    const maxPaths = 512;
-    var overflowed = false;
-
-    void emit() {
-      if (controller.isClosed) return;
-      final paths = overflowed ? const <String>{} : Set<String>.from(pending);
-      pending.clear();
-      overflowed = false;
-      controller.add(
-        RepoWatchEvent(at: DateTime.now(), mode: mode, paths: paths),
-      );
-    }
-
-    void startPolling() {
-      mode = WatchMode.polling;
-      pollTimer?.cancel();
-      emit();
-      pollTimer = Timer.periodic(pollInterval, (_) => emit());
-      // A watcher that degrades to polling must not stay degraded for the
-      // rest of the session — periodically retry event-driven watching so a
-      // transient volume issue is picked back up.
-      recoveryTimer?.cancel();
-      recoveryTimer = Timer.periodic(recoveryInterval, (_) {
-        if (cancelled) return;
-        restarts = 0;
-        start().catchError((_) => scheduleRestart());
-      });
-    }
-
-    Future<void> teardownWatcher() async {
-      // Cancel the subscriptions *before* dropping `coalescer` — the listener
-      // dereferences `coalescer!`, so an event delivered in the window
-      // between nulling it and cancelling the subs would throw a null-check
-      // error inside the stream callback. Mirrors RemoteWatchService.
-      for (final sub in subs) {
-        await sub.cancel();
-      }
-      subs.clear();
-      coalescer?.cancel();
-      coalescer = null;
-    }
-
-    scheduleRestart = () {
-      if (cancelled || controller.isClosed) return;
-      if (restarts >= _maxRestarts) {
-        startPolling();
-        return;
-      }
-      mode = WatchMode.stopped;
-      // Emit immediately so the UI's status dot reflects the outage for the
-      // whole restart-backoff window, not just once it gives up.
-      emit();
-      restarts++;
-      restartTimer?.cancel();
-      restartTimer = Timer(Duration(seconds: restarts * 2), () {
-        if (cancelled || controller.isClosed) return;
-        start().catchError((_) => scheduleRestart());
-      });
-    };
-
-    start = () async {
-      recoveryTimer?.cancel();
-      recoveryTimer = null;
-      // Stop any polling loop too — a successful recovery must not leave the
-      // periodic poll timer emitting refresh ticks forever alongside the
-      // event-driven watcher. Mirrors RemoteWatchService.
-      pollTimer?.cancel();
-      pollTimer = null;
-      await teardownWatcher();
-      if (cancelled) return;
-
-      mode = WatchMode.eventDriven;
-      coalescer = Coalescer(
-        trailing: trailing,
-        maxWait: maxWait,
-        minInterval: minInterval,
-        onFire: emit,
-      );
-
-      try {
-        for (final root in roots) {
-          subs.add(
-            Directory(root.dir).watch(recursive: true).listen(
-              (event) {
-                restarts = 0;
-                mode = WatchMode.eventDriven;
-                final path = root.relativize(event.path);
-                if (!shouldTriggerWatch(path)) return;
-                if (pending.length >= maxPaths) {
-                  overflowed = true;
-                  pending.clear();
-                }
-                if (!overflowed) pending.add(path);
-                coalescer!.signal();
-              },
-              onDone: scheduleRestart,
-              onError: (Object _) => scheduleRestart(),
-            ),
-          );
+    return watchLifecycle(
+      trailing: trailing,
+      maxWait: maxWait,
+      minInterval: minInterval,
+      pollInterval: pollInterval,
+      recoveryInterval: recoveryInterval,
+      arm: (hooks) async {
+        final subs = <StreamSubscription<FileSystemEvent>>[];
+        Future<void> teardown() async {
+          for (final sub in subs) {
+            await sub.cancel();
+          }
+          subs.clear();
         }
-      } catch (e) {
-        // A small minority of filesystems (some network mounts) can reject
-        // `Directory.watch()` outright rather than erroring through the
-        // stream — treat that the same as a stream error. Any root failing
-        // restarts them ALL: a linked worktree whose common-git-dir watch died
-        // would still see file edits but never learn that HEAD moved, which is
-        // worse than an honest restart-then-poll.
-        developer.log(
-          'Directory.watch failed to start: $e',
-          name: 'LocalWatchService',
-        );
-        await teardownWatcher();
-        scheduleRestart();
-        return;
-      }
 
-      // The watcher is now armed. Announce it with one eventDriven tick, same
-      // reasoning as RemoteWatchService: turns the status dot green
-      // immediately instead of sitting grey until the first real change.
-      emit();
-    };
+        try {
+          for (final root in roots) {
+            subs.add(
+              Directory(root.dir).watch(recursive: true).listen(
+                (event) {
+                  hooks.noteActivity();
+                  final path = root.relativize(event.path);
+                  if (!shouldTriggerWatch(path)) return;
+                  hooks.signalPath(path);
+                },
+                onDone: hooks.scheduleRestart,
+                onError: (Object _) => hooks.scheduleRestart(),
+              ),
+            );
+          }
+        } catch (e) {
+          // A small minority of filesystems (some network mounts) can reject
+          // `Directory.watch()` outright rather than erroring through the
+          // stream — treat that the same as a stream error. Any root failing
+          // restarts them ALL: a linked worktree whose common-git-dir watch
+          // died would still see file edits but never learn that HEAD moved,
+          // which is worse than an honest restart-then-poll.
+          developer.log(
+            'Directory.watch failed to start: $e',
+            name: 'LocalWatchService',
+          );
+          await teardown();
+          rethrow; // the engine schedules the restart
+        }
 
-    Future<void> stop() async {
-      cancelled = true;
-      restartTimer?.cancel();
-      pollTimer?.cancel();
-      recoveryTimer?.cancel();
-      await teardownWatcher();
-      if (!controller.isClosed) await controller.close();
-    }
-
-    controller = StreamController<RepoWatchEvent>(
-      onListen: () {
-        start().catchError((Object _) => scheduleRestart());
+        return WatchArmed(teardown);
       },
-      onCancel: stop,
     );
-    return controller.stream;
   }
 }

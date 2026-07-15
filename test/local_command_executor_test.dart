@@ -5,6 +5,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_magic_git/core/exec/command_telemetry.dart';
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
@@ -120,6 +121,23 @@ void main() {
     );
   });
 
+  test('a timed-out command records a failed telemetry sample', () async {
+    // The dashboard must see failed commands, not just successes — a session
+    // where every read times out otherwise reports as perfectly healthy.
+    CommandTelemetry.instance.reset();
+    await expectLater(
+      executor.execute(
+        repoPath: tempDir.path,
+        gitArgs: ['sh', '-c', 'sleep 5'],
+        timeout: const Duration(milliseconds: 50),
+      ),
+      throwsA(isA<SSHCommandTimeout>()),
+    );
+    final t = CommandTelemetry.instance;
+    expect(t.commandCount, 1);
+    expect(t.samples.single.success, isFalse);
+  });
+
   test(
     'execute throws SSHOutputExceeded for output past the cap',
     () async {
@@ -136,10 +154,10 @@ void main() {
         returnsNormally,
       );
       // Confirm the cap actually trips with a tiny ceiling via collectBounded
-      // directly (mirrors ssh_command_executor_test.dart's own approach).
+      // directly (the canonical coverage lives in command_drain_test.dart).
       final stream = Stream<String>.fromIterable(['a' * 50, 'b' * 50]);
       expect(
-        () => SSHCommandExecutor.collectBounded(stream, 'test', maxChars: 10),
+        () => collectBounded(stream, 'test', maxChars: 10),
         throwsA(isA<SSHOutputExceeded>()),
       );
     },

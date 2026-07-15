@@ -114,15 +114,25 @@ class CommandTelemetry extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Tracks a newly opened long-lived stream handle.
-  void streamOpened() {
+  /// Session marker for stream accounting — bumped by [reset]. A handle
+  /// records the epoch it opened under and hands it back on close, so a
+  /// previous session's handles still tearing down during a reconnect can't
+  /// decrement the *new* session's open-stream count (the old `> 0` guard
+  /// prevented negatives, not misattribution).
+  int _streamEpoch = 0;
+
+  /// Tracks a newly opened long-lived stream handle. The returned token must
+  /// be passed to [streamClosed] when the handle dies.
+  int streamOpened() {
     _openStreams++;
     if (_openStreams > _peakOpenStreams) _peakOpenStreams = _openStreams;
     notifyListeners();
+    return _streamEpoch;
   }
 
-  /// Tracks a closed/cancelled long-lived stream handle.
-  void streamClosed() {
+  /// Tracks a closed/cancelled long-lived stream handle opened under [epoch].
+  void streamClosed(int epoch) {
+    if (epoch != _streamEpoch) return; // opened before the last reset
     if (_openStreams > 0) _openStreams--;
     notifyListeners();
   }
@@ -139,6 +149,7 @@ class CommandTelemetry extends ChangeNotifier {
     _channelOpenErrors = 0;
     _openStreams = 0;
     _peakOpenStreams = 0;
+    _streamEpoch++; // orphan the previous session's still-closing handles
     notifyListeners();
   }
 }

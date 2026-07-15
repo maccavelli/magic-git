@@ -582,6 +582,12 @@ class ConnectionController extends Notifier<ConnectionState> {
     String type,
     Uint8List fingerprintBytes,
   ) async {
+    // A superseded attempt's handshake can still be running when this fires
+    // (only disconnect force-closes pending clients; a newer connect doesn't).
+    // Let it proceed and it would TOFU-remember a key for a connection nobody
+    // wants — or, on a mismatch, clobber the *live* attempt's prompt and
+    // decision completer. Rejecting the key aborts the stale handshake.
+    if (attempt != _attempt) return false;
     final fingerprint = utf8.decode(fingerprintBytes);
     final store = ref.read(knownHostsStoreProvider);
     final existing = await store.lookup(host, port);
@@ -989,6 +995,15 @@ class ConnectionController extends Notifier<ConnectionState> {
         state = const ConnectionState();
         return;
       }
+      // Whatever failed — the SSH handshake itself, or a post-connect stage
+      // like the repo check — the session is now unreachable from the state
+      // this lands in, so make the transport agree: without this, a connect
+      // that authenticated fine and then failed validateRepoPath left two
+      // healthy clients and a 15s ping loop running behind the error card
+      // indefinitely. No-op when the handshake itself failed (the manager
+      // already retired everything).
+      await ref.read(sshClientManagerProvider).disconnect();
+      if (attempt != _attempt || !ref.mounted) return;
       // A failed *reconnect* stays in the reconnecting popup (as `lost`) so
       // _autoReconnect keeps retrying; a failed *initial* connect surfaces the
       // error to the landing card as before. Identity fields carried through
@@ -1219,12 +1234,15 @@ class ConnectionController extends Notifier<ConnectionState> {
       if (state.repoPath != null && state.repoPath != repoPath) {
         await ScopedAccess.instance.release(state.repoPath!);
       }
-    } else if (state.repoPath != null) {
+    } else {
       // ssh → local: tear down the authenticated SSH client and socket.
       // connectLocal has no SSH connect() to supersede it, and a later local
       // disconnect() deliberately skips SSH teardown — so without this the
-      // client leaks until the next SSH connect or app quit. (repoPath is null
-      // on a fresh launch, so this doesn't fire before any SSH session existed.)
+      // client leaks until the next SSH connect or app quit. Unconditional
+      // (not keyed on repoPath): a provisioning session runs with a null
+      // repoPath, and keying on it skipped exactly that session's teardown —
+      // the provisioned client leaked past the switch to a local repo. On a
+      // fresh launch this is a no-op (nothing connected, nothing pending).
       ref.read(executorProvider).resetEnvironment();
       await ref.read(sshClientManagerProvider).disconnect();
     }
@@ -1464,6 +1482,14 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// user can reconnect manually or start fresh).
   void stopReconnect() {
     ++_attempt; // supersede the loop
+    // Supersede the *manager* too. Bumping only the controller's counter left
+    // the two supersession counters desynced: a reconnect attempt caught
+    // mid-handshake passes the manager's own generation checks (nothing
+    // changed *its* counter), attaches its clients, and starts a health
+    // monitor — a live authenticated session pinging away indefinitely while
+    // the UI says retrying stopped. disconnect() bumps the manager's
+    // generation and force-closes the in-flight handshake's socket.
+    unawaited(ref.read(sshClientManagerProvider).disconnect());
     if (state.phase == ConnectionPhase.lost || state.reconnectAttempt > 0) {
       state = state.copyWith(reconnectAttempt: 0, reconnecting: false);
     }

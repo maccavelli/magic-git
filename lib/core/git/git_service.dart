@@ -2022,9 +2022,18 @@ class GitService {
 
   /// Many [showBlob]s in one remote round-trip via `git cat-file --batch`.
   ///
-  /// Prefer this when expanding multiple diffs or prefetching revision content.
   /// On batch failure, falls back to sequential [showBlob] (fail-open on perf).
   /// Worktree files still use [readFile] — cat-file is object-db only.
+  ///
+  /// **Deliberately unconsumed by the UI today** (evaluated, not an
+  /// oversight): every current blob reader requests exactly one blob at a
+  /// time — the diff expanders fetch lazily per click by design, and the
+  /// conflict view reads the worktree file. This is the call for the first
+  /// feature that genuinely needs a burst (an "expand all", multi-file
+  /// prefetch, or bulk export); wiring it into the lazy paths would just
+  /// re-litigate their recorded bandwidth decision. Note the UTF-8 round trip
+  /// limits it to text blobs — a binary blob in the batch trips the parser
+  /// and falls back to sequential (correct, slower).
   Future<Map<BlobKey, String>> showBlobsBatch(
     String repoPath,
     List<BlobKey> keys,

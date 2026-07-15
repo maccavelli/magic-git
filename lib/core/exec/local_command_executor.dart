@@ -134,6 +134,28 @@ class LocalCommandExecutor implements CommandExecutor {
     // Assigned as soon as the process spawns, so a timeout firing during
     // drain can still reach it for cleanup below.
     Process? process;
+    // Hoisted out of spawnAndDrain so the failure paths below can record what
+    // the command consumed before it died — mirrors SSHCommandExecutor._run.
+    final budget = OutputByteBudget();
+    void recordFailureSample() {
+      CommandTelemetry.instance.record(
+        CommandSample(
+          lane: lane,
+          duration: sw.elapsed,
+          bytes: budget.used,
+          // No wire on a local pipe — buffered and "wire" size coincide.
+          wireBytes: budget.used,
+          compressed: false,
+          success: false,
+        ),
+      );
+    }
+    // Set when the timeout fires. Checked right after the spawn resolves: a
+    // timeout that fired while `Process.start` was still pending found a null
+    // process with nothing to kill, and the command would otherwise run on
+    // unattended — for one that never exits, forever. Mirrors
+    // SSHCommandExecutor._run's flag.
+    var timedOut = false;
 
     Future<SSHCommandResult> spawnAndDrain() async {
       try {
@@ -172,17 +194,27 @@ class LocalCommandExecutor implements CommandExecutor {
         return SSHCommandResult(exitCode: 127, stdout: '', stderr: e.message);
       }
       final p = process!;
+      if (timedOut) {
+        _killEscalate(p);
+        throw SSHCommandTimeout(gitArgs.join(' '));
+      }
 
       // Always close stdin (whether or not anything was written) rather than
-      // only when [stdin] is non-null: unlike an SSH channel, a local pipe
-      // left open indefinitely can make a command that unexpectedly reads
-      // stdin (or a future call site that forgets `GIT_TERMINAL_PROMPT=0`
-      // covers every case) hang forever rather than surfacing a fast, clear
-      // failure.
-      if (stdin != null) {
-        p.stdin.write(stdin);
-      }
-      await p.stdin.close();
+      // only when [stdin] is non-null: a local pipe left open indefinitely
+      // can make a command that unexpectedly reads stdin (or a future call
+      // site that forgets `GIT_TERMINAL_PROMPT=0` covers every case) hang
+      // forever rather than surfacing a fast, clear failure.
+      // Pipe errors are swallowed deliberately: a child that exits before
+      // consuming stdin (a fast-failing `--stdin` command) surfaces EPIPE as
+      // a SocketException from close() — which would replace the process's
+      // real exit code + stderr with a thrown error that retry classification
+      // even treats as transient. The exit code is the story; let it speak.
+      try {
+        if (stdin != null) {
+          p.stdin.write(stdin);
+        }
+        await p.stdin.close();
+      } catch (_) {}
 
       // `allowMalformed: true` so non-UTF-8 bytes (binary content, non-UTF-8
       // filenames/authors) are replaced rather than throwing. A single
@@ -193,17 +225,16 @@ class LocalCommandExecutor implements CommandExecutor {
       // reasoning applies locally as over SSH: a huge diff/log/`cat` is just as
       // capable of ballooning memory regardless of transport.
       final label = gitArgs.join(' ');
-      final budget = OutputByteBudget();
-      final stdoutFuture = SSHCommandExecutor.collectBounded(
-        SSHCommandExecutor.boundedBytes(
+      final stdoutFuture = collectBounded(
+        boundedBytes(
           p.stdout,
           budget,
           label,
         ).transform(const Utf8Decoder(allowMalformed: true)),
         label,
       );
-      final stderrFuture = SSHCommandExecutor.collectBounded(
-        SSHCommandExecutor.boundedBytes(
+      final stderrFuture = collectBounded(
+        boundedBytes(
           p.stderr,
           budget,
           label,
@@ -241,17 +272,20 @@ class LocalCommandExecutor implements CommandExecutor {
     try {
       return await attempt.timeout(timeout);
     } on TimeoutException {
+      // If the spawn itself was the slow part, `process` is still null here —
+      // the flag makes spawnAndDrain kill it the moment the spawn resolves.
+      // (A cleanup keyed on `attempt` settling would not do: a never-exiting
+      // command never settles it.) Mirrors SSHCommandExecutor._run.
+      timedOut = true;
       _killEscalate(process);
-      // If spawn/drain eventually does settle in the background, make sure
-      // whatever process it produced gets terminated too, instead of leaving
-      // it running unattended — mirrors SSHCommandExecutor's post-timeout
-      // cleanup.
-      unawaited(
-        attempt.then((_) {}, onError: (_) {}).whenComplete(() {
-          _killEscalate(process);
-        }),
-      );
+      recordFailureSample();
       throw SSHCommandTimeout(gitArgs.join(' '));
+    } catch (_) {
+      // Any other drain failure — canonically SSHOutputExceeded from the
+      // byte budget. Record what it consumed; the dashboard must see failed
+      // commands, not just successes. (The `finally` below still kills.)
+      recordFailureSample();
+      rethrow;
     } finally {
       // Harmless no-op on the success path (the process has already exited
       // by the time `exitCode` resolves) — guards the case where draining
@@ -293,8 +327,24 @@ class LocalCommandExecutor implements CommandExecutor {
 /// [CommandStreamHandle] backed by a live local [Process].
 class _ProcessStreamHandle implements SSHStreamHandle {
   final Process _process;
+  late final int _telemetryEpoch;
+  bool _closed = false;
 
-  _ProcessStreamHandle(this._process);
+  _ProcessStreamHandle(this._process) {
+    // Mirror _SshSessionStreamHandle: the dashboard's open/peak-stream
+    // counters describe streams on *any* transport, so a local session's
+    // watcher must count too. Natural process exit closes the same as cancel.
+    _telemetryEpoch = CommandTelemetry.instance.streamOpened();
+    unawaited(
+      _process.exitCode.then((_) {}, onError: (_) {}).whenComplete(_noteClosed),
+    );
+  }
+
+  void _noteClosed() {
+    if (_closed) return;
+    _closed = true;
+    CommandTelemetry.instance.streamClosed(_telemetryEpoch);
+  }
 
   @override
   late final Stream<String> stdout = _process.stdout.transform(
@@ -311,6 +361,7 @@ class _ProcessStreamHandle implements SSHStreamHandle {
   @override
   Future<void> cancel() async {
     _killEscalate(_process);
+    _noteClosed();
   }
 }
 

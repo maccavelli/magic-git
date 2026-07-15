@@ -133,6 +133,15 @@ class SSHClientManager {
   /// Started when a connect succeeds, stopped when that client is retired.
   ConnectionHealthMonitor? _health;
 
+  /// Dead-peer monitor for [_streamClient]. The stream client is idle by
+  /// design (a watcher can be quiet for hours), which makes it exactly the
+  /// connection a NAT/firewall idle-drop kills first — and, unlike the
+  /// command client, nothing else would ever notice: a silently-dead stream
+  /// channel never fires the watcher's onDone, so the UI's watching dot
+  /// stays green while external changes go unseen for the rest of the
+  /// session. Null when running degraded (single client).
+  ConnectionHealthMonitor? _streamHealth;
+
   /// Every client currently being authenticated by an in-flight [connect].
   /// Tracked separately from [_client] (which is only assigned once auth
   /// succeeds) so [disconnect] can force-close all of them immediately
@@ -206,16 +215,32 @@ class SSHClientManager {
     final previousCmd = _client;
     final previousStream = _streamClient;
 
-    final cmdClient = await _openAuthenticatedClient(
-      profile,
-      gen: gen,
-      onVerifyHostKey: onVerifyHostKey,
-      authTimeout: _authTimeout,
-    );
+    final SSHClient? cmdClient;
+    try {
+      cmdClient = await _openAuthenticatedClient(
+        profile,
+        gen: gen,
+        onVerifyHostKey: onVerifyHostKey,
+        authTimeout: _authTimeout,
+      );
+    } catch (_) {
+      // This attempt already bumped the generation past the previous session,
+      // so every command pinned from here on refuses to run against it —
+      // "keeping" it on failure would keep only its sockets and its ping
+      // loop, invisible and unusable, until some later connect or disconnect.
+      // Retire it so the transport agrees with what commands can reach. Gen-
+      // guarded: if a newer attempt started meanwhile, cleanup is its call.
+      if (gen == _generation) _closeClient();
+      rethrow;
+    }
     if (cmdClient == null) {
-      // Superseded during command-client handshake — leave previous attached.
+      // Superseded during command-client handshake — leave previous attached;
+      // the superseding attempt owns retirement now.
       return;
     }
+    // Non-nullable rebind: `cmdClient` was assigned inside a try, which bars
+    // its promotion inside the monitor closures below.
+    final cmd = cmdClient;
 
     // Best-effort second client for streams. Never fail the whole connect if
     // this fails — degrade to single-client (streams share command client).
@@ -245,13 +270,15 @@ class SSHClientManager {
 
     // This attempt wins: only now do we retire the previous clients.
     _health?.stop();
+    _streamHealth?.stop();
+    _streamHealth = null;
     previousCmd?.close();
     // Avoid double-close when previous was already degraded (stream == null)
     // or when stream shared nothing with cmd.
     if (previousStream != null && !identical(previousStream, previousCmd)) {
       previousStream.close();
     }
-    _client = cmdClient;
+    _client = cmd;
     _streamClient = streamClient;
     _clientGeneration = gen;
 
@@ -260,21 +287,48 @@ class SSHClientManager {
     // [done] on the primary client to drive reconnect — nulling it would
     // drop that Future before the drop path observes it.
     final monitor = ConnectionHealthMonitor(
-      ping: () => cmdClient.ping(),
+      ping: () => cmd.ping(),
       onDead: () {
         final stream = _streamClient;
-        if (stream != null && !identical(stream, cmdClient)) {
+        if (stream != null && !identical(stream, cmd)) {
           stream.close();
         }
         _streamClient = null;
-        cmdClient.close();
+        cmd.close();
       },
       onPingSample: onPingSample,
     )..start();
     _health = monitor;
     unawaited(
-      cmdClient.done.then((_) {}, onError: (_) {}).whenComplete(monitor.stop),
+      cmd.done.then((_) {}, onError: (_) {}).whenComplete(monitor.stop),
     );
+
+    // The stream client gets its own monitor (see [_streamHealth]) — and,
+    // dead or alive, its slot is cleared the moment its transport closes, so
+    // the `streamClient` getter's fall-back to the command client (the
+    // documented degraded mode) engages mid-session too, not only when the
+    // second connect failed up front. Identity-guarded: by the time this
+    // client dies, a newer connect may already own the slot.
+    // (`streamClient` here is connect()'s local — the just-opened stream
+    // client, null when degraded — NOT the like-named getter, whose fallback
+    // would wrongly hang a second monitor on the command client.)
+    final stream = streamClient;
+    if (stream != null) {
+      final streamMonitor = ConnectionHealthMonitor(
+        ping: () => stream.ping(),
+        onDead: () {
+          if (identical(_streamClient, stream)) _streamClient = null;
+          stream.close();
+        },
+      )..start();
+      _streamHealth = streamMonitor;
+      unawaited(
+        stream.done.then((_) {}, onError: (_) {}).whenComplete(() {
+          streamMonitor.stop();
+          if (identical(_streamClient, stream)) _streamClient = null;
+        }),
+      );
+    }
   }
 
   /// Opens and authenticates one [SSHClient]. Returns null if [gen] was
@@ -398,6 +452,8 @@ class SSHClientManager {
   void _closeClient() {
     _health?.stop();
     _health = null;
+    _streamHealth?.stop();
+    _streamHealth = null;
     final cmd = _client;
     final stream = _streamClient;
     _client = null;

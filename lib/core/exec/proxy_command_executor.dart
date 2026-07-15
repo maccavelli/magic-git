@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
+import '../ssh/ssh_client_manager.dart' show ConnectionHealthMonitor;
 import '../ssh/ssh_command_executor.dart';
 import '../window/window_channels.dart';
 import 'exec_proxy_codec.dart';
@@ -72,8 +73,15 @@ class ProxyCommandExecutor implements CommandExecutor {
   /// error is how the liveness probe abandons a call that will never be answered.
   final Set<Completer<Never>> _outstanding = {};
 
-  Timer? _probe;
-  int _silentProbes = 0;
+  /// The liveness probe, alive only while calls are outstanding. This is the
+  /// same [ConnectionHealthMonitor] that watches the SSH transport — reused
+  /// rather than re-implemented, notably for its never-stack-probes guard: a
+  /// hand-rolled `Timer.periodic` here once let one ~15 s main-isolate stall
+  /// time out two *overlapping* pings and hit [deadProbes] in a single
+  /// hiccup, abandoning commands that were about to succeed. The monitor
+  /// counts only sequential unanswered pings. A stopped monitor can't be
+  /// restarted, so each probing episode constructs a fresh one.
+  ConnectionHealthMonitor? _monitor;
 
   /// Runs [gitArgs] on the main isolate, and — the whole point of the machinery
   /// below — comes back *even if the main isolate never answers*.
@@ -116,7 +124,7 @@ class ProxyCommandExecutor implements CommandExecutor {
 
     final abandoned = Completer<Never>();
     _outstanding.add(abandoned);
-    _probe ??= Timer.periodic(probeInterval, (_) => _pingOnce());
+    _startProbing();
 
     final Map<Object?, Object?>? reply;
     try {
@@ -160,23 +168,23 @@ class ProxyCommandExecutor implements CommandExecutor {
     return result;
   }
 
-  /// One liveness ping. Cheap by construction: the main window's hub answers it
-  /// without touching a session, an executor or the lane scheduler, so it says
-  /// only what it is meant to say — "I am here and I am reading my channel".
-  Future<void> _pingOnce() async {
-    if (_outstanding.isEmpty) return;
-    try {
-      await channel.invokeMethod<void>('ping').timeout(probeTimeout);
-      _silentProbes = 0;
-    } catch (_) {
-      // Any failure counts as silence: a timeout, a dead relay, a hub with no
-      // handler left. What it is doesn't matter — that it isn't answering does.
-      if (++_silentProbes < deadProbes) return;
-      _abandonOutstanding(
+  /// Arms the liveness probe if it isn't already running. The ping itself is
+  /// cheap by construction: the main window's hub answers it without touching
+  /// a session, an executor or the lane scheduler, so it says only what it is
+  /// meant to say — "I am here and I am reading my channel". Any failure
+  /// counts as silence (a timeout, a dead relay, a hub with no handler left) —
+  /// what it is doesn't matter; that it isn't answering does.
+  void _startProbing() {
+    _monitor ??= ConnectionHealthMonitor(
+      ping: () => channel.invokeMethod<void>('ping'),
+      onDead: () => _abandonOutstanding(
         'The main window stopped responding, so this command was abandoned. '
         'It may still be running there.',
-      );
-    }
+      ),
+      interval: probeInterval,
+      pingTimeout: probeTimeout,
+      failureThreshold: deadProbes,
+    )..start();
   }
 
   /// Fails every call still waiting on the main window. Their commands may well
@@ -195,9 +203,8 @@ class ProxyCommandExecutor implements CommandExecutor {
   }
 
   void _stopProbing() {
-    _probe?.cancel();
-    _probe = null;
-    _silentProbes = 0;
+    _monitor?.stop();
+    _monitor = null;
   }
 
   /// Drops the liveness probe. Called when the window is going away — an

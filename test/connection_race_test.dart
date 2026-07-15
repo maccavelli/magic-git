@@ -276,6 +276,15 @@ void main() {
       async.flushMicrotasks();
       expect(manager.gates.length, 1, reason: 'loop was superseded');
       expect(container.read(connectionProvider).phase, ConnectionPhase.lost);
+      // The MANAGER was superseded too, not just the controller's counter: a
+      // reconnect attempt caught mid-handshake would otherwise pass the
+      // manager's own generation checks, attach its clients, and run a health
+      // monitor against a session the UI says was stopped.
+      expect(
+        manager.disconnects,
+        greaterThanOrEqualTo(1),
+        reason: 'stopReconnect must supersede the manager generation',
+      );
     });
   });
 

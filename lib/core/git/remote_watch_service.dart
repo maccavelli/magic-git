@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 import '../ssh/ssh_command_executor.dart';
-import 'coalescer.dart';
 import 'watch_event.dart';
+import 'watch_lifecycle.dart';
 import 'watch_path_filter.dart';
 
 enum _WatcherTool { fswatch, inotifywait, none }
@@ -15,15 +15,14 @@ enum _WatcherTool { fswatch, inotifywait, none }
 /// observe remotely-originated changes), streaming its event records back over
 /// a dedicated SSH channel. If neither fswatch nor inotifywait is available, it
 /// falls back to periodic polling so the UI still refreshes.
+///
+/// The restart/polling/recovery lifecycle lives in [watchLifecycle], shared
+/// with `LocalWatchService`; this class owns only the remote-specific arming:
+/// tool detection, the SSH stream, and delimiter parsing.
 class RemoteWatchService {
   final CommandExecutor _executor;
 
   RemoteWatchService(this._executor);
-
-  /// Maximum consecutive event-watcher (re)start attempts before degrading to
-  /// polling. A watcher that dies then keeps failing to re-arm (SSH blip, killed
-  /// process, remote OOM) must never leave the UI silently un-refreshed.
-  static const int _maxRestarts = 3;
 
   /// Cap on the un-delimited stdout buffer. A watcher tool that streams partial
   /// output without ever emitting the record delimiter (a wedged or misbehaving
@@ -39,202 +38,74 @@ class RemoteWatchService {
     Duration pollInterval = const Duration(seconds: 5),
     Duration recoveryInterval = const Duration(minutes: 3),
   }) {
-    late final StreamController<RepoWatchEvent> controller;
-    SSHStreamHandle? handle;
-    StreamSubscription<String>? sub;
-    Timer? pollTimer;
-    Timer? restartTimer;
-    Timer? recoveryTimer;
-    Coalescer? coalescer;
-    var buffer = '';
-    var mode = WatchMode.stopped;
-    var cancelled = false;
-    var restarts = 0;
     // Cached across restarts within this stream's lifetime — the answer can't
     // change between one blip's retries, so there's no need to re-probe the
-    // remote for it every time. Cleared while recovering from polling (below),
-    // since enough time has passed there that it's worth re-checking.
+    // remote for it every time. Cleared while recovering from polling, since
+    // enough time has passed there that it's worth re-checking.
     _WatcherTool? cachedTool;
-    // Forward-declared so `startPolling`'s recovery timer (below) can call
-    // them; both are assigned before `watch()` returns, and neither is
-    // invoked until a Timer fires or the stream is listened to.
-    late Future<void> Function() start;
-    late void Function() scheduleRestart;
 
-    // The paths seen since the last fire — see the identically-shaped buffer in
-    // LocalWatchService, and [RepoWatchEvent.paths] for why a tick that names
-    // what moved is worth this much more than one that doesn't.
-    final pending = <String>{};
-    const maxPaths = 512;
-    var overflowed = false;
+    return watchLifecycle(
+      trailing: trailing,
+      maxWait: maxWait,
+      minInterval: minInterval,
+      pollInterval: pollInterval,
+      recoveryInterval: recoveryInterval,
+      onPollingRecoveryAttempt: () => cachedTool = null,
+      arm: (hooks) async {
+        final tool = cachedTool ??= await _detectWatcher(repoPath);
+        if (hooks.isCancelled()) return const WatchAborted();
 
-    void emit() {
-      if (controller.isClosed) return;
-      final paths = overflowed ? const <String>{} : Set<String>.from(pending);
-      pending.clear();
-      overflowed = false;
-      controller.add(
-        RepoWatchEvent(at: DateTime.now(), mode: mode, paths: paths),
-      );
-    }
+        if (tool == _WatcherTool.none) return const WatchUnavailable();
 
-    void startPolling() {
-      mode = WatchMode.polling;
-      pollTimer?.cancel();
-      emit();
-      pollTimer = Timer.periodic(pollInterval, (_) => emit());
-      // A watcher that degrades to polling (repeated restart failures, or no
-      // watcher tool found) must not stay degraded for the rest of the
-      // session — periodically retry event-driven watching so a recovered
-      // network (or a since-installed fswatch/inotifywait) is picked back up.
-      recoveryTimer?.cancel();
-      recoveryTimer = Timer.periodic(recoveryInterval, (_) {
-        if (cancelled) return;
-        restarts = 0;
-        cachedTool = null;
-        start().catchError((_) => scheduleRestart());
-      });
-    }
+        final handle = await _executor.executeStream(
+          repoPath: repoPath,
+          gitArgs: _watcherArgs(tool),
+        );
+        if (hooks.isCancelled()) {
+          await handle.cancel();
+          return const WatchAborted();
+        }
 
-    Future<void> teardownWatcher() async {
-      // Cancel the stdout subscription *before* dropping `coalescer`: the
-      // listener dereferences `coalescer!`, so a chunk delivered in the window
-      // between nulling it and cancelling the sub would throw a null-check
-      // error inside the stream callback.
-      await sub?.cancel();
-      sub = null;
-      coalescer?.cancel();
-      coalescer = null;
-      buffer = '';
-      await handle?.cancel();
-      handle = null;
-    }
-
-    scheduleRestart = () {
-      if (cancelled || controller.isClosed) return;
-      if (restarts >= _maxRestarts) {
-        startPolling();
-        return;
-      }
-      mode = WatchMode.stopped;
-      // Emit immediately — without this, subscribers keep seeing whatever
-      // mode was last emitted (usually `eventDriven`) for the entire restart
-      // backoff window, so the UI's "watching" dot stayed lit green through a
-      // real outage instead of going grey with the "Watcher stopped"
-      // affordance it already has for exactly this state.
-      emit();
-      restarts++;
-      restartTimer?.cancel();
-      restartTimer = Timer(Duration(seconds: restarts * 2), () {
-        if (cancelled || controller.isClosed) return;
-        start().catchError((_) => scheduleRestart());
-      });
-    };
-
-    start = () async {
-      // An active attempt is underway — pause the polling-recovery retries
-      // until it's clear whether this one succeeds.
-      recoveryTimer?.cancel();
-      recoveryTimer = null;
-      // Stop any polling loop too. Without this, a successful recovery from
-      // polling mode left the periodic poll timer running forever alongside
-      // the event-driven watcher — a status-refresh round trip every
-      // pollInterval for the rest of the session, mislabeled as an event tick
-      // (only startPolling and stop ever cancelled it). If this attempt fails,
-      // scheduleRestart → startPolling re-arms it.
-      pollTimer?.cancel();
-      pollTimer = null;
-      await teardownWatcher();
-      if (cancelled) return;
-
-      final tool = cachedTool ??= await _detectWatcher(repoPath);
-      if (cancelled) return;
-
-      if (tool == _WatcherTool.none) {
-        startPolling();
-        return;
-      }
-
-      mode = WatchMode.eventDriven;
-      coalescer = Coalescer(
-        trailing: trailing,
-        maxWait: maxWait,
-        minInterval: minInterval,
-        onFire: emit,
-      );
-
-      final newHandle = await _executor.executeStream(
-        repoPath: repoPath,
-        gitArgs: _watcherArgs(tool),
-      );
-      if (cancelled) {
-        await newHandle.cancel();
-        return;
-      }
-      handle = newHandle;
-
-      final delimiter = tool == _WatcherTool.fswatch ? '\u0000' : '\n';
-      sub = newHandle.stdout.listen(
-        (chunk) {
-          restarts = 0;
-          mode = WatchMode.eventDriven;
-          buffer += chunk;
-          var idx = buffer.indexOf(delimiter);
-          while (idx >= 0) {
-            final event = buffer.substring(0, idx);
-            buffer = buffer.substring(idx + 1);
-            if (shouldTriggerWatch(event)) {
-              if (pending.length >= maxPaths) {
-                overflowed = true;
-                pending.clear();
+        var buffer = '';
+        final delimiter = tool == _WatcherTool.fswatch ? '\u0000' : '\n';
+        final sub = handle.stdout.listen(
+          (chunk) {
+            hooks.noteActivity();
+            buffer += chunk;
+            var idx = buffer.indexOf(delimiter);
+            while (idx >= 0) {
+              final event = buffer.substring(0, idx);
+              buffer = buffer.substring(idx + 1);
+              if (shouldTriggerWatch(event)) {
+                hooks.signalPath(event);
               }
-              if (!overflowed) pending.add(event);
-              coalescer!.signal();
+              idx = buffer.indexOf(delimiter);
             }
-            idx = buffer.indexOf(delimiter);
-          }
-          // Whatever remains is an unterminated partial record. If it has grown
-          // past a sane bound, the watcher is emitting output that never
-          // completes a record — drop it and resync on the next delimiter
-          // rather than buffering unbounded.
-          if (buffer.length > _maxBufferChars) {
-            developer.log(
-              'watcher output exceeded $_maxBufferChars chars with no '
-              'delimiter; dropping buffered partial',
-              name: 'RemoteWatchService',
-            );
-            buffer = '';
-          }
-        },
-        onDone: scheduleRestart,
-        onError: (Object _) => scheduleRestart(),
-      );
+            // Whatever remains is an unterminated partial record. If it has
+            // grown past a sane bound, the watcher is emitting output that
+            // never completes a record — drop it and resync on the next
+            // delimiter rather than buffering unbounded.
+            if (buffer.length > _maxBufferChars) {
+              developer.log(
+                'watcher output exceeded $_maxBufferChars chars with no '
+                'delimiter; dropping buffered partial',
+                name: 'RemoteWatchService',
+              );
+              buffer = '';
+            }
+          },
+          onDone: hooks.scheduleRestart,
+          onError: (Object _) => hooks.scheduleRestart(),
+        );
 
-      // The watcher is now armed. Announce it with one eventDriven tick so the
-      // status dot turns green immediately (and pulls a fresh status) instead of
-      // sitting grey — indistinguishable from "stopped" — until the first file
-      // change happens to arrive. This does NOT reset the restart budget: only a
-      // real event (a stdout chunk) counts as proof the watcher is healthy, so a
-      // watcher that arms then dies repeatedly still degrades to polling.
-      emit();
-    };
-
-    Future<void> stop() async {
-      cancelled = true;
-      restartTimer?.cancel();
-      pollTimer?.cancel();
-      recoveryTimer?.cancel();
-      await teardownWatcher();
-      if (!controller.isClosed) await controller.close();
-    }
-
-    controller = StreamController<RepoWatchEvent>(
-      onListen: () {
-        start().catchError((Object _) => scheduleRestart());
+        return WatchArmed(() async {
+          // Cancel the stdout subscription *before* the handle, mirroring the
+          // engine's source-before-coalescer ordering.
+          await sub.cancel();
+          await handle.cancel();
+        });
       },
-      onCancel: stop,
     );
-    return controller.stream;
   }
 
   Future<_WatcherTool> _detectWatcher(String repoPath) async {
@@ -298,5 +169,4 @@ class RemoteWatchService {
         return const [];
     }
   }
-
 }

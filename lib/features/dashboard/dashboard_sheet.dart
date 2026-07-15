@@ -340,6 +340,12 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
                 samples.fold<int>(0, (n, s) => n + s.inMicroseconds) ~/
                 samples.length,
           );
+    // Read fresh on every rebuild (each ping sample, ≤15 s): dual-client can
+    // degrade mid-session when the stream connection dies and its slot falls
+    // back to the command client — a state that was previously invisible.
+    final degraded = ref
+        .read(sshClientManagerProvider)
+        .streamClientDegraded;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -356,6 +362,13 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
               typography,
               avg == null ? '—' : '${avg.inMilliseconds} ms',
               'average',
+            ),
+            const SizedBox(width: 24),
+            _stat(
+              typography,
+              degraded ? 'single' : 'dual',
+              'ssh clients',
+              color: degraded ? MacosColors.systemOrangeColor : null,
             ),
             const SizedBox(width: 24),
             Expanded(
