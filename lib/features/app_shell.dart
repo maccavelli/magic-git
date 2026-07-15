@@ -697,11 +697,13 @@ class _AppShellState extends ConsumerState<AppShell> {
           return Column(
             children: [
               const ToolHealthBanner(),
-              // Ambient SSH link latency — zero-height when no samples yet.
-              const Align(
-                alignment: Alignment.centerRight,
-                child: LinkStatusChip(),
-              ),
+              // Ambient SSH latency + connection status for non-Repository
+              // pages. Repository hosts the same strip on its toolbar instead.
+              if (pageIndex != 0)
+                const Align(
+                  alignment: Alignment.centerRight,
+                  child: SshLinkStatusRow(horizontalPadding: 8),
+                ),
               Expanded(child: _pages(repoPath, pageIndex, visitedPages)),
             ],
           );

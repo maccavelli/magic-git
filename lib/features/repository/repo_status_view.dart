@@ -16,6 +16,7 @@ import '../common/busy_action.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
+import '../common/link_status_chip.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/split_diff_view.dart';
@@ -1704,6 +1705,13 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                 color: MacosColors.systemYellowColor,
               ),
             ),
+          ],
+          // SSH latency + connection status (ambient shell row is hidden on
+          // this page so the strip lives only on the toolbar). Hidden for
+          // local sessions — skip the gap too so layout stays tight.
+          if (!ref.watch(connectionProvider.select((c) => c.isLocal))) ...[
+            const SizedBox(width: 12),
+            const SshLinkStatusRow(),
           ],
           const Spacer(),
           _toolButton(
