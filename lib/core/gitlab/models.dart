@@ -114,103 +114,11 @@ class Pipeline {
       ciStatus == CiStatus.failed || ciStatus == CiStatus.canceled;
 }
 
-/// A project label, from `glab api projects/:id/labels`.
-class Label {
-  final String name;
-  final String color; // Hex, e.g. "#FF0000"
-  final String? description;
-
-  const Label({required this.name, required this.color, this.description});
-
-  factory Label.fromJson(Map<String, dynamic> json) => Label(
-    name: json['name'] as String? ?? '',
-    color: json['color'] as String? ?? '#888888',
-    description: json['description'] as String?,
-  );
-}
-
-/// A project milestone.
-class Milestone {
-  final int iid;
-  final String title;
-  final String state; // active / closed
-  final String? dueDate;
-
-  const Milestone({
-    required this.iid,
-    required this.title,
-    required this.state,
-    this.dueDate,
-  });
-
-  factory Milestone.fromJson(Map<String, dynamic> json) => Milestone(
-    iid: (json['iid'] as num?)?.toInt() ?? 0,
-    title: json['title'] as String? ?? '',
-    state: json['state'] as String? ?? '',
-    dueDate: json['due_date'] as String?,
-  );
-}
-
-/// A project release.
-class Release {
-  final String tagName;
-  final String name;
-  final String? createdAt;
-
-  const Release({required this.tagName, required this.name, this.createdAt});
-
-  factory Release.fromJson(Map<String, dynamic> json) => Release(
-    tagName: json['tag_name'] as String? ?? '',
-    name: json['name'] as String? ?? '',
-    createdAt: json['created_at'] as String?,
-  );
-}
-
-/// A project issue.
-class Issue {
-  final int iid;
-  final String title;
-  final String state; // opened / closed
-  final String? authorUsername;
-  final List<String> labels;
-
-  const Issue({
-    required this.iid,
-    required this.title,
-    required this.state,
-    this.authorUsername,
-    this.labels = const [],
-  });
-
-  factory Issue.fromJson(Map<String, dynamic> json) {
-    final author = json['author'];
-    final rawLabels = json['labels'];
-    return Issue(
-      iid: (json['iid'] as num?)?.toInt() ?? 0,
-      title: json['title'] as String? ?? '',
-      state: json['state'] as String? ?? '',
-      authorUsername: author is Map ? author['username'] as String? : null,
-      labels: rawLabels is List
-          ? rawLabels.whereType<String>().toList()
-          : const [],
-    );
-  }
-}
-
-/// Combined project overview fetched in one GraphQL round-trip.
-class ProjectDashboard {
-  final List<Issue> issues;
-  final List<Label> labels;
-  final List<Milestone> milestones;
-  final List<Release> releases;
-
-  const ProjectDashboard({
-    this.issues = const [],
-    this.labels = const [],
-    this.milestones = const [],
-    this.releases = const [],
-  });
-}
+// The project-dashboard models (Issue, Label, Milestone, Release,
+// ProjectDashboard) moved to the forge-neutral `ForgeIssue`/`ForgeLabel`/
+// `ForgeMilestone`/`ForgeRelease`/`ForgeProjectDashboard` in
+// `core/forge/forge_dashboard.dart` — they were structurally identical to
+// their GitHub twins, differing only in wire field names.
 
 /// A CI/CD job within a pipeline, from `glab api .../pipelines/:id/jobs`.
 class Job {

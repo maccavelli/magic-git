@@ -74,18 +74,16 @@ void main() {
       () async {
         // `--paginate` + `-i` interleaves a header block per page, so the
         // leading-header strip + first-status-line read only ever see page 1.
-        await glab.issues('/repo');
+        // Exercised through api() directly: the issues()/releases() wrappers
+        // that used to cover this were dead code once the Project dashboard
+        // moved to one GraphQL round-trip, and were removed.
+        await glab.api('/repo', 'projects/:id/issues', paginate: true);
         expect(exec.calls.single, contains('--paginate'));
         expect(
           exec.calls.single,
           isNot(contains('-i')),
           reason: 'a paginated call must not combine -i with --paginate',
         );
-
-        exec.calls.clear();
-        await glab.releases('/repo');
-        expect(exec.calls.single, contains('--paginate'));
-        expect(exec.calls.single, isNot(contains('-i')));
 
         // A non-paginated call still uses -i to catch a misleading exit code.
         exec.calls.clear();
@@ -202,6 +200,82 @@ void main() {
         'errors': [<String, dynamic>{}],
       });
       expect(msg, isNotNull);
+    });
+  });
+
+  group('GlabService.projectDashboard', () {
+    late _FakeExecutor exec;
+    late GlabService glab;
+
+    setUp(() {
+      exec = _FakeExecutor();
+      glab = GlabService(exec);
+    });
+
+    // Real gitlab.com response shape (captured 2026-07). The load-bearing
+    // detail: iid fields are **Strings** — the old `as num?` cast crashed the
+    // whole dashboard parse for any project with an issue or milestone.
+    const payload =
+        'HTTP/2 200\ncontent-type: application/json\n\n'
+        '{"data":{"project":{'
+        '"issues":{"count":2577,"nodes":[{"iid":"606072","title":"T",'
+        '"state":"opened","author":{"username":"bob"},'
+        '"labels":{"nodes":[{"title":"backend"}]}}]},'
+        '"labels":{"count":4217,"nodes":[{"title":"bug","color":"#34495E","description":null}]},'
+        '"milestones":{"nodes":[{"iid":"2","title":"v0.5.0","state":"active","dueDate":"2026-07-22"}]},'
+        '"releases":{"count":272,"nodes":[{"tagName":"v19.0.2","name":"v19.0.2",'
+        '"releasedAt":"2026-07-01T17:57:10Z"}]}}}}';
+
+    test('parses real String-iid payload (the crash regression)', () async {
+      exec.results.addAll([
+        _ok('git@gitlab.com:group/proj.git'),
+        _ok(payload),
+      ]);
+      final d = await glab.projectDashboard('/repo');
+      expect(d.issues.single.id, 606072);
+      expect(d.milestones.single.id, 2);
+      expect(d.issuesTotal, 2577);
+      expect(d.labelsTotal, 4217);
+      // MilestoneConnection exposes no count — unknown, not zero.
+      expect(d.milestonesTotal, isNull);
+      expect(d.releasesTotal, 272);
+      expect(d.warning, isNull);
+    });
+
+    test(
+      'a null project (nonexistent OR unauthorized — GitLab sends no error '
+      'for either) throws instead of rendering an empty dashboard',
+      () async {
+        exec.results.addAll([
+          _ok('git@gitlab.com:group/proj.git'),
+          _ok('HTTP/2 200\n\n{"data":{"project":null}}'),
+        ]);
+        await expectLater(
+          glab.projectDashboard('/repo'),
+          throwsA(
+            isA<GlabException>().having(
+              (e) => e.message,
+              'message',
+              contains('group/proj'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test('an empty graphql body resets a stale warning', () async {
+      // First call: partial data + errors → warning set.
+      exec.next = _ok(
+        'HTTP/2 200\n\n{"data":{"project":{}},"errors":[{"message":"partial"}]}',
+      );
+      await glab.graphql('/repo', 'q');
+      expect(glab.lastGraphqlWarning, contains('partial'));
+
+      // Second call: empty body — one of the early-return paths that used to
+      // skip the assignment entirely and leak the first call's warning.
+      exec.next = _ok('HTTP/2 200\n\n');
+      await glab.graphql('/repo', 'q');
+      expect(glab.lastGraphqlWarning, isNull);
     });
   });
 }

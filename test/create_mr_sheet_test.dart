@@ -9,9 +9,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/gitlab/glab_service.dart';
-import 'package:remote_magic_git/core/gitlab/models.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
@@ -96,7 +96,7 @@ Future<(_FakeGit, _FakeGlab)> _pump(WidgetTester tester) async {
       // retry backoff Timer pending past the test's teardown.
       projectDashboardProvider(
         _repo,
-      ).overrideWith((ref) async => const ProjectDashboard()),
+      ).overrideWith((ref) async => const ForgeProjectDashboard()),
     ],
   );
   addTearDown(container.dispose);

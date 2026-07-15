@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import '../forge/forge_dashboard.dart';
 import '../forge/forge_json.dart';
 import '../forge/forge_repo_summary.dart';
 import '../ssh/ssh_command_executor.dart';
@@ -374,20 +375,6 @@ class GlabService {
     return _mapList(decoded, Pipeline.fromJson, label: 'projects/:id/pipelines');
   }
 
-  /// Open issues for the project. Paginated — a project can easily have more
-  /// open issues than fit on one page, and unlike [pipelines]/[jobs] (a
-  /// naturally bounded, most-recent-first activity feed), the open-issues list
-  /// is reference data a user expects to see *all* of, not just the first page.
-  Future<List<Issue>> issues(String repoPath, {int perPage = 30}) async {
-    final decoded = await api(
-      repoPath,
-      'projects/:id/issues',
-      fields: ['state=opened', 'per_page=$perPage'],
-      paginate: true,
-    );
-    return _mapList(decoded, Issue.fromJson, label: 'projects/:id/issues');
-  }
-
   /// Project path (`group/sub/project`) from a git remote URL, for GraphQL
   /// `fullPath`. Returns null when the URL cannot be parsed.
   static String? projectPathFromRemote(String url) {
@@ -406,16 +393,21 @@ class GlabService {
     return path.isEmpty ? null : path;
   }
 
-  /// GraphQL document for [projectDashboard].
+  /// GraphQL document for [projectDashboard]. Each connection also asks for
+  /// its `count` so the UI can show "30 of 2577" instead of silently
+  /// truncating — except milestones: `MilestoneConnection` exposes no
+  /// count/totalCount field (verified against gitlab.com), so that total
+  /// stays unknown.
   static const projectDashboardQuery = r'''
 query($path: ID!) {
   project(fullPath: $path) {
     issues(state: opened, first: 30) {
+      count
       nodes { iid title state author { username } labels { nodes { title } } }
     }
-    labels(first: 100) { nodes { title color description } }
+    labels(first: 100) { count nodes { title color description } }
     milestones(state: active, first: 50) { nodes { iid title state dueDate } }
-    releases(first: 20) { nodes { tagName name releasedAt } }
+    releases(first: 20) { count nodes { tagName name releasedAt } }
   }
 }
 ''';
@@ -473,6 +465,11 @@ query($path: ID!) {
     Map<String, String> variables = const {},
     String label = 'glab api graphql',
   }) async {
+    // Reset up front so no return/throw path can leak the previous call's
+    // warning into this one — the empty-body and non-map early returns below
+    // used to skip the assignment entirely, leaving a stale warning from an
+    // earlier repo's query on the instance.
+    lastGraphqlWarning = null;
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: [...graphqlArgs(query, variables: variables), '-i'],
@@ -514,7 +511,7 @@ query($path: ID!) {
 
   /// Fetches issues, labels, milestones, and releases in **one** GraphQL query
   /// (one SSH round-trip) instead of four separate REST calls.
-  Future<ProjectDashboard> projectDashboard(String repoPath) async {
+  Future<ForgeProjectDashboard> projectDashboard(String repoPath) async {
     final remote = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['git', 'remote', 'get-url', 'origin'],
@@ -534,77 +531,42 @@ query($path: ID!) {
       variables: {'path': fullPath},
       label: 'glab api graphql dashboard',
     );
+    // Per [lastGraphqlWarning]'s contract: capture immediately after the
+    // await, then carry it on the result so the UI never has to read the
+    // racy service field at widget-build time.
+    final warning = lastGraphqlWarning;
     final project = data['project'];
-    if (project is! Map<String, dynamic>) return const ProjectDashboard();
-    return _parseProjectDashboard(project);
-  }
-
-  ProjectDashboard _parseProjectDashboard(Map<String, dynamic> project) {
-    List<T> nodes<T>(String key, T Function(Map<String, dynamic>) from) {
-      final conn = project[key];
-      if (conn is! Map<String, dynamic>) return const [];
-      final list = conn['nodes'];
-      if (list is! List) return const [];
-      return list.whereType<Map<String, dynamic>>().map(from).toList();
-    }
-
-    Issue issueFromGql(Map<String, dynamic> n) {
-      final labelsConn = n['labels'];
-      final labelNodes = labelsConn is Map ? labelsConn['nodes'] : null;
-      final labels = labelNodes is List
-          ? labelNodes
-                .whereType<Map<String, dynamic>>()
-                .map((l) => l['title'] as String? ?? '')
-                .where((s) => s.isNotEmpty)
-                .toList()
-          : const <String>[];
-      final author = n['author'];
-      return Issue(
-        iid: (n['iid'] as num?)?.toInt() ?? 0,
-        title: n['title'] as String? ?? '',
-        state: (n['state'] as String? ?? 'opened').toLowerCase(),
-        authorUsername: author is Map ? author['username'] as String? : null,
-        labels: labels,
+    if (project is! Map<String, dynamic>) {
+      // GitLab resolves a nonexistent OR unauthorized project to
+      // `{"data": {"project": null}}` with **no errors array at all**
+      // (verified against gitlab.com) — deliberately hiding whether the
+      // project exists. Returning an empty dashboard here made a typo'd
+      // origin or a missing glab login indistinguishable from a genuinely
+      // empty project.
+      throw GlabException(
+        'GitLab reports no project at "$fullPath" — the path may be wrong, '
+        'or glab may not be logged in with access to it '
+        '(GitLab answers with an empty result, not an error, in both cases)',
+        const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
       );
     }
-
-    Label labelFromGql(Map<String, dynamic> n) => Label(
-      name: n['title'] as String? ?? '',
-      color: n['color'] as String? ?? '#888888',
-      description: n['description'] as String?,
-    );
-
-    Milestone milestoneFromGql(Map<String, dynamic> n) => Milestone(
-      iid: (n['iid'] as num?)?.toInt() ?? 0,
-      title: n['title'] as String? ?? '',
-      state: (n['state'] as String? ?? 'active').toLowerCase(),
-      dueDate: n['dueDate'] as String?,
-    );
-
-    Release releaseFromGql(Map<String, dynamic> n) => Release(
-      tagName: n['tagName'] as String? ?? '',
-      name: n['name'] as String? ?? '',
-      createdAt: n['releasedAt'] as String?,
-    );
-
-    return ProjectDashboard(
-      issues: nodes('issues', issueFromGql),
-      labels: nodes('labels', labelFromGql),
-      milestones: nodes('milestones', milestoneFromGql),
-      releases: nodes('releases', releaseFromGql),
-    );
+    return _parseProjectDashboard(project, warning: warning);
   }
 
-  /// Project releases. Paginated — see [issues].
-  Future<List<Release>> releases(String repoPath, {int perPage = 20}) async {
-    final decoded = await api(
-      repoPath,
-      'projects/:id/releases',
-      fields: ['per_page=$perPage'],
-      paginate: true,
-    );
-    return _mapList(decoded, Release.fromJson, label: 'projects/:id/releases');
-  }
+  ForgeProjectDashboard _parseProjectDashboard(
+    Map<String, dynamic> project, {
+    String? warning,
+  }) => ForgeProjectDashboard(
+    issues: graphqlNodes(project['issues'], ForgeIssue.fromGlabGql),
+    labels: graphqlNodes(project['labels'], ForgeLabel.fromGlabGql),
+    milestones: graphqlNodes(project['milestones'], ForgeMilestone.fromGlabGql),
+    releases: graphqlNodes(project['releases'], ForgeRelease.fromGlabGql),
+    issuesTotal: graphqlConnectionCount(project['issues']),
+    labelsTotal: graphqlConnectionCount(project['labels']),
+    milestonesTotal: graphqlConnectionCount(project['milestones']),
+    releasesTotal: graphqlConnectionCount(project['releases']),
+    warning: warning,
+  );
 
   /// Maps a decoded JSON list response through [from]. A genuinely empty
   /// list (`[]`, `decoded is List` with zero elements) and a malformed,

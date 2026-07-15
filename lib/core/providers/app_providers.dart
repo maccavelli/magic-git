@@ -12,6 +12,7 @@ import '../exec/local_command_executor.dart';
 import '../forge/auth_probe_service.dart';
 import '../forge/auth_status.dart';
 import '../forge/forge.dart';
+import '../forge/forge_dashboard.dart';
 import '../forge/forge_repo_summary.dart';
 import '../git/git_service.dart';
 import '../git/host_fs_service.dart';
@@ -3187,7 +3188,7 @@ final jobTraceProvider = StreamProvider.autoDispose
 
 /// Project overview (issues, labels, milestones, releases) in one GraphQL hop.
 final projectDashboardProvider = FutureProvider.autoDispose
-    .family<ProjectDashboard, String>((ref, repoPath) async {
+    .family<ForgeProjectDashboard, String>((ref, repoPath) async {
       final glab = ref.watch(glabServiceProvider);
       await _forgeAuthReady(ref);
       return glab.projectDashboard(repoPath);
@@ -3427,7 +3428,7 @@ final runJobLogProvider = FutureProvider.autoDispose
 /// GitHub repository overview (issues, labels, milestones, releases) in one
 /// GraphQL hop.
 final githubProjectDashboardProvider = FutureProvider.autoDispose
-    .family<GhProjectDashboard, String>((ref, repoPath) async {
+    .family<ForgeProjectDashboard, String>((ref, repoPath) async {
       final gh = ref.watch(ghServiceProvider);
       await _forgeAuthReady(ref);
       return gh.projectDashboard(repoPath);

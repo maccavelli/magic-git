@@ -4,7 +4,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
-import '../../core/github/models.dart';
+import '../../core/forge/forge_dashboard.dart';
 // Hide the app's connection-phase `ConnectionState` so FutureBuilder's
 // framework `ConnectionState` (waiting/done) resolves unambiguously.
 import '../../core/providers/app_providers.dart' hide ConnectionState;
@@ -12,7 +12,7 @@ import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
 import '../common/dashboard_warning_banner.dart';
 import '../common/diff_view.dart';
-import '../common/label_colors.dart';
+import '../common/label_picker_field.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
 
@@ -38,8 +38,8 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
   bool _draft = false;
   bool _showPreview = false;
   final Set<String> _labels = {};
-  // Keyed by the milestone's `number` (unique), resolved back to its title for
-  // `gh pr create --milestone` in [_submit].
+  // Keyed by the milestone's id (GitHub `number`, unique), resolved back to
+  // its title for `gh pr create --milestone` in [_submit].
   int? _milestoneNumber;
   Future<String>? _preview;
   Timer? _previewDebounce;
@@ -134,7 +134,7 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
         const [];
     String? milestoneTitle;
     for (final m in milestones) {
-      if (m.number == _milestoneNumber) {
+      if (m.id == _milestoneNumber) {
         milestoneTitle = m.title;
         break;
       }
@@ -185,9 +185,9 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
         .value;
     final labels = dashboard?.labels ?? const [];
     final milestones = dashboard?.milestones ?? const [];
-    final dashboardWarning = dashboard == null
-        ? null
-        : ref.read(ghServiceProvider).lastGraphqlWarning;
+    // Carried on the fetch result — reading the service's mutable
+    // lastGraphqlWarning at build time raced against other GraphQL calls.
+    final dashboardWarning = dashboard?.warning;
     final typography = MacosTheme.of(context).typography;
 
     return SizedSheet(
@@ -246,7 +246,16 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
                         _assignees,
                         placeholder: 'alice',
                       ),
-                      if (labels.isNotEmpty) _labelsField(labels, typography),
+                      if (labels.isNotEmpty)
+                        LabelPickerField(
+                          labels: labels,
+                          selected: _labels,
+                          onToggle: (name) => setState(() {
+                            _labels.contains(name)
+                                ? _labels.remove(name)
+                                : _labels.add(name);
+                          }),
+                        ),
                       if (milestones.isNotEmpty) _milestoneField(milestones),
                       const SizedBox(height: 6),
                       _toggle('Create as draft', _draft, (v) => _draft = v),
@@ -299,59 +308,7 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
   );
 
 
-  Widget _labelsField(List<GhLabel> labels, MacosTypography typography) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Labels',
-            style: typography.caption1.copyWith(
-              color: MacosColors.systemGrayColor,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Wrap(
-            spacing: 6,
-            runSpacing: 6,
-            children: [for (final l in labels) _labelChip(l)],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _labelChip(GhLabel label) {
-    final selected = _labels.contains(label.name);
-    final color =
-        tryParseLabelColor(label.color) ?? MacosColors.systemBlueColor;
-    return GestureDetector(
-      onTap: () => setState(() {
-        selected ? _labels.remove(label.name) : _labels.add(label.name);
-      }),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: selected ? 0.28 : 0.10),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: selected ? color : MacosColors.separatorColor,
-          ),
-        ),
-        child: Text(
-          label.name,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: selected ? FontWeight.bold : FontWeight.normal,
-            color: color,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _milestoneField(List<GhMilestone> milestones) {
+  Widget _milestoneField(List<ForgeMilestone> milestones) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -369,10 +326,7 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
                 child: Text('None'),
               ),
               for (final m in milestones)
-                MacosPopupMenuItem<int?>(
-                  value: m.number,
-                  child: Text(m.title),
-                ),
+                MacosPopupMenuItem<int?>(value: m.id, child: Text(m.title)),
             ],
           ),
         ],

@@ -20,6 +20,42 @@ List<T> mapJsonList<T>(
   return decoded.whereType<Map<String, dynamic>>().map(from).toList();
 }
 
+/// Coerces a JSON scalar to an int. GitLab's GraphQL API returns `iid`
+/// fields as **strings** (`"606072"`) while its REST API returns numbers and
+/// GitHub's GraphQL returns Int — one tolerant reader instead of per-site
+/// casts. (A blind `as num?` cast here crashed the entire GitLab dashboard
+/// parse on any real project, because every issue and milestone iid arrives
+/// as a String.)
+int jsonInt(dynamic v) => switch (v) {
+  final num n => n.toInt(),
+  final String s => int.tryParse(s) ?? 0,
+  _ => 0,
+};
+
+/// Maps a GraphQL connection object's `nodes` list through [from]. Anything
+/// that isn't the expected `{nodes: [...]}` shape is an empty result — a
+/// missing connection is "no rows", never a crash. Was a byte-identical
+/// private helper in both forge services' dashboard parsers.
+List<T> graphqlNodes<T>(
+  dynamic connection,
+  T Function(Map<String, dynamic>) from,
+) {
+  if (connection is! Map<String, dynamic>) return const [];
+  final list = connection['nodes'];
+  if (list is! List) return const [];
+  return list.whereType<Map<String, dynamic>>().map(from).toList();
+}
+
+/// Total size of a GraphQL connection, when the forge exposes one: GitHub
+/// calls it `totalCount` (on every connection), GitLab `count` (on issues,
+/// labels, and releases — `MilestoneConnection` has neither, verified against
+/// gitlab.com). Null means unknown, which is distinct from zero.
+int? graphqlConnectionCount(dynamic connection) {
+  if (connection is! Map<String, dynamic>) return null;
+  final v = connection['totalCount'] ?? connection['count'];
+  return v is num ? v.toInt() : null;
+}
+
 /// Extracts a joined message from a GraphQL response's `errors` array, or
 /// null when there are none. GraphQL reports query failures **in the body
 /// with HTTP 200**, so callers must inspect this rather than trusting the

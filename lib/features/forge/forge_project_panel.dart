@@ -4,12 +4,16 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/forge/forge.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/async_views.dart';
-import '../github/github_project_panel.dart';
-import '../gitlab/project_panel.dart';
 import 'forge_panel.dart';
+import 'project_dashboard_panel.dart';
 
-/// The "Project" sidebar tab. Like [ForgePanel], detects the repo's forge and
-/// dispatches to the GitLab or GitHub project dashboard.
+/// The "Project" sidebar tab. Like [ForgePanel], detects the repo's forge,
+/// then renders the shared [ProjectDashboardPanel] over the matching
+/// dashboard provider. [forgeProvider] resolves [Forge.none] whenever
+/// `git remote get-url origin` fails, so a dashboard is only ever attempted
+/// with an origin present — no separate remote guard is needed here (the old
+/// per-panel guard checked for remote-tracking *refs*, which wrongly blanked
+/// the dashboard for a repo with an origin configured but never fetched).
 class ForgeProjectPanel extends ConsumerWidget {
   final String repoPath;
 
@@ -32,8 +36,15 @@ class ForgeProjectPanel extends ConsumerWidget {
       loading: () => const Center(child: ProgressCircle()),
       error: (err, _) => SectionError(err),
       data: (f) => switch (f) {
-        Forge.github => GitHubProjectPanel(repoPath: repoPath),
-        Forge.gitlab => ProjectPanel(repoPath: repoPath),
+        Forge.github => ProjectDashboardPanel(
+          dashboard: ref.watch(githubProjectDashboardProvider(repoPath)),
+          onRefresh: () =>
+              ref.invalidate(githubProjectDashboardProvider(repoPath)),
+        ),
+        Forge.gitlab => ProjectDashboardPanel(
+          dashboard: ref.watch(projectDashboardProvider(repoPath)),
+          onRefresh: () => ref.invalidate(projectDashboardProvider(repoPath)),
+        ),
         Forge.none => const NoRemoteNotice('project features'),
         Forge.unknown => const UnsupportedForgeNotice(),
       },

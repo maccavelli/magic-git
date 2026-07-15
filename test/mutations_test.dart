@@ -1146,18 +1146,16 @@ void main() {
     });
 
     test(
-      'catalog-style lists (issues/releases) paginate; the bounded activity '
-      'feeds (pipelines/jobs) do not',
+      'api(paginate: true) paginates; the bounded activity feeds '
+      '(pipelines/jobs) do not',
       () async {
-        await glab.issues('/repo');
+        await glab.api('/repo', 'projects/:id/issues', paginate: true);
         expect(exec.calls[0], contains('--paginate'));
-        await glab.releases('/repo');
-        expect(exec.calls[1], contains('--paginate'));
 
         await glab.pipelines('/repo');
-        expect(exec.calls[2], isNot(contains('--paginate')));
+        expect(exec.calls[1], isNot(contains('--paginate')));
         await glab.jobs('/repo', 1);
-        expect(exec.calls[3], isNot(contains('--paginate')));
+        expect(exec.calls[2], isNot(contains('--paginate')));
       },
     );
 

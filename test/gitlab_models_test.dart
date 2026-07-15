@@ -83,46 +83,4 @@ void main() {
     });
   });
 
-  group('project models', () {
-    test('Label.fromJson defaults color when missing', () {
-      final l = Label.fromJson({'name': 'bug'});
-      expect(l.name, 'bug');
-      expect(l.color, '#888888');
-    });
-
-    test('Milestone.fromJson', () {
-      final m = Milestone.fromJson({
-        'iid': 3,
-        'title': 'v2',
-        'state': 'active',
-        'due_date': '2026-08-01',
-      });
-      expect(m.iid, 3);
-      expect(m.title, 'v2');
-      expect(m.dueDate, '2026-08-01');
-    });
-
-    test('Release.fromJson', () {
-      final r = Release.fromJson({
-        'tag_name': 'v1.0',
-        'name': 'First',
-        'created_at': '2026-01-01',
-      });
-      expect(r.tagName, 'v1.0');
-      expect(r.name, 'First');
-    });
-
-    test('Issue.fromJson parses labels list and author', () {
-      final i = Issue.fromJson({
-        'iid': 9,
-        'title': 'Bug',
-        'state': 'opened',
-        'author': {'username': 'bob'},
-        'labels': ['p1', 'backend'],
-      });
-      expect(i.iid, 9);
-      expect(i.authorUsername, 'bob');
-      expect(i.labels, ['p1', 'backend']);
-    });
-  });
 }

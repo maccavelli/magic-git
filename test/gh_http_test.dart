@@ -357,4 +357,108 @@ void main() {
       expect(exec.calls, isEmpty);
     });
   });
+
+  group('GhService.projectDashboard', () {
+    late _FakeExecutor exec;
+    late GhService gh;
+
+    setUp(() {
+      exec = _FakeExecutor();
+      gh = GhService(exec);
+    });
+
+    // Real api.github.com response shape (captured from cli/cli, 2026-07).
+    const payload =
+        '{"data":{"repository":{'
+        '"issues":{"totalCount":974,"nodes":[{"number":13881,"title":"T",'
+        '"state":"OPEN","author":{"login":"bob"},'
+        '"labels":{"nodes":[{"name":"needs-triage"}]}}]},'
+        '"labels":{"totalCount":80,"nodes":[{"name":"bug","color":"d73a4a","description":""}]},'
+        '"milestones":{"totalCount":0,"nodes":[]},'
+        '"releases":{"totalCount":200,"nodes":[{"tagName":"v2.96.0",'
+        '"name":"GitHub CLI 2.96.0","publishedAt":"2026-07-02T21:31:04Z"}]}}}}';
+
+    test('parses a real-shaped payload with totals, no warning', () async {
+      exec.results.addAll([
+        _ok('git@github.com:owner/repo.git'),
+        _ok(payload),
+      ]);
+      final d = await gh.projectDashboard('/repo');
+      expect(d.issues.single.id, 13881);
+      expect(d.issues.single.labels, ['needs-triage']);
+      expect(d.issuesTotal, 974);
+      expect(d.labels.single.color, '#d73a4a');
+      expect(d.releasesTotal, 200);
+      expect(d.releases.single.publishedDate, '2026-07-02');
+      expect(d.warning, isNull);
+    });
+
+    test('carries a partial-data warning on the result', () async {
+      exec.results.addAll([
+        _ok('git@github.com:owner/repo.git'),
+        const SSHCommandResult(
+          exitCode: 1,
+          stdout:
+              '{"data":{"repository":{"issues":{"nodes":[]}}},'
+              '"errors":[{"message":"no access to field x"}]}',
+          stderr: 'gh: graphql error',
+        ),
+      ]);
+      final d = await gh.projectDashboard('/repo');
+      expect(d.warning, contains('no access to field x'));
+    });
+
+    test(
+      'a null repository (NOT_FOUND) throws instead of rendering an '
+      'empty dashboard',
+      () async {
+        // Real shape: data present, repository null, NOT_FOUND in errors[].
+        exec.results.addAll([
+          _ok('git@github.com:owner/repo.git'),
+          const SSHCommandResult(
+            exitCode: 1,
+            stdout:
+                '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND",'
+                '"message":"Could not resolve to a Repository"}]}',
+            stderr: 'gh: Could not resolve to a Repository',
+          ),
+        ]);
+        await expectLater(
+          gh.projectDashboard('/repo'),
+          throwsA(
+            isA<GhException>().having(
+              (e) => e.message,
+              'message',
+              contains('Could not resolve'),
+            ),
+          ),
+        );
+      },
+    );
+
+    test('queries totalCount on every connection', () {
+      expect(
+        RegExp('totalCount')
+            .allMatches(GhService.projectDashboardQuery)
+            .length,
+        4,
+      );
+    });
+  });
+
+  group('GhService.graphql warning lifecycle', () {
+    test('a clean call resets the previous warning', () async {
+      final exec = _FakeExecutor();
+      final gh = GhService(exec);
+      exec.next = _ok(
+        '{"data":{"repository":{}},"errors":[{"message":"partial"}]}',
+      );
+      await gh.graphql('/repo', 'q');
+      expect(gh.lastGraphqlWarning, contains('partial'));
+
+      exec.next = _ok('{"data":{"repository":{}}}');
+      await gh.graphql('/repo', 'q');
+      expect(gh.lastGraphqlWarning, isNull);
+    });
+  });
 }

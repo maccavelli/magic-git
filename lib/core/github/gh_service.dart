@@ -1,5 +1,6 @@
 import 'dart:convert';
 import '../forge/forge.dart';
+import '../forge/forge_dashboard.dart';
 import '../forge/forge_json.dart';
 import '../forge/forge_repo_summary.dart';
 import '../ssh/ssh_command_executor.dart';
@@ -528,11 +529,12 @@ class GhService {
 query($owner: String!, $name: String!) {
   repository(owner: $owner, name: $name) {
     issues(states: OPEN, first: 30, orderBy: {field: CREATED_AT, direction: DESC}) {
+      totalCount
       nodes { number title state author { login } labels(first: 10) { nodes { name } } }
     }
-    labels(first: 100) { nodes { name color description } }
-    milestones(states: OPEN, first: 50) { nodes { number title state dueOn } }
-    releases(first: 20, orderBy: {field: CREATED_AT, direction: DESC}) { nodes { tagName name publishedAt } }
+    labels(first: 100) { totalCount nodes { name color description } }
+    milestones(states: OPEN, first: 50) { totalCount nodes { number title state dueOn } }
+    releases(first: 20, orderBy: {field: CREATED_AT, direction: DESC}) { totalCount nodes { tagName name publishedAt } }
   }
 }
 ''';
@@ -556,6 +558,10 @@ query($owner: String!, $name: String!) {
     Map<String, String> variables = const {},
     String label = 'gh api graphql',
   }) async {
+    // Reset up front so no return/throw path can leak the previous call's
+    // warning into this one — the field is only meaningful immediately after
+    // this call returns.
+    lastGraphqlWarning = null;
     final args = <String>['gh', 'api', 'graphql', '-f', 'query=$query'];
     variables.forEach((name, value) => args.addAll(['-f', '$name=$value']));
     // Every GraphQL call this app issues is a query (the dashboard read).
@@ -592,7 +598,7 @@ query($owner: String!, $name: String!) {
   }
 
   /// Fetches issues, labels, milestones, and releases in one GraphQL round-trip.
-  Future<GhProjectDashboard> projectDashboard(String repoPath) async {
+  Future<ForgeProjectDashboard> projectDashboard(String repoPath) async {
     final remote = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['git', 'remote', 'get-url', 'origin'],
@@ -612,66 +618,41 @@ query($owner: String!, $name: String!) {
       variables: {'owner': slug.owner, 'name': slug.name},
       label: 'gh api graphql dashboard',
     );
+    // Per [lastGraphqlWarning]'s contract: capture immediately after the
+    // await, then carry it on the result so the UI never has to read the
+    // racy service field at widget-build time.
+    final warning = lastGraphqlWarning;
     final repo = data['repository'];
-    if (repo is! Map<String, dynamic>) return const GhProjectDashboard();
-    return _parseProjectDashboard(repo);
-  }
-
-  GhProjectDashboard _parseProjectDashboard(Map<String, dynamic> repo) {
-    List<T> nodes<T>(String key, T Function(Map<String, dynamic>) from) {
-      final conn = repo[key];
-      if (conn is! Map<String, dynamic>) return const [];
-      final list = conn['nodes'];
-      if (list is! List) return const [];
-      return list.whereType<Map<String, dynamic>>().map(from).toList();
-    }
-
-    GhIssue issueFromGql(Map<String, dynamic> n) {
-      final labelsConn = n['labels'];
-      final labelNodes = labelsConn is Map ? labelsConn['nodes'] : null;
-      final labels = labelNodes is List
-          ? labelNodes
-                .whereType<Map<String, dynamic>>()
-                .map((l) => l['name'] as String? ?? '')
-                .where((s) => s.isNotEmpty)
-                .toList()
-          : const <String>[];
-      final author = n['author'];
-      return GhIssue(
-        number: (n['number'] as num?)?.toInt() ?? 0,
-        title: n['title'] as String? ?? '',
-        state: (n['state'] as String? ?? 'open').toLowerCase(),
-        authorLogin: author is Map ? author['login'] as String? : null,
-        labels: labels,
+    if (repo is! Map<String, dynamic>) {
+      // GitHub resolves a missing or inaccessible repository to
+      // `repository: null` plus a NOT_FOUND entry in `errors[]` — `data` is
+      // present, so graphql() rightly treats it as partial success. For the
+      // dashboard a null repository IS total failure; rendering it as an
+      // empty project hid bad slugs and missing access behind "No open
+      // issues".
+      throw GhException(
+        warning ??
+            'GitHub reports no repository at ${slug.owner}/${slug.name}',
+        const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
       );
     }
-
-    GhLabel labelFromGql(Map<String, dynamic> n) => GhLabel(
-      name: n['name'] as String? ?? '',
-      color: normalizeGhLabelColor(n['color'] as String?),
-      description: n['description'] as String?,
-    );
-
-    GhMilestone milestoneFromGql(Map<String, dynamic> n) => GhMilestone(
-      number: (n['number'] as num?)?.toInt() ?? 0,
-      title: n['title'] as String? ?? '',
-      state: (n['state'] as String? ?? 'open').toLowerCase(),
-      dueOn: n['dueOn'] as String?,
-    );
-
-    GhRelease releaseFromGql(Map<String, dynamic> n) => GhRelease(
-      tagName: n['tagName'] as String? ?? '',
-      name: n['name'] as String? ?? '',
-      publishedAt: n['publishedAt'] as String?,
-    );
-
-    return GhProjectDashboard(
-      issues: nodes('issues', issueFromGql),
-      labels: nodes('labels', labelFromGql),
-      milestones: nodes('milestones', milestoneFromGql),
-      releases: nodes('releases', releaseFromGql),
-    );
+    return _parseProjectDashboard(repo, warning: warning);
   }
+
+  ForgeProjectDashboard _parseProjectDashboard(
+    Map<String, dynamic> repo, {
+    String? warning,
+  }) => ForgeProjectDashboard(
+    issues: graphqlNodes(repo['issues'], ForgeIssue.fromGhGql),
+    labels: graphqlNodes(repo['labels'], ForgeLabel.fromGhGql),
+    milestones: graphqlNodes(repo['milestones'], ForgeMilestone.fromGhGql),
+    releases: graphqlNodes(repo['releases'], ForgeRelease.fromGhGql),
+    issuesTotal: graphqlConnectionCount(repo['issues']),
+    labelsTotal: graphqlConnectionCount(repo['labels']),
+    milestonesTotal: graphqlConnectionCount(repo['milestones']),
+    releasesTotal: graphqlConnectionCount(repo['releases']),
+    warning: warning,
+  );
 
   Future<dynamic> _runJson(
     String repoPath,
