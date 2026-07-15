@@ -1,0 +1,12 @@
+# Test tags. Declaring them here silences the "tag was used that wasn't
+# specified" warning and documents what each gate means.
+tags:
+  # Tests that exercise real git / real processes on this machine (temp
+  # repos, real filesystem). Run as part of the normal suite.
+  integration:
+  # Tests that talk to a LIVE forge (create/delete real projects on the
+  # signed-in GitLab instance; read-only calls against GitHub). Skipped in
+  # the default run — network-dependent and mutating. Run explicitly with:
+  #   flutter test --run-skipped -t live-forge test/create_repo_wire_live_test.dart
+  live-forge:
+    skip: "live forge test — run explicitly with --run-skipped -t live-forge"

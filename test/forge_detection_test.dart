@@ -82,4 +82,74 @@ void main() {
       );
     });
   });
+
+  group('forgeUrlFromCreateOutput', () {
+    test('gh output: a bare URL line, normalized to .git', () {
+      expect(
+        forgeUrlFromCreateOutput(
+          'https://github.com/mac/newrepo\n',
+          name: 'newrepo',
+        ),
+        'https://github.com/mac/newrepo.git',
+      );
+    });
+
+    test('glab output: the ✓-line with the URL embedded (verified live '
+        'against glab 1.107)', () {
+      expect(
+        forgeUrlFromCreateOutput(
+          '✓ Created project on GitLab: Samuel Smith / newrepo - '
+          'https://gitlab.corp.example/sax/newrepo\n',
+          name: 'newrepo',
+        ),
+        'https://gitlab.corp.example/sax/newrepo.git',
+      );
+    });
+
+    test('an existing .git suffix is not doubled', () {
+      expect(
+        forgeUrlFromCreateOutput(
+          'https://gitlab.com/g/r.git',
+          name: 'r',
+        ),
+        'https://gitlab.com/g/r.git',
+      );
+    });
+
+    test('trailing sentence punctuation is stripped', () {
+      expect(
+        forgeUrlFromCreateOutput(
+          'Created https://github.com/mac/proj.',
+          name: 'proj',
+        ),
+        'https://github.com/mac/proj.git',
+      );
+    });
+
+    test('a URL whose last segment is NOT the project is never taken', () {
+      // e.g. a docs/release-notes link in the output must not become origin.
+      expect(
+        forgeUrlFromCreateOutput(
+          'See https://gitlab.com/help/user/project for details',
+          name: 'newrepo',
+        ),
+        isNull,
+      );
+    });
+
+    test('case differences between name and URL segment still match', () {
+      expect(
+        forgeUrlFromCreateOutput(
+          'https://github.com/mac/MyRepo',
+          name: 'myrepo',
+        ),
+        'https://github.com/mac/MyRepo.git',
+      );
+    });
+
+    test('empty output or name yields null', () {
+      expect(forgeUrlFromCreateOutput('', name: 'r'), isNull);
+      expect(forgeUrlFromCreateOutput('https://x.com/r', name: ''), isNull);
+    });
+  });
 }

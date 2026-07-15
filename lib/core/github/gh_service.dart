@@ -181,18 +181,36 @@ class GhService {
     return result;
   }
 
-  /// The clone URL of the just-created [name] on [host] — used to wire
-  /// `origin` after [createRepoInExisting]. `gh repo view <name>` resolves
-  /// the bare name against the authenticated account exactly as create did.
-  /// Protocol follows `git_protocol` so SSH users get an SSH origin. Retries
-  /// briefly for post-create eventual consistency. Best-effort: returns null
-  /// (never throws) when the lookup can't produce a URL.
-  Future<String?> cloneUrl({
+  /// Resolves the clone URL for `origin` after [createRepoInExisting] —
+  /// layered sources, never throws, and always says what it tried
+  /// ([OriginUrlResolution.detail]) so a live wiring failure is diagnosable
+  /// from the sheet's warning instead of a bare "could not be determined".
+  ///
+  /// Source order:
+  ///  1. [createOutput] — `gh repo create` prints the new repo's URL on
+  ///     stdout (verified live against gh 2.96); parsing it back costs zero
+  ///     round trips and cannot race post-create eventual consistency. Taken
+  ///     directly for https users; SSH users still get the lookup first
+  ///     (create prints only the https form) with this as the fallback.
+  ///  2. `gh repo view <name> --json url,sshUrl` — the bare name resolves
+  ///     against the authenticated account exactly as create did (verified
+  ///     live). Retried briefly for eventual consistency; picks the URL
+  ///     matching the user's `git_protocol`.
+  Future<OriginUrlResolution> resolveOriginUrl({
     required String repoPath,
     required String name,
     String host = 'github.com',
+    String? createOutput,
     int retries = 2,
   }) async {
+    final notes = <String>[];
+    final protocol = await _gitProtocol(repoPath, host);
+    final fromCreate = createOutput == null
+        ? null
+        : forgeUrlFromCreateOutput(createOutput, name: name);
+    if (fromCreate != null && protocol != 'ssh') {
+      return (url: fromCreate, detail: 'from gh repo create output');
+    }
     for (var attempt = 0; attempt <= retries; attempt++) {
       if (attempt > 0) {
         await Future<void>.delayed(Duration(milliseconds: 250 * attempt));
@@ -204,23 +222,53 @@ class GhService {
           'gh repo view',
           extraEnv: hostEnv(host),
         );
-        if (decoded is! Map) continue;
+        if (decoded is! Map) {
+          notes.add('gh repo view returned no object');
+          continue;
+        }
         final https = decoded['url'];
         final ssh = decoded['sshUrl'];
-        if (await _gitProtocol(repoPath, host) == 'ssh' &&
-            ssh is String &&
-            ssh.isNotEmpty) {
-          return ssh;
+        if (protocol == 'ssh' && ssh is String && ssh.isNotEmpty) {
+          return (url: ssh, detail: 'from gh repo view (ssh)');
         }
         if (https is String && https.isNotEmpty) {
-          return https.endsWith('.git') ? https : '$https.git';
+          final url = https.endsWith('.git') ? https : '$https.git';
+          return (url: url, detail: 'from gh repo view');
         }
-        if (ssh is String && ssh.isNotEmpty) return ssh;
-      } catch (_) {
-        // Retry; caller surfaces a generic "clone URL could not be determined".
+        if (ssh is String && ssh.isNotEmpty) {
+          return (url: ssh, detail: 'from gh repo view (ssh only)');
+        }
+        notes.add('gh repo view carried neither url nor sshUrl');
+      } on GhException catch (e) {
+        notes.add(_firstLine(e.result.stderr, fallback: 'gh repo view failed '
+            '(exit ${e.result.exitCode})'));
+      } catch (e) {
+        notes.add('$e');
       }
     }
-    return null;
+    if (fromCreate != null) {
+      // SSH-protocol user whose lookup never resolved: a working https origin
+      // beats none (git auth still works; the user can rewrite it to SSH).
+      return (
+        url: fromCreate,
+        detail: 'from gh repo create output (ssh lookup unavailable: '
+            '${notes.join('; ')})',
+      );
+    }
+    return (
+      url: null,
+      detail: notes.isEmpty ? 'no URL source produced output' : notes.join('; '),
+    );
+  }
+
+  /// First non-empty line of [text], or [fallback] — keeps CLI stderr
+  /// readable inside a one-line diagnostic trail.
+  static String _firstLine(String text, {required String fallback}) {
+    for (final line in const LineSplitter().convert(text)) {
+      final t = line.trim();
+      if (t.isNotEmpty) return t;
+    }
+    return fallback;
   }
 
   /// The user's configured clone protocol for [host] (`gh config get

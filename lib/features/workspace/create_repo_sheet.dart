@@ -59,10 +59,13 @@ enum _SourceMode { newFolder, existingFolder }
 /// an optional README + initial commit, then mode-specific origin wiring:
 ///  * None       — nothing further.
 ///  * GitHub     — API-only `gh repo create <name>` (no `--source`/`--remote`/
-///    `--push`), then Magic Git wires `origin` via [GhService.cloneUrl] and
-///    pushes with PATH-hardened `git` when a commit exists.
+///    `--push`), then Magic Git wires `origin` via
+///    [GhService.resolveOriginUrl] (the create's own printed URL first, API
+///    lookup as fallback) and pushes with PATH-hardened `git` when a commit
+///    exists.
 ///  * GitLab     — API-only `glab repo create <name> --skipGitInit`, then the
-///    same hardened origin + push ownership as GitHub.
+///    same hardened origin + push ownership as GitHub via
+///    [GlabService.resolveOriginUrl].
 ///  * Custom URL — `git remote add origin &lt;url&gt;` (no forge CLI — for
 ///    repos already created on a web UI, bare repos on an SSH host, or any
 ///    other pre-existing remote), then `git push -u` when a commit exists.
@@ -596,16 +599,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         case _RemoteMode.github:
           final label = 'gh repo create $name';
           final gh = GhService(executor);
+          SSHCommandResult? created;
           String? createFailure;
           try {
-            final result = await gh.createRepoInExisting(
+            created = await gh.createRepoInExisting(
               repoPath: dest,
               name: name,
               private: _private,
               description: _description.text.trim(),
               host: host,
             );
-            log.logResult(label, result);
+            log.logResult(label, created);
           } on GhException catch (e) {
             log.logResult(label, e.result);
             createFailure = e.result.stderr.trim().isEmpty
@@ -613,6 +617,8 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
                 : e.result.stderr.trim();
           }
           // Always attempt origin wiring — partial create success is common.
+          // The create's own output is the primary URL source (gh prints the
+          // new repo's URL); the API lookup chain is the fallback.
           final before = warnings.length;
           await _ensureForgeOrigin(
             executor,
@@ -621,8 +627,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             hasCommit,
             pushRef,
             warnings,
-            lookupUrl: () =>
-                gh.cloneUrl(repoPath: dest, name: name, host: host),
+            lookupUrl: () => gh.resolveOriginUrl(
+              repoPath: dest,
+              name: name,
+              host: host,
+              createOutput: created?.stdout,
+            ),
           );
           if (createFailure != null) {
             // If origin was wired, the forge project exists — drop the create
@@ -640,15 +650,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         case _RemoteMode.gitlab:
           final label = 'glab repo create $name';
           final glab = GlabService(executor);
+          SSHCommandResult? created;
           String? createFailure;
           try {
-            await glab.createRepoInExisting(
+            created = await glab.createRepoInExisting(
               repoPath: dest,
               name: name,
               private: _private,
               description: _description.text.trim(),
               host: host,
             );
+            log.logResult(label, created);
           } on GlabException catch (e) {
             log.logResult(label, e.result);
             createFailure = e.result.stderr.trim().isEmpty
@@ -663,8 +675,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             hasCommit,
             pushRef,
             warnings,
-            lookupUrl: () =>
-                glab.cloneUrl(repoPath: dest, name: name, host: host),
+            lookupUrl: () => glab.resolveOriginUrl(
+              repoPath: dest,
+              name: name,
+              host: host,
+              createOutput: created?.stdout,
+            ),
           );
           if (createFailure != null) {
             final originOk = await _verifyOrigin(executor, log, dest) == null;
@@ -865,7 +881,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   /// push when [hasCommit]. Idempotent and best-effort:
   ///  * origin already resolves → push if needed
   ///  * origin missing → [lookupUrl] + `git remote add origin`, then push
-  /// Returns whether origin is present after this call.
+  /// Returns whether origin is present after this call. A failed resolution
+  /// carries its diagnostic trail ([OriginUrlResolution.detail]) into both
+  /// the warning banner and the output log, so a live failure names its
+  /// cause instead of a bare "could not be determined".
   Future<bool> _ensureForgeOrigin(
     CommandExecutor executor,
     OutputLogNotifier log,
@@ -873,7 +892,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     bool hasCommit,
     String pushRef,
     List<String> warnings, {
-    required Future<String?> Function() lookupUrl,
+    required Future<OriginUrlResolution> Function() lookupUrl,
   }) async {
     final existing = await executor.execute(
       repoPath: dest,
@@ -883,12 +902,15 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     );
     var hasOrigin = existing.isSuccess && existing.stdout.trim().isNotEmpty;
     if (!hasOrigin) {
-      final url = (await lookupUrl())?.trim();
+      final resolved = await lookupUrl();
+      final url = resolved.url?.trim();
       if (url == null || url.isEmpty) {
+        log.logError('origin clone-URL resolution', resolved.detail);
         warnings.add(
           'The repository was created on the forge, but no "origin" remote '
           'could be configured locally — its clone URL could not be '
-          'determined. Add one manually: git remote add origin <url>.',
+          'determined. Add one manually: git remote add origin <url>. '
+          '(${resolved.detail})',
         );
         return false;
       }

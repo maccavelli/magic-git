@@ -291,7 +291,9 @@ void main() {
     stderr: "error: No such remote 'origin'",
   );
 
-  /// API-only create → missing origin → cloneUrl → remote add → verify.
+  /// API-only create (empty stdout → no create-output URL, exercising the
+  /// lookup fallback) → missing origin → protocol probe → view lookup →
+  /// remote add → verify.
   void queueGithubOriginWire(
     _FakeExecutor exec, {
     required String name,
@@ -299,13 +301,13 @@ void main() {
   }) {
     exec.results.add(_ok('')); // gh repo create (API only)
     exec.results.add(noOrigin); // get-url: missing
+    exec.results.add(_ok('https')); // git_protocol (probed first)
     exec.results.add(
       _ok(
         '{"url":"https://github.com/me/$name","sshUrl":'
         '"git@github.com:me/$name.git"}',
       ),
     ); // gh repo view
-    exec.results.add(_ok('https')); // git_protocol
     exec.results.add(_ok('')); // git remote add
     if (push) exec.results.add(_ok('')); // git push -u
     exec.results.add(_ok('https://github.com/me/$name.git\n')); // verify
@@ -318,6 +320,7 @@ void main() {
   }) {
     exec.results.add(_ok('')); // glab repo create --skipGitInit
     exec.results.add(noOrigin); // get-url: missing
+    exec.results.add(_ok('')); // glab config get git_protocol (unset → https)
     exec.results.add(
       _ok('HTTP/2.0 200 OK\n\n{"username":"me"}'),
     ); // glab api user
@@ -377,6 +380,47 @@ void main() {
         joined.any((c) => c.contains('--source') || c.contains('--remote')),
         isFalse,
         reason: 'never ask gh to nest local git ops',
+      );
+      expect(stub.repoPathsSet, ['/srv/new-proj']);
+      expect(find.byType(CreateRepositorySheet), findsNothing);
+    },
+  );
+
+  testWidgets(
+    "the URL printed by gh repo create is the primary origin source — no "
+    "view lookup round trip at all",
+    (tester) async {
+      final (stub, exec, _) = await _pumpConnected(tester);
+      await _next(tester); // Source
+      await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.pumpAndSettle();
+      await _next(tester); // Remote → Details
+      await tester.enterText(_nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await _next(tester); // Details → Review
+
+      exec.results.add(_ok('absent')); // probe
+      exec.results.add(_ok('')); // git init
+      exec.results.add(
+        _ok('https://github.com/me/new-proj\n'),
+      ); // gh repo create prints the new repo URL
+      exec.results.add(noOrigin); // get-url: missing
+      exec.results.add(_ok('https')); // git_protocol
+      exec.results.add(_ok('')); // git remote add
+      exec.results.add(_ok('https://github.com/me/new-proj.git\n')); // verify
+      await tester.tap(_createButton());
+      await tester.pumpAndSettle();
+
+      final joined = exec.calls.map((c) => c.join(' ')).toList();
+      expect(
+        joined,
+        contains('git remote add origin https://github.com/me/new-proj.git'),
+        reason: 'origin wired from the create output alone',
+      );
+      expect(
+        joined.any((c) => c.startsWith('gh repo view')),
+        isFalse,
+        reason: 'no lookup round trip when create already printed the URL',
       );
       expect(stub.repoPathsSet, ['/srv/new-proj']);
       expect(find.byType(CreateRepositorySheet), findsNothing);
@@ -601,13 +645,13 @@ void main() {
         ),
       );
       exec.results.add(noOrigin); // ensure: missing
+      exec.results.add(_ok('https')); // git_protocol (probed first)
       exec.results.add(
         _ok(
           '{"url":"https://github.com/me/new-proj","sshUrl":'
           '"git@github.com:me/new-proj.git"}',
         ),
       ); // view still finds the project
-      exec.results.add(_ok('https'));
       exec.results.add(_ok('')); // remote add
       exec.results.add(_ok('')); // push
       // verify after ensure (downgrade create failure) + step-4 verify

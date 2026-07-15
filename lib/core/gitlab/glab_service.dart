@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import '../forge/forge.dart';
 import '../forge/forge_dashboard.dart';
 import '../forge/forge_json.dart';
 import '../forge/forge_repo_summary.dart';
@@ -157,8 +158,13 @@ class GlabService {
   /// Passes `--skipGitInit` so glab does not nest local `git init` / remote
   /// wiring (those ride an unhardened PATH and can leave the API project
   /// created with no usable `origin`). The create-repo wizard inits first,
-  /// then wires origin and pushes with PATH-hardened `git` via [cloneUrl].
-  Future<void> createRepoInExisting({
+  /// then wires origin and pushes with PATH-hardened `git`.
+  ///
+  /// Returns the create result: its stdout carries a
+  /// `✓ Created project on GitLab: … - <url>` line (verified live against
+  /// glab 1.107) that [resolveOriginUrl] reads back as the primary origin
+  /// URL source.
+  Future<SSHCommandResult> createRepoInExisting({
     required String repoPath,
     required String name,
     required bool private,
@@ -185,28 +191,68 @@ class GlabService {
     if (!result.isSuccess) {
       throw GlabException('glab repo create failed', result);
     }
+    return result;
   }
 
-  /// The clone URL of the just-created [name] on [host] — used to wire
-  /// `origin` after [createRepoInExisting]. Bare names resolve under the
-  /// authenticated user's namespace; group paths (`a/b/c`) are used verbatim.
-  /// Prefers `ssh_url_to_repo` when the user looks SSH-oriented, else
-  /// `http_url_to_repo`. Retries briefly for post-create eventual consistency.
-  /// Best-effort: returns null (never throws) when the project can't be
-  /// confirmed.
-  Future<String?> cloneUrl({
+  /// The user's configured clone protocol for [host]
+  /// (`glab config get git_protocol --host <host>`) — `ssh` or `https`;
+  /// defaults to `https` (glab's own default; the key prints nothing when
+  /// unset) on any error, so a failed probe never blocks origin wiring.
+  ///
+  /// The host flag MUST be spelled `--host`: unlike gh's config command,
+  /// glab's `-h` means `--help` — `glab config get git_protocol -h <host>`
+  /// exits 0 printing the help text (verified live against glab 1.107),
+  /// which would silently read as "not ssh" here but would poison any parse
+  /// that trusted the output.
+  Future<String> _gitProtocol(String repoPath, String host) async {
+    try {
+      final result = await _executor.execute(
+        repoPath: repoPath,
+        gitArgs: ['glab', 'config', 'get', 'git_protocol', '--host', host],
+        lane: ExecLane.read,
+        extraEnv: hostEnv(host),
+      );
+      return result.stdout.trim().toLowerCase() == 'ssh' ? 'ssh' : 'https';
+    } catch (_) {
+      return 'https';
+    }
+  }
+
+  /// Resolves the clone URL for `origin` after [createRepoInExisting] —
+  /// layered sources, never throws, and always says what it tried
+  /// ([OriginUrlResolution.detail]). The GitLab twin of
+  /// `GhService.resolveOriginUrl`.
+  ///
+  /// Source order:
+  ///  1. [createOutput] — glab's `✓ Created project…` line carries the
+  ///     project URL; zero round trips, no post-create consistency race.
+  ///     Taken directly for https users; SSH users get the lookup first
+  ///     (create prints only the https form) with this as the fallback.
+  ///  2. API lookup: bare names resolve under the authenticated user's
+  ///     namespace (`glab api user`); group paths (`a/b/c`) are used
+  ///     verbatim; then `glab api projects/<id>` yields both URL forms and
+  ///     the user's `git_protocol` picks. Retried briefly.
+  Future<OriginUrlResolution> resolveOriginUrl({
     required String repoPath,
     required String name,
     String host = 'gitlab.com',
+    String? createOutput,
     int retries = 2,
   }) async {
+    final notes = <String>[];
+    final protocol = await _gitProtocol(repoPath, host);
+    final fromCreate = createOutput == null
+        ? null
+        : forgeUrlFromCreateOutput(createOutput, name: name);
+    if (fromCreate != null && protocol != 'ssh') {
+      return (url: fromCreate, detail: 'from glab repo create output');
+    }
     for (var attempt = 0; attempt <= retries; attempt++) {
       if (attempt > 0) {
         await Future<void>.delayed(Duration(milliseconds: 250 * attempt));
       }
       try {
         String full;
-        String? username;
         if (name.contains('/')) {
           full = name;
         } else {
@@ -217,8 +263,11 @@ class GlabService {
             expectHeaders: true,
             extraEnv: hostEnv(host),
           );
-          username = (who is Map ? who['username'] : null) as String?;
-          if (username == null || username.isEmpty) continue;
+          final username = (who is Map ? who['username'] : null) as String?;
+          if (username == null || username.isEmpty) {
+            notes.add('glab api user carried no username');
+            continue;
+          }
           full = '$username/$name';
         }
         // GitLab's project id must arrive URL-encoded — each path segment
@@ -231,20 +280,52 @@ class GlabService {
           expectHeaders: true,
           extraEnv: hostEnv(host),
         );
-        if (project is! Map) continue;
+        if (project is! Map) {
+          notes.add('glab api projects/$full returned no object');
+          continue;
+        }
         final https = project['http_url_to_repo'] as String?;
         final ssh = project['ssh_url_to_repo'] as String?;
-        if (https != null && https.isNotEmpty) return https;
-        if (ssh != null && ssh.isNotEmpty) return ssh;
-        // Last resort: construct from known identity (never invent owner).
-        if (username != null && username.isNotEmpty) {
-          return 'https://$host/$username/$name.git';
+        if (protocol == 'ssh' && ssh != null && ssh.isNotEmpty) {
+          return (url: ssh, detail: 'from glab api projects (ssh)');
         }
-      } catch (_) {
-        // Retry; caller surfaces a generic "clone URL could not be determined".
+        if (https != null && https.isNotEmpty) {
+          return (url: https, detail: 'from glab api projects');
+        }
+        if (ssh != null && ssh.isNotEmpty) {
+          return (url: ssh, detail: 'from glab api projects (ssh only)');
+        }
+        notes.add('project $full carried no clone URLs');
+      } on GlabException catch (e) {
+        notes.add(_firstLine(e.result.stderr,
+            fallback: '${e.message} (exit ${e.result.exitCode})'));
+      } catch (e) {
+        notes.add('$e');
       }
     }
-    return null;
+    if (fromCreate != null) {
+      // SSH-protocol user whose lookup never resolved: a working https origin
+      // beats none (the user can rewrite it to SSH).
+      return (
+        url: fromCreate,
+        detail: 'from glab repo create output (ssh lookup unavailable: '
+            '${notes.join('; ')})',
+      );
+    }
+    return (
+      url: null,
+      detail: notes.isEmpty ? 'no URL source produced output' : notes.join('; '),
+    );
+  }
+
+  /// First non-empty line of [text], or [fallback] — keeps CLI stderr
+  /// readable inside a one-line diagnostic trail.
+  static String _firstLine(String text, {required String fallback}) {
+    for (final line in const LineSplitter().convert(text)) {
+      final t = line.trim();
+      if (t.isNotEmpty) return t;
+    }
+    return fallback;
   }
 
   /// argv for a streamed clone of [pathWithNamespace] into [dirName] (run with

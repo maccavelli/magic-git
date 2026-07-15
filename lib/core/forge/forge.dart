@@ -61,3 +61,42 @@ Forge forgeFromRemoteUrl(String url) {
   return classifyForgeHost(host);
 }
 
+
+/// The outcome of resolving a just-created forge project's clone URL for
+/// origin wiring: the URL itself (null when every source failed), plus a
+/// human-readable trail of what was tried and why each source failed — the
+/// create-repo sheet surfaces it in its warning banner and output log, so a
+/// live wiring failure states its reason instead of a bare "could not be
+/// determined".
+typedef OriginUrlResolution = ({String? url, String detail});
+
+/// Extracts the created project's clone URL from a forge CLI's own
+/// `repo create` output, or null when no line carries one.
+///
+/// Both CLIs print the new project's web URL on success — `gh repo create`
+/// prints it alone on stdout, `glab repo create` embeds it in a
+/// `✓ Created project on GitLab: … - <url>` line (verified live against
+/// gh 2.96 / glab 1.107). Reading it back is the *primary* origin-URL source:
+/// zero extra round trips and immune to the post-create eventual-consistency
+/// window that makes an immediate API lookup racy. The URL's final path
+/// segment must equal [name] (case-insensitively, ignoring a `.git` suffix),
+/// so an unrelated URL in the output can never be mistaken for the project.
+/// The result is normalized to end in `.git`.
+String? forgeUrlFromCreateOutput(String output, {required String name}) {
+  if (output.isEmpty || name.isEmpty) return null;
+  for (final m in RegExp(r'''https?://[^\s"'()<>]+''').allMatches(output)) {
+    // Sentence punctuation attaches to an embedded URL; strip it before
+    // comparing the last segment.
+    final candidate = m.group(0)!.replaceFirst(RegExp(r'[.,;:!?]+$'), '');
+    var base = candidate;
+    if (base.endsWith('.git')) base = base.substring(0, base.length - 4);
+    while (base.endsWith('/')) {
+      base = base.substring(0, base.length - 1);
+    }
+    final slash = base.lastIndexOf('/');
+    if (slash < 0) continue;
+    final last = base.substring(slash + 1);
+    if (last.toLowerCase() == name.toLowerCase()) return '$base.git';
+  }
+  return null;
+}
