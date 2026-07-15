@@ -70,3 +70,8 @@ String? joinedGraphqlErrors(Map<String, dynamic> decoded) {
       .join('; ');
   return joined.isEmpty ? 'unknown GraphQL error' : joined;
 }
+
+/// First eight characters of a commit SHA for display (empty for null) —
+/// shared by the GitHub and GitLab models, which have no common base type.
+String shortShaOf(String? sha) =>
+    sha == null ? '' : sha.substring(0, sha.length.clamp(0, 8));

@@ -6,6 +6,7 @@ import '../../core/git/git_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/theme/app_theme.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/busy_action.dart';
@@ -425,7 +426,7 @@ class _StashViewState extends ConsumerState<StashView>
       },
       child: Container(
         color: selected
-            ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
+            ? AppTheme.rowSelectionTint
             : const Color(0x00000000),
         padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
         child: Row(

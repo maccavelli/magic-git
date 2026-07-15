@@ -4,6 +4,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
@@ -113,10 +114,10 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
       // A conflict leaves the rebase in progress; close so the user can resolve
       // it via the Repository panel's rebase banner, but surface the message.
       log.logResult(label, e.result);
-      if (mounted) await showErrorDialog(context, e.toString());
+      if (mounted) await showErrorDialog(context, displayError(e));
     } catch (e) {
       log.logError(label, e.toString());
-      if (mounted) await showErrorDialog(context, e.toString());
+      if (mounted) await showErrorDialog(context, displayError(e));
     } finally {
       // Whatever happened, refresh the repo-scoped views — guarded as one
       // unit: the sheet can be gone (repo switch, disconnect) by the time

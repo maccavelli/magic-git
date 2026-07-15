@@ -5,6 +5,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/theme/app_theme.dart';
 import '../common/actions.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
@@ -239,9 +240,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
               ? 'origin'
               : remotesList.isEmpty
               ? null
-              : remotesList.contains('origin')
-              ? 'origin'
-              : remotesList.first;
+              : defaultRemote(remotesList);
           final localOnlyTags = remoteTags == null
               ? const <String>[]
               : [
@@ -373,7 +372,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         color: branch.isHead
             ? MacosColors.systemGreenColor.withValues(alpha: 0.12)
             : selected
-            ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
+            ? AppTheme.rowSelectionTint
             : const Color(0x00000000),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
         child: Row(

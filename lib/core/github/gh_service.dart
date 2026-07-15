@@ -306,18 +306,8 @@ class GhService {
   /// the GraphQL dashboard (which needs explicit `owner`/`name` variables;
   /// unlike REST, `gh api graphql` does not substitute `{owner}`/`{repo}`).
   static ({String owner, String name})? ownerRepoFromRemote(String url) {
-    var path = url.trim();
-    if (path.isEmpty) return null;
-    if (path.endsWith('.git')) path = path.substring(0, path.length - 4);
-    if (path.contains('://')) {
-      final uri = Uri.tryParse(path);
-      if (uri == null) return null;
-      path = uri.path.startsWith('/') ? uri.path.substring(1) : uri.path;
-    } else {
-      final colon = path.indexOf(':');
-      if (colon < 0) return null;
-      path = path.substring(colon + 1);
-    }
+    final path = remotePathFromUrl(url);
+    if (path == null) return null;
     final segs = path.split('/').where((s) => s.isNotEmpty).toList();
     if (segs.length < 2) return null;
     return (owner: segs[0], name: segs[1]);

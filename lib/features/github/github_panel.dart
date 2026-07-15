@@ -10,7 +10,7 @@ import '../common/branch_switch.dart';
 import '../common/escape_dismissible.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/show_more_row.dart';
-import '../common/tool_icon_button.dart';
+import '../forge/forge_widgets.dart';
 import 'create_pr_sheet.dart';
 import 'run_jobs_view.dart';
 import 'status_color.dart';
@@ -158,11 +158,11 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
-        _sectionHeader(
-          context,
+        ForgeSectionHeader(
           'Pull Requests',
-          () => ref.invalidate(pullRequestsProvider(repoPath)),
+          onRefresh: () => ref.invalidate(pullRequestsProvider(repoPath)),
           onAdd: _createPr,
+          addTooltip: 'New pull request',
         ),
         asyncListSection(
           prs,
@@ -170,10 +170,9 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
           (pr) => _prRow(pr, _headRunFor(pr, runByBranch)),
         ),
         const SizedBox(height: 16),
-        _sectionHeader(
-          context,
+        ForgeSectionHeader(
           'Workflow Runs',
-          () => ref.invalidate(workflowRunsProvider(repoPath)),
+          onRefresh: () => ref.invalidate(workflowRunsProvider(repoPath)),
         ),
         // Newest 10 by default; "Show more" re-fetches the same provider with
         // the full (bounded) history — see GitLabPanel._leftPane for the
@@ -197,155 +196,36 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     );
   }
 
-  Widget _sectionHeader(
-    BuildContext context,
-    String title,
-    VoidCallback onRefresh, {
-    VoidCallback? onAdd,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-      child: Row(
-        children: [
-          Text(
-            title,
-            style: MacosTheme.of(
-              context,
-            ).typography.caption1.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const Spacer(),
-          if (onAdd != null)
-            ToolIconButton(
-              icon: CupertinoIcons.add,
-              tooltip: 'New pull request',
-              size: 15,
-              onPressed: onAdd,
-            ),
-          ToolIconButton(
-            icon: CupertinoIcons.refresh,
-            tooltip: 'Refresh',
-            size: 15,
-            onPressed: onRefresh,
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _prRow(PullRequest pr, WorkflowRun? headRun) {
-    final typography = MacosTheme.of(context).typography;
-    final selected = pr.number == _selectedPrNumber;
-    return GestureDetector(
+    return ChangeRequestRow(
+      badge: pr.draft
+          ? const StatusBadge('DRAFT', MacosColors.systemGrayColor)
+          : StatusBadge('#${pr.number}', MacosColors.systemBlueColor),
+      title: pr.title,
+      branches: '${pr.headRefName} → ${pr.baseRefName}',
+      ciDotColor: headRun == null ? null : ghRunStateColor(headRun.runState),
+      selected: pr.number == _selectedPrNumber,
       onTap: () => _selectPr(pr.number),
-      child: Container(
-        color: selected
-            ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
-            : const Color(0x00000000),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (pr.draft)
-              _badge('DRAFT', MacosColors.systemGrayColor)
-            else
-              _badge('#${pr.number}', MacosColors.systemBlueColor),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    pr.title,
-                    style: typography.body,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      if (headRun != null) ...[
-                        MacosIcon(
-                          CupertinoIcons.circle_fill,
-                          size: 8,
-                          color: ghRunStateColor(headRun.runState),
-                        ),
-                        const SizedBox(width: 5),
-                      ],
-                      Flexible(
-                        child: Text(
-                          '${pr.headRefName} → ${pr.baseRefName}',
-                          style: typography.caption1.copyWith(
-                            color: MacosColors.systemGrayColor,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
   Widget _runRow(WorkflowRun run) {
-    final typography = MacosTheme.of(context).typography;
-    final selected = run.id == _selectedRunId;
-    final rerunnable = run.isRerunnable;
-    return GestureDetector(
+    return CiRunRow(
+      dotColor: ghRunStateColor(run.runState),
+      title: run.workflowName.isEmpty ? run.headBranch : run.workflowName,
+      caption: '${run.headBranch}  ·  ${run.shortSha}',
+      selected: run.id == _selectedRunId,
       onTap: () => _selectRun(run.id),
-      child: Container(
-        color: selected
-            ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
-            : const Color(0x00000000),
-        padding: const EdgeInsets.fromLTRB(16, 7, 8, 7),
-        child: Row(
-          children: [
-            MacosIcon(
-              CupertinoIcons.circle_fill,
-              size: 10,
-              color: ghRunStateColor(run.runState),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    run.workflowName.isEmpty ? run.headBranch : run.workflowName,
-                    style: typography.body,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(
-                    '${run.headBranch}  ·  ${run.shortSha}',
-                    style: typography.caption1.copyWith(
-                      color: MacosColors.systemGrayColor,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            if (rerunnable)
-              if (_rerunningRuns.contains(run.id))
-                const SizedBox(width: 15, height: 15, child: ProgressCircle())
-              else
-                ToolIconButton(
-                  icon: CupertinoIcons.refresh_thick,
-                  tooltip: 'Re-run failed jobs',
-                  size: 15,
-                  color: MacosColors.systemGreenColor,
-                  onPressed: () => _rerun(run.id),
-                ),
-          ],
-        ),
-      ),
+      trailing: run.isRerunnable
+          ? InFlightIconButton(
+              busy: _rerunningRuns.contains(run.id),
+              icon: CupertinoIcons.refresh_thick,
+              tooltip: 'Re-run failed jobs',
+              size: 15,
+              color: MacosColors.systemGreenColor,
+              onPressed: () => _rerun(run.id),
+            )
+          : null,
     );
   }
 
@@ -355,8 +235,6 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     AsyncValue<List<PullRequest>> prs,
     AsyncValue<List<WorkflowRun>> runs,
   ) {
-    final typography = MacosTheme.of(context).typography;
-
     if (_selectedRunId != null) {
       WorkflowRun? run;
       for (final r in runs.value ?? const <WorkflowRun>[]) {
@@ -373,119 +251,63 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       if (pr != null) return _prDetail(pr);
     }
 
-    return Center(
-      child: Text(
-        'Select a pull request or workflow run',
-        style: typography.body.copyWith(color: MacosColors.systemGrayColor),
-      ),
-    );
+    return const CenteredHint('Select a pull request or workflow run');
   }
 
   Widget _runDetail(WorkflowRun? run, int runId) {
-    final typography = MacosTheme.of(context).typography;
-    final rerunnable = run != null && run.isRerunnable;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-          child: Row(
-            children: [
-              MacosIcon(
-                CupertinoIcons.circle_fill,
-                size: 11,
-                color: ghRunStateColor(run?.runState ?? GhRunState.unknown),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  run == null
-                      ? 'Run #$runId'
-                      : '${run.workflowName}  ·  ${run.headBranch}',
-                  style: typography.title3,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              if (rerunnable)
-                if (_rerunningRuns.contains(runId))
-                  const SizedBox(width: 16, height: 16, child: ProgressCircle())
-                else
-                  ToolIconButton(
-                    icon: CupertinoIcons.refresh_thick,
-                    tooltip: 'Re-run failed jobs',
-                    size: 16,
-                    color: MacosColors.systemGreenColor,
-                    onPressed: () => _rerun(runId),
-                  ),
-            ],
-          ),
+        CiDetailHeader(
+          dotColor: ghRunStateColor(run?.runState ?? GhRunState.unknown),
+          title: run == null
+              ? 'Run #$runId'
+              : '${run.workflowName}  ·  ${run.headBranch}',
+          trailing: run != null && run.isRerunnable
+              ? InFlightIconButton(
+                  busy: _rerunningRuns.contains(runId),
+                  icon: CupertinoIcons.refresh_thick,
+                  tooltip: 'Re-run failed jobs',
+                  size: 16,
+                  color: MacosColors.systemGreenColor,
+                  onPressed: () => _rerun(runId),
+                )
+              : null,
         ),
-        Container(height: 1, color: MacosColors.separatorColor),
         Expanded(child: RunJobsView(repoPath: repoPath, runId: runId)),
       ],
     );
   }
 
   Widget _prDetail(PullRequest pr) {
-    final typography = MacosTheme.of(context).typography;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  if (pr.draft)
-                    _badge('DRAFT', MacosColors.systemGrayColor)
-                  else
-                    _badge('#${pr.number}', MacosColors.systemBlueColor),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(pr.title, style: typography.title3)),
-                ],
-              ),
-              const SizedBox(height: 10),
-              _detailLine('Head', pr.headRefName),
-              _detailLine('Base', pr.baseRefName),
-              if (pr.authorLogin != null)
-                _detailLine('Author', '@${pr.authorLogin}'),
-              _detailLine('State', pr.merged ? 'merged' : pr.state),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  if (_checkingOutPrs.contains(pr.number))
-                    const ProgressCircle()
-                  else
-                    PushButton(
-                      controlSize: ControlSize.large,
-                      secondary: true,
-                      onPressed: () => _checkoutPr(pr),
-                      child: const Text('Check out'),
-                    ),
-                  const SizedBox(width: 8),
-                  if (_approvingPrs.contains(pr.number))
-                    const ProgressCircle()
-                  else
-                    PushButton(
-                      controlSize: ControlSize.large,
-                      secondary: true,
-                      onPressed: () => _approve(pr.number),
-                      child: const Text('Approve'),
-                    ),
-                  const SizedBox(width: 8),
-                  if (_mergingPrs.contains(pr.number))
-                    const ProgressCircle()
-                  else
-                    _mergeButton(pr),
-                ],
-              ),
-            ],
-          ),
+    return ChangeRequestDetail(
+      badge: pr.draft
+          ? const StatusBadge('DRAFT', MacosColors.systemGrayColor)
+          : StatusBadge('#${pr.number}', MacosColors.systemBlueColor),
+      title: pr.title,
+      lines: [
+        DetailLine('Head', pr.headRefName),
+        DetailLine('Base', pr.baseRefName),
+        if (pr.authorLogin != null) DetailLine('Author', '@${pr.authorLogin}'),
+        DetailLine('State', pr.merged ? 'merged' : pr.state),
+      ],
+      actions: [
+        InFlightPushButton(
+          busy: _checkingOutPrs.contains(pr.number),
+          label: 'Check out',
+          secondary: true,
+          onPressed: () => _checkoutPr(pr),
         ),
-        Container(height: 1, color: MacosColors.separatorColor),
+        InFlightPushButton(
+          busy: _approvingPrs.contains(pr.number),
+          label: 'Approve',
+          secondary: true,
+          onPressed: () => _approve(pr.number),
+        ),
+        if (_mergingPrs.contains(pr.number))
+          const ProgressCircle()
+        else
+          _mergeButton(pr),
       ],
     );
   }
@@ -525,28 +347,6 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     return MacosTooltip(
       message: "Draft pull requests can't be merged — mark it ready first.",
       child: row,
-    );
-  }
-
-  Widget _detailLine(String label, String value) {
-    final typography = MacosTheme.of(context).typography;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 70,
-            child: Text(
-              label,
-              style: typography.caption1.copyWith(
-                color: MacosColors.systemGrayColor,
-              ),
-            ),
-          ),
-          Expanded(child: Text(value, style: typography.body)),
-        ],
-      ),
     );
   }
 
@@ -657,21 +457,4 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     }
   }
 
-  Widget _badge(String text, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          color: color,
-        ),
-      ),
-    );
-  }
 }

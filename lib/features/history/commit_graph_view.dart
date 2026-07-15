@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../core/git/commit_graph.dart';
+import '../../core/theme/app_theme.dart';
 
 /// Lane palette — distinct, reused cyclically by lane index.
 const _laneColors = <Color>[
@@ -84,7 +85,7 @@ class CommitRowPainter extends CustomPainter {
       Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.4 * scale
-        ..color = const Color(0xFF1E1E1E),
+        ..color = AppTheme.terminalBackground,
     );
   }
 

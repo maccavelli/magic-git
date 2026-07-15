@@ -107,12 +107,12 @@ class _CreateTagSheetState extends ConsumerState<CreateTagSheet> {
     return true;
   }
 
-  /// origin when configured, else the first remote — the same choice
-  /// [remoteTagsProvider] makes, so the checkbox and the badges agree.
+  /// [defaultRemote] — the same choice [remoteTagsProvider] makes, so the
+  /// checkbox and the badges agree.
   String? get _remote {
     final remotes = ref.watch(remotesProvider(widget.repoPath)).value;
     if (remotes == null || remotes.isEmpty) return null;
-    return remotes.contains('origin') ? 'origin' : remotes.first;
+    return defaultRemote(remotes);
   }
 
   Future<void> _submit() async {

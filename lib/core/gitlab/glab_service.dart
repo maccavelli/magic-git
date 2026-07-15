@@ -82,7 +82,7 @@ class GlabService {
       timeout: const Duration(seconds: 20),
       lane: ExecLane.read,
     );
-    final host = _hostFromRemote(remote.stdout.trim());
+    final host = forgeHostFromRemoteUrl(remote.stdout.trim());
     if (host == null) {
       throw GlabException(
         'could not resolve a GitLab host from the origin remote',
@@ -344,20 +344,6 @@ class GlabService {
       ? null
       : {'GITLAB_HOST': host, 'GITLAB_URI': host};
 
-  /// Extracts the host from a git remote URL. Handles scp-like
-  /// (`git@host:group/repo.git`), `ssh://`, and `https://`/`http://` forms.
-  /// Returns null when no host can be parsed.
-  static String? _hostFromRemote(String url) {
-    if (url.isEmpty) return null;
-    if (!url.contains('://')) {
-      // scp-like syntax: [user@]host:path
-      final m = RegExp(r'^(?:[^@/]+@)?([^/:]+):').firstMatch(url);
-      return m?.group(1);
-    }
-    final host = Uri.tryParse(url)?.host;
-    return (host != null && host.isNotEmpty) ? host : null;
-  }
-
   /// Calls a REST v4 endpoint, e.g. `projects/:id/merge_requests`.
   ///
   /// [fields] are `key=value` pairs sent via `-f` (`--field`); when any are
@@ -499,21 +485,7 @@ class GlabService {
 
   /// Project path (`group/sub/project`) from a git remote URL, for GraphQL
   /// `fullPath`. Returns null when the URL cannot be parsed.
-  static String? projectPathFromRemote(String url) {
-    if (url.isEmpty) return null;
-    var path = url.trim();
-    if (path.endsWith('.git')) path = path.substring(0, path.length - 4);
-    if (path.contains('://')) {
-      final uri = Uri.tryParse(path);
-      if (uri == null) return null;
-      path = uri.path.startsWith('/') ? uri.path.substring(1) : uri.path;
-    } else {
-      final colon = path.indexOf(':');
-      if (colon < 0) return null;
-      path = path.substring(colon + 1);
-    }
-    return path.isEmpty ? null : path;
-  }
+  static String? projectPathFromRemote(String url) => remotePathFromUrl(url);
 
   /// GraphQL document for [projectDashboard]. Each connection also asks for
   /// its `count` so the UI can show "30 of 2577" instead of silently
@@ -994,12 +966,21 @@ query($path: ID!) {
     }
   }
 
-  /// Merges a merge request (PUT .../merge).
-  Future<void> mergeMergeRequest(String repoPath, int iid) async {
+  /// Merges a merge request (PUT .../merge). With [squash], the source
+  /// commits are squashed into a single commit on merge (`squash=true` — the
+  /// API's only per-merge strategy knob; a rebase-style merge is a
+  /// project-level setting on GitLab, not a per-request choice, so unlike
+  /// `gh pr merge` there is no rebase flag here).
+  Future<void> mergeMergeRequest(
+    String repoPath,
+    int iid, {
+    bool squash = false,
+  }) async {
     await api(
       repoPath,
       'projects/:id/merge_requests/$iid/merge',
       method: 'PUT',
+      fields: [if (squash) 'squash=true'],
     );
   }
 

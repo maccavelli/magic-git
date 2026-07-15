@@ -3,10 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/escape_dismissible.dart';
-import '../common/sized_sheet.dart';
-import '../common/tool_icon_button.dart';
 import '../switcher/connection_switcher.dart';
-import 'connection_form.dart';
 import 'local_repo_form.dart';
 
 /// The landing (unconnected) page: a layered branding card with just two
@@ -361,48 +358,6 @@ class _MenuRowState extends State<_MenuRow> {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Hosts [ConnectionForm] in a modal sheet. The form signals success only by
-/// flipping the connection state, so this listens and dismisses itself once a
-/// connection is established (staying open on error so the message shows).
-class NewConnectionSheet extends ConsumerWidget {
-  const NewConnectionSheet({super.key});
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    ref.listen(connectionProvider, (_, next) {
-      if (next.isConnected) {
-        final nav = Navigator.of(context);
-        if (nav.canPop()) nav.pop();
-      }
-    });
-
-    final screen = MediaQuery.sizeOf(context);
-    return SizedSheet(
-      width: kSheetWidth,
-      height: (screen.height * 0.82).clamp(460.0, 820.0).toDouble(),
-      child: SizedBox(
-        child: Column(
-          children: [
-            Align(
-              alignment: Alignment.centerRight,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(0, 10, 10, 0),
-                child: ToolIconButton(
-                  icon: CupertinoIcons.xmark,
-                  tooltip: 'Close',
-                  size: 16,
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ),
-            ),
-            const Expanded(child: ConnectionForm()),
-          ],
         ),
       ),
     );

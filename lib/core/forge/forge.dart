@@ -17,9 +17,7 @@ enum Forge { github, gitlab, none, unknown }
 /// (`git@host:owner/repo.git`), `ssh://`, and `https://`/`http://` forms.
 /// Returns null when no host can be parsed.
 ///
-/// Mirrors the host parsing `GlabService` does internally (`_hostFromRemote`),
-/// promoted here so forge detection can share it without depending on the
-/// GitLab layer.
+/// Shared by forge detection and both CLI services' host resolution.
 String? forgeHostFromRemoteUrl(String url) {
   final trimmed = url.trim();
   if (trimmed.isEmpty) return null;
@@ -30,6 +28,27 @@ String? forgeHostFromRemoteUrl(String url) {
   }
   final host = Uri.tryParse(trimmed)?.host;
   return (host != null && host.isNotEmpty) ? host : null;
+}
+
+/// The path component of a git remote URL — `.git` suffix stripped, no
+/// leading slash: `git@host:group/repo.git` → `group/repo`,
+/// `https://host/owner/repo` → `owner/repo`. Returns null when the URL can't
+/// be parsed. GitLab keeps the whole (possibly nested) path; GitHub callers
+/// split it into owner/name.
+String? remotePathFromUrl(String url) {
+  var path = url.trim();
+  if (path.isEmpty) return null;
+  if (path.endsWith('.git')) path = path.substring(0, path.length - 4);
+  if (path.contains('://')) {
+    final uri = Uri.tryParse(path);
+    if (uri == null) return null;
+    path = uri.path.startsWith('/') ? uri.path.substring(1) : uri.path;
+  } else {
+    final colon = path.indexOf(':');
+    if (colon < 0) return null;
+    path = path.substring(colon + 1);
+  }
+  return path.isEmpty ? null : path;
 }
 
 /// Classifies a remote [host] as a known forge by hostname alone.

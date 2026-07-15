@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/material.dart' show SelectableText;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+import '../../core/utils/display_error.dart';
 import '../core/git/git_service.dart';
 import '../core/output/output_log.dart';
 import '../core/providers/app_providers.dart';
@@ -407,7 +408,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       }
     } on GitException catch (e) {
       if (!mounted) return;
-      await showErrorDialog(context, '$e');
+      await showErrorDialog(context, displayError(e));
     }
   }
 

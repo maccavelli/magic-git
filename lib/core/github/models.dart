@@ -8,6 +8,8 @@
 /// than GitLab's single `status`.
 library;
 
+import '../forge/forge_json.dart';
+
 /// A unified, typed view of a GitHub Actions run/job state, collapsing the
 /// (`status`, `conclusion`) pair into one enum for color/retry logic — so those
 /// switches are compile-exhaustive (a new GitHub state maps to [unknown] rather
@@ -134,8 +136,7 @@ class WorkflowRun {
     );
   }
 
-  String get shortSha =>
-      headSha == null ? '' : headSha!.substring(0, headSha!.length.clamp(0, 8));
+  String get shortSha => shortShaOf(headSha);
 
   /// Typed view of (`status`, `conclusion`) for color/logic (see [GhRunState]).
   GhRunState get runState => GhRunState.from(status, conclusion);

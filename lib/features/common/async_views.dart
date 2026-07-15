@@ -2,6 +2,8 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../../core/utils/display_error.dart';
+
 /// Padded, centered spinner for an in-flight section load.
 class SectionLoading extends StatelessWidget {
   const SectionLoading({super.key});
@@ -38,7 +40,7 @@ class SectionError extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) =>
-      SectionMessage('$error', color: MacosColors.systemRedColor);
+      SectionMessage(displayError(error), color: MacosColors.systemRedColor);
 }
 
 /// Grey inline "nothing here" text for an empty section.

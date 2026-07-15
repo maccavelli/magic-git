@@ -377,7 +377,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   /// the next field inside the debounce window and cancels the timer.
   void _debounceFilters() {
     _searchDebounce?.cancel();
-    _searchDebounce = Timer(const Duration(milliseconds: 350), () {
+    _searchDebounce = Timer(kInputDebounce, () {
       if (!mounted) return;
       setState(() {
         _typed = parseLogFilter(_searchController.text);

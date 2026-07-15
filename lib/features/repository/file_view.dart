@@ -5,6 +5,7 @@ import 'package:macos_window_utils/widgets/transparent_macos_sidebar.dart';
 import 'package:macos_window_utils/widgets/visual_effect_subview_container/visual_effect_subview_container_resize_event_relay.dart';
 import '../../core/git/repo_tree.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
 import '../common/context_menu.dart';
@@ -310,7 +311,7 @@ class _FileViewState extends ConsumerState<FileView> {
       cancelLabel: 'No',
       destructive: true,
     );
-    if (!ok) return;
+    if (!ok || !mounted) return;
     // Drop a stale selection highlight if the file being removed is the one
     // currently open in the diff panel.
     if (_selectedPath == node.path) {
@@ -592,7 +593,7 @@ class _FileViewState extends ConsumerState<FileView> {
           : (d) => _showContextMenu(node, d.globalPosition),
       child: Container(
         color: selected
-            ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
+            ? AppTheme.rowSelectionTint
             : const Color(0x00000000),
         padding: EdgeInsets.only(
           left: 8 + row.depth * 14,

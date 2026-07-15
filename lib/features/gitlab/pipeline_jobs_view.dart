@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/gitlab/models.dart';
 import '../../core/providers/app_providers.dart';
-import '../common/tool_icon_button.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/utils/display_error.dart';
+import '../forge/forge_widgets.dart';
 import 'status_color.dart';
 
 /// A pipeline's jobs beside the selected job's live log — the GitLab tab's main
@@ -36,7 +38,6 @@ class _PipelineJobsViewState extends ConsumerState<PipelineJobsView> {
 
   @override
   Widget build(BuildContext context) {
-    final typography = MacosTheme.of(context).typography;
     final jobsAsync = ref.watch(
       jobsProvider((widget.repoPath, widget.pipelineId)),
     );
@@ -49,37 +50,23 @@ class _PipelineJobsViewState extends ConsumerState<PipelineJobsView> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Padding(
+              // Manual refresh only (no auto-polling): a running pipeline's
+              // job statuses otherwise stay frozen until the pipeline is
+              // re-selected. Invalidating re-fetches this pipeline's jobs (and,
+              // since the trace view watches its own provider, a re-selected
+              // job re-tails).
+              ForgeSectionHeader(
+                'Jobs',
+                refreshTooltip: 'Refresh jobs',
                 padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
-                child: Row(
-                  children: [
-                    Text(
-                      'Jobs',
-                      style: typography.caption1.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    // Manual refresh only (no auto-polling): a running
-                    // pipeline's job statuses otherwise stay frozen until the
-                    // pipeline is re-selected. Invalidating re-fetches this
-                    // pipeline's jobs (and, since the trace view watches its own
-                    // provider, a re-selected job re-tails).
-                    ToolIconButton(
-                      icon: CupertinoIcons.refresh,
-                      tooltip: 'Refresh jobs',
-                      size: 15,
-                      onPressed: () => ref.invalidate(
-                        jobsProvider((widget.repoPath, widget.pipelineId)),
-                      ),
-                    ),
-                  ],
+                onRefresh: () => ref.invalidate(
+                  jobsProvider((widget.repoPath, widget.pipelineId)),
                 ),
               ),
               Expanded(
                 child: jobsAsync.when(
                   loading: () => const Center(child: ProgressCircle()),
-                  error: (err, _) => _error(context, err),
+                  error: (err, _) => PaneError(err),
                   data: (jobs) => _jobList(context, jobs),
                 ),
               ),
@@ -89,14 +76,7 @@ class _PipelineJobsViewState extends ConsumerState<PipelineJobsView> {
         Container(width: 1, color: MacosColors.separatorColor),
         Expanded(
           child: _selectedJobId == null
-              ? Center(
-                  child: Text(
-                    'Select a job to view its log',
-                    style: typography.body.copyWith(
-                      color: MacosColors.systemGrayColor,
-                    ),
-                  ),
-                )
+              ? const CenteredHint('Select a job to view its log')
               : _TraceLog(repoPath: widget.repoPath, jobId: _selectedJobId!),
         ),
       ],
@@ -113,59 +93,17 @@ class _PipelineJobsViewState extends ConsumerState<PipelineJobsView> {
       itemBuilder: (context, index) {
         final job = jobs[index];
         final selected = job.id == _selectedJobId;
-        return GestureDetector(
+        return JobRow(
+          name: job.name,
+          caption: '${job.stage}  ·  ${job.status}',
+          dotColor: ciStatusColor(job.ciStatus),
+          selected: selected,
           onTap: () => setState(() => _selectedJobId = job.id),
-          child: Container(
-            color: selected
-                ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
-                : const Color(0x00000000),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(
-              children: [
-                MacosIcon(
-                  CupertinoIcons.circle_fill,
-                  size: 9,
-                  color: ciStatusColor(job.ciStatus),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        job.name,
-                        style: typography.body,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Text(
-                        '${job.stage}  ·  ${job.status}',
-                        style: typography.caption1.copyWith(
-                          color: MacosColors.systemGrayColor,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
         );
       },
     );
   }
 
-  Widget _error(BuildContext context, Object err) => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Text(
-        '$err',
-        style: MacosTheme.of(
-          context,
-        ).typography.body.copyWith(color: MacosColors.systemRedColor),
-      ),
-    ),
-  );
 }
 
 /// Live log for one job. The trace stream delivers **incremental** chunks; we
@@ -298,7 +236,7 @@ class _TraceLogState extends ConsumerState<_TraceLog> {
     final hasContent = _chunks.isNotEmpty || _error != null;
 
     return Container(
-      color: const Color(0xFF1E1E1E),
+      color: AppTheme.terminalBackground,
       padding: const EdgeInsets.all(12),
       child: (_loading && !hasContent)
           ? const Center(child: ProgressCircle())
@@ -321,14 +259,6 @@ class _TraceLogState extends ConsumerState<_TraceLog> {
     );
   }
 
-  static const _logStyle = TextStyle(
-    fontFamily: 'Menlo',
-    fontFamilyFallback: ['SF Mono', 'Consolas', 'monospace'],
-    fontSize: 12,
-    height: 1.35,
-    color: Color(0xFFE0E0E0),
-  );
-
   Widget _logList() {
     final itemCount = _chunks.length + (_error != null ? 1 : 0);
     // One SelectionArea over plain Text chunks: per-chunk SelectableText
@@ -339,9 +269,9 @@ class _TraceLogState extends ConsumerState<_TraceLog> {
         itemCount: itemCount,
         itemBuilder: (context, index) {
           if (index < _chunks.length) {
-            return Text(_chunks[index], style: _logStyle);
+            return Text(_chunks[index], style: kJobLogStyle);
           }
-          return Text('$_error', style: _logStyle);
+          return Text(displayError(_error!), style: kJobLogStyle);
         },
       ),
     );

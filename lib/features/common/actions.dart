@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show Dialog;
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/local/dock_progress.dart';
+import '../../core/utils/display_error.dart';
 import 'escape_dismissible.dart';
 
 /// Runs a mutating [action], surfacing any failure in a macOS error dialog.
@@ -23,7 +24,7 @@ Future<bool> runAction(
     return true;
   } catch (e) {
     if (context.mounted) {
-      await showErrorDialog(context, '$e');
+      await showErrorDialog(context, displayError(e));
     }
     return false;
   }

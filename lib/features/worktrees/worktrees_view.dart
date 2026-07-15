@@ -9,6 +9,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/providers/window_manager_bridge.dart';
+import '../../core/utils/display_error.dart';
 import '../branches/branches_view.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
@@ -209,7 +210,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
     try {
       preview = await git.pruneWorktrees(repoPath, dryRun: true);
     } catch (e) {
-      if (mounted) await showErrorDialog(context, '$e');
+      if (mounted) await showErrorDialog(context, displayError(e));
       return;
     }
     if (!mounted) return;

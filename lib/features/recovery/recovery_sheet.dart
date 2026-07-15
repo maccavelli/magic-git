@@ -6,6 +6,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
+import '../../core/theme/app_theme.dart';
 import '../common/actions.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
@@ -220,7 +221,7 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
                     vertical: 1,
                   ),
                   decoration: BoxDecoration(
-                    color: MacosColors.systemBlueColor.withValues(alpha: 0.15),
+                    color: AppTheme.rowSelectionTint,
                     borderRadius: BorderRadius.circular(4),
                   ),
                   child: Text(
@@ -306,7 +307,7 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
         color: selected
-            ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
+            ? AppTheme.rowSelectionTint
             : null,
         borderRadius: BorderRadius.circular(6),
       ),

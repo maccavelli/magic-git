@@ -9,6 +9,7 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/utils/file_actions.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
@@ -2312,7 +2313,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           _handleRowSecondaryTap(rows, file.path, kind, d.globalPosition),
       child: Container(
         color: _isPathSelected(file.path, kind)
-            ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
+            ? AppTheme.rowSelectionTint
             : const Color(0x00000000),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
         child: Row(

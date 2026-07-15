@@ -2,6 +2,8 @@
 // home-dir start, descend/parent navigation, dotfile hiding, a permission
 // error keeping the current listing, and popping the chosen path.
 
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +15,8 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/workspace/remote_directory_browser.dart';
 
 /// Serves a fixed virtual directory tree; records which paths were listed.
+/// A path with a [gates] entry doesn't resolve until the test completes it —
+/// how the stale-response test makes one listing deliberately slow.
 class _FakeFs extends HostFsService {
   _FakeFs() : super(SSHCommandExecutor(SSHClientManager()));
 
@@ -23,6 +27,7 @@ class _FakeFs extends HostFsService {
   };
   final Set<String> denied = {'/home/mac/code/secret'};
   final List<String> listed = [];
+  final Map<String, Completer<List<String>>> gates = {};
 
   @override
   Future<String> homeDir() async => '/home/mac';
@@ -30,10 +35,14 @@ class _FakeFs extends HostFsService {
   @override
   Future<List<String>> listDirectories(String path) async {
     listed.add(path);
+    final gate = gates[path];
+    if (gate != null) return gate.future;
     if (denied.contains(path)) {
       throw const HostFsException('Permission denied');
     }
-    return tree[path] ?? const [];
+    // Copy: the real service returns a fresh growable list, and the sheet
+    // sorts what it receives — a const list here would throw in sort().
+    return List.of(tree[path] ?? const []);
   }
 }
 
@@ -42,8 +51,12 @@ class _FakeFs extends HostFsService {
 Finder _byTooltip(String message) =>
     find.byWidgetPredicate((w) => w is MacosTooltip && w.message == message);
 
-Future<String?> _open(WidgetTester tester, {String? initialPath}) async {
-  final fs = _FakeFs();
+Future<String?> _open(
+  WidgetTester tester, {
+  String? initialPath,
+  _FakeFs? fs,
+}) async {
+  fs ??= _FakeFs();
   String? result;
   await tester.pumpWidget(
     ProviderScope(
@@ -130,5 +143,38 @@ void main() {
     await _open(tester, initialPath: '/home/mac/code');
     expect(find.text('magic-git'), findsOneWidget);
     expect(find.text('notes'), findsNothing);
+  });
+
+  testWidgets('a stale slow listing cannot overwrite a newer navigation', (
+    tester,
+  ) async {
+    final fs = _FakeFs();
+    fs.gates['/home/mac/code'] = Completer<List<String>>();
+    await _open(tester, fs: fs);
+
+    // Start a slow descend into `code` — its listing is gated open.
+    await tester.tap(find.text('code'));
+    await tester.pump();
+
+    // While it's in flight, navigate by path; this resolves immediately and
+    // becomes the current listing.
+    await tester.enterText(find.byType(MacosTextField), '/home/mac/notes');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pumpAndSettle();
+
+    // The old `code` request resolves late; it must be dropped, not applied.
+    fs.gates['/home/mac/code']!.complete(['magic-git', 'secret']);
+    await tester.pumpAndSettle();
+
+    expect(find.text('magic-git'), findsNothing,
+        reason: 'the stale listing must not replace the newer one');
+    expect(
+      tester
+          .widget<MacosTextField>(find.byType(MacosTextField))
+          .controller!
+          .text,
+      '/home/mac/notes',
+      reason: 'the path field must stay on the navigation the user made last',
+    );
   });
 }

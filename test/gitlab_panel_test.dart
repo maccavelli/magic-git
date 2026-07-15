@@ -31,6 +31,21 @@ class _GatedGlab extends GlabService {
   }
 }
 
+/// Records mergeMergeRequest calls as (iid, squash) pairs.
+class _MergeCapturingGlab extends GlabService {
+  _MergeCapturingGlab() : super(SSHCommandExecutor(SSHClientManager()));
+  final merges = <(int, bool)>[];
+
+  @override
+  Future<void> mergeMergeRequest(
+    String repoPath,
+    int iid, {
+    bool squash = false,
+  }) async {
+    merges.add((iid, squash));
+  }
+}
+
 const _repo = '/repo';
 
 final _mrs = [
@@ -79,9 +94,10 @@ final _remoteRefs = [
   ),
 ];
 
-Future<void> _pump(WidgetTester tester) async {
+Future<void> _pump(WidgetTester tester, {GlabService? glab}) async {
   final container = ProviderContainer(
     overrides: [
+      if (glab != null) glabServiceProvider.overrideWithValue(glab),
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
       // Sibling of the refs override: the views now read CONFIGURED
       // remotes (remotesProvider), not remote-tracking refs.
@@ -158,6 +174,28 @@ void main() {
     // Detail lines.
     expect(find.text('Source'), findsOneWidget);
     expect(find.text('Target'), findsOneWidget);
+  });
+
+  testWidgets('the merge pulldown offers squash, confirmed with its own verb',
+      (tester) async {
+    // The GitLab merge API always supported squash=true; the UI only ever
+    // sent the default. The pulldown beside Merge closes that gap (no rebase
+    // entry — on GitLab that's a project setting, not a per-merge choice).
+    final glab = _MergeCapturingGlab();
+    await _pump(tester, glab: glab);
+
+    await tester.tap(find.text('Add the parser'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(MacosPulldownButton).last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Squash and merge'));
+    await tester.pumpAndSettle();
+
+    expect(glab.merges, isEmpty, reason: 'nothing before the confirm');
+    await tester.tap(find.text('Squash-merge'));
+    await tester.pumpAndSettle();
+
+    expect(glab.merges, [(7, true)]);
   });
 
   testWidgets(

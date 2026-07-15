@@ -41,6 +41,12 @@ class _RemoteDirectoryBrowserSheetState
   /// the current listing is retained beneath it.
   String? _error;
 
+  /// Monotonic id of the newest navigation. Listings arrive over SSH, so an
+  /// older, slower request can resolve after a newer one; any response whose
+  /// id is no longer current is dropped instead of overwriting the newer
+  /// listing (path field, entries, and current path all travel together).
+  int _navigation = 0;
+
   @override
   void initState() {
     super.initState();
@@ -77,13 +83,14 @@ class _RemoteDirectoryBrowserSheetState
   /// Loads [path]'s subdirectories. On success it becomes the current path; on
   /// failure the current path/listing are kept and the error is shown.
   Future<void> _navigateTo(String path) async {
+    final navigation = ++_navigation;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
       final dirs = await _fs.listDirectories(path);
-      if (!mounted) return;
+      if (!mounted || navigation != _navigation) return;
       dirs.sort();
       setState(() {
         _currentPath = path;
@@ -92,7 +99,7 @@ class _RemoteDirectoryBrowserSheetState
         _pathField.text = path;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || navigation != _navigation) return;
       setState(() {
         _loading = false;
         _error = _friendly(e);

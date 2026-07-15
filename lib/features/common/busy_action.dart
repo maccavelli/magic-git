@@ -4,6 +4,7 @@ import '../../core/git/git_service.dart';
 import '../../core/local/dock_progress.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/utils/display_error.dart';
 import 'actions.dart';
 
 /// THE mutating-action runner for panel views — the busy gate, the
@@ -110,10 +111,12 @@ mixin BusyActionState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
         if (mounted) await showErrorDialog(context, custom);
       } else if (e is GitException) {
         log.logResult(title, e.result);
-        if (mounted) await showErrorDialog(context, e.toString());
+        if (mounted) await showErrorDialog(context, displayError(e));
       } else {
+        // The log keeps the raw toString (a technical surface); the dialog
+        // gets the humanized form.
         log.logError(title, e.toString());
-        if (mounted) await showErrorDialog(context, e.toString());
+        if (mounted) await showErrorDialog(context, displayError(e));
       }
     } finally {
       if (mounted) {

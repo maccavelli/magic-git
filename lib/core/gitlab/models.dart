@@ -1,3 +1,5 @@
+import '../forge/forge_json.dart';
+
 /// A GitLab CI/CD pipeline or job status. The raw wire string is preserved on
 /// the model for verbatim display; this typed view drives color/retry logic so
 /// those switches are compile-exhaustive (a new GitLab status maps to [unknown]
@@ -103,8 +105,7 @@ class Pipeline {
     );
   }
 
-  String get shortSha =>
-      sha == null ? '' : sha!.substring(0, sha!.length.clamp(0, 8));
+  String get shortSha => shortShaOf(sha);
 
   /// Typed view of [status] for color/logic (see [CiStatus]).
   CiStatus get ciStatus => CiStatus.fromWire(status);

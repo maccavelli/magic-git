@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/theme/app_theme.dart';
 import '../common/diff_view.dart';
 import '../common/tool_icon_button.dart';
 
@@ -117,7 +118,7 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
       onTap: () => setState(() => _selected = c.hash),
       child: Container(
         color: isSel
-            ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
+            ? AppTheme.rowSelectionTint
             : const Color(0x00000000),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         child: Column(

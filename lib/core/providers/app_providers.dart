@@ -1952,7 +1952,6 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   refsProvider,
   stashesProvider,
   stashDiffProvider,
-  prepareCommitMsgHookProvider,
   repoStructureProvider,
   repoStatusOverlayProvider,
   fileLogProvider,
@@ -1976,7 +1975,6 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   reflogProvider,
   magicSnapshotsProvider,
   gitWorktreesProvider,
-  repoLayoutProvider,
 ];
 
 /// Clears the eight hash-keyed diff/blame/log LRUs — the LRU-clearing half of
@@ -2526,20 +2524,6 @@ final gitWorktreesProvider = FutureProvider.autoDispose
       return ref.watch(gitServiceProvider).gitWorktrees(repoPath);
     });
 
-/// Where this repo's git data lives — and specifically whether [repoPath] is a
-/// linked worktree, and if so where its main repository is.
-///
-/// Not in [repoMutationFamilies]: the layout of a checkout is fixed for as
-/// long as it is open under this key. `worktree move` retires the old path —
-/// the Worktrees panel closes the tab and reopens it under the NEW path, so a
-/// fresh keyed instance is fetched — and `repair` only applies to prunable
-/// worktrees, which have no open tab to go stale. (It IS in
-/// [repoScopedFetchFamilies], so ⌘R and connection resets refetch it.)
-final repoLayoutProvider = FutureProvider.autoDispose
-    .family<RepoLayout, String>((ref, repoPath) {
-      return ref.watch(gitServiceProvider).repoLayout(repoPath);
-    });
-
 final refsProvider = FutureProvider.autoDispose.family<List<GitRef>, String>((
   ref,
   repoPath,
@@ -2582,9 +2566,7 @@ final remoteTagsProvider = FutureProvider.autoDispose
     .family<Map<String, String>?, String>((ref, repoPath) async {
       final remote = await ref.watch(
         remotesProvider(repoPath).selectAsync(
-          (remotes) => remotes.contains('origin')
-              ? 'origin'
-              : (remotes.isEmpty ? null : remotes.first),
+          (remotes) => remotes.isEmpty ? null : defaultRemote(remotes),
         ),
       );
       if (remote == null) return null;
@@ -3099,13 +3081,6 @@ final stashDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       final (repoPath, oid) = key;
       return ref.watch(gitServiceProvider).stashShow(repoPath, oid);
-    });
-
-/// Whether the repo has a prepare-commit-msg hook (message becomes optional /
-/// the "Generate" action becomes available). Keyed by repoPath.
-final prepareCommitMsgHookProvider = FutureProvider.autoDispose
-    .family<bool, String>((ref, repoPath) {
-      return ref.watch(gitServiceProvider).hasPrepareCommitMsgHook(repoPath);
     });
 
 /// Unified diff for a single working-tree/staged file. Keyed by

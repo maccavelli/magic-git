@@ -28,3 +28,8 @@ const kAppTextFieldFocusedDecoration = BoxDecoration(
 /// field fill. This is a fixed, clearly-visible muted gray tuned for the dark
 /// canvas. Pass via `placeholderStyle:` on any field with a `placeholder:`.
 const kAppPlaceholderStyle = TextStyle(color: Color(0xFF8E8E93));
+
+/// Debounce for text-input-driven refetches (the history search filter and
+/// the PR/MR preview diff) — long enough to let typing settle, short enough
+/// to feel live. One value so every "type, then fetch" field feels the same.
+const kInputDebounce = Duration(milliseconds: 350);

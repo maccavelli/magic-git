@@ -666,9 +666,3 @@ final windowManagerBridgeProvider =
     NotifierProvider<WindowManagerBridge, List<WindowHandle>>(
       WindowManagerBridge.new,
     );
-
-/// Whether the History window is currently open — the toolbar/menu toggle state.
-final historyWindowOpenProvider = Provider<bool>((ref) {
-  final windows = ref.watch(windowManagerBridgeProvider);
-  return windows.any((w) => w.kind == WindowKind.history);
-});

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/output/output_log.dart';
+import '../../core/theme/app_theme.dart';
 import '../common/tool_icon_button.dart';
 
 /// The user-resizable output view docked across the bottom of the repository
@@ -151,7 +152,7 @@ class _OutputViewState extends ConsumerState<OutputView> {
   Widget _logList(BuildContext context, List<OutputLine> lines) {
     if (lines.isEmpty) {
       return Container(
-        color: const Color(0xFF1E1E1E),
+        color: AppTheme.terminalBackground,
         alignment: Alignment.center,
         child: Text(
           'No output yet.',
@@ -162,7 +163,7 @@ class _OutputViewState extends ConsumerState<OutputView> {
       );
     }
     return Container(
-      color: const Color(0xFF1E1E1E),
+      color: AppTheme.terminalBackground,
       // SelectionArea + plain Text so a multi-line command transcript can be
       // drag-copied — per-line SelectableText couldn't span lines.
       child: Scrollbar(

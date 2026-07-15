@@ -1338,6 +1338,20 @@ void main() {
       ]);
     });
 
+    test('mergeMergeRequest with squash sends the typed squash field', () async {
+      await glab.mergeMergeRequest('/repo', 12, squash: true);
+      expect(exec.calls.single, [
+        'glab',
+        'api',
+        'projects/:id/merge_requests/12/merge',
+        '--method',
+        'PUT',
+        '-f',
+        'squash=true',
+        '-i',
+      ]);
+    });
+
     test(
       'read endpoints pass an explicit --method GET (never implicit POST)',
       () async {

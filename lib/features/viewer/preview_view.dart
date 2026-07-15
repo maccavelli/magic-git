@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_html/flutter_html.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:macos_ui/macos_ui.dart';
+import '../../core/theme/app_theme.dart';
 
 /// Rendered previews of Markdown and HTML files — the "Preview" tab of the
 /// viewer, alongside the raw source shown by `CodeView`.
@@ -31,7 +32,7 @@ class MarkdownPreview extends StatelessWidget {
     final link = dark ? const Color(0xFF6AB7FF) : const Color(0xFF0066CC);
     final rule = dark ? const Color(0xFF3A3A3C) : const Color(0xFFD6D6DB);
     final fill = MacosColors.systemGrayColor.withValues(alpha: dark ? 0.18 : 0.12);
-    final bg = dark ? const Color(0xFF1E1E1E) : const Color(0xFFFFFFFF);
+    final bg = dark ? AppTheme.terminalBackground : const Color(0xFFFFFFFF);
 
     // A comfortable reading base; headings step down from a clear h1.
     final body = TextStyle(color: fg, fontSize: 14, height: 1.55);

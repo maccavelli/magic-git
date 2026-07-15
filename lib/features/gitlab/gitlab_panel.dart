@@ -10,7 +10,7 @@ import '../common/branch_switch.dart';
 import '../common/escape_dismissible.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/show_more_row.dart';
-import '../common/tool_icon_button.dart';
+import '../forge/forge_widgets.dart';
 import 'create_mr_sheet.dart';
 import 'pipeline_jobs_view.dart';
 import 'status_color.dart';
@@ -197,11 +197,11 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
-        _sectionHeader(
-          context,
+        ForgeSectionHeader(
           'Merge Requests',
-          () => ref.invalidate(mergeRequestsProvider(repoPath)),
+          onRefresh: () => ref.invalidate(mergeRequestsProvider(repoPath)),
           onAdd: _createMr,
+          addTooltip: 'New merge request',
         ),
         asyncListSection(
           mrs,
@@ -209,10 +209,9 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
           (mr) => _mrRow(mr, _headPipelineFor(mr, pipeByRef)),
         ),
         const SizedBox(height: 16),
-        _sectionHeader(
-          context,
+        ForgeSectionHeader(
           'Pipelines',
-          () => ref.invalidate(pipelinesProvider(repoPath)),
+          onRefresh: () => ref.invalidate(pipelinesProvider(repoPath)),
         ),
         // Newest 10 by default; "Show more" flips the scope notifier, which
         // re-fetches this same provider with the full (bounded) history —
@@ -236,152 +235,38 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     );
   }
 
-  Widget _sectionHeader(
-    BuildContext context,
-    String title,
-    VoidCallback onRefresh, {
-    VoidCallback? onAdd,
-  }) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 8, 4),
-      child: Row(
-        children: [
-          Text(
-            title,
-            style: MacosTheme.of(
-              context,
-            ).typography.caption1.copyWith(fontWeight: FontWeight.bold),
-          ),
-          const Spacer(),
-          if (onAdd != null)
-            ToolIconButton(
-              icon: CupertinoIcons.add,
-              tooltip: 'New merge request',
-              size: 15,
-              onPressed: onAdd,
-            ),
-          ToolIconButton(
-            icon: CupertinoIcons.refresh,
-            tooltip: 'Refresh',
-            size: 15,
-            onPressed: onRefresh,
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _mrRow(MergeRequest mr, Pipeline? headPipeline) {
-    final typography = MacosTheme.of(context).typography;
-    final selected = mr.iid == _selectedMrIid;
-    return GestureDetector(
+    return ChangeRequestRow(
+      badge: mr.draft
+          ? const StatusBadge('DRAFT', MacosColors.systemGrayColor)
+          : StatusBadge('!${mr.iid}', MacosColors.systemBlueColor),
+      title: mr.title,
+      branches: '${mr.sourceBranch} → ${mr.targetBranch}',
+      ciDotColor: headPipeline == null
+          ? null
+          : ciStatusColor(headPipeline.ciStatus),
+      selected: mr.iid == _selectedMrIid,
       onTap: () => _selectMr(mr.iid),
-      child: Container(
-        color: selected
-            ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
-            : const Color(0x00000000),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (mr.draft)
-              _badge('DRAFT', MacosColors.systemGrayColor)
-            else
-              _badge('!${mr.iid}', MacosColors.systemBlueColor),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    mr.title,
-                    style: typography.body,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      if (headPipeline != null) ...[
-                        MacosIcon(
-                          CupertinoIcons.circle_fill,
-                          size: 8,
-                          color: ciStatusColor(headPipeline.ciStatus),
-                        ),
-                        const SizedBox(width: 5),
-                      ],
-                      Flexible(
-                        child: Text(
-                          '${mr.sourceBranch} → ${mr.targetBranch}',
-                          style: typography.caption1.copyWith(
-                            color: MacosColors.systemGrayColor,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 
   Widget _pipelineRow(Pipeline pipeline) {
-    final typography = MacosTheme.of(context).typography;
-    final selected = pipeline.id == _selectedPipelineId;
-    final retryable = pipeline.isRetryable;
-    return GestureDetector(
+    return CiRunRow(
+      dotColor: ciStatusColor(pipeline.ciStatus),
+      title: '${pipeline.ref}  ·  ${pipeline.shortSha}',
+      selected: pipeline.id == _selectedPipelineId,
       onTap: () => _selectPipeline(pipeline.id),
-      child: Container(
-        color: selected
-            ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
-            : const Color(0x00000000),
-        // Right inset matches the section headers so every retry icon lines up
-        // flush against the same right margin (never indented past a refresh).
-        padding: const EdgeInsets.fromLTRB(16, 7, 8, 7),
-        child: Row(
-          children: [
-            // A colored dot conveys pass/fail at a glance; the textual status and
-            // the jobs/logs icon are gone — the row itself opens the logs, and
-            // only the retry action remains on the right margin.
-            MacosIcon(
-              CupertinoIcons.circle_fill,
-              size: 10,
-              color: ciStatusColor(pipeline.ciStatus),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                '${pipeline.ref}  ·  ${pipeline.shortSha}',
-                style: typography.body,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            if (retryable)
-              if (_retryingPipelines.contains(pipeline.id))
-                const SizedBox(
-                  width: 15,
-                  height: 15,
-                  child: ProgressCircle(),
-                )
-              else
-                // Retry is green; only plain refresh icons stay blue.
-                ToolIconButton(
-                  icon: CupertinoIcons.refresh_thick,
-                  tooltip: 'Retry pipeline',
-                  size: 15,
-                  color: MacosColors.systemGreenColor,
-                  onPressed: () => _retry(pipeline.id),
-                ),
-          ],
-        ),
-      ),
+      // Retry is green; only plain refresh icons stay blue.
+      trailing: pipeline.isRetryable
+          ? InFlightIconButton(
+              busy: _retryingPipelines.contains(pipeline.id),
+              icon: CupertinoIcons.refresh_thick,
+              tooltip: 'Retry pipeline',
+              size: 15,
+              color: MacosColors.systemGreenColor,
+              onPressed: () => _retry(pipeline.id),
+            )
+          : null,
     );
   }
 
@@ -391,8 +276,6 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     AsyncValue<List<MergeRequest>> mrs,
     AsyncValue<List<Pipeline>> pipelines,
   ) {
-    final typography = MacosTheme.of(context).typography;
-
     if (_selectedPipelineId != null) {
       Pipeline? pipeline;
       for (final p in pipelines.value ?? const <Pipeline>[]) {
@@ -409,61 +292,29 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       if (mr != null) return _mrDetail(mr);
     }
 
-    return Center(
-      child: Text(
-        'Select a merge request or pipeline',
-        style: typography.body.copyWith(color: MacosColors.systemGrayColor),
-      ),
-    );
+    return const CenteredHint('Select a merge request or pipeline');
   }
 
   Widget _pipelineDetail(Pipeline? pipeline, int pipelineId) {
-    final typography = MacosTheme.of(context).typography;
-    final retryable = pipeline != null && pipeline.isRetryable;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-          child: Row(
-            children: [
-              MacosIcon(
-                CupertinoIcons.circle_fill,
-                size: 11,
-                color: ciStatusColor(pipeline?.ciStatus ?? CiStatus.unknown),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  pipeline == null
-                      ? 'Pipeline #$pipelineId'
-                      : 'Pipeline #$pipelineId  ·  ${pipeline.ref}',
-                  style: typography.title3,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              // The only pipeline action on the main panel's right margin —
-              // green, flush right (only plain refresh icons stay blue).
-              if (retryable)
-                if (_retryingPipelines.contains(pipelineId))
-                  const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: ProgressCircle(),
-                  )
-                else
-                  ToolIconButton(
-                    icon: CupertinoIcons.refresh_thick,
-                    tooltip: 'Retry pipeline',
-                    size: 16,
-                    color: MacosColors.systemGreenColor,
-                    onPressed: () => _retry(pipelineId),
-                  ),
-            ],
-          ),
+        CiDetailHeader(
+          dotColor: ciStatusColor(pipeline?.ciStatus ?? CiStatus.unknown),
+          title: pipeline == null
+              ? 'Pipeline #$pipelineId'
+              : 'Pipeline #$pipelineId  ·  ${pipeline.ref}',
+          trailing: pipeline != null && pipeline.isRetryable
+              ? InFlightIconButton(
+                  busy: _retryingPipelines.contains(pipelineId),
+                  icon: CupertinoIcons.refresh_thick,
+                  tooltip: 'Retry pipeline',
+                  size: 16,
+                  color: MacosColors.systemGreenColor,
+                  onPressed: () => _retry(pipelineId),
+                )
+              : null,
         ),
-        Container(height: 1, color: MacosColors.separatorColor),
         Expanded(
           child: PipelineJobsView(repoPath: repoPath, pipelineId: pipelineId),
         ),
@@ -472,66 +323,35 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   }
 
   Widget _mrDetail(MergeRequest mr) {
-    final typography = MacosTheme.of(context).typography;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  if (mr.draft)
-                    _badge('DRAFT', MacosColors.systemGrayColor)
-                  else
-                    _badge('!${mr.iid}', MacosColors.systemBlueColor),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(mr.title, style: typography.title3),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              _detailLine('Source', mr.sourceBranch),
-              _detailLine('Target', mr.targetBranch),
-              if (mr.authorUsername != null)
-                _detailLine('Author', '@${mr.authorUsername}'),
-              _detailLine('State', mr.state),
-              const SizedBox(height: 16),
-              Row(
-                children: [
-                  if (_checkingOutMrs.contains(mr.iid))
-                    const ProgressCircle()
-                  else
-                    PushButton(
-                      controlSize: ControlSize.large,
-                      secondary: true,
-                      onPressed: () => _checkoutMr(mr),
-                      child: const Text('Check out'),
-                    ),
-                  const SizedBox(width: 8),
-                  if (_approvingMrs.contains(mr.iid))
-                    const ProgressCircle()
-                  else
-                    PushButton(
-                      controlSize: ControlSize.large,
-                      secondary: true,
-                      onPressed: () => _approve(mr.iid),
-                      child: const Text('Approve'),
-                    ),
-                  const SizedBox(width: 8),
-                  if (_mergingMrs.contains(mr.iid))
-                    const ProgressCircle()
-                  else
-                    _mergeButton(mr),
-                ],
-              ),
-            ],
-          ),
+    return ChangeRequestDetail(
+      badge: mr.draft
+          ? const StatusBadge('DRAFT', MacosColors.systemGrayColor)
+          : StatusBadge('!${mr.iid}', MacosColors.systemBlueColor),
+      title: mr.title,
+      lines: [
+        DetailLine('Source', mr.sourceBranch),
+        DetailLine('Target', mr.targetBranch),
+        if (mr.authorUsername != null)
+          DetailLine('Author', '@${mr.authorUsername}'),
+        DetailLine('State', mr.state),
+      ],
+      actions: [
+        InFlightPushButton(
+          busy: _checkingOutMrs.contains(mr.iid),
+          label: 'Check out',
+          secondary: true,
+          onPressed: () => _checkoutMr(mr),
         ),
-        Container(height: 1, color: MacosColors.separatorColor),
+        InFlightPushButton(
+          busy: _approvingMrs.contains(mr.iid),
+          label: 'Approve',
+          secondary: true,
+          onPressed: () => _approve(mr.iid),
+        ),
+        if (_mergingMrs.contains(mr.iid))
+          const ProgressCircle()
+        else
+          _mergeButton(mr),
       ],
     );
   }
@@ -539,42 +359,37 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   /// The "Merge" action, disabled (greyed out, `onPressed: null`) with an
   /// explanatory tooltip when [mr] is a draft — GitLab's API rejects merging
   /// a draft MR outright, so this catches it client-side instead of letting
-  /// the user hit a raw remote error. Mirrors this panel's existing
-  /// disabled-when-not-applicable idiom (e.g. the retry icon only appearing
-  /// for a `retryable` pipeline) and `CreateMrSheet`'s `onPressed: condition
-  /// ? action : null` pattern.
+  /// the user hit a raw remote error. The pulldown beside it offers the
+  /// squash merge the API always supported but the UI never exposed
+  /// (mirroring the GitHub panel's merge pulldown; GitLab has no per-merge
+  /// rebase — that's a project setting — so squash is the only entry).
   Widget _mergeButton(MergeRequest mr) {
-    final button = PushButton(
-      controlSize: ControlSize.large,
-      onPressed: mr.draft ? null : () => _merge(mr.iid),
-      child: const Text('Merge'),
+    final row = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        PushButton(
+          controlSize: ControlSize.large,
+          onPressed: mr.draft ? null : () => _merge(mr.iid),
+          child: const Text('Merge'),
+        ),
+        if (!mr.draft) ...[
+          const SizedBox(width: 4),
+          MacosPulldownButton(
+            icon: CupertinoIcons.chevron_down,
+            items: [
+              MacosPulldownMenuItem(
+                title: const Text('Squash and merge'),
+                onTap: () => _merge(mr.iid, squash: true),
+              ),
+            ],
+          ),
+        ],
+      ],
     );
-    if (!mr.draft) return button;
+    if (!mr.draft) return row;
     return MacosTooltip(
       message: "Draft merge requests can't be merged — mark it ready first.",
-      child: button,
-    );
-  }
-
-  Widget _detailLine(String label, String value) {
-    final typography = MacosTheme.of(context).typography;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 70,
-            child: Text(
-              label,
-              style: typography.caption1.copyWith(
-                color: MacosColors.systemGrayColor,
-              ),
-            ),
-          ),
-          Expanded(child: Text(value, style: typography.body)),
-        ],
-      ),
+      child: row,
     );
   }
 
@@ -623,14 +438,15 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     }
   }
 
-  Future<void> _merge(int iid) async {
+  Future<void> _merge(int iid, {bool squash = false}) async {
     if (_mergingMrs.contains(iid)) return; // already in flight
     final repoPath = this.repoPath; // see _approve
+    final verb = squash ? 'Squash-merge' : 'Merge';
     final ok = await confirmAction(
       context,
       title: 'Merge merge request',
-      message: 'Merge !$iid into its target branch?',
-      confirmLabel: 'Merge',
+      message: '$verb !$iid into its target branch?',
+      confirmLabel: verb,
     );
     if (!ok || !mounted) return;
     // Guard added after confirm so its spinner means "merging", not "confirm
@@ -639,7 +455,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     final glab = ref.read(glabServiceProvider);
     final success = await runAction(
       context,
-      () => glab.mergeMergeRequest(repoPath, iid),
+      () => glab.mergeMergeRequest(repoPath, iid, squash: squash),
     );
     if (!mounted) return;
     setState(() => _mergingMrs.remove(iid));
@@ -704,21 +520,4 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     }
   }
 
-  Widget _badge(String text, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(4),
-      ),
-      child: Text(
-        text,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          color: color,
-        ),
-      ),
-    );
-  }
 }

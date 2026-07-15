@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:macos_ui/macos_ui.dart';
+import '../../core/theme/app_theme.dart';
 
 /// Shared chrome for the image previews: the artwork centred on a neutral
 /// backdrop, pan/zoomable via [InteractiveViewer].
@@ -16,7 +17,7 @@ class _ImageStage extends StatelessWidget {
     return ColoredBox(
       color: MacosTheme.brightnessOf(context).resolve(
         const Color(0xFFF2F2F5),
-        const Color(0xFF1E1E1E),
+        AppTheme.terminalBackground,
       ),
       child: InteractiveViewer(
         maxScale: 8,

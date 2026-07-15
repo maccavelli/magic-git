@@ -589,6 +589,13 @@ List<BlameLine> parseBlame(String raw) {
 
 /// Splits NUL-delimited `ls-files -z` output into non-empty path entries.
 /// Top-level so it can run in a background isolate for very large repos.
+/// The remote the app targets when several are configured: `origin` when
+/// present, else the first listed. One definition, so push buttons, tag
+/// badges, and [remoteTagsProvider] can never disagree about which remote
+/// they mean. Callers handle the no-remotes case themselves.
+String defaultRemote(List<String> remotes) =>
+    remotes.contains('origin') ? 'origin' : remotes.first;
+
 List<String> splitNulPaths(String raw) =>
     raw.split('\u0000').where((s) => s.isNotEmpty).toList();
 
@@ -2373,29 +2380,6 @@ class GitService {
               description: 'Commit',
             ),
     );
-  }
-
-  /// Whether a `prepare-commit-msg` hook is installed (respecting
-  /// `core.hooksPath`). When true, a commit message is optional — the hook
-  /// supplies it.
-  Future<bool> hasPrepareCommitMsgHook(String repoPath) async {
-    final result = await _executor.execute(
-      repoPath: repoPath,
-      gitArgs: [
-        'sh',
-        '-c',
-        // Prefer core.hooksPath; otherwise resolve the hooks dir via
-        // `git rev-parse --git-path hooks` rather than hardcoding `.git/hooks`.
-        // In a linked worktree or submodule `.git` is a FILE, not a dir, so a
-        // literal `.git/hooks` never exists and the hook would never be found.
-        'hp=\$(git config --get core.hooksPath 2>/dev/null); '
-            '[ -n "\$hp" ] || hp=\$(git rev-parse --git-path hooks 2>/dev/null || echo .git/hooks); '
-            '[ -x "\$hp/prepare-commit-msg" ] && echo yes || echo no',
-      ],
-      retries: _readRetries,
-      lane: ExecLane.read,
-    );
-    return result.stdout.trim() == 'yes';
   }
 
   /// Runs the `prepare-commit-msg` hook against a scratch message file and

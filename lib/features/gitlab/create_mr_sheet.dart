@@ -1,20 +1,14 @@
-import 'dart:async';
-
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
-import '../../core/forge/forge_dashboard.dart';
-// Hide the app's connection-phase `ConnectionState` so FutureBuilder's
-// framework `ConnectionState` (waiting/done) resolves unambiguously.
-import '../../core/providers/app_providers.dart' hide ConnectionState;
+import '../../core/providers/app_providers.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
 import '../common/dashboard_warning_banner.dart';
-import '../common/diff_view.dart';
 import '../common/label_picker_field.dart';
-import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
+import '../forge/forge_create_sheet_widgets.dart';
 
 class CreateMrSheet extends ConsumerStatefulWidget {
   final String repoPath;
@@ -38,7 +32,6 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
   bool _draft = false;
   bool _squash = false;
   bool _removeSource = false;
-  bool _showPreview = false;
   final Set<String> _labels = {};
   // Keyed by the milestone's `iid`, not its title: two milestones (typically
   // one project-level, one inherited from a group) can share the same title,
@@ -47,8 +40,6 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
   // wrong milestone in release. The title actually sent to `glab` is resolved
   // back from this id in [_submit].
   int? _milestoneIid;
-  Future<String>? _preview;
-  Timer? _previewDebounce;
 
   void _maybePrefillSource(GitStatus? status) {
     if (_sourcePrefilled || _source.text.trim().isNotEmpty) return;
@@ -61,7 +52,6 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
 
   @override
   void dispose() {
-    _previewDebounce?.cancel();
     _source.dispose();
     _target.dispose();
     _title.dispose();
@@ -87,50 +77,9 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
       !_sourceEqualsTarget &&
       !_submitting;
 
-  /// Splits a comma-separated field into trimmed, non-empty tokens. Also
-  /// strips a single leading `@` from each token — a common copy-paste
-  /// artifact when a reviewer/assignee username is pulled from a GitLab
-  /// profile URL or an `@mention`, which `glab`/GitLab's API expects as a bare
-  /// username, not the `@`-prefixed mention form.
-  List<String> _csv(TextEditingController c) => c.text
-      .split(',')
-      .map((s) => s.trim())
-      .map((s) => s.startsWith('@') ? s.substring(1) : s)
-      .where((s) => s.isNotEmpty)
-      .toList();
-
-  void _togglePreview() {
-    setState(() {
-      _showPreview = !_showPreview;
-      if (_showPreview) _refreshPreview();
-    });
-  }
-
-  void _refreshPreview() {
-    final target = _target.text.trim();
-    final source = _source.text.trim();
-    if (target.isEmpty || source.isEmpty) {
-      _preview = null;
-      return;
-    }
-    // `target...source`: what the source branch adds since it forked off target.
-    _preview = ref
-        .read(gitServiceProvider)
-        .diffRange(widget.repoPath, '$target...$source');
-  }
-
-  /// Re-fetches the preview only if it's actually showing — editing the
-  /// source/target branch while the preview is open used to leave it
-  /// pointing at whatever range was current when it was last opened/tapped.
-  /// Debounced so a remote `git diff` doesn't fire on every keystroke while
-  /// typing a branch name (mirrors the history search filter's debounce).
-  void _refreshPreviewIfShown() {
-    if (!_showPreview) return;
-    _previewDebounce?.cancel();
-    _previewDebounce = Timer(const Duration(milliseconds: 350), () {
-      if (mounted) setState(_refreshPreview);
-    });
-  }
+  // Rebuild hook for every form edit: validation and the diff preview both
+  // react to the current field texts.
+  void _formChanged() => setState(() {});
 
   Future<void> _submit() async {
     // Entry guard: the disabled-button state is a rebuild behind, so a rapid
@@ -173,8 +122,8 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
         title: _title.text.trim(),
         description: _description.text.trim(),
         draft: _draft,
-        reviewers: _csv(_reviewers),
-        assignees: _csv(_assignees),
+        reviewers: csvUsernames(_reviewers.text),
+        assignees: csvUsernames(_assignees.text),
         labels: _labels.toList(),
         milestone: milestoneTitle,
         squash: _squash,
@@ -237,37 +186,38 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      _field(
+                      ForgeSheetField(
                         'Source branch',
                         _source,
-                        onExtraChanged: _refreshPreviewIfShown,
+                        onChanged: _formChanged,
                       ),
-                      _field(
+                      ForgeSheetField(
                         'Target branch',
                         _target,
-                        onExtraChanged: _refreshPreviewIfShown,
+                        onChanged: _formChanged,
                       ),
                       if (_sourceEqualsTarget)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 10, top: 2),
-                          child: Text(
-                            'Source and target branches must be different.',
-                            style: typography.caption1.copyWith(
-                              color: MacosColors.systemRedColor,
-                            ),
-                          ),
+                        const FieldErrorNote(
+                          'Source and target branches must be different.',
                         ),
-                      _field('Title', _title),
-                      _field('Description', _description, maxLines: 4),
-                      _field(
+                      ForgeSheetField('Title', _title, onChanged: _formChanged),
+                      ForgeSheetField(
+                        'Description',
+                        _description,
+                        maxLines: 4,
+                        onChanged: _formChanged,
+                      ),
+                      ForgeSheetField(
                         'Reviewers (comma-separated)',
                         _reviewers,
                         placeholder: 'alice, bob',
+                        onChanged: _formChanged,
                       ),
-                      _field(
+                      ForgeSheetField(
                         'Assignees (comma-separated)',
                         _assignees,
                         placeholder: 'alice',
+                        onChanged: _formChanged,
                       ),
                       if (labels.isNotEmpty)
                         LabelPickerField(
@@ -279,44 +229,43 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
                                 : _labels.add(name);
                           }),
                         ),
-                      if (milestones.isNotEmpty) _milestoneField(milestones),
+                      if (milestones.isNotEmpty)
+                        ForgeMilestonePicker(
+                          milestones,
+                          value: _milestoneIid,
+                          onChanged: (v) => setState(() => _milestoneIid = v),
+                        ),
                       const SizedBox(height: 6),
-                      _toggle('Mark as draft', _draft, (v) => _draft = v),
-                      _toggle(
+                      ForgeSheetToggle(
+                        'Mark as draft',
+                        _draft,
+                        onChanged: (v) => setState(() => _draft = v),
+                      ),
+                      ForgeSheetToggle(
                         'Squash commits when merged',
                         _squash,
-                        (v) => _squash = v,
+                        onChanged: (v) => setState(() => _squash = v),
                       ),
-                      _toggle(
+                      ForgeSheetToggle(
                         'Remove source branch when merged',
                         _removeSource,
-                        (v) => _removeSource = v,
+                        onChanged: (v) => setState(() => _removeSource = v),
                       ),
-                      _previewSection(typography),
+                      ForgeDiffPreview(
+                        repoPath: widget.repoPath,
+                        from: _source.text.trim(),
+                        into: _target.text.trim(),
+                        emptyHint: 'Set source and target branches to preview.',
+                      ),
                     ],
                   ),
                 ),
               ),
               const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  PushButton(
-                    controlSize: ControlSize.large,
-                    secondary: true,
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 8),
-                  if (_submitting)
-                    const ProgressCircle()
-                  else
-                    PushButton(
-                      controlSize: ControlSize.large,
-                      onPressed: _canSubmit ? _submit : null,
-                      child: const Text('Create'),
-                    ),
-                ],
+              SheetSubmitRow(
+                submitting: _submitting,
+                canSubmit: _canSubmit,
+                onSubmit: _submit,
               ),
             ],
           ),
@@ -324,123 +273,4 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
       ),
     );
   }
-
-  Widget _field(
-    String label,
-    TextEditingController controller, {
-    int maxLines = 1,
-    String? placeholder,
-    VoidCallback? onExtraChanged,
-  }) => LabeledTextField(
-    label: label,
-    controller: controller,
-    maxLines: maxLines,
-    placeholder: placeholder,
-    padding: const EdgeInsets.only(bottom: 10),
-    onChanged: () => setState(() => onExtraChanged?.call()),
-  );
-
-
-  Widget _milestoneField(List<ForgeMilestone> milestones) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: [
-          const SizedBox(
-            width: 90,
-            child: Text('Milestone', style: TextStyle(fontSize: 13)),
-          ),
-          MacosPopupButton<int?>(
-            value: _milestoneIid,
-            onChanged: (v) => setState(() => _milestoneIid = v),
-            items: [
-              const MacosPopupMenuItem<int?>(
-                value: null,
-                child: Text('None'),
-              ),
-              for (final m in milestones)
-                MacosPopupMenuItem<int?>(value: m.id, child: Text(m.title)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _toggle(String label, bool value, ValueChanged<bool> onChanged) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          MacosSwitch(
-            value: value,
-            onChanged: (v) => setState(() => onChanged(v)),
-          ),
-          const SizedBox(width: 8),
-          Expanded(child: Text(label, style: const TextStyle(fontSize: 13))),
-        ],
-      ),
-    );
-  }
-
-  Widget _previewSection(MacosTypography typography) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const SizedBox(height: 8),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: PushButton(
-            controlSize: ControlSize.small,
-            secondary: true,
-            onPressed: _togglePreview,
-            child: Text(_showPreview ? 'Hide preview' : 'Preview changes'),
-          ),
-        ),
-        if (_showPreview) ...[
-          const SizedBox(height: 8),
-          Container(
-            height: 220,
-            decoration: BoxDecoration(
-              border: Border.all(color: MacosColors.separatorColor),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: FutureBuilder<String>(
-              future: _preview,
-              builder: (context, snap) {
-                if (_preview == null) {
-                  return Center(
-                    child: Text(
-                      'Set source and target branches to preview.',
-                      style: typography.caption1.copyWith(
-                        color: MacosColors.systemGrayColor,
-                      ),
-                    ),
-                  );
-                }
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: ProgressCircle());
-                }
-                if (snap.hasError) {
-                  return Center(
-                    child: Padding(
-                      padding: const EdgeInsets.all(12),
-                      child: Text(
-                        '${snap.error}',
-                        style: typography.caption1.copyWith(
-                          color: MacosColors.systemRedColor,
-                        ),
-                      ),
-                    ),
-                  );
-                }
-                return DiffView(diff: snap.data ?? '');
-              },
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
 }
