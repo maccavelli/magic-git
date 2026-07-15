@@ -524,29 +524,31 @@ void main() {
     matching: find.byType(CustomPaint),
   );
 
-  test('minimapVolumeColor ramps cool slate → indigo → blue → cyan', () {
+  test('minimapVolumeColor ramps cool slate → indigo → blue → soft teal', () {
     final low = minimapVolumeColor(0);
-    final midLow = minimapVolumeColor(0.3);
-    final mid = minimapVolumeColor(0.6);
+    final midLow = minimapVolumeColor(0.35);
+    final mid = minimapVolumeColor(0.65);
     final high = minimapVolumeColor(1);
     final below = minimapVolumeColor(-1);
     final above = minimapVolumeColor(2);
+    final between = minimapVolumeColor(0.5);
 
     // Clamp at the unit interval.
     expect(below, low);
     expect(above, high);
 
-    // Ends match the declared stops.
+    // Declared stops are hit exactly; mid-ramp values are interpolated.
     expect(low, kMinimapVolumeStops.first.$2);
     expect(high, kMinimapVolumeStops.last.$2);
     expect(midLow, kMinimapVolumeStops[1].$2);
     expect(mid, kMinimapVolumeStops[2].$2);
+    expect(between, isNot(midLow));
+    expect(between, isNot(mid));
 
-    // Peak is brighter (higher alpha) than quiet volume.
+    // Peak alpha stays above quiet; peak is muted teal, not electric cyan.
     expect(high.a, greaterThan(low.a));
-    // Quiet and peak are distinct — not the old monochrome white wash.
+    expect(high.a, lessThan(0.55));
     expect(low, isNot(high));
-    expect(low, isNot(mid));
   });
 
   testWidgets('the minimap stays hidden while the list fits the viewport', (

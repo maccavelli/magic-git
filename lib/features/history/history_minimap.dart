@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -6,16 +7,16 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/commit_graph.dart';
 import '../../core/git/git_service.dart';
 
-/// Cool indigo → blue → cyan ramp for day-volume on the dark canvas.
+/// Cool indigo → blue → soft teal ramp for day-volume on the dark canvas.
 ///
 /// Avoids green (HEAD) and orange (tags) so heat stays a background signal
-/// under system-colored ref ticks. Alphas are baked into the stops so markers
-/// and the viewport band remain legible on top.
+/// under system-colored ref ticks. Peak teal is deliberately muted — a bright
+/// cyan competed with the viewport band and felt harsh on `#1E1E1E`.
 const List<(double, Color)> kMinimapVolumeStops = [
-  (0.0, Color(0x733A3A4A)), // quiet slate
-  (0.3, Color(0x8C5E5CE6)), // system indigo
-  (0.6, Color(0xB30A84FF)), // system blue
-  (1.0, Color(0xE664D2FF)), // system teal / cyan peak
+  (0.0, Color(0x55383C48)), // quiet cool slate
+  (0.35, Color(0x665E5CE6)), // system indigo
+  (0.65, Color(0x780A84FF)), // system blue
+  (1.0, Color(0x7048A0C0)), // soft muted teal peak (not electric cyan)
 ];
 
 /// Maps day-busyness `t` in 0..1 to a volume heat color. Values outside the
@@ -37,13 +38,13 @@ Color minimapVolumeColor(double t) {
   return stops.last.$2;
 }
 
-/// Quantize density into discrete heat levels so adjacent equal-volume rows
-/// can be merged into one rect (keeps long histories cheap to paint).
-const int _volumeBuckets = 12;
+/// Minimum bar width (logical px) when smoothed density > 0 so quiet days
+/// still show a color fleck on the 18px track.
+const double _minBarWidth = 2.0;
 
-/// Minimum bar width (logical px) when density > 0 so quiet days still show a
-/// color fleck on the 18px track.
-const double _minBarWidth = 2.5;
+/// Vertical blur radius for the volume layer — softens day-boundary steps
+/// into a continuous fade without washing out the silhouette.
+const double _volumeBlurSigma = 1.15;
 
 /// An annotated scroll track beside the commit list: an activity silhouette
 /// (how busy each commit's day was), per-commit markers for HEAD / branches /
@@ -168,64 +169,16 @@ class _MinimapPainter extends CustomPainter {
     // scroll track rather than a void beside the list.
     canvas.drawRect(
       Rect.fromLTWH(0, 0, 1, size.height),
-      Paint()..color = const Color(0x405E5CE6),
+      Paint()..color = const Color(0x355E5CE6),
     );
 
     double yFor(int index) => (index + 0.5) / rows.length * size.height;
 
-    // Activity heat: width encodes relative day-busyness; color follows the
-    // indigo→blue→cyan ramp. Adjacent rows that quantize to the same bucket
-    // and bar width are merged into one rect so long histories stay cheap
-    // (unlike translucent whites, solid-ish heat colors do not compound when
-    // rows share edges — merging is purely a draw-call optimization).
+    // Activity heat: continuous vertical sample of density, color-lerped
+    // along the cool ramp, with a soft right-edge fade and a light blur so
+    // day boundaries dissolve instead of reading as solid color blocks.
     if (density.length == rows.length) {
-      final rowHeight = size.height / rows.length;
-      final paint = Paint();
-      // Sentinel-free run state: start < 0 means no open run.
-      var runStart = -1;
-      var runBucket = -1;
-      var runWidth = 0.0;
-
-      void flush(int endExclusive) {
-        if (runStart < 0) return;
-        final t = (runBucket + 0.5) / _volumeBuckets;
-        paint.color = minimapVolumeColor(t);
-        canvas.drawRect(
-          Rect.fromLTWH(
-            0,
-            runStart * rowHeight,
-            runWidth,
-            (endExclusive - runStart) * rowHeight,
-          ),
-          paint,
-        );
-        runStart = -1;
-      }
-
-      for (var i = 0; i < rows.length; i++) {
-        final d = density[i];
-        if (d <= 0) {
-          flush(i);
-          continue;
-        }
-        final bucket = math.min(
-          _volumeBuckets - 1,
-          (d.clamp(0.0, 1.0) * _volumeBuckets).floor(),
-        );
-        final barW = math.max(_minBarWidth, size.width * d);
-        // Snap width slightly so near-equal days share a run more often.
-        final snappedW = (barW * 2).roundToDouble() / 2;
-        if (runStart >= 0 &&
-            runBucket == bucket &&
-            (runWidth - snappedW).abs() < 0.01) {
-          continue;
-        }
-        flush(i);
-        runStart = i;
-        runBucket = bucket;
-        runWidth = snappedW;
-      }
-      flush(rows.length);
+      _paintVolumeHeat(canvas, size, density);
     }
 
     // Ref markers (left-inset ticks) and selection markers (right-inset), so
@@ -253,8 +206,7 @@ class _MinimapPainter extends CustomPainter {
 
     // Viewport band — filled with a visible border, since a fill alone
     // vanishes against markers (the recurring GitLens theme-contrast
-    // complaint). Stroke is a touch stronger so the band still reads over
-    // cyan peak heat.
+    // complaint).
     if (controller.hasClients && controller.position.hasContentDimensions) {
       final position = controller.position;
       final total = position.maxScrollExtent + position.viewportDimension;
@@ -275,6 +227,95 @@ class _MinimapPainter extends CustomPainter {
         );
       }
     }
+  }
+
+  /// Draws the volume silhouette as a continuous, softly blurred field.
+  ///
+  /// Density is box-smoothed, then sampled at ~1 logical px vertically with
+  /// linear interpolation between rows so color and width glide rather than
+  /// step. Each strip fades on its right edge; the whole layer is blurred
+  /// slightly so remaining steps melt together.
+  void _paintVolumeHeat(Canvas canvas, Size size, List<double> raw) {
+    final smoothed = _smoothDensity(raw);
+    final n = smoothed.length;
+    if (n == 0) return;
+
+    // One strip per logical pixel keeps long histories cheap enough (track
+    // height is a few hundred px) while short lists still interpolate finely.
+    final strips = math.max(1, size.height.round());
+    final stripH = size.height / strips;
+
+    // Draw into a blurred offscreen layer so vertical density steps dissolve
+    // into a continuous wash when composited back.
+    canvas.saveLayer(
+      Offset.zero & size,
+      Paint()
+        ..imageFilter = ui.ImageFilter.blur(
+          sigmaX: _volumeBlurSigma * 0.4,
+          sigmaY: _volumeBlurSigma,
+        ),
+    );
+    final paint = Paint()..style = PaintingStyle.fill;
+
+    for (var s = 0; s < strips; s++) {
+      // Sample at strip center in continuous row-index space.
+      final rowPos = ((s + 0.5) / strips) * n - 0.5;
+      final d = _sampleDensity(smoothed, rowPos);
+      if (d <= 0.004) continue;
+
+      final barW = math.max(_minBarWidth, size.width * d);
+      final y = s * stripH;
+      final color = minimapVolumeColor(d);
+
+      // Soft horizontal falloff: solid for most of the bar, then ease out so
+      // the silhouette edge is a fade, not a hard cut.
+      paint.shader = ui.Gradient.linear(
+        Offset(0, y),
+        Offset(barW, y),
+        [
+          color,
+          color,
+          color.withValues(alpha: color.a * 0.35),
+          color.withValues(alpha: 0),
+        ],
+        const [0.0, 0.55, 0.85, 1.0],
+      );
+      // Overlap strips by half a pixel so vertical seams never show a hairline.
+      canvas.drawRect(
+        Rect.fromLTWH(0, y - 0.25, barW, stripH + 0.5),
+        paint,
+      );
+    }
+
+    canvas.restore();
+  }
+
+  /// 5-tap [1,2,3,2,1] box blur along the density series so day jumps ease
+  /// into neighboring commits instead of hard plateaus.
+  List<double> _smoothDensity(List<double> raw) {
+    final n = raw.length;
+    if (n <= 2) return List<double>.from(raw);
+    final out = List<double>.filled(n, 0);
+    for (var i = 0; i < n; i++) {
+      final i0 = i > 1 ? i - 2 : 0;
+      final i1 = i > 0 ? i - 1 : 0;
+      final i3 = i < n - 1 ? i + 1 : n - 1;
+      final i4 = i < n - 2 ? i + 2 : n - 1;
+      out[i] =
+          (raw[i0] + 2 * raw[i1] + 3 * raw[i] + 2 * raw[i3] + raw[i4]) / 9.0;
+    }
+    return out;
+  }
+
+  /// Linear sample of density at a continuous row index (may be fractional).
+  double _sampleDensity(List<double> d, double rowPos) {
+    if (d.isEmpty) return 0;
+    if (d.length == 1) return d.first;
+    final x = rowPos.clamp(0.0, (d.length - 1).toDouble());
+    final i0 = x.floor();
+    final i1 = math.min(d.length - 1, i0 + 1);
+    final f = x - i0;
+    return d[i0] * (1 - f) + d[i1] * f;
   }
 
   /// Marker color by the row's most significant decoration — the same
