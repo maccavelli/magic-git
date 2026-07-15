@@ -110,6 +110,26 @@ void main() {
     await Future.wait(futures);
   });
 
+  test('setMaxConcurrentReads clamps to [1, maxReadCapHardLimit]', () {
+    final s = CommandLaneScheduler(maxConcurrentReads: 4);
+    s.setMaxConcurrentReads(0);
+    expect(s.maxConcurrentReads, 1);
+    s.setMaxConcurrentReads(100);
+    expect(s.maxConcurrentReads, CommandLaneScheduler.maxReadCapHardLimit);
+    s.setMaxConcurrentReads(4);
+    expect(s.maxConcurrentReads, 4);
+    // Same value is a no-op (still 4).
+    s.setMaxConcurrentReads(4);
+    expect(s.maxConcurrentReads, 4);
+  });
+
+  test('constructor clamps initial maxConcurrentReads', () {
+    final low = CommandLaneScheduler(maxConcurrentReads: 0);
+    expect(low.maxConcurrentReads, 1);
+    final high = CommandLaneScheduler(maxConcurrentReads: 99);
+    expect(high.maxConcurrentReads, CommandLaneScheduler.maxReadCapHardLimit);
+  });
+
   test('sync ops run one at a time but overlap reads', () async {
     final s = CommandLaneScheduler();
     final read = _Gate();

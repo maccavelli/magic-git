@@ -81,4 +81,25 @@ void main() {
     expect(t.openStreams, 0);
     expect(t.peakOpenStreams, 0);
   });
+
+  test('streamClosed never drives openStreams negative', () {
+    final t = CommandTelemetry.instance;
+    t.streamClosed();
+    t.streamClosed();
+    expect(t.openStreams, 0);
+    expect(t.peakOpenStreams, 0);
+  });
+
+  test('peakOpenStreams is sticky across closes until reset', () {
+    final t = CommandTelemetry.instance;
+    t.streamOpened();
+    t.streamOpened();
+    t.streamOpened();
+    expect(t.peakOpenStreams, 3);
+    t.streamClosed();
+    t.streamClosed();
+    t.streamClosed();
+    expect(t.openStreams, 0);
+    expect(t.peakOpenStreams, 3);
+  });
 }

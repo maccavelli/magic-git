@@ -19,6 +19,36 @@ void main() {
     );
   });
 
+  test('band boundaries are inclusive at 80ms and 200ms edges', () {
+    // < 80 → ceiling; 80–200 inclusive upper → 3; > 200 → 2
+    expect(
+      AdaptiveReadConcurrency.bandForRtt(const Duration(milliseconds: 79)),
+      4,
+    );
+    expect(
+      AdaptiveReadConcurrency.bandForRtt(const Duration(milliseconds: 80)),
+      3,
+    );
+    expect(
+      AdaptiveReadConcurrency.bandForRtt(const Duration(milliseconds: 200)),
+      3,
+    );
+    expect(
+      AdaptiveReadConcurrency.bandForRtt(const Duration(milliseconds: 201)),
+      2,
+    );
+  });
+
+  test('bandForRtt never exceeds the given ceiling', () {
+    expect(
+      AdaptiveReadConcurrency.bandForRtt(
+        const Duration(milliseconds: 10),
+        ceiling: 2,
+      ),
+      2,
+    );
+  });
+
   test('starts at no-sample cap and requires consecutive samples to change', () {
     final caps = <int>[];
     final a = AdaptiveReadConcurrency(
@@ -37,6 +67,13 @@ void main() {
     a.onRtt(const Duration(milliseconds: 300));
     expect(a.effectiveCap, 2);
     expect(caps, [2]);
+  });
+
+  test('mixed intermediate band (80–200ms) settles at 3', () {
+    final a = AdaptiveReadConcurrency(consecutiveRequired: 2);
+    a.onRtt(const Duration(milliseconds: 120));
+    a.onRtt(const Duration(milliseconds: 150));
+    expect(a.effectiveCap, 3);
   });
 
   test('returning to current band clears pending hysteresis', () {
@@ -70,5 +107,13 @@ void main() {
     a.reset();
     expect(a.effectiveCap, 3);
     expect(caps.last, 3);
+  });
+
+  test('reset while already at no-sample cap is a no-op for onCapChanged', () {
+    final caps = <int>[];
+    final a = AdaptiveReadConcurrency(onCapChanged: caps.add);
+    expect(a.effectiveCap, 3);
+    a.reset();
+    expect(caps, isEmpty);
   });
 }

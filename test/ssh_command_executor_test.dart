@@ -8,12 +8,14 @@
 
 import 'dart:async';
 
+import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_magic_git/core/exec/command_telemetry.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
 void main() {
-  group('SSHClientManager generation', () {
+  group('SSHClientManager generation + dual-client surface', () {
     test('starts at 0 and is bumped by disconnect even with no connection', () {
       final manager = SSHClientManager();
       expect(manager.generation, 0);
@@ -21,6 +23,70 @@ void main() {
       expect(manager.generation, 1);
       manager.disconnect();
       expect(manager.generation, 2);
+    });
+
+    test('disconnected dual-client getters are null / not degraded', () {
+      final manager = SSHClientManager();
+      expect(manager.client, isNull);
+      expect(manager.streamClient, isNull);
+      expect(manager.streamClientDegraded, isFalse);
+      expect(manager.clientGeneration, -1);
+      expect(manager.done, isNull);
+    });
+
+    test('disconnect clears clientGeneration and keeps streamClient null',
+        () async {
+      final manager = SSHClientManager();
+      await manager.disconnect();
+      expect(manager.client, isNull);
+      expect(manager.streamClient, isNull);
+      expect(manager.clientGeneration, -1);
+      expect(manager.streamClientDegraded, isFalse);
+    });
+  });
+
+  group('SSHCommandExecutor adaptive read concurrency', () {
+    test('starts at the adaptive no-sample cap (3)', () {
+      final executor = SSHCommandExecutor(SSHClientManager());
+      expect(executor.adaptiveReadCap, 3);
+    });
+
+    test('noteLinkRtt lowers the cap after hysteresis', () {
+      final executor = SSHCommandExecutor(SSHClientManager());
+      for (var i = 0; i < 3; i++) {
+        executor.noteLinkRtt(const Duration(milliseconds: 300));
+      }
+      expect(executor.adaptiveReadCap, 2);
+    });
+
+    test('resetAdaptiveReads and resetEnvironment restore no-sample cap', () {
+      final executor = SSHCommandExecutor(SSHClientManager());
+      for (var i = 0; i < 3; i++) {
+        executor.noteLinkRtt(const Duration(milliseconds: 300));
+      }
+      expect(executor.adaptiveReadCap, 2);
+
+      executor.resetAdaptiveReads();
+      expect(executor.adaptiveReadCap, 3);
+
+      for (var i = 0; i < 3; i++) {
+        executor.noteLinkRtt(const Duration(milliseconds: 300));
+      }
+      expect(executor.adaptiveReadCap, 2);
+      executor.resetEnvironment();
+      expect(executor.adaptiveReadCap, 3);
+    });
+
+    test('low RTT raises cap back to the production ceiling of 4', () {
+      final executor = SSHCommandExecutor(SSHClientManager());
+      // First settle at 2, then recover.
+      for (var i = 0; i < 3; i++) {
+        executor.noteLinkRtt(const Duration(milliseconds: 300));
+      }
+      for (var i = 0; i < 3; i++) {
+        executor.noteLinkRtt(const Duration(milliseconds: 20));
+      }
+      expect(executor.adaptiveReadCap, 4);
     });
   });
 
@@ -239,6 +305,44 @@ void main() {
       );
       expect(calls, 2);
       expect(result.stdout, 'ok');
+    });
+
+    test('SSHChannelOpenError is transient and counts telemetry', () async {
+      CommandTelemetry.instance.reset();
+      expect(
+        SSHCommandExecutor.isTransientTransportError(
+          SSHChannelOpenError(2, 'Administratively prohibited'),
+        ),
+        isTrue,
+      );
+
+      var calls = 0;
+      await expectLater(
+        SSHCommandExecutor.runWithRetries(
+          () async {
+            calls++;
+            throw SSHChannelOpenError(2, 'Administratively prohibited');
+          },
+          1,
+          backoff: Duration.zero,
+        ),
+        throwsA(isA<SSHChannelOpenError>()),
+      );
+      // Initial + one retry; each failure records a channel-open error.
+      expect(calls, 2);
+      expect(CommandTelemetry.instance.channelOpenErrors, 2);
+    });
+
+    test('channel-open error is recorded even when retries are zero', () async {
+      CommandTelemetry.instance.reset();
+      await expectLater(
+        SSHCommandExecutor.runWithRetries(
+          () async => throw SSHChannelOpenError(1, 'full'),
+          0,
+        ),
+        throwsA(isA<SSHChannelOpenError>()),
+      );
+      expect(CommandTelemetry.instance.channelOpenErrors, 1);
     });
   });
 
