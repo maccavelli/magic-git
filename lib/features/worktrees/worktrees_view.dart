@@ -559,7 +559,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
                     // every other client's worktree list. The path is in the
                     // tooltip.
                     label: path.split('/').last,
-                    icon: CupertinoIcons.square_split_2x1,
+                    icon: kWorktreeIcon,
                     tooltip: path,
                     selected: tabs.selected == path,
                     onTap: () =>
@@ -708,7 +708,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
         CupertinoIcons.scissors,
         MacosColors.systemOrangeColor,
       ),
-      _ => (CupertinoIcons.square_split_2x1, MacosColors.systemBlueColor),
+      _ => (kWorktreeIcon, MacosColors.systemBlueColor),
     };
 
     return GestureDetector(
@@ -811,7 +811,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
           mainAxisSize: MainAxisSize.min,
           children: [
             const MacosIcon(
-              CupertinoIcons.square_split_2x1,
+              kWorktreeIcon,
               size: 40,
               color: MacosColors.systemGrayColor,
             ),

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
+import '../worktrees/worktree_tabs.dart';
 import 'field_styles.dart';
 import 'sized_sheet.dart';
 
@@ -116,7 +117,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
       (3, CupertinoIcons.tray_2, 'Stashes'),
       (4, CupertinoIcons.cloud, 'Forge'),
       (5, CupertinoIcons.cube_box, 'Project'),
-      (6, CupertinoIcons.square_split_2x1, 'Worktrees'),
+      (6, kWorktreeIcon, 'Worktrees'),
     ];
 
     final commands = <_PaletteCommand>[
@@ -206,7 +207,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
                 run: () => widget.onCheckoutBranch(r.shortName),
               )
             : _PaletteCommand(
-                icon: CupertinoIcons.square_split_2x1,
+                icon: kWorktreeIcon,
                 label: 'Switch to worktree for ${r.shortName}',
                 hint: 'Worktree',
                 run: () => widget.onOpenWorktree(elsewhere),
@@ -222,7 +223,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
       if (wt.isMain || wt.isPrunable) continue;
       commands.add(
         _PaletteCommand(
-          icon: CupertinoIcons.square_split_2x1,
+          icon: kWorktreeIcon,
           label: 'Open worktree ${wt.name}',
           hint: 'Worktree',
           run: () => widget.onOpenWorktree(wt.path),

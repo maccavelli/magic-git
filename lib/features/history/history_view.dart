@@ -24,6 +24,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/tool_icon_button.dart';
 import '../worktrees/add_worktree_sheet.dart';
+import '../worktrees/worktree_tabs.dart';
 import 'commit_graph_view.dart';
 import 'history_minimap.dart';
 import 'log_filter.dart';
@@ -817,7 +818,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         // Same as above, but into a separate checkout — so you can start from
         // this commit without abandoning whatever is in your working tree.
         ContextMenuItem(
-          icon: CupertinoIcons.square_split_2x1,
+          icon: kWorktreeIcon,
           label: 'Branch from $short in a new worktree…',
           enabled: canAct,
           onTap: () => _actWorktreeFrom(hash),

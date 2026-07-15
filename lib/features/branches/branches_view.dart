@@ -346,7 +346,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                 child: LabelChip(
                   elsewhere.split('/').last,
                   color: MacosColors.systemPurpleColor,
-                  icon: CupertinoIcons.square_split_2x1,
+                  icon: kWorktreeIcon,
                 ),
               ),
             ],
@@ -432,7 +432,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                 // tracker: take this branch into a new checkout in one step,
                 // instead of switching away from what you are doing.
                 ToolIconButton(
-                  icon: CupertinoIcons.square_split_2x1,
+                  icon: kWorktreeIcon,
                   tooltip: 'Checkout in a new worktree…',
                   size: 15,
                   onPressed: busy

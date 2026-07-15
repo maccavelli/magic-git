@@ -1,4 +1,4 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../tabs/tab_ui_providers.dart';
@@ -9,6 +9,11 @@ import 'worktree_access.dart';
 /// each feature that navigates here, with a comment lamenting the circular
 /// import that forced the copy.)
 const int kWorktreesPageIndex = 6;
+
+/// Canonical glyph for a git worktree: SF Symbol **tree**
+/// ([CupertinoIcons.tree]). Do **not** use `square_split_2x1` — that means
+/// side-by-side / split view elsewhere in the app.
+const IconData kWorktreeIcon = CupertinoIcons.tree;
 
 /// The one wording for "this branch is held by another worktree" — used by
 /// the Branches panel's badge and History's ref chips, which had drifted into

@@ -660,7 +660,7 @@ class _AppShellState extends ConsumerState<AppShell> {
                 label: Text('Project'),
               ),
               SidebarItem(
-                leading: MacosIcon(CupertinoIcons.square_split_2x1),
+                leading: MacosIcon(kWorktreeIcon),
                 label: Text('Worktrees'),
               ),
             ],

@@ -138,7 +138,7 @@ class RefChip extends StatelessWidget {
     // Checked out in another worktree — a second HEAD, in effect. Purple, with
     // the worktree glyph, matching the badge the Branches panel puts on it.
     if (_inOtherWorktree) {
-      return (MacosColors.systemPurpleColor, CupertinoIcons.square_split_2x1);
+      return (MacosColors.systemPurpleColor, kWorktreeIcon);
     }
     // Local branch (highlight the checked-out one).
     return (
