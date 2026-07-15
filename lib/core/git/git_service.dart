@@ -644,10 +644,19 @@ class RepoSnapshot {
   final List<GitRef> refs;
   final PendingOp pendingOp;
 
+  /// Names of the repo's *configured* remotes (`git remote`), e.g.
+  /// `['origin']`. This — not [refs] — is the truth for "does this repo have
+  /// a remote": a freshly created or cloned EMPTY repository has a perfectly
+  /// wired `origin` but zero remote-tracking refs, and every UI gate that
+  /// tested `refs.any(isRemote)` falsely reported "No remote detected" for
+  /// exactly the repos the create/clone flows had just set up correctly.
+  final List<String> remotes;
+
   const RepoSnapshot({
     required this.status,
     required this.refs,
     required this.pendingOp,
+    this.remotes = const [],
   });
 }
 
@@ -982,6 +991,14 @@ class GitService {
   /// one round trip — see [_snapshot].
   Future<PendingOp> pendingOp(String repoPath) async =>
       (await _snapshot(repoPath)).pendingOp;
+
+  /// The repo's *configured* remotes (`git remote`) — the correct test for
+  /// "does this repo have a remote" (see [RepoSnapshot.remotes]; remote-
+  /// tracking refs are empty for an empty repository even with a perfectly
+  /// wired origin). Bundled with [status]/[refs]/[pendingOp] into one round
+  /// trip — see [_snapshot].
+  Future<List<String>> remotes(String repoPath) async =>
+      (await _snapshot(repoPath)).remotes;
 
   // ---------------------------------------------------------------------------
   // git worktree
@@ -1402,6 +1419,11 @@ class GitService {
         // transcode it.
         "git -c i18n.logOutputEncoding=UTF-8 for-each-ref --format='$format' refs/heads refs/remotes refs/tags; s2=\$?; "
         "printf '$_snapshotSep%d$_snapshotSep' \"\$s2\"; "
+        // Configured remotes (`git remote`) — the CONFIG-level truth for
+        // "has a remote". Remote-tracking refs cannot provide it for an
+        // empty repository (see [RepoSnapshot.remotes]).
+        'git remote; s3=\$?; '
+        "printf '$_snapshotSep%d$_snapshotSep' \"\$s3\"; "
         '$_pendingOpScript';
 
     final result = await _executor.execute(
@@ -1413,14 +1435,16 @@ class GitService {
     );
 
     final parts = result.stdout.split(_snapshotSep);
-    if (parts.length < 5) {
+    if (parts.length < 7) {
       throw GitException('malformed combined status/refs/pending-op output', result);
     }
     final statusStdout = parts[0];
     final statusExit = int.tryParse(parts[1].trim()) ?? 1;
     final refsStdout = parts[2];
     final refsExit = int.tryParse(parts[3].trim()) ?? 1;
-    final pendingStdout = parts[4];
+    final remotesStdout = parts[4];
+    final remotesExit = int.tryParse(parts[5].trim()) ?? 1;
+    final pendingStdout = parts[6];
 
     if (statusExit != 0) {
       throw GitException(
@@ -1447,6 +1471,15 @@ class GitService {
         ? await Isolate.run(() => GitPorcelainParser.parseV2(statusStdout))
         : GitPorcelainParser.parseV2(statusStdout);
     final refs = parseRefs(refsStdout, fieldSep);
+    // `git remote` inside a repo effectively cannot fail; a non-zero exit is
+    // treated as "no remotes known" rather than failing the whole snapshot —
+    // status and refs above are the load-bearing sections.
+    final remotes = remotesExit != 0
+        ? const <String>[]
+        : [
+            for (final line in remotesStdout.split('\n'))
+              if (line.trim().isNotEmpty) line.trim(),
+          ];
     final pendingOp = switch (pendingStdout.trim()) {
       'rebase' => PendingOp.rebase,
       'merge' => PendingOp.merge,
@@ -1455,7 +1488,12 @@ class GitService {
       _ => PendingOp.none,
     };
 
-    return RepoSnapshot(status: status, refs: refs, pendingOp: pendingOp);
+    return RepoSnapshot(
+      status: status,
+      refs: refs,
+      pendingOp: pendingOp,
+      remotes: remotes,
+    );
   }
 
   /// Opt-in per-repo tuning for large working trees (mutates git config).

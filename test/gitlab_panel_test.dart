@@ -83,6 +83,9 @@ Future<void> _pump(WidgetTester tester) async {
   final container = ProviderContainer(
     overrides: [
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+      // Sibling of the refs override: the views now read CONFIGURED
+      // remotes (remotesProvider), not remote-tracking refs.
+      remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
       pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
       jobsProvider((_repo, 100)).overrideWith((ref) async => _jobs),
@@ -165,6 +168,9 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
           mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
           pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
           glabServiceProvider.overrideWithValue(glab),
@@ -232,7 +238,13 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
           refsProvider(repoB).overrideWith((ref) async => _remoteRefs),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(repoB).overrideWith((ref) async => const ['origin']),
           mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
           pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
           jobsProvider((_repo, 100)).overrideWith((ref) async => _jobs),

@@ -113,6 +113,9 @@ void main() {
           _repo,
         ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
         refsProvider(_repo).overrideWith((ref) async => const <GitRef>[]),
+        // Sibling of the refs override: the views now read CONFIGURED
+        // remotes (remotesProvider), not remote-tracking refs.
+        remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
         // Follows statusProvider, so the refresh re-drives it too; stub it or
         // its read reaches the fake's unconfigured executor and leaves the
         // retry backoff timer pending past teardown.

@@ -82,6 +82,9 @@ Future<void> _pump(WidgetTester tester, {GhService? gh}) async {
     overrides: [
       if (gh != null) ghServiceProvider.overrideWithValue(gh),
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+      // Sibling of the refs override: the views now read CONFIGURED
+      // remotes (remotesProvider), not remote-tracking refs.
+      remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
       workflowRunsProvider(_repo).overrideWith((ref) async => _runs),
       runJobsProvider((_repo, 200)).overrideWith((ref) => Stream.value(_jobs)),

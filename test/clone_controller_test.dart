@@ -140,11 +140,15 @@ void main() {
     expect(jobState().progressLine, 'Receiving objects:  60%');
 
     exec.handle.emitErr('\rReceiving objects: 100%, done.\n');
+    exec.results.add(_ok('https://github.com/mac/magic-git.git\n')); // verify
     await exec.handle.finish(0);
     expect(await fut, isTrue);
     expect(jobState().phase, CloneJobPhase.succeeded);
-    expect(logLines().last, '✓ completed');
-    expect(exec.calls, hasLength(1), reason: 'only the probe — never rm');
+    expect(logLines(), contains('✓ completed'));
+    // Probe + the post-clone origin verification — never rm.
+    expect(exec.calls, hasLength(2));
+    expect(exec.calls.last, ['git', 'remote', 'get-url', 'origin'],
+        reason: 'a successful clone validates its origin is in place');
   });
 
   test('an existing destination fails before any stream or delete', () async {
@@ -178,6 +182,7 @@ void main() {
     expect(exec.streamCalls.single, [
       'git', 'clone', '--progress', '--', 'https://example.com/r.git', 'r',
     ]);
+    exec.results.add(_ok('https://example.com/r.git\n')); // verify
     await exec.handle.finish(0);
     expect(await fut, isTrue);
   });
@@ -248,6 +253,7 @@ void main() {
     final fut = job.run(ghe);
     await pumpEventQueue();
     expect(exec.streamEnvs.single, {'GH_HOST': 'ghe.corp.example'});
+    exec.results.add(_ok('https://ghe.corp.example/team/x.git\n')); // verify
     await exec.handle.finish(0);
     await fut;
   });
@@ -260,6 +266,7 @@ void main() {
     expect(await job.run(_req), isFalse, reason: 'second run refused');
     expect(exec.streamCalls, hasLength(1));
 
+    exec.results.add(_ok('u\n')); // verify
     await exec.handle.finish(0);
     expect(await fut, isTrue);
 
@@ -267,6 +274,7 @@ void main() {
     exec.results.add(_ok('absent'));
     final again = job.run(_req);
     await pumpEventQueue();
+    exec.results.add(_ok('u\n')); // verify
     await exec.handle.finish(0);
     expect(await again, isTrue, reason: 'succeeded → re-run allowed');
   });

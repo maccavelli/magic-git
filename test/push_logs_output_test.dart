@@ -94,6 +94,9 @@ Future<ProviderContainer> _mountAndPush(
       ),
       fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+      // Sibling of the refs override: the views now read CONFIGURED
+      // remotes (remotesProvider), not remote-tracking refs.
+      remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
     ],
   );
   addTearDown(container.dispose);
@@ -132,6 +135,9 @@ void main() {
         ),
         fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
         refsProvider(repo).overrideWith((ref) async => _remoteRefs),
+        // Sibling of the refs override: the views now read CONFIGURED
+        // remotes (remotesProvider), not remote-tracking refs.
+        remotesProvider(repo).overrideWith((ref) async => const ['origin']),
       ],
     );
     addTearDown(container.dispose);

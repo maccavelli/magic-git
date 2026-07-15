@@ -212,6 +212,9 @@ void main() {
         overrides: [
           gitServiceProvider.overrideWithValue(_FakeGit()),
           refsProvider(_repo).overrideWith((ref) async => const []),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
         ],
       );
       addTearDown(container.dispose);
@@ -333,6 +336,9 @@ void main() {
           ),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
         ],
       );
       addTearDown(container.dispose);
@@ -431,6 +437,9 @@ void main() {
           ),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
         ],
       );
       addTearDown(container.dispose);

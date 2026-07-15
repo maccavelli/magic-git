@@ -107,10 +107,12 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
 
   @override
   Widget build(BuildContext context) {
-    // No remote at all → the gh-backed views can't work; show a friendly notice
-    // rather than a raw gh error (mirrors GitLabPanel).
-    final refs = ref.watch(refsProvider(repoPath)).value;
-    if (refs != null && !refs.any((r) => r.isRemote)) {
+    // No remote at all → the gh-backed views can't work; show a friendly
+    // notice rather than a raw gh error (mirrors GitLabPanel). CONFIGURED
+    // remotes, not remote-tracking refs — an empty repo with a wired origin
+    // must still get its forge features.
+    final remotes = ref.watch(remotesProvider(repoPath)).value;
+    if (remotes != null && remotes.isEmpty) {
       return const NoRemoteNotice('GitHub features');
     }
     final prs = ref.watch(pullRequestsProvider(repoPath));

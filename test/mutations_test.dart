@@ -650,7 +650,8 @@ void main() {
       // the last of the sep-delimited sections (sep matches
       // GitService._snapshotSep: STX-wrapped "RMGSNAP").
       const sep = 'RMGSNAP';
-      String combined(String op) => '$sep' '0$sep' '$sep' '0$sep' '$op\n';
+      String combined(String op) =>
+          '$sep' '0$sep' '$sep' '0$sep' '$sep' '0$sep' '$op\n';
       exec.results.add(
         SSHCommandResult(exitCode: 0, stdout: combined('cherry-pick'), stderr: ''),
       );
@@ -660,6 +661,21 @@ void main() {
         SSHCommandResult(exitCode: 0, stdout: combined('none'), stderr: ''),
       );
       expect(await git.pendingOp('/repo'), PendingOp.none);
+    });
+
+    test('remotes parses the configured-remote section of the snapshot — the '
+        'config-level truth an empty repo needs (its remote-tracking refs '
+        'are necessarily absent)', () async {
+      const sep = '\u0002RMGSNAP\u0002';
+      exec.results.add(
+        const SSHCommandResult(
+          exitCode: 0,
+          stdout:
+              '${sep}0$sep${sep}0${sep}origin\nupstream\n${sep}0${sep}none\n',
+          stderr: '',
+        ),
+      );
+      expect(await git.remotes('/repo'), ['origin', 'upstream']);
     });
 
     test('merge builds the right argv per mode', () async {

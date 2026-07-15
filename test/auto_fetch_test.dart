@@ -72,6 +72,14 @@ void main() {
         localExecutorProvider.overrideWithValue(_FakeLocalExecutor()),
         appSettingsProvider.overrideWith(_FixedSettings.new),
         refsProvider(_repo).overrideWith((ref) async => refs),
+        // The auto-fetch gate reads CONFIGURED remotes now, not
+        // remote-tracking refs — derived here so each case's intent
+        // (remote present / absent) carries over unchanged.
+        remotesProvider(_repo).overrideWith(
+          (ref) async => refs.any((r) => r.isRemote)
+              ? const ['origin']
+              : const <String>[],
+        ),
       ],
     );
     addTearDown(container.dispose);
@@ -79,7 +87,7 @@ void main() {
     return container;
   }
 
-  test('does not arm the timer for a repo with no remote-tracking refs', () {
+  test('does not arm the timer for a repo with no configured remote', () {
     fakeAsync((async) {
       final git = _FetchCountingGit();
       late ProviderContainer container;
@@ -93,7 +101,7 @@ void main() {
     });
   });
 
-  test('arms the timer once a remote-tracking ref is present', () {
+  test('arms the timer once a configured remote is present', () {
     fakeAsync((async) {
       final git = _FetchCountingGit();
       late ProviderContainer container;

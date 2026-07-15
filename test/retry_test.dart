@@ -21,7 +21,7 @@ class _RetryCapturingExecutor extends SSHCommandExecutor {
   // (used by every other read/write in this test) doesn't need to itself be
   // shaped like that combined output.
   static const _sep = 'RMGSNAP';
-  static const _emptySnapshot = '$_sep' '0$_sep' '$_sep' '0$_sep' 'none\n';
+  static const _emptySnapshot = '$_sep' '0$_sep' '$_sep' '0$_sep' '$_sep' '0$_sep' 'none\n';
 
   @override
   Future<SSHCommandResult> execute({

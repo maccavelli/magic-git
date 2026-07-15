@@ -28,6 +28,7 @@ Future<void> _pumpForge(WidgetTester tester, Forge forge) async {
       forgeProvider(_repo).overrideWith((ref) async => forge),
       // Keep the underlying forge panels from hitting a real executor.
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+      remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       pullRequestsProvider(_repo).overrideWith((ref) async => const []),
       workflowRunsProvider(_repo).overrideWith((ref) async => const []),
       mergeRequestsProvider(_repo).overrideWith((ref) async => const []),

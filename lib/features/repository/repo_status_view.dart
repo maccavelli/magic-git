@@ -1644,17 +1644,21 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   ) {
     final typography = MacosTheme.of(context).typography;
     final branch = status?.branch;
-    // Repo-level fact (any remote-tracking ref at all), not per-branch
-    // upstream tracking — a repo can have zero remotes configured, or have
-    // one configured but never fetched, and either way this is what "No
-    // remote detected" means here. Works identically for a local repo that
-    // was simply never pushed anywhere and an SSH repo missing an `origin`.
-    // Null (still loading) is treated as "has a remote" so the label doesn't
-    // flash on before the first fetch resolves.
-    final hasRemote = refs == null || refs.any((r) => r.isRemote);
+    // CONFIGURED remotes (`git remote`), not remote-tracking refs: a freshly
+    // created or cloned EMPTY repository has a perfectly wired `origin` and
+    // zero remote refs, and the old refs-based test falsely reported "No
+    // remote detected" for exactly the repos the create/clone flows had just
+    // set up. Null (still loading) is treated as "has a remote" so the label
+    // doesn't flash on before the first fetch resolves.
+    final remotes = ref.watch(remotesProvider(repoPath)).value;
+    final hasRemote = remotes == null || remotes.isNotEmpty;
+    // A repo with a remote but no refs at all is simply EMPTY (unborn HEAD,
+    // nothing fetched) — say that, instead of implying its remote setup
+    // failed.
+    final emptyRepo = hasRemote && refs != null && refs.isEmpty;
     // Network actions need a remote — disable them (not just the busy gate)
-    // when none is detected, so they can't be clicked into a guaranteed error.
-    // Matches the "No remote detected" label rendered below.
+    // when none is configured, so they can't be clicked into a guaranteed
+    // error. Matches the "No remote detected" label rendered below.
     final remoteDisabled = busy || !hasRemote;
     final label = branch == null
         ? repoPath
@@ -1724,6 +1728,18 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                     'No remote detected',
                     style: typography.caption1.copyWith(
                       color: MacosColors.systemYellowColor,
+                    ),
+                  ),
+                ] else if (emptyRepo) ...[
+                  // The remote IS wired; the repo just has no commits/refs
+                  // yet. The old refs-based test rendered "No remote
+                  // detected" here, reading like the create/clone flow had
+                  // failed to configure origin when it had done so perfectly.
+                  const SizedBox(width: 8),
+                  Text(
+                    'No branches yet — repository is empty',
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
                     ),
                   ),
                 ],

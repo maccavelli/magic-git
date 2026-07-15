@@ -116,6 +116,9 @@ Future<ProviderContainer> _pump(WidgetTester tester, _SlowGit git) async {
       ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
       fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
       refsProvider(_repo).overrideWith((ref) async => const []),
+      // Sibling of the refs override: the views now read CONFIGURED
+      // remotes (remotesProvider), not remote-tracking refs.
+      remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
     ],
   );
   addTearDown(container.dispose);

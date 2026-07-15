@@ -144,10 +144,12 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   @override
   Widget build(BuildContext context) {
     // No remote at all → the glab-backed MR/pipeline views can't work; show a
-    // friendly notice rather than a raw glab error. Null (refs still loading)
+    // friendly notice rather than a raw glab error. CONFIGURED remotes, not
+    // remote-tracking refs — an empty repo with a wired origin has no remote
+    // refs yet and must still get its forge features. Null (still loading)
     // falls through. Mirrors repo_status_view's "No remote detected".
-    final refs = ref.watch(refsProvider(repoPath)).value;
-    if (refs != null && !refs.any((r) => r.isRemote)) {
+    final remotes = ref.watch(remotesProvider(repoPath)).value;
+    if (remotes != null && remotes.isEmpty) {
       return const NoRemoteNotice('GitLab features');
     }
     final mrs = ref.watch(mergeRequestsProvider(repoPath));

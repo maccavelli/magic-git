@@ -256,6 +256,31 @@ class CloneJobController extends Notifier<CloneJobState> {
     session.close(exitCode: exitCode);
 
     if (exitCode == 0 && !_cancelled) {
+      // Post-clone verification: `origin` must resolve inside the new clone.
+      // A clone always wires origin, so this effectively never fires — but
+      // when something exotic breaks that promise, the output log says so
+      // in plain terms instead of the repo just behaving oddly later.
+      // Verification is a read; its own failure never fails the clone.
+      try {
+        final verify = await executor.execute(
+          repoPath: dest,
+          gitArgs: ['git', 'remote', 'get-url', 'origin'],
+          lane: ExecLane.read,
+          retries: 0,
+        );
+        if (!verify.isSuccess || verify.stdout.trim().isEmpty) {
+          log.logError(
+            'post-clone origin verification',
+            'git remote get-url origin printed nothing (exit '
+                '${verify.exitCode}) — the clone succeeded but its origin '
+                'remote looks unconfigured',
+          );
+        } else {
+          log.logResult('git remote get-url origin', verify);
+        }
+      } catch (e) {
+        log.logError('post-clone origin verification', '$e');
+      }
       state = state.copyWith(phase: CloneJobPhase.succeeded);
       return true;
     }

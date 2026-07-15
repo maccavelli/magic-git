@@ -64,6 +64,9 @@ Future<void> _pump(WidgetTester tester) async {
       ),
       fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
       refsProvider(_repo).overrideWith((ref) async => const []),
+      // Sibling of the refs override: the views now read CONFIGURED
+      // remotes (remotesProvider), not remote-tracking refs.
+      remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
       fileDiffProvider((
         _repo,
         'lib/a.dart',
@@ -344,6 +347,9 @@ void main() {
           ),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
           fileDiffProvider((
             _repo,
             'lib/a.dart',

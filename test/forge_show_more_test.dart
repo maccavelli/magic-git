@@ -74,6 +74,9 @@ void main() {
       final fullFetch = Completer<List<Pipeline>>();
       final container = ProviderContainer(overrides: [
         refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+        // Sibling of the refs override: the views now read CONFIGURED
+        // remotes (remotesProvider), not remote-tracking refs.
+        remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
         mergeRequestsProvider(_repo).overrideWith((ref) async => const []),
         // Mirrors the real provider's shape: watches the scope notifier so
         // the Show-more tap re-fetches this same instance.
@@ -109,6 +112,9 @@ void main() {
     (tester) async {
       final container = ProviderContainer(overrides: [
         refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+        // Sibling of the refs override: the views now read CONFIGURED
+        // remotes (remotesProvider), not remote-tracking refs.
+        remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
         pullRequestsProvider(_repo).overrideWith((ref) async => const []),
         workflowRunsProvider(_repo).overrideWith((ref) async {
           final full = ref.watch(workflowRunsScopeProvider(_repo));
@@ -134,6 +140,9 @@ void main() {
     (tester) async {
       final container = ProviderContainer(overrides: [
         refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+        // Sibling of the refs override: the views now read CONFIGURED
+        // remotes (remotesProvider), not remote-tracking refs.
+        remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
         mergeRequestsProvider(_repo).overrideWith((ref) async => const []),
         pipelinesProvider(_repo).overrideWith((ref) async => _pipelines(3)),
       ]);

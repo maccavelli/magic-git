@@ -103,4 +103,19 @@ void main() {
       reason: 'the local remote-tracking ref goes with it',
     );
   });
+
+  test('a clone of an EMPTY remote reports its configured remote while '
+      'having zero refs — the state the old refs-based "has remote" test '
+      'misread as "No remote detected"', () async {
+    final root = tempDir.resolveSymbolicLinksSync();
+    final emptyOrigin = '$root/empty-origin';
+    final emptyClone = '$root/empty-clone';
+    await raw(['init', '-q', '--bare', emptyOrigin], cwd: root);
+    await raw(['clone', '-q', emptyOrigin, emptyClone], cwd: root);
+
+    expect(await git.remotes(emptyClone), ['origin'],
+        reason: 'git remote is the config-level truth');
+    expect(await git.refs(emptyClone), isEmpty,
+        reason: 'an empty clone has no refs of any kind');
+  });
 }

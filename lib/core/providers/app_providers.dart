@@ -2045,6 +2045,9 @@ List<ProviderOrFamily> repoMutationFamilies(String repoPath) => [
   logProvider,
   logSearchProvider,
   refsProvider,
+  // Configured remotes ride the same snapshot as refs, and mutations can
+  // change them too (`git remote add/remove` in the create/publish flows).
+  remotesProvider,
   stashesProvider,
   reflogProvider,
   magicSnapshotsProvider,
@@ -2259,10 +2262,13 @@ final autoFetchProvider = Provider.autoDispose<void>((ref) {
   // post-commit fetch, a watcher-driven refresh). Watching refs directly would
   // tear down and recreate the timer on each of those, resetting its cadence so
   // that on an actively-used repo the interval never elapses and auto-fetch
-  // effectively never runs. Null (refs still loading) doesn't block the timer —
-  // only a *confirmed* absence of any remote-tracking ref does.
+  // effectively never runs. Null (still loading) doesn't block the timer —
+  // only a *confirmed* absence of any configured remote does. Configured
+  // remotes, not remote-tracking refs: an empty repo with a wired origin
+  // must still auto-fetch (that fetch is what eventually brings the first
+  // remote refs down).
   final hasRemote = ref.watch(
-    refsProvider(repoPath).select((a) => a.value?.any((r) => r.isRemote)),
+    remotesProvider(repoPath).select((a) => a.value?.isNotEmpty),
   );
   if (hasRemote == false) {
     return;
@@ -2531,6 +2537,18 @@ final refsProvider = FutureProvider.autoDispose.family<List<GitRef>, String>((
 ) {
   return ref.watch(gitServiceProvider).refs(repoPath);
 });
+
+/// The repo's *configured* remotes (`git remote`), e.g. `['origin']` — the
+/// canonical "does this repo have a remote" signal. NOT derivable from
+/// [refsProvider]: an empty repository (fresh create, clone of an empty
+/// project) has zero remote-tracking refs while its origin is perfectly
+/// configured, and gates that tested refs falsely reported "No remote
+/// detected" for exactly the repos the create/clone flows had just wired.
+/// Rides the same combined snapshot round trip as status/refs/pendingOp.
+final remotesProvider = FutureProvider.autoDispose
+    .family<List<String>, String>((ref, repoPath) {
+      return ref.watch(gitServiceProvider).remotes(repoPath);
+    });
 
 /// Commit history (HEAD) for a repo.
 final logProvider = FutureProvider.autoDispose.family<List<GitCommit>, String>((

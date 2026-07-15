@@ -235,6 +235,8 @@ Future<_FakeGitService> _pump(
   // before rethrowing — which the test framework flags as "a Timer is still
   // pending" the moment the widget tree is torn down at the end of the test.
   List<GitRef> refs = const [],
+  // Configured remotes — null derives from [refs] (see the override below).
+  List<String>? remotes,
   // Right-click menu's Reveal-in-Finder/Open-File items are gated on this —
   // default (remote/SSH) matches every other test here, where they must
   // stay hidden.
@@ -257,6 +259,18 @@ Future<_FakeGitService> _pump(
       ),
       fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
       refsProvider(_repo).overrideWith((ref) async => refs),
+      // Sibling of the refs override: the header now reads CONFIGURED
+      // remotes (remotesProvider), not remote-tracking refs. Defaults to
+      // matching the refs (remote refs imply a configured remote) so
+      // existing tests keep their intent; pass [remotes] explicitly to
+      // model an empty repo whose origin IS wired.
+      remotesProvider(_repo).overrideWith(
+        (ref) async =>
+            remotes ??
+            (refs.any((r) => r.isRemote)
+                ? const ['origin']
+                : const <String>[]),
+      ),
       connectionProvider.overrideWith(
         () => _StubConnection(
           ConnectionState(
@@ -470,6 +484,9 @@ void main() {
           ),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
         ],
       );
       addTearDown(container.dispose);
@@ -523,6 +540,9 @@ void main() {
           repoWatchProvider(_repo).overrideWith((ref) => watchController.stream),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
         ],
       );
       addTearDown(container.dispose);
@@ -593,6 +613,9 @@ void main() {
           repoWatchProvider(_repo).overrideWith((ref) => watchController.stream),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
         ],
       );
       addTearDown(container.dispose);
@@ -655,6 +678,9 @@ void main() {
           ),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
         ],
       );
       addTearDown(container.dispose);
@@ -798,12 +824,15 @@ void main() {
   testWidgets(
     'does not show "No remote detected" while refs are still loading',
     (tester) async {
-      // A refsProvider that never resolves during the test — `.value` stays
-      // null throughout, which must read as "unknown" (hide the label), not
-      // "no remote" (show it).
+      // Providers that never resolve during the test — `.value` stays null
+      // throughout, which must read as "unknown" (hide the label), not
+      // "no remote" (show it). The label is driven by remotesProvider now;
+      // refs get the same treatment since the header reads both.
       final neverCompletes = Completer<List<GitRef>>();
+      final remotesNever = Completer<List<String>>();
       addTearDown(() {
         if (!neverCompletes.isCompleted) neverCompletes.complete(const []);
+        if (!remotesNever.isCompleted) remotesNever.complete(const []);
       });
       final git = _FakeGitService();
       final container = ProviderContainer(
@@ -816,6 +845,7 @@ void main() {
           ),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) => neverCompletes.future),
+          remotesProvider(_repo).overrideWith((ref) => remotesNever.future),
         ],
       );
       addTearDown(container.dispose);
@@ -1023,6 +1053,9 @@ void main() {
             ),
             fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
             refsProvider(_repo).overrideWith((ref) async => const <GitRef>[]),
+            // Sibling of the refs override: the views now read CONFIGURED
+            // remotes (remotesProvider), not remote-tracking refs.
+            remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
             connectionProvider.overrideWith(
               () => _StubConnection(
                 const ConnectionState(backend: ConnectionBackend.ssh),
@@ -1088,6 +1121,9 @@ void main() {
             ),
             fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
             refsProvider(_repo).overrideWith((ref) async => const <GitRef>[]),
+            // Sibling of the refs override: the views now read CONFIGURED
+            // remotes (remotesProvider), not remote-tracking refs.
+            remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
             connectionProvider.overrideWith(
               () => _StubConnection(
                 const ConnectionState(backend: ConnectionBackend.ssh),
@@ -1462,6 +1498,61 @@ void main() {
       },
     );
   });
+
+  testWidgets(
+    'an EMPTY repo with a configured origin reports "No branches yet", '
+    'never "No remote detected" — the wired-but-unfetched state a fresh '
+    'create/clone of an empty forge project always lands in',
+    (tester) async {
+      await _pump(
+        tester,
+        status: GitStatus(branch: const GitBranchInfo(), files: const []),
+        refs: const [], // no refs of ANY kind: unborn HEAD, nothing fetched
+        remotes: const ['origin'], // …but the remote config is perfect
+      );
+
+      expect(find.text('No remote detected'), findsNothing,
+          reason: 'origin IS configured — this label was a lie for empty '
+              'repos and read as a create/clone wiring failure');
+      expect(
+        find.text('No branches yet — repository is empty'),
+        findsOneWidget,
+      );
+
+      // Network actions must be live: fetching/pulling an empty remote is
+      // exactly how its first branch arrives.
+      final fetchIcon = find.byWidgetPredicate(
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.cloud_download,
+      );
+      expect(fetchIcon, findsOneWidget);
+      expect(
+        tester
+            .widget<MacosTooltip>(find.ancestor(
+              of: fetchIcon,
+              matching: find.byType(MacosTooltip),
+            ).first)
+            .message,
+        'Fetch',
+      );
+    },
+  );
+
+  testWidgets(
+    'a repo with NO configured remotes still reports "No remote detected"',
+    (tester) async {
+      await _pump(
+        tester,
+        status: GitStatus(branch: const GitBranchInfo(), files: const []),
+        refs: const [],
+        remotes: const [],
+      );
+      expect(find.text('No remote detected'), findsOneWidget);
+      expect(
+        find.text('No branches yet — repository is empty'),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets(
     'toolbar actions stay flush right with the SSH status chip present — a '
