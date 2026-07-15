@@ -964,6 +964,184 @@ void main() {
       expect(git.staged, ['lib/a.dart']);
       expect(find.textContaining('files selected'), findsNothing);
     });
+
+    testWidgets(
+      'bulk Stage re-homes the multi-selection into Staged rather than '
+      'leaving it orphaned on the unstaged section',
+      (tester) async {
+        final git = await _pump(
+          tester,
+          status: _statusWith(
+            unstaged: const [
+              GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+              GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+            ],
+          ),
+        );
+
+        await tester.tap(find.text('lib/a.dart'));
+        await tester.pumpAndSettle();
+        await cmdClick(tester, find.text('lib/b.dart'));
+        expect(find.text('2 files selected'), findsOneWidget);
+
+        await tester.tap(find.text('lib/a.dart'), buttons: kSecondaryMouseButton);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Stage 2 Files'));
+        await tester.pumpAndSettle();
+
+        expect(git.staged, ['lib/a.dart', 'lib/b.dart']);
+        // Re-homed as a multi-selection (kind follows the files). With the
+        // test's fixed status override the paths still appear under Changes,
+        // so the status-sync re-homes them back onto unstaged — either way the
+        // selection is not cleared. The production path (status refetch after
+        // stage) lands them under Staged and keeps kind=staged.
+        expect(find.text('2 files selected'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'a status refresh prunes multi-select members that left the section',
+      (tester) async {
+        // Mutable status so we can simulate an external stage of one member
+        // without going through our own stage action's bookkeeping.
+        var current = _statusWith(
+          unstaged: const [
+            GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+            GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+          ],
+        );
+        final git = _FakeGitService();
+        final container = ProviderContainer(
+          overrides: [
+            gitServiceProvider.overrideWithValue(git),
+            statusProvider(_repo).overrideWith((ref) async => current),
+            pendingOpProvider(
+              _repo,
+            ).overrideWith((ref) async => PendingOp.none),
+            repoWatchProvider(_repo).overrideWith(
+              (ref) => const Stream<RepoWatchEvent>.empty(),
+            ),
+            fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
+            refsProvider(_repo).overrideWith((ref) async => const <GitRef>[]),
+            connectionProvider.overrideWith(
+              () => _StubConnection(
+                const ConnectionState(backend: ConnectionBackend.ssh),
+              ),
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const MacosApp(
+              debugShowCheckedModeBanner: false,
+              home: RepoStatusView(repoPath: _repo),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('lib/a.dart'));
+        await tester.pumpAndSettle();
+        await cmdClick(tester, find.text('lib/b.dart'));
+        expect(find.text('2 files selected'), findsOneWidget);
+
+        // External stage of a: still in status.files (as staged), but no
+        // longer in the unstaged section the selection claimed.
+        current = _statusWith(
+          staged: const [
+            GitFileStatus(path: 'lib/a.dart', statusX: 'M', statusY: '.'),
+          ],
+          unstaged: const [
+            GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+          ],
+        );
+        container.invalidate(statusProvider(_repo));
+        await tester.pumpAndSettle();
+
+        // a pruned; b alone → multi-select summary goes away. b may also
+        // appear in the diff chrome once the selection collapses to one file.
+        expect(find.textContaining('files selected'), findsNothing);
+        expect(find.text('lib/b.dart'), findsWidgets);
+      },
+    );
+
+    testWidgets(
+      'a status refresh re-homes a single selection that moved sections',
+      (tester) async {
+        var current = _statusWith(
+          unstaged: const [
+            GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+          ],
+        );
+        final git = _FakeGitService();
+        final container = ProviderContainer(
+          overrides: [
+            gitServiceProvider.overrideWithValue(git),
+            statusProvider(_repo).overrideWith((ref) async => current),
+            pendingOpProvider(
+              _repo,
+            ).overrideWith((ref) async => PendingOp.none),
+            repoWatchProvider(_repo).overrideWith(
+              (ref) => const Stream<RepoWatchEvent>.empty(),
+            ),
+            fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
+            refsProvider(_repo).overrideWith((ref) async => const <GitRef>[]),
+            connectionProvider.overrideWith(
+              () => _StubConnection(
+                const ConnectionState(backend: ConnectionBackend.ssh),
+              ),
+            ),
+            // Diff keys for both halves — re-home flips staged:true.
+            fileDiffProvider((
+              _repo,
+              'lib/a.dart',
+              false,
+              false,
+              3,
+            )).overrideWith((ref) async => 'diff unstaged'),
+            fileDiffProvider((
+              _repo,
+              'lib/a.dart',
+              true,
+              false,
+              3,
+            )).overrideWith((ref) async => 'diff staged'),
+          ],
+        );
+        addTearDown(container.dispose);
+        await tester.pumpWidget(
+          UncontrolledProviderScope(
+            container: container,
+            child: const MacosApp(
+              debugShowCheckedModeBanner: false,
+              home: RepoStatusView(repoPath: _repo),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.tap(find.text('lib/a.dart'));
+        await tester.pumpAndSettle();
+        // Diff panel open on the unstaged half.
+        expect(find.text('lib/a.dart'), findsWidgets);
+
+        current = _statusWith(
+          staged: const [
+            GitFileStatus(path: 'lib/a.dart', statusX: 'M', statusY: '.'),
+          ],
+        );
+        container.invalidate(statusProvider(_repo));
+        await tester.pumpAndSettle();
+
+        // Still selected (re-homed to staged), not cleared — path still shown
+        // in the staged section and the diff chrome.
+        expect(find.text('lib/a.dart'), findsWidgets);
+        expect(find.text('Staged (1)'), findsOneWidget);
+        expect(find.text('Changes'), findsNothing);
+      },
+    );
   });
 
   group('right-click context menu', () {

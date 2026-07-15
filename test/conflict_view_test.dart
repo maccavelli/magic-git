@@ -45,13 +45,16 @@ Future<void> _pump(WidgetTester tester, String content) async {
 }
 
 Color? _backgroundOf(WidgetTester tester, String text) {
-  // The view renders plain Text rows under one SelectionArea (cross-line
-  // copy), so match the Text widget carrying the line directly.
-  final finder = find.byWidgetPredicate(
+  // Bands live on the row Container (full-width soft fill under DiffPan),
+  // not on Text.style.backgroundColor — same pattern as the other diff
+  // surfaces after the layout polish.
+  final textFinder = find.byWidgetPredicate(
     (widget) => widget is Text && widget.data == text,
   );
-  final line = tester.widget<Text>(finder);
-  return line.style?.backgroundColor;
+  final container = tester.widget<Container>(
+    find.ancestor(of: textFinder, matching: find.byType(Container)).first,
+  );
+  return container.color;
 }
 
 void main() {

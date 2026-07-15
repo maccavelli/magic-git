@@ -275,10 +275,11 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
     return SelectionArea(
       child: ListView.builder(
         controller: _vertical,
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         // Fixed extent in the unwrapped case only — a wrapped line's height is
         // its own business. Every row (expanders included) is one line tall, so
-        // the O(1) scroll math holds.
+        // the O(1) scroll math holds. [kDiffStrut] keeps glyph height inside
+        // the slot so text never clips against the itemExtent.
         itemExtent: widget.wrap ? null : kDiffLineExtent,
         itemCount: _rows.length,
         itemBuilder: (context, index) =>
@@ -312,15 +313,20 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
   Widget _text(String text, Color defaultColor, PatchRow row) {
     // An expanded line is unchanged code: colour it as context, and tint its
     // background faintly so it reads as "revealed", not "part of the change".
+    // Additions/removals get the same soft band as DiffView/HunkDiffView.
     final expanded = row is CodeRow && row.fromExpansion;
+    final bg = expanded
+        ? const Color(0x0DFFFFFF)
+        : diffLineBackground(text);
     return Container(
-      color: expanded ? const Color(0x0DFFFFFF) : null,
+      color: bg,
       padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
       alignment: Alignment.centerLeft,
       child: Text(
         text,
         maxLines: widget.wrap ? null : 1,
         softWrap: widget.wrap,
+        strutStyle: widget.wrap ? null : kDiffStrut,
         style: kDiffMono.copyWith(color: diffLineColor(text, defaultColor)),
       ),
     );

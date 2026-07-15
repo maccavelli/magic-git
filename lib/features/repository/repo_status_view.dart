@@ -403,6 +403,166 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     setState(() {
       _selectionKind = null;
       _selectedPaths = {};
+      _selectionAnchor = null;
+      _popout = false;
+    });
+  }
+
+  /// True when [path] is selected *in* [kind]'s section. Highlighting and
+  /// keyboard target checks must use this rather than a bare path set — a
+  /// path can legitimately appear in more than one section (partially staged)
+  /// and must not light up under the wrong header after a bulk stage moves it.
+  bool _isPathSelected(String path, _SectionKind kind) =>
+      _selectionKind == kind && _selectedPaths.contains(path);
+
+  /// Which status section currently owns [path], or null if the working tree
+  /// no longer reports it. Conflict wins over staged/unstaged (an unmerged
+  /// path is only listed under Conflicts).
+  _SectionKind? _sectionOfPath(GitStatus status, String path) {
+    if (status.conflicted.any((f) => f.path == path)) {
+      return _SectionKind.conflict;
+    }
+    // A partially-staged file is in both staged and unstaged lists. Prefer the
+    // section the selection is already in so a refresh doesn't yank a mixed
+    // file out of the pane the user is looking at; otherwise prefer unstaged
+    // (the "what did I just edit" half — same default as the file tree).
+    final staged = status.staged.any((f) => f.path == path);
+    final unstaged = status.unstaged.any((f) => f.path == path);
+    if (staged && unstaged) {
+      if (_selectionKind == _SectionKind.staged) return _SectionKind.staged;
+      return _SectionKind.unstaged;
+    }
+    if (staged) return _SectionKind.staged;
+    if (unstaged) return _SectionKind.unstaged;
+    if (status.untracked.any((f) => f.path == path)) {
+      return _SectionKind.untracked;
+    }
+    return null;
+  }
+
+  Set<String> _pathsInSection(GitStatus status, _SectionKind kind) =>
+      switch (kind) {
+        _SectionKind.conflict => {
+          for (final f in status.conflicted) f.path,
+        },
+        _SectionKind.staged => {for (final f in status.staged) f.path},
+        _SectionKind.unstaged => {for (final f in status.unstaged) f.path},
+        _SectionKind.untracked => {
+          for (final f in status.untracked) f.path,
+        },
+      };
+
+  /// Keeps the selection honest against a freshly landed [status]: drop paths
+  /// that left the selected section, and re-home a selection that moved as a
+  /// unit (bulk stage/unstage, or an external stage of the sole selected
+  /// file) so the panel follows the files instead of sitting on a stale empty
+  /// key. When only *some* members left, the leavers are pruned and the rest
+  /// stay — multi-select never spans sections.
+  void _syncSelectionToStatus(GitStatus status) {
+    final kind = _selectionKind;
+    if (kind == null || _selectedPaths.isEmpty) return;
+
+    final inSection = _pathsInSection(status, kind);
+    final pruned = _selectedPaths.intersection(inSection);
+    if (pruned.length == _selectedPaths.length) return; // all still valid
+
+    // Every path that left this section: where did it go (if anywhere)?
+    final left = _selectedPaths.difference(inSection);
+    _SectionKind? commonNew;
+    final moved = <String>{};
+    var split = false;
+    for (final path in left) {
+      final nk = _sectionOfPath(status, path);
+      if (nk == null) continue; // gone from the working tree entirely
+      if (commonNew == null) {
+        commonNew = nk;
+      } else if (commonNew != nk) {
+        split = true;
+        break;
+      }
+      moved.add(path);
+    }
+
+    if (pruned.isEmpty) {
+      // Entire selection left the section. Re-home when every surviving path
+      // landed in the *same* new section (bulk stage of N files, or a single
+      // file staged externally); otherwise clear.
+      if (!split &&
+          commonNew != null &&
+          moved.length == _selectedPaths.length) {
+        setState(() {
+          _selectionKind = commonNew;
+          _selectedPaths = moved;
+          if (_selectionAnchor == null ||
+              !moved.contains(_selectionAnchor)) {
+            _selectionAnchor = moved.first;
+          }
+          if (moved.length != 1 || commonNew == _SectionKind.conflict) {
+            _popout = false;
+          }
+        });
+        return;
+      }
+      setState(() {
+        _selectionKind = null;
+        _selectedPaths = {};
+        _selectionAnchor = null;
+        _popout = false;
+      });
+      return;
+    }
+
+    // Partial: keep whoever is still in this section.
+    setState(() {
+      _selectedPaths = pruned;
+      if (_selectionAnchor != null &&
+          !_selectedPaths.contains(_selectionAnchor)) {
+        _selectionAnchor = _selectedPaths.first;
+      }
+      if (_selectedPaths.length != 1) _popout = false;
+    });
+  }
+
+  /// After a bulk action moved [paths] into [newKind], re-home the selection
+  /// there (or clear it if nothing remains). Mirrors [_dropOrReselect] for the
+  /// multi-select case so the panel doesn't stay on a section the files just
+  /// left.
+  void _rehomeBulk(Iterable<String> paths, _SectionKind newKind) {
+    final moved = paths.toSet();
+    final keep = moved.intersection(_selectedPaths);
+    if (keep.isEmpty) {
+      // Action targeted paths outside the current selection (shouldn't happen
+      // for the context-menu path, which selects first) — leave selection.
+      return;
+    }
+    setState(() {
+      _selectionKind = newKind;
+      _selectedPaths = keep;
+      _selectionAnchor = keep.contains(_selectionAnchor)
+          ? _selectionAnchor
+          : keep.first;
+      if (keep.length != 1 || newKind == _SectionKind.conflict) {
+        _popout = false;
+      }
+    });
+  }
+
+  /// Drops [paths] from the selection after an action that removes them from
+  /// the working tree (discard, delete, gitignore, resolve).
+  void _dropPathsFromSelection(Iterable<String> paths) {
+    if (_selectedPaths.isEmpty) return;
+    final gone = paths.toSet();
+    if (!_selectedPaths.any(gone.contains)) return;
+    setState(() {
+      _selectedPaths = {..._selectedPaths}..removeAll(gone);
+      if (_selectedPaths.isEmpty) {
+        _selectionKind = null;
+        _selectionAnchor = null;
+        _popout = false;
+      } else if (_selectionAnchor != null &&
+          !_selectedPaths.contains(_selectionAnchor)) {
+        _selectionAnchor = _selectedPaths.first;
+      }
     });
   }
 
@@ -704,11 +864,23 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   }
 
   Future<void> _stageMany(List<String> paths) async {
-    await runGuarded(() => ref.read(gitServiceProvider).stageMany(repoPath, paths));
+    if (await runGuarded(
+      () => ref.read(gitServiceProvider).stageMany(repoPath, paths),
+    )) {
+      if (!mounted) return;
+      // Follow the files into Staged — same bookkeeping as a single-file
+      // stage, for the multi-select case.
+      _rehomeBulk(paths, _SectionKind.staged);
+    }
   }
 
   Future<void> _unstageMany(List<String> paths) async {
-    await runGuarded(() => ref.read(gitServiceProvider).unstageMany(repoPath, paths));
+    if (await runGuarded(
+      () => ref.read(gitServiceProvider).unstageMany(repoPath, paths),
+    )) {
+      if (!mounted) return;
+      _rehomeBulk(paths, _SectionKind.unstaged);
+    }
   }
 
   Future<void> _discardMany(List<String> paths) async {
@@ -722,7 +894,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       destructive: true,
     );
     if (!ok) return;
-    await runGuarded(() => ref.read(gitServiceProvider).discardMany(repoPath, paths));
+    if (await runGuarded(
+      () => ref.read(gitServiceProvider).discardMany(repoPath, paths),
+    )) {
+      if (!mounted) return;
+      _dropPathsFromSelection(paths);
+    }
   }
 
   Future<void> _discardUntrackedMany(List<String> paths) async {
@@ -736,9 +913,13 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       destructive: true,
     );
     if (!ok) return;
-    await runGuarded(
-      () => ref.read(gitServiceProvider).removeUntrackedFilesMany(repoPath, paths),
-    );
+    if (await runGuarded(
+      () =>
+          ref.read(gitServiceProvider).removeUntrackedFilesMany(repoPath, paths),
+    )) {
+      if (!mounted) return;
+      _dropPathsFromSelection(paths);
+    }
   }
 
   Future<void> _discardStagedMany(List<String> paths) async {
@@ -752,15 +933,21 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       destructive: true,
     );
     if (!ok) return;
-    await runGuarded(
+    if (await runGuarded(
       () => ref.read(gitServiceProvider).discardStagedMany(repoPath, paths),
-    );
+    )) {
+      if (!mounted) return;
+      _dropPathsFromSelection(paths);
+    }
   }
 
   Future<void> _addToGitignoreMany(List<String> paths) async {
-    await runGuarded(
+    if (await runGuarded(
       () => ref.read(gitServiceProvider).addToGitignoreMany(repoPath, paths),
-    );
+    )) {
+      if (!mounted) return;
+      _dropPathsFromSelection(paths);
+    }
   }
 
   Future<void> _resolveMany(List<String> paths, {required bool useOurs}) async {
@@ -770,9 +957,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           .resolveConflictMany(repoPath, paths, useOurs: useOurs),
     )) {
       if (!mounted) return;
-      for (final p in paths) {
-        _removeFromSelection(p);
-      }
+      _dropPathsFromSelection(paths);
     }
   }
 
@@ -946,24 +1131,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       // _prefetchDiffs.
       _prefetchDiffs(next.value);
       final status = next.value;
-      final kind = _selectionKind;
-      if (status == null || kind == null) return;
-      // If a selected file left the working tree externally (committed,
-      // discarded, or a conflict resolved in another terminal), its path is
-      // no longer in the file list — drop it from the selection so the panel
-      // stops requesting a diff/conflict-content for a file git no longer
-      // reports. Applied per-path (not just "clear everything") so the rest
-      // of a multi-selection survives one member disappearing.
-      final stillPresent = kind == _SectionKind.conflict
-          ? status.conflicted.map((f) => f.path).toSet()
-          : status.files.map((f) => f.path).toSet();
-      final pruned = _selectedPaths.intersection(stillPresent);
-      if (pruned.length != _selectedPaths.length) {
-        setState(() {
-          _selectedPaths = pruned;
-          if (_selectedPaths.isEmpty) _selectionKind = null;
-        });
-      }
+      if (status == null) return;
+      // Section-aware prune / single-file re-home. Path-only presence was not
+      // enough: a bulk or external stage leaves the path in status.files but
+      // under a different section, and the panel kept requesting the old
+      // (now empty) diff key.
+      _syncSelectionToStatus(status);
     });
     final pending = ref.watch(pendingOpProvider(repoPath)).value;
     // Keep the background auto-fetch timer alive while this panel is shown.
@@ -2030,7 +2203,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           d.globalPosition,
         ),
         child: Container(
-          color: _selectedPaths.contains(file.path)
+          color: _isPathSelected(file.path, _SectionKind.conflict)
               ? MacosColors.systemRedColor.withValues(alpha: 0.12)
               : const Color(0x00000000),
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
@@ -2080,7 +2253,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       onSecondaryTapUp: (d) =>
           _handleRowSecondaryTap(rows, file.path, kind, d.globalPosition),
       child: Container(
-        color: _selectedPaths.contains(file.path)
+        color: _isPathSelected(file.path, kind)
             ? MacosColors.systemBlueColor.withValues(alpha: 0.15)
             : const Color(0x00000000),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),

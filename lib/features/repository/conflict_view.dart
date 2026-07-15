@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart';
+import '../common/diff_view.dart';
 
 /// Which region of a conflict block a line falls in, so "ours", "theirs" (and,
 /// for `diff3`/`zdiff3` style conflicts, the common "ancestor") can be colored
@@ -95,10 +96,12 @@ List<_ConflictLine> _classifyLines(String content) {
 
 /// Renders a conflicted file, coloring the `<<<<<<<`/`|||||||`/`=======`/
 /// `>>>>>>>` regions so "ours", the `diff3`/`zdiff3` ancestor, and "theirs"
-/// are all visually distinct. Uses [ListView.builder] (like the sibling diff
-/// viewers — see `DiffView`/`HunkDiffView`) so only on-screen lines are
-/// actually built, keeping a large conflicted file responsive. Detected
-/// binary content is shown as a placeholder instead (see [_looksBinary]).
+/// are all visually distinct.
+///
+/// Uses the shared [DiffPan] so long lines pan as one unit (the same model as
+/// every other diff surface) instead of each line owning its own horizontal
+/// scroller — that older shape made the conflict "come apart" under the cursor
+/// and left text sitting outside the visual margins of the pane.
 class ConflictView extends StatefulWidget {
   final String content;
 
@@ -109,21 +112,24 @@ class ConflictView extends StatefulWidget {
 }
 
 class _ConflictViewState extends State<ConflictView> {
-  static const _mono = TextStyle(
-    fontFamily: 'Menlo',
-    fontFamilyFallback: ['SF Mono', 'Consolas', 'monospace'],
-    fontSize: 12,
-    height: 1.35,
-  );
+  final ScrollController _vertical = ScrollController();
+  final ScrollController _horizontal = ScrollController();
 
   List<_ConflictLine> _lines = const [];
+  double _maxLineWidth = 0;
   bool _isBinary = false;
 
   @override
   void initState() {
     super.initState();
-    _isBinary = _looksBinary(widget.content);
-    _lines = _isBinary ? const [] : _classifyLines(widget.content);
+    _reload(widget.content);
+  }
+
+  @override
+  void dispose() {
+    _vertical.dispose();
+    _horizontal.dispose();
+    super.dispose();
   }
 
   @override
@@ -132,9 +138,16 @@ class _ConflictViewState extends State<ConflictView> {
     // Same object identity, not just equal content, is the common case — see
     // the equivalent memoization in HunkDiffView/SplitDiffView.
     if (oldWidget.content != widget.content) {
-      _isBinary = _looksBinary(widget.content);
-      _lines = _isBinary ? const [] : _classifyLines(widget.content);
+      _reload(widget.content);
     }
+  }
+
+  void _reload(String content) {
+    _isBinary = _looksBinary(content);
+    _lines = _isBinary ? const [] : _classifyLines(content);
+    _maxLineWidth = _isBinary
+        ? 0
+        : measureDiffWidth(_lines.map((l) => l.text));
   }
 
   @override
@@ -155,36 +168,37 @@ class _ConflictViewState extends State<ConflictView> {
 
     // SelectionArea + plain Text so a resolution snippet spanning markers can
     // be drag-copied — per-line SelectableText couldn't span lines.
-    return Scrollbar(
-      child: SelectionArea(
-        child: ListView.builder(
-          itemCount: _lines.length,
-          itemBuilder: (context, i) {
-            final line = _lines[i];
-            final isFirst = i == 0;
-            final isLast = i == _lines.length - 1;
-            final (color, background) = _colorsFor(line.region, defaultColor);
-            return Padding(
-              padding: EdgeInsets.fromLTRB(
-                12,
-                isFirst ? 12 : 0,
-                12,
-                isLast ? 12 : 0,
-              ),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
+    return DiffPan(
+      vertical: _vertical,
+      horizontal: _horizontal,
+      maxLineWidth: _maxLineWidth,
+      builder: (context, contentWidth, _) {
+        return SelectionArea(
+          child: ListView.builder(
+            controller: _vertical,
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            itemExtent: kDiffLineExtent,
+            itemCount: _lines.length,
+            itemBuilder: (context, i) {
+              final line = _lines[i];
+              final (color, background) = _colorsFor(line.region, defaultColor);
+              return Container(
+                width: contentWidth,
+                color: background,
+                padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
+                alignment: Alignment.centerLeft,
                 child: Text(
                   line.text,
-                  style: _mono.copyWith(
-                    color: color,
-                    backgroundColor: background,
-                  ),
+                  maxLines: 1,
+                  softWrap: false,
+                  strutStyle: kDiffStrut,
+                  style: kDiffMono.copyWith(color: color),
                 ),
-              ),
-            );
-          },
-        ),
-      ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 
@@ -208,14 +222,20 @@ class _ConflictViewState extends State<ConflictView> {
           MacosColors.systemGreenColor.withValues(alpha: 0.18),
         );
       case _LineRegion.insideOurs:
-        return (defaultColor, MacosColors.systemBlueColor.withValues(alpha: 0.10));
+        return (
+          defaultColor,
+          MacosColors.systemBlueColor.withValues(alpha: 0.10),
+        );
       case _LineRegion.insideAncestor:
         return (
           defaultColor,
           MacosColors.systemOrangeColor.withValues(alpha: 0.10),
         );
       case _LineRegion.insideTheirs:
-        return (defaultColor, MacosColors.systemGreenColor.withValues(alpha: 0.10));
+        return (
+          defaultColor,
+          MacosColors.systemGreenColor.withValues(alpha: 0.10),
+        );
       case _LineRegion.normal:
         return (defaultColor, null);
     }

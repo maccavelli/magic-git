@@ -253,15 +253,20 @@ class _HunkDiffViewState extends State<HunkDiffView> {
         vertical: _vertical,
         horizontal: _horizontal,
         maxLineWidth: _maxLineWidth,
-        builder: (context, _, viewportWidth) =>
-            _list(file, defaultColor, viewportWidth),
+        builder: (context, contentWidth, viewportWidth) =>
+            _list(file, defaultColor, contentWidth, viewportWidth),
       ),
     );
   }
 
   // SelectionArea + plain Text lines so a drag can copy across lines (and across
   // hunk boundaries) — per-line SelectableText couldn't span rows.
-  Widget _list(DiffFile file, Color defaultColor, double viewportWidth) {
+  Widget _list(
+    DiffFile file,
+    Color defaultColor,
+    double contentWidth,
+    double viewportWidth,
+  ) {
     return SelectionArea(
       child: ListView.builder(
         controller: _vertical,
@@ -272,7 +277,7 @@ class _HunkDiffViewState extends State<HunkDiffView> {
           if (item is _HeaderItem) {
             return _header(file, item.hunk, item.index, viewportWidth);
           }
-          return _line(item as _LineItem, defaultColor);
+          return _line(item as _LineItem, defaultColor, contentWidth);
         },
       ),
     );
@@ -372,13 +377,19 @@ class _HunkDiffViewState extends State<HunkDiffView> {
     );
   }
 
-  Widget _line(_LineItem line, Color defaultColor) {
-    return Padding(
+  Widget _line(_LineItem line, Color defaultColor, double contentWidth) {
+    // Full-width soft band (same as DiffView) so add/remove rows read as a
+    // continuous gutter, not a tint that stops where the glyph run ends.
+    return Container(
+      width: contentWidth,
+      color: diffLineBackground(line.text),
       padding: const EdgeInsets.symmetric(horizontal: kDiffHPad, vertical: 1),
+      alignment: Alignment.centerLeft,
       child: Text(
         line.text,
         maxLines: 1,
         softWrap: false,
+        strutStyle: kDiffStrut,
         style: kDiffMono.copyWith(
           color: diffLineColor(line.text, defaultColor),
         ),

@@ -150,21 +150,29 @@ class _SplitDiffViewState extends State<SplitDiffView> {
     return DiffPan(
       vertical: _vertical,
       horizontal: _horizontal,
-      // Two columns side by side, so the pan has to be wide enough for the
-      // widest cell to clear *its half* of it.
-      maxLineWidth: _maxLineWidth * 2,
-      builder: (context, _, viewportWidth) =>
-          _list(items, defaultColor, viewportWidth),
+      // Two padded columns + centre rule — not merely 2× the cell text width
+      // (that under-counted cell pad and the separator, so long lines clipped
+      // at the pan's right edge).
+      maxLineWidth: splitDiffPanMaxLineWidth(_maxLineWidth),
+      builder: (context, contentWidth, viewportWidth) =>
+          _list(items, defaultColor, contentWidth, viewportWidth),
     );
   }
 
   // SelectionArea + plain Text cells so a drag can copy across rows — per-cell
   // SelectableText couldn't span them.
-  Widget _list(List<Object> items, Color defaultColor, double viewportWidth) {
+  Widget _list(
+    List<Object> items,
+    Color defaultColor,
+    double contentWidth,
+    double viewportWidth,
+  ) {
     return SelectionArea(
       child: ListView.builder(
         controller: _vertical,
         padding: const EdgeInsets.symmetric(vertical: 8),
+        // Body rows are one mono line tall; headers are slightly taller, so
+        // no fixed extent on the whole list — body still uses the strut.
         itemCount: items.length,
         itemBuilder: (context, i) {
           final item = items[i];
@@ -186,18 +194,24 @@ class _SplitDiffViewState extends State<SplitDiffView> {
               ),
             );
           }
-          return _rowWidget(item as _SplitRow, defaultColor);
+          return _rowWidget(item as _SplitRow, defaultColor, contentWidth);
         },
       ),
     );
   }
 
-  Widget _rowWidget(_SplitRow row, Color defaultColor) {
-    return IntrinsicHeight(
+  Widget _rowWidget(_SplitRow row, Color defaultColor, double contentWidth) {
+    // Half of the content width each side of the 1px rule — keeps the two
+    // columns equal as the pan grows past the viewport.
+    final cellW = (contentWidth - kDiffSplitSeparator) / 2;
+    return SizedBox(
+      width: contentWidth,
+      height: kDiffLineExtent + 2, // +2 for the 1px vertical cell pad either side
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
+          SizedBox(
+            width: cellW,
             child: _cell(
               row.left,
               kind: DiffLineKind.remove,
@@ -205,8 +219,12 @@ class _SplitDiffViewState extends State<SplitDiffView> {
               isContext: row.isContext,
             ),
           ),
-          Container(width: 1, color: MacosColors.separatorColor),
-          Expanded(
+          Container(
+            width: kDiffSplitSeparator,
+            color: MacosColors.separatorColor,
+          ),
+          SizedBox(
+            width: cellW,
             child: _cell(
               row.right,
               kind: DiffLineKind.add,
@@ -239,16 +257,20 @@ class _SplitDiffViewState extends State<SplitDiffView> {
       bg = const Color(0x00000000);
       fg = diffKindColor(DiffLineKind.context, defaultColor);
     } else {
-      bg = diffKindColor(kind, defaultColor).withValues(alpha: 0.12);
+      bg = diffKindBackground(kind) ?? const Color(0x00000000);
       fg = diffKindColor(kind, defaultColor);
     }
     return Container(
       color: bg,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+      // Same horizontal inset as every other diff surface — the old 8px pad
+      // was what made split feel tighter (and shorted the pan) vs unified.
+      padding: const EdgeInsets.symmetric(horizontal: kDiffHPad, vertical: 1),
+      alignment: Alignment.centerLeft,
       child: Text(
         text ?? '',
         maxLines: 1,
         softWrap: false,
+        strutStyle: kDiffStrut,
         style: kDiffMono.copyWith(color: fg),
       ),
     );

@@ -5,6 +5,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/features/common/diff_view.dart';
 import 'package:remote_magic_git/features/common/split_diff_view.dart';
 
 const _diff = '''
@@ -78,6 +79,50 @@ void main() {
       expect(find.textContaining('@@ -1,3000 +1,3000 @@'), findsOneWidget);
       // A context line fills both columns, so it renders twice.
       expect(find.text('context line 0'), findsNWidgets(2));
+    },
+  );
+
+  testWidgets(
+    'long cell text is fully reachable on the shared horizontal pan',
+    (tester) async {
+      // Regression: pan extent used to be 2×cell text + outer pad only, which
+      // shorted each column's own pad and the centre rule — the tail of a long
+      // line clipped even when scrolled fully right.
+      final long = 'x' * 200;
+      final diff =
+          'diff --git a/a.txt b/a.txt\n'
+          'index 111..222 100644\n'
+          '--- a/a.txt\n'
+          '+++ b/a.txt\n'
+          '@@ -1,1 +1,1 @@\n'
+          '-$long\n'
+          '+$long\n';
+      await tester.pumpWidget(
+        MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: SizedBox(
+            width: 300,
+            height: 400,
+            child: SplitDiffView(diff: diff),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final horizontal = tester
+          .stateList<ScrollableState>(find.byType(Scrollable))
+          .firstWhere((s) => s.position.axis == Axis.horizontal);
+      expect(horizontal.position.maxScrollExtent, greaterThan(0));
+
+      // The pan must be at least wide enough for two padded cells + separator
+      // of the measured cell text — otherwise long lines clip at the edge.
+      final cellW = measureDiffWidth([long]);
+      final minContent = splitDiffContentWidth(cellW);
+      expect(
+        horizontal.position.viewportDimension +
+            horizontal.position.maxScrollExtent,
+        greaterThanOrEqualTo(minContent - 0.5),
+      );
     },
   );
 
