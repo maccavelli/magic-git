@@ -146,21 +146,19 @@ class GhService {
     );
   }
 
-  /// Creates [name] on [host] from *inside* a freshly-`git init`-ed repo at
-  /// [repoPath] — `gh repo create --source . --remote origin`, gh's documented
-  /// "push an existing local repository" path. Init-first keeps the user's
-  /// chosen initial branch authoritative; the `--clone` form was abandoned
-  /// because its empty-repo fallback quietly does a local `git init` on the
-  /// host's own `init.defaultBranch` (often `master`) and pushes nothing.
-  /// [push] adds `--push` — the current branch is pushed and set as upstream;
-  /// only pass it when a commit exists (an unborn branch can't be pushed).
+  /// Creates [name] on [host] as an empty forge project — API only.
+  ///
+  /// Does **not** pass `--source` / `--remote` / `--push`: those make `gh`
+  /// nest an unhardened `git` that can fail (or exit non-zero after the API
+  /// project already exists) under a Finder-launched GUI or bare SSH exec
+  /// channel. The create-repo wizard inits locally first, then wires
+  /// `origin` and pushes with PATH-hardened `git` via [cloneUrl].
   Future<SSHCommandResult> createRepoInExisting({
     required String repoPath,
     required String name,
     required bool private,
     String description = '',
     String host = 'github.com',
-    bool push = false,
     Duration timeout = const Duration(minutes: 3),
   }) async {
     final result = await _executor.execute(
@@ -172,11 +170,6 @@ class GhService {
         name,
         private ? '--private' : '--public',
         if (description.isNotEmpty) ...['--description', description],
-        '--source',
-        '.',
-        '--remote',
-        'origin',
-        if (push) '--push',
       ],
       lane: ExecLane.sync,
       timeout: timeout,
@@ -188,43 +181,46 @@ class GhService {
     return result;
   }
 
-  /// The clone URL of the just-created [name] on [host] — used to repair a
-  /// missing `origin` after [createRepoInExisting] (gh wires the remote with a
-  /// *nested* `git` that rides an unhardened PATH and can silently no-op under
-  /// a Finder-launched GUI or a bare SSH exec channel). `gh repo view <name>`
-  /// resolves the bare name against the authenticated account exactly as
-  /// `gh repo create` did, so it always finds the same repo. The protocol is
-  /// matched to the user's `git_protocol` so the repaired remote is identical
-  /// to gh's own — SSH users don't get an HTTPS origin they can't push, and
-  /// vice versa. Best-effort: returns null (never throws) when the lookup
-  /// can't produce a URL, so the caller warns rather than wiring a guess.
+  /// The clone URL of the just-created [name] on [host] — used to wire
+  /// `origin` after [createRepoInExisting]. `gh repo view <name>` resolves
+  /// the bare name against the authenticated account exactly as create did.
+  /// Protocol follows `git_protocol` so SSH users get an SSH origin. Retries
+  /// briefly for post-create eventual consistency. Best-effort: returns null
+  /// (never throws) when the lookup can't produce a URL.
   Future<String?> cloneUrl({
     required String repoPath,
     required String name,
     String host = 'github.com',
+    int retries = 2,
   }) async {
-    try {
-      final decoded = await _runJson(
-        repoPath,
-        ['gh', 'repo', 'view', name, '--json', 'url,sshUrl'],
-        'gh repo view',
-        extraEnv: hostEnv(host),
-      );
-      if (decoded is! Map) return null;
-      final https = decoded['url'];
-      final ssh = decoded['sshUrl'];
-      if (await _gitProtocol(repoPath, host) == 'ssh' &&
-          ssh is String &&
-          ssh.isNotEmpty) {
-        return ssh;
+    for (var attempt = 0; attempt <= retries; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(Duration(milliseconds: 250 * attempt));
       }
-      if (https is String && https.isNotEmpty) {
-        return https.endsWith('.git') ? https : '$https.git';
+      try {
+        final decoded = await _runJson(
+          repoPath,
+          ['gh', 'repo', 'view', name, '--json', 'url,sshUrl'],
+          'gh repo view',
+          extraEnv: hostEnv(host),
+        );
+        if (decoded is! Map) continue;
+        final https = decoded['url'];
+        final ssh = decoded['sshUrl'];
+        if (await _gitProtocol(repoPath, host) == 'ssh' &&
+            ssh is String &&
+            ssh.isNotEmpty) {
+          return ssh;
+        }
+        if (https is String && https.isNotEmpty) {
+          return https.endsWith('.git') ? https : '$https.git';
+        }
+        if (ssh is String && ssh.isNotEmpty) return ssh;
+      } catch (_) {
+        // Retry; caller surfaces a generic "clone URL could not be determined".
       }
-      return (ssh is String && ssh.isNotEmpty) ? ssh : null;
-    } catch (_) {
-      return null;
     }
+    return null;
   }
 
   /// The user's configured clone protocol for [host] (`gh config get

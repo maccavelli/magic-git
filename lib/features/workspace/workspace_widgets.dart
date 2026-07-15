@@ -22,6 +22,7 @@ class WorkspaceBanner extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             MacosIcon(
               CupertinoIcons.exclamationmark_triangle,
@@ -33,8 +34,9 @@ class WorkspaceBanner extends StatelessWidget {
               child: Text(
                 message,
                 style: typography.caption1,
-                maxLines: 4,
-                overflow: TextOverflow.ellipsis,
+                // Multi-paragraph create-repo warnings; wrap rather than
+                // force a fixed-height overflow in the wizard footer.
+                softWrap: true,
               ),
             ),
           ],

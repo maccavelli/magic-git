@@ -211,14 +211,14 @@ void main() {
   });
 
   group('create', () {
-    test('gh createRepoInExisting full option matrix', () async {
+    test('gh createRepoInExisting is API-only (no --source/--remote/--push)',
+        () async {
       await gh.createRepoInExisting(
         repoPath: '/srv/code/newrepo',
         name: 'newrepo',
         private: true,
         description: 'my thing',
         host: 'ghe.corp.example',
-        push: true,
       );
       expect(exec.calls.single, [
         'gh',
@@ -228,18 +228,12 @@ void main() {
         '--private',
         '--description',
         'my thing',
-        '--source',
-        '.',
-        '--remote',
-        'origin',
-        '--push',
       ]);
       expect(exec.repoPaths.single, '/srv/code/newrepo');
       expect(exec.envs.single, {'GH_HOST': 'ghe.corp.example'});
     });
 
-    test('gh createRepoInExisting public minimal (no commit → no push)',
-        () async {
+    test('gh createRepoInExisting public minimal', () async {
       await gh.createRepoInExisting(
         repoPath: '/x/r',
         name: 'r',
@@ -251,14 +245,10 @@ void main() {
         'create',
         'r',
         '--public',
-        '--source',
-        '.',
-        '--remote',
-        'origin',
       ]);
     });
 
-    test('glab createRepoInExisting runs inside the inited repo', () async {
+    test('glab createRepoInExisting skips local git setup', () async {
       await glab.createRepoInExisting(
         repoPath: '/srv/code/newrepo',
         name: 'newrepo',
@@ -273,6 +263,7 @@ void main() {
         '--private',
         '--description',
         'd',
+        '--skipGitInit',
       ]);
       expect(exec.repoPaths.single, '/srv/code/newrepo');
       expect(exec.envs.single, isNull);

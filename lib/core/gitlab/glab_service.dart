@@ -152,11 +152,12 @@ class GlabService {
     );
   }
 
-  /// Creates [name] on [host] from *inside* a freshly-`git init`-ed repo at
-  /// [repoPath] — glab's documented remote-wiring path (it adds `origin`
-  /// pointing at the new project). The create sheet's GitLab mode inits first,
-  /// then calls this; on failure the local repo is kept and the error surfaces
-  /// as a warning (never delete the user's new repo over a forge hiccup).
+  /// Creates [name] on [host] as an empty forge project — API only.
+  ///
+  /// Passes `--skipGitInit` so glab does not nest local `git init` / remote
+  /// wiring (those ride an unhardened PATH and can leave the API project
+  /// created with no usable `origin`). The create-repo wizard inits first,
+  /// then wires origin and pushes with PATH-hardened `git` via [cloneUrl].
   Future<void> createRepoInExisting({
     required String repoPath,
     required String name,
@@ -174,6 +175,8 @@ class GlabService {
         name,
         private ? '--private' : '--public',
         if (description.isNotEmpty) ...['--description', description],
+        // Skip glab's local git setup — Magic Git owns origin + push.
+        '--skipGitInit',
       ],
       lane: ExecLane.sync,
       timeout: timeout,
@@ -184,53 +187,64 @@ class GlabService {
     }
   }
 
-  /// The clone URL of the just-created [name] on [host] — used to repair a
-  /// missing `origin` after [createRepoInExisting] (glab wires the remote as an
-  /// implicit side effect via a *nested* `git` that rides an unhardened PATH
-  /// and can silently no-op under a Finder-launched GUI or a bare SSH exec
-  /// channel). `glab repo create <name>` lands in the authenticated user's
-  /// namespace, so the project is resolved as `<username>/<name>` (a [name]
-  /// that already carries a group path is used verbatim) and its canonical
-  /// `http_url_to_repo` read back from the API. Best-effort: returns null
-  /// (never throws) when the project can't be confirmed, so the caller warns
-  /// rather than wiring a guessed — possibly wrong — origin.
+  /// The clone URL of the just-created [name] on [host] — used to wire
+  /// `origin` after [createRepoInExisting]. Bare names resolve under the
+  /// authenticated user's namespace; group paths (`a/b/c`) are used verbatim.
+  /// Prefers `ssh_url_to_repo` when the user looks SSH-oriented, else
+  /// `http_url_to_repo`. Retries briefly for post-create eventual consistency.
+  /// Best-effort: returns null (never throws) when the project can't be
+  /// confirmed.
   Future<String?> cloneUrl({
     required String repoPath,
     required String name,
     String host = 'gitlab.com',
+    int retries = 2,
   }) async {
-    try {
-      String full;
-      if (name.contains('/')) {
-        full = name;
-      } else {
-        final who = await _runJson(
+    for (var attempt = 0; attempt <= retries; attempt++) {
+      if (attempt > 0) {
+        await Future<void>.delayed(Duration(milliseconds: 250 * attempt));
+      }
+      try {
+        String full;
+        String? username;
+        if (name.contains('/')) {
+          full = name;
+        } else {
+          final who = await _runJson(
+            repoPath,
+            ['glab', 'api', 'user', '-i'],
+            'glab api user',
+            expectHeaders: true,
+            extraEnv: hostEnv(host),
+          );
+          username = (who is Map ? who['username'] : null) as String?;
+          if (username == null || username.isEmpty) continue;
+          full = '$username/$name';
+        }
+        // GitLab's project id must arrive URL-encoded — each path segment
+        // percent-encoded and the separators as `%2F`.
+        final encoded = full.split('/').map(Uri.encodeComponent).join('%2F');
+        final project = await _runJson(
           repoPath,
-          ['glab', 'api', 'user', '-i'],
-          'glab api user',
+          ['glab', 'api', 'projects/$encoded', '-i'],
+          'glab api projects',
           expectHeaders: true,
           extraEnv: hostEnv(host),
         );
-        final username = (who is Map ? who['username'] : null) as String?;
-        if (username == null || username.isEmpty) return null;
-        full = '$username/$name';
+        if (project is! Map) continue;
+        final https = project['http_url_to_repo'] as String?;
+        final ssh = project['ssh_url_to_repo'] as String?;
+        if (https != null && https.isNotEmpty) return https;
+        if (ssh != null && ssh.isNotEmpty) return ssh;
+        // Last resort: construct from known identity (never invent owner).
+        if (username != null && username.isNotEmpty) {
+          return 'https://$host/$username/$name.git';
+        }
+      } catch (_) {
+        // Retry; caller surfaces a generic "clone URL could not be determined".
       }
-      // GitLab's project id must arrive URL-encoded — each path segment
-      // percent-encoded and the separators as `%2F`.
-      final encoded = full.split('/').map(Uri.encodeComponent).join('%2F');
-      final project = await _runJson(
-        repoPath,
-        ['glab', 'api', 'projects/$encoded', '-i'],
-        'glab api projects',
-        expectHeaders: true,
-        extraEnv: hostEnv(host),
-      );
-      final url = (project is Map ? project['http_url_to_repo'] : null)
-          as String?;
-      return (url == null || url.isEmpty) ? null : url;
-    } catch (_) {
-      return null;
     }
+    return null;
   }
 
   /// argv for a streamed clone of [pathWithNamespace] into [dirName] (run with

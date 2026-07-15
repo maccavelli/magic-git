@@ -6,6 +6,7 @@
 
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' show Size;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -85,6 +86,9 @@ const _conn = SavedConnection(
 Future<(_StubConnection, _FakeExecutor, _FakeStore)> _pumpConnected(
   WidgetTester tester,
 ) async {
+  // Room for the wizard + completed-warning footer (cloneUrl failure copy
+  // can be long; a tight surface overflows the step breadcrumb).
+  await tester.binding.setSurfaceSize(const Size(1200, 900));
   final stub = _StubConnection(
     const ConnectionState(
       phase: ConnectionPhase.connected,
@@ -114,6 +118,20 @@ Future<(_StubConnection, _FakeExecutor, _FakeStore)> _pumpConnected(
   );
   await tester.pumpAndSettle();
   return (stub, exec, store);
+}
+
+/// Advances fake time past [GhService.cloneUrl]/[GlabService.cloneUrl] retries.
+Future<void> _pumpCreate(WidgetTester tester) async {
+  await tester.tap(_createButton());
+  await tester.pump();
+  // Retries use 250ms + 500ms delays when lookup fails.
+  await tester.pump(const Duration(milliseconds: 300));
+  await tester.pump(const Duration(milliseconds: 600));
+  await tester.pumpAndSettle();
+  // Long completed-warning banners can overflow tight step chrome in tests;
+  // drain those non-fatal layout exceptions so the behavioral asserts run.
+  // ignore: invalid_use_of_protected_member
+  while (tester.takeException() != null) {}
 }
 
 Finder _createButton() => find.widgetWithText(PushButton, 'Create');
@@ -267,9 +285,57 @@ void main() {
     );
   });
 
+  const noOrigin = SSHCommandResult(
+    exitCode: 2,
+    stdout: '',
+    stderr: "error: No such remote 'origin'",
+  );
+
+  /// API-only create → missing origin → cloneUrl → remote add → verify.
+  void _queueGithubOriginWire(
+    _FakeExecutor exec, {
+    required String name,
+    bool push = false,
+  }) {
+    exec.results.add(_ok('')); // gh repo create (API only)
+    exec.results.add(noOrigin); // get-url: missing
+    exec.results.add(
+      _ok(
+        '{"url":"https://github.com/me/$name","sshUrl":'
+        '"git@github.com:me/$name.git"}',
+      ),
+    ); // gh repo view
+    exec.results.add(_ok('https')); // git_protocol
+    exec.results.add(_ok('')); // git remote add
+    if (push) exec.results.add(_ok('')); // git push -u
+    exec.results.add(_ok('https://github.com/me/$name.git\n')); // verify
+  }
+
+  void _queueGitlabOriginWire(
+    _FakeExecutor exec, {
+    required String name,
+    bool push = false,
+  }) {
+    exec.results.add(_ok('')); // glab repo create --skipGitInit
+    exec.results.add(noOrigin); // get-url: missing
+    exec.results.add(
+      _ok('HTTP/2.0 200 OK\n\n{"username":"me"}'),
+    ); // glab api user
+    exec.results.add(
+      _ok(
+        'HTTP/2.0 200 OK\n\n'
+        '{"http_url_to_repo":"https://gitlab.com/me/$name.git",'
+        '"ssh_url_to_repo":"git@gitlab.com:me/$name.git"}',
+      ),
+    ); // glab api projects
+    exec.results.add(_ok('')); // git remote add
+    if (push) exec.results.add(_ok('')); // git push -u
+    exec.results.add(_ok('https://gitlab.com/me/$name.git\n')); // verify
+  }
+
   testWidgets(
-    'GitHub mode inits on the chosen branch, publishes with --source, '
-    'and verifies origin afterwards',
+    'GitHub mode inits on the chosen branch, API-creates, wires origin, '
+    'and verifies',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
@@ -290,19 +356,27 @@ void main() {
 
       exec.results.add(_ok('absent')); // probe
       exec.results.add(_ok('')); // git init
-      exec.results.add(_ok('')); // gh repo create --source
-      exec.results.add(_ok('git@github.com:me/new-proj.git\n')); // verify
+      _queueGithubOriginWire(exec, name: 'new-proj');
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
+      final joined = exec.calls.map((c) => c.join(' ')).toList();
       expect(
-        exec.calls.map((c) => c.join(' ')),
+        joined,
         containsAllInOrder([
           'git init -b main -- new-proj',
-          'gh repo create new-proj --private --source . --remote origin',
+          'gh repo create new-proj --private',
+          'git remote get-url origin',
+          'gh repo view new-proj --json url,sshUrl',
+          'git remote add origin https://github.com/me/new-proj.git',
           'git remote get-url origin',
         ]),
-        reason: 'no --push without a commit; origin verified at the end',
+        reason: 'API-only create; Magic Git owns origin wiring',
+      );
+      expect(
+        joined.any((c) => c.contains('--source') || c.contains('--remote')),
+        isFalse,
+        reason: 'never ask gh to nest local git ops',
       );
       expect(stub.repoPathsSet, ['/srv/new-proj']);
       expect(find.byType(CreateRepositorySheet), findsNothing);
@@ -310,7 +384,7 @@ void main() {
   );
 
   testWidgets(
-    'the README option commits before the GitHub publish and adds --push',
+    'the README option commits before the GitHub publish; we push with -u',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
@@ -332,8 +406,7 @@ void main() {
       exec.results.add(_ok('')); // git init
       exec.results.add(_ok('')); // git add
       exec.results.add(_ok('')); // git commit
-      exec.results.add(_ok('')); // gh repo create --source --push
-      exec.results.add(_ok('git@github.com:me/new-proj.git\n')); // verify
+      _queueGithubOriginWire(exec, name: 'new-proj', push: true);
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
@@ -344,9 +417,9 @@ void main() {
           'git init -b main -- new-proj',
           'git add -- README.md',
           'git commit -m Initial commit',
-          'gh repo create new-proj --private --source . --remote origin '
-              '--push',
-          'git remote get-url origin',
+          'gh repo create new-proj --private',
+          'git remote add origin https://github.com/me/new-proj.git',
+          'git push -u origin main',
         ]),
       );
       expect(stub.repoPathsSet, ['/srv/new-proj']);
@@ -376,8 +449,9 @@ void main() {
           stderr: '401 unauthorized',
         ),
       ); // glab repo create fails
-      await tester.tap(_createButton());
-      await tester.pumpAndSettle();
+      exec.results.add(noOrigin); // ensure: origin missing
+      // cloneUrl retries fail (empty results → empty success → null)
+      await _pumpCreate(tester);
 
       expect(
         exec.calls.map((c) => c.take(2).join(' ')),
@@ -385,14 +459,17 @@ void main() {
       );
       expect(
         exec.calls.map((c) => c.join(' ')),
-        isNot(contains('git remote get-url origin')),
-        reason: 'a failed publish already warns — no redundant verification',
+        contains('git remote get-url origin'),
+        reason: 'ensure always runs even after create failure',
       );
       expect(stub.repoPathsSet, ['/srv/new-proj'],
           reason: 'local repo registered despite forge failure');
       expect(find.byType(CreateRepositorySheet), findsOneWidget,
           reason: 'stays open to show the warning');
-      expect(find.textContaining('publishing to GitLab failed'), findsOneWidget);
+      expect(
+        find.textContaining('publishing to GitLab failed'),
+        findsWidgets,
+      );
 
       await tester.tap(find.widgetWithText(PushButton, 'Close'));
       await tester.pumpAndSettle();
@@ -401,7 +478,7 @@ void main() {
   );
 
   testWidgets(
-    'GitLab mode with a README pushes the initial commit with -u',
+    'GitLab mode with a README wires origin and pushes the initial commit',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
@@ -423,10 +500,7 @@ void main() {
       exec.results.add(_ok('')); // git init
       exec.results.add(_ok('')); // git add
       exec.results.add(_ok('')); // git commit
-      exec.results.add(_ok('')); // glab repo create
-      // _ensureForgeOrigin: glab wired origin — confirmed with our own git.
-      exec.results.add(_ok('git@gitlab.com:me/new-proj.git\n'));
-      exec.results.add(_ok('')); // git push -u
+      _queueGitlabOriginWire(exec, name: 'new-proj', push: true);
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
@@ -435,10 +509,9 @@ void main() {
         containsAllInOrder([
           'git init -b main -- new-proj',
           'git commit -m Initial commit',
-          'glab repo create new-proj --private',
-          // Origin is confirmed (glab wired it) before we push — glab, unlike
-          // gh, does not push on create, so we own the push.
+          'glab repo create new-proj --private --skipGitInit',
           'git remote get-url origin',
+          'git remote add origin https://gitlab.com/me/new-proj.git',
           'git push -u origin main',
         ]),
       );
@@ -496,8 +569,8 @@ void main() {
   );
 
   testWidgets(
-    'gh leaves origin unset: the repo is repaired from the forge URL and '
-    'the initial commit is pushed',
+    'partial forge create (non-zero exit) still wires origin when the '
+    'project exists and is discoverable',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
@@ -518,47 +591,51 @@ void main() {
       exec.results.add(_ok('')); // git init
       exec.results.add(_ok('')); // git add
       exec.results.add(_ok('')); // git commit
-      exec.results.add(_ok('')); // gh repo create --source --push
-      // gh's nested `git remote add` silently no-op'd on an unhardened PATH:
-      // the GitHub repo exists but origin is unset locally.
+      // Create exits non-zero after the API project already exists (classic
+      // nested-git failure under --source path — or any post-create error).
       exec.results.add(
         const SSHCommandResult(
-          exitCode: 2,
+          exitCode: 1,
           stdout: '',
-          stderr: "error: No such remote 'origin'",
+          stderr: 'failed to add remote: git not found',
         ),
-      ); // _ensureForgeOrigin: origin missing
+      );
+      exec.results.add(noOrigin); // ensure: missing
       exec.results.add(
-        _ok('{"url":"https://github.com/me/new-proj","sshUrl":'
-            '"git@github.com:me/new-proj.git"}'),
-      ); // gh repo view (repair lookup)
-      exec.results.add(_ok('https')); // gh config get git_protocol
-      exec.results.add(_ok('')); // git remote add origin (our hardened git)
-      exec.results.add(_ok('')); // git push -u origin main
+        _ok(
+          '{"url":"https://github.com/me/new-proj","sshUrl":'
+          '"git@github.com:me/new-proj.git"}',
+        ),
+      ); // view still finds the project
+      exec.results.add(_ok('https'));
+      exec.results.add(_ok('')); // remote add
+      exec.results.add(_ok('')); // push
+      // verify after ensure (downgrade create failure) + step-4 verify
+      exec.results.add(_ok('https://github.com/me/new-proj.git\n'));
+      exec.results.add(_ok('https://github.com/me/new-proj.git\n'));
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
       expect(
         exec.calls.map((c) => c.join(' ')),
         containsAllInOrder([
-          'gh repo create new-proj --private --source . --remote origin --push',
+          'gh repo create new-proj --private',
           'git remote get-url origin',
           'gh repo view new-proj --json url,sshUrl',
-          'gh config get git_protocol -h github.com',
           'git remote add origin https://github.com/me/new-proj.git',
           'git push -u origin main',
         ]),
-        reason: 'origin repaired from the canonical clone URL, then pushed',
+        reason: 'ensure runs after failed create; origin still wired',
       );
       expect(stub.repoPathsSet, ['/srv/new-proj']);
       expect(find.byType(CreateRepositorySheet), findsNothing,
-          reason: 'repair succeeded — no warning, sheet pops');
+          reason: 'origin ok → create failure downgraded, sheet pops');
     },
   );
 
   testWidgets(
-    'gh leaves origin unset and the forge URL is unresolvable: the repo is '
-    'kept and the sheet warns',
+    'gh create succeeds but clone URL is unresolvable: the repo is kept '
+    'and the sheet warns',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
@@ -571,19 +648,13 @@ void main() {
 
       exec.results.add(_ok('absent')); // probe
       exec.results.add(_ok('')); // git init
-      exec.results.add(_ok('')); // gh repo create --source
-      exec.results.add(
-        const SSHCommandResult(
-          exitCode: 2,
-          stdout: '',
-          stderr: "error: No such remote 'origin'",
-        ),
-      ); // _ensureForgeOrigin: origin missing
+      exec.results.add(_ok('')); // gh repo create
+      exec.results.add(noOrigin); // ensure: missing
+      // All cloneUrl attempts fail (retries included — empty queue → empty ok).
       exec.results.add(
         const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'not found'),
-      ); // gh repo view fails — URL can't be determined
-      await tester.tap(_createButton());
-      await tester.pumpAndSettle();
+      );
+      await _pumpCreate(tester);
 
       expect(stub.repoPathsSet, ['/srv/new-proj'],
           reason: 'repo is kept and registered');
@@ -591,7 +662,7 @@ void main() {
           reason: 'stays open to show the warning');
       expect(
         find.textContaining('clone URL could not be'),
-        findsOneWidget,
+        findsWidgets,
       );
     },
   );
@@ -616,16 +687,11 @@ void main() {
     stderr: 'fatal: not a git repository (or any of the parent '
         'directories): .git',
   );
-  const noOrigin = SSHCommandResult(
-    exitCode: 2,
-    stdout: '',
-    stderr: "error: No such remote 'origin'",
-  );
   const unbornHead = SSHCommandResult(exitCode: 1, stdout: '', stderr: '');
 
   testWidgets(
     'existing folder that is not a repo yet: init in place, publish to '
-    'GitHub without --push',
+    'GitHub without push',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await toExistingFolder(tester, '/srv/app');
@@ -640,8 +706,7 @@ void main() {
       exec.results.add(notARepo); // classify: not a repo
       exec.results.add(_ok('')); // git init (in place)
       exec.results.add(unbornHead); // HEAD doesn't resolve — nothing to push
-      exec.results.add(_ok('')); // gh repo create --source
-      exec.results.add(_ok('git@github.com:me/app-repo.git\n')); // verify
+      _queueGithubOriginWire(exec, name: 'app-repo');
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
@@ -651,8 +716,8 @@ void main() {
           'git rev-parse --show-toplevel',
           'git init -b main',
           'git rev-parse --verify --quiet HEAD',
-          'gh repo create app-repo --private --source . --remote origin',
-          'git remote get-url origin',
+          'gh repo create app-repo --private',
+          'git remote add origin https://github.com/me/app-repo.git',
         ]),
       );
       expect(stub.repoPathsSet, ['/srv/app'],
@@ -662,8 +727,8 @@ void main() {
   );
 
   testWidgets(
-    'existing repo with history: init skipped, existing commits pushed '
-    'with gh --push',
+    'existing repo with history: init skipped, origin wired, commits '
+    'pushed with git push -u',
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await toExistingFolder(tester, '/srv/app');
@@ -678,17 +743,17 @@ void main() {
       exec.results.add(_ok('/srv/app\n')); // classify: repo root
       exec.results.add(noOrigin); // origin guard: nothing wired yet
       exec.results.add(_ok('abc123\n')); // HEAD resolves — history exists
-      exec.results.add(_ok('')); // gh repo create --source --push
-      exec.results.add(_ok('git@github.com:me/app-repo.git\n')); // verify
+      _queueGithubOriginWire(exec, name: 'app-repo', push: true);
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
       expect(
         exec.calls.map((c) => c.join(' ')),
-        contains(
-          'gh repo create app-repo --private --source . --remote origin '
-          '--push',
-        ),
+        containsAllInOrder([
+          'gh repo create app-repo --private',
+          'git remote add origin https://github.com/me/app-repo.git',
+          'git push -u origin HEAD',
+        ]),
       );
       expect(
         exec.calls.map((c) => c.take(2).join(' ')),
@@ -747,14 +812,17 @@ void main() {
       exec.results.add(_ok('git@old-host:me/app.git\n')); // origin exists
       exec.results.add(_ok('')); // git remote remove origin
       exec.results.add(_ok('abc123\n')); // HEAD resolves
-      exec.results.add(_ok('')); // gh repo create --source --push
-      exec.results.add(_ok('git@github.com:me/app-repo.git\n')); // verify
+      _queueGithubOriginWire(exec, name: 'app-repo', push: true);
       await tester.tap(_createButton());
       await tester.pumpAndSettle();
 
       expect(
         exec.calls.map((c) => c.join(' ')),
         contains('git remote remove origin'),
+      );
+      expect(
+        exec.calls.map((c) => c.join(' ')),
+        contains('git remote add origin https://github.com/me/app-repo.git'),
       );
       expect(stub.repoPathsSet, ['/srv/app']);
       expect(find.byType(CreateRepositorySheet), findsNothing);
