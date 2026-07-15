@@ -156,6 +156,92 @@ void main() {
     });
   });
 
+  group('isTransientTransportError / runWithRetries', () {
+    test('never retries timeouts, supersession, or output cap', () {
+      expect(
+        SSHCommandExecutor.isTransientTransportError(
+          const SSHCommandTimeout('git status'),
+        ),
+        isFalse,
+      );
+      expect(
+        SSHCommandExecutor.isTransientTransportError(
+          const SSHCommandSuperseded('git status'),
+        ),
+        isFalse,
+      );
+      expect(
+        SSHCommandExecutor.isTransientTransportError(
+          const SSHOutputExceeded('git log'),
+        ),
+        isFalse,
+      );
+    });
+
+    test('never retries deterministic client errors', () {
+      expect(
+        SSHCommandExecutor.isTransientTransportError(
+          ArgumentError('bad path'),
+        ),
+        isFalse,
+      );
+      expect(
+        SSHCommandExecutor.isTransientTransportError(
+          const FormatException('bad gzip'),
+        ),
+        isFalse,
+      );
+      expect(
+        SSHCommandExecutor.isTransientTransportError(
+          StateError('no active SSH connection'),
+        ),
+        isFalse,
+      );
+    });
+
+    test('retries connection-closed style transport blips', () {
+      expect(
+        SSHCommandExecutor.isTransientTransportError(
+          Exception('SSH connection closed by peer'),
+        ),
+        isTrue,
+      );
+    });
+
+    test('runWithRetries does not re-issue a FormatException', () async {
+      var calls = 0;
+      await expectLater(
+        SSHCommandExecutor.runWithRetries(() async {
+          calls++;
+          throw const FormatException('corrupt');
+        }, 3),
+        throwsA(isA<FormatException>()),
+      );
+      expect(calls, 1);
+    });
+
+    test('runWithRetries re-issues a transient transport error once', () async {
+      var calls = 0;
+      final result = await SSHCommandExecutor.runWithRetries(
+        () async {
+          calls++;
+          if (calls == 1) {
+            throw Exception('connection closed unexpectedly');
+          }
+          return const SSHCommandResult(
+            exitCode: 0,
+            stdout: 'ok',
+            stderr: '',
+          );
+        },
+        1,
+        backoff: Duration.zero,
+      );
+      expect(calls, 2);
+      expect(result.stdout, 'ok');
+    });
+  });
+
   group('OutputByteBudget / boundedBytes bound on raw bytes', () {
     List<int> bytes(int n) => List<int>.filled(n, 0x61);
 

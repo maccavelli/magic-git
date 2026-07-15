@@ -17,6 +17,7 @@ import 'common/branch_switch.dart';
 import 'common/command_palette.dart';
 import 'common/diff_view.dart' show kDiffMono;
 import 'common/escape_dismissible.dart';
+import 'common/link_status_chip.dart';
 import 'common/sidebar_branding.dart';
 import 'common/undo_toast.dart';
 import 'connection/connection_landing.dart';
@@ -696,6 +697,11 @@ class _AppShellState extends ConsumerState<AppShell> {
           return Column(
             children: [
               const ToolHealthBanner(),
+              // Ambient SSH link latency — zero-height when no samples yet.
+              const Align(
+                alignment: Alignment.centerRight,
+                child: LinkStatusChip(),
+              ),
               Expanded(child: _pages(repoPath, pageIndex, visitedPages)),
             ],
           );

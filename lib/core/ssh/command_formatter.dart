@@ -88,6 +88,11 @@ class CommandFormatter {
   /// stream as `\x01EXIT=<n>\x01`, appended after stdout — the executor
   /// recovers it with [SSHCommandExecutor.splitExitTrailer]. stderr is left
   /// uncompressed on its own channel stream.
+  ///
+  /// When [binaryPaths] contains `gzip`, that absolute path is used for the
+  /// pipe (settings overrides and discovery both land there). Bare `gzip`
+  /// only appears as a fallback if compression is requested without a resolved
+  /// path — callers that gate on discovery should always supply one.
   static String format({
     required String repoPath,
     required List<String> gitArgs,
@@ -119,10 +124,14 @@ class CommandFormatter {
     if (!compressOutput) {
       return '$unset$prelude$cd && exec $escapedArgs';
     }
+    // Prefer the resolved absolute gzip (settings override / discovery);
+    // fall back to bare name only if somehow compress was requested without
+    // one. Escaped so a path with spaces never breaks the pipe token.
+    final gzipBin = ShellEscaper.escape(binaryPaths['gzip'] ?? 'gzip');
     // POSIX group so the trailer's `$?` is the command's own exit, then one
     // pipe through gzip. `printf '\001…'` — POSIX printf interprets octal
     // escapes in its format string, emitting the raw 0x01 marker bytes.
     return "$unset$prelude$cd && "
-        "{ $escapedArgs; printf '\\001EXIT=%d\\001' \"\$?\"; } | gzip -c -1";
+        "{ $escapedArgs; printf '\\001EXIT=%d\\001' \"\$?\"; } | $gzipBin -c -1";
   }
 }

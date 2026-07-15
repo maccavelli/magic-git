@@ -205,18 +205,40 @@ class SSHClientManager {
     // would own closing the socket is ever constructed. Close the already-open
     // socket ourselves on any throw here, or a bad/encrypted key leaks it once
     // per attempt (and auto-reconnect repeats the attempt).
+    // Auth method selection is deliberate: a non-null `onPasswordRequest`
+    // *registers* the password method with the server. Returning `''` for a
+    // key-only profile would attempt empty-password auth on every connect
+    // (burning MaxAuthTries / fail2ban and delaying publickey). Only enable
+    // password when a real password was supplied; only enable publickey when
+    // a private key was supplied. Require at least one — otherwise auth can
+    // never succeed and we fail fast instead of hanging on `none`.
+    final password = profile.password;
+    final privateKey = profile.privateKey;
+    final hasPassword = password != null && password.isNotEmpty;
+    final hasKey = privateKey != null && privateKey.isNotEmpty;
+    if (!hasPassword && !hasKey) {
+      socket.destroy();
+      throw ArgumentError(
+        'SSHConnectionProfile requires a password or a private key',
+      );
+    }
+
     final SSHClient client;
     try {
       client = SSHClient(
         socket,
         username: profile.username,
-        onPasswordRequest: () => profile.password ?? '',
-        identities: profile.privateKey != null
-            ? SSHKeyPair.fromPem(profile.privateKey!, profile.passphrase)
+        // Only when a password exists — see comment above.
+        onPasswordRequest: hasPassword ? () => password : null,
+        identities: hasKey
+            ? SSHKeyPair.fromPem(privateKey, profile.passphrase)
             : null,
-        // Explicit keepalive so a dead peer (dropped Wi-Fi, NAT/firewall idle
-        // timeout) surfaces promptly on `done`, which drives auto-reconnect.
-        keepAliveInterval: const Duration(seconds: 10),
+        // Dead-peer detection is owned by [ConnectionHealthMonitor] below
+        // (which checks whether pings are *answered*). The library's own
+        // keepAliveInterval fires-and-forgets without a reply counter, and
+        // stacking both doubles global-request traffic during bulk reads —
+        // so leave the library keepalive off.
+        keepAliveInterval: null,
         onVerifyHostKey: onVerifyHostKey == null
             ? null
             : (type, fingerprint) async {

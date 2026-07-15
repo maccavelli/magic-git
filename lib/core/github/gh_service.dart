@@ -402,6 +402,7 @@ class GhService {
       repoPath: repoPath,
       gitArgs: ['gh', 'run', 'view', '--job', '$jobId', '--log'],
       lane: ExecLane.read,
+      compress: true,
     );
     if (!result.isSuccess) {
       throw GhException('gh run view --log failed', result);
@@ -569,6 +570,7 @@ query($owner: String!, $name: String!) {
       repoPath: repoPath,
       gitArgs: args,
       lane: ExecLane.read,
+      compress: true,
     );
 
     final body = result.stdout.trim();
@@ -665,6 +667,9 @@ query($owner: String!, $name: String!) {
       repoPath: repoPath,
       gitArgs: args,
       lane: lane,
+      // Large JSON list/api payloads compress well; only on reads — mutations
+      // are small and must not pay the shell+gzip pipeline cost.
+      compress: lane == ExecLane.read,
       extraEnv: extraEnv,
     );
     if (!result.isSuccess) {

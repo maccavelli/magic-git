@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show gzip;
+import 'dart:io' show SocketException, gzip;
 import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
 import '../exec/command_lanes.dart';
@@ -10,12 +10,14 @@ import 'ssh_client_manager.dart';
 
 export '../exec/command_lanes.dart' show ExecLane;
 
-class SSHCommandResult {
+/// Transport-agnostic command result. [SSHCommandResult] remains as a
+/// compatibility typedef — both the SSH and local executors return this shape.
+class CommandResult {
   final int exitCode;
   final String stdout;
   final String stderr;
 
-  const SSHCommandResult({
+  const CommandResult({
     required this.exitCode,
     required this.stdout,
     required this.stderr,
@@ -23,6 +25,9 @@ class SSHCommandResult {
 
   bool get isSuccess => exitCode == 0;
 }
+
+/// Compatibility alias — prefer [CommandResult] in new code.
+typedef SSHCommandResult = CommandResult;
 
 /// Thrown when a request/response command exceeds its timeout. Distinct from a
 /// non-zero exit so the UI can surface "timed out" rather than hanging forever.
@@ -98,7 +103,7 @@ class OutputByteBudget {
 /// a live `Process`) can hand callers ([GlabService.traceStream],
 /// `RemoteWatchService`/`LocalWatchService`) the same shape regardless of
 /// transport.
-abstract class SSHStreamHandle {
+abstract class CommandStreamHandle {
   /// UTF-8 decoded output. `allowMalformed: true` so a non-UTF-8 byte (binary
   /// content, blob output) is replaced rather than throwing and killing the
   /// stream.
@@ -118,10 +123,13 @@ abstract class SSHStreamHandle {
   Future<void> cancel();
 }
 
-/// [SSHStreamHandle] backed by a live [SSHSession]. dartssh2 multiplexes it
+/// Compatibility alias — prefer [CommandStreamHandle] in new code.
+typedef SSHStreamHandle = CommandStreamHandle;
+
+/// [CommandStreamHandle] backed by a live [SSHSession]. dartssh2 multiplexes it
 /// onto its own channel with an independent flow-control window, so it
 /// coexists with request/response commands without blocking them.
-class _SshSessionStreamHandle implements SSHStreamHandle {
+class _SshSessionStreamHandle implements CommandStreamHandle {
   final SSHSession _session;
 
   _SshSessionStreamHandle(this._session);
@@ -143,14 +151,7 @@ class _SshSessionStreamHandle implements SSHStreamHandle {
   Future<int?> get exitCode => _session.waitForExit();
 
   @override
-  Future<void> cancel() async {
-    try {
-      _session.kill(SSHSignal.TERM);
-    } catch (_) {
-      // Session may already be gone; closing below is still correct.
-    }
-    _session.close();
-  }
+  Future<void> cancel() => SSHCommandExecutor.killAndCloseSession(_session);
 }
 
 /// Executes git/glab commands against a repo — either over SSH
@@ -281,26 +282,49 @@ class SSHCommandExecutor implements CommandExecutor {
   }
 
   /// Streams [bytes] to [remotePath] over SFTP on the active session. Not on the
-  /// serialized command queue — it's a distinct SFTP channel, so it coexists
-  /// with in-flight git commands.
+  /// command lane scheduler — it's a distinct SFTP channel — but still
+  /// generation-pinned and timed so a disconnect/reconnect mid-upload refuses
+  /// cleanly and a hung SFTP never stalls install forever. The [SftpClient] is
+  /// always closed so repeated sideloads don't leak channels.
   @override
   Future<void> uploadBytes(String remotePath, Uint8List bytes) async {
+    final gen = _clientManager.generation;
     final client = _clientManager.client;
     if (client == null) {
       throw StateError('cannot upload: no active SSH connection');
     }
-    final sftp = await client.sftp();
-    final file = await sftp.open(
-      remotePath,
-      mode:
-          SftpFileOpenMode.create |
-          SftpFileOpenMode.write |
-          SftpFileOpenMode.truncate,
-    );
+    if (_clientManager.clientGeneration != gen) {
+      throw SSHCommandSuperseded('sftp put $remotePath');
+    }
+
+    Future<void> openAndWrite() async {
+      if (_clientManager.generation != gen ||
+          _clientManager.clientGeneration != gen) {
+        throw SSHCommandSuperseded('sftp put $remotePath');
+      }
+      final sftp = await client.sftp();
+      try {
+        final file = await sftp.open(
+          remotePath,
+          mode:
+              SftpFileOpenMode.create |
+              SftpFileOpenMode.write |
+              SftpFileOpenMode.truncate,
+        );
+        try {
+          await file.write(Stream<Uint8List>.value(bytes)).done;
+        } finally {
+          await file.close();
+        }
+      } finally {
+        sftp.close();
+      }
+    }
+
     try {
-      await file.write(Stream<Uint8List>.value(bytes)).done;
-    } finally {
-      await file.close();
+      await openAndWrite().timeout(defaultTimeout);
+    } on TimeoutException {
+      throw SSHCommandTimeout('sftp put $remotePath');
     }
   }
 
@@ -375,11 +399,10 @@ class SSHCommandExecutor implements CommandExecutor {
   static const Duration _retryBackoff = Duration(milliseconds: 400);
 
   /// Runs [attempt], retrying up to [retries] times on a *transient* transport
-  /// error with [backoff] between tries. An [SSHCommandTimeout] is never retried
-  /// (the command is ambiguous — it may already have taken effect), nor is an
-  /// [SSHCommandSuperseded] (retrying would just fail again against the same
-  /// stale generation — the caller must re-issue against the current
-  /// connection). A non-zero exit is returned normally (not thrown), so it
+  /// error with [backoff] between tries. Only errors that [isTransientTransportError]
+  /// accepts are retried — deterministic failures (timeouts, supersession,
+  /// oversized output, auth, argument errors, gzip format errors) rethrow
+  /// immediately. A non-zero exit is returned normally (not thrown), so it
   /// isn't a retry trigger either. Shared by every [CommandExecutor]
   /// implementation (not just tests) — `LocalCommandExecutor` reuses this
   /// directly rather than duplicating retry logic that has no SSH-specific
@@ -405,18 +428,53 @@ class SSHCommandExecutor implements CommandExecutor {
     while (true) {
       try {
         return await run(attempt);
-      } on SSHCommandTimeout {
-        rethrow;
-      } on SSHCommandSuperseded {
-        rethrow;
-      } on SSHOutputExceeded {
-        // An oversized output is deterministic — retrying just reproduces it.
-        rethrow;
-      } catch (_) {
-        if (n++ >= retries) rethrow;
+      } catch (e) {
+        if (!isTransientTransportError(e) || n++ >= retries) rethrow;
         await Future<void>.delayed(backoff);
       }
     }
+  }
+
+  /// Whether [e] is a blip worth re-issuing an *idempotent* read for.
+  /// Allowlist, not denylist: auth failures, timeouts, supersession, parse
+  /// errors, and argument errors must never be retried.
+  static bool isTransientTransportError(Object e) {
+    // Deterministic / ambiguous — never retry.
+    if (e is SSHCommandTimeout ||
+        e is SSHCommandSuperseded ||
+        e is SSHOutputExceeded ||
+        e is ArgumentError ||
+        e is FormatException ||
+        e is StateError ||
+        e is TimeoutException) {
+      return false;
+    }
+    // dartssh2 auth / host-key / key-decode are deterministic for this attempt.
+    if (e is SSHAuthError ||
+        e is SSHHostkeyError ||
+        e is SSHKeyDecodeError) {
+      return false;
+    }
+    // Capacity blip or mid-flight channel drop — worth one retry after backoff.
+    if (e is SSHChannelOpenError ||
+        e is SSHChannelRequestError ||
+        e is SSHSocketError ||
+        e is SSHStateError ||
+        e is SSHPacketError ||
+        e is SocketException) {
+      return true;
+    }
+    // String fallback for transport wraps that don't surface typed errors.
+    final s = e.toString().toLowerCase();
+    if (s.contains('connection closed') ||
+        s.contains('connection reset') ||
+        s.contains('broken pipe') ||
+        (s.contains('socket') &&
+            (s.contains('closed') || s.contains('error'))) ||
+        (s.contains('channel') && s.contains('closed'))) {
+      return true;
+    }
+    return false;
   }
 
   /// Accumulates a decoded [chunks] stream into a single String, aborting with
@@ -674,17 +732,45 @@ class SSHCommandExecutor implements CommandExecutor {
     }
   }
 
+  /// Grace between TERM and KILL on a timed-out / cancelled session. Short
+  /// enough that a wedged process doesn't hold `.git/index.lock` long; long
+  /// enough that a polite exit can flush and release locks first.
+  static const Duration killGrace = Duration(milliseconds: 400);
+
   /// Best-effort remote termination + channel close for a timed-out command.
   /// Safe to call with a null [session] (nothing to do yet) and safe to call
   /// more than once (dartssh2 sessions tolerate repeated `close()`). See
   /// [command_formatter.dart]'s `exec`-based invocation for why the signal is
   /// actually delivered to the real process rather than a shell wrapper.
+  ///
+  /// Escalation: TERM immediately, then KILL after [killGrace] if the session
+  /// is still around — a process that ignores TERM must not keep running
+  /// unattended (or holding locks) after the client has given up.
   void _killAndClose(SSHSession? session) {
+    killAndCloseSession(session);
+  }
+
+  /// Shared by request/response timeout cleanup and stream [cancel].
+  static Future<void> killAndCloseSession(SSHSession? session) async {
     if (session == null) return;
     try {
       session.kill(SSHSignal.TERM);
     } catch (_) {}
-    session.close();
+    try {
+      session.close();
+    } catch (_) {}
+    // Escalate after a short grace so an ignored TERM still dies. Fire-and-
+    // forget: the caller's future must not wait on a hung process.
+    unawaited(
+      Future<void>.delayed(killGrace, () {
+        try {
+          session.kill(SSHSignal.KILL);
+        } catch (_) {}
+        try {
+          session.close();
+        } catch (_) {}
+      }),
+    );
   }
 
   /// Starts a long-running remote command and returns a live [SSHStreamHandle]
@@ -704,11 +790,13 @@ class SSHCommandExecutor implements CommandExecutor {
     Map<String, String>? extraEnv,
     Duration openTimeout = defaultTimeout,
   }) async {
+    // Pin generation at open time — same contract as execute()'s enqueue pin.
+    final gen = _clientManager.generation;
     final client = _clientManager.client;
     if (client == null) {
       throw Exception('SSH connection not established.');
     }
-    if (_clientManager.clientGeneration != _clientManager.generation) {
+    if (_clientManager.clientGeneration != gen) {
       // A new connect() is mid-handshake: the attached client belongs to a
       // superseded attempt. Refuse to bind a long-lived stream (a watcher, a
       // CI trace) to a session that's about to be retired — the caller's
@@ -727,12 +815,19 @@ class SSHCommandExecutor implements CommandExecutor {
     final attempt = client.execute(command);
     try {
       final session = await attempt.timeout(openTimeout);
+      // Superseded while the channel was opening — kill the session rather
+      // than handing the caller a stream bound to a retired generation.
+      if (_clientManager.generation != gen ||
+          _clientManager.clientGeneration != gen) {
+        await killAndCloseSession(session);
+        throw SSHCommandSuperseded(gitArgs.join(' '));
+      }
       return _SshSessionStreamHandle(session);
     } on TimeoutException {
       // If the open eventually does resolve in the background, don't leak the
       // session it produces — terminate and close it, mirroring `_run`'s
       // post-timeout cleanup above.
-      unawaited(attempt.then(_killAndClose, onError: (_) {}));
+      unawaited(attempt.then(killAndCloseSession, onError: (_) {}));
       throw SSHCommandTimeout(gitArgs.join(' '));
     }
   }

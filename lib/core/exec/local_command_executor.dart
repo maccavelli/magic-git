@@ -241,14 +241,14 @@ class LocalCommandExecutor implements CommandExecutor {
     try {
       return await attempt.timeout(timeout);
     } on TimeoutException {
-      process?.kill();
+      _killEscalate(process);
       // If spawn/drain eventually does settle in the background, make sure
       // whatever process it produced gets terminated too, instead of leaving
       // it running unattended — mirrors SSHCommandExecutor's post-timeout
       // cleanup.
       unawaited(
         attempt.then((_) {}, onError: (_) {}).whenComplete(() {
-          process?.kill();
+          _killEscalate(process);
         }),
       );
       throw SSHCommandTimeout(gitArgs.join(' '));
@@ -256,6 +256,8 @@ class LocalCommandExecutor implements CommandExecutor {
       // Harmless no-op on the success path (the process has already exited
       // by the time `exitCode` resolves) — guards the case where draining
       // itself threw for some other reason, leaving the process running.
+      // Use plain kill here (not escalate): the process has usually already
+      // exited; escalate is reserved for the timeout path above.
       process?.kill();
     }
   }
@@ -278,13 +280,17 @@ class LocalCommandExecutor implements CommandExecutor {
       final process = await attempt.timeout(openTimeout);
       return _ProcessStreamHandle(process);
     } on TimeoutException {
-      unawaited(attempt.then((p) => p.kill(), onError: (_) {}));
+      unawaited(
+        attempt.then((p) {
+          _killEscalate(p);
+        }, onError: (_) {}),
+      );
       throw SSHCommandTimeout(gitArgs.join(' '));
     }
   }
 }
 
-/// [SSHStreamHandle] backed by a live local [Process].
+/// [CommandStreamHandle] backed by a live local [Process].
 class _ProcessStreamHandle implements SSHStreamHandle {
   final Process _process;
 
@@ -304,6 +310,23 @@ class _ProcessStreamHandle implements SSHStreamHandle {
 
   @override
   Future<void> cancel() async {
-    _process.kill(ProcessSignal.sigterm);
+    _killEscalate(_process);
   }
+}
+
+/// TERM immediately, then KILL after [SSHCommandExecutor.killGrace] so a
+/// process that ignores TERM cannot run unattended after the client has
+/// given up. Mirrors the SSH path's escalation.
+void _killEscalate(Process? process) {
+  if (process == null) return;
+  try {
+    process.kill(ProcessSignal.sigterm);
+  } catch (_) {}
+  unawaited(
+    Future<void>.delayed(SSHCommandExecutor.killGrace, () {
+      try {
+        process.kill(ProcessSignal.sigkill);
+      } catch (_) {}
+    }),
+  );
 }

@@ -5,10 +5,32 @@
 > repositories over SSH — driving remote `git` (2.48) and `glab` (1.103) without
 > cloning locally.
 >
-> Status: **plan for review**. Grounded in a 5-angle deep-research pass (25 sources,
-> 113 claims, 23 verified / 2 refuted) plus local recon of the installed `glab`
-> binary and the existing scaffold. Citations at the bottom; ⚠ marks
-> under-evidenced items flagged for a spike before committing.
+> Status: historical plan + living transport notes. Many items below shipped;
+> **§0.1** is the current transport truth. Older sections may still say
+> “serialized `_tail`” or “shell probe” — treat §0.1 as authoritative.
+
+---
+
+## 0.1 Current SSH transport (authoritative, 2026-07)
+
+- **POSIX remotes only** — no Windows shell dialect; `ShellEscaper` is POSIX-only.
+- **One multiplexed `SSHClient`** (`SSHClientManager`) with generation pinning so
+  a reconnect never runs a queued command against the wrong host.
+- **Auth:** password and/or PEM private key (file load or paste). No ssh-agent
+  client auth in dartssh2; `agentHandler` is agent *forwarding* only and is not
+  used for login. Empty password is never attempted for key-only profiles.
+- **Host keys:** app-scoped TOFU (`KnownHostsStore`) + mismatch prompt; pausable
+  auth timeout while the user decides.
+- **Dead peer:** `ConnectionHealthMonitor` owns keepalive pings (reply-checked);
+  library `keepAliveInterval` is off to avoid double traffic.
+- **Scheduling:** `CommandLaneScheduler` — concurrent reads (default **4** for
+  OpenSSH `MaxSessions` headroom), one sync, exclusive mutations as barrier,
+  isolated long hooks. Not a single global chain.
+- **Compression:** dartssh2 has no transport compression; large text reads use
+  application `gzip` (absolute path when discovered) + in-band exit trailer.
+- **Streams:** `executeStream` off-queue (watcher, CI trace); generation-guarded.
+- **Safety:** `exec` so TERM/KILL hit the real process; output byte budgets;
+  transient-only retries; SFTP upload closed/timed/generation-pinned.
 
 ---
 
@@ -16,18 +38,17 @@
 
 Already built and hardened (keep these — they are the right foundation):
 
-- `lib/core/ssh/ssh_client_manager.dart` — `dartssh2` wrapper, connection dedup,
-  shell-type probe (posix/cmd/powershell), `SSHConnectionProfile`.
-- `lib/core/ssh/ssh_command_executor.dart` — **serialized** command chain (single
-  `_tail` future) to avoid `.git/index.lock` contention; returns
-  `SSHCommandResult(exitCode, stdout, stderr)`.
+- `lib/core/ssh/ssh_client_manager.dart` — `dartssh2` wrapper, generation tokens,
+  health monitor, `SSHConnectionProfile`.
+- `lib/core/ssh/ssh_command_executor.dart` — lane-aware scheduler, gzip, stream
+  handles, result type `CommandResult` (`SSHCommandResult` typedef).
 - `lib/core/ssh/command_formatter.dart` — env prelude (`GIT_TERMINAL_PROMPT=0`,
-  `GIT_EDITOR=true`) + `cd` + injection-safe arg vector, per-shell.
-- `lib/core/ssh/shell_escaper.dart` — per-shell quoting (the injection defense).
-- `lib/core/utils/git_porcelain_parser.dart` — parses `git status --porcelain=v1 -z`.
+  `GIT_EDITOR=true`, `GIT_OPTIONAL_LOCKS=0`) + `cd` + injection-safe arg vector.
+- `lib/core/ssh/shell_escaper.dart` — POSIX quoting (the injection defense).
+- `lib/core/utils/git_porcelain_parser.dart` — parses porcelain status.
 
-Missing (this plan): glab/GitLab integration, a state-management layer, domain
-models beyond file status, real-time watching, and all wired UI.
+Missing from the *original* plan (many since shipped): glab/GitLab integration,
+state management, domain models, real-time watching, full UI.
 
 ---
 

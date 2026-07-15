@@ -267,11 +267,23 @@ class EnvironmentResolver {
   // capabilities — rather than written out here. A hand-written list is how a
   // tool ends up overridable in Settings but never actually looked for on the
   // host (or looked for, and missing from the doctor panel).
+  // Login-shell PATH capture is useful (Homebrew's `brew shellenv` in zshrc)
+  // but a hung or network-blocking shellrc must not wedge connect for the
+  // full probe timeout. Run it in the background, wait up to ~3s, then kill
+  // and proceed with empty lp — common user dirs still cover Homebrew.
+  // Prefer \$TMPDIR when set, else /tmp (sandbox / odd hosts).
   static final String _probeScript =
       'os=\$(uname -s 2>/dev/null || echo unknown); '
-      // Prefer the user's login shell (sources their profile, e.g. Homebrew's
-      // `brew shellenv`), falling back to sh.
-      'lp=\$(\${SHELL:-sh} -lc \'printf %s "\$PATH"\' 2>/dev/null); '
+      'lp=""; '
+      '_mg_lp="\${TMPDIR:-/tmp}/mg_lp.\$\$"; '
+      '(\${SHELL:-sh} -lc \'printf %s "\$PATH"\' >"\$_mg_lp" 2>/dev/null) & '
+      'lp_pid=\$!; '
+      'i=0; while [ \$i -lt 30 ] && kill -0 \$lp_pid 2>/dev/null; do '
+      'i=\$((i+1)); sleep 0.1; done; '
+      'if kill -0 \$lp_pid 2>/dev/null; then kill \$lp_pid 2>/dev/null; wait \$lp_pid 2>/dev/null; '
+      'else wait \$lp_pid 2>/dev/null; '
+      'lp=\$(cat "\$_mg_lp" 2>/dev/null); fi; '
+      'rm -f "\$_mg_lp" 2>/dev/null; '
       'case "\$os" in '
       'Darwin) c="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:\$HOME/.local/bin:\$HOME/bin" ;; '
       'Linux) c="/usr/local/bin:/usr/local/sbin:\$HOME/.local/bin:\$HOME/bin:/home/linuxbrew/.linuxbrew/bin:/snap/bin" ;; '

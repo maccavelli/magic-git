@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -80,6 +83,35 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
       await _doSubmit();
     } finally {
       if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  /// Loads a private key from disk into the form. Prefer this over pasting PEM
+  /// so users never copy key material into the clipboard. Contents stay in the
+  /// text field (and Keychain when saved) — dartssh2 authenticates from PEM,
+  /// not from ssh-agent.
+  Future<void> _loadPrivateKeyFile() async {
+    final file = await openFile(
+      acceptedTypeGroups: const [
+        XTypeGroup(
+          label: 'SSH private key',
+          // Any file is selectable — key files often have no extension.
+        ),
+      ],
+    );
+    if (file == null || !mounted) return;
+    try {
+      final contents = await File(file.path).readAsString();
+      if (!mounted) return;
+      setState(() {
+        _privateKey.text = contents.trimRight();
+        // A non-empty key enables Connect even without a password.
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saveWarning = 'Could not read key file: $e';
+      });
     }
   }
 
@@ -232,10 +264,22 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
               _field(
                 'Private key (PEM)',
                 _privateKey,
-                placeholder: 'Paste key for key-based auth (optional)',
+                placeholder: 'Load a key file or paste PEM (optional)',
                 maxLines: 5,
                 hint: 'Key-based sign-in; kept in secure storage when the '
-                    'connection is saved.',
+                    'connection is saved. Prefer loading from disk over paste.',
+              ),
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: PushButton(
+                    controlSize: ControlSize.small,
+                    secondary: true,
+                    onPressed: _submitting ? null : _loadPrivateKeyFile,
+                    child: const Text('Load private key…'),
+                  ),
+                ),
               ),
               _field(
                 'Key passphrase',

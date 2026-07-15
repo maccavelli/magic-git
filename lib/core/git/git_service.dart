@@ -1033,6 +1033,7 @@ class GitService {
       'List worktrees',
       retries: _readRetries,
       lane: ExecLane.read,
+      compress: true,
     );
     return parseWorktreeList(result.stdout);
   }

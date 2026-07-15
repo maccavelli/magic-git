@@ -113,7 +113,11 @@ class _Job {
 /// - **A job cannot hold its slot forever.** See [watchdogMargin].
 class CommandLaneScheduler {
   CommandLaneScheduler({
-    this.maxConcurrentReads = 6,
+    // 4, not 6: under OpenSSH's default MaxSessions 10, concurrent traffic is
+    // roughly 4 reads + 1 sync + 1 watcher stream + 1 CI-trace stream ≈ 7,
+    // leaving headroom for SFTP sideloads and isolated hooks. 6 reads pushed
+    // that budget to the ceiling and risked SSHChannelOpenError under load.
+    this.maxConcurrentReads = 4,
     this.maxConcurrentIsolated = 2,
   });
 

@@ -35,6 +35,7 @@ import '../ssh/environment_probe.dart';
 import '../ssh/host_key_prompt.dart';
 import '../ssh/ssh_client_manager.dart';
 import '../ssh/ssh_command_executor.dart';
+import '../ssh/ssh_error_messages.dart';
 import '../storage/connection_store.dart';
 import '../storage/known_hosts_store.dart';
 import '../storage/local_repo_store.dart';
@@ -995,7 +996,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       // right host on a failed retry, not just on the first drop.
       state = ConnectionState(
         phase: reconnecting ? ConnectionPhase.lost : ConnectionPhase.error,
-        error: e.toString(),
+        error: humanizeSshError(e),
         reconnecting: reconnecting,
         reconnectAttempt: attemptNo,
         repoPath: repoPath,
@@ -1348,8 +1349,8 @@ class ConnectionController extends Notifier<ConnectionState> {
       key = secrets[3];
       passphrase = secrets[4];
     } catch (_) {
-      // Secrets unavailable (e.g. unsigned build without a dotfile) — the
-      // connection may still succeed via agent/other auth, or fail cleanly.
+      // Secrets unavailable (e.g. unsigned build without a dotfile) — connect
+      // still runs; without a password/key it will fail auth cleanly.
     }
     String? notEmpty(String? v) => (v != null && v.isNotEmpty) ? v : null;
     await connect(
@@ -1575,7 +1576,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       key = secrets[3];
       passphrase = secrets[4];
     } catch (_) {
-      // Secrets unavailable — the connection may still succeed via other auth.
+      // Secrets unavailable — connect still runs; without a password/key it fails auth.
     }
     String? notEmpty(String? v) => (v != null && v.isNotEmpty) ? v : null;
     final profile = SSHConnectionProfile(
@@ -1668,7 +1669,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       }
       state = ConnectionState(
         phase: ConnectionPhase.error,
-        error: e.toString(),
+        error: humanizeSshError(e),
         connectionId: conn.id,
         connectionLabel: conn.displayName,
         host: conn.host,

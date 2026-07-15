@@ -134,11 +134,22 @@ void main() {
       expect(
         cmd,
         contains(
-          "{ 'git' 'log'; printf '\\001EXIT=%d\\001' \"\$?\"; } | gzip -c -1",
+          "{ 'git' 'log'; printf '\\001EXIT=%d\\001' \"\$?\"; } | 'gzip' -c -1",
         ),
       );
       // No `exec` — the shell must survive the command to emit the trailer.
       expect(cmd, isNot(contains('exec ')));
+    });
+
+    test('uses the resolved absolute gzip path when provided', () {
+      final cmd = CommandFormatter.format(
+        repoPath: '/repo',
+        gitArgs: ['git', 'log'],
+        binaryPaths: const {'gzip': '/opt/homebrew/bin/gzip'},
+        compressOutput: true,
+      );
+      expect(cmd, contains("| '/opt/homebrew/bin/gzip' -c -1"));
+      expect(cmd, isNot(contains("| 'gzip' -c -1")));
     });
 
     test('still escapes every argument inside the group', () {

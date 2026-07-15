@@ -475,6 +475,7 @@ query($path: ID!) {
       gitArgs: [...graphqlArgs(query, variables: variables), '-i'],
       // Every GraphQL call this app issues is a query (the dashboard read).
       lane: ExecLane.read,
+      compress: true,
     );
     if (!result.isSuccess) {
       throw GlabException('$label failed', result);
@@ -892,6 +893,9 @@ query($path: ID!) {
       repoPath: repoPath,
       gitArgs: args,
       lane: lane,
+      // Large JSON list/api payloads compress well; only on reads — mutations
+      // are small and must not pay the shell+gzip pipeline cost.
+      compress: lane == ExecLane.read,
       extraEnv: extraEnv,
     );
     if (!result.isSuccess) {
