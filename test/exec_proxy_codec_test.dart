@@ -2,6 +2,8 @@
 // preservation across the envelope, and version-skew degradation. Pure Dart —
 // no channel machinery involved, by design.
 
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
@@ -44,6 +46,27 @@ void main() {
       expect(decoded.stdin, isNull);
     });
 
+    test('NUL-delimited stdin survives, and travels as bytes on the wire', () {
+      // `check-ignore -z --stdin` joins paths with NUL. A string payload
+      // would be beheaded at the first NUL by the native codec the window
+      // relay hops through — the wire shape MUST be typed data.
+      const request = ExecuteRequest(
+        repoPath: '/r',
+        gitArgs: ['git', 'check-ignore', '-z', '--stdin'],
+        stdin: 'build\u0000lib/a.dart\u0000.dart_tool',
+        timeout: Duration(seconds: 30),
+        retries: 0,
+        lane: ExecLane.read,
+        compress: false,
+      );
+      final wire = encodeExecuteRequest(request);
+      expect(wire['stdin'], isA<Uint8List>());
+      expect(
+        decodeExecuteRequest(wire).stdin,
+        'build\u0000lib/a.dart\u0000.dart_tool',
+      );
+    });
+
     test('an unknown lane name degrades to exclusive (the safe default)', () {
       final map = encodeExecuteRequest(
         const ExecuteRequest(
@@ -72,6 +95,25 @@ void main() {
       expect(decoded.stdout, 'out\n');
       expect(decoded.stderr, 'err\n');
       expect(decoded.isSuccess, isFalse);
+    });
+
+    test('NUL-bearing stdout survives, and travels as bytes on the wire', () {
+      // The combined status/refs snapshot opens with `status --porcelain=v2
+      // -z` — NUL-delimited — so its stdout ALWAYS embeds NULs. As a string
+      // this was truncated at the first NUL by the native codec on the
+      // window relay, beheading the snapshot before its first section
+      // separator: the History pop-out never got refs. Bytes are immune.
+      const result = SSHCommandResult(
+        exitCode: 0,
+        stdout: '# branch.oid abc\u0000?? a.txt\u0000RMGSNAP0',
+        stderr: '',
+      );
+      final wire = encodeExecuteResult(result);
+      expect(wire['stdout'], isA<Uint8List>());
+      expect(
+        decodeExecuteResponse(wire).stdout,
+        '# branch.oid abc\u0000?? a.txt\u0000RMGSNAP0',
+      );
     });
 
     test('each typed executor exception survives with its command', () {

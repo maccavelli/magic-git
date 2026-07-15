@@ -6,9 +6,38 @@
 /// unit-testable without platform machinery. All payloads are
 /// `Map<String, Object?>` of StandardMethodCodec-safe values (String, int,
 /// bool, List, Map); enums travel by `.name`, Durations as milliseconds.
+///
+/// Command **text payloads travel as UTF-8 bytes (`Uint8List`), never as
+/// strings**: git output routinely contains embedded NULs (`status -z`,
+/// `check-ignore -z`, binary diffs), and while Dart's own StandardMethodCodec
+/// round-trips U+0000 in a string faithfully, the native ObjC codec the
+/// window relay hops through does not — everything after the first NUL is
+/// lost. That truncation silently beheaded the combined status/refs snapshot
+/// (whose first section is NUL-delimited porcelain) on every secondary-window
+/// fetch, which is why the History pop-out never showed ref decorations.
+/// Typed data is length-prefixed raw bytes in every codec implementation, so
+/// it is immune by construction. Applies to stdout/stderr (response) and
+/// stdin (request); argv/env strings cannot contain NUL by OS contract and
+/// stay strings.
 library;
 
+import 'dart:convert';
+import 'dart:typed_data';
+
 import '../ssh/ssh_command_executor.dart';
+
+/// Encodes command text for the wire — see the library doc for why bytes.
+Uint8List _wireBytes(String text) => Uint8List.fromList(utf8.encode(text));
+
+/// Decodes wire text: bytes from a current peer; a plain string is accepted
+/// as a defensive fallback (both engines always run the same binary, so this
+/// only matters to hand-built test payloads). Malformed sequences are
+/// replaced rather than thrown — the executor's own decoding posture.
+String _wireText(Object? value) => switch (value) {
+  final Uint8List bytes => const Utf8Decoder(allowMalformed: true).convert(bytes),
+  final String text => text,
+  _ => '',
+};
 
 /// The identity a secondary window's child isolate pulls from native at boot
 /// (over the bootstrap channel): which window it is and what to render. The
@@ -86,7 +115,8 @@ Map<String, Object?> encodeExecuteRequest(ExecuteRequest request) => {
   'repoPath': request.repoPath,
   'gitArgs': request.gitArgs,
   'extraEnv': request.extraEnv,
-  'stdin': request.stdin,
+  // Bytes, not a string: stdin may be NUL-delimited (`check-ignore -z`).
+  'stdin': request.stdin == null ? null : _wireBytes(request.stdin!),
   'timeoutMs': request.timeout.inMilliseconds,
   'retries': request.retries,
   'lane': request.lane.name,
@@ -102,7 +132,7 @@ ExecuteRequest decodeExecuteRequest(Map<Object?, Object?> map) {
     repoPath: map['repoPath'] as String,
     gitArgs: (map['gitArgs'] as List).cast<String>(),
     extraEnv: (map['extraEnv'] as Map?)?.cast<String, String>(),
-    stdin: map['stdin'] as String?,
+    stdin: map['stdin'] == null ? null : _wireText(map['stdin']),
     timeout: Duration(milliseconds: map['timeoutMs'] as int),
     retries: map['retries'] as int? ?? 0,
     lane: lane,
@@ -113,8 +143,10 @@ ExecuteRequest decodeExecuteRequest(Map<Object?, Object?> map) {
 Map<String, Object?> encodeExecuteResult(SSHCommandResult result) => {
   'ok': true,
   'exitCode': result.exitCode,
-  'stdout': result.stdout,
-  'stderr': result.stderr,
+  // Bytes, not strings — NUL-bearing output must survive the native hop
+  // (see the library doc; this is what broke the pop-out's snapshot).
+  'stdout': _wireBytes(result.stdout),
+  'stderr': _wireBytes(result.stderr),
 };
 
 /// Encodes a thrown error into the failure envelope. The three typed executor
@@ -149,8 +181,8 @@ SSHCommandResult decodeExecuteResponse(Map<Object?, Object?> map) {
   if (map['ok'] == true) {
     return SSHCommandResult(
       exitCode: map['exitCode'] as int,
-      stdout: map['stdout'] as String? ?? '',
-      stderr: map['stderr'] as String? ?? '',
+      stdout: _wireText(map['stdout']),
+      stderr: _wireText(map['stderr']),
     );
   }
   final command = map['command'] as String? ?? '';
