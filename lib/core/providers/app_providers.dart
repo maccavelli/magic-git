@@ -2054,6 +2054,10 @@ List<ProviderOrFamily> repoMutationFamilies(String repoPath) => [
   // The worktree list itself: `worktree add/remove/lock` from any worktree
   // rewrites `<common>/.git/worktrees/`, which every other worktree reads.
   gitWorktreesProvider,
+
+  // remoteTagsProvider is deliberately ABSENT: it costs a network round trip
+  // (`git ls-remote`), and this list runs after every stage/commit. Only
+  // operations that touched the remote invalidate it — [refreshRemoteTags].
 ];
 
 /// THE post-mutation refresh — the one thing a feature calls after mutating a
@@ -2288,6 +2292,11 @@ final autoFetchProvider = Provider.autoDispose<void>((ref) {
       for (final p in repoMutationFamilies(repoPath)) {
         ref.invalidate(p);
       }
+      // The fetch just talked to the remote anyway — mark the cached
+      // remote-tag listing refetchable too (the actual ls-remote happens
+      // lazily, on the next read, so this costs nothing when no tags UI is
+      // showing).
+      ref.invalidate(remoteTagsProvider(repoPath));
     } catch (e) {
       // Best-effort — the next tick just retries — but a persistent failure
       // (expired credentials, revoked key) should be discoverable instead of
@@ -2549,6 +2558,52 @@ final remotesProvider = FutureProvider.autoDispose
     .family<List<String>, String>((ref, repoPath) {
       return ref.watch(gitServiceProvider).remotes(repoPath);
     });
+
+/// The tags on the repo's remote, as `{shortName: oid}` — what powers the
+/// "local only" / "differs from origin" badges on the tags list. Null means
+/// UNKNOWN (no remote configured, or the remote unreachable); the UI renders
+/// unknown as no badges at all, never as an error.
+///
+/// This is the app's only `git ls-remote` — a real network round trip, which
+/// dictates the whole caching posture:
+///  - Deliberately NOT in [repoMutationFamilies]: a stage/commit must never
+///    cost a round trip. Only call sites that actually touched the network
+///    (tag pushes, remote tag deletion, fetches) invalidate it — via
+///    [refreshRemoteTags].
+///  - The remotes list is depended on through `selectAsync`, NOT a plain
+///    watch: [remotesProvider] is invalidated by every mutation, and a plain
+///    watch would re-run this provider (and its round trip) each time even
+///    though the remote's name never changed.
+///  - `keepAlive` + a five-minute timer: the listing survives panel
+///    unmounts/remounts instead of re-fetching on each, and goes refetchable
+///    once it's plausibly stale. An invalidation while nothing listens just
+///    marks it dirty — the fetch happens on the next actual read.
+final remoteTagsProvider = FutureProvider.autoDispose
+    .family<Map<String, String>?, String>((ref, repoPath) async {
+      final remote = await ref.watch(
+        remotesProvider(repoPath).selectAsync(
+          (remotes) => remotes.contains('origin')
+              ? 'origin'
+              : (remotes.isEmpty ? null : remotes.first),
+        ),
+      );
+      if (remote == null) return null;
+      final link = ref.keepAlive();
+      final timer = Timer(const Duration(minutes: 5), link.close);
+      ref.onDispose(timer.cancel);
+      return ref
+          .read(gitServiceProvider)
+          .lsRemoteTags(repoPath, remote: remote);
+    });
+
+/// Invalidates [remoteTagsProvider] after an operation that changed — or
+/// refreshed local knowledge of — the remote's tags: a tag push, a remote
+/// tag deletion, a fetch. Deliberately separate from [refreshAfterMutation]:
+/// re-listing costs a network round trip, so only call sites that already
+/// touched the network opt in.
+void refreshRemoteTags(WidgetRef ref, String repoPath) {
+  ref.invalidate(remoteTagsProvider(repoPath));
+}
 
 /// Commit history (HEAD) for a repo.
 final logProvider = FutureProvider.autoDispose.family<List<GitCommit>, String>((

@@ -44,6 +44,12 @@ app.*.map.json
 /RemoteMagicGit-macos.zip
 /.venv-icons/
 
+# Transient backup build_macos.sh --unsigned makes while it strips the
+# entitlements for the build; its EXIT trap restores and removes it. It only
+# exists mid-build (or after a killed build) and must never be committed —
+# it once was, swept up alongside a real change (81aa5cf, repaired since).
+/macos/Runner/Release.entitlements.bak
+
 # Android Studio will place build artifacts here
 /android/app/debug
 /android/app/profile

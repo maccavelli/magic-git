@@ -192,6 +192,44 @@ void main() {
     expect(await raw(['cat-file', '-t', 'v1.0']), 'tag');
   });
 
+  test('undoing an annotated tag creation deletes it; the record holds the '
+      'post-op tag object OID', () async {
+    await git.createTag(repo, 'v2.0', message: 'notes');
+
+    final record = records.single;
+    expect(record.kind, UndoOpKind.createTag);
+    // The post-mutation capture: the tag *object* (an object that did not
+    // exist before the mutation ran), not the peeled commit.
+    expect(record.deletedOid, await raw(['rev-parse', 'refs/tags/v2.0']));
+    expect(record.deletedOid, isNot(await raw(['rev-parse', 'HEAD'])));
+
+    await git.undoExecute(record);
+    final gone = await Process.run(
+        'git', ['rev-parse', '-q', '--verify', 'refs/tags/v2.0'],
+        workingDirectory: repo);
+    expect(gone.exitCode, isNot(0), reason: 'the created tag is deleted');
+  });
+
+  test('undoing a lightweight tag creation deletes it, and refuses once the '
+      'tag has been moved', () async {
+    await git.createTag(repo, 'wip');
+    expect(records.single.deletedOid, await raw(['rev-parse', 'HEAD']),
+        reason: 'a lightweight tag ref IS the target commit');
+
+    // Someone re-points the tag before the undo: refuse, do not delete.
+    await write('a.txt', 'two\n');
+    await raw(['add', 'a.txt']);
+    await raw(['commit', '-q', '-m', 'second']);
+    await raw(['tag', '-f', 'wip']);
+
+    await expectLater(
+      () => git.undoExecute(records.single),
+      throwsA(isA<UndoStaleException>()),
+    );
+    expect(await raw(['cat-file', '-t', 'wip']), 'commit',
+        reason: 'the moved tag survives the refused undo');
+  });
+
   test('undoing a discard restores the file content, unstaged, path-scoped',
       () async {
     await write('a.txt', 'modified\n');

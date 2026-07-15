@@ -488,25 +488,31 @@ void main() {
 
     test('createTag: lightweight vs annotated', () async {
       await git.createTag('/repo', 'v1.0.0');
-      expect(exec.calls.single, [
-        'git',
-        'tag',
-        '--end-of-options',
-        'v1.0.0',
-        'HEAD',
-      ]);
+      var script = expectCapturedScript(
+        exec.calls.single,
+        "'git' 'tag' '--end-of-options' 'v1.0.0' 'HEAD'",
+      );
+      // The created ref's OID is a POST-mutation capture — an annotated
+      // tag's object doesn't exist beforehand — and becomes the undo guard.
+      expect(
+        script,
+        contains(r"y0=$(git rev-parse -q --verify 'refs/tags/v1.0.0'); "),
+      );
+      expect(
+        script.indexOf(r'rc=$?'),
+        lessThan(script.indexOf('y0=')),
+        reason: 'the created-tag OID must be captured after the mutation',
+      );
       exec.calls.clear();
       await git.createTag('/repo', 'v1.0.0', message: 'release', ref: 'abc123');
-      expect(exec.calls.single, [
-        'git',
-        'tag',
-        '-a',
-        '-m',
-        'release',
-        '--end-of-options',
-        'v1.0.0',
-        'abc123',
-      ]);
+      script = expectCapturedScript(
+        exec.calls.single,
+        "'git' 'tag' '-a' '-m' 'release' '--end-of-options' 'v1.0.0' 'abc123'",
+      );
+      expect(
+        script,
+        contains(r"y0=$(git rev-parse -q --verify 'refs/tags/v1.0.0'); "),
+      );
     });
 
     test('committer identity injects -c flags on an annotated tag', () async {
@@ -518,20 +524,11 @@ void main() {
         committerEmail: 'jane@example.com',
       );
       await idGit.createTag('/repo', 'v1.0.0', message: 'release');
-      expect(exec.calls.single, [
-        'git',
-        '-c',
-        'user.name=Jane Dev',
-        '-c',
-        'user.email=jane@example.com',
-        'tag',
-        '-a',
-        '-m',
-        'release',
-        '--end-of-options',
-        'v1.0.0',
-        'HEAD',
-      ]);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' '-c' 'user.name=Jane Dev' '-c' 'user.email=jane@example.com' "
+        "'tag' '-a' '-m' 'release' '--end-of-options' 'v1.0.0' 'HEAD'",
+      );
     });
 
     test('deleteTag / pushTag', () async {
@@ -554,6 +551,71 @@ void main() {
         'origin',
         'refs/tags/v1.0.0',
       ]);
+    });
+
+    test('pushTags sends explicit refspecs in one invocation', () async {
+      await git.pushTags('/repo', ['v1.0.0', 'v1.1.0']);
+      // Explicit refspecs, deliberately not --tags: a diverged tag would
+      // poison a --tags batch with its rejection; a list can't.
+      expect(exec.calls.single, [
+        'git',
+        'push',
+        '--end-of-options',
+        'origin',
+        'refs/tags/v1.0.0',
+        'refs/tags/v1.1.0',
+      ]);
+    });
+
+    test('deleteRemoteTag uses the full refname', () async {
+      await git.deleteRemoteTag('/repo', 'origin', 'v1.0.0');
+      // refs/tags/ disambiguates from a branch of the same name.
+      expect(exec.calls.single, [
+        'git',
+        'push',
+        '--delete',
+        '--end-of-options',
+        'origin',
+        'refs/tags/v1.0.0',
+      ]);
+    });
+
+    test('lsRemoteTags: argv, unpeeled oids, graceful failure', () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout:
+            'aaaa000000000000000000000000000000000000\trefs/tags/v1.0.0\n'
+            // The peel line: an annotated tag's underlying commit. Skipped —
+            // the tag *object* oid (the line above) is what GitRef.oid holds
+            // locally, and ref-level inequality is what predicts a push
+            // rejection.
+            'bbbb000000000000000000000000000000000000\trefs/tags/v1.0.0^{}\n'
+            'cccc000000000000000000000000000000000000\trefs/tags/v2.0.0\n'
+            // Non-tag and malformed lines are ignored.
+            'dddd000000000000000000000000000000000000\trefs/heads/main\n'
+            'garbage-without-a-tab\n',
+        stderr: '',
+      );
+      final tags = await git.lsRemoteTags('/repo');
+      expect(exec.calls.single, [
+        'git',
+        'ls-remote',
+        '--tags',
+        '--end-of-options',
+        'origin',
+      ]);
+      expect(tags, {
+        'v1.0.0': 'aaaa000000000000000000000000000000000000',
+        'v2.0.0': 'cccc000000000000000000000000000000000000',
+      });
+
+      // Unreachable remote → null ("unknown"), never a throw.
+      exec.next = const SSHCommandResult(
+        exitCode: 128,
+        stdout: '',
+        stderr: 'fatal: could not read from remote repository',
+      );
+      expect(await git.lsRemoteTags('/repo'), isNull);
     });
 
     test('cherryPick: plain vs merge mainline, and abort', () async {

@@ -622,6 +622,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       (log) async =>
           log.logResult('git fetch --all --prune', await git.fetch(repoPath)),
     );
+    // The fetch talked to the remote anyway — mark the cached remote-tag
+    // listing refetchable (lazy: the ls-remote runs on the next actual read).
+    if (mounted) refreshRemoteTags(ref, repoPath);
   }
 
   Future<void> _stashPush() async {
@@ -730,6 +733,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       );
       await _logPushed(log, git, base);
     });
+    // A --follow-tags push may have just put local tags on the remote — the
+    // cached remote-tag listing is stale.
+    if (followTags && mounted) refreshRemoteTags(ref, repoPath);
   }
 
   Future<void> _sync([PullMode mode = PullMode.ffOnly]) async {

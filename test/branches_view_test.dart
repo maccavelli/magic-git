@@ -80,6 +80,12 @@ Future<_FakeGit> _pump(WidgetTester tester) async {
     overrides: [
       gitServiceProvider.overrideWithValue(git),
       refsProvider(_repo).overrideWith((ref) async => _refs),
+      // The view now watches CONFIGURED remotes to pick the tag-push target
+      // — unoverridden it would fall through to the executor.
+      remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+      // The real provider keeps a five-minute keepAlive timer that widget
+      // tests would flag as still pending; null = unknown, no badges.
+      remoteTagsProvider(_repo).overrideWith((ref) async => null),
     ],
   );
   addTearDown(container.dispose);
@@ -157,6 +163,12 @@ void main() {
         overrides: [
           gitServiceProvider.overrideWithValue(git),
           refsProvider(_repo).overrideWith((ref) async => _refs),
+          // The view now watches CONFIGURED remotes to pick the tag-push target
+      // — unoverridden it would fall through to the executor.
+      remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+      // The real provider keeps a five-minute keepAlive timer that widget
+          // tests would flag as still pending; null = unknown, no badges.
+          remoteTagsProvider(_repo).overrideWith((ref) async => null),
           // Clean status — guardedBranchSwitch runs the checkout directly
           // with no confirm dialog in the way.
           statusProvider(_repo).overrideWith(

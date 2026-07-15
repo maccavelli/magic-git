@@ -15,6 +15,7 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/branches/create_tag_sheet.dart';
 import 'package:remote_magic_git/features/common/commit_patch_view.dart';
 import 'package:remote_magic_git/features/common/sheet_chrome.dart';
 import 'package:remote_magic_git/features/history/commit_graph_view.dart'
@@ -133,6 +134,10 @@ Future<void> _pump(
   WidgetTester tester,
   List<GitCommit> commits, {
   _FakeGit? git,
+  // For tests that open the Create Tag sheet, which watches the remotes
+  // and remote-tags providers — unoverridden they'd error against the fake
+  // executor and leave Riverpod retry timers pending.
+  bool tagSheetProviders = false,
 }) async {
   // The zoom setter persists through SharedPreferences — back it with the
   // in-memory mock so writes don't hit a missing platform channel.
@@ -140,6 +145,10 @@ Future<void> _pump(
   final container = ProviderContainer(
     overrides: [
       gitServiceProvider.overrideWithValue(git ?? _FakeGit(commits)),
+      if (tagSheetProviders) ...[
+        remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+        remoteTagsProvider(_repo).overrideWith((ref) async => null),
+      ],
     ],
   );
   addTearDown(container.dispose);
@@ -442,6 +451,20 @@ void main() {
     expect(find.text('Checkout bbbbbbb'), findsOneWidget);
     expect(find.text('Cherry-pick bbbbbbb'), findsOneWidget);
     expect(find.text('Reset to bbbbbbb — hard'), findsOneWidget);
+  });
+
+  testWidgets('Tag <short>… opens the Create Tag sheet targeting the clicked '
+      'commit', (tester) async {
+    await _pump(tester, [head, older], tagSheetProviders: true);
+
+    await tester.tap(find.text('old commit'), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Tag bbbbbbb…'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CreateTagSheet), findsOneWidget);
+    // The sheet names the exact commit it will tag — not HEAD.
+    expect(find.textContaining('bbbbbbb — old commit'), findsOneWidget);
   });
 
   testWidgets('bulk cherry-pick applies oldest→newest', (tester) async {

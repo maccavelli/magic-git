@@ -3249,20 +3249,42 @@ class GitService {
   /// real git object requiring an author identity, so it gets [_idArgs] like
   /// every other object-creating command; a lightweight tag is just a ref and
   /// doesn't need one, but including it unconditionally is harmless.
+  ///
+  /// Journaled: undo deletes the tag, validating it still points at the
+  /// captured OID. The OID is a post-mutation capture because an annotated
+  /// tag's object doesn't exist until the tag does.
   Future<void> createTag(
     String repoPath,
     String name, {
     String? message,
     String ref = 'HEAD',
-  }) => _runVoid(repoPath, [
-    'git',
-    ..._idArgs,
-    'tag',
-    if (message != null && message.isNotEmpty) ...['-a', '-m', message],
-    '--end-of-options',
-    name,
-    ref,
-  ], 'git tag');
+  }) async {
+    await _runCaptured(
+      repoPath,
+      [
+        'git',
+        ..._idArgs,
+        'tag',
+        if (message != null && message.isNotEmpty) ...['-a', '-m', message],
+        '--end-of-options',
+        name,
+        ref,
+      ],
+      'git tag',
+      postCaptures: [
+        'git rev-parse -q --verify ${ShellEscaper.escape('refs/tags/$name')}',
+      ],
+      record: (c) => c.postExtras[0].isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.createTag,
+              description: 'Creation of tag $name',
+              refName: name,
+              deletedOid: c.postExtras[0],
+            ),
+    );
+  }
 
   /// Deletes a local tag. The captured OID is the tag *object* for an
   /// annotated tag (deliberately not peeled), so undo restores it
@@ -3292,13 +3314,93 @@ class GitService {
     String repoPath,
     String name, {
     String remote = 'origin',
+  }) => pushTags(repoPath, [name], remote: remote);
+
+  /// Pushes every tag in [names] to [remote] in a single invocation, so the
+  /// "push N local-only tags" affordance costs one round trip. Deliberately
+  /// explicit refspecs rather than `--tags`: a local tag that DIFFERS from
+  /// the remote's would poison a `--tags` batch with its rejection, while an
+  /// explicit list touches exactly the tags asked for.
+  Future<SSHCommandResult> pushTags(
+    String repoPath,
+    List<String> names, {
+    String remote = 'origin',
   }) => _run(
     repoPath,
-    ['git', 'push', '--end-of-options', remote, 'refs/tags/$name'],
+    [
+      'git',
+      'push',
+      '--end-of-options',
+      remote,
+      for (final n in names) 'refs/tags/$n',
+    ],
     'git push tag',
     timeout: networkTimeout,
     lane: ExecLane.sync,
   );
+
+  /// Deletes the tag on [remote] (`git push --delete`) — the remote sibling
+  /// of [deleteTag]. The full `refs/tags/` refname disambiguates from a
+  /// branch of the same name. Deliberately NOT journaled, like
+  /// [deleteRemoteBranch]: resurrecting a remote ref is a push the user must
+  /// own — the caller's confirm dialog is the guard.
+  Future<SSHCommandResult> deleteRemoteTag(
+    String repoPath,
+    String remote,
+    String name,
+  ) => _run(
+    repoPath,
+    ['git', 'push', '--delete', '--end-of-options', remote, 'refs/tags/$name'],
+    'git push --delete',
+    timeout: networkTimeout,
+    lane: ExecLane.sync,
+  );
+
+  /// The tags currently on [remote], as `{shortName: oid}` — the remote-side
+  /// truth for "is this local tag on the remote yet?".
+  ///
+  /// The oid kept is the UNPEELED value (`^{}` peel lines are skipped): for
+  /// an annotated tag that's the tag *object*, exactly what [GitRef.oid]
+  /// holds locally — and unpeeled inequality is precisely what predicts a
+  /// push rejection, since git refuses whenever the ref itself would move,
+  /// even when both sides peel to the same commit.
+  ///
+  /// Returns null when the remote can't be reached (offline, auth failure) —
+  /// callers must render "unknown", never an error. Network op: sync lane
+  /// like fetch/push, no retries (a dead host shouldn't be hammered by a
+  /// passive indicator), [networkTimeout].
+  Future<Map<String, String>?> lsRemoteTags(
+    String repoPath, {
+    String remote = 'origin',
+  }) async {
+    final SSHCommandResult result;
+    try {
+      result = await _run(
+        repoPath,
+        ['git', 'ls-remote', '--tags', '--end-of-options', remote],
+        'git ls-remote',
+        timeout: networkTimeout,
+        lane: ExecLane.sync,
+      );
+    } catch (_) {
+      // GitException (non-zero exit) or a transport failure alike: the
+      // answer is "unknown", by contract — the caller shows no badges.
+      return null;
+    }
+    final tags = <String, String>{};
+    for (final line in result.stdout.split('\n')) {
+      final tab = line.indexOf('\t');
+      if (tab <= 0) continue;
+      final oid = line.substring(0, tab).trim();
+      final refName = line.substring(tab + 1).trim();
+      if (!refName.startsWith('refs/tags/') || refName.endsWith('^{}')) {
+        continue;
+      }
+      if (oid.isEmpty) continue;
+      tags[refName.substring('refs/tags/'.length)] = oid;
+    }
+    return tags;
+  }
 
   /// The SHA [rev] resolves to, or null if it doesn't exist (e.g. no upstream
   /// is configured, or HEAD is detached). Never throws for a missing rev, so
@@ -3747,6 +3849,10 @@ class GitService {
     String label, {
     required UndoRecord? Function(UndoCapture capture) record,
     List<String> extraCaptures = const [],
+    // Like [extraCaptures], but taken AFTER the mutation — for values that
+    // only exist once it ran (e.g. a created annotated tag's object OID,
+    // which is a brand-new object no pre-op command can name).
+    List<String> postCaptures = const [],
     Duration? timeout,
     String? stdin,
     // A raw shell snippet to run as the mutation instead of [mutation]'s
@@ -3765,6 +3871,14 @@ class GitService {
       fmt += '%s$_undoSep';
       printfArgs.write(' "\$x$i"');
     }
+    final postAssigns = StringBuffer();
+    final postPrintfArgs = StringBuffer();
+    var postFmt = '$_undoSep%s$_undoSep%s$_undoSep';
+    for (var i = 0; i < postCaptures.length; i++) {
+      postAssigns.write('y$i=\$(${postCaptures[i]}); ');
+      postFmt += '%s$_undoSep';
+      postPrintfArgs.write(' "\$y$i"');
+    }
     // No `set -e`: `-q --verify` legitimately fails on an unborn HEAD and
     // `symbolic-ref` on a detached one — both yield empty fields the record
     // builders understand. The mutation's own exit code is preserved via $rc.
@@ -3776,7 +3890,8 @@ class GitService {
         '$mut; rc=\$?; '
         'post=\$(git rev-parse -q --verify HEAD); '
         'postref=\$(git symbolic-ref -q --short HEAD); '
-        "printf '$_undoSep%s$_undoSep%s$_undoSep' \"\$post\" \"\$postref\"; "
+        '$postAssigns'
+        "printf '$postFmt' \"\$post\" \"\$postref\"$postPrintfArgs; "
         'exit \$rc';
 
     final result = await _executor.execute(
@@ -3786,14 +3901,16 @@ class GitService {
       stdin: stdin,
     );
 
-    // Expected shape: '' pre preref extras… mutOut post postref '' — the
-    // leading/trailing separators bracket the whole stream, so the count is
-    // deterministic and the mutation's own stdout is exactly one segment.
+    // Expected shape: '' pre preref extras… mutOut post postref postExtras…
+    // '' — the leading/trailing separators bracket the whole stream, so the
+    // count is deterministic and the mutation's own stdout is exactly one
+    // segment.
     final n = extraCaptures.length;
+    final m = postCaptures.length;
     final parts = result.stdout.split(_undoSep);
     UndoCapture? capture;
     var mutationStdout = result.stdout;
-    if (parts.length == 7 + n) {
+    if (parts.length == 7 + n + m) {
       mutationStdout = parts[3 + n];
       capture = UndoCapture(
         preHead: parts[1],
@@ -3801,6 +3918,7 @@ class GitService {
         extras: parts.sublist(3, 3 + n),
         postHead: parts[4 + n],
         postRef: parts[5 + n],
+        postExtras: parts.sublist(6 + n, 6 + n + m),
       );
     }
     final cleaned = SSHCommandResult(
@@ -3894,6 +4012,14 @@ class GitService {
         // (message, tagger, signature) instead of as a new lightweight tag.
         return 'git rev-parse -q --verify ${esc('refs/tags/${r.refName}')} >/dev/null && exit 42; '
             'git update-ref ${esc('refs/tags/${r.refName}')} ${esc(r.deletedOid)}';
+      case UndoOpKind.createTag:
+        // The created tag must still point where creation left it (the tag
+        // *object* for an annotated tag — a re-tag with a different message
+        // counts as moved). No HEAD guard: creation touched only the tag
+        // ref. A copy pushed to a remote since is deliberately untouched.
+        return '[ "\$(git rev-parse -q --verify ${esc('refs/tags/${r.refName}')})" '
+            '= ${esc(r.deletedOid)} ] || exit 42; '
+            'git tag -d --end-of-options ${esc(r.refName)}';
       case UndoOpKind.stashDrop:
         // Always additive (lands at stash@{0}), so no validation to fail.
         // `stash store` writes a stash reflog entry — an object-creating

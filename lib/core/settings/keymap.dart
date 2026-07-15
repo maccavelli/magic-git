@@ -329,7 +329,7 @@ final List<KeymapAction> kKeymapActions = [
   ),
   KeymapAction(
     id: 'branches.createTag',
-    label: 'Focus new tag field',
+    label: 'Create tag…',
     category: KeymapCategory.branches,
     defaultBindings: [
       KeyBinding.fromKey(LogicalKeyboardKey.keyT, meta: true, shift: true),

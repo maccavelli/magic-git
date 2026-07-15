@@ -71,6 +71,19 @@ class AppSettings {
   /// so a user can park a command without arming it.
   final bool worktreePostCreateEnabled;
 
+  /// The Create Tag sheet's "Annotated tag" default. Defaults true — an
+  /// annotated tag carries tagger/date/message, is what `--follow-tags`
+  /// pushes, and is the right shape for the release tags the sheet mostly
+  /// creates. Persisted from the sheet's last use, like the worktree
+  /// defaults.
+  final bool tagAnnotatedByDefault;
+
+  /// The Create Tag sheet's "Push to remote after creating" default. Defaults
+  /// true: `git push` not sending tags is the single most surprising thing
+  /// about them, and a tag that silently stays local is the failure this
+  /// whole sheet exists to prevent.
+  final bool tagPushAfterCreate;
+
   const AppSettings({
     this.networkTimeout = GitService.defaultNetworkTimeout,
     this.commitTimeout = GitService.defaultCommitTimeout,
@@ -86,6 +99,8 @@ class AppSettings {
     this.worktreeCopyEnabled = true,
     this.worktreePostCreate = '',
     this.worktreePostCreateEnabled = false,
+    this.tagAnnotatedByDefault = true,
+    this.tagPushAfterCreate = true,
   });
 
   AppSettings copyWith({
@@ -103,6 +118,8 @@ class AppSettings {
     bool? worktreeCopyEnabled,
     String? worktreePostCreate,
     bool? worktreePostCreateEnabled,
+    bool? tagAnnotatedByDefault,
+    bool? tagPushAfterCreate,
   }) => AppSettings(
     networkTimeout: networkTimeout ?? this.networkTimeout,
     commitTimeout: commitTimeout ?? this.commitTimeout,
@@ -119,6 +136,8 @@ class AppSettings {
     worktreePostCreate: worktreePostCreate ?? this.worktreePostCreate,
     worktreePostCreateEnabled:
         worktreePostCreateEnabled ?? this.worktreePostCreateEnabled,
+    tagAnnotatedByDefault: tagAnnotatedByDefault ?? this.tagAnnotatedByDefault,
+    tagPushAfterCreate: tagPushAfterCreate ?? this.tagPushAfterCreate,
   );
 
   // Value equality so a cross-tab [reloadFromDisk] that re-reads the same value
@@ -140,6 +159,8 @@ class AppSettings {
       other.worktreeCopyEnabled == worktreeCopyEnabled &&
       other.worktreePostCreate == worktreePostCreate &&
       other.worktreePostCreateEnabled == worktreePostCreateEnabled &&
+      other.tagAnnotatedByDefault == tagAnnotatedByDefault &&
+      other.tagPushAfterCreate == tagPushAfterCreate &&
       _mapEquals(other.binaryOverrides, binaryOverrides);
 
   @override
@@ -157,6 +178,8 @@ class AppSettings {
     worktreeCopyEnabled,
     worktreePostCreate,
     worktreePostCreateEnabled,
+    tagAnnotatedByDefault,
+    tagPushAfterCreate,
     Object.hashAllUnordered(
       binaryOverrides.entries.map((e) => Object.hash(e.key, e.value)),
     ),
@@ -191,6 +214,8 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   static const _wtCopyEnabledKey = 'worktreeCopyEnabled';
   static const _wtPostCreateKey = 'worktreePostCreate';
   static const _wtPostCreateEnabledKey = 'worktreePostCreateEnabled';
+  static const _tagAnnotatedKey = 'tagAnnotatedByDefault';
+  static const _tagPushAfterCreateKey = 'tagPushAfterCreate';
 
   /// Set true by any setter the moment the user explicitly changes a setting.
   /// [build] kicks [_load] fire-and-forget and returns defaults immediately, so
@@ -282,6 +307,8 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
       worktreeCopyEnabled: prefs.getBool(_wtCopyEnabledKey),
       worktreePostCreate: prefs.getString(_wtPostCreateKey),
       worktreePostCreateEnabled: prefs.getBool(_wtPostCreateEnabledKey),
+      tagAnnotatedByDefault: prefs.getBool(_tagAnnotatedKey),
+      tagPushAfterCreate: prefs.getBool(_tagPushAfterCreateKey),
     );
   }
 
@@ -448,6 +475,22 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
         _wtPostCreateEnabledKey,
         state.worktreePostCreateEnabled,
       );
+    });
+  }
+
+  /// Persists the Create Tag sheet's defaults — the same rationale as
+  /// [setWorktreeDefaults]: the answer to "annotated?" and "push it?" is the
+  /// same nearly every time, so the sheet remembers its last use instead of
+  /// asking again.
+  Future<void> setTagDefaults({bool? annotated, bool? pushAfterCreate}) async {
+    _userEdited = true;
+    state = state.copyWith(
+      tagAnnotatedByDefault: annotated,
+      tagPushAfterCreate: pushAfterCreate,
+    );
+    await _persist((prefs) async {
+      await prefs.setBool(_tagAnnotatedKey, state.tagAnnotatedByDefault);
+      await prefs.setBool(_tagPushAfterCreateKey, state.tagPushAfterCreate);
     });
   }
 

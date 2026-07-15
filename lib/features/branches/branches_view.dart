@@ -17,6 +17,7 @@ import '../common/show_more_row.dart';
 import '../common/tool_icon_button.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
+import 'create_tag_sheet.dart';
 
 /// Source-control pane: local branches (checkout/delete/create), remote-tracking
 /// branches, and tags. Stashes have their own top-level namespace (StashView).
@@ -42,8 +43,6 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     with BusyActionState {
   final _newBranch = TextEditingController();
   final _newBranchFocus = FocusNode();
-  final _newTag = TextEditingController();
-  final _newTagFocus = FocusNode();
 
   // Keyboard navigation of the local-branch list: a click selects a branch
   // (highlight) and focuses the list; ↑/↓ then walk the selection, Enter checks
@@ -78,8 +77,6 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   void dispose() {
     _newBranch.dispose();
     _newBranchFocus.dispose();
-    _newTag.dispose();
-    _newTagFocus.dispose();
     _branchFocus.dispose();
     _branchScroll.dispose();
     super.dispose();
@@ -213,7 +210,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       bindings: widget.isActive
           ? resolveShortcuts(keymap, {
               'branches.newBranch': () => _newBranchFocus.requestFocus(),
-              'branches.createTag': () => _newTagFocus.requestFocus(),
+              'branches.createTag': _openCreateTagSheet,
               // Only bound with a non-current branch selected — otherwise they
               // fall through, matching the rest of the app's precondition gates.
               'branches.merge': _canActOnSelection
@@ -231,6 +228,26 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           final locals = refs.where((r) => r.isLocalBranch).toList();
           final remotes = refs.where((r) => r.isRemote).toList();
           final tags = refs.where((r) => r.isTag).toList();
+          // The remote's tag listing (null = unknown: unreachable, or no
+          // remote) and the remote the tag actions target — the same
+          // origin-preferred choice remoteTagsProvider makes. While the
+          // remotes list is still loading, fall back to 'origin' so the push
+          // buttons don't blink out; a CONFIRMED empty list hides them.
+          final remoteTags = ref.watch(remoteTagsProvider(repoPath)).value;
+          final remotesList = ref.watch(remotesProvider(repoPath)).value;
+          final String? tagRemote = remotesList == null
+              ? 'origin'
+              : remotesList.isEmpty
+              ? null
+              : remotesList.contains('origin')
+              ? 'origin'
+              : remotesList.first;
+          final localOnlyTags = remoteTags == null
+              ? const <String>[]
+              : [
+                  for (final t in tags)
+                    if (!remoteTags.containsKey(t.shortName)) t.shortName,
+                ];
           // Newest first: for-each-ref's default order is refname-ascending,
           // which for release tags reads oldest-to-newest — backwards from
           // what anyone scanning for the latest release wants. Dateless refs
@@ -255,7 +272,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
             for (final b in locals) _BranchRow(b, remote: false),
             _HeaderRow('Remote Branches (${remotes.length})'),
             for (final b in remotes) _BranchRow(b, remote: true),
-            _HeaderRow('Tags (${tags.length})'),
+            _TagsHeaderRow(tags.length),
             const _CreateTagRow(),
             for (final t in visibleTags) _TagRefRow(t),
             if (hiddenTags > 0) _ShowMoreTagsRow(hiddenTags),
@@ -268,12 +285,25 @@ class _BranchesViewState extends ConsumerState<BranchesView>
               itemCount: rows.length,
               itemBuilder: (context, i) => switch (rows[i]) {
                 _CreateBranchRow() => _createBranchBar(git),
-                _CreateTagRow() => _createTagBar(git),
+                _CreateTagRow() => _createTagBar(),
                 _HeaderRow(:final title) => _sectionHeader(context, title),
+                _TagsHeaderRow(:final count) => _tagsHeader(
+                  context,
+                  git,
+                  count,
+                  localOnlyTags,
+                  tagRemote,
+                ),
                 _BranchRow(:final branch, :final remote) => remote
                     ? _remoteRow(context, git, branch)
                     : _localRow(context, git, branch),
-                _TagRefRow(:final tag) => _tagRow(context, git, tag),
+                _TagRefRow(:final tag) => _tagRow(
+                  context,
+                  git,
+                  tag,
+                  _tagStatus(tag, remoteTags),
+                  tagRemote,
+                ),
                 _ShowMoreTagsRow(:final hidden) => ShowMoreRow(
                   label: 'Show $hidden more ${hidden == 1 ? "tag" : "tags"}',
                   onTap: () => setState(() => _showAllTags = true),
@@ -627,95 +657,259 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     );
   }
 
-  Widget _createTagBar(GitService git) {
+  /// Opens the Create Tag sheet (annotated toggle, message, push-after-create)
+  /// — which replaced the old inline name-only bar. The bar could only produce
+  /// the exact artifact that makes tags painful: lightweight, HEAD-only, and
+  /// silently unpushed.
+  Future<void> _openCreateTagSheet() async {
+    final created = await showMacosSheet<bool>(
+      context: context,
+      builder: (_) => CreateTagSheet(repoPath: repoPath),
+    );
+    if (created == true && mounted) _refresh();
+  }
+
+  Widget _createTagBar() {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: PushButton(
+          controlSize: ControlSize.regular,
+          secondary: true,
+          onPressed: busy ? null : _openCreateTagSheet,
+          child: const Text('New Tag…'),
+        ),
+      ),
+    );
+  }
+
+  /// Where a local tag stands relative to the remote's copy — computed from
+  /// [remoteTagsProvider]'s listing. The oid comparison is ref-level
+  /// (unpeeled), matching [GitRef.oid]: for an annotated tag both sides are
+  /// the tag *object*, so a re-tagged same-commit tag correctly reads as
+  /// [_TagRemoteStatus.differs] (its push WOULD be rejected).
+  static _TagRemoteStatus _tagStatus(
+    GitRef tag,
+    Map<String, String>? remoteTags,
+  ) {
+    if (remoteTags == null) return _TagRemoteStatus.unknown;
+    final remoteOid = remoteTags[tag.shortName];
+    if (remoteOid == null) return _TagRemoteStatus.localOnly;
+    return remoteOid == tag.oid
+        ? _TagRemoteStatus.inSync
+        : _TagRemoteStatus.differs;
+  }
+
+  Widget _tagRow(
+    BuildContext context,
+    GitService git,
+    GitRef tag,
+    _TagRemoteStatus status,
+    String? remote,
+  ) {
+    final typography = MacosTheme.of(context).typography;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
       child: Row(
         children: [
+          // One Expanded around the whole informational cluster, no Spacer:
+          // a loose Flexible sibling of a Spacer splits the free space with
+          // it instead of yielding what it doesn't use, dragging the trailing
+          // buttons toward the middle (the repo toolbar had this exact bug).
           Expanded(
-            child: MacosTextField(
-              controller: _newTag,
-              focusNode: _newTagFocus,
-              placeholder: 'New tag at HEAD',
-              placeholderStyle: kAppPlaceholderStyle,
-              decoration: kAppTextFieldDecoration,
-              focusedDecoration: kAppTextFieldFocusedDecoration,
+            child: Row(
+              children: [
+                const MacosIcon(
+                  CupertinoIcons.tag,
+                  size: 15,
+                  color: MacosColors.systemTealColor,
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    tag.shortName,
+                    style: typography.body,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (status == _TagRemoteStatus.localOnly) ...[
+                  const SizedBox(width: 6),
+                  const LabelChip(
+                    'local only',
+                    color: MacosColors.systemOrangeColor,
+                  ),
+                ],
+                if (status == _TagRemoteStatus.differs) ...[
+                  const SizedBox(width: 6),
+                  LabelChip(
+                    'differs from $remote',
+                    color: MacosColors.systemRedColor,
+                  ),
+                ],
+              ],
             ),
           ),
-          const SizedBox(width: 8),
-          // See _createBranchBar — listens to the controller directly rather
-          // than `setState`-ing the whole view on every keystroke.
-          ValueListenableBuilder<TextEditingValue>(
-            valueListenable: _newTag,
-            builder: (context, value, _) => PushButton(
-              controlSize: ControlSize.large,
-              onPressed: value.text.trim().isEmpty || busy
+          // No remote configured → nothing to push to; the button would only
+          // ever produce an error.
+          if (remote != null)
+            ToolIconButton(
+              icon: CupertinoIcons.cloud_upload,
+              tooltip: switch (status) {
+                _TagRemoteStatus.inSync => 'Already on $remote',
+                _TagRemoteStatus.localOnly =>
+                  'Push tag to $remote — not on the remote yet',
+                _TagRemoteStatus.differs =>
+                  'This tag differs from the one on $remote — the push will '
+                      'be rejected. Delete the remote tag first to replace '
+                      'it.',
+                _TagRemoteStatus.unknown => 'Push tag to $remote',
+              },
+              size: 15,
+              color: status == _TagRemoteStatus.localOnly
+                  ? MacosColors.systemOrangeColor
+                  : null,
+              onPressed: busy || status == _TagRemoteStatus.inSync
                   ? null
-                  : () async {
-                      final name = value.text.trim();
-                      await runGuarded(() => git.createTag(repoPath, name));
-                      // See _createBranchBar — guard against a dispose during
-                      // the await before touching the controller.
-                      if (mounted) _newTag.clear();
-                    },
-              child: const Text('Tag'),
+                  : () => _pushTag(git, tag.shortName, remote),
             ),
+          ToolIconButton(
+            icon: CupertinoIcons.trash,
+            tooltip: 'Delete tag',
+            size: 14,
+            color: MacosColors.systemRedColor,
+            onPressed: busy ? null : () => _deleteTag(git, tag, status, remote),
           ),
         ],
       ),
     );
   }
 
-  Widget _tagRow(BuildContext context, GitService git, GitRef tag) {
-    final typography = MacosTheme.of(context).typography;
+  /// Pushes one tag — through the output log, like every network op (the old
+  /// silent `runGuarded` variant left no trace of a push that DID happen).
+  Future<void> _pushTag(GitService git, String name, String remote) async {
+    final label = 'git push $remote refs/tags/$name';
+    await runLogged(label, (log) async {
+      log.logResult(label, await git.pushTag(repoPath, name, remote: remote));
+    });
+    if (mounted) refreshRemoteTags(ref, repoPath);
+  }
+
+  /// Deletes a tag. When the remote listing says the tag also exists there,
+  /// escalate to a three-way choice; the local delete stays journaled (⌘Z
+  /// restores it), the remote one is not — the same asymmetry as branches.
+  Future<void> _deleteTag(
+    GitService git,
+    GitRef tag,
+    _TagRemoteStatus status,
+    String? remote,
+  ) async {
+    final name = tag.shortName;
+    final knownOnRemote = status == _TagRemoteStatus.inSync ||
+        status == _TagRemoteStatus.differs;
+    if (knownOnRemote && remote != null) {
+      final choice = await chooseAction<_TagDeleteScope>(
+        context,
+        title: 'Delete tag',
+        message:
+            'Tag "$name" also exists on "$remote". Deleting it there removes '
+            'it for everyone who uses the remote — the local delete is '
+            'undoable (⌘Z), the remote one is not.',
+        primaryLabel: 'Delete Local Only',
+        primaryValue: _TagDeleteScope.local,
+        secondary: [
+          ('Delete Local and on $remote', _TagDeleteScope.both),
+          ('Cancel', _TagDeleteScope.cancel),
+        ],
+      );
+      if (choice == null || choice == _TagDeleteScope.cancel || !mounted) {
+        return;
+      }
+      await runGuarded(() => git.deleteTag(repoPath, name));
+      if (choice == _TagDeleteScope.both && mounted) {
+        await runLogged('git push --delete', (log) async {
+          log.logResult(
+            'git push --delete $remote refs/tags/$name',
+            await git.deleteRemoteTag(repoPath, remote, name),
+          );
+        });
+        if (mounted) refreshRemoteTags(ref, repoPath);
+      }
+      return;
+    }
+    final ok = await confirmAction(
+      context,
+      title: 'Delete tag',
+      message: 'Delete local tag "$name"?',
+      confirmLabel: 'Delete',
+      destructive: true,
+    );
+    if (ok && mounted) {
+      await runGuarded(() => git.deleteTag(repoPath, name));
+    }
+  }
+
+  /// The Tags section header — with, when the remote listing shows local-only
+  /// tags, the bulk escape hatch: push exactly those tags in one round trip.
+  Widget _tagsHeader(
+    BuildContext context,
+    GitService git,
+    int count,
+    List<String> localOnly,
+    String? remote,
+  ) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
       child: Row(
         children: [
-          const MacosIcon(
-            CupertinoIcons.tag,
-            size: 15,
-            color: MacosColors.systemTealColor,
-          ),
-          const SizedBox(width: 8),
           Expanded(
             child: Text(
-              tag.shortName,
-              style: typography.body,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              'Tags ($count)',
+              style: MacosTheme.of(
+                context,
+              ).typography.caption1.copyWith(fontWeight: FontWeight.bold),
             ),
           ),
-          ToolIconButton(
-            icon: CupertinoIcons.cloud_upload,
-            tooltip: 'Push tag to origin',
-            size: 15,
-            onPressed: busy
-                ? null
-                : () => runGuarded(() => git.pushTag(repoPath, tag.shortName)),
-          ),
-          ToolIconButton(
-            icon: CupertinoIcons.trash,
-            tooltip: 'Delete tag',
-            size: 14,
-            color: MacosColors.systemRedColor,
-            onPressed: busy
-                ? null
-                : () async {
-                    final ok = await confirmAction(
-                      context,
-                      title: 'Delete tag',
-                      message: 'Delete local tag "${tag.shortName}"?',
-                      confirmLabel: 'Delete',
-                    );
-                    if (ok) {
-                      await runGuarded(() => git.deleteTag(repoPath, tag.shortName));
-                    }
-                  },
-          ),
+          if (localOnly.isNotEmpty && remote != null)
+            PushButton(
+              controlSize: ControlSize.small,
+              secondary: true,
+              onPressed: busy
+                  ? null
+                  : () => _pushAllLocalOnly(git, localOnly, remote),
+              child: Text('Push ${localOnly.length} to $remote'),
+            ),
         ],
       ),
     );
+  }
+
+  Future<void> _pushAllLocalOnly(
+    GitService git,
+    List<String> names,
+    String remote,
+  ) async {
+    // Name them when the list is short; a count once it stops being readable.
+    final listing = names.length <= 8
+        ? '\n\n${names.join(', ')}'
+        : '';
+    final ok = await confirmAction(
+      context,
+      title: 'Push tags',
+      message:
+          'Push ${names.length} tag(s) that exist only locally to '
+          '"$remote"?$listing',
+      confirmLabel: 'Push',
+    );
+    if (!ok || !mounted) return;
+    await runLogged('git push tags', (log) async {
+      log.logResult(
+        'git push $remote ${names.map((n) => 'refs/tags/$n').join(' ')}',
+        await git.pushTags(repoPath, names, remote: remote),
+      );
+    });
+    if (mounted) refreshRemoteTags(ref, repoPath);
   }
 
   Widget _remoteRow(BuildContext context, GitService git, GitRef branch) {
@@ -868,7 +1062,33 @@ class _TagRefRow extends _Row {
   const _TagRefRow(this.tag);
 }
 
+/// The Tags section header — its own descriptor (not [_HeaderRow]) because it
+/// carries the "Push N to origin" affordance alongside the title.
+class _TagsHeaderRow extends _Row {
+  final int count;
+  const _TagsHeaderRow(this.count);
+}
+
 class _ShowMoreTagsRow extends _Row {
   final int hidden;
   const _ShowMoreTagsRow(this.hidden);
 }
+
+/// Where a local tag stands relative to the remote's copy.
+enum _TagRemoteStatus {
+  /// No listing available (remote unreachable, or none configured).
+  unknown,
+
+  /// The tag exists locally but not on the remote — the attention state this
+  /// whole feature exists for.
+  localOnly,
+
+  /// Same name, same (unpeeled) oid — pushing again would be a no-op.
+  inSync,
+
+  /// Same name, different oid — a push would be rejected by the remote.
+  differs,
+}
+
+/// The three-way outcome of deleting a tag that also exists on the remote.
+enum _TagDeleteScope { local, both, cancel }

@@ -272,6 +272,11 @@ void main() {
               ),
             ],
           ),
+          // The view watches configured remotes (tag-push target) and the
+          // remote-tag listing — unoverridden they'd error against the fake
+          // executor and leave Riverpod retry timers pending.
+          remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+          remoteTagsProvider(_repo).overrideWith((ref) async => null),
         ],
       );
       addTearDown(container.dispose);

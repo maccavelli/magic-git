@@ -60,6 +60,12 @@ Future<void> pump(WidgetTester tester) async {
     overrides: [
       gitServiceProvider.overrideWithValue(_FakeGit()),
       refsProvider(_repo).overrideWith((ref) async => _refs),
+      // The view now watches CONFIGURED remotes to pick the tag-push target
+      // — unoverridden it would fall through to the executor.
+      remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+      // The real provider keeps a five-minute keepAlive timer that widget
+      // tests would flag as still pending; null = unknown, no badges.
+      remoteTagsProvider(_repo).overrideWith((ref) async => null),
     ],
   );
   addTearDown(container.dispose);

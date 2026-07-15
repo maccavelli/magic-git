@@ -34,6 +34,12 @@ enum UndoOpKind {
   /// `update-ref`, so an annotated tag comes back byte-identical.
   deleteTag,
 
+  /// `git tag [-a]` — undo deletes the created tag, validating it still
+  /// points at the captured OID (the tag *object* for an annotated tag). If
+  /// the tag was pushed before the undo, only the local copy is deleted —
+  /// the same asymmetry as branch undo.
+  createTag,
+
   /// `git stash drop` — undo re-stores the captured stash commit (it lands at
   /// `stash@{0}`, not its original list position).
   stashDrop,
@@ -198,13 +204,16 @@ class UndoRecord {
 /// The raw pre/post state one `_runCaptured` invocation observed, handed to
 /// the per-mutation `record` builder. Same empty-string conventions as
 /// [UndoRecord]; [extras] holds the op-specific side captures (deleted-ref
-/// OID, stash subject, …) in the order they were requested.
+/// OID, stash subject, …) in the order they were requested — taken BEFORE
+/// the mutation. [postExtras] are the same, taken AFTER it — for values
+/// that only exist once the mutation ran (a created tag object's OID).
 class UndoCapture {
   final String preHead;
   final String preRef;
   final String postHead;
   final String postRef;
   final List<String> extras;
+  final List<String> postExtras;
 
   const UndoCapture({
     required this.preHead,
@@ -212,6 +221,7 @@ class UndoCapture {
     required this.postHead,
     required this.postRef,
     this.extras = const [],
+    this.postExtras = const [],
   });
 
   /// Builds a record carrying this capture's pre/post state; the caller

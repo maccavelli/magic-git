@@ -11,6 +11,7 @@ import '../../core/git/log_search.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
+import '../branches/create_tag_sheet.dart';
 import '../common/actions.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
@@ -621,6 +622,20 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     if (mounted) _refresh();
   }
 
+  /// Tags a commit via the shared Create Tag sheet (annotated toggle,
+  /// message, push-after-create) — prefilled with this commit as the target.
+  Future<void> _actCreateTagAt(GitCommit commit) async {
+    final created = await showMacosSheet<bool>(
+      context: context,
+      builder: (_) => CreateTagSheet(
+        repoPath: repoPath,
+        initialRef: commit.hash,
+        initialRefLabel: '${commit.shortHash} — ${commit.subject}',
+      ),
+    );
+    if (created == true && mounted) _refresh();
+  }
+
   Future<void> _actCherryPick(GitCommit commit) async {
     final label = 'git cherry-pick ${commit.shortHash}';
     if (commit.isMerge) {
@@ -822,6 +837,12 @@ class _HistoryViewState extends ConsumerState<HistoryView>
           label: 'Branch from $short in a new worktree…',
           enabled: canAct,
           onTap: () => _actWorktreeFrom(hash),
+        ),
+        ContextMenuItem(
+          icon: CupertinoIcons.tag,
+          label: 'Tag $short…',
+          enabled: canAct,
+          onTap: () => _actCreateTagAt(commit),
         ),
         const ContextMenuDivider(),
         ContextMenuItem(
