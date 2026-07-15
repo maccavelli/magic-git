@@ -33,7 +33,7 @@
 
 set -euo pipefail
 
-FLUTTER_VERSION="3.44.4"
+FLUTTER_VERSION="3.44.6"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SDK_DIR="$SCRIPT_DIR/.flutter-sdk"
 OUT_ZIP="$SCRIPT_DIR/RemoteMagicGit-macos.zip"
