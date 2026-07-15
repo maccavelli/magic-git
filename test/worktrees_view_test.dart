@@ -19,8 +19,21 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/features/worktrees/worktree_access.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_tabs.dart';
 import 'package:remote_magic_git/features/worktrees/worktrees_view.dart';
+import 'package:riverpod/misc.dart' show Override;
+
+/// Records grant releases instead of touching the real ScopedAccess.
+class _RecordingAccess extends WorktreeAccess {
+  _RecordingAccess(super.ref);
+  final List<String> released = [];
+
+  @override
+  Future<void> release(String worktreePath) async {
+    released.add(worktreePath);
+  }
+}
 
 void main() {
   late Directory tmp;
@@ -81,6 +94,7 @@ void main() {
   Future<ProviderContainer> pump(
     WidgetTester tester, {
     List<GitWorktree>? data,
+    List<Override> extraOverrides = const [],
   }) async {
     // A real desktop width. The 800x600 default overflows, and an overflow is a
     // test failure — and a worktree tab mounts the full RepoStatusView, whose
@@ -95,6 +109,7 @@ void main() {
         gitWorktreesProvider(
           repo,
         ).overrideWith((ref) async => data ?? worktrees),
+        ...extraOverrides,
       ],
     );
     addTearDown(container.dispose);
@@ -202,6 +217,38 @@ void main() {
       expect(c.read(worktreeTabsProvider).selected, isNull);
     });
   });
+
+  testWidgets(
+    "a dead tab's sandbox grant is released, not just its tab",
+    (tester) async {
+      // A worktree pruned or removed in a terminal: build()'s dead-path sweep
+      // drops the tab — and must ALSO release the security-scoped grant,
+      // which used to leak until the whole container was disposed (the
+      // explicit close/remove/move paths release theirs themselves).
+      late _RecordingAccess access;
+      final c = await pump(
+        tester,
+        extraOverrides: [
+          worktreeAccessProvider.overrideWith((ref) {
+            access = _RecordingAccess(ref);
+            return access;
+          }),
+        ],
+      );
+
+      final tabs = c.read(worktreeTabsProvider.notifier);
+      tabs.open('/dead/path');
+      // Keep the Overview frontmost: selecting the dead tab would mount a
+      // whole workspace against the nonexistent path (real subprocesses,
+      // pending watchdog timers) — and the realistic scenario is exactly a
+      // background tab whose worktree got pruned in a terminal.
+      tabs.select(null);
+      await tester.pumpAndSettle();
+
+      expect(c.read(worktreeTabsProvider).open, isEmpty);
+      expect(access.released, contains('/dead/path'));
+    },
+  );
 
   testWidgets('a repo with only a main worktree explains what they are', (
     tester,

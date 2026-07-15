@@ -11,8 +11,11 @@ import '../../core/providers/app_providers.dart';
 import '../../core/providers/window_manager_bridge.dart';
 import '../branches/branches_view.dart';
 import '../common/actions.dart';
+import '../common/async_views.dart';
+import '../common/busy_action.dart';
 import '../common/context_menu.dart';
-import '../common/field_styles.dart';
+import '../common/label_chip.dart';
+import '../common/prompt_text_sheet.dart';
 import '../common/tool_icon_button.dart';
 import '../history/history_view.dart';
 import '../repository/repo_status_view.dart';
@@ -85,12 +88,8 @@ const List<(String, IconData)> _subPanels = [
   ('Stashes', CupertinoIcons.tray_2),
 ];
 
-class _WorktreesViewState extends ConsumerState<WorktreesView> {
-  /// Serializes mutating worktree operations. Two overlapping `worktree add`s
-  /// would race on the same admin directory; a double-tapped Remove would try to
-  /// delete a directory the first call already took. While set, actions go inert.
-  bool _busy = false;
-
+class _WorktreesViewState extends ConsumerState<WorktreesView>
+    with BusyActionState {
   final ContextMenuOverlay _contextMenu = ContextMenuOverlay();
 
   String get repoPath => widget.repoPath;
@@ -106,16 +105,8 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
   /// every other worktree of this repo reads. See [refreshAfterMutation].
   void _refresh() => refreshAfterMutation(ref, repoPath);
 
-  Future<void> _run(Future<void> Function() op) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      await runAction(context, op);
-    } finally {
-      if (mounted) setState(() => _busy = false);
-      _refresh();
-    }
-  }
+  @override
+  void refreshAfterAction() => _refresh();
 
   // ---------------------------------------------------------------- actions
 
@@ -169,7 +160,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
     );
     if (!ok || !mounted) return;
 
-    await _run(() async {
+    await runGuarded(() async {
       final git = ref.read(gitServiceProvider);
       try {
         await git.removeWorktree(repoPath, wt.path, locked: wt.isLocked);
@@ -238,7 +229,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
       confirmLabel: 'Prune',
     );
     if (!ok || !mounted) return;
-    await _run(() => git.pruneWorktrees(repoPath));
+    await runGuarded(() => git.pruneWorktrees(repoPath));
   }
 
   /// Re-links a worktree whose folder was moved behind git's back (dragged in
@@ -268,7 +259,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
     }
     if (newPath == null || !mounted) return;
     final path = newPath;
-    await _run(
+    await runGuarded(
       () => ref.read(gitServiceProvider).repairWorktrees(repoPath, [path]),
     );
   }
@@ -316,7 +307,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
 
     final from = wt.path;
     final to = destination;
-    await _run(() async {
+    await runGuarded(() async {
       final git = ref.read(gitServiceProvider);
       try {
         await git.moveWorktree(repoPath, from, to);
@@ -349,57 +340,32 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
     return parts.join('/');
   }
 
-  /// A plain path prompt, for the SSH backend where there is no folder picker.
+  /// A plain path prompt, for the SSH backend where there is no folder
+  /// picker. Delegates to the shared [promptText] — the hand-rolled dialog
+  /// this replaced disposed its controller the moment the dialog popped,
+  /// while the dismiss animation was still rebuilding the field against it
+  /// (the exact bug promptText was extracted to eliminate).
   Future<String?> _promptPath({
     required String title,
     required String message,
     required String initial,
     String confirmLabel = 'Move',
-  }) async {
-    final controller = TextEditingController(text: initial);
-    final result = await showMacosAlertDialog<String>(
-      context: context,
-      builder: (context) => MacosAlertDialog(
-        appIcon: const MacosIcon(CupertinoIcons.folder, size: 56),
-        title: Text(title),
-        message: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(message, textAlign: TextAlign.center),
-            const SizedBox(height: 12),
-            MacosTextField(
-              controller: controller,
-              decoration: kAppTextFieldDecoration,
-              focusedDecoration: kAppTextFieldFocusedDecoration,
-              placeholderStyle: kAppPlaceholderStyle,
-            ),
-          ],
-        ),
-        primaryButton: PushButton(
-          controlSize: ControlSize.large,
-          onPressed: () =>
-              Navigator.of(context).pop(controller.text.trim()),
-          child: Text(confirmLabel),
-        ),
-        secondaryButton: PushButton(
-          controlSize: ControlSize.large,
-          secondary: true,
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-      ),
-    );
-    controller.dispose();
-    return (result?.isEmpty ?? true) ? null : result;
-  }
+  }) => promptText(
+    context,
+    title,
+    placeholder: initial,
+    initial: initial,
+    description: message,
+    confirmLabel: confirmLabel,
+  );
 
   Future<void> _toggleLock(GitWorktree wt) async {
     final git = ref.read(gitServiceProvider);
     if (wt.isLocked) {
-      await _run(() => git.unlockWorktree(repoPath, wt.path));
+      await runGuarded(() => git.unlockWorktree(repoPath, wt.path));
       return;
     }
-    await _run(() => git.lockWorktree(repoPath, wt.path));
+    await runGuarded(() => git.lockWorktree(repoPath, wt.path));
   }
 
   Future<void> _add() async {
@@ -534,9 +500,20 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
     final live = worktreesAsync.value;
     if (live != null) {
       final paths = live.map((w) => w.path).toSet();
-      if (tabs.open.any((p) => !paths.contains(p))) {
+      final dead = tabs.open.where((p) => !paths.contains(p)).toList();
+      if (dead.isNotEmpty) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) ref.read(worktreeTabsProvider.notifier).retain(paths);
+          if (!mounted) return;
+          ref.read(worktreeTabsProvider.notifier).retain(paths);
+          // The explicit close paths (_closeTab/_remove/_move) release their
+          // grants themselves; this sweep is the ONLY release for a worktree
+          // that vanished externally (pruned, or removed in a terminal) —
+          // without it the native security-scoped grant leaks until the
+          // whole container is disposed.
+          final access = ref.read(worktreeAccessProvider);
+          for (final p in dead) {
+            access.release(p);
+          }
         });
       }
     }
@@ -597,7 +574,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
             icon: CupertinoIcons.add,
             tooltip: 'Add worktree…',
             size: 16,
-            onPressed: _busy ? null : _add,
+            onPressed: busy ? null : _add,
           ),
           const SizedBox(width: 4),
           ToolIconButton(
@@ -680,13 +657,13 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
             title: Text(
               stale == 0 ? 'Prune stale worktrees' : 'Prune $stale stale…',
             ),
-            onTap: _busy ? null : _prune,
+            onTap: busy ? null : _prune,
           ),
           MacosPulldownMenuItem(
             title: const Text('Repair worktree links'),
-            onTap: _busy
+            onTap: busy
                 ? null
-                : () => _run(
+                : () => runGuarded(
                     () => ref
                         .read(gitServiceProvider)
                         .repairWorktrees(repoPath),
@@ -705,7 +682,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
   ) {
     return async.when(
       loading: () => const Center(child: ProgressCircle()),
-      error: (err, _) => _error(context, err),
+      error: (err, _) => SectionError(err),
       data: (worktrees) {
         // Only the main worktree: this repo has no linked worktrees yet.
         if (worktrees.length <= 1) return _empty(context);
@@ -760,23 +737,23 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
                         ),
                       ),
                       const SizedBox(width: 6),
-                      _chip(wt.branchLabel, MacosColors.systemBlueColor),
+                      LabelChip(wt.branchLabel, color: MacosColors.systemBlueColor),
                       if (wt.isMain) ...[
                         const SizedBox(width: 4),
-                        _chip('main worktree', MacosColors.systemGreenColor),
+                        const LabelChip('main worktree', color: MacosColors.systemGreenColor),
                       ],
                       if (wt.isLocked) ...[
                         const SizedBox(width: 4),
-                        _chip(
+                        LabelChip(
                           wt.lockReason?.isNotEmpty ?? false
                               ? 'locked: ${wt.lockReason}'
                               : 'locked',
-                          MacosColors.systemGrayColor,
+                          color: MacosColors.systemGrayColor,
                         ),
                       ],
                       if (wt.isPrunable) ...[
                         const SizedBox(width: 4),
-                        _chip('missing', MacosColors.systemRedColor),
+                        const LabelChip('missing', color: MacosColors.systemRedColor),
                       ],
                     ],
                   ),
@@ -800,14 +777,17 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
                 icon: CupertinoIcons.wrench,
                 tooltip: 'Repair — I moved this folder',
                 size: 15,
-                onPressed: _busy ? null : () => _repair(wt),
+                onPressed: busy ? null : () => _repair(wt),
               ),
               const SizedBox(width: 4),
               ToolIconButton(
                 icon: CupertinoIcons.trash,
-                tooltip: 'Prune — forget this worktree',
+                // `git worktree prune` is inherently global — there is no
+                // per-path form — so the copy must not pretend this only
+                // forgets this row. The confirm lists exactly what goes.
+                tooltip: 'Prune — forget all missing worktrees…',
                 size: 15,
-                onPressed: _busy ? null : _prune,
+                onPressed: busy ? null : _prune,
               ),
             ] else if (!wt.isMain)
               ToolIconButton(
@@ -821,18 +801,6 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
       ),
     );
   }
-
-  Widget _chip(String text, Color color) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.15),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Text(
-      text,
-      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color),
-    ),
-  );
 
   Widget _empty(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
@@ -862,7 +830,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
             const SizedBox(height: 16),
             PushButton(
               controlSize: ControlSize.large,
-              onPressed: _busy ? null : _add,
+              onPressed: busy ? null : _add,
               child: const Text('Add Worktree…'),
             ),
           ],
@@ -870,19 +838,6 @@ class _WorktreesViewState extends ConsumerState<WorktreesView> {
       ),
     );
   }
-
-  Widget _error(BuildContext context, Object err) => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Text(
-        '$err',
-        textAlign: TextAlign.center,
-        style: MacosTheme.of(
-          context,
-        ).typography.body.copyWith(color: MacosColors.systemRedColor),
-      ),
-    ),
-  );
 
   // -------------------------------------------------------------- workspace
 

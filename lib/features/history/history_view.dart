@@ -8,12 +8,12 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/commit_graph.dart';
 import '../../core/git/git_service.dart';
 import '../../core/git/log_search.dart';
-import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/branch_switch.dart';
+import '../common/busy_action.dart';
 import '../common/commit_patch_view.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
@@ -57,7 +57,7 @@ class HistoryView extends ConsumerStatefulWidget {
 }
 
 class _HistoryViewState extends ConsumerState<HistoryView>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, BusyActionState {
   // Multi-selection over commit hashes, following the macOS list-selection
   // conventions (same scheme as RepoStatusView's file rows): plain click
   // replaces the selection, ⌘-click toggles a row in/out, ⇧-click extends a
@@ -73,13 +73,6 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   // first rebase completes and rewrites hashes before the second is
   // dismissed, the second would operate against stale/nonexistent hashes.
   bool _rebaseSheetOpen = false;
-
-  // Guards against a double-tap (or a mis-click during a confirm dialog's
-  // dismiss animation) firing two concurrent commit mutations — cherry-pick and
-  // revert run with no confirm dialog, so nothing else serializes them at the
-  // UI layer, and a second would run against whatever state the first just
-  // produced (e.g. onto a half-applied cherry-pick). Mirrors BranchesView.
-  bool _busy = false;
 
   // History search/filter: a debounced message filter, an all-branches
   // toggle, and the advanced criteria (author / date range / path / hide
@@ -348,7 +341,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   }
 
   KeyEventResult _onCommitKey(FocusNode node, KeyEvent event) {
-    if (event is KeyUpEvent || !widget.isActive || _busy) {
+    if (event is KeyUpEvent || !widget.isActive || busy) {
       return KeyEventResult.ignored;
     }
     final extend = HardwareKeyboard.instance.isShiftPressed;
@@ -495,55 +488,15 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     refreshAfterMutation(ref, repoPath);
   }
 
-  /// Runs a mutating op, refreshing on success. [movesHead] clears the diff
-  /// selection because the selected commit may no longer exist / be meaningful.
+  /// [movesHead] ops (reset, amend, branch-from) clear the diff selection on
+  /// success because the selected commit may no longer exist / be meaningful.
   Future<void> _run(
     Future<void> Function() op, {
     bool movesHead = false,
-  }) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      if (await runAction(context, op)) {
-        if (movesHead) _clearSelection();
-        _refresh();
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
+  }) => runGuarded(op, onSuccess: movesHead ? _clearSelection : null);
 
-  /// Like [_run], but logs the command's output to the output view — for
-  /// operations (cherry-pick, revert) where seeing the actual git output (e.g.
-  /// a conflict) matters.
-  Future<void> _runLogged(
-    String title,
-    Future<void> Function(OutputLogNotifier log) body,
-  ) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    final log = ref.read(outputLogProvider.notifier);
-    try {
-      await body(log);
-    } on GitException catch (e) {
-      log.logResult(title, e.result);
-      if (mounted) await showErrorDialog(context, e.toString());
-    } catch (e) {
-      log.logError(title, e.toString());
-      if (mounted) await showErrorDialog(context, e.toString());
-    } finally {
-      // A conflicting cherry-pick/revert makes GitService throw a
-      // GitException — that's the documented way a conflict is signaled, not
-      // an exceptional failure — and `pendingOp` is meant to then surface a
-      // resolve/abort banner. Refreshing only on success left the History /
-      // Repository views showing stale pre-op state with no conflict
-      // indication until some unrelated refresh happened to fire, so the
-      // refresh has to run here regardless of outcome, mirroring
-      // rebase_sheet.dart's `_apply`.
-      _refresh();
-      if (mounted) setState(() => _busy = false);
-    }
-  }
+  @override
+  void refreshAfterAction() => _refresh();
 
   GitCommit? _commitFor(String hash) {
     for (final c in _lastCommits ?? const <GitCommit>[]) {
@@ -618,28 +571,24 @@ class _HistoryViewState extends ConsumerState<HistoryView>
           'to keep any new commits.',
       confirmLabel: 'Checkout',
     );
-    if (!ok || _busy || !mounted) return;
+    if (!ok || busy || !mounted) return;
     // The same dirty-tree guardrail a branch checkout gets (stash / carry /
     // cancel): a detached checkout overwrites the working tree just the same,
     // and this path used to skip the guard — the user got git's raw
-    // "would be overwritten" error instead of the stash offer.
-    setState(() => _busy = true);
-    try {
+    // "would be overwritten" error instead of the stash offer. runGuarded's
+    // always-refresh matters too: the guard's stash step can succeed while
+    // the checkout fails, and that intermediate state must land on screen.
+    await runGuarded(() async {
       final switched = await guardedBranchSwitch(
         context,
         ref,
         repoPath,
         () => _git.checkout(repoPath, hash),
       );
+      // Only an actual switch invalidates the selection — a cancelled guard
+      // dialog leaves everything as it was.
       if (switched && mounted) setState(_clearSelection);
-    } finally {
-      if (mounted) {
-        // Refresh regardless: the guard's stash step can succeed while the
-        // checkout fails, and that intermediate state must land on screen.
-        _refresh();
-        setState(() => _busy = false);
-      }
-    }
+    });
   }
 
   Future<void> _actBranchFrom(String hash) async {
@@ -676,7 +625,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     if (commit.isMerge) {
       final m = await _mainlineFor(commit);
       if (m == null) return;
-      await _runLogged(
+      await runLogged(
         label,
         (log) async => log.logResult(
           label,
@@ -684,7 +633,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         ),
       );
     } else {
-      await _runLogged(
+      await runLogged(
         label,
         (log) async =>
             log.logResult(label, await _git.cherryPick(repoPath, commit.hash)),
@@ -703,7 +652,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     final m = await _mainlineFor(commit);
     if (commit.isMerge && m == null) return; // cancelled the mainline prompt
     final label = 'git revert ${commit.shortHash}';
-    await _runLogged(
+    await runLogged(
       label,
       (log) async => log.logResult(
         label,
@@ -734,7 +683,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       confirmLabel: 'Cherry-pick',
     );
     if (!ok) return;
-    await _runLogged('git cherry-pick ($n commits)', (log) async {
+    await runLogged('git cherry-pick ($n commits)', (log) async {
       for (final c in oldestFirst) {
         log.logResult(
           'git cherry-pick ${c.shortHash}',
@@ -760,7 +709,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       confirmLabel: 'Revert',
     );
     if (!ok) return;
-    await _runLogged('git revert ($n commits)', (log) async {
+    await runLogged('git revert ($n commits)', (log) async {
       for (final c in newestFirst) {
         log.logResult(
           'git revert ${c.shortHash}',
@@ -844,9 +793,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   /// (cherry-pick N / revert N / copy N SHAs).
   List<ContextMenuEntry> _commitMenuEntries(List<GitCommit> selection) {
     // Every mutating item is disabled while an operation is already
-    // mid-flight, so a second tap can't queue up behind it — the same _busy
+    // mid-flight, so a second tap can't queue up behind it — the same busy
     // gating the pulldown menu has always applied.
-    final canAct = !_busy;
+    final canAct = !busy;
     if (selection.length == 1) {
       final commit = selection.single;
       final hash = commit.hash;
@@ -976,11 +925,11 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   /// won't be found in the unfiltered log either — correctly a no-op, since
   /// "rebase from here" isn't meaningful for a non-ancestor commit anyway.
   Future<void> _actRebaseFrom(GitCommit commit) async {
-    // Also gated on `_busy` — the same flag cherry-pick/revert/etc. use via
+    // Also gated on `busy` — the same flag cherry-pick/revert/etc. use via
     // `_run`/`_runLogged` — so a rebase can't start while another History
     // mutation is mid-flight, and vice versa: those actions won't fire while
-    // this sheet is open, since `_busy` stays set for its whole lifetime.
-    if (_busy || _rebaseSheetOpen || commit.parents.isEmpty) return;
+    // this sheet is open, since `busy` stays set for its whole lifetime.
+    if (busy || _rebaseSheetOpen || commit.parents.isEmpty) return;
     List<GitCommit> commits;
     try {
       // Walked at least as deep as the panel currently displays: a commit the
@@ -1025,24 +974,24 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       return;
     }
     final included = slice.reversed.toList();
-    setState(() {
-      _rebaseSheetOpen = true;
-      _busy = true;
-    });
+    setState(() => _rebaseSheetOpen = true);
     try {
-      await showMacosSheet<void>(
-        context: context,
-        builder: (_) => EscapeDismissible(
-          child: RebaseSheet(
-            repoPath: repoPath,
-            onto: commit.parents.first,
-            commits: included,
+      // holdBusyWhile: the sheet owns the interaction and refreshes itself;
+      // the panel underneath just has to stay inert until it closes.
+      await holdBusyWhile(
+        () => showMacosSheet<void>(
+          context: context,
+          builder: (_) => EscapeDismissible(
+            child: RebaseSheet(
+              repoPath: repoPath,
+              onto: commit.parents.first,
+              commits: included,
+            ),
           ),
         ),
       );
     } finally {
       _rebaseSheetOpen = false;
-      if (mounted) setState(() => _busy = false);
     }
     // A completed rebase rewrites hashes for the whole range — the selected
     // commit (if it was in that range) no longer exists, so the diff pane
@@ -1112,7 +1061,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     final hasCommits = commits?.isNotEmpty ?? false;
 
     return PanelShortcuts(
-      bindings: widget.isActive && !_busy
+      bindings: widget.isActive && !busy
           ? resolveShortcuts(keymap, {
               'history.copySha': _selectedHashes.isEmpty
                   ? null

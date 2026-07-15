@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
+import '../worktrees/worktree_tabs.dart';
 
 /// The chips decorating one commit, laid out so they can never overflow the
 /// commit list's right edge.
@@ -122,8 +123,7 @@ class RefChip extends StatelessWidget {
     // rather than leaving it looking idle.
     if (!_inOtherWorktree) return chip;
     return MacosTooltip(
-      message:
-          'Checked out in the worktree at ${gitRef.worktreePath}',
+      message: checkedOutElsewhereMessage(gitRef.worktreePath!),
       child: chip,
     );
   }

@@ -7,7 +7,10 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
+import '../common/async_views.dart';
+import '../common/busy_action.dart';
 import '../common/diff_view.dart';
+import '../common/label_chip.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
@@ -35,7 +38,8 @@ class StashView extends ConsumerStatefulWidget {
   ConsumerState<StashView> createState() => _StashViewState();
 }
 
-class _StashViewState extends ConsumerState<StashView> {
+class _StashViewState extends ConsumerState<StashView>
+    with BusyActionState {
   /// The selected stash's OID — its STABLE identity. Selecting by position
   /// (`stash@{n}`) broke whenever the list shifted (a drop, a pop, an
   /// auto-stash from a branch switch): the highlight and preview silently
@@ -45,13 +49,6 @@ class _StashViewState extends ConsumerState<StashView> {
 
   // Serializes mutating stash operations. All of them (apply/pop/drop/clear,
   // stash push) route through [_runLogged], which shares this single flag —
-  // double-clicking "Drop" (or any other action) while the first tap's git
-  // command is still in flight would otherwise fire two overlapping mutations
-  // that race on `.git/index.lock`, or — for drop specifically — shift stash
-  // indices out from under the second call once the first drop already
-  // removed an earlier entry. While set, the toolbar/menu items go inert.
-  bool _busy = false;
-
   // Keyboard navigation of the stash list: the list takes focus on a card tap,
   // then ↑/↓ walk _selected through the stashes (⌥⌘A/⌥⌘P/⌘⌫ then act on it).
   final FocusNode _stashFocus = FocusNode(debugLabel: 'stash-list');
@@ -88,7 +85,7 @@ class _StashViewState extends ConsumerState<StashView> {
   }
 
   KeyEventResult _onStashKey(FocusNode node, KeyEvent event) {
-    if (event is KeyUpEvent || !widget.isActive || _busy) {
+    if (event is KeyUpEvent || !widget.isActive || busy) {
       return KeyEventResult.ignored;
     }
     switch (event.logicalKey) {
@@ -141,57 +138,29 @@ class _StashViewState extends ConsumerState<StashView> {
     ),
   );
 
-  /// Runs a stash mutation, logging the command's output to the output view —
-  /// stash pop/apply can conflict just like a merge, so the actual git output
-  /// matters. Refreshes and re-previews on success.
-  ///
-  /// Returns whether the mutation actually succeeded — callers that need to
-  /// adjust bookkeeping (e.g. [_dropStash] re-targeting [_selected] after a
-  /// stash index shift) only do so once the underlying git command actually
-  /// ran, since a failed drop leaves every index exactly where it was.
+  /// Runs a stash mutation through the shared [runLogged], adding this
+  /// panel's one domain error: [StashStaleException] means the list shifted
+  /// since render and NOTHING was modified — the always-refresh brings in the
+  /// real list, so the dialog says so instead of showing raw git output.
   Future<bool> _runLogged(
     String title,
     Future<void> Function(OutputLogNotifier log) body,
-  ) async {
-    // Guarded centrally here rather than at every call site: every mutating
-    // stash action (push/apply/pop/drop/clear) routes through this method —
-    // see [_busy]. A re-entrant call while one is already in flight is a no-op.
-    if (_busy) return false;
-    setState(() => _busy = true);
-    final log = ref.read(outputLogProvider.notifier);
-    var success = false;
-    try {
-      await body(log);
-      success = true;
-    } on StashStaleException catch (e) {
-      // The guard refused: the list shifted since it was rendered and the
-      // positional ref no longer names what the user clicked. Nothing was
-      // modified; the finally-refresh below brings the real list in.
-      if (mounted) {
-        await showErrorDialog(context, '$e The list has been refreshed.');
-      }
-    } on GitException catch (e) {
-      log.logResult(title, e.result);
-      if (mounted) await showErrorDialog(context, e.toString());
-    } catch (e) {
-      log.logError(title, e.toString());
-      if (mounted) await showErrorDialog(context, e.toString());
-    } finally {
-      // Refresh on FAILURE too — a conflicting pop/apply throws GitException
-      // but has already rewritten the working tree, and the status/pendingOp
-      // providers must pick that up now, not on some later unrelated refresh
-      // (the same fix repo_status and history landed; this copy predated it).
-      // `mounted` guards the whole block: the view can be torn down while a
-      // slow pop is in flight, and touching `ref` after disposal throws.
-      if (mounted) {
-        if (_selected != null) {
-          ref.invalidate(stashDiffProvider((repoPath, _selected!)));
-        }
-        _refresh();
-        setState(() => _busy = false);
-      }
+  ) => runLogged(
+    title,
+    body,
+    describeError: (e) =>
+        e is StashStaleException ? '$e The list has been refreshed.' : null,
+  );
+
+  @override
+  void refreshAfterAction() {
+    // The preview pane renders stashDiffProvider for the selected OID —
+    // re-fetch it alongside the list so a successful pop/drop can't leave a
+    // stale diff for an entry that no longer exists.
+    if (_selected != null) {
+      ref.invalidate(stashDiffProvider((repoPath, _selected!)));
     }
-    return success;
+    _refresh();
   }
 
   @override
@@ -213,7 +182,7 @@ class _StashViewState extends ConsumerState<StashView> {
     }
 
     return PanelShortcuts(
-      bindings: widget.isActive && !_busy
+      bindings: widget.isActive && !busy
           ? resolveShortcuts(keymap, {
               'stashes.apply': selEntry == null
                   ? null
@@ -234,7 +203,7 @@ class _StashViewState extends ConsumerState<StashView> {
         Expanded(
           child: stashesAsync.when(
             loading: () => const Center(child: ProgressCircle()),
-            error: (err, _) => _error(context, err),
+            error: (err, _) => SectionError(err),
             data: (stashes) {
               if (stashes.isEmpty) return _empty(context);
               // A selection is valid only while its stash still exists — an
@@ -308,7 +277,7 @@ class _StashViewState extends ConsumerState<StashView> {
   /// Hamburger menu of stash-wide actions.
   Widget _menu(BuildContext context, GitService git, int count) {
     final hasStashes = count > 0;
-    final canApplyOrPop = hasStashes && !_busy;
+    final canApplyOrPop = hasStashes && !busy;
     return MacosPulldownButtonTheme(
       // System-grey, matching the Repository and History toolbars' overflow
       // menus, instead of the pull-down theme's default gray.
@@ -322,9 +291,9 @@ class _StashViewState extends ConsumerState<StashView> {
           MacosPulldownMenuItem(
             title: Text(
               'Stash current changes',
-              style: _busy ? _disabledStyle(context) : null,
+              style: busy ? _disabledStyle(context) : null,
             ),
-            onTap: _busy
+            onTap: busy
                 ? null
                 : () => _runLogged(
                     'git stash push',
@@ -337,9 +306,9 @@ class _StashViewState extends ConsumerState<StashView> {
           MacosPulldownMenuItem(
             title: Text(
               'Stash including untracked',
-              style: _busy ? _disabledStyle(context) : null,
+              style: busy ? _disabledStyle(context) : null,
             ),
-            onTap: _busy
+            onTap: busy
                 ? null
                 : () => _runLogged(
                     'git stash push --include-untracked',
@@ -352,9 +321,9 @@ class _StashViewState extends ConsumerState<StashView> {
           MacosPulldownMenuItem(
             title: Text(
               'Stash with message\u2026',
-              style: _busy ? _disabledStyle(context) : null,
+              style: busy ? _disabledStyle(context) : null,
             ),
-            onTap: _busy ? null : () => _stashWithMessage(git),
+            onTap: busy ? null : () => _stashWithMessage(git),
           ),
           MacosPulldownMenuItem(
             title: Text(
@@ -484,7 +453,7 @@ class _StashViewState extends ConsumerState<StashView> {
                   const SizedBox(height: 3),
                   Row(
                     children: [
-                      _chip('stash@{${stash.index}}'),
+                      LabelChip('stash@{${stash.index}}', color: MacosColors.systemBlueColor),
                       if (stash.branch.isNotEmpty) ...[
                         const SizedBox(width: 6),
                         Flexible(
@@ -520,20 +489,20 @@ class _StashViewState extends ConsumerState<StashView> {
               icon: CupertinoIcons.tray_arrow_up,
               tooltip: 'Apply stash (keep in list)',
               size: 15,
-              onPressed: _busy ? null : () => _apply(git, stash),
+              onPressed: busy ? null : () => _apply(git, stash),
             ),
             ToolIconButton(
               icon: CupertinoIcons.arrow_up_bin,
               tooltip: 'Pop stash (apply & remove)',
               size: 15,
-              onPressed: _busy ? null : () => _pop(git, stash),
+              onPressed: busy ? null : () => _pop(git, stash),
             ),
             ToolIconButton(
               icon: CupertinoIcons.trash,
               tooltip: 'Drop stash',
               size: 14,
               color: MacosColors.systemRedColor,
-              onPressed: _busy ? null : () => _dropStash(context, git, stash),
+              onPressed: busy ? null : () => _dropStash(context, git, stash),
             ),
           ],
         ),
@@ -587,22 +556,6 @@ class _StashViewState extends ConsumerState<StashView> {
     );
   }
 
-  Widget _chip(String text) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-    decoration: BoxDecoration(
-      color: MacosColors.systemBlueColor.withValues(alpha: 0.15),
-      borderRadius: BorderRadius.circular(4),
-    ),
-    child: Text(
-      text,
-      style: const TextStyle(
-        fontSize: 11,
-        fontWeight: FontWeight.bold,
-        color: MacosColors.systemBlueColor,
-      ),
-    ),
-  );
-
   Widget _empty(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
     return Center(
@@ -626,15 +579,4 @@ class _StashViewState extends ConsumerState<StashView> {
     );
   }
 
-  Widget _error(BuildContext context, Object err) => Center(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Text(
-        '$err',
-        style: MacosTheme.of(
-          context,
-        ).typography.body.copyWith(color: MacosColors.systemRedColor),
-      ),
-    ),
-  );
 }

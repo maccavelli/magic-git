@@ -12,6 +12,7 @@ import '../../core/settings/keymap.dart';
 import '../../core/utils/file_actions.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
+import '../common/busy_action.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
@@ -61,7 +62,8 @@ class RepoStatusView extends ConsumerStatefulWidget {
   ConsumerState<RepoStatusView> createState() => _RepoStatusViewState();
 }
 
-class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
+class _RepoStatusViewState extends ConsumerState<RepoStatusView>
+    with BusyActionState {
   // Which status section the current selection belongs to; null means
   // nothing is selected.
   _SectionKind? _selectionKind;
@@ -173,13 +175,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
   // coalescing window) rather than a genuinely concurrent external one.
   static const _ownMutationSuppressWindow = Duration(seconds: 3);
 
-  // Serializes mutating git operations. The working index and refs are shared
-  // state, so two overlapping writes — a double-clicked Push, or a Stage fired
-  // during an in-flight Pull — race on `.git/index.lock` and surface spurious
-  // lock/rejection errors. While set, mutating toolbar buttons and shortcuts go
-  // inert and any re-entrant mutation no-ops.
-  bool _busy = false;
-
   // Right-click context menu, anchored at the tap point.
   final _contextMenu = ContextMenuOverlay();
 
@@ -193,7 +188,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
 
   // Memoized status-row model. `_statusRows` allocates a header/file row per
   // changed file across every section, and this widget setState()s constantly
-  // (each selection tap, the _busy toggle wrapping every git op, each diff
+  // (each selection tap, the busy toggle wrapping every git op, each diff
   // toggle). Riverpod hands back the *same* GitStatus instance until
   // statusProvider is invalidated, so the derivation is cached on that identity
   // and rebuilt only when the status actually changes — not on every frame. For
@@ -248,7 +243,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
   }
 
   KeyEventResult _onListKey(FocusNode node, KeyEvent event) {
-    if (event is KeyUpEvent || !widget.isActive || _busy) {
+    if (event is KeyUpEvent || !widget.isActive || busy) {
       return KeyEventResult.ignored;
     }
     switch (event.logicalKey) {
@@ -356,7 +351,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
 
   Future<void> _stage(String path) async {
     final git = ref.read(gitServiceProvider);
-    if (await _guardedAction(() => git.stage(repoPath, path))) {
+    if (await runGuarded(() => git.stage(repoPath, path))) {
       if (!mounted) return;
       // Flip the diff panel's staged flag immediately for the file just
       // staged, rather than leaving it pointed at the pre-stage diff key
@@ -367,7 +362,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
 
   Future<void> _unstage(String path) async {
     final git = ref.read(gitServiceProvider);
-    if (await _guardedAction(() => git.unstage(repoPath, path))) {
+    if (await runGuarded(() => git.unstage(repoPath, path))) {
       if (!mounted) return;
       _dropOrReselect(path, _SectionKind.unstaged);
     }
@@ -413,14 +408,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
 
   Future<void> _stageAll() async {
     final git = ref.read(gitServiceProvider);
-    await _guardedAction(() => git.stageAll(repoPath));
+    await runGuarded(() => git.stageAll(repoPath));
   }
 
   /// The mirror of [_stageAll]. No confirmation: unstaging destroys nothing —
   /// every change stays in the working tree, and Stage All puts it back.
   Future<void> _unstageAll() async {
     final git = ref.read(gitServiceProvider);
-    await _guardedAction(() => git.unstageAll(repoPath));
+    await runGuarded(() => git.unstageAll(repoPath));
   }
 
   /// Folds the currently staged changes into HEAD, keeping its message — the
@@ -438,7 +433,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     );
     if (!ok || !mounted) return;
     final git = ref.read(gitServiceProvider);
-    await _guardedAction(() => git.amendCommit(repoPath));
+    await runGuarded(() => git.amendCommit(repoPath));
   }
 
   Future<void> _openCommitDialog(int stagedCount) async {
@@ -456,72 +451,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     }
   }
 
-  /// Runs a mutating git op behind the [_busy] gate: no-ops if another mutation
-  /// is already in flight, and toggles [_busy] so the toolbar/shortcuts reflect
-  /// it. Returns whether the op actually ran and succeeded. Always refreshes
-  /// the repo-scoped providers in `finally` — see the comment there.
-  Future<bool> _guardedAction(Future<void> Function() op) async {
-    if (_busy) return false;
-    setState(() => _busy = true);
-    try {
-      return await runAction(context, op);
-    } finally {
-      // Refresh even when `op` failed: a thrown GitException is exactly how
-      // GitService signals a merge/rebase/cherry-pick/revert conflict, and
-      // pendingOpProvider (which follows statusProvider) needs to observe the
-      // resulting in-progress state immediately so the conflict banner
-      // appears, rather than waiting on some unrelated later refresh.
-      // _refresh() is itself mounted-guarded, so this is safe even if the
-      // widget was disposed mid-await.
-      _refresh();
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _run(Future<void> Function() op) async {
-    await _guardedAction(op);
-  }
-
-  /// Runs a remote-sync operation, logging its command output to the output
-  /// view and refreshing regardless of outcome (see the `finally` block).
-  /// Failure output is logged too, then surfaced via the usual error dialog.
-  /// Returns whether it succeeded, so a caller that also needs to update
-  /// local state (e.g. clearing the selected conflict) can do so only once
-  /// the operation actually completed.
-  Future<bool> _runLogged(
-    String title,
-    Future<void> Function(OutputLogNotifier log) body,
-  ) async {
-    // Serialize with every other mutation (see [_busy]): a Pull/Push/Sync in
-    // flight must not overlap a second one — they race on `.git/index.lock`.
-    if (_busy) return false;
-    setState(() => _busy = true);
-    final log = ref.read(outputLogProvider.notifier);
-    var ok = false;
-    try {
-      await body(log);
-      ok = true;
-    } on GitException catch (e) {
-      log.logResult(title, e.result);
-      if (mounted) await showErrorDialog(context, e.toString());
-    } catch (e) {
-      log.logError(title, e.toString());
-      if (mounted) await showErrorDialog(context, e.toString());
-    } finally {
-      // Refresh even on failure: a pull/push/sync that hits a conflict is
-      // reported as a thrown GitException (that's how GitService signals
-      // one), leaving a merge/rebase in progress — pendingOpProvider needs to
-      // pick that up so the Repository panel's conflict banner shows up
-      // immediately instead of after some unrelated later refresh.
-      _refresh();
-      if (mounted) setState(() => _busy = false);
-    }
-    return ok;
-  }
+  @override
+  void refreshAfterAction() => _refresh();
 
   Future<void> _fetch() async {
     final git = ref.read(gitServiceProvider);
-    await _runLogged(
+    await runLogged(
       'git fetch --all --prune',
       (log) async =>
           log.logResult('git fetch --all --prune', await git.fetch(repoPath)),
@@ -535,7 +470,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     // untracked-only tree who clicks Stash would otherwise get a silent
     // "No local changes to save" no-op and believe the work was parked. The
     // Stashes panel's menu still offers the tracked-only variant explicitly.
-    await _runLogged(
+    await runLogged(
       'git stash push',
       (log) async => log.logResult(
         'git stash push --include-untracked',
@@ -553,7 +488,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
   Future<void> _pull([PullMode mode = PullMode.ffOnly]) async {
     final git = ref.read(gitServiceProvider);
     final label = _pullLabel(mode);
-    await _runLogged(label, (log) async {
+    await runLogged(label, (log) async {
       final before = await git.revParse(repoPath, 'HEAD');
       log.logResult(label, await git.pull(repoPath, mode: mode));
       await _logPulled(log, git, before);
@@ -620,7 +555,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       if (setUpstream) '-u',
       if (followTags) '--follow-tags',
     ].join(' ');
-    await _runLogged(label, (log) async {
+    await runLogged(label, (log) async {
       // Capture the old remote tip before the push advances the tracking ref.
       final base = await git.revParse(repoPath, '@{upstream}');
       log.logResult(
@@ -641,7 +576,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     final pullLabel = _pullLabel(mode);
     // Inlined pull-then-push (rather than git.sync) so each phase can report the
     // files it moved: the push base is @{upstream} *after* the pull advanced it.
-    await _runLogged('git sync', (log) async {
+    await runLogged('git sync', (log) async {
       final before = await git.revParse(repoPath, 'HEAD');
       log.logResult(pullLabel, await git.pull(repoPath, mode: mode));
       await _logPulled(log, git, before);
@@ -690,12 +625,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       destructive: true,
     );
     if (ok) {
-      await _run(() => ref.read(gitServiceProvider).discard(repoPath, path));
+      await runGuarded(() => ref.read(gitServiceProvider).discard(repoPath, path));
     }
   }
 
   /// Deletes a single untracked file from the working tree. Mirrors [_discard]
-  /// (same confirmation pattern, same `_run`/`_guardedAction` gate so it can't
+  /// (same confirmation pattern, same [runGuarded] gate so it can't
   /// race a concurrent mutation and refreshes statusProvider/repoStructureProvider
   /// afterward), but routes through [GitService.removeUntrackedFile] instead of
   /// `git restore` — there is no tracked history to fall back to for an
@@ -712,7 +647,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       destructive: true,
     );
     if (ok) {
-      await _run(
+      await runGuarded(
         () => ref.read(gitServiceProvider).removeUntrackedFile(repoPath, path),
       );
     }
@@ -720,7 +655,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
 
   Future<void> _resolve(String path, {required bool useOurs}) async {
     final git = ref.read(gitServiceProvider);
-    if (await _guardedAction(
+    if (await runGuarded(
       () => git.resolveConflict(repoPath, path, useOurs: useOurs),
     )) {
       if (!mounted) return;
@@ -740,19 +675,19 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       destructive: true,
     );
     if (ok) {
-      await _run(
+      await runGuarded(
         () => ref.read(gitServiceProvider).discardStaged(repoPath, path),
       );
     }
   }
 
   Future<void> _addToGitignore(String path) async {
-    await _run(() => ref.read(gitServiceProvider).addToGitignore(repoPath, path));
+    await runGuarded(() => ref.read(gitServiceProvider).addToGitignore(repoPath, path));
   }
 
   // ---- Bulk (multi-select) file actions -------------------------------
   // Each calls the corresponding batch GitService method (one git invocation
-  // covering the whole selection) inside one _guardedAction/_run — same
+  // covering the whole selection) inside one runGuarded — same
   // busy-gate and refresh as every single-file action. A resulting vanished
   // path (staged/discarded/deleted/resolved away) is dropped from the
   // selection generically by the statusProvider listener once the refresh
@@ -769,11 +704,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
   }
 
   Future<void> _stageMany(List<String> paths) async {
-    await _run(() => ref.read(gitServiceProvider).stageMany(repoPath, paths));
+    await runGuarded(() => ref.read(gitServiceProvider).stageMany(repoPath, paths));
   }
 
   Future<void> _unstageMany(List<String> paths) async {
-    await _run(() => ref.read(gitServiceProvider).unstageMany(repoPath, paths));
+    await runGuarded(() => ref.read(gitServiceProvider).unstageMany(repoPath, paths));
   }
 
   Future<void> _discardMany(List<String> paths) async {
@@ -787,7 +722,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       destructive: true,
     );
     if (!ok) return;
-    await _run(() => ref.read(gitServiceProvider).discardMany(repoPath, paths));
+    await runGuarded(() => ref.read(gitServiceProvider).discardMany(repoPath, paths));
   }
 
   Future<void> _discardUntrackedMany(List<String> paths) async {
@@ -801,7 +736,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       destructive: true,
     );
     if (!ok) return;
-    await _run(
+    await runGuarded(
       () => ref.read(gitServiceProvider).removeUntrackedFilesMany(repoPath, paths),
     );
   }
@@ -817,19 +752,19 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
       destructive: true,
     );
     if (!ok) return;
-    await _run(
+    await runGuarded(
       () => ref.read(gitServiceProvider).discardStagedMany(repoPath, paths),
     );
   }
 
   Future<void> _addToGitignoreMany(List<String> paths) async {
-    await _run(
+    await runGuarded(
       () => ref.read(gitServiceProvider).addToGitignoreMany(repoPath, paths),
     );
   }
 
   Future<void> _resolveMany(List<String> paths, {required bool useOurs}) async {
-    if (await _guardedAction(
+    if (await runGuarded(
       () => ref
           .read(gitServiceProvider)
           .resolveConflictMany(repoPath, paths, useOurs: useOurs),
@@ -864,7 +799,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     // clearing it upfront left the conflict panel stale (still showing a
     // conflict the abort never actually resolved) on failure, with no
     // rebuild to reflect that.
-    if (await _guardedAction(
+    if (await runGuarded(
       () => switch (op) {
         PendingOp.merge => git.mergeAbort(repoPath),
         PendingOp.cherryPick => git.cherryPickAbort(repoPath),
@@ -879,7 +814,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
   }
 
   Future<void> _continueRebase() async {
-    final ok = await _runLogged('git rebase --continue', (log) async {
+    final ok = await runLogged('git rebase --continue', (log) async {
       log.logResult(
         'git rebase --continue',
         await ref.read(gitServiceProvider).rebaseContinue(repoPath),
@@ -1048,7 +983,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     final status = statusAsync.value;
     final selected = _selected;
     final keymap = ref.watch(keymapProvider);
-    final shortcuts = widget.isActive && !_busy
+    final shortcuts = widget.isActive && !busy
         ? resolveShortcuts(keymap, {
             'repository.fetch': _fetch,
             'repository.push': () =>
@@ -1481,7 +1416,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     }
     if (!mounted) return;
 
-    await _guardedAction(() {
+    await runGuarded(() {
       switch (action) {
         case HunkAction.stage:
           return git.applyPatch(repoPath, patch, cached: true, reverse: false);
@@ -1497,7 +1432,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
           );
       }
     });
-    // _guardedAction's `finally` now runs _refresh() unconditionally (success
+    // runGuarded's `finally` now runs the refresh unconditionally (success
     // or failure) — mounted-guarded, marking the own-mutation (so the
     // watcher's echo tick is suppressed rather than triggering a redundant
     // refetch) and invalidating status plus the selected file's diff key.
@@ -1543,10 +1478,10 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
     // Null (still loading) is treated as "has a remote" so the label doesn't
     // flash on before the first fetch resolves.
     final hasRemote = refs == null || refs.any((r) => r.isRemote);
-    // Network actions need a remote — disable them (not just the _busy gate)
+    // Network actions need a remote — disable them (not just the busy gate)
     // when none is detected, so they can't be clicked into a guaranteed error.
     // Matches the "No remote detected" label rendered below.
-    final remoteDisabled = _busy || !hasRemote;
+    final remoteDisabled = busy || !hasRemote;
     final label = branch == null
         ? repoPath
         : branch.isDetached
@@ -1634,7 +1569,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView> {
           _toolButton(
             CupertinoIcons.tray_arrow_down,
             'Stash',
-            _busy ? null : _stashPush,
+            busy ? null : _stashPush,
           ),
           const SizedBox(width: 2),
           ToolIconButton(

@@ -3,12 +3,13 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
-import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
 import '../common/branch_switch.dart';
+import '../common/busy_action.dart';
 import '../common/field_styles.dart';
+import '../common/label_chip.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
@@ -36,18 +37,12 @@ class BranchesView extends ConsumerStatefulWidget {
   ConsumerState<BranchesView> createState() => _BranchesViewState();
 }
 
-class _BranchesViewState extends ConsumerState<BranchesView> {
+class _BranchesViewState extends ConsumerState<BranchesView>
+    with BusyActionState {
   final _newBranch = TextEditingController();
   final _newBranchFocus = FocusNode();
   final _newTag = TextEditingController();
   final _newTagFocus = FocusNode();
-
-  // Guards against a double-tap (or a mis-click during a confirm dialog's
-  // dismiss animation) firing two concurrent mutations against the same repo
-  // — the SSH executor serializes the commands themselves, but a second one
-  // would then run against whatever state the first just changed, out from
-  // under the user (e.g. checking out a different branch mid-delete).
-  bool _busy = false;
 
   // Keyboard navigation of the local-branch list: a click selects a branch
   // (highlight) and focuses the list; ↑/↓ then walk the selection, Enter checks
@@ -113,7 +108,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
   }
 
   KeyEventResult _onBranchKey(FocusNode node, KeyEvent event) {
-    if (event is KeyUpEvent || !widget.isActive || _busy) {
+    if (event is KeyUpEvent || !widget.isActive || busy) {
       return KeyEventResult.ignored;
     }
     switch (event.logicalKey) {
@@ -141,56 +136,8 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
     refreshAfterMutation(ref, repoPath);
   }
 
-  Future<void> _run(Future<void> Function() op) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      await runAction(context, op);
-    } finally {
-      // Refresh even when `op` failed: e.g. a rejected delete/create can
-      // still be a GitException that signals a conflict-like state (and, for
-      // any op, refsProvider/statusProvider are the source of truth this
-      // view renders from — leaving them stale on failure is exactly the bug
-      // this `finally` closes). Guarded together with the busy reset since
-      // both touch `ref`/state that's unsafe after disposal.
-      if (mounted) {
-        _refresh();
-        setState(() => _busy = false);
-      }
-    }
-  }
-
-  /// Like [_run], but logs the command's output to the output view — for
-  /// operations (merge) where seeing the actual git output (e.g. a conflict)
-  /// matters.
-  Future<void> _runLogged(
-    String title,
-    Future<void> Function(OutputLogNotifier log) body,
-  ) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    final log = ref.read(outputLogProvider.notifier);
-    try {
-      await body(log);
-    } on GitException catch (e) {
-      log.logResult(title, e.result);
-      if (mounted) await showErrorDialog(context, e.toString());
-    } catch (e) {
-      log.logError(title, e.toString());
-      if (mounted) await showErrorDialog(context, e.toString());
-    } finally {
-      // Refresh regardless of outcome: a merge conflict is signaled by
-      // GitService throwing a GitException (not a special return value), and
-      // refsProvider/statusProvider — and thus pendingOpProvider — need to
-      // pick up the resulting merge-in-progress state so the Repository
-      // panel's conflict banner appears right away instead of after some
-      // unrelated later refresh.
-      if (mounted) {
-        _refresh();
-        setState(() => _busy = false);
-      }
-    }
-  }
+  @override
+  void refreshAfterAction() => _refresh();
 
   /// Where [branch] is checked out, from the refs we already have loaded — no
   /// extra git call, since `%(worktreepath)` rides the existing snapshot.
@@ -222,28 +169,20 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
     if (mounted) _refresh();
   }
 
-  /// Checks out [ref] behind the dirty-tree guardrail (stash / carry / cancel),
-  /// refreshing regardless of outcome (see the `finally` block).
+  /// Checks out [ref] behind the dirty-tree guardrail (stash / carry /
+  /// cancel). [runGuarded]'s always-refresh matters here: guardedBranchSwitch's
+  /// stash step can succeed while the checkout itself then fails, leaving
+  /// partial state (stash created, branch unchanged) that refsProvider/
+  /// statusProvider need to reflect rather than staying stale.
   Future<void> _checkout(GitService git, String ref) async {
-    if (_busy) return;
-    setState(() => _busy = true);
-    try {
-      await guardedBranchSwitch(
+    await runGuarded(
+      () => guardedBranchSwitch(
         context,
         this.ref,
         repoPath,
         () => git.checkout(repoPath, ref),
-      );
-    } finally {
-      // Refresh even on a failed/cancelled switch: guardedBranchSwitch's
-      // stash step can succeed while the checkout itself then fails, leaving
-      // partial state (stash created, branch unchanged) that refsProvider/
-      // statusProvider need to reflect rather than staying stale.
-      if (mounted) {
-        _refresh();
-        setState(() => _busy = false);
-      }
-    }
+      ),
+    );
   }
 
   @override
@@ -334,11 +273,11 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
             valueListenable: _newBranch,
             builder: (context, value, _) => PushButton(
               controlSize: ControlSize.large,
-              onPressed: value.text.trim().isEmpty || _busy
+              onPressed: value.text.trim().isEmpty || busy
                   ? null
                   : () async {
                       final name = value.text.trim();
-                      await _run(() => git.createBranch(repoPath, name));
+                      await runGuarded(() => git.createBranch(repoPath, name));
                       // Guard: _run spans an SSH/local round-trip, during which
                       // a tab switch or disconnect can dispose this State (and
                       // _newBranch); clearing a disposed controller throws.
@@ -401,35 +340,13 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
             if (elsewhere != null) ...[
               const SizedBox(width: 6),
               MacosTooltip(
-                message: 'Checked out in the worktree at $elsewhere',
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 1,
-                  ),
-                  decoration: BoxDecoration(
-                    color: MacosColors.systemPurpleColor.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const MacosIcon(
-                        CupertinoIcons.square_split_2x1,
-                        size: 10,
-                        color: MacosColors.systemPurpleColor,
-                      ),
-                      const SizedBox(width: 3),
-                      Text(
-                        elsewhere.split('/').last,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: MacosColors.systemPurpleColor,
-                        ),
-                      ),
-                    ],
-                  ),
+                // Shared wording + chip: History's ref chips render the same
+                // fact and the two had drifted apart in style and sentence.
+                message: checkedOutElsewhereMessage(elsewhere),
+                child: LabelChip(
+                  elsewhere.split('/').last,
+                  color: MacosColors.systemPurpleColor,
+                  icon: CupertinoIcons.square_split_2x1,
                 ),
               ),
             ],
@@ -485,7 +402,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
               icon: CupertinoIcons.pencil,
               tooltip: 'Rename branch',
               size: 14,
-              onPressed: _busy
+              onPressed: busy
                   ? null
                   : () => _renameBranch(git, branch.shortName),
             ),
@@ -499,14 +416,14 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
                   icon: CupertinoIcons.square_arrow_right,
                   tooltip: 'Switch to its worktree',
                   size: 15,
-                  onPressed: _busy ? null : () => _switchToWorktree(elsewhere),
+                  onPressed: busy ? null : () => _switchToWorktree(elsewhere),
                 )
               else ...[
                 ToolIconButton(
                   icon: CupertinoIcons.square_arrow_down,
                   tooltip: 'Checkout branch',
                   size: 15,
-                  onPressed: _busy
+                  onPressed: busy
                       ? null
                       : () => _checkout(git, branch.shortName),
                 ),
@@ -518,7 +435,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
                   icon: CupertinoIcons.square_split_2x1,
                   tooltip: 'Checkout in a new worktree…',
                   size: 15,
-                  onPressed: _busy
+                  onPressed: busy
                       ? null
                       : () => _checkoutInNewWorktree(branch.shortName),
                 ),
@@ -560,7 +477,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
                           '— remove that worktree first',
                 size: 14,
                 color: MacosColors.systemRedColor,
-                onPressed: _busy || elsewhere != null
+                onPressed: busy || elsewhere != null
                     ? null
                     : () => _deleteBranch(git, branch.shortName),
               ),
@@ -578,7 +495,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
   /// terminal, even though `GitService.deleteBranch(force: true)` already
   /// existed and was simply never wired to anything.
   Future<void> _deleteBranch(GitService git, String name) async {
-    if (_busy) return;
+    if (busy) return;
     final ok = await confirmAction(
       context,
       title: 'Delete branch',
@@ -586,73 +503,55 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
       confirmLabel: 'Delete',
     );
     if (!ok || !mounted) return;
-    setState(() => _busy = true);
-    try {
-      await git.deleteBranch(repoPath, name);
-    } on GitException catch (e) {
-      if (!mounted) return;
-      // "cannot delete branch 'x' used by worktree at '/path'". There is no
-      // override for this — `--ignore-other-worktrees` exists on checkout and
-      // switch, but not on branch — so the ONLY way through is to remove the
-      // worktree first. Offer exactly that, instead of dead-ending on git's
-      // message. (Tower shipped a hang here; Fork added this option in 2.63.)
-      if (e.branchHeldByWorktree) {
-        final worktree = _worktreePathFor(name);
-        final removeToo = await confirmAction(
-          context,
-          title: 'Branch is checked out in a worktree',
-          message: worktree == null
-              ? 'This branch is checked out in another worktree. Remove that '
-                    'worktree before deleting the branch.'
-              : 'This branch is checked out in the worktree at\n$worktree\n\n'
-                    'Git cannot delete a branch that is checked out. Remove the '
-                    'worktree as well?',
-          confirmLabel: 'Remove Worktree and Delete',
-          destructive: true,
-        );
-        if (!removeToo || worktree == null || !mounted) return;
-        await runAction(context, () async {
+    // The escalation dialogs live INSIDE the guarded op (the same shape as
+    // the worktrees panel's remove flow): a declined escalation returns
+    // cleanly, an unclassified error rethrows into runGuarded's dialog, and
+    // either way the always-refresh picks up whatever state the attempt left.
+    await runGuarded(() async {
+      try {
+        await git.deleteBranch(repoPath, name);
+      } on GitException catch (e) {
+        if (!mounted) rethrow;
+        // "cannot delete branch 'x' used by worktree at '/path'". There is no
+        // override for this — `--ignore-other-worktrees` exists on checkout
+        // and switch, but not on branch — so the ONLY way through is to
+        // remove the worktree first. Offer exactly that, instead of
+        // dead-ending on git's message. (Tower shipped a hang here; Fork
+        // added this option in 2.63.)
+        if (e.branchHeldByWorktree) {
+          final worktree = _worktreePathFor(name);
+          final removeToo = await confirmAction(
+            context,
+            title: 'Branch is checked out in a worktree',
+            message: worktree == null
+                ? 'This branch is checked out in another worktree. Remove that '
+                      'worktree before deleting the branch.'
+                : 'This branch is checked out in the worktree at\n$worktree\n\n'
+                      'Git cannot delete a branch that is checked out. Remove '
+                      'the worktree as well?',
+            confirmLabel: 'Remove Worktree and Delete',
+            destructive: true,
+          );
+          if (!removeToo || worktree == null || !mounted) return;
           await git.removeWorktree(repoPath, worktree, force: true);
           await git.deleteBranch(repoPath, name, force: true);
-        });
-        return;
-      }
-      if (!e.branchNotFullyMerged) {
-        await showErrorDialog(context, e.toString());
-        return;
-      }
-      final force = await confirmAction(
-        context,
-        title: 'Branch not fully merged',
-        message:
-            '"$name" has commits not merged into the current branch. '
-            "Force-deleting will permanently lose them unless they're "
-            'reachable from elsewhere (another branch, a tag, or a stash). '
-            'Force delete anyway?',
-        confirmLabel: 'Force Delete',
-      );
-      // Uses runAction directly (not _run) — _busy is already held by this
-      // call, and _run would just no-op seeing it set. Its own refresh is
-      // covered by this method's shared `finally` below.
-      if (force && mounted) {
-        await runAction(
+          return;
+        }
+        if (!e.branchNotFullyMerged) rethrow;
+        final force = await confirmAction(
           context,
-          () => git.deleteBranch(repoPath, name, force: true),
+          title: 'Branch not fully merged',
+          message:
+              '"$name" has commits not merged into the current branch. '
+              "Force-deleting will permanently lose them unless they're "
+              'reachable from elsewhere (another branch, a tag, or a stash). '
+              'Force delete anyway?',
+          confirmLabel: 'Force Delete',
         );
+        if (!force || !mounted) return;
+        await git.deleteBranch(repoPath, name, force: true);
       }
-    } catch (e) {
-      if (mounted) await showErrorDialog(context, e.toString());
-    } finally {
-      // Refresh regardless of outcome — including the "not fully merged"
-      // rejection and a declined/failed force-delete — so refsProvider picks
-      // up whatever state (or lack of change) the attempt actually left,
-      // rather than showing the stale pre-delete branch list until an
-      // unrelated refresh happens later.
-      if (mounted) {
-        _refresh();
-        setState(() => _busy = false);
-      }
-    }
+    });
   }
 
   Future<void> _mergeBranch(
@@ -685,7 +584,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
       if (mode == MergeMode.squash) '--squash',
       branch,
     ].join(' ');
-    await _runLogged(
+    await runLogged(
       label,
       (log) async =>
           log.logResult(label, await git.merge(repoPath, branch, mode: mode)),
@@ -714,11 +613,11 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
             valueListenable: _newTag,
             builder: (context, value, _) => PushButton(
               controlSize: ControlSize.large,
-              onPressed: value.text.trim().isEmpty || _busy
+              onPressed: value.text.trim().isEmpty || busy
                   ? null
                   : () async {
                       final name = value.text.trim();
-                      await _run(() => git.createTag(repoPath, name));
+                      await runGuarded(() => git.createTag(repoPath, name));
                       // See _createBranchBar — guard against a dispose during
                       // the await before touching the controller.
                       if (mounted) _newTag.clear();
@@ -755,16 +654,16 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
             icon: CupertinoIcons.cloud_upload,
             tooltip: 'Push tag to origin',
             size: 15,
-            onPressed: _busy
+            onPressed: busy
                 ? null
-                : () => _run(() => git.pushTag(repoPath, tag.shortName)),
+                : () => runGuarded(() => git.pushTag(repoPath, tag.shortName)),
           ),
           ToolIconButton(
             icon: CupertinoIcons.trash,
             tooltip: 'Delete tag',
             size: 14,
             color: MacosColors.systemRedColor,
-            onPressed: _busy
+            onPressed: busy
                 ? null
                 : () async {
                     final ok = await confirmAction(
@@ -774,7 +673,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
                       confirmLabel: 'Delete',
                     );
                     if (ok) {
-                      await _run(() => git.deleteTag(repoPath, tag.shortName));
+                      await runGuarded(() => git.deleteTag(repoPath, tag.shortName));
                     }
                   },
           ),
@@ -811,7 +710,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
             icon: CupertinoIcons.square_arrow_down,
             tooltip: 'Check out tracking branch',
             size: 15,
-            onPressed: _busy ? null : () => _checkout(git, localName),
+            onPressed: busy ? null : () => _checkout(git, localName),
           ),
           const SizedBox(width: 4),
           ToolIconButton(
@@ -819,7 +718,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
             tooltip: 'Delete branch on the remote',
             size: 14,
             color: MacosColors.systemRedColor,
-            onPressed: _busy
+            onPressed: busy
                 ? null
                 : () => _deleteRemoteBranch(git, branch.shortName),
           ),
@@ -846,7 +745,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
       destructive: true,
     );
     if (!ok || !mounted) return;
-    await _runLogged('git push --delete', (log) async {
+    await runLogged('git push --delete', (log) async {
       log.logResult(
         'git push --delete $remote $branch',
         await git.deleteRemoteBranch(repoPath, remote, branch),
@@ -865,7 +764,7 @@ class _BranchesViewState extends ConsumerState<BranchesView> {
       initial: oldName,
     );
     if (newName == null || newName == oldName || !mounted) return;
-    await _run(() => git.renameBranch(repoPath, oldName, newName));
+    await runGuarded(() => git.renameBranch(repoPath, oldName, newName));
     // Follow the rename in the selection, so ↑/↓/Enter keep working on the
     // row the user was just acting on.
     if (mounted && _selectedBranch == oldName) {

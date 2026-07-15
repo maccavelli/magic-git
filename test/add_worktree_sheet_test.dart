@@ -9,7 +9,7 @@
 // pre-filled path reads as ready-to-go when the app in fact has no permission to
 // write there at all. Create then dies on a raw "permission denied" from git.
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -17,6 +17,16 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/features/worktrees/add_worktree_sheet.dart';
+
+/// Pins the connection to a fixed state (the app default in tests is the SSH
+/// backend), so the sheet's local-only affordances can be tested both ways.
+class _StubConnection extends ConnectionController {
+  _StubConnection(this._state);
+  final ConnectionState _state;
+
+  @override
+  ConnectionState build() => _state;
+}
 
 const _repo = '/Users/x/wt-demo/app';
 
@@ -43,13 +53,22 @@ Future<void> pump(
   WidgetTester tester, {
   String? initialCommitish,
   String? initialBranchName,
+  bool localBackend = false,
 }) async {
   tester.view.physicalSize = const Size(1400, 1400);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
 
   final container = ProviderContainer(
-    overrides: [refsProvider(_repo).overrideWith((ref) async => _refs)],
+    overrides: [
+      refsProvider(_repo).overrideWith((ref) async => _refs),
+      if (localBackend)
+        connectionProvider.overrideWith(
+          () => _StubConnection(
+            const ConnectionState(backend: ConnectionBackend.local),
+          ),
+        ),
+    ],
   );
   addTearDown(container.dispose);
 
@@ -206,4 +225,38 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets(
+    'the Choose… folder picker is hidden on the SSH backend, where it would '
+    'browse the wrong machine',
+    (tester) async {
+      // The picker browses the local filesystem and doubles as the macOS
+      // sandbox grant; on a remote repo the parent is a directory on the
+      // remote host, so offering the local picker wrote a local path into a
+      // remote destination. Plain text entry is the whole flow there.
+      await pump(tester); // default harness state: SSH backend
+      expect(find.text('Choose…'), findsNothing);
+    },
+  );
+
+  testWidgets('the Choose… folder picker is offered on the local backend', (
+    tester,
+  ) async {
+    await pump(tester, localBackend: true);
+    expect(find.text('Choose…'), findsOneWidget);
+  });
+
+  testWidgets(
+    'an initial branch that is already checked out elsewhere does not crash '
+    'the existing-branch popup',
+    (tester) async {
+      // The popup only offers branches no worktree holds, but the initial
+      // value arrives from a caller — a value the popup does not offer used
+      // to trip MacosPopupButton's exactly-one-item assertion.
+      await pump(tester, initialCommitish: 'feature/auth');
+      expect(tester.takeException(), isNull);
+      // The guarded popup falls back to its hint instead.
+      expect(find.text('Choose a branch'), findsOneWidget);
+    },
+  );
 }

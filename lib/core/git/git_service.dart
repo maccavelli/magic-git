@@ -1128,7 +1128,14 @@ class GitService {
   }) async {
     final args = ['git', 'worktree', 'prune', '--verbose'];
     if (dryRun) args.add('--dry-run');
-    final result = await _run(repoPath, args, 'Prune worktrees');
+    final result = await _run(
+      repoPath,
+      args,
+      'Prune worktrees',
+      // The dry-run preview only reads the admin dir — it must not wait
+      // behind (or barrier ahead of) real mutations just to show a list.
+      lane: dryRun ? ExecLane.read : ExecLane.exclusive,
+    );
     // `--verbose` reports one line per entry ("Removing worktrees/x: <reason>")
     // on **stderr**, not stdout — verified against git 2.55, and true for the
     // real run as well as `--dry-run`. Read both so a future git that moves it
@@ -1248,6 +1255,12 @@ class GitService {
       ['sh', '-c', script],
       'Copy ignored files into the worktree',
       timeout: defaultCommitTimeout,
+      // Isolated, like [runInWorktree] and for the same reason: it writes
+      // into a brand-new checkout nothing else touches (the source side only
+      // *reads* ignored files), and someone globbing a big fixture dir would
+      // otherwise hold the exclusive barrier and stall every read in the app.
+      // This call site was missed when the isolated lane was introduced.
+      lane: ExecLane.isolated,
     );
   }
 

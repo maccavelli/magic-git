@@ -10,6 +10,12 @@ import 'worktree_access.dart';
 /// import that forced the copy.)
 const int kWorktreesPageIndex = 6;
 
+/// The one wording for "this branch is held by another worktree" — used by
+/// the Branches panel's badge and History's ref chips, which had drifted into
+/// separate copies of the same sentence.
+String checkedOutElsewhereMessage(String worktreePath) =>
+    'Checked out in the worktree at $worktreePath';
+
 /// THE way to bring a worktree's workspace forward from anywhere in the app:
 /// sandbox grant first (prompts once, then never again — a worktree lives
 /// outside the main repo's grant), then open its tab, then surface the

@@ -16,6 +16,7 @@ Future<String?> promptText(
   required String placeholder,
   String initial = '',
   String? description,
+  String confirmLabel = 'OK',
 }) async {
   final value = await showMacosSheet<String>(
     context: context,
@@ -24,6 +25,7 @@ Future<String?> promptText(
       placeholder: placeholder,
       initial: initial,
       description: description,
+      confirmLabel: confirmLabel,
     ),
   );
   final trimmed = value?.trim();
@@ -39,12 +41,14 @@ class _PromptTextSheet extends StatefulWidget {
   final String placeholder;
   final String initial;
   final String? description;
+  final String confirmLabel;
 
   const _PromptTextSheet({
     required this.title,
     required this.placeholder,
     required this.initial,
     this.description,
+    this.confirmLabel = 'OK',
   });
 
   @override
@@ -108,7 +112,7 @@ class _PromptTextSheetState extends State<_PromptTextSheet> {
                           ? null
                           : _controller.text,
                     ),
-                    child: const Text('OK'),
+                    child: Text(widget.confirmLabel),
                   ),
                 ],
               ),

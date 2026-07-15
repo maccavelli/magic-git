@@ -2485,9 +2485,12 @@ final gitWorktreesProvider = FutureProvider.autoDispose
 /// Where this repo's git data lives — and specifically whether [repoPath] is a
 /// linked worktree, and if so where its main repository is.
 ///
-/// Not in [repoMutationFamilies]: the layout of a checkout is fixed for as long
-/// as it is open. Only `worktree move`/`repair` can change it, and both go
-/// through a full refresh anyway.
+/// Not in [repoMutationFamilies]: the layout of a checkout is fixed for as
+/// long as it is open under this key. `worktree move` retires the old path —
+/// the Worktrees panel closes the tab and reopens it under the NEW path, so a
+/// fresh keyed instance is fetched — and `repair` only applies to prunable
+/// worktrees, which have no open tab to go stale. (It IS in
+/// [repoScopedFetchFamilies], so ⌘R and connection resets refetch it.)
 final repoLayoutProvider = FutureProvider.autoDispose
     .family<RepoLayout, String>((ref, repoPath) {
       return ref.watch(gitServiceProvider).repoLayout(repoPath);

@@ -550,5 +550,41 @@ void main() {
       expect(exec.lastLane, ExecLane.isolated);
       expect(exec.lastTimeout, GitService.defaultHookTimeout);
     });
+
+    test('copyIgnoredFiles runs isolated too, not on the barrier', () async {
+      // Same rationale as the hook: it writes into a brand-new checkout
+      // nothing else touches (the source side only READS ignored files), and
+      // a glob matching something heavy used to hold the exclusive barrier
+      // and stall every read in the app. This call site was missed when the
+      // isolated lane was introduced.
+      final exec = _LaneCapturingExecutor();
+      final capturing = GitService(exec);
+
+      await capturing.copyIgnoredFiles(
+        from: '/repo',
+        to: '/wt',
+        globs: ['.env*'],
+      );
+
+      expect(exec.lastLane, ExecLane.isolated);
+    });
+  });
+
+  group('pruneWorktrees scheduling', () {
+    test('the dry-run preview reads; the real prune takes the barrier', () async {
+      final exec = _LaneCapturingExecutor();
+      final capturing = GitService(exec);
+
+      await capturing.pruneWorktrees('/repo', dryRun: true);
+      expect(
+        exec.lastLane,
+        ExecLane.read,
+        reason: 'a read-only preview must not wait behind (or barrier ahead '
+            'of) real mutations just to show a list',
+      );
+
+      await capturing.pruneWorktrees('/repo');
+      expect(exec.lastLane, ExecLane.exclusive);
+    });
   });
 }

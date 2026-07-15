@@ -283,7 +283,9 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     final git = ref.read(gitServiceProvider);
     final repoPath = widget.repoPath;
 
-    final ok = await runAction(context, () async {
+    // Phase 1: create the worktree. Only a failure HERE means nothing was
+    // created and the sheet should stay open for another attempt.
+    final created = await runAction(context, () async {
       await git.addWorktree(
         repoPath,
         path: path,
@@ -295,16 +297,30 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
         },
         detach: _basis == _Basis.detached,
       );
+    });
+    if (!mounted) return;
+    if (!created) {
+      setState(() => _submitting = false);
+      return;
+    }
 
-      // Only tracked files were checked out. Bring across the ignored ones the
-      // project actually needs to run — without this the new worktree is a
-      // checkout you still have to hand-configure before it will start.
-      if (_copyIgnored && _copyGlobs.text.trim().isNotEmpty) {
-        // Into the Output view like the post-create command below: the result
-        // names every file copied (and any that failed), which is the only
-        // place you can see that a glob quietly matched nothing.
-        final label = 'Copy ignored files (${_copyGlobs.text.trim()})';
-        final log = ref.read(outputLogProvider.notifier);
+    // Phase 2: the convenience steps. The worktree EXISTS from here on, so a
+    // failed copy or install must NOT put the sheet back in its pre-create
+    // state — resubmitting would just fail with "already exists". Each step
+    // surfaces its own error dialog (with the full output in the Output
+    // view), and the flow still proceeds to open the new worktree so the
+    // user lands where the problem is fixable.
+
+    // Only tracked files were checked out. Bring across the ignored ones the
+    // project actually needs to run — without this the new worktree is a
+    // checkout you still have to hand-configure before it will start.
+    if (_copyIgnored && _copyGlobs.text.trim().isNotEmpty) {
+      // Into the Output view like the post-create command below: the result
+      // names every file copied (and any that failed), which is the only
+      // place you can see that a glob quietly matched nothing.
+      final label = 'Copy ignored files (${_copyGlobs.text.trim()})';
+      final log = ref.read(outputLogProvider.notifier);
+      await runAction(context, () async {
         try {
           log.logResult(
             label,
@@ -322,26 +338,25 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
           log.logResult(label, e.result);
           rethrow;
         }
-      }
+      });
+    }
 
-      if (_runPostCreate && _postCreate.text.trim().isNotEmpty) {
-        final command = _postCreate.text.trim();
-        // Into the Output view, like every other command whose output matters:
-        // a `pnpm install` that fails is something you need to be able to READ,
-        // not just be told about — and on success you still want the log.
-        final log = ref.read(outputLogProvider.notifier);
+    if (mounted && _runPostCreate && _postCreate.text.trim().isNotEmpty) {
+      final command = _postCreate.text.trim();
+      // Into the Output view, like every other command whose output matters:
+      // a `pnpm install` that fails is something you need to be able to READ,
+      // not just be told about — and on success you still want the log.
+      final log = ref.read(outputLogProvider.notifier);
+      await runAction(context, () async {
         try {
           log.logResult(command, await git.runInWorktree(path, command));
         } on GitException catch (e) {
           log.logResult(command, e.result);
           rethrow;
         }
-      }
-    });
-    if (!ok || !mounted) {
-      setState(() => _submitting = false);
-      return;
+      });
     }
+    if (!mounted) return;
 
     // Remember the grant, so opening this worktree later never prompts. The
     // parent-folder grant covers it; a bookmark on the worktree itself is what
@@ -493,7 +508,13 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
         if (_basis == _Basis.existingBranch) ...[
           const SizedBox(height: 8),
           MacosPopupButton<String>(
-            value: _existingBranch,
+            // Guarded against the offered list: the value can arrive from a
+            // caller ("Checkout in New Worktree…") or survive a refs refresh
+            // while the sheet is open, and a value the popup no longer
+            // offers trips its exactly-one-item assertion.
+            value: available.any((b) => b.shortName == _existingBranch)
+                ? _existingBranch
+                : null,
             hint: const Text('Choose a branch'),
             items: [
               for (final b in available)
@@ -546,13 +567,20 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
                 onChanged: (_) => setState(() {}),
               ),
             ),
-            const SizedBox(width: 6),
-            PushButton(
-              controlSize: ControlSize.regular,
-              secondary: true,
-              onPressed: _grantParent,
-              child: const Text('Choose…'),
-            ),
+            // The picker browses the LOCAL filesystem and doubles as the
+            // sandbox grant — both meaningless for a repo on a remote host,
+            // where the path names a directory on the remote and there is
+            // no sandbox. Plain text entry is the whole flow there (same as
+            // the Move/Repair prompts).
+            if (isLocal) ...[
+              const SizedBox(width: 6),
+              PushButton(
+                controlSize: ControlSize.regular,
+                secondary: true,
+                onPressed: _grantParent,
+                child: const Text('Choose…'),
+              ),
+            ],
           ],
         ),
         if (isLocal)
