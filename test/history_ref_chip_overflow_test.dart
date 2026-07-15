@@ -5,13 +5,8 @@
 // between adjacent rows, and the minimap maps commits to y-positions assuming
 // uniform rows. So chips cannot wrap onto a second line; they must fit on one.
 //
-// The bug: the chips were intrinsically-sized children of a Row, sitting beside
-// an `Expanded` subject. Once their combined natural width exceeded the pane,
-// the subject collapsed to zero and the surplus had nowhere to go — the chips
-// painted straight out past the margin.
-//
-// Worktrees are what surfaced it: every branch checked out in another worktree
-// now carries a chip of its own, so a commit routinely has several.
+// Chips now sit after the subject with real branch/tag names, tooltips, and
+// filtered remotes (no redundant origin/* when the local branch is present).
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -40,8 +35,7 @@ const _commit = GitCommit(
   subject: 'the subject must stay readable',
 );
 
-/// The pathological case: one commit that is the tip of many refs, several with
-/// long names. Exactly what a repo full of worktrees produces.
+/// Pathological tip: many refs with long names (worktrees + remotes + tags).
 List<GitRef> _manyRefs() => [
   const GitRef(
     name: 'refs/heads/main',
@@ -133,6 +127,123 @@ Future<void> pump(WidgetTester tester, List<GitRef> refs) async {
 }
 
 void main() {
+  group('filterHistoryRefDecorations', () {
+    test('hides origin/* when the matching local branch is present', () {
+      final filtered = filterHistoryRefDecorations([
+        const GitRef(
+          name: 'refs/heads/main',
+          oid: _hash,
+          isHead: true,
+          subject: 's',
+        ),
+        const GitRef(
+          name: 'refs/remotes/origin/main',
+          oid: _hash,
+          isHead: false,
+          subject: 's',
+        ),
+        const GitRef(
+          name: 'refs/remotes/origin/other',
+          oid: _hash,
+          isHead: false,
+          subject: 's',
+        ),
+      ]);
+      expect(filtered.map((r) => r.shortName), ['main', 'origin/other']);
+    });
+
+    test('drops remote */HEAD symrefs', () {
+      final filtered = filterHistoryRefDecorations([
+        const GitRef(
+          name: 'refs/remotes/origin/HEAD',
+          oid: _hash,
+          isHead: false,
+          subject: 's',
+        ),
+        const GitRef(
+          name: 'refs/tags/v1',
+          oid: _hash,
+          isHead: false,
+          subject: 's',
+        ),
+      ]);
+      expect(filtered.map((r) => r.shortName), ['v1']);
+    });
+
+    test('orders HEAD, local, tags, then remotes', () {
+      final filtered = filterHistoryRefDecorations([
+        const GitRef(
+          name: 'refs/remotes/origin/only-remote',
+          oid: _hash,
+          isHead: false,
+          subject: 's',
+        ),
+        const GitRef(
+          name: 'refs/tags/v2',
+          oid: _hash,
+          isHead: false,
+          subject: 's',
+        ),
+        const GitRef(
+          name: 'refs/heads/main',
+          oid: _hash,
+          isHead: true,
+          subject: 's',
+        ),
+        const GitRef(
+          name: 'refs/heads/dev',
+          oid: _hash,
+          isHead: false,
+          subject: 's',
+        ),
+      ]);
+      expect(filtered.map((r) => r.shortName), [
+        'main',
+        'dev',
+        'v2',
+        'origin/only-remote',
+      ]);
+    });
+  });
+
+  group('refDecorationTooltip / label', () {
+    test('HEAD branch tooltip names the checkout', () {
+      const ref = GitRef(
+        name: 'refs/heads/main',
+        oid: _hash,
+        isHead: true,
+        subject: 's',
+      );
+      expect(refDecorationLabel(ref), 'main');
+      expect(refDecorationTooltip(ref), 'HEAD → main (checked out here)');
+    });
+
+    test('remote and tag tooltips are explicit', () {
+      expect(
+        refDecorationTooltip(
+          const GitRef(
+            name: 'refs/remotes/origin/feature',
+            oid: _hash,
+            isHead: false,
+            subject: 's',
+          ),
+        ),
+        'Remote branch origin/feature',
+      );
+      expect(
+        refDecorationTooltip(
+          const GitRef(
+            name: 'refs/tags/v1.2.3',
+            oid: _hash,
+            isHead: false,
+            subject: 's',
+          ),
+        ),
+        'Tag v1.2.3',
+      );
+    });
+  });
+
   testWidgets('many long ref chips do not overflow the commit pane', (
     tester,
   ) async {
@@ -146,18 +257,19 @@ void main() {
     expect(find.text('the subject must stay readable'), findsOneWidget);
   });
 
-  testWidgets('past three refs, the rest collapse into a +N chip', (
+  testWidgets('past maxVisible refs, the rest collapse into a +N chip', (
     tester,
   ) async {
     await pump(tester, _manyRefs());
 
-    // Five refs -> three chips + "+2". Without the cap, a commit that is the tip
-    // of a dozen refs would leave no room for the subject at all.
+    // After filtering redundant remotes: main, feature/..., hotfix/..., tag
+    // (origin/feature/... drops because local feature/... is present).
+    // Four visible refs → two chips + "+2".
     expect(find.text('+2'), findsOneWidget);
     expect(find.byType(RefChip), findsNWidgets(RefChipStrip.maxVisible));
   });
 
-  testWidgets('a commit with a single short ref still shows it plainly', (
+  testWidgets('a commit with a single short ref shows the branch name', (
     tester,
   ) async {
     await pump(tester, [
@@ -171,7 +283,32 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.byType(RefChip), findsOneWidget);
+    // Name is painted on the chip — not icon-only.
+    expect(find.text('main'), findsOneWidget);
     expect(find.textContaining('+'), findsNothing);
+  });
+
+  testWidgets('redundant origin/main does not paint a gray chip', (
+    tester,
+  ) async {
+    await pump(tester, [
+      const GitRef(
+        name: 'refs/heads/main',
+        oid: _hash,
+        isHead: true,
+        subject: 's',
+      ),
+      const GitRef(
+        name: 'refs/remotes/origin/main',
+        oid: _hash,
+        isHead: false,
+        subject: 's',
+      ),
+    ]);
+
+    expect(find.byType(RefChip), findsOneWidget);
+    expect(find.text('main'), findsOneWidget);
+    expect(find.text('origin/main'), findsNothing);
   });
 
   testWidgets('a commit with no refs gives the subject the whole row', (
