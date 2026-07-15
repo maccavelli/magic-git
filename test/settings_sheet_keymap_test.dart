@@ -1,5 +1,5 @@
 // The Settings sheet's "Keyboard Mappings" section: it summarizes the
-// current customization count and its "Customize…" button opens the
+// current customization count and its ToolIconButton opens the
 // KeyboardMappingsSheet.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,8 +10,15 @@ import 'package:remote_magic_git/features/settings/keyboard_mappings_sheet.dart'
 import 'package:remote_magic_git/features/settings/settings_sheet.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+/// ToolIconButton wraps MacosTooltip (not Flutter's Tooltip).
+Finder _byMacosTooltip(String message) => find.byWidgetPredicate(
+  (w) => w is MacosTooltip && w.message == message,
+);
+
 void main() {
-  testWidgets('Customize… opens the Keyboard Mappings sheet', (tester) async {
+  testWidgets('Customize icon opens the Keyboard Mappings sheet', (
+    tester,
+  ) async {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(
       const ProviderScope(
@@ -27,10 +34,11 @@ void main() {
     expect(find.textContaining('shortcuts'), findsWidgets);
 
     // The sheet's content exceeds the default test viewport height and
-    // scrolls — bring the button into view before tapping it.
-    await tester.ensureVisible(find.text('Customize…'));
+    // scrolls — bring the compact icon into view before tapping it.
+    final customize = _byMacosTooltip('Customize keyboard mappings');
+    await tester.ensureVisible(customize);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Customize…'));
+    await tester.tap(customize);
     await tester.pumpAndSettle();
 
     expect(find.byType(KeyboardMappingsSheet), findsOneWidget);

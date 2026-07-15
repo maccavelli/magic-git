@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/environment_probe.dart';
+import 'package:remote_magic_git/features/common/tool_icon_button.dart';
 import 'package:remote_magic_git/features/settings/tool_health_banner.dart';
 
 class _FixedEnv extends BinaryEnvironmentNotifier {
@@ -30,6 +31,11 @@ class _FixedConn extends ConnectionController {
         )
       : const ConnectionState();
 }
+
+/// ToolIconButton wraps MacosTooltip (not Flutter's Tooltip).
+Finder _byMacosTooltip(String message) => find.byWidgetPredicate(
+  (w) => w is MacosTooltip && w.message == message,
+);
 
 Future<void> _pump(
   WidgetTester tester, {
@@ -65,7 +71,8 @@ void main() {
   ) async {
     await _pump(tester, env: _glabMissing, connected: true);
     expect(find.textContaining('glab is not installed'), findsOneWidget);
-    expect(find.text('Check environment…'), findsOneWidget);
+    expect(_byMacosTooltip('Check environment'), findsOneWidget);
+    expect(find.byType(ToolIconButton), findsNWidgets(2)); // doctor + dismiss
   });
 
   testWidgets('shows nothing when disconnected, even if env looks unhealthy', (
@@ -90,15 +97,14 @@ void main() {
       versions: {'git': '2.39.3'},
     );
     await _pump(tester, env: healthy, connected: true);
-    expect(find.byType(PushButton), findsNothing); // no banner content at all
+    expect(find.byType(ToolIconButton), findsNothing);
   });
 
   testWidgets('dismiss hides the banner', (tester) async {
     await _pump(tester, env: _glabMissing, connected: true);
     expect(find.textContaining('glab is not installed'), findsOneWidget);
 
-    // The dismiss (x) is the icon button; tap it.
-    await tester.tap(find.byType(MacosIconButton));
+    await tester.tap(_byMacosTooltip('Dismiss'));
     await tester.pumpAndSettle();
     expect(find.textContaining('glab is not installed'), findsNothing);
   });

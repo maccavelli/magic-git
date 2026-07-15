@@ -72,14 +72,12 @@ class _ToolHealthBannerState extends ConsumerState<ToolHealthBanner> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          const SizedBox(width: 8),
-          PushButton(
-            controlSize: ControlSize.small,
-            secondary: true,
-            onPressed: _openDoctor,
-            child: const Text('Check environment…'),
-          ),
           const SizedBox(width: 4),
+          ToolIconButton(
+            icon: CupertinoIcons.wrench,
+            tooltip: 'Check environment',
+            onPressed: _openDoctor,
+          ),
           ToolIconButton(
             icon: CupertinoIcons.xmark,
             tooltip: 'Dismiss',

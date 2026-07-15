@@ -30,7 +30,7 @@ final _modifierKeys = {
 /// Lets the user rebind every shortcut in [kKeymapActions]: click a binding
 /// chip to replace it, click "+ Add" to bind a second trigger to the same
 /// action, or reset one action (or all of them) back to its default. Opened
-/// from Settings via the "Customize…" button.
+/// from Settings via the customize (slider) [ToolIconButton].
 class KeyboardMappingsSheet extends ConsumerStatefulWidget {
   const KeyboardMappingsSheet({super.key});
 

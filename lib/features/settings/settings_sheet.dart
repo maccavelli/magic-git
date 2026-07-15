@@ -119,11 +119,26 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
 
   static String _fetchLabel(int m) => m == 0 ? 'Off' : 'Every $m min';
 
+  /// Settings is slightly wider than the app-wide [kSheetWidth] so section
+  /// blurbs and rows breathe; text fields keep the same fixed widths as before
+  /// (see [_fieldWidth], [_textFieldWidth], [_binaryFieldWidth]).
+  static const double _sheetWidth = kSheetWidth + 40;
+
+  /// Horizontal content width at the previous [kSheetWidth] with 22px padding
+  /// each side — used so Expanded fields do not grow when the sheet does.
+  static const double _legacyContentWidth = kSheetWidth - 44; // 376
+
+  static const double _fieldWidth = 96; // timeouts
+  static const double _textFieldWidth =
+      _legacyContentWidth - 60 - 12; // name/email: 304
+  static const double _binaryFieldWidth =
+      _legacyContentWidth - 84 - 8; // path field without status: 284
+
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
     return SizedSheet(
-      width: kSheetWidth,
+      width: _sheetWidth,
       child: SizedBox(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(22),
@@ -280,15 +295,14 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
             style: MacosTheme.of(context).typography.body,
           ),
         ),
-        PushButton(
-          controlSize: ControlSize.small,
-          secondary: true,
+        ToolIconButton(
+          icon: CupertinoIcons.slider_horizontal_3,
+          tooltip: 'Customize keyboard mappings',
           onPressed: () => showMacosSheet<void>(
             context: context,
             builder: (_) =>
                 const EscapeDismissible(child: KeyboardMappingsSheet()),
           ),
-          child: const Text('Customize…'),
         ),
       ],
     );
@@ -407,15 +421,14 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
         Expanded(
           child: Text(text, style: typography.body.copyWith(color: color)),
         ),
-        PushButton(
-          controlSize: ControlSize.small,
-          secondary: true,
+        ToolIconButton(
+          icon: CupertinoIcons.wrench,
+          tooltip: 'Check environment',
           onPressed: () => showMacosSheet<void>(
             context: context,
             builder: (_) =>
                 const EscapeDismissible(child: EnvironmentHealthSheet()),
           ),
-          child: const Text('Check environment…'),
         ),
       ],
     );
@@ -462,7 +475,11 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
         children: [
           SizedBox(width: 84, child: Text(bin, style: typography.body)),
           const SizedBox(width: 8),
-          Expanded(
+          // Fixed width so widening the sheet does not stretch path fields.
+          SizedBox(
+            width: statusText.isNotEmpty
+                ? _binaryFieldWidth - 8 - 64 // room for status caption
+                : _binaryFieldWidth,
             child: MacosTextField(
               controller: _bin[bin],
               placeholder: resolved != null && resolved.isNotEmpty
@@ -527,7 +544,7 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
         Expanded(child: Text(label, style: typography.body)),
         const SizedBox(width: 12),
         SizedBox(
-          width: 96,
+          width: _fieldWidth,
           child: MacosTextField(
             controller: controller,
             textAlign: TextAlign.end,
@@ -547,7 +564,9 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
       children: [
         SizedBox(width: 60, child: Text(label, style: typography.body)),
         const SizedBox(width: 12),
-        Expanded(
+        // Fixed width (not Expanded) so sheet widening leaves fields unchanged.
+        SizedBox(
+          width: _textFieldWidth,
           child: MacosTextField(
             controller: controller,
             placeholder: hint,
