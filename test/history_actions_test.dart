@@ -524,6 +524,31 @@ void main() {
     matching: find.byType(CustomPaint),
   );
 
+  test('minimapVolumeColor ramps cool slate → indigo → blue → cyan', () {
+    final low = minimapVolumeColor(0);
+    final midLow = minimapVolumeColor(0.3);
+    final mid = minimapVolumeColor(0.6);
+    final high = minimapVolumeColor(1);
+    final below = minimapVolumeColor(-1);
+    final above = minimapVolumeColor(2);
+
+    // Clamp at the unit interval.
+    expect(below, low);
+    expect(above, high);
+
+    // Ends match the declared stops.
+    expect(low, kMinimapVolumeStops.first.$2);
+    expect(high, kMinimapVolumeStops.last.$2);
+    expect(midLow, kMinimapVolumeStops[1].$2);
+    expect(mid, kMinimapVolumeStops[2].$2);
+
+    // Peak is brighter (higher alpha) than quiet volume.
+    expect(high.a, greaterThan(low.a));
+    // Quiet and peak are distinct — not the old monochrome white wash.
+    expect(low, isNot(high));
+    expect(low, isNot(mid));
+  });
+
   testWidgets('the minimap stays hidden while the list fits the viewport', (
     tester,
   ) async {

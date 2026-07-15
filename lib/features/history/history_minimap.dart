@@ -1,8 +1,49 @@
+import 'dart:math' as math;
+
 import 'package:flutter/widgets.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/git/commit_graph.dart';
 import '../../core/git/git_service.dart';
+
+/// Cool indigo → blue → cyan ramp for day-volume on the dark canvas.
+///
+/// Avoids green (HEAD) and orange (tags) so heat stays a background signal
+/// under system-colored ref ticks. Alphas are baked into the stops so markers
+/// and the viewport band remain legible on top.
+const List<(double, Color)> kMinimapVolumeStops = [
+  (0.0, Color(0x733A3A4A)), // quiet slate
+  (0.3, Color(0x8C5E5CE6)), // system indigo
+  (0.6, Color(0xB30A84FF)), // system blue
+  (1.0, Color(0xE664D2FF)), // system teal / cyan peak
+];
+
+/// Maps day-busyness `t` in 0..1 to a volume heat color. Values outside the
+/// unit interval are clamped. Public so unit tests can pin the ramp without
+/// pumping the full History panel.
+Color minimapVolumeColor(double t) {
+  final x = t.clamp(0.0, 1.0);
+  const stops = kMinimapVolumeStops;
+  if (x <= stops.first.$1) return stops.first.$2;
+  if (x >= stops.last.$1) return stops.last.$2;
+  for (var i = 1; i < stops.length; i++) {
+    final (t0, c0) = stops[i - 1];
+    final (t1, c1) = stops[i];
+    if (x <= t1) {
+      final local = (x - t0) / (t1 - t0);
+      return Color.lerp(c0, c1, local)!;
+    }
+  }
+  return stops.last.$2;
+}
+
+/// Quantize density into discrete heat levels so adjacent equal-volume rows
+/// can be merged into one rect (keeps long histories cheap to paint).
+const int _volumeBuckets = 12;
+
+/// Minimum bar width (logical px) when density > 0 so quiet days still show a
+/// color fleck on the 18px track.
+const double _minBarWidth = 2.5;
 
 /// An annotated scroll track beside the commit list: an activity silhouette
 /// (how busy each commit's day was), per-commit markers for HEAD / branches /
@@ -117,34 +158,74 @@ class _MinimapPainter extends CustomPainter {
     final rows = graph.rows;
     if (rows.isEmpty || size.height <= 0) return;
 
-    // Track background.
+    // Track background — soft lift off the terminal canvas.
     canvas.drawRect(
       Offset.zero & size,
-      Paint()..color = const Color(0x10FFFFFF),
+      Paint()..color = const Color(0x12FFFFFF),
+    );
+
+    // Quiet spine: a 1px indigo rail so empty stretches still read as a
+    // scroll track rather than a void beside the list.
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, 1, size.height),
+      Paint()..color = const Color(0x405E5CE6),
     );
 
     double yFor(int index) => (index + 0.5) / rows.length * size.height;
 
-    // Activity silhouette: each row's bar runs as far across the track as its
-    // day was busy, relative to the busiest day in the loaded history. Built
-    // as ONE path and filled once — thousands of separately-drawn translucent
-    // rects would compound their alpha wherever sub-pixel rows overlap, and
-    // read as arbitrary banding rather than density.
+    // Activity heat: width encodes relative day-busyness; color follows the
+    // indigo→blue→cyan ramp. Adjacent rows that quantize to the same bucket
+    // and bar width are merged into one rect so long histories stay cheap
+    // (unlike translucent whites, solid-ish heat colors do not compound when
+    // rows share edges — merging is purely a draw-call optimization).
     if (density.length == rows.length) {
       final rowHeight = size.height / rows.length;
-      final silhouette = Path();
-      var any = false;
+      final paint = Paint();
+      // Sentinel-free run state: start < 0 means no open run.
+      var runStart = -1;
+      var runBucket = -1;
+      var runWidth = 0.0;
+
+      void flush(int endExclusive) {
+        if (runStart < 0) return;
+        final t = (runBucket + 0.5) / _volumeBuckets;
+        paint.color = minimapVolumeColor(t);
+        canvas.drawRect(
+          Rect.fromLTWH(
+            0,
+            runStart * rowHeight,
+            runWidth,
+            (endExclusive - runStart) * rowHeight,
+          ),
+          paint,
+        );
+        runStart = -1;
+      }
+
       for (var i = 0; i < rows.length; i++) {
         final d = density[i];
-        if (d <= 0) continue;
-        any = true;
-        silhouette.addRect(
-          Rect.fromLTWH(0, i * rowHeight, size.width * d, rowHeight),
+        if (d <= 0) {
+          flush(i);
+          continue;
+        }
+        final bucket = math.min(
+          _volumeBuckets - 1,
+          (d.clamp(0.0, 1.0) * _volumeBuckets).floor(),
         );
+        final barW = math.max(_minBarWidth, size.width * d);
+        // Snap width slightly so near-equal days share a run more often.
+        final snappedW = (barW * 2).roundToDouble() / 2;
+        if (runStart >= 0 &&
+            runBucket == bucket &&
+            (runWidth - snappedW).abs() < 0.01) {
+          continue;
+        }
+        flush(i);
+        runStart = i;
+        runBucket = bucket;
+        runWidth = snappedW;
       }
-      if (any) {
-        canvas.drawPath(silhouette, Paint()..color = const Color(0x18FFFFFF));
-      }
+      flush(rows.length);
     }
 
     // Ref markers (left-inset ticks) and selection markers (right-inset), so
@@ -156,7 +237,10 @@ class _MinimapPainter extends CustomPainter {
       final y = yFor(i);
       if (color != null) {
         tick.color = color;
-        canvas.drawRect(Rect.fromLTRB(1.5, y - 1, size.width * 0.6, y + 1), tick);
+        canvas.drawRect(
+          Rect.fromLTRB(1.5, y - 1, size.width * 0.6, y + 1),
+          tick,
+        );
       }
       if (selected.contains(hash)) {
         tick.color = const Color(0xCCFFFFFF);
@@ -169,7 +253,8 @@ class _MinimapPainter extends CustomPainter {
 
     // Viewport band — filled with a visible border, since a fill alone
     // vanishes against markers (the recurring GitLens theme-contrast
-    // complaint).
+    // complaint). Stroke is a touch stronger so the band still reads over
+    // cyan peak heat.
     if (controller.hasClients && controller.position.hasContentDimensions) {
       final position = controller.position;
       final total = position.maxScrollExtent + position.viewportDimension;
@@ -180,13 +265,13 @@ class _MinimapPainter extends CustomPainter {
           Rect.fromLTWH(0.5, top, size.width - 1, height),
           const Radius.circular(3),
         );
-        canvas.drawRRect(band, Paint()..color = const Color(0x22FFFFFF));
+        canvas.drawRRect(band, Paint()..color = const Color(0x28FFFFFF));
         canvas.drawRRect(
           band,
           Paint()
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1
-            ..color = const Color(0x66FFFFFF),
+            ..color = const Color(0x88FFFFFF),
         );
       }
     }
