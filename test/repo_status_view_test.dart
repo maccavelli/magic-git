@@ -755,6 +755,52 @@ void main() {
     );
   });
 
+  testWidgets('the toolbar divergence badge hides entirely when in sync', (
+    tester,
+  ) async {
+    // Tracking upstream, zero ahead/behind — the old rendering was a noisy
+    // "↑0 ↓0"; nothing at all is the in-sync signal.
+    await _pump(
+      tester,
+      status: GitStatus(
+        branch: const GitBranchInfo(head: 'main', upstream: 'origin/main'),
+        files: const [],
+      ),
+    );
+
+    expect(find.textContaining('↑'), findsNothing);
+    expect(find.textContaining('↓'), findsNothing);
+  });
+
+  testWidgets(
+    'a diverged toolbar badge shows only the non-zero arrows, with the '
+    'plain-words tooltip',
+    (tester) async {
+      await _pump(
+        tester,
+        status: GitStatus(
+          branch: const GitBranchInfo(
+            head: 'main',
+            upstream: 'origin/main',
+            ahead: 2,
+          ),
+          files: const [],
+        ),
+      );
+
+      expect(find.text('↑2'), findsOneWidget);
+      expect(find.textContaining('↓'), findsNothing, reason: 'behind is 0');
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w is MacosTooltip &&
+              w.message == '2 commits ahead of, 0 behind origin/main',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
   testWidgets('no upstream leaves Push/Pull/Sync at their default color', (
     tester,
   ) async {

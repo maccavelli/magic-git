@@ -1723,11 +1723,25 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (branch != null && branch.hasUpstream) ...[
+                // Divergence from upstream — shown only when there is
+                // something to push or pull. An in-sync branch used to render
+                // a noisy "↑0 ↓0" here; nothing at all is the signal that
+                // nothing needs doing (mirrors the Branches panel's badge).
+                if (branch != null &&
+                    branch.hasUpstream &&
+                    (branch.ahead > 0 || branch.behind > 0)) ...[
                   const SizedBox(width: 8),
-                  Text(
-                    '↑${branch.ahead} ↓${branch.behind}',
-                    style: typography.caption1,
+                  MacosTooltip(
+                    message:
+                        '${branch.ahead} commit${branch.ahead == 1 ? '' : 's'} '
+                        'ahead of, ${branch.behind} behind ${branch.upstream}',
+                    child: Text(
+                      [
+                        if (branch.ahead > 0) '↑${branch.ahead}',
+                        if (branch.behind > 0) '↓${branch.behind}',
+                      ].join(' '),
+                      style: typography.caption1,
+                    ),
                   ),
                 ],
                 if (!hasRemote) ...[

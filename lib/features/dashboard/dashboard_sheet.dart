@@ -413,12 +413,29 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
           children: [
             _stat(typography, branch.head ?? 'detached', 'branch'),
             const SizedBox(width: 24),
-            _stat(
-              typography,
-              branch.hasUpstream
-                  ? '↑${branch.ahead} ↓${branch.behind}'
-                  : 'no upstream',
-              'ahead / behind',
+            // A fixed slot in the stat row, so an in-sync branch says so in
+            // words rather than the noisy "↑0 ↓0" this used to render — the
+            // arrows appear only when there is something to push or pull.
+            MacosTooltip(
+              message: !branch.hasUpstream
+                  ? 'This branch has no upstream — publish it to a remote '
+                      'to track divergence'
+                  : branch.ahead > 0 || branch.behind > 0
+                      ? '${branch.ahead} commit${branch.ahead == 1 ? '' : 's'} '
+                          'ahead of, ${branch.behind} behind ${branch.upstream}'
+                      : 'Even with ${branch.upstream} — nothing to push or pull',
+              child: _stat(
+                typography,
+                !branch.hasUpstream
+                    ? 'no upstream'
+                    : branch.ahead > 0 || branch.behind > 0
+                        ? [
+                            if (branch.ahead > 0) '↑${branch.ahead}',
+                            if (branch.behind > 0) '↓${branch.behind}',
+                          ].join(' ')
+                        : 'in sync',
+                'ahead / behind',
+              ),
             ),
             const SizedBox(width: 24),
             _stat(typography, '${status.staged.length}', 'staged'),

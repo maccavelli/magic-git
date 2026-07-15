@@ -24,7 +24,15 @@ class _StubConnection extends ConnectionController {
   ConnectionState build() => _state;
 }
 
-Future<void> _pump(WidgetTester tester) async {
+Future<void> _pump(
+  WidgetTester tester, {
+  GitBranchInfo branch = const GitBranchInfo(
+    head: 'main',
+    upstream: 'origin/main',
+    ahead: 2,
+    behind: 1,
+  ),
+}) async {
   final state = ConnectionState(
     phase: ConnectionPhase.connected,
     repoPath: '/srv/repo',
@@ -38,15 +46,7 @@ Future<void> _pump(WidgetTester tester) async {
       overrides: [
         connectionProvider.overrideWith(() => _StubConnection(state)),
         statusProvider.overrideWith(
-          (ref, repo) async => GitStatus(
-            branch: const GitBranchInfo(
-              head: 'main',
-              upstream: 'origin/main',
-              ahead: 2,
-              behind: 1,
-            ),
-            files: const [],
-          ),
+          (ref, repo) async => GitStatus(branch: branch, files: const []),
         ),
         logProvider.overrideWith((ref, repo) async => const []),
         forgeProvider.overrideWith((ref, repo) async => Forge.none),
@@ -146,6 +146,35 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
     expect(find.byType(DashboardSheet), findsNothing);
+  });
+
+  testWidgets('an in-sync branch reads "in sync" — never "↑0 ↓0"', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      branch: const GitBranchInfo(head: 'main', upstream: 'origin/main'),
+    );
+
+    expect(find.text('in sync'), findsOneWidget);
+    expect(find.textContaining('↑'), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (w) =>
+            w is MacosTooltip &&
+            w.message == 'Even with origin/main — nothing to push or pull',
+      ),
+      findsOneWidget,
+    );
+
+    // Close via the X so the periodic uptime ticker is disposed.
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) => w is MacosTooltip && w.message == 'Close',
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
   });
 
   testWidgets('the footprint fetch runs only after Measure', (tester) async {
