@@ -57,6 +57,59 @@ void main() {
     expect(s.queued, 0);
   });
 
+  test('setMaxConcurrentReads lowers without cancelling in-flight', () async {
+    final s = CommandLaneScheduler(maxConcurrentReads: 3);
+    final gates = List.generate(4, (_) => _Gate());
+    final futures = [
+      for (final g in gates) s.run0(ExecLane.read, g.body),
+    ];
+    await _tick();
+    expect(s.activeReads, 3);
+
+    // Lowering the cap must not kill running jobs — only hold the 4th.
+    s.setMaxConcurrentReads(2);
+    expect(s.maxConcurrentReads, 2);
+    expect(s.activeReads, 3);
+    expect(gates[3].started.isCompleted, isFalse);
+
+    // Finish one: still at 2 active (cap), 4th still held.
+    gates[0].release.complete();
+    await _tick();
+    expect(s.activeReads, 2);
+    expect(gates[3].started.isCompleted, isFalse);
+
+    // Finish another: now under cap, 4th starts.
+    gates[1].release.complete();
+    await _tick();
+    expect(gates[3].started.isCompleted, isTrue);
+
+    for (final g in gates) {
+      if (!g.release.isCompleted) g.release.complete();
+    }
+    await Future.wait(futures);
+  });
+
+  test('setMaxConcurrentReads raise pumps the queue', () async {
+    final s = CommandLaneScheduler(maxConcurrentReads: 1);
+    final a = _Gate();
+    final b = _Gate();
+    final futures = [
+      s.run0(ExecLane.read, a.body),
+      s.run0(ExecLane.read, b.body),
+    ];
+    await _tick();
+    expect(a.started.isCompleted, isTrue);
+    expect(b.started.isCompleted, isFalse);
+
+    s.setMaxConcurrentReads(2);
+    await _tick();
+    expect(b.started.isCompleted, isTrue);
+
+    a.release.complete();
+    b.release.complete();
+    await Future.wait(futures);
+  });
+
   test('sync ops run one at a time but overlap reads', () async {
     final s = CommandLaneScheduler();
     final read = _Gate();

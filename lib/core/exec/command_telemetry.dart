@@ -49,6 +49,9 @@ class CommandTelemetry extends ChangeNotifier {
   int _totalWireBytes = 0;
   int _compressedBytes = 0;
   int _compressedWireBytes = 0;
+  int _channelOpenErrors = 0;
+  int _openStreams = 0;
+  int _peakOpenStreams = 0;
 
   /// Recent samples, oldest first (bounded at [_ringCapacity]).
   List<CommandSample> get samples => List.unmodifiable(_ring);
@@ -66,6 +69,16 @@ class CommandTelemetry extends ChangeNotifier {
   /// layer actually saved on the link.
   int get compressedBytes => _compressedBytes;
   int get compressedWireBytes => _compressedWireBytes;
+
+  /// Times an SSH channel open failed this session (e.g. MaxSessions /
+  /// `SSHChannelOpenError`). Evidence for dual-client capacity work.
+  int get channelOpenErrors => _channelOpenErrors;
+
+  /// Live long-lived streams currently open (watcher, CI trace, batch).
+  int get openStreams => _openStreams;
+
+  /// Peak concurrent long-lived streams this session.
+  int get peakOpenStreams => _peakOpenStreams;
 
   /// Mean duration across the recent ring; zero when empty.
   Duration get averageDuration {
@@ -95,6 +108,25 @@ class CommandTelemetry extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Records a failed SSH channel open (typically MaxSessions pressure).
+  void recordChannelOpenError() {
+    _channelOpenErrors++;
+    notifyListeners();
+  }
+
+  /// Tracks a newly opened long-lived stream handle.
+  void streamOpened() {
+    _openStreams++;
+    if (_openStreams > _peakOpenStreams) _peakOpenStreams = _openStreams;
+    notifyListeners();
+  }
+
+  /// Tracks a closed/cancelled long-lived stream handle.
+  void streamClosed() {
+    if (_openStreams > 0) _openStreams--;
+    notifyListeners();
+  }
+
   /// Clears everything — called when a new session connects, so the dashboard
   /// describes the current connection rather than the app's lifetime.
   void reset() {
@@ -104,6 +136,9 @@ class CommandTelemetry extends ChangeNotifier {
     _totalWireBytes = 0;
     _compressedBytes = 0;
     _compressedWireBytes = 0;
+    _channelOpenErrors = 0;
+    _openStreams = 0;
+    _peakOpenStreams = 0;
     notifyListeners();
   }
 }

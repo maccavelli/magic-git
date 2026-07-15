@@ -65,4 +65,20 @@ void main() {
     expect(t.totalWireBytes, 0);
     expect(notified, 2);
   });
+
+  test('channel open errors and stream counts reset with the session', () {
+    final t = CommandTelemetry.instance;
+    t.recordChannelOpenError();
+    t.recordChannelOpenError();
+    t.streamOpened();
+    t.streamOpened();
+    t.streamClosed();
+    expect(t.channelOpenErrors, 2);
+    expect(t.openStreams, 1);
+    expect(t.peakOpenStreams, 2);
+    t.reset();
+    expect(t.channelOpenErrors, 0);
+    expect(t.openStreams, 0);
+    expect(t.peakOpenStreams, 0);
+  });
 }

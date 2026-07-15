@@ -3,12 +3,28 @@ import 'dart:convert';
 import 'dart:io' show SocketException, gzip;
 import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
+import '../exec/command_drain.dart' as drain;
 import '../exec/command_lanes.dart';
 import '../exec/command_telemetry.dart';
+import 'adaptive_read_concurrency.dart';
 import 'command_formatter.dart';
 import 'ssh_client_manager.dart';
 
+// Re-export drain types so existing imports of this library keep working.
+export '../exec/command_drain.dart'
+    show
+        SSHOutputExceeded,
+        OutputByteBudget,
+        collectBounded,
+        boundedBytes,
+        maxCommandOutputChars,
+        maxCommandOutputBytes;
 export '../exec/command_lanes.dart' show ExecLane;
+
+// Local aliases used throughout this file (prefix import avoids name clash
+// with the static forwarders below).
+typedef OutputByteBudget = drain.OutputByteBudget;
+typedef SSHOutputExceeded = drain.SSHOutputExceeded;
 
 /// Transport-agnostic command result. [SSHCommandResult] remains as a
 /// compatibility typedef — both the SSH and local executors return this shape.
@@ -56,43 +72,6 @@ class SSHCommandSuperseded implements Exception {
       'SSH command superseded by a new connection before it could run: $command';
 }
 
-/// Thrown when a request/response command's stdout (or stderr) grows past
-/// [SSHCommandExecutor.maxCommandOutputChars]. A request/response command
-/// buffers its whole output in memory as one String; this surfaces a clear
-/// failure the callers already handle (like a non-zero exit) instead of letting
-/// a pathological huge diff/log/`cat` balloon memory toward an OOM. Never
-/// retried (see [SSHCommandExecutor.runWithRetries]) — a retry would just
-/// reproduce the same oversized output.
-class SSHOutputExceeded implements Exception {
-  final String command;
-  const SSHOutputExceeded(this.command);
-
-  @override
-  String toString() =>
-      'SSH command output exceeded the maximum buffer size: $command';
-}
-
-/// A mutable byte budget shared across one command's stdout and stderr, so their
-/// *combined* buffered output — not each stream independently — is what the cap
-/// bounds. [charge] is called per raw byte chunk before decoding; the first
-/// charge that pushes the running total over [limit] throws [SSHOutputExceeded].
-/// Single-threaded by construction (both streams drain on the same isolate), so
-/// the shared counter needs no synchronization.
-class OutputByteBudget {
-  OutputByteBudget([this.limit = SSHCommandExecutor.maxCommandOutputBytes]);
-
-  final int limit;
-  int _used = 0;
-
-  /// Total bytes charged so far — for tests/diagnostics.
-  int get used => _used;
-
-  void charge(int bytes, String command) {
-    _used += bytes;
-    if (_used > limit) throw SSHOutputExceeded(command);
-  }
-}
-
 /// A live handle to a long-running command (e.g. `fswatch`, a CI job trace,
 /// or `git log --follow`) whose output is consumed incrementally.
 ///
@@ -131,8 +110,21 @@ typedef SSHStreamHandle = CommandStreamHandle;
 /// coexists with request/response commands without blocking them.
 class _SshSessionStreamHandle implements CommandStreamHandle {
   final SSHSession _session;
+  bool _closed = false;
 
-  _SshSessionStreamHandle(this._session);
+  _SshSessionStreamHandle(this._session) {
+    CommandTelemetry.instance.streamOpened();
+    // Count natural channel death the same as cancel (watcher restart path).
+    unawaited(
+      _session.done.then((_) {}, onError: (_) {}).whenComplete(_noteClosed),
+    );
+  }
+
+  void _noteClosed() {
+    if (_closed) return;
+    _closed = true;
+    CommandTelemetry.instance.streamClosed();
+  }
 
   /// The stream transform carries decoder state across chunk boundaries, so
   /// multi-byte sequences split across packets decode correctly.
@@ -151,7 +143,10 @@ class _SshSessionStreamHandle implements CommandStreamHandle {
   Future<int?> get exitCode => _session.waitForExit();
 
   @override
-  Future<void> cancel() => SSHCommandExecutor.killAndCloseSession(_session);
+  Future<void> cancel() async {
+    await SSHCommandExecutor.killAndCloseSession(_session);
+    _noteClosed();
+  }
 }
 
 /// Executes git/glab commands against a repo — either over SSH
@@ -224,22 +219,23 @@ class SSHCommandExecutor implements CommandExecutor {
   /// callers can override per command.
   static const Duration defaultTimeout = Duration(seconds: 60);
 
-  /// Post-decode backstop on the number of decoded characters a single
-  /// request/response stream may accumulate. The *primary* ceiling is now
-  /// [maxCommandOutputBytes], charged on raw bytes before decoding and shared
-  /// across stdout+stderr (see [OutputByteBudget]); since UTF-8 bytes ≥ code
-  /// units, the byte budget trips first for any content, so this char cap only
-  /// backs it up. Such commands buffer their entire output in memory as one
-  /// String, so without a bound a huge diff/log/`cat` of a big blob could spike
-  /// memory. The streaming path ([executeStream] / [SSHStreamHandle]) is exempt:
-  /// it hands callers the raw stream and never materializes it here.
-  static const int maxCommandOutputChars = 50 * 1024 * 1024;
+  /// Post-decode backstop — see [drain.maxCommandOutputChars].
+  /// Kept as a static for call sites that use [SSHCommandExecutor.maxCommandOutputChars].
+  static const int maxCommandOutputChars = drain.maxCommandOutputChars;
+
+  /// Primary byte ceiling — see [drain.maxCommandOutputBytes].
+  static const int maxCommandOutputBytes = drain.maxCommandOutputBytes;
 
   /// Lane-aware scheduler: reads run concurrently (and alongside a fetch/push
   /// on the sync lane), mutations run strictly alone — see [ExecLane] /
   /// [CommandLaneScheduler]. Replaces the old single serialized chain, which
   /// let one slow network op head-of-line-block every read in the app.
   final CommandLaneScheduler _scheduler = CommandLaneScheduler();
+
+  /// Soft-throttles [_scheduler]'s read ceiling from keepalive RTT samples.
+  late final AdaptiveReadConcurrency _adaptiveReads = AdaptiveReadConcurrency(
+    onCapChanged: _scheduler.setMaxConcurrentReads,
+  );
 
   /// Augmented remote `$PATH` (discovered at connect), exported before every
   /// command so user-installed tools resolve on the minimal exec-channel PATH.
@@ -254,7 +250,23 @@ class SSHCommandExecutor implements CommandExecutor {
   /// [CommandExecutor.setForgeTokenNeutralization]). Empty by default.
   List<String> _neutralizeTokens = const [];
 
-  SSHCommandExecutor(this._clientManager);
+  SSHCommandExecutor(this._clientManager) {
+    // Start at the adaptive no-sample cap (3) until RTT samples arrive.
+    _scheduler.setMaxConcurrentReads(_adaptiveReads.effectiveCap);
+  }
+
+  /// Current adaptive read ceiling (for tests / diagnostics).
+  int get adaptiveReadCap => _adaptiveReads.effectiveCap;
+
+  /// Feed a keepalive RTT sample so the read lane can soft-throttle under
+  /// high latency. Wired from [ConnectionHealthMonitor.onPingSample].
+  void noteLinkRtt(Duration rtt) => _adaptiveReads.onRtt(rtt);
+
+  /// Reset adaptive concurrency to the no-sample cap (on connect/disconnect).
+  void resetAdaptiveReads() {
+    _adaptiveReads.reset();
+    _scheduler.setMaxConcurrentReads(_adaptiveReads.effectiveCap);
+  }
 
   /// Applies the per-connection resolved environment (see [EnvironmentResolver]):
   /// an augmented [path] and a [binaries] map. Cleared with [resetEnvironment].
@@ -279,6 +291,7 @@ class SSHCommandExecutor implements CommandExecutor {
     _envPath = null;
     _binaryPaths = const {};
     _neutralizeTokens = const [];
+    resetAdaptiveReads();
   }
 
   /// Streams [bytes] to [remotePath] over SFTP on the active session. Not on the
@@ -429,6 +442,11 @@ class SSHCommandExecutor implements CommandExecutor {
       try {
         return await run(attempt);
       } catch (e) {
+        // Observe MaxSessions / channel-open pressure once per failure, even
+        // when we will not retry (retries == 0 or non-transient).
+        if (e is SSHChannelOpenError) {
+          CommandTelemetry.instance.recordChannelOpenError();
+        }
         if (!isTransientTransportError(e) || n++ >= retries) rethrow;
         await Future<void>.delayed(backoff);
       }
@@ -477,57 +495,24 @@ class SSHCommandExecutor implements CommandExecutor {
     return false;
   }
 
-  /// Accumulates a decoded [chunks] stream into a single String, aborting with
-  /// [SSHOutputExceeded] once more than [maxChars] characters have arrived. This
-  /// is what bounds a request/response command's in-memory output: the stream
-  /// subscription is cancelled the moment the ceiling is crossed (the `await
-  /// for` exits on throw), so a runaway command stops being drained promptly
-  /// rather than buffering to exhaustion. Shared by every [CommandExecutor]
-  /// implementation (not just tests) — this has no SSH-specific behavior,
-  /// just `Stream<String> → String` bounding, so `LocalCommandExecutor` reuses
-  /// it directly.
+  /// Accumulates a decoded stream into a single String with a char ceiling.
+  /// Prefer importing [drain.collectBounded]; this static forwarder preserves
+  /// existing `SSHCommandExecutor.collectBounded` call sites.
   static Future<String> collectBounded(
     Stream<String> chunks,
     String command, {
-    int maxChars = maxCommandOutputChars,
-  }) async {
-    final buffer = StringBuffer();
-    var total = 0;
-    await for (final chunk in chunks) {
-      total += chunk.length;
-      if (total > maxChars) {
-        throw SSHOutputExceeded(command);
-      }
-      buffer.write(chunk);
-    }
-    return buffer.toString();
-  }
+    int maxChars = drain.maxCommandOutputChars,
+  }) =>
+      drain.collectBounded(chunks, command, maxChars: maxChars);
 
-  /// Primary in-memory output ceiling, counted in **raw bytes** (pre-decode) so
-  /// it maps to real wire/disk/memory size regardless of encoding — unlike
-  /// [maxCommandOutputChars] (UTF-16 code units), under which CJK-heavy output
-  /// could be ~3× this many bytes on the wire yet count as far fewer "chars",
-  /// and any non-Latin1 content doubles the resident `String` size. A single
-  /// budget is shared across a command's stdout+stderr (see [OutputByteBudget]),
-  /// bounding their *combined* size. 50 MiB is far above any status/log/diff this
-  /// UI issues; [collectBounded]'s char cap remains as a post-decode backstop.
-  static const int maxCommandOutputBytes = 50 * 1024 * 1024;
-
-  /// Passes a raw byte stream through unchanged while charging each chunk's
-  /// length against [budget] *before* UTF-8 decoding, aborting with
-  /// [SSHOutputExceeded] the moment the budget is exceeded. Inserted ahead of the
-  /// decoder in both executors' drain paths so the ceiling is byte-based and a
-  /// single [budget] shared between stdout and stderr bounds their combined size.
+  /// Charges raw bytes against [budget] before decode. Static forwarder for
+  /// existing `SSHCommandExecutor.boundedBytes` call sites.
   static Stream<List<int>> boundedBytes(
     Stream<List<int>> bytes,
     OutputByteBudget budget,
     String command,
-  ) async* {
-    await for (final chunk in bytes) {
-      budget.charge(chunk.length, command);
-      yield chunk;
-    }
-  }
+  ) =>
+      drain.boundedBytes(bytes, budget, command);
 
   /// Merges the resolved PATH and [extraEnv] over the formatter's default
   /// prelude (later entries win).
@@ -792,7 +777,10 @@ class SSHCommandExecutor implements CommandExecutor {
   }) async {
     // Pin generation at open time — same contract as execute()'s enqueue pin.
     final gen = _clientManager.generation;
-    final client = _clientManager.client;
+    // Prefer the dedicated stream client (dual-client mode) so long-lived
+    // watchers/traces do not consume MaxSessions on the command connection.
+    // Falls back to the command client when stream open degraded.
+    final client = _clientManager.streamClient;
     if (client == null) {
       throw Exception('SSH connection not established.');
     }
@@ -829,6 +817,9 @@ class SSHCommandExecutor implements CommandExecutor {
       // post-timeout cleanup above.
       unawaited(attempt.then(killAndCloseSession, onError: (_) {}));
       throw SSHCommandTimeout(gitArgs.join(' '));
+    } on SSHChannelOpenError {
+      CommandTelemetry.instance.recordChannelOpenError();
+      rethrow;
     }
   }
 }

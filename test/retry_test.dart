@@ -52,7 +52,8 @@ void main() {
       var calls = 0;
       final r = await SSHCommandExecutor.runWithRetries(() async {
         calls++;
-        if (calls < 3) throw Exception('SSH connection not established.');
+        // Must be allowlisted as transient (A3) — generic Exception is not.
+        if (calls < 3) throw Exception('connection closed by peer');
         return const SSHCommandResult(exitCode: 0, stdout: 'ok', stderr: '');
       }, 3, backoff: Duration.zero);
       expect(calls, 3);
@@ -65,7 +66,7 @@ void main() {
         SSHCommandExecutor.runWithRetries(
           () async {
             calls++;
-            throw Exception('down');
+            throw Exception('connection reset');
           },
           1,
           backoff: Duration.zero,
@@ -135,7 +136,7 @@ void main() {
           () async {
             aCalls++;
             order.add('A#$aCalls');
-            if (aCalls == 1) throw Exception('transient');
+            if (aCalls == 1) throw Exception('connection closed');
             return const SSHCommandResult(exitCode: 0, stdout: 'a', stderr: '');
           },
           1,

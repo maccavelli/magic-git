@@ -117,9 +117,11 @@ class CommandLaneScheduler {
     // roughly 4 reads + 1 sync + 1 watcher stream + 1 CI-trace stream ≈ 7,
     // leaving headroom for SFTP sideloads and isolated hooks. 6 reads pushed
     // that budget to the ceiling and risked SSHChannelOpenError under load.
-    this.maxConcurrentReads = 4,
+    // Soft-adjustable via [setMaxConcurrentReads] under high RTT (adaptive
+    // concurrency) — never raised above 4 without dual-client headroom.
+    int maxConcurrentReads = 4,
     this.maxConcurrentIsolated = 2,
-  });
+  }) : _maxConcurrentReads = maxConcurrentReads.clamp(1, 8);
 
   /// Grace period a job gets *beyond its own deadline* before the scheduler
   /// reclaims its slot.
@@ -140,10 +142,26 @@ class CommandLaneScheduler {
   /// catches a command that has stopped existing.
   static const Duration watchdogMargin = Duration(seconds: 30);
 
+  /// Hard safety clamp for [setMaxConcurrentReads] — above this is never useful
+  /// under default OpenSSH MaxSessions and risks channel-open errors.
+  static const int maxReadCapHardLimit = 8;
+
+  int _maxConcurrentReads;
+
   /// Ceiling on concurrently running [ExecLane.read] jobs. High enough that a
   /// couple of slow forge-CLI calls can't crowd out interactive git reads;
   /// low enough not to swamp a remote host with parallel processes.
-  final int maxConcurrentReads;
+  int get maxConcurrentReads => _maxConcurrentReads;
+
+  /// Soft-adjust the read ceiling. Never cancels in-flight jobs: raising
+  /// immediately pumps the queue; lowering only blocks new starts until
+  /// occupancy falls. Clamped to `[1, maxReadCapHardLimit]`.
+  void setMaxConcurrentReads(int value) {
+    final v = value.clamp(1, maxReadCapHardLimit);
+    if (v == _maxConcurrentReads) return;
+    _maxConcurrentReads = v;
+    _pump();
+  }
 
   /// Ceiling on concurrently running [ExecLane.isolated] jobs. These are
   /// long-lived by nature (package installs), so the bound is what keeps a

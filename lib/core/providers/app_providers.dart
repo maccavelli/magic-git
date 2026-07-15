@@ -903,12 +903,13 @@ class ConnectionController extends Notifier<ConnectionState> {
               type,
               fingerprintBytes,
             ),
-            // Feed keepalive RTTs to the dashboard's latency sparkline —
-            // guarded so a retired session's monitor can't pollute a newer
-            // session's chart.
+            // Feed keepalive RTTs to the dashboard's latency sparkline and to
+            // the SSH executor's adaptive read concurrency — guarded so a
+            // retired session's monitor can't pollute a newer session.
             onPingSample: (rtt) {
               if (attempt != _attempt || !ref.mounted) return;
               ref.read(pingSamplesProvider.notifier).add(rtt);
+              ref.read(executorProvider).noteLinkRtt(rtt);
             },
           );
       // Superseded by a newer connect or a disconnect while we were resolving —
@@ -1646,12 +1647,13 @@ class ConnectionController extends Notifier<ConnectionState> {
               type,
               fingerprintBytes,
             ),
-            // Feed keepalive RTTs to the dashboard's latency sparkline —
-            // guarded so a retired session's monitor can't pollute a newer
-            // session's chart.
+            // Feed keepalive RTTs to the dashboard's latency sparkline and to
+            // the SSH executor's adaptive read concurrency — guarded so a
+            // retired session's monitor can't pollute a newer session.
             onPingSample: (rtt) {
               if (attempt != _attempt || !ref.mounted) return;
               ref.read(pingSamplesProvider.notifier).add(rtt);
+              ref.read(executorProvider).noteLinkRtt(rtt);
             },
           );
       if (attempt != _attempt || !ref.mounted) return null;

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
@@ -108,13 +109,25 @@ class ConnectionHealthMonitor {
   }
 }
 
-/// Owns the single long-lived SSH connection. POSIX remotes only (a native
+/// Owns the long-lived SSH connection(s). POSIX remotes only (a native
 /// Windows port lives in a separate codebase), so there is no shell probing.
+///
+/// **Dual client:** when connect succeeds, a second [SSHClient] is opened for
+/// long-lived streams (watcher, CI trace) so request/response traffic and
+/// streams each get their own OpenSSH `MaxSessions` budget. If the stream
+/// client fails to authenticate, the session **degrades** to a single client
+/// (streams share the command client) rather than failing connect.
 class SSHClientManager {
   static const Duration _socketTimeout = Duration(seconds: 15);
   static const Duration _authTimeout = Duration(seconds: 15);
+  /// Stream client is best-effort; fail open to single-client quickly.
+  static const Duration _streamAuthTimeout = Duration(seconds: 10);
 
+  /// Command / SFTP / health-monitor client (primary).
   SSHClient? _client;
+
+  /// Long-lived stream client; null when degraded to single-client mode.
+  SSHClient? _streamClient;
 
   /// Active dead-peer monitor for [_client] (see [ConnectionHealthMonitor]).
   /// Started when a connect succeeds, stopped when that client is retired.
@@ -146,7 +159,16 @@ class SSHClientManager {
   /// neither the stale client nor the not-yet-attached new one.
   int _clientGeneration = -1;
 
+  /// Primary client (commands, SFTP, health). Backward-compatible name.
   SSHClient? get client => _client;
+
+  /// Client for [SSHCommandExecutor.executeStream]. Falls back to [client]
+  /// when the dual stream client failed to connect (degraded mode).
+  SSHClient? get streamClient => _streamClient ?? _client;
+
+  /// True when streams share the command client (stream open failed).
+  bool get streamClientDegraded =>
+      _client != null && _streamClient == null;
 
   /// Current attempt generation. Bumped by every [connect]/[disconnect].
   /// Exposed so callers that queue work against the *current* connection
@@ -160,9 +182,10 @@ class SSHClientManager {
   /// [generation] and this equal G — see [_clientGeneration].
   int get clientGeneration => _clientGeneration;
 
-  /// Completes when the active connection's transport closes — whether from a
+  /// Completes when the primary (command) transport closes — whether from a
   /// remote-side drop, network loss, or our own [disconnect]. Callers use it to
   /// detect an unexpected drop (and offer reconnect). Null when not connected.
+  /// Stream-only death does **not** complete this; watchers restart on their own.
   Future<void>? get done => _client?.done;
 
   /// Connects to [profile]. When given, [onVerifyHostKey] is consulted with
@@ -177,18 +200,93 @@ class SSHClientManager {
     void Function(Duration rtt)? onPingSample,
   }) async {
     final gen = ++_generation;
-    // The previous client (if any) is deliberately left open and serving
-    // `client`/`done` through this entire attempt — it's only retired once
-    // the new one actually succeeds, at the very end of this method. This
-    // used to close it eagerly at the top, so switching to a connection that
-    // then failed (bad host, auth failure, network down) left the user fully
-    // disconnected even though the connection they already had was still
-    // fine. `previous` itself is never reassigned to `_client` again; it's
-    // only closed, either here on success or by whatever supersedes this
-    // attempt (a concurrent disconnect() closes whatever `_client` currently
-    // is, which is still `previous` until the line below runs).
-    final previous = _client;
+    // The previous clients (if any) are deliberately left open and serving
+    // `client`/`done` through this entire attempt — they're only retired once
+    // the new command client actually succeeds, at the very end of this method.
+    final previousCmd = _client;
+    final previousStream = _streamClient;
 
+    final cmdClient = await _openAuthenticatedClient(
+      profile,
+      gen: gen,
+      onVerifyHostKey: onVerifyHostKey,
+      authTimeout: _authTimeout,
+    );
+    if (cmdClient == null) {
+      // Superseded during command-client handshake — leave previous attached.
+      return;
+    }
+
+    // Best-effort second client for streams. Never fail the whole connect if
+    // this fails — degrade to single-client (streams share command client).
+    SSHClient? streamClient;
+    try {
+      streamClient = await _openAuthenticatedClient(
+        profile,
+        gen: gen,
+        onVerifyHostKey: onVerifyHostKey,
+        authTimeout: _streamAuthTimeout,
+      );
+    } catch (e, st) {
+      developer.log(
+        'stream SSH client failed; degrading to single client: $e',
+        name: 'SSHClientManager',
+        error: e,
+        stackTrace: st,
+      );
+      streamClient = null;
+    }
+    // Superseded after stream attempt — drop both new clients.
+    if (gen != _generation) {
+      cmdClient.close();
+      streamClient?.close();
+      return;
+    }
+
+    // This attempt wins: only now do we retire the previous clients.
+    _health?.stop();
+    previousCmd?.close();
+    // Avoid double-close when previous was already degraded (stream == null)
+    // or when stream shared nothing with cmd.
+    if (previousStream != null && !identical(previousStream, previousCmd)) {
+      previousStream.close();
+    }
+    _client = cmdClient;
+    _streamClient = streamClient;
+    _clientGeneration = gen;
+
+    // Health monitor on the command client only. onDead must close both
+    // clients but *not* null [_client]: ConnectionController listens to
+    // [done] on the primary client to drive reconnect — nulling it would
+    // drop that Future before the drop path observes it.
+    final monitor = ConnectionHealthMonitor(
+      ping: () => cmdClient.ping(),
+      onDead: () {
+        final stream = _streamClient;
+        if (stream != null && !identical(stream, cmdClient)) {
+          stream.close();
+        }
+        _streamClient = null;
+        cmdClient.close();
+      },
+      onPingSample: onPingSample,
+    )..start();
+    _health = monitor;
+    unawaited(
+      cmdClient.done.then((_) {}, onError: (_) {}).whenComplete(monitor.stop),
+    );
+  }
+
+  /// Opens and authenticates one [SSHClient]. Returns null if [gen] was
+  /// superseded mid-handshake. Throws on auth/socket failure (caller decides
+  /// whether that fails connect or degrades).
+  Future<SSHClient?> _openAuthenticatedClient(
+    SSHConnectionProfile profile, {
+    required int gen,
+    FutureOr<bool> Function(String type, Uint8List fingerprint)?
+    onVerifyHostKey,
+    required Duration authTimeout,
+  }) async {
     final socket = await SSHSocket.connect(
       profile.host,
       profile.port,
@@ -197,7 +295,7 @@ class SSHClientManager {
 
     // A host-key mismatch pauses on `onVerifyHostKey` awaiting an explicit
     // human decision (see [ConnectionController._verifyHostKey]), which can
-    // legitimately take far longer than [_authTimeout] — this flag lets the
+    // legitimately take far longer than the auth timeout — this flag lets the
     // timeout below tell "genuinely stuck" apart from "waiting on a person."
     var awaitingHostKeyDecision = false;
     // `SSHKeyPair.fromPem` is evaluated eagerly as a constructor argument and
@@ -233,7 +331,7 @@ class SSHClientManager {
         identities: hasKey
             ? SSHKeyPair.fromPem(privateKey, profile.passphrase)
             : null,
-        // Dead-peer detection is owned by [ConnectionHealthMonitor] below
+        // Dead-peer detection is owned by [ConnectionHealthMonitor]
         // (which checks whether pings are *answered*). The library's own
         // keepAliveInterval fires-and-forgets without a reply counter, and
         // stacking both doubles global-request traffic during bulk reads —
@@ -255,12 +353,10 @@ class SSHClientManager {
       rethrow;
     }
 
-    // Superseded while the socket was connecting — `previous` is left
-    // untouched for whatever superseded this attempt (a fresh connect() or a
-    // disconnect()) to deal with.
+    // Superseded while the socket was connecting.
     if (gen != _generation) {
       client.close();
-      return;
+      return null;
     }
 
     // Exposed for the duration of the handshake so a concurrent disconnect()
@@ -269,7 +365,7 @@ class SSHClientManager {
     try {
       await awaitWithPausableTimeout(
         client.authenticated,
-        _authTimeout,
+        authTimeout,
         isPaused: () => awaitingHostKeyDecision,
       );
     } catch (_) {
@@ -282,29 +378,9 @@ class SSHClientManager {
     // Superseded while authenticating — don't leak the live connection.
     if (gen != _generation) {
       client.close();
-      return;
+      return null;
     }
-
-    // This attempt wins: only now do we retire the previous client.
-    _health?.stop();
-    previous?.close();
-    _client = client;
-    _clientGeneration = gen;
-
-    // Arm dead-peer detection for this client (see ConnectionHealthMonitor).
-    // Its onDead force-closes the client, completing `done` so the ordinary
-    // drop path (auto-reconnect) takes over. Also stop probing the moment the
-    // transport closes for any other reason — the drop path is already
-    // handling it, and pinging a closed client would just error pointlessly.
-    final monitor = ConnectionHealthMonitor(
-      ping: () => client.ping(),
-      onDead: client.close,
-      onPingSample: onPingSample,
-    )..start();
-    _health = monitor;
-    unawaited(
-      client.done.then((_) {}, onError: (_) {}).whenComplete(monitor.stop),
-    );
+    return client;
   }
 
   Future<void> disconnect() async {
@@ -322,8 +398,14 @@ class SSHClientManager {
   void _closeClient() {
     _health?.stop();
     _health = null;
-    _client?.close();
+    final cmd = _client;
+    final stream = _streamClient;
     _client = null;
+    _streamClient = null;
     _clientGeneration = -1;
+    cmd?.close();
+    if (stream != null && !identical(stream, cmd)) {
+      stream.close();
+    }
   }
 }

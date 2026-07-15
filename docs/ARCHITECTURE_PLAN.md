@@ -14,23 +14,34 @@
 ## 0.1 Current SSH transport (authoritative, 2026-07)
 
 - **POSIX remotes only** — no Windows shell dialect; `ShellEscaper` is POSIX-only.
-- **One multiplexed `SSHClient`** (`SSHClientManager`) with generation pinning so
-  a reconnect never runs a queued command against the wrong host.
+- **Dual `SSHClient` when possible** (`SSHClientManager`): command client for
+  `execute` / SFTP / health pings, stream client for `executeStream` (watcher,
+  CI trace). Shared generation pinning so a reconnect never runs work against
+  the wrong host. If the stream client fails to open, **degrade to single
+  client** (streams share the command client) rather than failing connect.
 - **Auth:** password and/or PEM private key (file load or paste). No ssh-agent
   client auth in dartssh2; `agentHandler` is agent *forwarding* only and is not
   used for login. Empty password is never attempted for key-only profiles.
 - **Host keys:** app-scoped TOFU (`KnownHostsStore`) + mismatch prompt; pausable
   auth timeout while the user decides.
-- **Dead peer:** `ConnectionHealthMonitor` owns keepalive pings (reply-checked);
-  library `keepAliveInterval` is off to avoid double traffic.
-- **Scheduling:** `CommandLaneScheduler` — concurrent reads (default **4** for
-  OpenSSH `MaxSessions` headroom), one sync, exclusive mutations as barrier,
-  isolated long hooks. Not a single global chain.
+- **Dead peer:** `ConnectionHealthMonitor` owns keepalive pings (reply-checked)
+  on the command client only; library `keepAliveInterval` is off; `onDead`
+  closes both clients.
+- **Scheduling:** `CommandLaneScheduler` — concurrent reads (default ceiling
+  **4**, soft-throttled by RTT via `AdaptiveReadConcurrency` under high latency),
+  one sync, exclusive mutations as barrier, isolated long hooks.
 - **Compression:** dartssh2 has no transport compression; large text reads use
   application `gzip` (absolute path when discovered) + in-band exit trailer.
-- **Streams:** `executeStream` off-queue (watcher, CI trace); generation-guarded.
-- **Safety:** `exec` so TERM/KILL hit the real process; output byte budgets;
-  transient-only retries; SFTP upload closed/timed/generation-pinned.
+- **Streams:** `executeStream` off-queue (watcher, CI trace); generation-guarded;
+  prefers the stream client when dual mode is active.
+- **Object multi-read:** `git cat-file --batch` one-shot batching
+  (`GitService.showBlobsBatch` / `GitCatFileBatch`) for multi-blob revision
+  content; worktree files still use `cat` / `readFile`.
+- **Telemetry:** `CommandTelemetry` tracks channel-open errors and open stream
+  counts (MaxSessions evidence).
+- **Safety:** `exec` so TERM/KILL hit the real process; output byte budgets
+  (`command_drain.dart`); transient-only retries; SFTP upload closed/timed/
+  generation-pinned.
 
 ---
 

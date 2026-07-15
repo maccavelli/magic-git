@@ -5,6 +5,7 @@ import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../undo/undo_types.dart';
 import '../utils/git_porcelain_parser.dart';
+import 'git_cat_file_batch.dart';
 import 'log_search.dart';
 import 'repo_tree.dart';
 
@@ -2017,6 +2018,28 @@ class GitService {
       throw GitException('reading file at revision failed', result);
     }
     return result.stdout;
+  }
+
+  /// Many [showBlob]s in one remote round-trip via `git cat-file --batch`.
+  ///
+  /// Prefer this when expanding multiple diffs or prefetching revision content.
+  /// On batch failure, falls back to sequential [showBlob] (fail-open on perf).
+  /// Worktree files still use [readFile] — cat-file is object-db only.
+  Future<Map<BlobKey, String>> showBlobsBatch(
+    String repoPath,
+    List<BlobKey> keys,
+  ) async {
+    if (keys.isEmpty) return {};
+    final batch = GitCatFileBatch(_executor);
+    final bytes = await batch.showBlobsBatch(
+      repoPath,
+      keys,
+      showOne: showBlob,
+    );
+    return {
+      for (final e in bytes.entries)
+        e.key: utf8.decode(e.value, allowMalformed: true),
+    };
   }
 
   /// The raw bytes of [path], base64-encoded, for content that isn't text —
