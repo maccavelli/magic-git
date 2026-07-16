@@ -59,6 +59,11 @@ class DropAction {
   final String verb;
   final IconData icon;
   final bool destructive;
+
+  /// Shown in the confirm dialog when [destructive]; falls back to a generic
+  /// warning. Ignored for non-destructive actions.
+  final String? confirmMessage;
+
   final Future<void> Function(DropContext ctx) run;
 
   const DropAction({
@@ -66,6 +71,7 @@ class DropAction {
     required this.verb,
     required this.icon,
     this.destructive = false,
+    this.confirmMessage,
     required this.run,
   });
 }
@@ -100,7 +106,18 @@ List<DropAction> _actionsFor(DragItem item, DropZoneId zone) {
             label: 'New worktree for $branch',
             verb: 'New worktree',
             icon: kWorktreeIcon,
-            run: (ctx) => _newWorktreeForBranch(ctx, branch),
+            run: (ctx) => _newWorktreeFrom(ctx, branch),
+          ),
+        ];
+      }
+      if (item is DragCommit) {
+        final commit = item.commit;
+        return [
+          DropAction(
+            label: 'New worktree from ${commit.shortHash}',
+            verb: 'New worktree',
+            icon: kWorktreeIcon,
+            run: (ctx) => _newWorktreeFrom(ctx, commit.hash),
           ),
         ];
       }
@@ -119,9 +136,26 @@ List<DropAction> _actionsFor(DragItem item, DropZoneId zone) {
         ];
       }
       return const [];
-    // No nav-drop actions yet (future phases add commit->Worktrees,
-    // files->Stashes, etc.).
     case DropZoneId.repository:
+      // Repository == the working copy on the current branch. A commit dropped
+      // here is cherry-picked onto it (destructive: it commits + can conflict).
+      if (item is DragCommit) {
+        final commit = item.commit;
+        return [
+          DropAction(
+            label: 'Cherry-pick ${commit.shortHash} into current branch',
+            verb: 'Cherry-pick',
+            icon: CupertinoIcons.doc_on_clipboard,
+            destructive: true,
+            confirmMessage:
+                'Apply ${commit.shortHash} "${commit.subject}" onto the '
+                'current branch? It stops if it conflicts, and ⌘Z undoes it.',
+            run: (ctx) => _cherryPickIntoCurrent(ctx, commit),
+          ),
+        ];
+      }
+      return const [];
+    // No nav-drop actions yet (future phases add files->Stashes, etc.).
     case DropZoneId.history:
     case DropZoneId.stashes:
     case DropZoneId.project:
@@ -152,8 +186,10 @@ Future<void> runDrop(
 ) async {
   final actions = _actionsFor(item, zone);
   if (actions.isEmpty) return;
-  if (actions.length == 1 && !actions.first.destructive) {
-    await actions.first.run(ctx);
+  // One action needs no disambiguation menu — run it (confirming first if it's
+  // destructive). Only genuinely ambiguous drops (>1 action) get the verb menu.
+  if (actions.length == 1) {
+    await _confirmAndRun(ctx, actions.first);
     return;
   }
   ctx.menu.show(ctx.context, pos, [
@@ -172,7 +208,9 @@ Future<void> _confirmAndRun(DropContext ctx, DropAction action) async {
     final ok = await confirmAction(
       ctx.context,
       title: action.label,
-      message: 'This can rewrite history or discard work. Continue?',
+      message:
+          action.confirmMessage ??
+          'This can rewrite history or discard work. Continue?',
       confirmLabel: 'Continue',
       destructive: true,
     );
@@ -202,17 +240,36 @@ Future<void> _newBranchFromCommit(DropContext ctx, GitCommit commit) async {
   ctx.selectPage(DropZoneId.branches.pageIndex);
 }
 
-Future<void> _newWorktreeForBranch(DropContext ctx, String branch) async {
-  // Reuse the exact sheet the Branches panel opens for "checkout in new
-  // worktree" — pre-seeded with the dropped branch as the start point.
+Future<void> _newWorktreeFrom(DropContext ctx, String commitish) async {
+  // Reuse the exact sheet the Branches/History panels open for "checkout/branch
+  // in a new worktree" — pre-seeded with the dropped branch or commit as the
+  // start point. The sheet lets the user pick new-branch vs detached.
   await showMacosSheet<void>(
     context: ctx.context,
     builder: (_) =>
-        AddWorktreeSheet(repoPath: ctx.repoPath, initialCommitish: branch),
+        AddWorktreeSheet(repoPath: ctx.repoPath, initialCommitish: commitish),
   );
   if (!ctx.context.mounted) return;
   ctx.refresh();
   ctx.selectPage(DropZoneId.worktrees.pageIndex);
+}
+
+Future<void> _cherryPickIntoCurrent(DropContext ctx, GitCommit commit) async {
+  final git = ctx.ref.read(gitServiceProvider);
+  // A conflict throws (git_service records nothing and the pending-op abort
+  // owns it), so runAction surfaces it in a dialog; a clean pick returns. For a
+  // merge commit, default to the first parent (-m 1) rather than erroring.
+  final ok = await runAction(
+    ctx.context,
+    () => git.cherryPick(
+      ctx.repoPath,
+      commit.hash,
+      mainline: commit.isMerge ? 1 : null,
+    ),
+  );
+  if (!ok || !ctx.context.mounted) return;
+  ctx.refresh();
+  ctx.selectPage(DropZoneId.repository.pageIndex);
 }
 
 Future<void> _createRequestFromBranch(DropContext ctx, String branch) async {

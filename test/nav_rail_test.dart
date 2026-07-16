@@ -111,19 +111,23 @@ void main() {
     expect(tapped, 3); // Stashes is the 4th item
   });
 
-  testWidgets('dragging a commit lights up + relabels only Branches', (
+  testWidgets('dragging a commit lights up every zone that accepts it', (
     tester,
   ) async {
     final container = await _pump(tester);
     container.read(dragStateProvider.notifier).begin(_commit);
     await tester.pump();
 
-    // The eligible tab relabels to its action verb...
-    expect(find.text('New branch'), findsOneWidget);
+    // Each eligible tab relabels to its action verb...
+    expect(find.text('New branch'), findsOneWidget); // Branches
+    expect(find.text('New worktree'), findsOneWidget); // Worktrees
+    expect(find.text('Cherry-pick'), findsOneWidget); // Repository
     expect(find.text('Branches'), findsNothing);
-    // ...and no other tab claims an action.
-    expect(find.text('New worktree'), findsNothing);
-    expect(find.text('Stashes'), findsOneWidget); // still itself, just dimmed
+    expect(find.text('Worktrees'), findsNothing);
+    expect(find.text('Repository'), findsNothing);
+    // ...while zones with no action for a commit keep their label (dimmed).
+    expect(find.text('History'), findsOneWidget);
+    expect(find.text('Stashes'), findsOneWidget);
   });
 
   testWidgets('dragging a branch lights up + relabels only Worktrees', (

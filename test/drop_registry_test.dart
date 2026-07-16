@@ -42,9 +42,17 @@ void main() {
     expect(dropVerb(_commit, DropZoneId.branches), 'New branch');
   });
 
-  test('a branch dropped on Worktrees offers "New worktree"', () {
+  test('a branch or a commit dropped on Worktrees offers "New worktree"', () {
     expect(canDrop(_branch, DropZoneId.worktrees), isTrue);
     expect(dropVerb(_branch, DropZoneId.worktrees), 'New worktree');
+    expect(canDrop(_commit, DropZoneId.worktrees), isTrue);
+    expect(dropVerb(_commit, DropZoneId.worktrees), 'New worktree');
+  });
+
+  test('a commit dropped on Repository cherry-picks; a branch does not', () {
+    expect(canDrop(_commit, DropZoneId.repository), isTrue);
+    expect(dropVerb(_commit, DropZoneId.repository), 'Cherry-pick');
+    expect(canDrop(_branch, DropZoneId.repository), isFalse);
   });
 
   test('a local branch dropped on Forge offers "New PR / MR"', () {
@@ -56,12 +64,10 @@ void main() {
   });
 
   test('payloads are rejected by zones with no action for them', () {
-    // Commit -> Worktrees and branch -> Branches are future phases, not this cut.
-    expect(canDrop(_commit, DropZoneId.worktrees), isFalse);
+    // branch -> Branches is a future phase, not this cut.
     expect(canDrop(_branch, DropZoneId.branches), isFalse);
-    // And zones with no drop actions at all.
+    // Zones with no drop actions at all reject both payloads.
     for (final zone in const [
-      DropZoneId.repository,
       DropZoneId.history,
       DropZoneId.stashes,
       DropZoneId.project,

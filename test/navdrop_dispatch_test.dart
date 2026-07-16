@@ -36,6 +36,11 @@ const _commit = DragCommit(
 
 const _items = [
   NavRailItem(
+    icon: CupertinoIcons.folder,
+    label: 'Repository',
+    zone: DropZoneId.repository,
+  ),
+  NavRailItem(
     icon: CupertinoIcons.arrow_branch,
     label: 'Branches',
     zone: DropZoneId.branches,
@@ -60,48 +65,62 @@ Future<void> _dragOnto(WidgetTester tester, Finder source, Finder target) async 
   await tester.pumpAndSettle();
 }
 
+Future<void> _pump(WidgetTester tester) async {
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [connectionProvider.overrideWith(_FakeConnection.new)],
+      child: MacosApp(
+        debugShowCheckedModeBanner: false,
+        home: Row(
+          children: [
+            // The drag source — stands in for a history commit row.
+            const DragItemDraggable(
+              item: _commit,
+              immediate: true,
+              child: SizedBox(
+                width: 120,
+                height: 44,
+                child: Center(child: Text('SOURCE')),
+              ),
+            ),
+            SizedBox(
+              width: 240,
+              height: 600,
+              child: NavRail(
+                currentIndex: 0,
+                onChanged: (_) {},
+                items: _items,
+                selectPage: (_) {},
+                refresh: () {},
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
   testWidgets('dropping a commit on Branches opens the new-branch prompt', (
     tester,
   ) async {
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [connectionProvider.overrideWith(_FakeConnection.new)],
-        child: MacosApp(
-          debugShowCheckedModeBanner: false,
-          home: Row(
-            children: [
-              // The drag source — stands in for a history commit row.
-              const DragItemDraggable(
-                item: _commit,
-                immediate: true,
-                child: SizedBox(
-                  width: 120,
-                  height: 44,
-                  child: Center(child: Text('SOURCE')),
-                ),
-              ),
-              SizedBox(
-                width: 240,
-                height: 600,
-                child: NavRail(
-                  currentIndex: 0,
-                  onChanged: (_) {},
-                  items: _items,
-                  selectPage: (_) {},
-                  refresh: () {},
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
-
+    await _pump(tester);
     await _dragOnto(tester, find.text('SOURCE'), find.text('Branches'));
 
     // The registry ran the single non-destructive action: the seeded prompt.
     expect(find.text('New branch from commit'), findsOneWidget);
+  });
+
+  testWidgets('dropping a commit on Repository asks to confirm the cherry-pick', (
+    tester,
+  ) async {
+    await _pump(tester);
+    await _dragOnto(tester, find.text('SOURCE'), find.text('Repository'));
+
+    // A destructive drop confirms first (no git runs until Continue is tapped).
+    expect(find.textContaining('onto the current branch'), findsOneWidget);
+    expect(find.text('Continue'), findsOneWidget);
   });
 }
