@@ -16,6 +16,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/show_more_row.dart';
 import '../common/tool_icon_button.dart';
+import '../dnd/drag_item.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'create_tag_sheet.dart';
@@ -30,11 +31,7 @@ class BranchesView extends ConsumerStatefulWidget {
   /// quiet rather than fire in the background.
   final bool isActive;
 
-  const BranchesView({
-    super.key,
-    required this.repoPath,
-    this.isActive = true,
-  });
+  const BranchesView({super.key, required this.repoPath, this.isActive = true});
 
   @override
   ConsumerState<BranchesView> createState() => _BranchesViewState();
@@ -177,10 +174,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   Future<void> _checkoutInNewWorktree(String branch) async {
     await showMacosSheet<void>(
       context: context,
-      builder: (_) => AddWorktreeSheet(
-        repoPath: repoPath,
-        initialCommitish: branch,
-      ),
+      builder: (_) =>
+          AddWorktreeSheet(repoPath: repoPath, initialCommitish: branch),
     );
     if (mounted) _refresh();
   }
@@ -297,9 +292,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                   localOnlyTags,
                   tagRemote,
                 ),
-                _BranchRow(:final branch, :final remote) => remote
-                    ? _remoteRow(context, git, branch)
-                    : _localRow(context, git, branch),
+                _BranchRow(:final branch, :final remote) =>
+                  remote
+                      ? _remoteRow(context, git, branch)
+                      : _localRow(context, git, branch),
                 _TagRefRow(:final tag) => _tagRow(
                   context,
                   git,
@@ -370,190 +366,206 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     // branches. The current branch keeps its green tint.
     return KeyedSubtree(
       key: _branchRowKeyFor(branch.shortName),
-      child: GestureDetector(
-      onTap: () => _selectBranch(branch.shortName),
-      child: Container(
-        color: branch.isHead
-            ? MacosColors.systemGreenColor.withValues(alpha: 0.12)
-            : selected
-            ? AppTheme.rowSelectionTint
-            : const Color(0x00000000),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-        child: Row(
-          children: [
-            MacosIcon(
-              CupertinoIcons.arrow_branch,
-              size: 15,
-              color: branch.isHead
-                  ? MacosColors.systemGreenColor
-                  : MacosColors.systemBlueColor,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                branch.shortName,
-                style: typography.body.copyWith(
-                  fontWeight: branch.isHead
-                      ? FontWeight.bold
-                      : FontWeight.normal,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            // Checked out in ANOTHER worktree. `isHead` already means "checked
-            // out here", so a worktreePath alongside a false isHead is the exact
-            // test. git will refuse both checkout and delete for such a branch,
-            // so say so up front instead of letting the user find out from a raw
-            // error.
-            if (elsewhere != null) ...[
-              const SizedBox(width: 6),
-              MacosTooltip(
-                // Shared wording + chip: History's ref chips render the same
-                // fact and the two had drifted apart in style and sentence.
-                message: checkedOutElsewhereMessage(elsewhere),
-                child: LabelChip(
-                  elsewhere.split('/').last,
-                  color: MacosColors.systemPurpleColor,
-                  icon: kWorktreeIcon,
-                ),
-              ),
-            ],
-            if (branch.upstream != null) ...[
-              const SizedBox(width: 6),
-              Text(
-                branch.upstream!,
-                style: typography.caption1.copyWith(
-                  color: MacosColors.systemGrayColor,
-                ),
-              ),
-            ],
-            // Divergence from upstream: the glanceable "does this need a
-            // push/pull" signal, and — for [gone] — the classic "merged PR
-            // left this behind" marker.
-            if (branch.upstreamGone) ...[
-              const SizedBox(width: 6),
-              MacosTooltip(
-                message:
-                    'The upstream branch was deleted (merged or removed on '
-                    'the remote) — this local branch is likely stale',
-                child: Text(
-                  'gone',
-                  style: typography.caption1.copyWith(
-                    color: MacosColors.systemOrangeColor,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ),
-            ] else if (branch.ahead > 0 || branch.behind > 0) ...[
-              const SizedBox(width: 6),
-              MacosTooltip(
-                message:
-                    '${branch.ahead} commit${branch.ahead == 1 ? '' : 's'} '
-                    'ahead, ${branch.behind} behind ${branch.upstream}',
-                child: Text(
-                  [
-                    if (branch.ahead > 0) '↑${branch.ahead}',
-                    if (branch.behind > 0) '↓${branch.behind}',
-                  ].join(' '),
-                  style: typography.caption1.copyWith(
-                    color: MacosColors.systemBlueColor,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-            ],
-            // Rename applies to every local branch — including the current
-            // one (`branch -m` follows HEAD) and one held by another worktree
-            // (git updates that worktree's HEAD too).
-            const SizedBox(width: 4),
-            ToolIconButton(
-              icon: CupertinoIcons.pencil,
-              tooltip: 'Rename branch',
-              size: 14,
-              onPressed: busy
-                  ? null
-                  : () => _renameBranch(git, branch.shortName),
-            ),
-            if (!branch.isHead) ...[
-              const SizedBox(width: 4),
-              if (elsewhere != null)
-                // git refuses to check this out here ("already used by worktree
-                // at …") and there is no sensible override, so offer the thing
-                // the user actually wants: go to where it IS checked out.
-                ToolIconButton(
-                  icon: CupertinoIcons.square_arrow_right,
-                  tooltip: 'Switch to its worktree',
+      // Long-press drag (so the branch list still scrolls): drop a branch on the
+      // Worktrees tab to spin up a worktree for it.
+      child: DragItemDraggable(
+        item: DragRef(branch),
+        child: GestureDetector(
+          onTap: () => _selectBranch(branch.shortName),
+          child: Container(
+            color: branch.isHead
+                ? MacosColors.systemGreenColor.withValues(alpha: 0.12)
+                : selected
+                ? AppTheme.rowSelectionTint
+                : const Color(0x00000000),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+            child: Row(
+              children: [
+                MacosIcon(
+                  CupertinoIcons.arrow_branch,
                   size: 15,
-                  onPressed: busy ? null : () => _switchToWorktree(elsewhere),
-                )
-              else ...[
-                ToolIconButton(
-                  icon: CupertinoIcons.square_arrow_down,
-                  tooltip: 'Checkout branch',
-                  size: 15,
-                  onPressed: busy
-                      ? null
-                      : () => _checkout(git, branch.shortName),
+                  color: branch.isHead
+                      ? MacosColors.systemGreenColor
+                      : MacosColors.systemBlueColor,
                 ),
-                const SizedBox(width: 4),
-                // The most-requested worktree flow in every client's issue
-                // tracker: take this branch into a new checkout in one step,
-                // instead of switching away from what you are doing.
-                ToolIconButton(
-                  icon: kWorktreeIcon,
-                  tooltip: 'Checkout in a new worktree…',
-                  size: 15,
-                  onPressed: busy
-                      ? null
-                      : () => _checkoutInNewWorktree(branch.shortName),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    branch.shortName,
+                    style: typography.body.copyWith(
+                      fontWeight: branch.isHead
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ],
-              const SizedBox(width: 4),
-              MacosPulldownButton(
-                icon: CupertinoIcons.arrow_merge,
-                items: [
-                  MacosPulldownMenuItem(
-                    title: const Text('Merge into current'),
-                    onTap: () =>
-                        _mergeBranch(git, branch.shortName, MergeMode.normal),
-                  ),
-                  MacosPulldownMenuItem(
-                    title: const Text('Merge (no fast-forward)'),
-                    onTap: () =>
-                        _mergeBranch(git, branch.shortName, MergeMode.noFf),
-                  ),
-                  MacosPulldownMenuItem(
-                    title: const Text('Merge (fast-forward only)'),
-                    onTap: () =>
-                        _mergeBranch(git, branch.shortName, MergeMode.ffOnly),
-                  ),
-                  MacosPulldownMenuItem(
-                    title: const Text('Squash merge'),
-                    onTap: () =>
-                        _mergeBranch(git, branch.shortName, MergeMode.squash),
+                // Checked out in ANOTHER worktree. `isHead` already means "checked
+                // out here", so a worktreePath alongside a false isHead is the exact
+                // test. git will refuse both checkout and delete for such a branch,
+                // so say so up front instead of letting the user find out from a raw
+                // error.
+                if (elsewhere != null) ...[
+                  const SizedBox(width: 6),
+                  MacosTooltip(
+                    // Shared wording + chip: History's ref chips render the same
+                    // fact and the two had drifted apart in style and sentence.
+                    message: checkedOutElsewhereMessage(elsewhere),
+                    child: LabelChip(
+                      elsewhere.split('/').last,
+                      color: MacosColors.systemPurpleColor,
+                      icon: kWorktreeIcon,
+                    ),
                   ),
                 ],
-              ),
-              const SizedBox(width: 4),
-              ToolIconButton(
-                icon: CupertinoIcons.trash,
-                tooltip: elsewhere == null
-                    ? 'Delete branch'
-                    // git refuses outright, and unlike checkout there is NO
-                    // override flag for this — the worktree has to go first.
-                    : 'Checked out in the worktree "${elsewhere.split('/').last}" '
-                          '— remove that worktree first',
-                size: 14,
-                color: MacosColors.systemRedColor,
-                onPressed: busy || elsewhere != null
-                    ? null
-                    : () => _deleteBranch(git, branch.shortName),
-              ),
-            ],
-          ],
+                if (branch.upstream != null) ...[
+                  const SizedBox(width: 6),
+                  Text(
+                    branch.upstream!,
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
+                    ),
+                  ),
+                ],
+                // Divergence from upstream: the glanceable "does this need a
+                // push/pull" signal, and — for [gone] — the classic "merged PR
+                // left this behind" marker.
+                if (branch.upstreamGone) ...[
+                  const SizedBox(width: 6),
+                  MacosTooltip(
+                    message:
+                        'The upstream branch was deleted (merged or removed on '
+                        'the remote) — this local branch is likely stale',
+                    child: Text(
+                      'gone',
+                      style: typography.caption1.copyWith(
+                        color: MacosColors.systemOrangeColor,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ] else if (branch.ahead > 0 || branch.behind > 0) ...[
+                  const SizedBox(width: 6),
+                  MacosTooltip(
+                    message:
+                        '${branch.ahead} commit${branch.ahead == 1 ? '' : 's'} '
+                        'ahead, ${branch.behind} behind ${branch.upstream}',
+                    child: Text(
+                      [
+                        if (branch.ahead > 0) '↑${branch.ahead}',
+                        if (branch.behind > 0) '↓${branch.behind}',
+                      ].join(' '),
+                      style: typography.caption1.copyWith(
+                        color: MacosColors.systemBlueColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+                // Rename applies to every local branch — including the current
+                // one (`branch -m` follows HEAD) and one held by another worktree
+                // (git updates that worktree's HEAD too).
+                const SizedBox(width: 4),
+                ToolIconButton(
+                  icon: CupertinoIcons.pencil,
+                  tooltip: 'Rename branch',
+                  size: 14,
+                  onPressed: busy
+                      ? null
+                      : () => _renameBranch(git, branch.shortName),
+                ),
+                if (!branch.isHead) ...[
+                  const SizedBox(width: 4),
+                  if (elsewhere != null)
+                    // git refuses to check this out here ("already used by worktree
+                    // at …") and there is no sensible override, so offer the thing
+                    // the user actually wants: go to where it IS checked out.
+                    ToolIconButton(
+                      icon: CupertinoIcons.square_arrow_right,
+                      tooltip: 'Switch to its worktree',
+                      size: 15,
+                      onPressed: busy
+                          ? null
+                          : () => _switchToWorktree(elsewhere),
+                    )
+                  else ...[
+                    ToolIconButton(
+                      icon: CupertinoIcons.square_arrow_down,
+                      tooltip: 'Checkout branch',
+                      size: 15,
+                      onPressed: busy
+                          ? null
+                          : () => _checkout(git, branch.shortName),
+                    ),
+                    const SizedBox(width: 4),
+                    // The most-requested worktree flow in every client's issue
+                    // tracker: take this branch into a new checkout in one step,
+                    // instead of switching away from what you are doing.
+                    ToolIconButton(
+                      icon: kWorktreeIcon,
+                      tooltip: 'Checkout in a new worktree…',
+                      size: 15,
+                      onPressed: busy
+                          ? null
+                          : () => _checkoutInNewWorktree(branch.shortName),
+                    ),
+                  ],
+                  const SizedBox(width: 4),
+                  MacosPulldownButton(
+                    icon: CupertinoIcons.arrow_merge,
+                    items: [
+                      MacosPulldownMenuItem(
+                        title: const Text('Merge into current'),
+                        onTap: () => _mergeBranch(
+                          git,
+                          branch.shortName,
+                          MergeMode.normal,
+                        ),
+                      ),
+                      MacosPulldownMenuItem(
+                        title: const Text('Merge (no fast-forward)'),
+                        onTap: () =>
+                            _mergeBranch(git, branch.shortName, MergeMode.noFf),
+                      ),
+                      MacosPulldownMenuItem(
+                        title: const Text('Merge (fast-forward only)'),
+                        onTap: () => _mergeBranch(
+                          git,
+                          branch.shortName,
+                          MergeMode.ffOnly,
+                        ),
+                      ),
+                      MacosPulldownMenuItem(
+                        title: const Text('Squash merge'),
+                        onTap: () => _mergeBranch(
+                          git,
+                          branch.shortName,
+                          MergeMode.squash,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 4),
+                  ToolIconButton(
+                    icon: CupertinoIcons.trash,
+                    tooltip: elsewhere == null
+                        ? 'Delete branch'
+                        // git refuses outright, and unlike checkout there is NO
+                        // override flag for this — the worktree has to go first.
+                        : 'Checked out in the worktree "${elsewhere.split('/').last}" '
+                              '— remove that worktree first',
+                    size: 14,
+                    color: MacosColors.systemRedColor,
+                    onPressed: busy || elsewhere != null
+                        ? null
+                        : () => _deleteBranch(git, branch.shortName),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
-      ),
       ),
     );
   }
@@ -809,8 +821,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     String? remote,
   ) async {
     final name = tag.shortName;
-    final knownOnRemote = status == _TagRemoteStatus.inSync ||
-        status == _TagRemoteStatus.differs;
+    final knownOnRemote =
+        status == _TagRemoteStatus.inSync || status == _TagRemoteStatus.differs;
     if (knownOnRemote && remote != null) {
       final choice = await chooseAction<_TagDeleteScope>(
         context,
@@ -894,9 +906,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     String remote,
   ) async {
     // Name them when the list is short; a count once it stops being readable.
-    final listing = names.length <= 8
-        ? '\n\n${names.join(', ')}'
-        : '';
+    final listing = names.length <= 8 ? '\n\n${names.join(', ')}' : '';
     final ok = await confirmAction(
       context,
       title: 'Push tags',

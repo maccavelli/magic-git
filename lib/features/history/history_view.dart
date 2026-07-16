@@ -26,6 +26,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/tool_icon_button.dart';
+import '../dnd/drag_item.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'commit_graph_view.dart';
@@ -1637,98 +1638,115 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               final row = graph.rows[index];
               final commit = row.commit;
               final selected = _selectedHashes.contains(commit.hash);
-              return DragTarget<GitRef>(
+              return DragTarget<DragItem>(
                 // A branch chip dropped anywhere on a commit row opens the integrate
-                // menu; the row it lands on is just the drop affordance.
-                onWillAcceptWithDetails: (details) =>
-                    _canDropBranch(details.data),
-                onAcceptWithDetails: (details) =>
-                    _onBranchDropped(details.data, details.offset),
+                // menu; the row it lands on is just the drop affordance. Only a
+                // dragged branch (DragRef) is meaningful here — a dragged commit
+                // is bound for the nav rail, not another commit.
+                onWillAcceptWithDetails: (details) {
+                  final data = details.data;
+                  return data is DragRef && _canDropBranch(data.ref);
+                },
+                onAcceptWithDetails: (details) {
+                  final data = details.data;
+                  if (data is DragRef) {
+                    _onBranchDropped(data.ref, details.offset);
+                  }
+                },
                 builder: (context, candidate, rejected) {
                   final dropHover = candidate.isNotEmpty;
-                  return GestureDetector(
-                    key: _commitRowKeyFor(commit.hash),
-                    onTap: () => _handleRowTap(commit.hash),
-                    onSecondaryTapUp: (d) =>
-                        _handleRowSecondaryTap(commit, d.globalPosition),
-                    child: Container(
-                      color: dropHover
-                          ? MacosColors.systemGreenColor.withValues(alpha: 0.20)
-                          : selected
-                          ? MacosColors.systemBlueColor.withValues(alpha: 0.32)
-                          : const Color(0x00000000),
-                      height: rowHeight,
-                      child: Row(
-                        children: [
-                          // Clip to the fixed band so rounding in the compressed-lane
-                          // math can never paint a hair over the ref chips, subject, or
-                          // author text to the right — every lane itself is still drawn
-                          // (compressed via `laneWidth` above once the count exceeds
-                          // the cap), never dropped.
-                          ClipRect(
-                            child: CustomPaint(
-                              size: Size(graphWidth, rowHeight),
-                              painter: CommitRowPainter(
-                                row,
-                                laneWidth: laneWidth,
-                                scale: zoom,
+                  // The row is itself draggable (long-press, so the list still
+                  // scrolls) — drop a commit on the Branches tab to fork a branch.
+                  return DragItemDraggable(
+                    item: DragCommit(commit),
+                    child: GestureDetector(
+                      key: _commitRowKeyFor(commit.hash),
+                      onTap: () => _handleRowTap(commit.hash),
+                      onSecondaryTapUp: (d) =>
+                          _handleRowSecondaryTap(commit, d.globalPosition),
+                      child: Container(
+                        color: dropHover
+                            ? MacosColors.systemGreenColor.withValues(
+                                alpha: 0.20,
+                              )
+                            : selected
+                            ? MacosColors.systemBlueColor.withValues(
+                                alpha: 0.32,
+                              )
+                            : const Color(0x00000000),
+                        height: rowHeight,
+                        child: Row(
+                          children: [
+                            // Clip to the fixed band so rounding in the compressed-lane
+                            // math can never paint a hair over the ref chips, subject, or
+                            // author text to the right — every lane itself is still drawn
+                            // (compressed via `laneWidth` above once the count exceeds
+                            // the cap), never dropped.
+                            ClipRect(
+                              child: CustomPaint(
+                                size: Size(graphWidth, rowHeight),
+                                painter: CommitRowPainter(
+                                  row,
+                                  laneWidth: laneWidth,
+                                  scale: zoom,
+                                ),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    if (commit.isMerge) ...[
-                                      MacosIcon(
-                                        CupertinoIcons.arrow_merge,
-                                        size: 13 * zoom,
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      if (commit.isMerge) ...[
+                                        MacosIcon(
+                                          CupertinoIcons.arrow_merge,
+                                          size: 13 * zoom,
+                                        ),
+                                        const SizedBox(width: 4),
+                                      ],
+                                      // Subject first (Tower / Fork / GitHub Desktop): the
+                                      // message is primary. Chips are intrinsically sized
+                                      // (capped per chip + maxVisible) so they never compete
+                                      // with the subject for flex space and collapse to
+                                      // zero width — the pop-out bug that hid every badge.
+                                      Expanded(
+                                        child: Text(
+                                          commit.subject,
+                                          style: typography.body,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
                                       ),
-                                      const SizedBox(width: 4),
+                                      if ((decorations[commit.hash] ??
+                                              const <GitRef>[])
+                                          .isNotEmpty) ...[
+                                        const SizedBox(width: 6),
+                                        RefChipStrip(
+                                          refs: decorations[commit.hash]!,
+                                          enableDrag: true,
+                                        ),
+                                      ],
                                     ],
-                                    // Subject first (Tower / Fork / GitHub Desktop): the
-                                    // message is primary. Chips are intrinsically sized
-                                    // (capped per chip + maxVisible) so they never compete
-                                    // with the subject for flex space and collapse to
-                                    // zero width — the pop-out bug that hid every badge.
-                                    Expanded(
-                                      child: Text(
-                                        commit.subject,
-                                        style: typography.body,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                    if ((decorations[commit.hash] ??
-                                            const <GitRef>[])
-                                        .isNotEmpty) ...[
-                                      const SizedBox(width: 6),
-                                      RefChipStrip(
-                                        refs: decorations[commit.hash]!,
-                                        enableDrag: true,
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                                const SizedBox(height: 2),
-                                Text(
-                                  '${commit.shortHash}  ·  ${commit.authorName}  ·  '
-                                  '${_shortDate(commit.date)}',
-                                  style: typography.caption1.copyWith(
-                                    color: MacosColors.systemGrayColor,
                                   ),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              ],
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '${commit.shortHash}  ·  ${commit.authorName}  ·  '
+                                    '${_shortDate(commit.date)}',
+                                    style: typography.caption1.copyWith(
+                                      color: MacosColors.systemGrayColor,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                        ],
+                            const SizedBox(width: 8),
+                          ],
+                        ),
                       ),
                     ),
                   );

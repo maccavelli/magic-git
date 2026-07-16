@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/git/git_service.dart';
+import '../dnd/drag_item.dart';
 import '../worktrees/worktree_tabs.dart';
 
 /// Prepare refs for display on a history (or reflog) row.
@@ -125,9 +126,7 @@ class RefChipStrip extends StatelessWidget {
         for (final r in shown) RefChip(gitRef: r, enableDrag: enableDrag),
         if (hidden.isNotEmpty)
           MacosTooltip(
-            message: hidden
-                .map((r) => refDecorationTooltip(r))
-                .join('\n'),
+            message: hidden.map((r) => refDecorationTooltip(r)).join('\n'),
             child: _RefChipChrome(
               color: MacosColors.systemGrayColor,
               child: Text(
@@ -171,20 +170,18 @@ class RefChip extends StatelessWidget {
     );
 
     // Only real branches are integration operands.
-    final draggable =
-        enableDrag && (gitRef.isLocalBranch || gitRef.isRemote);
+    final draggable = enableDrag && (gitRef.isLocalBranch || gitRef.isRemote);
     if (!draggable) return tooltipped;
 
-    return Draggable<GitRef>(
-      data: gitRef,
-      // Anchor the floating chip to the pointer, not the chip's top-left, so it
-      // tracks under the finger regardless of where the chip was grabbed.
-      dragAnchorStrategy: pointerDragAnchorStrategy,
+    // Immediate (touch) drag: the chip is a small target, so it doesn't fight
+    // the history list's vertical scroll the way a full row would.
+    return DragItemDraggable(
+      item: DragRef(gitRef),
+      immediate: true,
       feedback: Transform.translate(
         offset: const Offset(8, 8),
         child: Opacity(opacity: 0.9, child: _chip(color, icon, label)),
       ),
-      childWhenDragging: Opacity(opacity: 0.4, child: tooltipped),
       child: tooltipped,
     );
   }
@@ -251,17 +248,12 @@ class _RefChipChrome extends StatelessWidget {
     // without a flex ancestor on the strip itself.
     return Container(
       margin: const EdgeInsets.only(left: 4),
-      constraints: const BoxConstraints(
-        maxWidth: RefChipStrip.maxChipWidth,
-      ),
+      constraints: const BoxConstraints(maxWidth: RefChipStrip.maxChipWidth),
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.14),
         borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: color.withValues(alpha: 0.42),
-          width: 0.6,
-        ),
+        border: Border.all(color: color.withValues(alpha: 0.42), width: 0.6),
       ),
       child: child,
     );

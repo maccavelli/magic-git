@@ -23,6 +23,8 @@ import 'common/sidebar_branding.dart';
 import 'common/undo_toast.dart';
 import 'connection/connection_landing.dart';
 import 'dashboard/dashboard_sheet.dart';
+import 'dnd/drop_registry.dart';
+import 'dnd/nav_rail.dart';
 import 'forge/forge_panel.dart';
 import 'forge/forge_project_panel.dart';
 import 'history/history_view.dart';
@@ -242,8 +244,7 @@ class _AppShellState extends ConsumerState<AppShell> {
   void _openShortcuts(BuildContext context) {
     showMacosSheet<void>(
       context: context,
-      builder: (_) =>
-          const EscapeDismissible(child: KeyboardShortcutsSheet()),
+      builder: (_) => const EscapeDismissible(child: KeyboardShortcutsSheet()),
     );
   }
 
@@ -553,7 +554,9 @@ class _AppShellState extends ConsumerState<AppShell> {
         ref.read(openFileViewersProvider.notifier).closeAll();
       }
       if (next != null && next != previous) {
-        ref.read(visitedPagesProvider.notifier).reset(ref.read(pageIndexProvider));
+        ref
+            .read(visitedPagesProvider.notifier)
+            .reset(ref.read(pageIndexProvider));
       }
     });
     // A changed host key pauses the in-progress connect/reconnect on an
@@ -604,7 +607,13 @@ class _AppShellState extends ConsumerState<AppShell> {
         // a viewer window.
         child: Stack(
           children: [
-            _buildWindow(context, connection, connected, pageIndex, visitedPages),
+            _buildWindow(
+              context,
+              connection,
+              connected,
+              pageIndex,
+              visitedPages,
+            ),
             const Positioned.fill(child: ViewerHost()),
             UndoToastOverlay(onUndo: _undoGitOperation),
           ],
@@ -640,40 +649,53 @@ class _AppShellState extends ConsumerState<AppShell> {
               )
             : null,
         builder: (context, scrollController) {
-          return SidebarItems(
+          // A custom rail (not macos_ui SidebarItems) so each tab is an
+          // individual drop target: items dragged from a panel can be dropped
+          // on a tab to run a workflow (commit -> Branches, branch ->
+          // Worktrees). Idle it mirrors the native item list.
+          return NavRail(
             currentIndex: connected ? pageIndex : 0,
             // While disconnected the content is pinned to ConnectionLanding, so
             // swallow sidebar taps rather than mutating the (hidden) page state.
-            // (onChanged is non-nullable, so use a no-op instead of null.)
             onChanged: connected ? _selectPage : (_) {},
+            controller: scrollController,
+            selectPage: _selectPage,
+            refresh: _refresh,
             items: const [
-              SidebarItem(
-                leading: MacosIcon(CupertinoIcons.folder),
-                label: Text('Repository'),
+              NavRailItem(
+                icon: CupertinoIcons.folder,
+                label: 'Repository',
+                zone: DropZoneId.repository,
               ),
-              SidebarItem(
-                leading: MacosIcon(CupertinoIcons.clock),
-                label: Text('History'),
+              NavRailItem(
+                icon: CupertinoIcons.clock,
+                label: 'History',
+                zone: DropZoneId.history,
               ),
-              SidebarItem(
-                leading: MacosIcon(CupertinoIcons.arrow_branch),
-                label: Text('Branches'),
+              NavRailItem(
+                icon: CupertinoIcons.arrow_branch,
+                label: 'Branches',
+                zone: DropZoneId.branches,
               ),
-              SidebarItem(
-                leading: MacosIcon(CupertinoIcons.tray_2),
-                label: Text('Stashes'),
+              NavRailItem(
+                icon: CupertinoIcons.tray_2,
+                label: 'Stashes',
+                zone: DropZoneId.stashes,
               ),
-              SidebarItem(
-                leading: MacosIcon(CupertinoIcons.cloud),
-                label: Text('Forge'),
+              NavRailItem(
+                icon: CupertinoIcons.cloud,
+                label: 'Forge',
+                zone: DropZoneId.forge,
               ),
-              SidebarItem(
-                leading: MacosIcon(CupertinoIcons.cube_box),
-                label: Text('Project'),
+              NavRailItem(
+                icon: CupertinoIcons.cube_box,
+                label: 'Project',
+                zone: DropZoneId.project,
               ),
-              SidebarItem(
-                leading: MacosIcon(kWorktreeIcon),
-                label: Text('Worktrees'),
+              NavRailItem(
+                icon: kWorktreeIcon,
+                label: 'Worktrees',
+                zone: DropZoneId.worktrees,
               ),
             ],
           );
