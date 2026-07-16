@@ -13,7 +13,12 @@ import '../forge/forge_create_sheet_widgets.dart';
 class CreatePrSheet extends ConsumerStatefulWidget {
   final String repoPath;
 
-  const CreatePrSheet({super.key, required this.repoPath});
+  /// Pre-fills the PR head (source) branch, overriding the current-branch
+  /// default — used when the sheet is opened by dropping a branch on the Forge
+  /// tab. Null keeps the default "prefill from the checked-out branch".
+  final String? initialHead;
+
+  const CreatePrSheet({super.key, required this.repoPath, this.initialHead});
 
   @override
   ConsumerState<CreatePrSheet> createState() => _CreatePrSheetState();
@@ -34,6 +39,18 @@ class _CreatePrSheetState extends ConsumerState<CreatePrSheet> {
   // Keyed by the milestone's id (GitHub `number`, unique), resolved back to
   // its title for `gh pr create --milestone` in [_submit].
   int? _milestoneNumber;
+
+  @override
+  void initState() {
+    super.initState();
+    // A dropped branch names the head explicitly — seed it and suppress the
+    // checked-out-branch prefill so the drop's branch wins.
+    final seeded = widget.initialHead;
+    if (seeded != null && seeded.isNotEmpty) {
+      _head.text = seeded;
+      _headPrefilled = true;
+    }
+  }
 
   void _maybePrefillHead(GitStatus? status) {
     if (_headPrefilled || _head.text.trim().isNotEmpty) return;

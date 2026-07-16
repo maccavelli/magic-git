@@ -13,7 +13,12 @@ import '../forge/forge_create_sheet_widgets.dart';
 class CreateMrSheet extends ConsumerStatefulWidget {
   final String repoPath;
 
-  const CreateMrSheet({super.key, required this.repoPath});
+  /// Pre-fills the MR source branch, overriding the current-branch default —
+  /// used when the sheet is opened by dropping a branch on the Forge tab. Null
+  /// keeps the default "prefill from the checked-out branch".
+  final String? initialSource;
+
+  const CreateMrSheet({super.key, required this.repoPath, this.initialSource});
 
   @override
   ConsumerState<CreateMrSheet> createState() => _CreateMrSheetState();
@@ -40,6 +45,18 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
   // wrong milestone in release. The title actually sent to `glab` is resolved
   // back from this id in [_submit].
   int? _milestoneIid;
+
+  @override
+  void initState() {
+    super.initState();
+    // A dropped branch names the source explicitly — seed it and suppress the
+    // checked-out-branch prefill so the drop's branch wins.
+    final seeded = widget.initialSource;
+    if (seeded != null && seeded.isNotEmpty) {
+      _source.text = seeded;
+      _sourcePrefilled = true;
+    }
+  }
 
   void _maybePrefillSource(GitStatus? status) {
     if (_sourcePrefilled || _source.text.trim().isNotEmpty) return;

@@ -370,3 +370,95 @@ Each phase is independently shippable; nothing after Phase 0 blocks anything els
 changelogs, GitHub/GitLab issue trackers, Hacker News, Product Hunt, and Capterra.
 Caveats: GitKraken feedback vote counts are snippet-approximate (Cloudflare-
 blocked); Reddit was unretrievable; vendor comparison copy treated as advocacy.*
+
+---
+
+# 9. Future-phase implementation path (post-engine)
+
+Phase 0 + the two named nav drops shipped: `lib/features/dnd/` (`drag_item`,
+`drag_state`, `drop_zone`, `drop_registry`, `nav_rail`), with `RefChip`,
+history commit rows, and Branches rows made draggable, and the merge/rebase drop
+ported onto the `DragItem` vocabulary. The engine is a registry: a new workflow
+is a `case` in `_actionsFor` (`drop_registry.dart`) plus, where needed, a new
+`DragItem`, a draggable source, and occasionally a drop zone or a service method.
+
+## What each remaining interaction actually needs
+
+Legend: **payload** = new `DragItem` subtype; **source** = make a row/chip
+`DragItemDraggable`; **zone** = new drop target; **service** = new/changed
+`GitService` method. Effort S/M/L. "reuse" = already exists, wire only.
+
+| # | Interaction | payload | source | zone | service | Effort |
+|---|---|---|---|---|---|---|
+| A1 | **branch → Forge** = create PR/MR | reuse `DragRef` | reuse | reuse `forge` nav zone | reuse `createPullRequest`/`createMergeRequest` | **S** |
+| A2 | **commit → Worktrees** = worktree at commit | reuse `DragCommit` | reuse | reuse `worktrees` | reuse `addWorktree(commitish/detach)` | **S** |
+| A3 | **commit → Repository** = cherry-pick into current ⚠ | reuse `DragCommit` | reuse | reuse `repository` | reuse `cherryPick` | **S** |
+| B1 | **stash → Repository** = apply / pop ⚠ | **`DragStash`** | stash rows (`stash_view.dart`) | reuse `repository` | reuse `stashApply`/`stashPop` | **M** |
+| B2 | **files → Stashes** = partial stash | **`DragFiles`** | file rows (`repo_status_view.dart`) | reuse `stashes` | **`stashPush(paths)`** (add pathspec) | **M** |
+| C1 | **drag-to-stage** (unstaged ⇄ staged) | reuse `DragFiles` | reuse (B2) | **in-panel** staged/unstaged lists | reuse `stageMany`/`unstageMany` | **M** |
+| D1 | **drag-reorder / squash commits** (interactive rebase) | — | rows in `RebaseSheet` | — (self-contained) | reuse `rebaseInteractive` | **M** |
+| E1 | **branch label → commit** = move pointer ⚠ | reuse `DragRef` | reuse | extend `commitRow` (disambiguation menu) | **`moveBranch` = `git branch -f`** | **L** |
+| E2 | **commit → a specific branch** = cherry-pick there | reuse `DragCommit` | reuse | branch rows as targets | reuse `cherryPick` (after checkout guard) | **L** |
+
+⚠ = destructive → routes through the registry's confirm-by-default menu path
+(already implemented in `runDrop`/`_confirmAndRun`).
+
+## Engine refinements the later phases force
+
+1. **Split nav zones from in-panel zones (before C1).** `DropZoneId.pageIndex`
+   assumes zone-order == page-index, true only for the seven nav tabs. In-panel
+   zones (staged/unstaged lists, branch-as-target) don't navigate. Refactor:
+   keep `DropZoneId` for nav, add a separate `InPanelZone` enum (no `pageIndex`),
+   and let `DropContext.selectPage` be a no-op for them. Small, do it once when
+   C1 lands.
+2. **Multi-select payloads (helps B2/C1).** `DragFiles` already wraps a list;
+   thread the panel's existing multi-selection into the drag so a range stages/
+   stashes at once (matches `stageMany`/`unstageMany`). No engine change, just
+   pass the selection at the source.
+3. **Disambiguation on `commitRow` (E1/E2).** Today a branch dropped on a commit
+   always means merge/rebase-vs-current. Move-pointer and cherry-pick-here add a
+   second meaning, so the drop must open a verb menu ("Move `<branch>` here" /
+   "Merge…" / "Rebase…"). The menu machinery already exists; the new work is the
+   `git branch -f` service method (journaled via `_runCaptured`, undo = move back)
+   and a same-position guard.
+
+## Cross-cutting hardening (do continuously, not a phase)
+
+Drawn from the §6 complaint clusters — these harden the whole engine:
+
+- **ESC cancels an in-progress drag** — a global key handler active while
+  `dragStateProvider != null` that ends the drag. Ship with the next phase.
+- **In-app abort** for a merge/rebase/cherry-pick left mid-conflict — surface
+  `--abort` in the pending-op banner, not only Undo. (GitKraken's top DnD
+  complaint; also needed by A3/E2.)
+- **One-time coach-mark** the first time the app launches after each new drag
+  source ships — the lit-up rail teaches nav drops, but in-panel drops need a hint.
+- **Click-to-pick / click-to-place** accessibility mode — reuses
+  `dragStateProvider` + the registry: click a source to "pick up", lit zones
+  become click targets. Cheap once the registry exists; buys keyboard/trackpad/
+  motor accessibility. Schedule after C1.
+
+## Recommended sequence (ROI × dependency)
+
+1. **A1 branch → Forge** — highest ROI for a forge-integrated client, pure
+   registry entry, zero new infra. *(one afternoon)*
+2. **A2 commit → Worktrees**, **A3 commit → Repository (cherry-pick)** — finish
+   the "ready-now" nav drops; A3 exercises the destructive-confirm path end to end.
+3. **B1 stash → Repository**, **B2 files → Stashes** — introduces `DragStash` /
+   `DragFiles` and the first non-history/branches draggable sources; B2 adds the
+   one-line `stashPush(paths)` change.
+4. **Engine refinement #1**, then **C1 drag-to-stage** — the first in-panel zones;
+   Fork's most-loved gesture and the SourceTree-removal backlash make this
+   high-value. Add ESC-cancel + click-to-pick here.
+5. **D1 drag-reorder/squash in the rebase editor** — independent of everything
+   above (self-contained in `RebaseSheet`); the single most-requested gesture
+   industry-wide (Sublime Merge #1194). Can be pulled forward if prioritized by
+   demand rather than dependency.
+6. **E1 move-pointer / E2 cherry-pick-to-branch** — last: the disambiguation menu
+   + `git branch -f` are the only genuinely new mechanics, and E1 is a
+   differentiator nobody ships well (GitKraken's unfilled #2 request).
+
+Each item is independently shippable and testable with the patterns already in
+`drop_registry_test.dart` / `nav_rail_test.dart` / `navdrop_dispatch_test.dart`
+(pure resolution + a lit-rail widget test + one drag→dispatch test), plus an
+integration-tagged test for any new git method (`moveBranch`, `stashPush(paths)`).

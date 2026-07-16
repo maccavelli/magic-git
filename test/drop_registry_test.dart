@@ -27,6 +27,15 @@ const _branch = DragRef(
   ),
 );
 
+const _remoteBranch = DragRef(
+  GitRef(
+    name: 'refs/remotes/origin/feature',
+    oid: 'a1b2c3d4e5f6',
+    isHead: false,
+    subject: 's',
+  ),
+);
+
 void main() {
   test('a commit dropped on Branches offers "New branch"', () {
     expect(canDrop(_commit, DropZoneId.branches), isTrue);
@@ -38,6 +47,14 @@ void main() {
     expect(dropVerb(_branch, DropZoneId.worktrees), 'New worktree');
   });
 
+  test('a local branch dropped on Forge offers "New PR / MR"', () {
+    expect(canDrop(_branch, DropZoneId.forge), isTrue);
+    expect(dropVerb(_branch, DropZoneId.forge), 'New PR / MR');
+    // A remote-tracking ref can't be a PR/MR source, and a commit isn't a branch.
+    expect(canDrop(_remoteBranch, DropZoneId.forge), isFalse);
+    expect(canDrop(_commit, DropZoneId.forge), isFalse);
+  });
+
   test('payloads are rejected by zones with no action for them', () {
     // Commit -> Worktrees and branch -> Branches are future phases, not this cut.
     expect(canDrop(_commit, DropZoneId.worktrees), isFalse);
@@ -47,7 +64,6 @@ void main() {
       DropZoneId.repository,
       DropZoneId.history,
       DropZoneId.stashes,
-      DropZoneId.forge,
       DropZoneId.project,
     ]) {
       expect(canDrop(_commit, zone), isFalse, reason: '$zone');

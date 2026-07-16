@@ -2,11 +2,14 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart' show MacosColors, showMacosSheet;
 
+import '../../core/forge/forge.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/actions.dart';
 import '../common/context_menu.dart';
 import '../common/prompt_text_sheet.dart';
+import '../github/create_pr_sheet.dart';
+import '../gitlab/create_mr_sheet.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart' show kWorktreeIcon;
 import 'drag_item.dart';
@@ -102,12 +105,25 @@ List<DropAction> _actionsFor(DragItem item, DropZoneId zone) {
         ];
       }
       return const [];
+    case DropZoneId.forge:
+      // Only a local branch can be a PR/MR source; a remote-tracking ref can't.
+      if (item is DragRef && item.ref.isLocalBranch) {
+        final branch = item.ref.shortName;
+        return [
+          DropAction(
+            label: 'Create pull/merge request from $branch',
+            verb: 'New PR / MR',
+            icon: CupertinoIcons.cloud_upload,
+            run: (ctx) => _createRequestFromBranch(ctx, branch),
+          ),
+        ];
+      }
+      return const [];
     // No nav-drop actions yet (future phases add commit->Worktrees,
-    // branch->Forge, files->Stashes, etc.).
+    // files->Stashes, etc.).
     case DropZoneId.repository:
     case DropZoneId.history:
     case DropZoneId.stashes:
-    case DropZoneId.forge:
     case DropZoneId.project:
       return const [];
   }
@@ -197,4 +213,36 @@ Future<void> _newWorktreeForBranch(DropContext ctx, String branch) async {
   if (!ctx.context.mounted) return;
   ctx.refresh();
   ctx.selectPage(DropZoneId.worktrees.pageIndex);
+}
+
+Future<void> _createRequestFromBranch(DropContext ctx, String branch) async {
+  // Which forge this repo talks to decides PR (GitHub) vs MR (GitLab). Resolve
+  // it (cheap once the Forge tab has been visited) and open that forge's
+  // existing create sheet, seeded with the dropped branch as the source.
+  final forge = await ctx.ref.read(forgeProvider(ctx.repoPath).future);
+  if (!ctx.context.mounted) return;
+  switch (forge) {
+    case Forge.github:
+      await showMacosSheet<void>(
+        context: ctx.context,
+        builder: (_) =>
+            CreatePrSheet(repoPath: ctx.repoPath, initialHead: branch),
+      );
+    case Forge.gitlab:
+      await showMacosSheet<void>(
+        context: ctx.context,
+        builder: (_) =>
+            CreateMrSheet(repoPath: ctx.repoPath, initialSource: branch),
+      );
+    case Forge.none:
+    case Forge.unknown:
+      await showErrorDialog(
+        ctx.context,
+        'No GitHub or GitLab remote detected for this repository.',
+      );
+      return;
+  }
+  if (!ctx.context.mounted) return;
+  ctx.refresh();
+  ctx.selectPage(DropZoneId.forge.pageIndex);
 }
