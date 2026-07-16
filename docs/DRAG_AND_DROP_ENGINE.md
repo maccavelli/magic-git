@@ -383,12 +383,25 @@ is a `case` in `_actionsFor` (`drop_registry.dart`) plus, where needed, a new
 `DragItem`, a draggable source, and occasionally a drop zone or a service method.
 
 **Shipped since:** the entire A-tier (**A1** branch → Forge, **A2** commit →
-Worktrees, **A3** commit → Repository cherry-pick) and the B-tier (**B1**
-stash → Repository apply/pop via `DragStash` + draggable stash cards, **B2**
-files → Stashes partial stash via `DragFiles` + draggable status rows +
-`stashPush(paths:)`). Remaining: **C1** (drag-to-stage), **D1** (interactive-
-rebase reorder/squash), **E1/E2** (move-pointer / cherry-pick-to-branch), plus
-the engine refinements and cross-cutting hardening below.
+Worktrees, **A3** commit → Repository cherry-pick), the B-tier (**B1** stash →
+Repository apply/pop via `DragStash` + draggable stash cards, **B2** files →
+Stashes partial stash via `DragFiles` + draggable status rows +
+`stashPush(paths:)`), and **C1** drag-to-stage (`StagingDropBanner` +
+`DragFiles.fromStaged`). Remaining: **D1** (interactive-rebase reorder/squash),
+**E1/E2** (move-pointer / cherry-pick-to-branch), plus the cross-cutting
+hardening below.
+
+**C1 architecture note (supersedes engine-refinement #1).** In-panel drops
+turned out *not* to want the global nav registry: staging must dispatch to the
+panel's own `stageMany`/`unstageMany` (which keep the selection + diff panel in
+sync), which the registry can't reach. So instead of adding an `InPanelZone`
+enum to `DropZoneId`, C1 uses a self-contained `StagingDropBanner`
+(`lib/features/dnd/`) — a plain `DragTarget<DragItem>` that reuses only the
+shared payload (`DragFiles`) and `dragStateProvider`, and calls back into the
+panel. Direction (Stage vs Unstage) comes from `DragFiles.fromStaged`, so it's
+a single unambiguous target that works even when the destination section is
+empty. This keeps `DropZoneId`/`pageIndex` untouched (no refinement needed) and
+is the template for future in-panel drops.
 
 ## What each remaining interaction actually needs
 
@@ -403,8 +416,8 @@ Legend: **payload** = new `DragItem` subtype; **source** = make a row/chip
 | A3 | **commit → Repository** = cherry-pick into current ⚠ | reuse `DragCommit` | reuse | reuse `repository` | reuse `cherryPick` | **S** | ✅ shipped |
 | B1 | **stash → Repository** = apply / pop | **`DragStash`** | stash rows (`stash_view.dart`) | reuse `repository` | reuse `stashApply`/`stashPop` | **M** | ✅ shipped |
 | B2 | **files → Stashes** = partial stash | **`DragFiles`** | file rows (`repo_status_view.dart`) | reuse `stashes` | **`stashPush(paths:)`** (pathspec) | **M** | ✅ shipped |
-| C1 | **drag-to-stage** (unstaged ⇄ staged) | reuse `DragFiles` | reuse (B2) | **in-panel** staged/unstaged lists | reuse `stageMany`/`unstageMany` | **M** | next |
-| D1 | **drag-reorder / squash commits** (interactive rebase) | — | rows in `RebaseSheet` | — (self-contained) | reuse `rebaseInteractive` | **M** |
+| C1 | **drag-to-stage** (unstaged ⇄ staged) | `DragFiles.fromStaged` | reuse (B2) | `StagingDropBanner` (in-panel) | reuse `stageMany`/`unstageMany` | **M** | ✅ shipped |
+| D1 | **drag-reorder / squash commits** (interactive rebase) | — | rows in `RebaseSheet` | — (self-contained) | reuse `rebaseInteractive` | **M** | next |
 | E1 | **branch label → commit** = move pointer ⚠ | reuse `DragRef` | reuse | extend `commitRow` (disambiguation menu) | **`moveBranch` = `git branch -f`** | **L** |
 | E2 | **commit → a specific branch** = cherry-pick there | reuse `DragCommit` | reuse | branch rows as targets | reuse `cherryPick` (after checkout guard) | **L** |
 
@@ -413,12 +426,13 @@ Legend: **payload** = new `DragItem` subtype; **source** = make a row/chip
 
 ## Engine refinements the later phases force
 
-1. **Split nav zones from in-panel zones (before C1).** `DropZoneId.pageIndex`
-   assumes zone-order == page-index, true only for the seven nav tabs. In-panel
-   zones (staged/unstaged lists, branch-as-target) don't navigate. Refactor:
-   keep `DropZoneId` for nav, add a separate `InPanelZone` enum (no `pageIndex`),
-   and let `DropContext.selectPage` be a no-op for them. Small, do it once when
-   C1 lands.
+1. ~~**Split nav zones from in-panel zones (before C1).**~~ **Resolved
+   differently — see the C1 architecture note above.** In-panel drops don't
+   route through the nav registry at all (they must dispatch to panel-private
+   handlers), so no `InPanelZone` enum was added and `DropZoneId`/`pageIndex`
+   stayed untouched. The pattern for a new in-panel drop is a self-contained
+   `DragTarget<DragItem>` (like `StagingDropBanner`) that reuses `DragFiles` +
+   `dragStateProvider` and calls back into the panel.
 2. **Multi-select payloads (helps B2/C1).** `DragFiles` already wraps a list;
    thread the panel's existing multi-selection into the drag so a range stages/
    stashes at once (matches `stageMany`/`unstageMany`). No engine change, just
@@ -455,7 +469,7 @@ Drawn from the §6 complaint clusters — these harden the whole engine:
 3. **B1 stash → Repository**, **B2 files → Stashes** — introduces `DragStash` /
    `DragFiles` and the first non-history/branches draggable sources; B2 adds the
    one-line `stashPush(paths)` change.
-4. **Engine refinement #1**, then **C1 drag-to-stage** — the first in-panel zones;
+4. ~~**Engine refinement #1**, then~~ **C1 drag-to-stage** — the first in-panel zones;
    Fork's most-loved gesture and the SourceTree-removal backlash make this
    high-value. Add ESC-cancel + click-to-pick here.
 5. **D1 drag-reorder/squash in the rebase editor** — independent of everything

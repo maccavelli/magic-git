@@ -24,6 +24,7 @@ import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
 import '../common/tool_icon_button.dart';
 import '../dnd/drag_item.dart';
+import '../dnd/staging_drop_banner.dart';
 import '../settings/settings_sheet.dart';
 import 'blame_sheet.dart';
 import 'commit_dialog.dart';
@@ -2014,10 +2015,30 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     return Focus(
       focusNode: _listFocus,
       onKeyEvent: _onListKey,
-      child: ListView.builder(
-        controller: _listScroll,
-        itemCount: rows.length,
-        itemBuilder: (context, index) => _statusRow(context, rows[index], rows),
+      // The staging banner overlays the top of the list, but only while a file
+      // drag is live (idle it's zero-size and the list is fully interactive).
+      // It dispatches to the same bulk stage/unstage the row icons and context
+      // menu use, so drag-to-stage stays consistent with every other path.
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: ListView.builder(
+              controller: _listScroll,
+              itemCount: rows.length,
+              itemBuilder: (context, index) =>
+                  _statusRow(context, rows[index], rows),
+            ),
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: StagingDropBanner(
+              onStage: _stageMany,
+              onUnstage: _unstageMany,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -2353,7 +2374,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         ? _orderedSelectedPaths(rows, kind)
         : [file.path];
     return DragItemDraggable(
-      item: DragFiles(dragPaths),
+      // fromStaged makes the drag-to-stage banner directional: a staged row can
+      // only be unstaged, everything else only staged.
+      item: DragFiles(dragPaths, fromStaged: kind == _SectionKind.staged),
       child: KeyedSubtree(
       key: _rowKeyFor(file.path, kind),
       child: GestureDetector(

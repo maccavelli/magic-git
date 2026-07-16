@@ -43,11 +43,19 @@ class DragStash extends DragItem {
 }
 
 /// One or more working-copy paths — the operand for a partial (path-scoped)
-/// stash when dropped onto the Stashes zone. Carries the whole current
-/// selection when the dragged row is part of it, else just that one path.
+/// stash when dropped onto the Stashes zone, and for drag-to-stage within the
+/// Repository panel. Carries the whole current selection when the dragged row
+/// is part of it, else just that one path.
+///
+/// [fromStaged] records whether the drag started in the Staged section. It's
+/// what makes drag-to-stage directional: an unstaged/untracked source can only
+/// be *staged*, a staged source can only be *unstaged* — so the drop target is
+/// unambiguous even when the destination section is empty. The Stashes drop
+/// ignores it.
 class DragFiles extends DragItem {
   final List<String> paths;
-  const DragFiles(this.paths);
+  final bool fromStaged;
+  const DragFiles(this.paths, {this.fromStaged = false});
   @override
   String get shortLabel => paths.length == 1
       ? _basename(paths.first)
