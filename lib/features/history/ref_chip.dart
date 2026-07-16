@@ -92,6 +92,11 @@ String refDecorationLabel(GitRef ref) {
 class RefChipStrip extends StatelessWidget {
   final List<GitRef> refs;
 
+  /// When true, branch chips can be dragged onto a commit (or another branch)
+  /// to merge/rebase — the History view opts in; the reflog and other read-only
+  /// surfaces leave it off.
+  final bool enableDrag;
+
   /// Beyond this, chips collapse into a `+N`. Two full-name chips leave room
   /// for the subject in the 420px commit pane; a third crowded out labels into
   /// icon-only ellipses (the complaint that motivated the redesign).
@@ -100,7 +105,7 @@ class RefChipStrip extends StatelessWidget {
   /// Soft cap on a single chip's width so one long name cannot dominate the row.
   static const double maxChipWidth = 132;
 
-  const RefChipStrip({super.key, required this.refs});
+  const RefChipStrip({super.key, required this.refs, this.enableDrag = false});
 
   @override
   Widget build(BuildContext context) {
@@ -117,7 +122,7 @@ class RefChipStrip extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        for (final r in shown) RefChip(gitRef: r),
+        for (final r in shown) RefChip(gitRef: r, enableDrag: enableDrag),
         if (hidden.isNotEmpty)
           MacosTooltip(
             message: hidden
@@ -148,45 +153,70 @@ class RefChipStrip extends StatelessWidget {
 class RefChip extends StatelessWidget {
   final GitRef gitRef;
 
-  const RefChip({super.key, required this.gitRef});
+  /// When true and this chip is a branch (local or remote), it becomes a
+  /// [Draggable] carrying its [GitRef] so it can be dropped on a commit to
+  /// merge/rebase. Tags and worktree-pinned branches are never draggable.
+  final bool enableDrag;
+
+  const RefChip({super.key, required this.gitRef, this.enableDrag = false});
 
   @override
   Widget build(BuildContext context) {
     final (color, icon) = _style(gitRef);
     final label = refDecorationLabel(gitRef);
-    // Width is hard-capped by [RefChipStrip.maxChipWidth]; the label
-    // ellipsizes rather than vanishing into an icon-only badge. Full name
-    // always lives on the tooltip.
-    final chip = _RefChipChrome(
-      color: color,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          MacosIcon(icon, size: 11, color: color),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              softWrap: false,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                color: color,
-                letterSpacing: -0.1,
-              ),
-            ),
-          ),
-        ],
-      ),
+
+    final tooltipped = MacosTooltip(
+      message: refDecorationTooltip(gitRef),
+      child: _chip(color, icon, label),
     );
 
-    return MacosTooltip(
-      message: refDecorationTooltip(gitRef),
-      child: chip,
+    // Only real branches are integration operands.
+    final draggable =
+        enableDrag && (gitRef.isLocalBranch || gitRef.isRemote);
+    if (!draggable) return tooltipped;
+
+    return Draggable<GitRef>(
+      data: gitRef,
+      // Anchor the floating chip to the pointer, not the chip's top-left, so it
+      // tracks under the finger regardless of where the chip was grabbed.
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: Transform.translate(
+        offset: const Offset(8, 8),
+        child: Opacity(opacity: 0.9, child: _chip(color, icon, label)),
+      ),
+      childWhenDragging: Opacity(opacity: 0.4, child: tooltipped),
+      child: tooltipped,
     );
   }
+
+  // Width is hard-capped by [RefChipStrip.maxChipWidth]; the label ellipsizes
+  // rather than vanishing into an icon-only badge. Full name always lives on the
+  // tooltip. Built on demand so the same chrome can back both the resting chip
+  // and the drag feedback (one widget can't appear in the tree twice).
+  Widget _chip(Color color, IconData icon, String label) => _RefChipChrome(
+    color: color,
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        MacosIcon(icon, size: 11, color: color),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: color,
+              letterSpacing: -0.1,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
 
   (Color, IconData) _style(GitRef ref) {
     if (ref.isTag) {

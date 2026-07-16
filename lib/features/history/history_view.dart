@@ -1,8 +1,7 @@
 import 'dart:async';
 import 'dart:isolate';
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/gestures.dart'
-    show GestureBinding, PointerScrollEvent;
+import 'package:flutter/gestures.dart' show GestureBinding, PointerScrollEvent;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -558,10 +557,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
 
   /// [movesHead] ops (reset, amend, branch-from) clear the diff selection on
   /// success because the selected commit may no longer exist / be meaningful.
-  Future<void> _run(
-    Future<void> Function() op, {
-    bool movesHead = false,
-  }) => runGuarded(op, onSuccess: movesHead ? _clearSelection : null);
+  Future<void> _run(Future<void> Function() op, {bool movesHead = false}) =>
+      runGuarded(op, onSuccess: movesHead ? _clearSelection : null);
 
   @override
   void refreshAfterAction() => _refresh();
@@ -1321,68 +1318,68 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
-        children: [
-          Expanded(
-            child: MacosTooltip(
-              message:
-                  'Filter by message, or use terms: author: file: sha: '
-                  'after: before:\n'
-                  'e.g. rename author:mac file:lib/core/ after:2026-01-01\n'
-                  'A bare commit hash (5+ characters) finds that commit\n'
-                  'Words must all match; * and ? are wildcards (file:*.dart)\n'
-                  'Quote values with spaces: author:"Mac Smith"',
-              child: MacosTextField(
-                controller: _searchController,
-                focusNode: _searchFocus,
-                placeholder: 'Filter — message, author:, file:, sha:…',
-                placeholderStyle: kAppPlaceholderStyle,
-                decoration: kAppTextFieldDecoration,
-                focusedDecoration: kAppTextFieldFocusedDecoration,
-                onChanged: (_) => _debounceFilters(),
+            children: [
+              Expanded(
+                child: MacosTooltip(
+                  message:
+                      'Filter by message, or use terms: author: file: sha: '
+                      'after: before:\n'
+                      'e.g. rename author:mac file:lib/core/ after:2026-01-01\n'
+                      'A bare commit hash (5+ characters) finds that commit\n'
+                      'Words must all match; * and ? are wildcards (file:*.dart)\n'
+                      'Quote values with spaces: author:"Mac Smith"',
+                  child: MacosTextField(
+                    controller: _searchController,
+                    focusNode: _searchFocus,
+                    placeholder: 'Filter — message, author:, file:, sha:…',
+                    placeholderStyle: kAppPlaceholderStyle,
+                    decoration: kAppTextFieldDecoration,
+                    focusedDecoration: kAppTextFieldFocusedDecoration,
+                    onChanged: (_) => _debounceFilters(),
+                  ),
+                ),
               ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          ToolIconButton(
-            icon: CupertinoIcons.slider_horizontal_3,
-            tooltip: 'Filter by author, date, or path',
-            size: 16,
-            color: advancedActive || _filtersExpanded
-                ? MacosColors.systemBlueColor
-                : null,
-            onPressed: () =>
-                setState(() => _filtersExpanded = !_filtersExpanded),
-          ),
-          const SizedBox(width: 6),
-          ToolIconButton(
-            icon: _allBranches
-                ? CupertinoIcons.square_stack_3d_up_fill
-                : CupertinoIcons.square_stack_3d_up,
-            tooltip: _allBranches
-                ? 'Showing all branches'
-                : 'Show all branches',
-            size: 16,
-            color: _allBranches ? MacosColors.systemBlueColor : null,
-            onPressed: () => setState(() => _allBranches = !_allBranches),
-          ),
-          const SizedBox(width: 6),
-          ToolIconButton(
-            icon: CupertinoIcons.arrow_counterclockwise_circle,
-            tooltip: 'Recovery (reflog & snapshots)',
-            size: 16,
-            onPressed: () =>
-                ref.read(recoveryVisibleProvider.notifier).setVisible(true),
-          ),
-          if (widget.onPopOut != null) ...[
-            const SizedBox(width: 6),
-            ToolIconButton(
-              icon: CupertinoIcons.macwindow,
-              tooltip: 'Open History in new window',
-              size: 16,
-              onPressed: widget.onPopOut,
-            ),
-          ],
-        ],
+              const SizedBox(width: 6),
+              ToolIconButton(
+                icon: CupertinoIcons.slider_horizontal_3,
+                tooltip: 'Filter by author, date, or path',
+                size: 16,
+                color: advancedActive || _filtersExpanded
+                    ? MacosColors.systemBlueColor
+                    : null,
+                onPressed: () =>
+                    setState(() => _filtersExpanded = !_filtersExpanded),
+              ),
+              const SizedBox(width: 6),
+              ToolIconButton(
+                icon: _allBranches
+                    ? CupertinoIcons.square_stack_3d_up_fill
+                    : CupertinoIcons.square_stack_3d_up,
+                tooltip: _allBranches
+                    ? 'Showing all branches'
+                    : 'Show all branches',
+                size: 16,
+                color: _allBranches ? MacosColors.systemBlueColor : null,
+                onPressed: () => setState(() => _allBranches = !_allBranches),
+              ),
+              const SizedBox(width: 6),
+              ToolIconButton(
+                icon: CupertinoIcons.arrow_counterclockwise_circle,
+                tooltip: 'Recovery (reflog & snapshots)',
+                size: 16,
+                onPressed: () =>
+                    ref.read(recoveryVisibleProvider.notifier).setVisible(true),
+              ),
+              if (widget.onPopOut != null) ...[
+                const SizedBox(width: 6),
+                ToolIconButton(
+                  icon: CupertinoIcons.macwindow,
+                  tooltip: 'Open History in new window',
+                  size: 16,
+                  onPressed: widget.onPopOut,
+                ),
+              ],
+            ],
           ),
           if (_filtersExpanded) ...[
             const SizedBox(height: 6),
@@ -1390,7 +1387,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               children: [
                 Expanded(
                   child: MacosTooltip(
-                    message: 'Show only commits by this author '
+                    message:
+                        'Show only commits by this author '
                         '(matches part of a name or email)',
                     child: MacosTextField(
                       controller: _authorController,
@@ -1408,7 +1406,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   child: MacosTooltip(
                     // Passed verbatim to `git log --since`, which accepts
                     // dates and phrases ("2 weeks ago") alike.
-                    message: 'Only commits after this date — '
+                    message:
+                        'Only commits after this date — '
                         'e.g. 2024-01-31 or "2 weeks ago"',
                     child: MacosTextField(
                       controller: _afterController,
@@ -1425,7 +1424,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   width: 116,
                   child: MacosTooltip(
                     // `git log --until`, same flexible date parsing.
-                    message: 'Only commits before this date — '
+                    message:
+                        'Only commits before this date — '
                         'e.g. 2024-01-31 or "3 days ago"',
                     child: MacosTextField(
                       controller: _beforeController,
@@ -1444,7 +1444,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               children: [
                 Expanded(
                   child: MacosTooltip(
-                    message: 'Show only commits that touched this file '
+                    message:
+                        'Show only commits that touched this file '
                         'or folder',
                     child: MacosTextField(
                       controller: _pathController,
@@ -1476,9 +1477,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
             const SizedBox(height: 4),
             Text(
               dateProblem,
-              style: MacosTheme.of(context).typography.caption1.copyWith(
-                color: MacosColors.systemRedColor,
-              ),
+              style: MacosTheme.of(
+                context,
+              ).typography.caption1.copyWith(color: MacosColors.systemRedColor),
             ),
           ],
         ],
@@ -1625,102 +1626,193 @@ class _HistoryViewState extends ConsumerState<HistoryView>
             context,
           ).copyWith(textScaler: TextScaler.linear(zoom)),
           child: ListView.builder(
-      controller: _commitScroll,
-      itemExtent: rowHeight,
-      physics: _metaDown ? const NeverScrollableScrollPhysics() : null,
-      itemCount: graph.rows.length + (exhausted ? 0 : 1),
-      itemBuilder: (context, index) {
-        if (index >= graph.rows.length) {
-          return _loadMoreRow(rowHeight, canLoadMore);
-        }
-        final row = graph.rows[index];
-        final commit = row.commit;
-        final selected = _selectedHashes.contains(commit.hash);
-        return GestureDetector(
-          key: _commitRowKeyFor(commit.hash),
-          onTap: () => _handleRowTap(commit.hash),
-          onSecondaryTapUp: (d) =>
-              _handleRowSecondaryTap(commit, d.globalPosition),
-          child: Container(
-            color: selected
-                ? MacosColors.systemBlueColor.withValues(alpha: 0.32)
-                : const Color(0x00000000),
-            height: rowHeight,
-            child: Row(
-              children: [
-                // Clip to the fixed band so rounding in the compressed-lane
-                // math can never paint a hair over the ref chips, subject, or
-                // author text to the right — every lane itself is still drawn
-                // (compressed via `laneWidth` above once the count exceeds
-                // the cap), never dropped.
-                ClipRect(
-                  child: CustomPaint(
-                    size: Size(graphWidth, rowHeight),
-                    painter: CommitRowPainter(
-                      row,
-                      laneWidth: laneWidth,
-                      scale: zoom,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
+            controller: _commitScroll,
+            itemExtent: rowHeight,
+            physics: _metaDown ? const NeverScrollableScrollPhysics() : null,
+            itemCount: graph.rows.length + (exhausted ? 0 : 1),
+            itemBuilder: (context, index) {
+              if (index >= graph.rows.length) {
+                return _loadMoreRow(rowHeight, canLoadMore);
+              }
+              final row = graph.rows[index];
+              final commit = row.commit;
+              final selected = _selectedHashes.contains(commit.hash);
+              return DragTarget<GitRef>(
+                // A branch chip dropped anywhere on a commit row opens the integrate
+                // menu; the row it lands on is just the drop affordance.
+                onWillAcceptWithDetails: (details) =>
+                    _canDropBranch(details.data),
+                onAcceptWithDetails: (details) =>
+                    _onBranchDropped(details.data, details.offset),
+                builder: (context, candidate, rejected) {
+                  final dropHover = candidate.isNotEmpty;
+                  return GestureDetector(
+                    key: _commitRowKeyFor(commit.hash),
+                    onTap: () => _handleRowTap(commit.hash),
+                    onSecondaryTapUp: (d) =>
+                        _handleRowSecondaryTap(commit, d.globalPosition),
+                    child: Container(
+                      color: dropHover
+                          ? MacosColors.systemGreenColor.withValues(alpha: 0.20)
+                          : selected
+                          ? MacosColors.systemBlueColor.withValues(alpha: 0.32)
+                          : const Color(0x00000000),
+                      height: rowHeight,
+                      child: Row(
                         children: [
-                          if (commit.isMerge) ...[
-                            MacosIcon(
-                              CupertinoIcons.arrow_merge,
-                              size: 13 * zoom,
-                            ),
-                            const SizedBox(width: 4),
-                          ],
-                          // Subject first (Tower / Fork / GitHub Desktop): the
-                          // message is primary. Chips are intrinsically sized
-                          // (capped per chip + maxVisible) so they never compete
-                          // with the subject for flex space and collapse to
-                          // zero width — the pop-out bug that hid every badge.
-                          Expanded(
-                            child: Text(
-                              commit.subject,
-                              style: typography.body,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                          // Clip to the fixed band so rounding in the compressed-lane
+                          // math can never paint a hair over the ref chips, subject, or
+                          // author text to the right — every lane itself is still drawn
+                          // (compressed via `laneWidth` above once the count exceeds
+                          // the cap), never dropped.
+                          ClipRect(
+                            child: CustomPaint(
+                              size: Size(graphWidth, rowHeight),
+                              painter: CommitRowPainter(
+                                row,
+                                laneWidth: laneWidth,
+                                scale: zoom,
+                              ),
                             ),
                           ),
-                          if ((decorations[commit.hash] ?? const <GitRef>[])
-                              .isNotEmpty) ...[
-                            const SizedBox(width: 6),
-                            RefChipStrip(
-                              refs: decorations[commit.hash]!,
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    if (commit.isMerge) ...[
+                                      MacosIcon(
+                                        CupertinoIcons.arrow_merge,
+                                        size: 13 * zoom,
+                                      ),
+                                      const SizedBox(width: 4),
+                                    ],
+                                    // Subject first (Tower / Fork / GitHub Desktop): the
+                                    // message is primary. Chips are intrinsically sized
+                                    // (capped per chip + maxVisible) so they never compete
+                                    // with the subject for flex space and collapse to
+                                    // zero width — the pop-out bug that hid every badge.
+                                    Expanded(
+                                      child: Text(
+                                        commit.subject,
+                                        style: typography.body,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    if ((decorations[commit.hash] ??
+                                            const <GitRef>[])
+                                        .isNotEmpty) ...[
+                                      const SizedBox(width: 6),
+                                      RefChipStrip(
+                                        refs: decorations[commit.hash]!,
+                                        enableDrag: true,
+                                      ),
+                                    ],
+                                  ],
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${commit.shortHash}  ·  ${commit.authorName}  ·  '
+                                  '${_shortDate(commit.date)}',
+                                  style: typography.caption1.copyWith(
+                                    color: MacosColors.systemGrayColor,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ],
                             ),
-                          ],
+                          ),
+                          const SizedBox(width: 8),
                         ],
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${commit.shortHash}  ·  ${commit.authorName}  ·  '
-                        '${_shortDate(commit.date)}',
-                        style: typography.caption1.copyWith(
-                          color: MacosColors.systemGrayColor,
-                        ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-              ],
-            ),
-          ),
-        );
-      },
+                    ),
+                  );
+                },
+              );
+            },
           ),
         ),
+      ),
+    );
+  }
+
+  // ---- Drag-a-branch-to-merge / rebase -----------------------------------
+
+  /// The current branch's short name, or null when detached — the operand every
+  /// dropped-branch action is relative to.
+  String? _currentBranchName() {
+    for (final r in _stableRefs) {
+      if (r.isHead && r.isLocalBranch) return r.shortName;
+    }
+    return null;
+  }
+
+  /// A drop is meaningful only when a branch is dragged and there's a current
+  /// branch that differs from it (a branch can't be merged/rebased with itself).
+  bool _canDropBranch(GitRef dragged) {
+    final current = _currentBranchName();
+    return current != null && dragged.shortName != current;
+  }
+
+  /// Opens the integrate menu at the drop point: merge [dragged] into the
+  /// current branch (three modes), or rebase the current branch onto it.
+  void _onBranchDropped(GitRef dragged, Offset globalPosition) {
+    final current = _currentBranchName();
+    if (current == null || dragged.shortName == current) return;
+    final name = dragged.shortName;
+    _contextMenu.show(context, globalPosition, [
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_merge,
+        label: 'Merge $name into $current',
+        onTap: () => _actMergeInto(dragged, MergeMode.normal),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_merge,
+        label: 'Merge $name into $current (no-ff)',
+        onTap: () => _actMergeInto(dragged, MergeMode.noFf),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_merge,
+        label: 'Merge $name into $current (squash)',
+        onTap: () => _actMergeInto(dragged, MergeMode.squash),
+      ),
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_2_squarepath,
+        label: 'Rebase $current onto $name',
+        onTap: () => _actRebaseOnto(dragged),
+      ),
+    ], width: 260);
+  }
+
+  Future<void> _actMergeInto(GitRef branch, MergeMode mode) async {
+    final label = [
+      'git merge',
+      if (mode == MergeMode.noFf) '--no-ff',
+      if (mode == MergeMode.squash) '--squash',
+      branch.shortName,
+    ].join(' ');
+    await runLogged(
+      label,
+      (log) async => log.logResult(
+        label,
+        await _git.merge(repoPath, branch.shortName, mode: mode),
+      ),
+    );
+  }
+
+  Future<void> _actRebaseOnto(GitRef branch) async {
+    final label = 'git rebase ${branch.shortName}';
+    await runLogged(
+      label,
+      (log) async => log.logResult(
+        label,
+        await _git.rebaseOnto(repoPath, branch.shortName),
       ),
     );
   }
@@ -1733,7 +1825,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         AppSettingsNotifier.defaultDiffContext,
       )),
     );
-    final wrap = ref.watch(appSettingsProvider.select((s) => s.historyDiffWrap));
+    final wrap = ref.watch(
+      appSettingsProvider.select((s) => s.historyDiffWrap),
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1767,8 +1861,6 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         ref.read(appSettingsProvider.notifier).setHistoryDiffWrap(!wrap),
   );
 
-
-
   /// The diff between exactly two selected commits — what [newer] adds on
   /// top of [older] (`git diff older..newer`). The pane appears the moment a
   /// second commit is ⌘/⇧-selected, matching Fork/Tower's compare-two flow.
@@ -1778,7 +1870,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     required GitCommit newer,
   }) {
     final typography = MacosTheme.of(context).typography;
-    final wrap = ref.watch(appSettingsProvider.select((s) => s.historyDiffWrap));
+    final wrap = ref.watch(
+      appSettingsProvider.select((s) => s.historyDiffWrap),
+    );
     final diffAsync = ref.watch(
       commitRangeDiffProvider((
         widget.repoPath,
