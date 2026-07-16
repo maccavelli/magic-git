@@ -54,17 +54,53 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
     RebaseAction.drop => 'Drop',
   };
 
+  /// The first commit has nothing above to fold into, so it can never be
+  /// squash/fixup — any move that lands a fold action there resets it to pick.
+  void _fixupFirstRow() {
+    if (_rows.isEmpty) return;
+    if (_rows.first.action == RebaseAction.squash ||
+        _rows.first.action == RebaseAction.fixup) {
+      _rows.first.action = RebaseAction.pick;
+    }
+  }
+
   void _move(int i, int delta) {
     final j = i + delta;
     if (j < 0 || j >= _rows.length) return;
     setState(() {
       final r = _rows.removeAt(i);
       _rows.insert(j, r);
-      // The first commit has nothing to fold into, so it can't squash/fixup.
-      if (_rows.first.action == RebaseAction.squash ||
-          _rows.first.action == RebaseAction.fixup) {
-        _rows.first.action = RebaseAction.pick;
-      }
+      _fixupFirstRow();
+    });
+  }
+
+  /// Dropping a commit into the gap [slot] (0..n) reorders it there. Slots
+  /// [from] and [from]+1 straddle the commit's own position, so they're no-ops.
+  bool _isReorderNoop(int from, int slot) => slot == from || slot == from + 1;
+
+  void _reorderTo(int from, int slot) {
+    if (_busy || _isReorderNoop(from, slot)) return;
+    setState(() {
+      final r = _rows.removeAt(from);
+      // Removing shifts everything after `from` down one, so a slot past it
+      // lands one index earlier than its raw value.
+      _rows.insert(slot > from ? slot - 1 : slot, r);
+      _fixupFirstRow();
+    });
+  }
+
+  /// Dropping commit [dragged] onto commit [target] folds it in: it moves to sit
+  /// immediately below [target] and is marked squash (keep both messages). The
+  /// user can switch it to fixup via the row's action menu.
+  void _squashInto(int dragged, int target) {
+    if (_busy || dragged == target) return;
+    setState(() {
+      final r = _rows.removeAt(dragged);
+      // `target`'s index after the removal, then insert just below it.
+      final t = dragged < target ? target - 1 : target;
+      _rows.insert(t + 1, r);
+      r.action = RebaseAction.squash;
+      _fixupFirstRow();
     });
   }
 
@@ -162,21 +198,16 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
               child: Text(
-                'Reorder and choose an action for each commit (top = oldest). '
-                'Squash/Fixup fold a commit into the one above it.',
+                'Drag a commit to reorder it, or drop it onto another to squash '
+                'them together (top = oldest). Squash/Fixup fold a commit into '
+                'the one above it.',
                 style: typography.caption1.copyWith(
                   color: MacosColors.systemGrayColor,
                 ),
               ),
             ),
             Container(height: 1, color: MacosColors.separatorColor),
-            Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(vertical: 6),
-                itemCount: _rows.length,
-                itemBuilder: (context, i) => _row(context, i),
-              ),
-            ),
+            Expanded(child: _list(context)),
             Container(height: 1, color: MacosColors.separatorColor),
             Padding(
               padding: const EdgeInsets.all(14),
@@ -221,13 +252,142 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
     );
   }
 
+  /// The commit list, interleaving reorder gaps and draggable rows:
+  /// gap 0, row 0, gap 1, row 1, …, row n-1, gap n. Each gap is a reorder drop
+  /// target (insertion line); each row is both draggable and a squash target.
+  Widget _list(BuildContext context) {
+    final children = <Widget>[];
+    for (var i = 0; i < _rows.length; i++) {
+      children.add(_gap(i));
+      children.add(_row(context, i));
+    }
+    children.add(_gap(_rows.length));
+    return ListView(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      children: children,
+    );
+  }
+
+  /// A reorder drop target between rows. Idle it's just spacing; while a commit
+  /// hovers it shows a blue insertion line. Rejects the two slots that straddle
+  /// the dragged commit's own position (dropping there wouldn't move it).
+  Widget _gap(int slot) {
+    return DragTarget<int>(
+      onWillAcceptWithDetails: (d) => !_busy && !_isReorderNoop(d.data, slot),
+      onAcceptWithDetails: (d) => _reorderTo(d.data, slot),
+      builder: (context, candidate, rejected) {
+        final active = candidate.isNotEmpty;
+        return KeyedSubtree(
+          key: ValueKey('rebase-gap-$slot'),
+          child: SizedBox(
+            height: 12,
+            child: Center(
+              child: Container(
+                height: active ? 3 : 0,
+                margin: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  color: MacosColors.systemBlueColor,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// A draggable commit row that is also a squash drop target: dropping another
+  /// commit onto it folds that commit in (green highlight while hovering).
   Widget _row(BuildContext context, int i) {
+    final content = _rowContent(context, i);
+    return LongPressDraggable<int>(
+      // Long-press (not immediate) so the list still scrolls; disabled while a
+      // rebase is running.
+      data: i,
+      maxSimultaneousDrags: _busy ? 0 : 1,
+      dragAnchorStrategy: pointerDragAnchorStrategy,
+      feedback: _ghost(context, i),
+      childWhenDragging: Opacity(opacity: 0.35, child: content),
+      child: DragTarget<int>(
+        onWillAcceptWithDetails: (d) => !_busy && d.data != i,
+        onAcceptWithDetails: (d) => _squashInto(d.data, i),
+        builder: (context, candidate, rejected) {
+          final active = candidate.isNotEmpty;
+          return KeyedSubtree(
+            key: ValueKey('rebase-row-$i'),
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: active
+                    ? MacosColors.systemGreenColor.withValues(alpha: 0.16)
+                    : null,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: active
+                      ? MacosColors.systemGreenColor.withValues(alpha: 0.6)
+                      : const Color(0x00000000),
+                ),
+              ),
+              child: content,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// The pointer-anchored drag ghost — the commit being moved.
+  Widget _ghost(BuildContext context, int i) {
+    final c = _rows[i].commit;
+    final typography = MacosTheme.of(context).typography;
+    return Transform.translate(
+      offset: const Offset(8, 8),
+      child: Opacity(
+        opacity: 0.92,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 320),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: const Color(0xFF2C2C2E),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: MacosColors.separatorColor),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const MacosIcon(
+                    CupertinoIcons.arrow_up_arrow_down,
+                    size: 13,
+                    color: MacosColors.systemGrayColor,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      '${c.shortHash}  ${c.subject}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: typography.caption1,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _rowContent(BuildContext context, int i) {
     final typography = MacosTheme.of(context).typography;
     final r = _rows[i];
     final dropped = r.action == RebaseAction.drop;
     final canFold = i > 0; // the first row has nothing above to fold into
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
       child: Row(
         children: [
           Column(

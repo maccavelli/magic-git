@@ -4,6 +4,7 @@
 // in one shot — Rebase confirms before running, mirroring Reset/Amend/Revert
 // elsewhere in the app.
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -64,6 +65,36 @@ Future<_FakeGit> _pump(WidgetTester tester) async {
   return git;
 }
 
+/// Long-press [source], drag it onto [target], and release — the interaction
+/// the rebase rows use (long-press so the list still scrolls).
+Future<void> _longDrag(
+  WidgetTester tester,
+  Finder source,
+  Finder target,
+) async {
+  final gesture = await tester.startGesture(tester.getCenter(source));
+  await tester.pump(const Duration(milliseconds: 600)); // exceed long-press
+  await tester.pump();
+  await gesture.moveTo(tester.getCenter(target));
+  await tester.pump();
+  await gesture.up();
+  await tester.pumpAndSettle();
+}
+
+/// Confirms the rebase and returns the steps handed to rebaseInteractive.
+Future<List<RebaseStep>> _confirmAndCapture(
+  WidgetTester tester,
+  _FakeGit git,
+) async {
+  await tester.tap(find.text('Rebase'));
+  await tester.pump();
+  await tester.pump(const Duration(seconds: 1));
+  await tester.tap(find.text('Rebase').last); // the dialog's confirm button
+  await tester.pump();
+  await tester.pump(const Duration(seconds: 1));
+  return git.calls.single;
+}
+
 void main() {
   testWidgets('the action picker never offers Reword', (tester) async {
     await _pump(tester);
@@ -120,6 +151,43 @@ void main() {
     expect(git.calls.single.map((s) => s.action), [
       RebaseAction.pick,
       RebaseAction.pick,
+    ]);
+  });
+
+  testWidgets('dragging a commit into a gap reorders it', (tester) async {
+    final git = await _pump(tester);
+
+    // Drop "first" (row 0) into the gap after the last row -> it moves to the
+    // end, so the steps come back second-then-first, both still pick.
+    await _longDrag(
+      tester,
+      find.text('first'),
+      find.byKey(const ValueKey('rebase-gap-2')),
+    );
+
+    final steps = await _confirmAndCapture(tester, git);
+    expect(steps.map((s) => s.hash), ['bbb2222222', 'aaa1111111']);
+    expect(steps.map((s) => s.action), [
+      RebaseAction.pick,
+      RebaseAction.pick,
+    ]);
+  });
+
+  testWidgets('dropping a commit onto another squashes it in', (tester) async {
+    final git = await _pump(tester);
+
+    // Drop "second" onto "first": it stays just below and becomes squash.
+    await _longDrag(
+      tester,
+      find.text('second'),
+      find.byKey(const ValueKey('rebase-row-0')),
+    );
+
+    final steps = await _confirmAndCapture(tester, git);
+    expect(steps.map((s) => s.hash), ['aaa1111111', 'bbb2222222']);
+    expect(steps.map((s) => s.action), [
+      RebaseAction.pick,
+      RebaseAction.squash,
     ]);
   });
 }

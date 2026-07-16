@@ -386,10 +386,11 @@ is a `case` in `_actionsFor` (`drop_registry.dart`) plus, where needed, a new
 Worktrees, **A3** commit → Repository cherry-pick), the B-tier (**B1** stash →
 Repository apply/pop via `DragStash` + draggable stash cards, **B2** files →
 Stashes partial stash via `DragFiles` + draggable status rows +
-`stashPush(paths:)`), and **C1** drag-to-stage (`StagingDropBanner` +
-`DragFiles.fromStaged`). Remaining: **D1** (interactive-rebase reorder/squash),
-**E1/E2** (move-pointer / cherry-pick-to-branch), plus the cross-cutting
-hardening below.
+`stashPush(paths:)`), **C1** drag-to-stage (`StagingDropBanner` +
+`DragFiles.fromStaged`), and **D1** drag-to-reorder / drag-to-squash in the
+interactive-rebase sheet (self-contained `LongPressDraggable<int>` + gap/row
+`DragTarget`s, no engine dependency). Remaining: **E1/E2** (move-pointer /
+cherry-pick-to-branch), plus the cross-cutting hardening below.
 
 **C1 architecture note (supersedes engine-refinement #1).** In-panel drops
 turned out *not* to want the global nav registry: staging must dispatch to the
@@ -417,8 +418,8 @@ Legend: **payload** = new `DragItem` subtype; **source** = make a row/chip
 | B1 | **stash → Repository** = apply / pop | **`DragStash`** | stash rows (`stash_view.dart`) | reuse `repository` | reuse `stashApply`/`stashPop` | **M** | ✅ shipped |
 | B2 | **files → Stashes** = partial stash | **`DragFiles`** | file rows (`repo_status_view.dart`) | reuse `stashes` | **`stashPush(paths:)`** (pathspec) | **M** | ✅ shipped |
 | C1 | **drag-to-stage** (unstaged ⇄ staged) | `DragFiles.fromStaged` | reuse (B2) | `StagingDropBanner` (in-panel) | reuse `stageMany`/`unstageMany` | **M** | ✅ shipped |
-| D1 | **drag-reorder / squash commits** (interactive rebase) | — | rows in `RebaseSheet` | — (self-contained) | reuse `rebaseInteractive` | **M** | next |
-| E1 | **branch label → commit** = move pointer ⚠ | reuse `DragRef` | reuse | extend `commitRow` (disambiguation menu) | **`moveBranch` = `git branch -f`** | **L** |
+| D1 | **drag-reorder / squash commits** (interactive rebase) | — | rows in `RebaseSheet` | — (self-contained) | reuse `rebaseInteractive` | **M** | ✅ shipped |
+| E1 | **branch label → commit** = move pointer ⚠ | reuse `DragRef` | reuse | extend `commitRow` (disambiguation menu) | **`moveBranch` = `git branch -f`** | **L** | next |
 | E2 | **commit → a specific branch** = cherry-pick there | reuse `DragCommit` | reuse | branch rows as targets | reuse `cherryPick` (after checkout guard) | **L** |
 
 ⚠ = destructive → routes through the registry's confirm-by-default menu path
