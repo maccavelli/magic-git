@@ -420,6 +420,13 @@ class _StashViewState extends ConsumerState<StashView>
       item: DragStash(stash),
       // Immediate (mouse-first) drag — see DragItemDraggable. Tap still selects.
       immediate: true,
+      // Picking a card up selects it — identical to the tap path below, so the
+      // selection (and its preview) follow the dragged stash (engine contract).
+      onDragSelect: () {
+        if (_selected == stash.oid) return;
+        _stashFocus.requestFocus();
+        setState(() => _selected = stash.oid);
+      },
       child: GestureDetector(
       key: _stashRowKeyFor(stash.oid),
       onTap: () {

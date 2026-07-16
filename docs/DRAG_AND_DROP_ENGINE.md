@@ -392,6 +392,19 @@ interactive-rebase sheet (self-contained `LongPressDraggable<int>` + gap/row
 `DragTarget`s, no engine dependency). Remaining: **E1/E2** (move-pointer /
 cherry-pick-to-branch), plus the cross-cutting hardening below.
 
+**Select-on-drag (canonical engine contract).** Picking an item up *selects*
+it: `DragItemDraggable.onDragSelect` fires the instant a drag begins (before
+the rail lights), and every selectable source wires it to its panel's own
+click-select path — so the dragged row shows the real selection bar, any other
+selection moves off it, and the drag operand is never ambiguous. Two rules for
+new sources: (1) ignore ⌘/⇧ (a drag must never toggle or range-extend), and
+(2) no-op when the item is already part of the current selection, so dragging
+a multi-selection doesn't collapse it to one row (`DragFiles` carries the whole
+selection). The dragged-source dim is 0.55 so the selection tint stays legible
+under it. Wired: history commit rows, branch rows, stash cards, repo file rows.
+Ref chips (labels, not list items) and rebase rows (no selection model) are
+deliberately exempt.
+
 **C1 architecture note (supersedes engine-refinement #1).** In-panel drops
 turned out *not* to want the global nav registry: staging must dispatch to the
 panel's own `stageMany`/`unstageMany` (which keep the selection + diff panel in

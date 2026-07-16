@@ -324,6 +324,20 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     });
   }
 
+  /// Select-on-drag (see [DragItemDraggable.onDragSelect]): picking a commit
+  /// row up selects exactly it, like a plain click — but deliberately ignores
+  /// ⌘/⇧ (a drag must never range-extend or toggle), and no-ops when the row
+  /// is already selected so dragging out of a multi-selection keeps it intact.
+  void _selectForDrag(String hash) {
+    if (_selectedHashes.contains(hash)) return;
+    _commitFocus.requestFocus();
+    setState(() {
+      _selectedHashes = {hash};
+      _selectionAnchor = hash;
+      _selectionCursor = hash;
+    });
+  }
+
   void _moveCommitSelection(int dir, {bool extend = false}) {
     final commits = _lastCommits;
     if (commits == null || commits.isEmpty) return;
@@ -1664,6 +1678,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   return DragItemDraggable(
                     item: DragCommit(commit),
                     immediate: true,
+                    // Picking a row up selects it — the canonical engine
+                    // contract, so the drag operand is never ambiguous.
+                    onDragSelect: () => _selectForDrag(commit.hash),
                     child: GestureDetector(
                       key: _commitRowKeyFor(commit.hash),
                       onTap: () => _handleRowTap(commit.hash),

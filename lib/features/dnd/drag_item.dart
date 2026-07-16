@@ -92,12 +92,23 @@ class DragItemDraggable extends ConsumerWidget {
   /// Start dragging on movement (mouse-first) instead of on long-press.
   final bool immediate;
 
+  /// **The canonical select-on-drag hook.** Fired the instant the drag begins,
+  /// before any drop target sees it. Every selectable drag source wires this
+  /// to its panel's own click-select path so picking an item up *selects* it —
+  /// the row shows the real selection bar (not just the drag dim), any other
+  /// selection moves off, and there is never ambiguity about which item the
+  /// drag is operating on. Panels should no-op when the item is already part
+  /// of the current selection (so dragging a multi-selection doesn't collapse
+  /// it to one row).
+  final VoidCallback? onDragSelect;
+
   const DragItemDraggable({
     super.key,
     required this.item,
     required this.child,
     this.feedback,
     this.immediate = false,
+    this.onDragSelect,
   });
 
   @override
@@ -110,7 +121,13 @@ class DragItemDraggable extends ConsumerWidget {
     // stays valid for the tab's lifetime; if the whole tab closed mid-drag,
     // clearing its state is moot, hence the swallow.
     final drag = ref.watch(dragStateProvider.notifier);
-    void begin() => drag.begin(item);
+    void begin() {
+      // Select first, then arm the drag state: by the time the rail lights up,
+      // the source row is already showing its real selection bar.
+      onDragSelect?.call();
+      drag.begin(item);
+    }
+
     void end() {
       try {
         drag.end();
@@ -118,6 +135,10 @@ class DragItemDraggable extends ConsumerWidget {
         // Tab container disposed mid-drag — nothing left to clear.
       }
     }
+
+    // Dimmed just enough to read "in flight" while the row's own selection
+    // tint (applied via onDragSelect) still reads as selected underneath.
+    final whenDragging = Opacity(opacity: 0.55, child: child);
 
     if (immediate) {
       return Draggable<DragItem>(
@@ -129,7 +150,7 @@ class DragItemDraggable extends ConsumerWidget {
         onDragStarted: begin,
         onDragEnd: (_) => end(),
         feedback: ghost,
-        childWhenDragging: Opacity(opacity: 0.4, child: child),
+        childWhenDragging: whenDragging,
         child: child,
       );
     }
@@ -140,7 +161,7 @@ class DragItemDraggable extends ConsumerWidget {
       onDragStarted: begin,
       onDragEnd: (_) => end(),
       feedback: ghost,
-      childWhenDragging: Opacity(opacity: 0.4, child: child),
+      childWhenDragging: whenDragging,
       child: child,
     );
   }

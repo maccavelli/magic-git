@@ -2111,6 +2111,23 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     });
   }
 
+  /// Select-on-drag (see [DragItemDraggable.onDragSelect]): picking a file row
+  /// up selects exactly it, like a plain click — ignoring ⌘/⇧ (a drag must
+  /// never toggle or range-extend) — and no-ops when the row is already part
+  /// of the current selection, since the drag then carries the whole
+  /// multi-selection and collapsing it would change the payload's meaning.
+  void _selectForDrag(String path, _SectionKind kind) {
+    if (_isPathSelected(path, kind)) return;
+    _listFocus.requestFocus();
+    setState(() {
+      _selectionKind = kind;
+      _selectedPaths = {path};
+      _selectionAnchor = path;
+      // Same rule as _handleRowTap: the popout only shows a single
+      // non-conflict file; this selection IS a single file, so it can stay.
+    });
+  }
+
   String _absolutePath(String path) => '$repoPath/$path';
 
   /// The currently-selected paths within [kind]'s section, in on-screen
@@ -2379,6 +2396,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       // drag — see DragItemDraggable; plain clicks still select.
       item: DragFiles(dragPaths, fromStaged: kind == _SectionKind.staged),
       immediate: true,
+      // Picking a row up selects it (canonical engine contract) — unless it's
+      // already in the selection, which the drag is carrying whole.
+      onDragSelect: () => _selectForDrag(file.path, kind),
       child: KeyedSubtree(
       key: _rowKeyFor(file.path, kind),
       child: GestureDetector(

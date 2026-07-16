@@ -371,6 +371,9 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       child: DragItemDraggable(
         item: DragRef(branch),
         immediate: true,
+        // Picking a row up selects it — the same path a click takes, so the
+        // selection bar moves to the dragged branch (canonical engine contract).
+        onDragSelect: () => _selectBranch(branch.shortName),
         child: GestureDetector(
           onTap: () => _selectBranch(branch.shortName),
           child: Container(
