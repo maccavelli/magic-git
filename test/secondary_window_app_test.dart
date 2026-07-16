@@ -6,6 +6,7 @@
 // per-engine bootstrap channel; relayed traffic over the per-window hub.
 
 import 'package:flutter/cupertino.dart' hide ConnectionState;
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +14,8 @@ import 'package:macos_ui/macos_ui.dart' show MacosIcon;
 import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/settings/app_settings.dart';
+import 'package:remote_magic_git/core/settings/pane_layout.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/window/window_channels.dart';
@@ -399,6 +402,64 @@ void main() {
 
     expect(find.text('Recovery'), findsWidgets, reason: 'local sheet opened');
     expect(hubOut.map((c) => c.method), isNot(contains('openRecovery')));
+  });
+
+  testWidgets(
+      'dragging the History divider in the pop-out notifies the main window '
+      'via settingsChanged (debounced)', (tester) async {
+    mockChannels(_connected('/srv/repo'));
+    await pump(tester, _FakeExecutor());
+    hubOut.clear();
+
+    // The divider sits at the commit list's right edge (historyList default).
+    final gesture = await tester.startGesture(
+      const Offset(420.5, 300),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await gesture.moveBy(const Offset(15, 0));
+    await tester.pump();
+    await gesture.up();
+    await tester.pump();
+
+    expect(
+      hubOut.map((c) => c.method),
+      isNot(contains('settingsChanged')),
+      reason: 'debounced — nothing before the 600ms window',
+    );
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(hubOut.map((c) => c.method), contains('settingsChanged'),
+        reason: 'the pane width is part of the sync signature');
+  });
+
+  test('the settings-sync signature covers zoom, wrap, and every pane width', () {
+    // The signature is what the pop-out's settings listener selects on — a
+    // locally-editable setting it misses is a setting whose pop-out edits
+    // never reach the main window. Exhaustive over PaneId.values by
+    // construction; this pins that each field actually moves the record.
+    const base = AppSettings();
+    expect(
+      secondarySettingsSyncSignature(base),
+      secondarySettingsSyncSignature(const AppSettings()),
+      reason: 'value-equal settings must produce an equal record (no ping-pong)',
+    );
+    expect(
+      secondarySettingsSyncSignature(base.copyWith(historyZoom: 1.3)),
+      isNot(secondarySettingsSyncSignature(base)),
+    );
+    expect(
+      secondarySettingsSyncSignature(base.copyWith(historyDiffWrap: true)),
+      isNot(secondarySettingsSyncSignature(base)),
+    );
+    for (final id in PaneId.values) {
+      expect(
+        secondarySettingsSyncSignature(
+          base.copyWith(paneWidths: {id: paneSpecs[id]!.min}),
+        ),
+        isNot(secondarySettingsSyncSignature(base)),
+        reason: 'a ${id.name} width change must move the signature',
+      );
+    }
   });
 
   testWidgets('⌘Z asks the main isolate to undo and toasts the outcome', (

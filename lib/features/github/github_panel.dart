@@ -4,11 +4,13 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/github/models.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/settings/pane_layout.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/branch_switch.dart';
 import '../common/escape_dismissible.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/resizable_master_detail.dart';
 import '../common/show_more_row.dart';
 import '../forge/forge_widgets.dart';
 import 'create_pr_sheet.dart';
@@ -136,13 +138,10 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
               'github.rerun': runId == null ? null : () => _rerun(runId),
             })
           : const <ShortcutActivator, VoidCallback>{},
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(width: 360, child: _leftPane(prs, runs, runByBranch)),
-          Container(width: 1, color: MacosColors.separatorColor),
-          Expanded(child: _mainPane(prs, runs)),
-        ],
+      child: ResizableMasterDetail(
+        paneId: PaneId.forgeList,
+        master: _leftPane(prs, runs, runByBranch),
+        detail: _mainPane(prs, runs),
       ),
     );
   }

@@ -11,6 +11,7 @@ import '../../core/git/log_search.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/settings/pane_layout.dart';
 import '../branches/create_tag_sheet.dart';
 import '../common/actions.dart';
 import '../common/branch_switch.dart';
@@ -23,6 +24,7 @@ import '../common/field_styles.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
+import '../common/resizable_master_detail.dart';
 import '../common/tool_icon_button.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
@@ -1129,36 +1131,33 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   ref.read(appSettingsProvider.notifier).setHistoryZoom(1.0),
             })
           : const <ShortcutActivator, VoidCallback>{},
-      child: Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SizedBox(
-          width: 420,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              _filterBar(context, filtering),
-              Container(height: 1, color: MacosColors.separatorColor),
-              Expanded(
-                child: _historyBody(
-                  context,
-                  logAsync: logAsync,
-                  commits: commits,
-                  exhausted: exhausted,
-                  decorations: decorations,
-                  filtering: filtering,
-                ),
+      child: ResizableMasterDetail(
+        paneId: PaneId.historyList,
+        // The diff/detail pane hosts real patch content — keep it usable
+        // when the commit list is dragged wide.
+        detailFloor: 360,
+        master: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _filterBar(context, filtering),
+            Container(height: 1, color: MacosColors.separatorColor),
+            Expanded(
+              child: _historyBody(
+                context,
+                logAsync: logAsync,
+                commits: commits,
+                exhausted: exhausted,
+                decorations: decorations,
+                filtering: filtering,
               ),
-              if (_hasQueryFilters) ...[
-                Container(height: 1, color: MacosColors.separatorColor),
-                _filterFooter(context, commits, exhausted),
-              ],
+            ),
+            if (_hasQueryFilters) ...[
+              Container(height: 1, color: MacosColors.separatorColor),
+              _filterFooter(context, commits, exhausted),
             ],
-          ),
+          ],
         ),
-        Container(width: 1, color: MacosColors.separatorColor),
-        Expanded(child: _rightPane(context, commits)),
-      ],
+        detail: _rightPane(context, commits),
       ),
     );
   }

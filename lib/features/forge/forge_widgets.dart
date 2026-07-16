@@ -508,13 +508,14 @@ class ChangeRequestDetail extends StatelessWidget {
               const SizedBox(height: 10),
               ...lines,
               const SizedBox(height: 16),
-              Row(
-                children: [
-                  for (final (i, action) in actions.indexed) ...[
-                    if (i > 0) const SizedBox(width: 8),
-                    action,
-                  ],
-                ],
+              // Wrap, not Row: the detail pane's width is user-controlled now
+              // (the panel divider drags), so the action buttons must flow to
+              // a second line in a narrow pane instead of overflowing.
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: actions,
               ),
             ],
           ),

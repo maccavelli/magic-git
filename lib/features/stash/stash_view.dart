@@ -6,6 +6,7 @@ import '../../core/git/git_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/settings/pane_layout.dart';
 import '../../core/theme/app_theme.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
@@ -15,6 +16,7 @@ import '../common/label_chip.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
+import '../common/resizable_master_detail.dart';
 import '../common/tool_icon_button.dart';
 
 /// The **Stashes** namespace — stash management lifted out of the Branches pane
@@ -211,30 +213,24 @@ class _StashViewState extends ConsumerState<StashView>
               // OID match, never a position-vs-count comparison.
               final selected =
                   stashes.any((s) => s.oid == _selected) ? _selected : null;
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  SizedBox(
-                    width: 360,
-                    child: Focus(
-                      focusNode: _stashFocus,
-                      onKeyEvent: _onStashKey,
-                      child: ListView.builder(
-                        controller: _stashScroll,
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        itemCount: stashes.length,
-                        itemBuilder: (context, i) => _stashCard(
-                          context,
-                          git,
-                          stashes[i],
-                          stashes[i].oid == selected,
-                        ),
-                      ),
+              return ResizableMasterDetail(
+                paneId: PaneId.stashList,
+                master: Focus(
+                  focusNode: _stashFocus,
+                  onKeyEvent: _onStashKey,
+                  child: ListView.builder(
+                    controller: _stashScroll,
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    itemCount: stashes.length,
+                    itemBuilder: (context, i) => _stashCard(
+                      context,
+                      git,
+                      stashes[i],
+                      stashes[i].oid == selected,
                     ),
                   ),
-                  Container(width: 1, color: MacosColors.separatorColor),
-                  Expanded(child: _preview(context, selected)),
-                ],
+                ),
+                detail: _preview(context, selected),
               );
             },
           ),

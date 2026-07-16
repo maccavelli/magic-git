@@ -4,11 +4,13 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/gitlab/models.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/settings/pane_layout.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/branch_switch.dart';
 import '../common/escape_dismissible.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/resizable_master_detail.dart';
 import '../common/show_more_row.dart';
 import '../forge/forge_widgets.dart';
 import 'create_mr_sheet.dart';
@@ -175,13 +177,10 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
                   : () => _retry(pipelineId),
             })
           : const <ShortcutActivator, VoidCallback>{},
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SizedBox(width: 360, child: _leftPane(mrs, pipelines, pipeByRef)),
-          Container(width: 1, color: MacosColors.separatorColor),
-          Expanded(child: _mainPane(mrs, pipelines)),
-        ],
+      child: ResizableMasterDetail(
+        paneId: PaneId.forgeList,
+        master: _leftPane(mrs, pipelines, pipeByRef),
+        detail: _mainPane(mrs, pipelines),
       ),
     );
   }

@@ -1,10 +1,13 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart' show DragStartBehavior;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:macos_window_utils/widgets/transparent_macos_sidebar.dart';
 import 'package:macos_window_utils/widgets/visual_effect_subview_container/visual_effect_subview_container_resize_event_relay.dart';
 import '../../core/git/repo_tree.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/app_settings.dart';
+import '../../core/settings/pane_layout.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
@@ -58,7 +61,10 @@ class _FileViewState extends ConsumerState<FileView> {
   static const _white = Color(0xFFFFFFFF);
   static const _fileWhite = Color(0xFFE4E4E6);
 
-  // User-set width; null until first drag (defaults to 1/4 of the panel).
+  // The in-flight drag width; null when not dragging. Between drags the
+  // width is the persisted [PaneId.filesTree] setting (see build), falling
+  // back to 1/4 of the panel when the user never chose one — so a chosen
+  // width now survives remounts and restarts instead of resetting.
   double? _width;
   final Set<String> _expanded = {};
   // Lazily-loaded children of collapsed ignored dirs, keyed by dir path.
@@ -408,7 +414,13 @@ class _FileViewState extends ConsumerState<FileView> {
   Widget build(BuildContext context) {
     final async = ref.watch(repoStructureProvider(repoPath));
     final overlay = ref.watch(repoStatusOverlayProvider(repoPath));
-    final width = (_width ?? widget.maxWidth / 4)
+    // The stored width is clamped to THIS panel's relative bounds on render
+    // only — a width chosen on a wide window renders clamped on a narrow one
+    // without being overwritten (only drags persist).
+    final stored = ref.watch(
+      appSettingsProvider.select((s) => s.paneWidthOrNull(PaneId.filesTree)),
+    );
+    final width = (_width ?? stored ?? widget.maxWidth / 4)
         .clamp(_floor, _ceil)
         .toDouble();
 
@@ -440,7 +452,7 @@ class _FileViewState extends ConsumerState<FileView> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _resizeHandle(),
+            _resizeHandle(width),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -467,16 +479,40 @@ class _FileViewState extends ConsumerState<FileView> {
     );
   }
 
-  Widget _resizeHandle() {
+  Widget _resizeHandle(double renderedWidth) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
+      // .down: the accepting move's delta reaches the first drag update
+      // instead of being consumed as slop — no dead zone. Mirrors
+      // ResizableMasterDetail.
+      dragStartBehavior: DragStartBehavior.down,
+      // Anchor on what is RENDERED, so a display-clamped stored width drags
+      // from its on-screen position. Mirrors ResizableMasterDetail.
+      onHorizontalDragStart: (_) => setState(() => _width = renderedWidth),
       onHorizontalDragUpdate: (d) {
         setState(() {
-          final current = _width ?? widget.maxWidth / 4;
+          final current = _width ?? renderedWidth;
           // Dragging left (negative dx) grows the right-docked pane.
           _width = (current - d.delta.dx).clamp(_floor, _ceil).toDouble();
         });
       },
+      // Persist once per completed drag; a cancelled drag reverts (committing
+      // a cancel would persist a display-clamped width — see
+      // ResizableMasterDetail._discard for the full reasoning).
+      onHorizontalDragEnd: (_) {
+        final width = _width;
+        if (width == null) return;
+        ref
+            .read(appSettingsProvider.notifier)
+            .setPaneWidth(PaneId.filesTree, width);
+        setState(() => _width = null);
+      },
+      onHorizontalDragCancel: () {
+        if (_width != null) setState(() => _width = null);
+      },
+      onDoubleTap: () => ref
+          .read(appSettingsProvider.notifier)
+          .setPaneWidth(PaneId.filesTree, paneSpecs[PaneId.filesTree]!.defaultWidth),
       child: const MouseRegion(
         cursor: SystemMouseCursors.resizeLeftRight,
         child: SizedBox(

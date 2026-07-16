@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/github/models.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/pane_layout.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/display_error.dart';
+import '../common/resizable_master_detail.dart';
 import '../forge/forge_widgets.dart';
 import 'status_color.dart';
 
@@ -45,35 +47,31 @@ class _RunJobsViewState extends ConsumerState<RunJobsView> {
       if (j.id == _selectedJobId) selectedJob = j;
     }
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SizedBox(
-          width: 240,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              ForgeSectionHeader(
-                'Jobs',
-                refreshTooltip: 'Refresh jobs',
-                padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
-                onRefresh: () => ref.invalidate(
-                  runJobsProvider((widget.repoPath, widget.runId)),
-                ),
-              ),
-              Expanded(
-                child: jobsAsync.when(
-                  loading: () => const Center(child: ProgressCircle()),
-                  error: (err, _) => PaneError(err),
-                  data: (jobs) => _jobList(context, jobs),
-                ),
-              ),
-            ],
+    return ResizableMasterDetail(
+      paneId: PaneId.jobsList,
+      // The log pane tolerates narrow (it scrolls horizontally).
+      detailFloor: 240,
+      master: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          ForgeSectionHeader(
+            'Jobs',
+            refreshTooltip: 'Refresh jobs',
+            padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+            onRefresh: () => ref.invalidate(
+              runJobsProvider((widget.repoPath, widget.runId)),
+            ),
           ),
-        ),
-        Container(width: 1, color: MacosColors.separatorColor),
-        Expanded(child: _logPane(context, selectedJob)),
-      ],
+          Expanded(
+            child: jobsAsync.when(
+              loading: () => const Center(child: ProgressCircle()),
+              error: (err, _) => PaneError(err),
+              data: (jobs) => _jobList(context, jobs),
+            ),
+          ),
+        ],
+      ),
+      detail: _logPane(context, selectedJob),
     );
   }
 

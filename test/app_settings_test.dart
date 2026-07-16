@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/settings/app_settings.dart';
+import 'package:remote_magic_git/core/settings/pane_layout.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -60,6 +61,102 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getInt('networkTimeoutSecs'), 5);
     expect(prefs.getInt('commitTimeoutSecs'), 420);
+  });
+
+  test('setPaneWidth clamps to the spec bounds and persists per-id keys', () async {
+    SharedPreferences.setMockInitialValues({});
+    final c = ProviderContainer();
+    addTearDown(c.dispose);
+    final notifier = c.read(appSettingsProvider.notifier);
+
+    await notifier.setPaneWidth(PaneId.historyList, 10000); // above ceiling
+    expect(c.read(appSettingsProvider).paneWidth(PaneId.historyList), 800);
+    await notifier.setPaneWidth(PaneId.jobsList, 10); // below floor
+    expect(c.read(appSettingsProvider).paneWidth(PaneId.jobsList), 180);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getDouble('paneWidth_historyList'), 800);
+    expect(prefs.getDouble('paneWidth_jobsList'), 180);
+  });
+
+  test('pane widths load from disk with clamping, fall back to spec defaults, '
+      'and load never writes back', () async {
+    SharedPreferences.setMockInitialValues({
+      'paneWidth_stashList': 9999.0, // out of range on disk
+      'paneWidth_forgeList': 400.0,
+    });
+    final c = ProviderContainer();
+    addTearDown(c.dispose);
+
+    final loaded = Completer<AppSettings>();
+    c.listen(appSettingsProvider, (_, next) {
+      if (next.paneWidthOrNull(PaneId.forgeList) == 400 &&
+          !loaded.isCompleted) {
+        loaded.complete(next);
+      }
+    });
+    c.read(appSettingsProvider);
+    final s = await loaded.future.timeout(const Duration(seconds: 2));
+
+    expect(s.paneWidth(PaneId.stashList), 640, reason: 'clamped to spec.max');
+    expect(s.paneWidth(PaneId.forgeList), 400);
+    expect(s.paneWidth(PaneId.historyList), 420, reason: 'spec default');
+    expect(s.paneWidthOrNull(PaneId.historyList), isNull);
+
+    // Sanitized in state only — the stored value is not rewritten.
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getDouble('paneWidth_stashList'), 9999.0);
+  });
+
+  test('setPaneWidth early-returns when the clamped value is unchanged, but '
+      'the first explicit reset-to-default still persists', () async {
+    SharedPreferences.setMockInitialValues({});
+    final c = ProviderContainer();
+    addTearDown(c.dispose);
+    final notifier = c.read(appSettingsProvider.notifier);
+
+    var changes = 0;
+    c.listen(appSettingsProvider, (_, _) => changes++);
+
+    // No entry stored: an explicit set to the DEFAULT width must persist
+    // (the raw-map-entry comparison, not the defaulted getter).
+    await notifier.setPaneWidth(PaneId.historyList, 420);
+    expect(changes, 1);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getDouble('paneWidth_historyList'), 420);
+
+    // Same value again — clamped result equals the stored entry: no churn.
+    await notifier.setPaneWidth(PaneId.historyList, 420);
+    expect(changes, 1);
+    // Beyond the ceiling while already pinned there: still no churn.
+    await notifier.setPaneWidth(PaneId.historyList, 800);
+    expect(changes, 2);
+    await notifier.setPaneWidth(PaneId.historyList, 12345);
+    expect(changes, 2);
+  });
+
+  test('reloadFromDisk re-landing equal pane widths is a state no-op', () async {
+    SharedPreferences.setMockInitialValues({'paneWidth_historyList': 500.0});
+    final c = ProviderContainer();
+    addTearDown(c.dispose);
+
+    final loaded = Completer<void>();
+    c.listen(appSettingsProvider, (_, next) {
+      if (next.paneWidthOrNull(PaneId.historyList) == 500 &&
+          !loaded.isCompleted) {
+        loaded.complete();
+      }
+    });
+    c.read(appSettingsProvider);
+    await loaded.future.timeout(const Duration(seconds: 2));
+
+    // A cross-isolate 'settingsChanged' that re-reads identical disk state
+    // must not emit — the map field participates in value equality, which is
+    // what terminates the sync echo between windows.
+    var changes = 0;
+    c.listen(appSettingsProvider, (_, _) => changes++);
+    await c.read(appSettingsProvider.notifier).reloadFromDisk();
+    expect(changes, 0);
   });
 
   test('setPreferences clamps autoFetchMinutes to a floor and a ceiling', () async {

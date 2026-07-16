@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../git/git_service.dart';
+import 'pane_layout.dart';
 import 'settings_bus.dart';
 import 'tool_catalog.dart';
 
@@ -84,6 +85,11 @@ class AppSettings {
   /// whole sheet exists to prevent.
   final bool tagPushAfterCreate;
 
+  /// User-chosen widths for the resizable master panes, keyed by [PaneId].
+  /// Absent = the pane's [PaneSpec.defaultWidth] (see [paneWidth]). Values
+  /// are clamped to the pane's spec bounds on both write and load.
+  final Map<PaneId, double> paneWidths;
+
   const AppSettings({
     this.networkTimeout = GitService.defaultNetworkTimeout,
     this.commitTimeout = GitService.defaultCommitTimeout,
@@ -101,7 +107,16 @@ class AppSettings {
     this.worktreePostCreateEnabled = false,
     this.tagAnnotatedByDefault = true,
     this.tagPushAfterCreate = true,
+    this.paneWidths = const {},
   });
+
+  /// The effective width for [id]: the stored value, else the spec default.
+  double paneWidth(PaneId id) => paneWidths[id] ?? paneSpecs[id]!.defaultWidth;
+
+  /// The stored width for [id], or null when the user never chose one — for
+  /// panes whose fallback is layout-relative (file_view's `maxWidth / 4`)
+  /// rather than the spec default.
+  double? paneWidthOrNull(PaneId id) => paneWidths[id];
 
   AppSettings copyWith({
     Duration? networkTimeout,
@@ -120,6 +135,7 @@ class AppSettings {
     bool? worktreePostCreateEnabled,
     bool? tagAnnotatedByDefault,
     bool? tagPushAfterCreate,
+    Map<PaneId, double>? paneWidths,
   }) => AppSettings(
     networkTimeout: networkTimeout ?? this.networkTimeout,
     commitTimeout: commitTimeout ?? this.commitTimeout,
@@ -138,6 +154,7 @@ class AppSettings {
         worktreePostCreateEnabled ?? this.worktreePostCreateEnabled,
     tagAnnotatedByDefault: tagAnnotatedByDefault ?? this.tagAnnotatedByDefault,
     tagPushAfterCreate: tagPushAfterCreate ?? this.tagPushAfterCreate,
+    paneWidths: paneWidths ?? this.paneWidths,
   );
 
   // Value equality so a cross-tab [reloadFromDisk] that re-reads the same value
@@ -161,7 +178,8 @@ class AppSettings {
       other.worktreePostCreateEnabled == worktreePostCreateEnabled &&
       other.tagAnnotatedByDefault == tagAnnotatedByDefault &&
       other.tagPushAfterCreate == tagPushAfterCreate &&
-      _mapEquals(other.binaryOverrides, binaryOverrides);
+      _mapEquals(other.binaryOverrides, binaryOverrides) &&
+      _mapEquals(other.paneWidths, paneWidths);
 
   @override
   int get hashCode => Object.hash(
@@ -183,9 +201,12 @@ class AppSettings {
     Object.hashAllUnordered(
       binaryOverrides.entries.map((e) => Object.hash(e.key, e.value)),
     ),
+    Object.hashAllUnordered(
+      paneWidths.entries.map((e) => Object.hash(e.key, e.value)),
+    ),
   );
 
-  static bool _mapEquals(Map<String, String> a, Map<String, String> b) {
+  static bool _mapEquals<K, V>(Map<K, V> a, Map<K, V> b) {
     if (identical(a, b)) return true;
     if (a.length != b.length) return false;
     for (final e in a.entries) {
@@ -216,6 +237,10 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   static const _wtPostCreateEnabledKey = 'worktreePostCreateEnabled';
   static const _tagAnnotatedKey = 'tagAnnotatedByDefault';
   static const _tagPushAfterCreateKey = 'tagPushAfterCreate';
+
+  /// Per-pane width keys: `paneWidth_<PaneId.name>` (mirrors [_binPrefix]).
+  /// Enum names are part of the on-disk format — see pane_layout.dart.
+  static const _paneWidthPrefix = 'paneWidth_';
 
   /// Set true by any setter the moment the user explicitly changes a setting.
   /// [build] kicks [_load] fire-and-forget and returns defaults immediately, so
@@ -284,6 +309,13 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
       final v = prefs.getString('$_binPrefix$bin');
       if (v != null && v.trim().isNotEmpty) overrides[bin] = v.trim();
     }
+    // Clamp-on-load sanitizes a corrupted/out-of-range stored width without
+    // writing back — disk stays untouched until the user next drags.
+    final paneWidths = <PaneId, double>{};
+    for (final MapEntry(key: id, value: spec) in paneSpecs.entries) {
+      final w = prefs.getDouble('$_paneWidthPrefix${id.name}');
+      if (w != null) paneWidths[id] = w.clamp(spec.min, spec.max).toDouble();
+    }
     if (abort()) return;
     state = state.copyWith(
       networkTimeout: n != null ? _floorTimeout(Duration(seconds: n)) : null,
@@ -298,6 +330,7 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
           .getInt(_autoFetchKey)
           ?.clamp(0, _maxAutoFetchMinutes),
       binaryOverrides: overrides,
+      paneWidths: paneWidths,
       historyZoom: prefs
           .getDouble(_historyZoomKey)
           ?.clamp(minHistoryZoom, maxHistoryZoom)
@@ -439,6 +472,23 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     _userEdited = true;
     state = state.copyWith(historyZoom: clamped);
     await _persist((prefs) => prefs.setDouble(_historyZoomKey, clamped));
+  }
+
+  /// Updates and persists the width of a resizable master pane, clamped to
+  /// its [PaneSpec] bounds. Called once per completed drag (never per frame)
+  /// and by the divider's double-click reset.
+  Future<void> setPaneWidth(PaneId id, double width) async {
+    final spec = paneSpecs[id]!;
+    final clamped = width.clamp(spec.min, spec.max).toDouble();
+    // Compare the RAW map entry, not paneWidth(id): the first explicit
+    // reset-to-default must still persist (an absent entry merely *renders*
+    // as the default; after a reset it should be stored).
+    if (clamped == state.paneWidths[id]) return;
+    _userEdited = true;
+    state = state.copyWith(paneWidths: {...state.paneWidths, id: clamped});
+    await _persist(
+      (prefs) => prefs.setDouble('$_paneWidthPrefix${id.name}', clamped),
+    );
   }
 
   /// Toggles and persists whether History diff views wrap long lines. Shared

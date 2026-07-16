@@ -4,8 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/gitlab/models.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/pane_layout.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/display_error.dart';
+import '../common/resizable_master_detail.dart';
 import '../forge/forge_widgets.dart';
 import 'status_color.dart';
 
@@ -42,44 +44,38 @@ class _PipelineJobsViewState extends ConsumerState<PipelineJobsView> {
       jobsProvider((widget.repoPath, widget.pipelineId)),
     );
 
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SizedBox(
-          width: 240,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Manual refresh only (no auto-polling): a running pipeline's
-              // job statuses otherwise stay frozen until the pipeline is
-              // re-selected. Invalidating re-fetches this pipeline's jobs (and,
-              // since the trace view watches its own provider, a re-selected
-              // job re-tails).
-              ForgeSectionHeader(
-                'Jobs',
-                refreshTooltip: 'Refresh jobs',
-                padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
-                onRefresh: () => ref.invalidate(
-                  jobsProvider((widget.repoPath, widget.pipelineId)),
-                ),
-              ),
-              Expanded(
-                child: jobsAsync.when(
-                  loading: () => const Center(child: ProgressCircle()),
-                  error: (err, _) => PaneError(err),
-                  data: (jobs) => _jobList(context, jobs),
-                ),
-              ),
-            ],
+    return ResizableMasterDetail(
+      paneId: PaneId.jobsList,
+      // The log pane tolerates narrow (it scrolls horizontally).
+      detailFloor: 240,
+      master: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Manual refresh only (no auto-polling): a running pipeline's
+          // job statuses otherwise stay frozen until the pipeline is
+          // re-selected. Invalidating re-fetches this pipeline's jobs (and,
+          // since the trace view watches its own provider, a re-selected
+          // job re-tails).
+          ForgeSectionHeader(
+            'Jobs',
+            refreshTooltip: 'Refresh jobs',
+            padding: const EdgeInsets.fromLTRB(12, 6, 6, 6),
+            onRefresh: () => ref.invalidate(
+              jobsProvider((widget.repoPath, widget.pipelineId)),
+            ),
           ),
-        ),
-        Container(width: 1, color: MacosColors.separatorColor),
-        Expanded(
-          child: _selectedJobId == null
-              ? const CenteredHint('Select a job to view its log')
-              : _TraceLog(repoPath: widget.repoPath, jobId: _selectedJobId!),
-        ),
-      ],
+          Expanded(
+            child: jobsAsync.when(
+              loading: () => const Center(child: ProgressCircle()),
+              error: (err, _) => PaneError(err),
+              data: (jobs) => _jobList(context, jobs),
+            ),
+          ),
+        ],
+      ),
+      detail: _selectedJobId == null
+          ? const CenteredHint('Select a job to view its log')
+          : _TraceLog(repoPath: widget.repoPath, jobId: _selectedJobId!),
     );
   }
 

@@ -5,7 +5,8 @@
 // SSH is touched.
 
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
+import 'package:flutter/gestures.dart'
+    show PointerDeviceKind, kSecondaryMouseButton;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -171,6 +172,25 @@ Finder get _actionsMenu => find.byWidgetPredicate(
 void main() {
   final head = _c('aaaaaaa1111111', 'head commit');
   final older = _c('bbbbbbb2222222', 'old commit');
+
+  testWidgets('the commit-list divider drags and persists its width', (
+    tester,
+  ) async {
+    await _pump(tester, [head]);
+    // The divider sits at the master pane's right edge (default 420).
+    final gesture = await tester.startGesture(
+      const Offset(420.5, 300),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await gesture.moveBy(const Offset(15, 0));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getDouble('paneWidth_historyList'), 435);
+  });
 
   testWidgets('no actions menu until a commit is selected', (tester) async {
     await _pump(tester, [head, older]);

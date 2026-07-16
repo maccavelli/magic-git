@@ -35,6 +35,7 @@ import '../../core/git/watch_event.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/settings/pane_layout.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/window/window_channels.dart';
 import '../../core/window/window_kind.dart';
@@ -65,6 +66,21 @@ const bool kWindowDiagnostics = bool.fromEnvironment('WINDOW_DIAGNOSTICS');
 void _native(String method, [Object? arguments]) {
   _bootstrap.invokeMethod<void>(method, arguments).catchError((_) {});
 }
+
+/// The value-comparable signature of every setting this window can EDIT
+/// locally — the record its settings-sync listener selects on. A setting
+/// missing from here is a setting whose pop-out edits the main window never
+/// hears about, so: zoom and word-wrap (the History gestures/toggle), plus
+/// every pane width (the divider drags), folded to a string because a Map
+/// field can't ride a record select (two rebuilt maps with equal contents are
+/// `!=`, which would re-arm the exact ping-pong the record exists to stop).
+/// All pane ids are signed — not just the panes this window renders — so a
+/// future pane can't be forgotten here.
+(double, bool, String) secondarySettingsSyncSignature(AppSettings s) => (
+  s.historyZoom,
+  s.historyDiffWrap,
+  PaneId.values.map((id) => '${id.name}:${s.paneWidth(id)}').join(','),
+);
 
 /// Forwards every provider failure to the native side's hw-debug.log.
 ///
@@ -690,13 +706,15 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
         }
       }
     });
-    // Settings changed HERE (⌘=/⌘−/pinch zoom, or the diff word-wrap toggle,
-    // all persisted from this isolate) must tell the main isolate to reload its
-    // own SharedPreferences cache. Gated on a value *change* via a record select
-    // — records compare by value, so the main window's settingsChanged push
-    // (whose reload re-lands the same values here) can't ping-pong back.
+    // Settings changed HERE (⌘=/⌘−/pinch zoom, the diff word-wrap toggle, a
+    // pane-divider drag — anything persisted from this isolate) must tell the
+    // main isolate to reload its own SharedPreferences cache. Gated on a value
+    // *change* via a record select — records compare by value, so the main
+    // window's settingsChanged push (whose reload re-lands the same values
+    // here) can't ping-pong back. The record is built by
+    // [secondarySettingsSyncSignature]; new locally-editable settings go THERE.
     ref.listen(
-      appSettingsProvider.select((s) => (s.historyZoom, s.historyDiffWrap)),
+      appSettingsProvider.select(secondarySettingsSyncSignature),
       (_, _) {
         _settingsSyncDebounce?.cancel();
         _settingsSyncDebounce = Timer(const Duration(milliseconds: 600), () {

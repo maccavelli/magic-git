@@ -6,7 +6,8 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/gestures.dart' show kSecondaryMouseButton;
+import 'package:flutter/gestures.dart'
+    show PointerDeviceKind, kSecondaryMouseButton;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -19,6 +20,7 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/repository/file_view.dart';
 import 'package:remote_magic_git/features/viewer/viewer_providers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const _repo = '/srv/repo';
 
@@ -175,6 +177,39 @@ Color? _folderColor(WidgetTester tester, String path) {
 }
 
 void main() {
+  testWidgets('a dragged Files-pane width persists across a remount', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    addTearDown(() => SharedPreferences.setMockInitialValues({}));
+    await _pump(tester, onOpenFile: (_, {required staged, required untracked}) {});
+
+    // Default width: maxWidth / 4 = 225 (nothing stored).
+    expect(tester.getSize(find.byType(FileView)).width, 225);
+
+    // Drag the handle left 55px — the right-docked pane GROWS to 280.
+    final pane = tester.getRect(find.byType(FileView));
+    final gesture = await tester.startGesture(
+      Offset(pane.left + 4, pane.top + 300),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await gesture.moveBy(const Offset(-55, 0));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(tester.getSize(find.byType(FileView)).width, 280);
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getDouble('paneWidth_filesTree'), 280);
+
+    // Remount (blank frame, then re-pump): the width used to reset to
+    // maxWidth/4 here — now it re-applies from the persisted setting.
+    await tester.pumpWidget(const SizedBox());
+    await _pump(tester, onOpenFile: (_, {required staged, required untracked}) {});
+    expect(tester.getSize(find.byType(FileView)).width, 280);
+  });
+
   testWidgets('dirty folder green, clean folder blue, names white', (
     tester,
   ) async {

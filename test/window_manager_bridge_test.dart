@@ -12,6 +12,7 @@ import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/providers/window_manager_bridge.dart';
 import 'package:remote_magic_git/core/settings/app_settings.dart';
+import 'package:remote_magic_git/core/settings/pane_layout.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/undo/undo_journal.dart';
@@ -414,6 +415,23 @@ void main() {
     SharedPreferences.setMockInitialValues({'historyZoom': 1.4});
     await deliverHubCall('settingsChanged', null);
     expect(container.read(appSettingsProvider).historyZoom, 1.4);
+  });
+
+  test('settingsChanged from a window reloads pane widths from disk', () async {
+    container = makeContainer(_connected);
+    await openHistory();
+    expect(
+      container.read(appSettingsProvider).paneWidth(PaneId.historyList),
+      420,
+      reason: 'spec default before any stored width',
+    );
+
+    SharedPreferences.setMockInitialValues({'paneWidth_historyList': 500.0});
+    await deliverHubCall('settingsChanged', null);
+    expect(
+      container.read(appSettingsProvider).paneWidth(PaneId.historyList),
+      500,
+    );
   });
 
   test('reloadFromDisk still applies disk state after a local edit in this '

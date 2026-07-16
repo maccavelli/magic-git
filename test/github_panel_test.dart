@@ -2,6 +2,7 @@
 // workflow runs list on the left; selecting one opens its detail on the right.
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -12,6 +13,7 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/github/github_panel.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _MergeCapturingGh extends GhService {
   _MergeCapturingGh() : super(SSHCommandExecutor(SSHClientManager()));
@@ -129,6 +131,30 @@ void main() {
 
     // Nothing selected yet.
     expect(find.text('Select a pull request or workflow run'), findsOneWidget);
+  });
+
+  testWidgets('the left-pane divider drags and persists its width', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    // The mock prefs store is process-static: without this reset the width
+    // persisted below would leak into the OTHER tests in this file (whose
+    // _pump does not reseed prefs) and shift their layout.
+    addTearDown(() => SharedPreferences.setMockInitialValues({}));
+    await _pump(tester);
+
+    final gesture = await tester.startGesture(
+      const Offset(360.5, 300), // the divider (forgeList default width)
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await gesture.moveBy(const Offset(20, 0));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getDouble('paneWidth_forgeList'), 380);
   });
 
   testWidgets('selecting a run opens its jobs in the main pane', (tester) async {

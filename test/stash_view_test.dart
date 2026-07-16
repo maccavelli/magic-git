@@ -3,6 +3,7 @@
 // data→render wiring and provider overrides.
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -11,6 +12,7 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/stash/stash_view.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Executor that never touches SSH — the view reads gitServiceProvider in build
 /// but the render tests never fire a mutation.
@@ -139,6 +141,30 @@ void main() {
       find.text('Select a stash to preview its contents'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('the stash-list divider drags and persists its width', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    // The mock prefs store is process-static: without this reset the width
+    // persisted below would leak into the OTHER tests in this file (whose
+    // _pump does not reseed prefs) and shift their layout.
+    addTearDown(() => SharedPreferences.setMockInitialValues({}));
+    await _pump(tester, stashes: _stashes);
+
+    final gesture = await tester.startGesture(
+      const Offset(360.5, 300), // the divider (stashList default width)
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await gesture.moveBy(const Offset(20, 0));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getDouble('paneWidth_stashList'), 380);
   });
 
   testWidgets('shows the empty state when there are no stashes', (tester) async {
