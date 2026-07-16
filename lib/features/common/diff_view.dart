@@ -376,12 +376,17 @@ class DiffActionButton extends StatefulWidget {
     required this.icon,
     required this.onPressed,
     this.tone = DiffActionTone.normal,
+    this.tooltip,
   });
 
   final String label;
   final IconData icon;
   final VoidCallback onPressed;
   final DiffActionTone tone;
+
+  /// Optional hover tooltip — used where the short label alone doesn't say
+  /// what the action operates on (e.g. "Scan" → "Scan environment").
+  final String? tooltip;
 
   @override
   State<DiffActionButton> createState() => _DiffActionButtonState();
@@ -425,7 +430,7 @@ class _DiffActionButtonState extends State<DiffActionButton> {
       ),
     };
 
-    return MouseRegion(
+    final button = MouseRegion(
       // The signal the old button never gave. Note this MouseRegion has to sit
       // *outside* everything: a Text under a SelectionArea wraps itself in an
       // I-beam MouseRegion, and the deepest annotation under the pointer is the
@@ -498,6 +503,9 @@ class _DiffActionButtonState extends State<DiffActionButton> {
         ),
       ),
     );
+    final tooltip = widget.tooltip;
+    if (tooltip == null) return button;
+    return MacosTooltip(message: tooltip, child: button);
   }
 }
 

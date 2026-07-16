@@ -75,7 +75,7 @@ class _ToolHealthBannerState extends ConsumerState<ToolHealthBanner> {
           const SizedBox(width: 4),
           ToolIconButton(
             icon: CupertinoIcons.wrench,
-            tooltip: 'Check environment',
+            tooltip: 'Scan environment',
             onPressed: _openDoctor,
           ),
           ToolIconButton(

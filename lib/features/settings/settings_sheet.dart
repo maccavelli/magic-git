@@ -11,6 +11,7 @@ import '../../core/settings/tool_health.dart';
 import '../../core/ssh/environment_probe.dart';
 import '../../core/storage/known_hosts_store.dart';
 import '../common/actions.dart';
+import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
@@ -122,7 +123,7 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
   /// Settings is slightly wider than the app-wide [kSheetWidth] so section
   /// blurbs and rows breathe; text fields keep the same fixed widths as before
   /// (see [_fieldWidth], [_textFieldWidth], [_binaryFieldWidth]).
-  static const double _sheetWidth = kSheetWidth + 40;
+  static const double _sheetWidth = kSheetWidth + 60;
 
   /// Horizontal content width at the previous [kSheetWidth] with 22px padding
   /// each side — used so Expanded fields do not grow when the sheet does.
@@ -295,8 +296,9 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
             style: MacosTheme.of(context).typography.body,
           ),
         ),
-        ToolIconButton(
-          icon: CupertinoIcons.slider_horizontal_3,
+        DiffActionButton(
+          label: 'Customize',
+          icon: CupertinoIcons.keyboard,
           tooltip: 'Customize keyboard mappings',
           onPressed: () => showMacosSheet<void>(
             context: context,
@@ -421,9 +423,10 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
         Expanded(
           child: Text(text, style: typography.body.copyWith(color: color)),
         ),
-        ToolIconButton(
-          icon: CupertinoIcons.wrench,
-          tooltip: 'Check environment',
+        DiffActionButton(
+          label: 'Scan',
+          icon: CupertinoIcons.search,
+          tooltip: 'Scan environment',
           onPressed: () => showMacosSheet<void>(
             context: context,
             builder: (_) =>

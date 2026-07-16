@@ -71,7 +71,7 @@ void main() {
   ) async {
     await _pump(tester, env: _glabMissing, connected: true);
     expect(find.textContaining('glab is not installed'), findsOneWidget);
-    expect(_byMacosTooltip('Check environment'), findsOneWidget);
+    expect(_byMacosTooltip('Scan environment'), findsOneWidget);
     expect(find.byType(ToolIconButton), findsNWidgets(2)); // doctor + dismiss
   });
 
