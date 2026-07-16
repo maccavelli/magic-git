@@ -370,6 +370,108 @@ final recentWorkspacesProvider = Provider<List<RecentWorkspace>>((ref) {
   return [for (final e in indexed.take(3)) e.$2];
 });
 
+/// A landing-page "recent repository": a *specific* repo the user can reopen in
+/// one click. Unlike [RecentWorkspace] — which is one entry per *connection*,
+/// forcing the user to pick a connection and *then* a repo — this is
+/// repo-centric: a multi-repo SSH connection expands into one [RecentRepo] per
+/// known repo path, and local repos map one-to-one. Selecting one connects
+/// straight to that repo regardless of which connection owns it.
+sealed class RecentRepo {
+  const RecentRepo();
+
+  /// Primary label — the repo folder's basename.
+  String get repoName;
+
+  /// Secondary label — where the repo lives: the connection's display name for
+  /// a remote repo, or the containing folder for a local one.
+  String get location;
+
+  /// Recency key — the owning connection's / repo's last-used time.
+  DateTime? get lastUsedAt;
+
+  /// Stable identity, for de-duplication and as a list key.
+  String get id;
+}
+
+/// A specific repo path on a saved SSH connection. [connectToSaved] with an
+/// explicit `repoPath` opens exactly this repo.
+class RecentRemoteRepo extends RecentRepo {
+  final SavedConnection connection;
+  final String repoPath;
+  const RecentRemoteRepo(this.connection, this.repoPath);
+  @override
+  String get repoName => _pathBasename(repoPath);
+  @override
+  String get location => connection.displayName;
+  @override
+  DateTime? get lastUsedAt => connection.lastConnectedAt;
+  @override
+  String get id => '${connection.id} $repoPath';
+}
+
+/// A bookmarked local-filesystem repo (one repo per [SavedLocalRepo]).
+class RecentLocalRepoEntry extends RecentRepo {
+  final SavedLocalRepo repo;
+  const RecentLocalRepoEntry(this.repo);
+  @override
+  String get repoName => repo.displayName;
+  @override
+  String get location {
+    final parent = _pathParent(repo.repoPath);
+    return parent.isEmpty ? 'Local' : parent;
+  }
+
+  @override
+  DateTime? get lastUsedAt => repo.lastConnectedAt;
+  @override
+  String get id => 'local ${repo.id}';
+}
+
+String _pathBasename(String path) {
+  final parts = path.split('/').where((s) => s.isNotEmpty).toList();
+  return parts.isEmpty ? path : parts.last;
+}
+
+String _pathParent(String path) {
+  final parts = path.split('/').where((s) => s.isNotEmpty).toList();
+  if (parts.length < 2) return '';
+  return '/${parts.sublist(0, parts.length - 1).join('/')}';
+}
+
+const _kRecentRepoLimit = 8;
+
+/// The most-recently-used *repositories* (up to [_kRecentRepoLimit]), newest
+/// first — the landing page's recent list. Flattens saved SSH connections (one
+/// entry per known repo path, default repo first) and saved local repos into a
+/// single recency-ordered list. Repos of the same connection share its
+/// timestamp, so they cluster; the stable index tiebreaker keeps the default
+/// repo ahead of its siblings and preserves stored order on ties (mirrors
+/// [recentWorkspacesProvider]'s sort).
+final recentReposProvider = Provider<List<RecentRepo>>((ref) {
+  final conns = ref.watch(savedConnectionsProvider).value ?? const [];
+  final locals = ref.watch(savedLocalReposProvider).value ?? const [];
+  final all = <RecentRepo>[
+    for (final c in conns)
+      for (final p in c.allRepoPaths) RecentRemoteRepo(c, p),
+    for (final r in locals) RecentLocalRepoEntry(r),
+  ];
+  final indexed = [for (var i = 0; i < all.length; i++) (i, all[i])]
+    ..sort((a, b) {
+      final at = a.$2.lastUsedAt;
+      final bt = b.$2.lastUsedAt;
+      if (at != null && bt != null) {
+        final byTime = bt.compareTo(at);
+        if (byTime != 0) return byTime;
+      } else if (at == null && bt != null) {
+        return 1; // never-used sorts after used
+      } else if (at != null && bt == null) {
+        return -1;
+      }
+      return a.$1.compareTo(b.$1); // stable: preserve original stored order
+    });
+  return [for (final e in indexed.take(_kRecentRepoLimit)) e.$2];
+});
+
 enum ConnectionPhase { disconnected, connecting, connected, error, lost }
 
 /// Which transport the active/most-recent connection uses. A [local] session

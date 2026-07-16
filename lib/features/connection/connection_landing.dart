@@ -103,7 +103,7 @@ class ConnectionLanding extends ConsumerWidget {
       );
     }
 
-    final recents = ref.watch(recentWorkspacesProvider);
+    final recents = ref.watch(recentReposProvider);
     final error = phase == ConnectionPhase.error ? connectionError : null;
 
     return Center(
@@ -189,10 +189,12 @@ class ConnectionLanding extends ConsumerWidget {
 }
 
 /// Styled identically to the "Add SSH Remote" button (same full-width
-/// [PushButton]); tapping it drops down a small menu of recent profiles that
-/// dismisses on any outside tap. Disabled when there are no recents.
+/// [PushButton]); tapping it drops down a small menu of recent *repositories*
+/// (remote or local) that dismisses on any outside tap. Each row opens that
+/// specific repo directly — no separate "pick a connection, then a repo" step.
+/// Disabled when there are no recents.
 class _RecentConnectionsButton extends ConsumerStatefulWidget {
-  final List<RecentWorkspace> recents;
+  final List<RecentRepo> recents;
   const _RecentConnectionsButton({required this.recents});
 
   @override
@@ -256,12 +258,17 @@ class _RecentConnectionsButtonState
     });
   }
 
-  Future<void> _select(RecentWorkspace w) async {
+  Future<void> _select(RecentRepo r) async {
     _removeMenu();
-    switch (w) {
-      case RecentConnection(:final connection):
-        await ref.read(connectionProvider.notifier).connectToSaved(connection);
-      case RecentLocalRepo(:final repo):
+    switch (r) {
+      case RecentRemoteRepo(:final connection, :final repoPath):
+        // Open exactly this repo on its connection — connectToSaved takes an
+        // explicit repoPath, so the user lands directly in the repo they
+        // clicked rather than the connection's default.
+        await ref
+            .read(connectionProvider.notifier)
+            .connectToSaved(connection, repoPath: repoPath);
+      case RecentLocalRepoEntry(:final repo):
         // Mirror the switcher's saved-local open: resolve the security-scoped
         // bookmark (surfacing a dialog if the folder is gone) before connecting
         // — plus, for a linked worktree, the main repository's grant.
@@ -298,8 +305,15 @@ class _RecentConnectionsButtonState
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final w in widget.recents)
-              _MenuRow(label: w.displayName, onTap: () => _select(w)),
+            for (final r in widget.recents)
+              _MenuRow(
+                title: r.repoName,
+                subtitle: r.location,
+                icon: r is RecentLocalRepoEntry
+                    ? CupertinoIcons.folder
+                    : CupertinoIcons.desktopcomputer,
+                onTap: () => _select(r),
+              ),
           ],
         ),
       ),
@@ -318,18 +332,30 @@ class _RecentConnectionsButtonState
           controlSize: ControlSize.large,
           secondary: true,
           onPressed: empty ? null : _toggleMenu,
-          child: Text(empty ? 'No Recent Workspaces' : 'Recent Workspaces'),
+          child: Text(
+            empty ? 'No Recent Repositories' : 'Recent Repositories',
+          ),
         ),
       ),
     );
   }
 }
 
-/// One selectable row in the recent-connections drop-down, with a hover tint.
+/// One selectable row in the recent-repositories drop-down: a leading transport
+/// icon, the repo name, and — dimmed beneath it — where the repo lives (the
+/// connection for a remote repo, the containing folder for a local one). Hover
+/// tints the row.
 class _MenuRow extends StatefulWidget {
-  final String label;
+  final String title;
+  final String subtitle;
+  final IconData icon;
   final VoidCallback onTap;
-  const _MenuRow({required this.label, required this.onTap});
+  const _MenuRow({
+    required this.title,
+    required this.subtitle,
+    required this.icon,
+    required this.onTap,
+  });
 
   @override
   State<_MenuRow> createState() => _MenuRowState();
@@ -340,6 +366,7 @@ class _MenuRowState extends State<_MenuRow> {
 
   @override
   Widget build(BuildContext context) {
+    final typography = MacosTheme.of(context).typography;
     return MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
@@ -351,12 +378,38 @@ class _MenuRowState extends State<_MenuRow> {
           color: _hover
               ? MacosColors.systemBlueColor.withValues(alpha: 0.25)
               : const Color(0x00000000),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          child: Text(
-            widget.label,
-            style: MacosTheme.of(context).typography.body,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              MacosIcon(
+                widget.icon,
+                size: 16,
+                color: MacosColors.systemGrayColor,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.title,
+                      style: typography.body,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      widget.subtitle,
+                      style: typography.caption1.copyWith(
+                        color: MacosColors.systemGrayColor,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
       ),

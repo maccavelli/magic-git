@@ -1,6 +1,8 @@
 // The landing page: two actions — Connections Manager (the single entry
-// point to every workspace action) and the Recent Workspaces pulldown
-// (disabled when empty, enabled when profiles exist).
+// point to every workspace action) and the Recent Repositories pulldown
+// (disabled when empty, enabled when saved repos exist). The pulldown is
+// repo-centric: it lists specific repos (a multi-repo connection expands into
+// one row per repo) so a click opens that repo directly.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -68,8 +70,8 @@ void main() {
   ) async {
     await _pump(tester);
     expect(find.text('Connections Manager'), findsOneWidget);
-    expect(find.text('No Recent Workspaces'), findsOneWidget);
-    expect(find.text('Recent Workspaces'), findsNothing);
+    expect(find.text('No Recent Repositories'), findsOneWidget);
+    expect(find.text('Recent Repositories'), findsNothing);
     // The per-task buttons moved into the Connections Manager — the landing
     // itself stays a single clear entry point.
     expect(find.text('Add SSH Remote'), findsNothing);
@@ -93,11 +95,11 @@ void main() {
         ),
       ],
     );
-    expect(find.text('Recent Workspaces'), findsOneWidget);
-    expect(find.text('No Recent Workspaces'), findsNothing);
+    expect(find.text('Recent Repositories'), findsOneWidget);
+    expect(find.text('No Recent Repositories'), findsNothing);
   });
 
-  testWidgets('a saved local repo appears under Recent Workspaces', (
+  testWidgets('a saved local repo appears under Recent Repositories', (
     tester,
   ) async {
     // The reported bug: only connections showed up. A saved local repo with no
@@ -113,15 +115,15 @@ void main() {
         ),
       ],
     );
-    expect(find.text('Recent Workspaces'), findsOneWidget);
-    expect(find.text('No Recent Workspaces'), findsNothing);
+    expect(find.text('Recent Repositories'), findsOneWidget);
+    expect(find.text('No Recent Repositories'), findsNothing);
 
-    await tester.tap(find.text('Recent Workspaces'));
+    await tester.tap(find.text('Recent Repositories'));
     await tester.pumpAndSettle();
     expect(find.text('My Local Repo'), findsOneWidget);
   });
 
-  testWidgets('Recent Workspaces drops down and dismisses on outside tap', (
+  testWidgets('Recent Repositories drops down and dismisses on outside tap', (
     tester,
   ) async {
     await _pump(
@@ -139,11 +141,14 @@ void main() {
       ],
     );
 
-    // Not shown until the button is tapped.
+    // Not shown until the button is tapped. 'Prod box' is the connection name,
+    // now shown as the repo row's location subtitle (repo basename 'r' is the
+    // title).
     expect(find.text('Prod box'), findsNothing);
-    await tester.tap(find.text('Recent Workspaces'));
+    await tester.tap(find.text('Recent Repositories'));
     await tester.pumpAndSettle();
     expect(find.text('Prod box'), findsOneWidget);
+    expect(find.text('r'), findsOneWidget);
 
     // A tap anywhere outside the menu closes it.
     await tester.tapAt(const Offset(5, 5));
