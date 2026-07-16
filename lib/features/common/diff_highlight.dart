@@ -173,13 +173,47 @@ List<ScopedRun>? _runsFor(
   // Defend against any image-reconstruction drift: only trust runs whose backing
   // text is exactly this row's content.
   if (line.text != content) return null;
+  return _runsOfLine(line, doc.scopes);
+}
+
+List<ScopedRun> _runsOfLine(HighlightedLine line, List<String?> scopes) => [
+  for (var k = 0; k < line.runCount; k++)
+    ScopedRun(
+      line.runStarts[k],
+      line.runStarts[k + 1],
+      line.runScopeIds[k] < 0 ? null : scopes[line.runScopeIds[k]],
+    ),
+];
+
+/// The highlight.js language id for [file] (from its path), or null when the
+/// extension isn't recognised.
+String? diffLanguageId(DiffFile file) =>
+    viewerFileTypeFor(file.newPath ?? file.oldPath ?? '').languageId;
+
+/// Highlights an image — the ordered line contents of one side of a diff — as
+/// [languageId], returning per line its syntax [ScopedRun]s (or null when
+/// highlighting is disabled, the language is unsupported, or a line's backing
+/// text drifts from the input). The whole image is highlighted in one call so
+/// multi-line grammar state (open strings, block comments) stays correct, then
+/// runs are mapped back per line. Used by the split renderer, which highlights
+/// its old (pre-image) and new (post-image) columns independently.
+List<List<ScopedRun>?> highlightImageRuns(
+  List<String> contents,
+  String? languageId, {
+  bool enable = true,
+}) {
+  if (!enable ||
+      contents.isEmpty ||
+      languageId == null ||
+      !isLanguageSupported(languageId)) {
+    return List<List<ScopedRun>?>.filled(contents.length, null);
+  }
+  final doc = highlightDoc(contents.join('\n'), languageId);
   return [
-    for (var k = 0; k < line.runCount; k++)
-      ScopedRun(
-        line.runStarts[k],
-        line.runStarts[k + 1],
-        line.runScopeIds[k] < 0 ? null : doc.scopes[line.runScopeIds[k]],
-      ),
+    for (var i = 0; i < contents.length; i++)
+      (i < doc.lines.length && doc.lines[i].text == contents[i])
+          ? _runsOfLine(doc.lines[i], doc.scopes)
+          : null,
   ];
 }
 
@@ -221,10 +255,10 @@ TextSpan diffLineSpan(
   final runs = h?.runs;
   final intraline = h?.intraline ?? const <IntralineRange>[];
   final emphasis = _emphasisBackground(kind);
-  // With syntax runs, unscoped text is the neutral body colour (add/remove is
-  // carried by the marker + row band); without runs, keep the classic all-green/
-  // all-red content colour.
-  final contentColor = runs == null ? kindColor : defaultColor;
+  // Unscoped text keeps the kind's colour so the red/green sense is preserved
+  // (an added line still reads green); recognised tokens tint over it. This is
+  // also what keeps unified and split agreeing on what green means.
+  final contentColor = kindColor;
 
   return TextSpan(
     style: base,
@@ -232,6 +266,41 @@ TextSpan diffLineSpan(
       markerSpan,
       ..._contentSpans(content, runs, base, contentColor, theme, intraline, emphasis),
     ],
+  );
+}
+
+/// Builds the [TextSpan] for one **split-view cell** — content only, no marker
+/// (side-by-side rows carry the kind in their column, not a leading `+`/`-`).
+/// Syntax-colours the content (unscoped text falls back to the kind colour when
+/// there are no runs, so an unsupported file looks unchanged) with a deeper wash
+/// on the intra-line changed ranges. [kind] is `remove` for the left column,
+/// `add` for the right, `context` for both sides of an unchanged row.
+TextSpan diffCellSpan(
+  String content,
+  List<ScopedRun>? runs,
+  List<IntralineRange> intraline,
+  DiffLineKind kind,
+  TextStyle base,
+  Color defaultColor,
+  CodeTheme theme,
+) {
+  final kindColor = diffKindColor(kind, defaultColor);
+  // Unscoped text keeps the kind's colour (green add / red remove / neutral
+  // context) so the split view agrees with unified on what green means;
+  // recognised tokens tint over it.
+  final contentColor = kindColor;
+  final emphasis = _emphasisBackground(kind);
+  return TextSpan(
+    style: base,
+    children: _contentSpans(
+      content,
+      runs,
+      base,
+      contentColor,
+      theme,
+      intraline,
+      emphasis,
+    ),
   );
 }
 

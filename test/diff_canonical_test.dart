@@ -24,11 +24,15 @@ import 'package:remote_magic_git/features/repository/hunk_diff_view.dart';
 const _repo = '/repo';
 const _hash = 'abc1234';
 
+// A plain-text file, so the palette-agreement check below isn't perturbed by
+// syntax token colours (highlighting is exercised by diff_highlight_test.dart /
+// split_diff_highlight_test.dart). Unscoped content keeps the kind colour, so
+// an added line still reads green in both views.
 const _diff =
-    'diff --git a/f.dart b/f.dart\n'
+    'diff --git a/f.txt b/f.txt\n'
     'index 111..222 100644\n'
-    '--- a/f.dart\n'
-    '+++ b/f.dart\n'
+    '--- a/f.txt\n'
+    '+++ b/f.txt\n'
     '@@ -1,4 +1,4 @@\n'
     ' keep\n'
     '-old line that runs on and on and on and on and on and on and on and on\n'
@@ -134,12 +138,23 @@ void main() {
     // diffKindColor, so this is true by construction rather than by luck.
     await _pump(tester, const SplitDiffView(diff: _diff));
 
+    // Cells are Text.rich now (syntax + intra-line spans); the kind colour lives
+    // on the content spans, not the widget's outer style. Read the first
+    // content leaf's colour.
     final added = tester.widget<Text>(
       find.text('new line that runs on and on and on and on and on and on and '
           'on and on'),
     );
+    Color? firstColor;
+    added.textSpan!.visitChildren((span) {
+      if (span is TextSpan && (span.text?.isNotEmpty ?? false)) {
+        firstColor = span.style?.color;
+        return false;
+      }
+      return true;
+    });
     expect(
-      added.style!.color,
+      firstColor,
       diffKindColor(DiffLineKind.add, const Color(0xFF000000)),
     );
   });

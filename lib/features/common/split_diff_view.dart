@@ -1,16 +1,33 @@
 import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart';
+import '../../core/git/intraline_diff.dart';
 import '../../core/git/unified_diff.dart';
+import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
+import 'diff_highlight.dart';
 import 'diff_view.dart';
 
 /// One side-by-side row: the old-side line (left) and/or the new-side line
 /// (right). A pure context line fills both; a removal fills only [left]; an
-/// addition only [right].
+/// addition only [right]. Each side carries its precomputed syntax runs and
+/// intra-line emphasis ([leftRuns]/[rightRuns] are null when highlighting was
+/// skipped — the cell still renders, coloured by kind).
 class _SplitRow {
   final String? left;
   final String? right;
   final bool isContext;
-  const _SplitRow({this.left, this.right, this.isContext = false});
+  final List<ScopedRun>? leftRuns;
+  final List<ScopedRun>? rightRuns;
+  final List<IntralineRange> leftIntraline;
+  final List<IntralineRange> rightIntraline;
+  const _SplitRow({
+    this.left,
+    this.right,
+    this.isContext = false,
+    this.leftRuns,
+    this.rightRuns,
+    this.leftIntraline = const [],
+    this.rightIntraline = const [],
+  });
 }
 
 /// A hunk header row (rendered full-width across both columns).
@@ -20,17 +37,55 @@ class _HeaderRow {
 }
 
 /// Parses [diff] and flattens it into the header/row items [SplitDiffView]
-/// renders. Returns null when there's nothing hunk-parseable (binary /
-/// mode-only change).
+/// renders, with per-side syntax highlighting + intra-line emphasis attached.
+/// Returns null when there's nothing hunk-parseable (binary / mode-only change).
+///
+/// The old (left) column is highlighted from the reconstructed pre-image and the
+/// new (right) column from the post-image, each in one pass so grammar state is
+/// correct. Highlighting rides this same function so it's off the UI thread for
+/// a huge patch too, but is gated off above the isolate threshold (re-registering
+/// grammars per ephemeral isolate isn't worth it) — those render kind-coloured.
 ///
 /// Top-level, because [DiffParser] hands it to `Isolate.run` for a big patch.
 List<Object>? _buildSplitItems(String diff) {
   final file = parseUnifiedDiff(diff);
   if (file == null) return null;
+  final enable = diffLineCount(diff) <= kDiffIsolateLineThreshold;
+  final lang = diffLanguageId(file);
+
+  // Reconstruct both images across the whole file: the left column is the
+  // pre-image (context + removals), the right the post-image (context +
+  // additions), in hunk-body order.
+  final preContent = <String>[];
+  final postContent = <String>[];
+  for (final hunk in file.hunks) {
+    for (final l in hunk.lines) {
+      switch (diffLineKind(l)) {
+        case DiffLineKind.context:
+          final t = l.isNotEmpty ? l.substring(1) : '';
+          preContent.add(t);
+          postContent.add(t);
+        case DiffLineKind.remove:
+          preContent.add(l.length > 1 ? l.substring(1) : '');
+        case DiffLineKind.add:
+          postContent.add(l.length > 1 ? l.substring(1) : '');
+        case DiffLineKind.noNewline:
+        case DiffLineKind.other:
+          break;
+      }
+    }
+  }
+  final preRuns = highlightImageRuns(preContent, lang, enable: enable);
+  final postRuns = highlightImageRuns(postContent, lang, enable: enable);
+
   final items = <Object>[];
+  // File-global image cursors, advanced in lockstep with the reconstruction
+  // above so each cell indexes the right highlighted line.
+  var preIdx = 0;
+  var postIdx = 0;
   for (final hunk in file.hunks) {
     items.add(_HeaderRow(hunk.header));
-    items.addAll(_splitHunk(hunk));
+    (preIdx, postIdx) = _splitHunk(hunk, items, preRuns, postRuns, preIdx, postIdx);
   }
   return items;
 }
@@ -133,8 +188,10 @@ class _SplitDiffViewState extends State<SplitDiffView> {
     final items = _items;
     if (items == null) return DiffView(diff: widget.diff);
 
+    final macosTheme = MacosTheme.of(context);
     final defaultColor =
-        MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
+        macosTheme.typography.body.color ?? MacosColors.textColor;
+    final codeTheme = codeThemeFor(macosTheme.brightness);
 
     // SelectionArea + plain Text cells so a drag can copy across rows —
     // per-cell SelectableText couldn't span them.
@@ -160,13 +217,13 @@ class _SplitDiffViewState extends State<SplitDiffView> {
               ),
             );
           }
-          return _rowWidget(item as _SplitRow, defaultColor);
+          return _rowWidget(item as _SplitRow, defaultColor, codeTheme);
         },
       ),
     );
   }
 
-  Widget _rowWidget(_SplitRow row, Color defaultColor) {
+  Widget _rowWidget(_SplitRow row, Color defaultColor, CodeTheme codeTheme) {
     // IntrinsicHeight so the pair shares one height (the taller, wrapped
     // cell's) and the shorter side's background band fills the whole row —
     // corresponding lines stay visually aligned when one side wraps.
@@ -179,7 +236,10 @@ class _SplitDiffViewState extends State<SplitDiffView> {
               row.left,
               kind: DiffLineKind.remove,
               defaultColor: defaultColor,
+              codeTheme: codeTheme,
               isContext: row.isContext,
+              runs: row.leftRuns,
+              intraline: row.leftIntraline,
             ),
           ),
           Container(
@@ -191,7 +251,10 @@ class _SplitDiffViewState extends State<SplitDiffView> {
               row.right,
               kind: DiffLineKind.add,
               defaultColor: defaultColor,
+              codeTheme: codeTheme,
               isContext: row.isContext,
+              runs: row.rightRuns,
+              intraline: row.rightIntraline,
             ),
           ),
         ],
@@ -207,20 +270,22 @@ class _SplitDiffViewState extends State<SplitDiffView> {
     String? text, {
     required DiffLineKind kind,
     required Color defaultColor,
+    required CodeTheme codeTheme,
     required bool isContext,
+    required List<ScopedRun>? runs,
+    required List<IntralineRange> intraline,
   }) {
+    // The cell's *kind* for colouring: a gutter/context cell is neutral; a
+    // filled add/remove cell keeps its column's kind (which is what carries the
+    // green/red, and the intra-line emphasis colour).
+    final cellKind = (text == null || isContext) ? DiffLineKind.context : kind;
     final Color bg;
-    final Color fg;
     if (text == null) {
-      // No counterpart on this side — a gutter, not a line.
       bg = MacosColors.systemGrayColor.withValues(alpha: 0.06);
-      fg = defaultColor;
     } else if (isContext) {
       bg = const Color(0x00000000);
-      fg = diffKindColor(DiffLineKind.context, defaultColor);
     } else {
       bg = diffKindBackground(kind) ?? const Color(0x00000000);
-      fg = diffKindColor(kind, defaultColor);
     }
     return Container(
       color: bg,
@@ -230,33 +295,60 @@ class _SplitDiffViewState extends State<SplitDiffView> {
       // counterpart's first line, and empty lines keep the mono rhythm.
       constraints: const BoxConstraints(minHeight: kDiffLineExtent),
       alignment: Alignment.centerLeft,
-      child: Text(
-        text ?? '',
+      child: Text.rich(
+        diffCellSpan(
+          text ?? '',
+          runs,
+          intraline,
+          cellKind,
+          kDiffMono,
+          defaultColor,
+          codeTheme,
+        ),
         // Wrap within the cell: the column is exactly half the pane, so a
         // long line folds instead of pushing its neighbour off the screen.
         softWrap: true,
         strutStyle: kDiffStrut,
-        style: kDiffMono.copyWith(color: fg),
       ),
     );
   }
 }
 
-/// Aligns a hunk's raw lines into split rows. Consecutive removals and
-/// additions are zipped (removal i ↔ addition i); leftovers become one-sided
-/// rows. Context lines flush any pending run, then fill both columns.
-List<_SplitRow> _splitHunk(DiffHunk hunk) {
-  final rows = <_SplitRow>[];
-  final removes = <String>[];
-  final adds = <String>[];
+/// Aligns a hunk's raw lines into split rows, appending them to [items].
+/// Consecutive removals and additions are zipped (removal i ↔ addition i), and
+/// a zipped pair is intra-line diffed so the changed characters get a deeper
+/// wash; leftovers become one-sided rows. Context lines flush any pending run,
+/// then fill both columns. Each cell picks up its syntax runs from [preRuns]
+/// (left) / [postRuns] (right) at the running image index; returns the advanced
+/// (preIdx, postIdx) for the next hunk.
+(int, int) _splitHunk(
+  DiffHunk hunk,
+  List<Object> items,
+  List<List<ScopedRun>?> preRuns,
+  List<List<ScopedRun>?> postRuns,
+  int preIdx,
+  int postIdx,
+) {
+  // Buffered removal/addition runs as (content, imageIndex) pairs.
+  final removes = <(String, int)>[];
+  final adds = <(String, int)>[];
 
   void flush() {
     final n = removes.length > adds.length ? removes.length : adds.length;
     for (var k = 0; k < n; k++) {
-      rows.add(
+      final r = k < removes.length ? removes[k] : null;
+      final a = k < adds.length ? adds[k] : null;
+      final intra = (r != null && a != null)
+          ? computeIntralineDiff(r.$1, a.$1)
+          : IntralineDiff.none;
+      items.add(
         _SplitRow(
-          left: k < removes.length ? removes[k] : null,
-          right: k < adds.length ? adds[k] : null,
+          left: r?.$1,
+          right: a?.$1,
+          leftRuns: r == null ? null : preRuns[r.$2],
+          rightRuns: a == null ? null : postRuns[a.$2],
+          leftIntraline: intra.oldRanges,
+          rightIntraline: intra.newRanges,
         ),
       );
     }
@@ -267,13 +359,25 @@ List<_SplitRow> _splitHunk(DiffHunk hunk) {
   for (final l in hunk.lines) {
     switch (diffLineKind(l)) {
       case DiffLineKind.add:
-        adds.add(l.length > 1 ? l.substring(1) : '');
+        adds.add((l.length > 1 ? l.substring(1) : '', postIdx));
+        postIdx++;
       case DiffLineKind.remove:
-        removes.add(l.length > 1 ? l.substring(1) : '');
+        removes.add((l.length > 1 ? l.substring(1) : '', preIdx));
+        preIdx++;
       case DiffLineKind.context:
         flush();
         final text = l.isNotEmpty ? l.substring(1) : '';
-        rows.add(_SplitRow(left: text, right: text, isContext: true));
+        items.add(
+          _SplitRow(
+            left: text,
+            right: text,
+            isContext: true,
+            leftRuns: preRuns[preIdx],
+            rightRuns: postRuns[postIdx],
+          ),
+        );
+        preIdx++;
+        postIdx++;
       case DiffLineKind.noNewline:
       case DiffLineKind.other:
         // "\ No newline…" and stray markers don't map to a side — skip.
@@ -281,5 +385,5 @@ List<_SplitRow> _splitHunk(DiffHunk hunk) {
     }
   }
   flush();
-  return rows;
+  return (preIdx, postIdx);
 }
