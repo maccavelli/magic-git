@@ -120,6 +120,17 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
     });
   }
 
+  /// Side-by-side needs the room of two columns. Toggling it on grows a
+  /// narrow window toward 85% of the host's width (never past it) so both
+  /// columns arrive readable — a one-time nudge inside the caller's setState,
+  /// not a constraint: the user can still drag it back down to [_minWidth].
+  void _growForSplit() {
+    final target = widget.bounds.width * 0.85;
+    if (_size.width >= target) return;
+    _size = Size(_fit(target, _minWidth, widget.bounds.width), _size.height);
+    _clampPosition();
+  }
+
   void _onResize(DragUpdateDetails details) {
     setState(() {
       _size = Size(
@@ -214,7 +225,10 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
                             icon: CupertinoIcons.square_split_2x1,
                             tooltip: 'Side-by-side',
                             active: _split,
-                            onPressed: () => setState(() => _split = !_split),
+                            onPressed: () => setState(() {
+                              _split = !_split;
+                              if (_split) _growForSplit();
+                            }),
                           ),
                           _toggle(
                             context,

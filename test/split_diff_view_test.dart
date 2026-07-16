@@ -83,46 +83,59 @@ void main() {
   );
 
   testWidgets(
-    'long cell text is fully reachable on the shared horizontal pan',
+    'both columns always fit the viewport — a long line wraps in its cell '
+    'instead of pushing the additions column off the pane',
     (tester) async {
-      // Regression: pan extent used to be 2×cell text + outer pad only, which
-      // shorted each column's own pad and the centre rule — the tail of a long
-      // line clipped even when scrolled fully right.
-      final long = 'x' * 200;
+      // Regression: the columns used to be sized by the widest single cell
+      // and the whole surface panned horizontally, so one long line anywhere
+      // pushed the right (additions) column entirely off the pane.
+      final long = List.generate(40, (i) => 'word$i').join(' ');
       final diff =
           'diff --git a/a.txt b/a.txt\n'
           'index 111..222 100644\n'
           '--- a/a.txt\n'
           '+++ b/a.txt\n'
-          '@@ -1,1 +1,1 @@\n'
+          '@@ -1,2 +1,2 @@\n'
+          ' short context\n'
           '-$long\n'
           '+$long\n';
       await tester.pumpWidget(
         MacosApp(
           debugShowCheckedModeBanner: false,
-          home: SizedBox(
-            width: 300,
-            height: 400,
-            child: SplitDiffView(diff: diff),
+          // Center, not a bare SizedBox: the home slot hands out TIGHT
+          // constraints, which would silently inflate the 300px box to the
+          // whole test surface and void the narrow-viewport premise.
+          home: Center(
+            child: SizedBox(
+              width: 300,
+              height: 400,
+              child: SplitDiffView(diff: diff),
+            ),
           ),
         ),
       );
       await tester.pumpAndSettle();
 
-      final horizontal = tester
+      // No horizontal pan exists at all any more.
+      final horizontals = tester
           .stateList<ScrollableState>(find.byType(Scrollable))
-          .firstWhere((s) => s.position.axis == Axis.horizontal);
-      expect(horizontal.position.maxScrollExtent, greaterThan(0));
+          .where((s) => s.position.axis == Axis.horizontal);
+      expect(horizontals, isEmpty);
 
-      // The pan must be at least wide enough for two padded cells + separator
-      // of the measured cell text — otherwise long lines clip at the edge.
-      final cellW = measureDiffWidth([long]);
-      final minContent = splitDiffContentWidth(cellW);
-      expect(
-        horizontal.position.viewportDimension +
-            horizontal.position.maxScrollExtent,
-        greaterThanOrEqualTo(minContent - 0.5),
-      );
+      // Both cells of the long pair are on screen, inside the 300px viewport,
+      // and the removal (left) sits fully left of the addition (right).
+      final viewport = tester.getRect(find.byType(SplitDiffView));
+      final cells = find.textContaining('word0');
+      expect(cells, findsNWidgets(2));
+      final left = tester.getRect(cells.first);
+      final right = tester.getRect(cells.last);
+      expect(right.right, lessThanOrEqualTo(viewport.right + 0.5));
+      expect(left.right, lessThanOrEqualTo(right.left + 0.5));
+
+      // The long pair wrapped: taller than one mono line, and the two cells
+      // share the row height (alignment survives the wrap).
+      expect(left.height, greaterThan(kDiffLineExtent * 2));
+      expect(left.height, right.height);
     },
   );
 

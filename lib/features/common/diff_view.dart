@@ -77,21 +77,6 @@ Color? diffLineBackground(String line) {
   return diffKindBackground(diffLineKind(line));
 }
 
-/// Content width a side-by-side row needs so the longest cell on either side
-/// can pan fully into view: two padded columns plus the centre rule.
-///
-/// [maxCellWidth] is the measured text width of the widest *single* cell
-/// (not both columns summed). Callers pass this to [DiffPan.maxLineWidth]
-/// via the inverse of DiffPan's `+ kDiffHPad * 2` so the final pan extent is
-/// exactly this value (see [splitDiffPanMaxLineWidth]).
-double splitDiffContentWidth(double maxCellWidth) =>
-    2 * (maxCellWidth + kDiffHPad * 2) + kDiffSplitSeparator;
-
-/// Value to hand [DiffPan.maxLineWidth] so its built-in outer pad yields
-/// [splitDiffContentWidth] as the final content width.
-double splitDiffPanMaxLineWidth(double maxCellWidth) =>
-    splitDiffContentWidth(maxCellWidth) - kDiffHPad * 2;
-
 // ---------------------------------------------------------------------------
 // Colour
 // ---------------------------------------------------------------------------

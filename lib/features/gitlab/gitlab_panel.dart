@@ -166,17 +166,19 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     final mrIid = _selectedMrIid;
     final pipelineId = _selectedPipelineId;
 
+    // One handler map for both consumers: the keyboard shortcuts and the
+    // command palette's dispatched intents (see PanelShortcuts.handlers).
+    final handlers = <String, VoidCallback?>{
+      'gitlab.newMr': _createMr,
+      'gitlab.approve': mrIid == null ? null : () => _approve(mrIid),
+      'gitlab.merge': mrIid == null ? null : () => _merge(mrIid),
+      'gitlab.retry': pipelineId == null ? null : () => _retry(pipelineId),
+    };
     return PanelShortcuts(
       bindings: widget.isActive
-          ? resolveShortcuts(keymap, {
-              'gitlab.newMr': _createMr,
-              'gitlab.approve': mrIid == null ? null : () => _approve(mrIid),
-              'gitlab.merge': mrIid == null ? null : () => _merge(mrIid),
-              'gitlab.retry': pipelineId == null
-                  ? null
-                  : () => _retry(pipelineId),
-            })
+          ? resolveShortcuts(keymap, handlers)
           : const <ShortcutActivator, VoidCallback>{},
+      handlers: widget.isActive ? handlers : const {},
       child: ResizableMasterDetail(
         paneId: PaneId.forgeList,
         master: _leftPane(mrs, pipelines, pipeByRef),

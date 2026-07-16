@@ -72,9 +72,13 @@ void main() {
       expect(_horizontalScrolls(), findsOneWidget);
     });
 
-    testWidgets('SplitDiffView', (tester) async {
+    testWidgets('SplitDiffView has NO horizontal pan at all', (tester) async {
+      // Split is the exception to the shared-pan shape: its two columns
+      // always fit the viewport (both sides must stay on screen — panning
+      // the surface pushed the additions column off the pane) and a long
+      // cell wraps within its column instead.
       await _pump(tester, const SplitDiffView(diff: _diff));
-      expect(_horizontalScrolls(), findsOneWidget);
+      expect(_horizontalScrolls(), findsNothing);
     });
 
     testWidgets('DiffView', (tester) async {

@@ -207,21 +207,25 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     final git = ref.read(gitServiceProvider);
     final keymap = ref.watch(keymapProvider);
 
+    // One handler map for both consumers: the keyboard shortcuts and the
+    // command palette's dispatched intents (see PanelShortcuts.handlers).
+    final handlers = <String, VoidCallback?>{
+      'branches.newBranch': () => _newBranchFocus.requestFocus(),
+      'branches.createTag': _openCreateTagSheet,
+      // Only bound with a non-current branch selected — otherwise they
+      // fall through, matching the rest of the app's precondition gates.
+      'branches.merge': _canActOnSelection
+          ? () => _mergeBranch(git, _selectedBranch!, MergeMode.normal)
+          : null,
+      'branches.delete': _canActOnSelection
+          ? () => _deleteBranch(git, _selectedBranch!)
+          : null,
+    };
     return PanelShortcuts(
       bindings: widget.isActive
-          ? resolveShortcuts(keymap, {
-              'branches.newBranch': () => _newBranchFocus.requestFocus(),
-              'branches.createTag': _openCreateTagSheet,
-              // Only bound with a non-current branch selected — otherwise they
-              // fall through, matching the rest of the app's precondition gates.
-              'branches.merge': _canActOnSelection
-                  ? () => _mergeBranch(git, _selectedBranch!, MergeMode.normal)
-                  : null,
-              'branches.delete': _canActOnSelection
-                  ? () => _deleteBranch(git, _selectedBranch!)
-                  : null,
-            })
+          ? resolveShortcuts(keymap, handlers)
           : const <ShortcutActivator, VoidCallback>{},
+      handlers: widget.isActive ? handlers : const {},
       child: refsAsync.when(
         loading: () => const Center(child: ProgressCircle()),
         error: (err, _) => _error(context, err),

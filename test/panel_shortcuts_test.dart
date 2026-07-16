@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 
@@ -9,13 +10,15 @@ void main() {
   ) async {
     var fired = 0;
     await tester.pumpWidget(
-      MaterialApp(
-        home: PanelShortcuts(
-          bindings: {
-            const SingleActivator(LogicalKeyboardKey.backspace, meta: true):
-                () => fired++,
-          },
-          child: const Focus(autofocus: true, child: SizedBox.expand()),
+      ProviderScope(
+        child: MaterialApp(
+          home: PanelShortcuts(
+            bindings: {
+              const SingleActivator(LogicalKeyboardKey.backspace, meta: true):
+                  () => fired++,
+            },
+            child: const Focus(autofocus: true, child: SizedBox.expand()),
+          ),
         ),
       ),
     );
@@ -35,17 +38,19 @@ void main() {
       addTearDown(controller.dispose);
 
       await tester.pumpWidget(
-        MaterialApp(
-          home: Material(
-            child: PanelShortcuts(
-              bindings: {
-                const SingleActivator(LogicalKeyboardKey.backspace, meta: true):
-                    () => fired++,
-              },
-              child: TextField(controller: controller),
+        ProviderScope(
+        child: MaterialApp(
+            home: Material(
+              child: PanelShortcuts(
+                bindings: {
+                  const SingleActivator(LogicalKeyboardKey.backspace, meta: true):
+                      () => fired++,
+                },
+                child: TextField(controller: controller),
+              ),
             ),
           ),
-        ),
+      ),
       );
 
       await tester.tap(find.byType(TextField));
@@ -75,13 +80,15 @@ void main() {
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Material(
-          child: PanelShortcuts(
-            bindings: {
-              const SingleActivator(LogicalKeyboardKey.space): () => toggled++,
-            },
-            child: TextField(controller: controller),
+      ProviderScope(
+        child: MaterialApp(
+          home: Material(
+            child: PanelShortcuts(
+              bindings: {
+                const SingleActivator(LogicalKeyboardKey.space): () => toggled++,
+              },
+              child: TextField(controller: controller),
+            ),
           ),
         ),
       ),
@@ -101,16 +108,18 @@ void main() {
     addTearDown(node.dispose);
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Material(
-          child: PanelShortcuts(
-            bindings: {
-              const SingleActivator(LogicalKeyboardKey.keyC, meta: true): () =>
-                  copiedSha++,
-            },
-            child: SelectionArea(
-              focusNode: node,
-              child: const Text('diff line'),
+      ProviderScope(
+        child: MaterialApp(
+          home: Material(
+            child: PanelShortcuts(
+              bindings: {
+                const SingleActivator(LogicalKeyboardKey.keyC, meta: true): () =>
+                    copiedSha++,
+              },
+              child: SelectionArea(
+                focusNode: node,
+                child: const Text('diff line'),
+              ),
             ),
           ),
         ),
@@ -135,18 +144,20 @@ void main() {
     addTearDown(elsewhere.dispose);
 
     await tester.pumpWidget(
-      MaterialApp(
-        home: Material(
-          child: PanelShortcuts(
-            bindings: {
-              const SingleActivator(LogicalKeyboardKey.keyC, meta: true): () =>
-                  fired++,
-            },
-            child: Column(
-              children: [
-                TextField(controller: controller),
-                Focus(focusNode: elsewhere, child: const SizedBox(height: 10)),
-              ],
+      ProviderScope(
+        child: MaterialApp(
+          home: Material(
+            child: PanelShortcuts(
+              bindings: {
+                const SingleActivator(LogicalKeyboardKey.keyC, meta: true): () =>
+                    fired++,
+              },
+              child: Column(
+                children: [
+                  TextField(controller: controller),
+                  Focus(focusNode: elsewhere, child: const SizedBox(height: 10)),
+                ],
+              ),
             ),
           ),
         ),

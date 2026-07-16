@@ -1165,8 +1165,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     final status = statusAsync.value;
     final selected = _selected;
     final keymap = ref.watch(keymapProvider);
-    final shortcuts = widget.isActive && !busy
-        ? resolveShortcuts(keymap, {
+    // One handler map for both consumers: the keyboard shortcuts and the
+    // command palette's dispatched intents (see PanelShortcuts.handlers).
+    final handlers = <String, VoidCallback?>{
             'repository.fetch': _fetch,
             'repository.push': () =>
                 _push(followTags: ref.read(appSettingsProvider).pushFollowTags),
@@ -1209,11 +1210,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             'repository.focusCommit': status != null && status.staged.isNotEmpty
                 ? () => _openCommitDialog(status.staged.length)
                 : null,
-          })
-        : const <ShortcutActivator, VoidCallback>{};
+          };
+    final live = widget.isActive && !busy;
 
     return PanelShortcuts(
-      bindings: shortcuts,
+      bindings: live
+          ? resolveShortcuts(keymap, handlers)
+          : const <ShortcutActivator, VoidCallback>{},
+      handlers: live ? handlers : const {},
       child: LayoutBuilder(
         builder: (context, constraints) {
         final statusArea = Expanded(
@@ -1364,12 +1368,18 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         ? _diffPanel(context)
         : null;
     if (panel == null) return list;
+    // Side-by-side needs the room of two columns — while it's active the diff
+    // panel takes a larger share of the row (the split cells wrap to fit
+    // whatever they get, but ~71% reads far better than 60% for two columns
+    // of code). The file list gives the space back the moment split is off.
+    final wideDiff =
+        _diffSplit && !_isMultiSelect && _selectedConflict == null;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(flex: 2, child: list),
         Container(width: 1, color: MacosColors.separatorColor),
-        Expanded(flex: 3, child: panel),
+        Expanded(flex: wideDiff ? 5 : 3, child: panel),
       ],
     );
   }

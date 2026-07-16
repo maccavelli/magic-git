@@ -40,6 +40,16 @@ List<Object>? _buildSplitItems(String diff) {
 /// stays in the unified `HunkDiffView`. Falls back to the plain [DiffView] when
 /// the diff has no parseable hunks (binary / mode-only change), or when parsing
 /// it fails outright.
+///
+/// The two columns always split the viewport equally, so BOTH sides are on
+/// screen at every pane width; a cell whose text is wider than its column
+/// wraps within the cell rather than panning the surface. The old shape sized
+/// both columns from the single widest cell and panned the whole surface —
+/// one long line anywhere pushed the additions column entirely off the pane,
+/// which read as "the diff is missing its right half". Wrapping keeps the
+/// left/right pair on one row (the row takes the taller cell's height), so
+/// corresponding lines stay aligned however narrow the pane gets, and a
+/// resize (pane divider, pop-out window) simply reflows.
 class SplitDiffView extends StatefulWidget {
   final String diff;
 
@@ -55,14 +65,9 @@ class _SplitDiffViewState extends State<SplitDiffView> {
   final DiffParser<List<Object>?> _parser = DiffParser(_buildSplitItems);
 
   final ScrollController _vertical = ScrollController();
-  final ScrollController _horizontal = ScrollController();
 
   List<Object>? _items;
   bool _loading = false;
-
-  /// Widest cell text, sizing the shared horizontal pan. Recomputed only when
-  /// the rows change — not on every layout pass.
-  double _maxLineWidth = 0;
 
   @override
   void initState() {
@@ -84,7 +89,6 @@ class _SplitDiffViewState extends State<SplitDiffView> {
   @override
   void dispose() {
     _vertical.dispose();
-    _horizontal.dispose();
     super.dispose();
   }
 
@@ -94,7 +98,6 @@ class _SplitDiffViewState extends State<SplitDiffView> {
     void apply(List<Object>? items, {required bool loading}) {
       _items = items;
       _loading = loading;
-      _maxLineWidth = items == null ? 0 : measureDiffWidth(_cellTexts(items));
     }
 
     final inline = _parser.parse(
@@ -124,20 +127,6 @@ class _SplitDiffViewState extends State<SplitDiffView> {
     });
   }
 
-  /// Every rendered cell's text, for the width measurement.
-  static Iterable<String> _cellTexts(List<Object> items) sync* {
-    for (final item in items) {
-      if (item is _HeaderRow) {
-        yield item.text;
-      } else if (item is _SplitRow) {
-        // Each column is half the pan, but a cell is measured whole: it is the
-        // longest single cell that decides how far there is to scroll.
-        if (item.left != null) yield item.left!;
-        if (item.right != null) yield item.right!;
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_loading) return const DiffPending();
@@ -147,71 +136,45 @@ class _SplitDiffViewState extends State<SplitDiffView> {
     final defaultColor =
         MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
 
-    return DiffPan(
-      vertical: _vertical,
-      horizontal: _horizontal,
-      // Two padded columns + centre rule — not merely 2× the cell text width
-      // (that under-counted cell pad and the separator, so long lines clipped
-      // at the pan's right edge).
-      maxLineWidth: splitDiffPanMaxLineWidth(_maxLineWidth),
-      builder: (context, contentWidth, viewportWidth) =>
-          _list(items, defaultColor, contentWidth, viewportWidth),
-    );
-  }
-
-  // SelectionArea + plain Text cells so a drag can copy across rows — per-cell
-  // SelectableText couldn't span them.
-  Widget _list(
-    List<Object> items,
-    Color defaultColor,
-    double contentWidth,
-    double viewportWidth,
-  ) {
+    // SelectionArea + plain Text cells so a drag can copy across rows —
+    // per-cell SelectableText couldn't span them.
     return SelectionArea(
       child: ListView.builder(
         controller: _vertical,
         padding: const EdgeInsets.symmetric(vertical: 8),
-        // Body rows are one mono line tall; headers are slightly taller, so
-        // no fixed extent on the whole list — body still uses the strut.
+        // Rows are as tall as their (possibly wrapped) taller cell, and
+        // headers differ again — no fixed extent; the builder lazily lays
+        // out only the visible rows.
         itemCount: items.length,
         itemBuilder: (context, i) {
           final item = items[i];
           if (item is _HeaderRow) {
-            // A header spans both columns and names the hunk — pin it, so it
-            // stays readable however far the diff is panned.
-            return DiffPinnedRow(
-              horizontal: _horizontal,
-              viewportWidth: viewportWidth,
-              child: Container(
-                color: MacosColors.systemGrayColor.withValues(alpha: 0.10),
-                padding: const EdgeInsets.fromLTRB(kDiffHPad, 4, 6, 4),
-                child: Text(
-                  item.text,
-                  style: kDiffMono.copyWith(color: kDiffHunkHeaderColor),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+            return Container(
+              color: MacosColors.systemGrayColor.withValues(alpha: 0.10),
+              padding: const EdgeInsets.fromLTRB(kDiffHPad, 4, 6, 4),
+              child: Text(
+                item.text,
+                style: kDiffMono.copyWith(color: kDiffHunkHeaderColor),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             );
           }
-          return _rowWidget(item as _SplitRow, defaultColor, contentWidth);
+          return _rowWidget(item as _SplitRow, defaultColor);
         },
       ),
     );
   }
 
-  Widget _rowWidget(_SplitRow row, Color defaultColor, double contentWidth) {
-    // Half of the content width each side of the 1px rule — keeps the two
-    // columns equal as the pan grows past the viewport.
-    final cellW = (contentWidth - kDiffSplitSeparator) / 2;
-    return SizedBox(
-      width: contentWidth,
-      height: kDiffLineExtent + 2, // +2 for the 1px vertical cell pad either side
+  Widget _rowWidget(_SplitRow row, Color defaultColor) {
+    // IntrinsicHeight so the pair shares one height (the taller, wrapped
+    // cell's) and the shorter side's background band fills the whole row —
+    // corresponding lines stay visually aligned when one side wraps.
+    return IntrinsicHeight(
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SizedBox(
-            width: cellW,
+          Expanded(
             child: _cell(
               row.left,
               kind: DiffLineKind.remove,
@@ -223,8 +186,7 @@ class _SplitDiffViewState extends State<SplitDiffView> {
             width: kDiffSplitSeparator,
             color: MacosColors.separatorColor,
           ),
-          SizedBox(
-            width: cellW,
+          Expanded(
             child: _cell(
               row.right,
               kind: DiffLineKind.add,
@@ -262,14 +224,17 @@ class _SplitDiffViewState extends State<SplitDiffView> {
     }
     return Container(
       color: bg,
-      // Same horizontal inset as every other diff surface — the old 8px pad
-      // was what made split feel tighter (and shorted the pan) vs unified.
+      // Same horizontal inset as every other diff surface.
       padding: const EdgeInsets.symmetric(horizontal: kDiffHPad, vertical: 1),
+      // A one-line minimum so a gutter (null side) is never shorter than its
+      // counterpart's first line, and empty lines keep the mono rhythm.
+      constraints: const BoxConstraints(minHeight: kDiffLineExtent),
       alignment: Alignment.centerLeft,
       child: Text(
         text ?? '',
-        maxLines: 1,
-        softWrap: false,
+        // Wrap within the cell: the column is exactly half the pane, so a
+        // long line folds instead of pushing its neighbour off the screen.
+        softWrap: true,
         strutStyle: kDiffStrut,
         style: kDiffMono.copyWith(color: fg),
       ),

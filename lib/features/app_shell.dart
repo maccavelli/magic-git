@@ -19,6 +19,7 @@ import 'common/command_palette.dart';
 import 'common/diff_view.dart' show kDiffMono;
 import 'common/escape_dismissible.dart';
 import 'common/link_status_chip.dart';
+import 'common/palette_intents.dart';
 import 'common/sidebar_branding.dart';
 import 'common/undo_toast.dart';
 import 'connection/connection_landing.dart';
@@ -292,12 +293,23 @@ class _AppShellState extends ConsumerState<AppShell> {
           onCloneRepository: () => _openCloneRepository(context),
           onCreateRepository: () => _openCreateRepository(context),
           onOpenHistoryWindow: () => WindowManagerBridge.current?.openHistory(),
+          onUndo: _undoGitOperation,
+          onDispatchAction: _dispatchPaletteAction,
           onCheckoutBranch: (branch) =>
               _checkoutBranch(context, repoPath, branch),
           onOpenWorktree: (path) => _openWorktree(context, path),
         ),
       ),
     );
+  }
+
+  /// Runs a panel-scoped keymap action from the palette: switch to the owning
+  /// panel, then park the action id as a [PaletteIntent] — the panel's
+  /// [PanelShortcuts] consumes it on its next build and runs the exact
+  /// handler (with all its guards) the keyboard shortcut would.
+  void _dispatchPaletteAction(String actionId, int panelIndex) {
+    _selectPage(panelIndex);
+    ref.read(paletteIntentProvider.notifier).dispatch(actionId);
   }
 
   /// Opens a worktree in the Worktrees panel — the shared grant-then-open-

@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/features/common/command_palette.dart';
@@ -38,9 +39,15 @@ class _Recorder {
   String? checkedOut;
   String? openedWorktree;
   int refreshed = 0;
+  int undone = 0;
+  final dispatched = <(String, int)>[];
 }
 
-Future<void> _open(WidgetTester tester, _Recorder rec) async {
+Future<void> _open(
+  WidgetTester tester,
+  _Recorder rec, {
+  Forge forge = Forge.github,
+}) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
@@ -49,6 +56,8 @@ Future<void> _open(WidgetTester tester, _Recorder rec) async {
         // for a real git through the unconnected executor and leave its retry
         // timer pending past the test.
         gitWorktreesProvider(_repo).overrideWith((ref) async => _worktrees),
+        // The palette gates its forge commands by the detected forge.
+        forgeProvider(_repo).overrideWith((ref) async => forge),
       ],
       child: MacosApp(
         debugShowCheckedModeBanner: false,
@@ -72,6 +81,9 @@ Future<void> _open(WidgetTester tester, _Recorder rec) async {
                     onCloneRepository: () => rec.cloneOpened++,
                     onCreateRepository: () => rec.createOpened++,
                     onOpenHistoryWindow: () => rec.historyWindowOpened++,
+                    onUndo: () => rec.undone++,
+                    onDispatchAction: (id, panel) =>
+                        rec.dispatched.add((id, panel)),
                     onCheckoutBranch: (b) => rec.checkedOut = b,
                     onOpenWorktree: (p) => rec.openedWorktree = p,
                   ),
@@ -94,6 +106,11 @@ void main() {
 
     expect(find.text('Go to Repository'), findsOneWidget);
     expect(find.text('Go to History'), findsOneWidget);
+
+    // The catalog is long now — rows below the fold build lazily, so reach
+    // Refresh through the filter instead of expecting it on screen.
+    await tester.enterText(find.byType(MacosTextField), 'refresh');
+    await tester.pumpAndSettle();
     expect(find.text('Refresh'), findsOneWidget);
   });
 
@@ -185,6 +202,79 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     expect(find.byType(CommandPalette), findsNothing);
+  });
+
+  testWidgets('offers the full keymap catalog and dispatches panel actions '
+      'as (actionId, panelIndex)', (tester) async {
+    final rec = _Recorder();
+    await _open(tester, rec);
+
+    await tester.enterText(find.byType(MacosTextField), 'fetch');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fetch'));
+    await tester.pumpAndSettle();
+    expect(rec.dispatched, [('repository.fetch', 0)]);
+
+    await _open(tester, rec);
+    await tester.enterText(find.byType(MacosTextField), 'cherry');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cherry-pick selected commit'));
+    await tester.pumpAndSettle();
+    expect(rec.dispatched.last, ('history.cherryPick', 1));
+  });
+
+  testWidgets('a category prefix narrows the list, VS Code-style', (
+    tester,
+  ) async {
+    await _open(tester, _Recorder());
+
+    // `go:` keeps navigation, drops git commands.
+    await tester.enterText(find.byType(MacosTextField), 'go: ');
+    await tester.pumpAndSettle();
+    expect(find.text('Go to Repository'), findsOneWidget);
+    expect(find.text('Fetch'), findsNothing);
+
+    // `git: fe` narrows within the git category.
+    await tester.enterText(find.byType(MacosTextField), 'git: fetch');
+    await tester.pumpAndSettle();
+    expect(find.text('Fetch'), findsOneWidget);
+    expect(find.text('Go to Repository'), findsNothing);
+
+    // A colon prefix that names no category is plain text, not a filter.
+    await tester.enterText(find.byType(MacosTextField), 'origin: x');
+    await tester.pumpAndSettle();
+    expect(find.text('No matching commands'), findsOneWidget);
+  });
+
+  testWidgets('forge commands follow the detected forge', (tester) async {
+    await _open(tester, _Recorder()); // GitHub by default
+    await tester.enterText(find.byType(MacosTextField), 'forge: ');
+    await tester.pumpAndSettle();
+    expect(find.text('New pull request'), findsOneWidget);
+    expect(find.text('New merge request'), findsNothing);
+
+    // Close this palette before re-pumping — a live sheet route across the
+    // pumpWidget swap otherwise strands the second open.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+
+    await _open(tester, _Recorder(), forge: Forge.gitlab);
+    await tester.enterText(find.byType(MacosTextField), 'forge: ');
+    await tester.pumpAndSettle();
+    expect(find.text('New merge request'), findsOneWidget);
+    expect(find.text('New pull request'), findsNothing);
+  });
+
+  testWidgets('Undo Last Git Operation invokes the shell undo', (
+    tester,
+  ) async {
+    final rec = _Recorder();
+    await _open(tester, rec);
+    await tester.enterText(find.byType(MacosTextField), 'undo');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Undo Last Git Operation'));
+    await tester.pumpAndSettle();
+    expect(rec.undone, 1);
   });
 
   testWidgets('Open History in New Window invokes its callback', (

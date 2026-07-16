@@ -15,20 +15,6 @@ const _default = Color(0xFF123456);
 
 void main() {
   group('layout constants', () {
-    test('split pan width accounts for both cell pads and the separator', () {
-      // Two columns of (text + pad*2) plus the centre rule — never merely
-      // 2× the cell text (that shorted the pan and clipped long lines).
-      const cell = 100.0;
-      final content = splitDiffContentWidth(cell);
-      expect(content, 2 * (cell + kDiffHPad * 2) + kDiffSplitSeparator);
-      // DiffPan adds kDiffHPad*2 on top of maxLineWidth; the helper inverts
-      // that so the final extent equals splitDiffContentWidth.
-      expect(
-        splitDiffPanMaxLineWidth(cell) + kDiffHPad * 2,
-        content,
-      );
-    });
-
     test('strut height matches the fixed itemExtent', () {
       // The force-strut is what keeps glyph runs inside the itemExtent slot
       // under SelectionArea; if these drift, text clips ("out of margins").

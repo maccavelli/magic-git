@@ -125,19 +125,19 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     final prNumber = _selectedPrNumber;
     final runId = _selectedRunId;
 
+    // One handler map for both consumers: the keyboard shortcuts and the
+    // command palette's dispatched intents (see PanelShortcuts.handlers).
+    final handlers = <String, VoidCallback?>{
+      'github.newPr': _createPr,
+      'github.approve': prNumber == null ? null : () => _approve(prNumber),
+      'github.merge': prNumber == null ? null : () => _merge(prNumber),
+      'github.rerun': runId == null ? null : () => _rerun(runId),
+    };
     return PanelShortcuts(
       bindings: widget.isActive
-          ? resolveShortcuts(keymap, {
-              'github.newPr': _createPr,
-              'github.approve': prNumber == null
-                  ? null
-                  : () => _approve(prNumber),
-              'github.merge': prNumber == null
-                  ? null
-                  : () => _merge(prNumber),
-              'github.rerun': runId == null ? null : () => _rerun(runId),
-            })
+          ? resolveShortcuts(keymap, handlers)
           : const <ShortcutActivator, VoidCallback>{},
+      handlers: widget.isActive ? handlers : const {},
       child: ResizableMasterDetail(
         paneId: PaneId.forgeList,
         master: _leftPane(prs, runs, runByBranch),

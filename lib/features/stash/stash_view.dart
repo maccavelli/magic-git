@@ -184,20 +184,21 @@ class _StashViewState extends ConsumerState<StashView>
       }
     }
 
+    // One handler map for both consumers: the keyboard shortcuts and the
+    // command palette's dispatched intents (see PanelShortcuts.handlers).
+    final handlers = <String, VoidCallback?>{
+      'stashes.apply': selEntry == null ? null : () => _apply(git, selEntry!),
+      'stashes.pop': selEntry == null ? null : () => _pop(git, selEntry!),
+      'stashes.drop': selEntry == null
+          ? null
+          : () => _dropStash(context, git, selEntry!),
+    };
+    final live = widget.isActive && !busy;
     return PanelShortcuts(
-      bindings: widget.isActive && !busy
-          ? resolveShortcuts(keymap, {
-              'stashes.apply': selEntry == null
-                  ? null
-                  : () => _apply(git, selEntry!),
-              'stashes.pop': selEntry == null
-                  ? null
-                  : () => _pop(git, selEntry!),
-              'stashes.drop': selEntry == null
-                  ? null
-                  : () => _dropStash(context, git, selEntry!),
-            })
+      bindings: live
+          ? resolveShortcuts(keymap, handlers)
           : const <ShortcutActivator, VoidCallback>{},
+      handlers: live ? handlers : const {},
       child: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

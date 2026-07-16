@@ -1105,32 +1105,35 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     final selectedCommit = _selectedCommitIn(commits);
     final hasCommits = commits?.isNotEmpty ?? false;
 
+    // One handler map for both consumers: the keyboard shortcuts and the
+    // command palette's dispatched intents (see PanelShortcuts.handlers).
+    final handlers = <String, VoidCallback?>{
+      'history.copySha': _selectedHashes.isEmpty ? null : _copySelectedShas,
+      'history.checkout': selectedHash == null
+          ? null
+          : () => _actCheckout(selectedHash),
+      'history.branchFrom': selectedHash == null
+          ? null
+          : () => _actBranchFrom(selectedHash),
+      'history.cherryPick': selectedCommit == null
+          ? null
+          : () => _actCherryPick(selectedCommit),
+      'history.rebaseFrom': selectedCommit == null
+          ? null
+          : () => _actRebaseFrom(selectedCommit),
+      'history.amend': hasCommits ? _actAmend : null,
+      'history.filter': () => _searchFocus.requestFocus(),
+      'history.zoomIn': () => _adjustZoom(0.1),
+      'history.zoomOut': () => _adjustZoom(-0.1),
+      'history.zoomReset': () =>
+          ref.read(appSettingsProvider.notifier).setHistoryZoom(1.0),
+    };
+    final live = widget.isActive && !busy;
     return PanelShortcuts(
-      bindings: widget.isActive && !busy
-          ? resolveShortcuts(keymap, {
-              'history.copySha': _selectedHashes.isEmpty
-                  ? null
-                  : _copySelectedShas,
-              'history.checkout': selectedHash == null
-                  ? null
-                  : () => _actCheckout(selectedHash),
-              'history.branchFrom': selectedHash == null
-                  ? null
-                  : () => _actBranchFrom(selectedHash),
-              'history.cherryPick': selectedCommit == null
-                  ? null
-                  : () => _actCherryPick(selectedCommit),
-              'history.rebaseFrom': selectedCommit == null
-                  ? null
-                  : () => _actRebaseFrom(selectedCommit),
-              'history.amend': hasCommits ? _actAmend : null,
-              'history.filter': () => _searchFocus.requestFocus(),
-              'history.zoomIn': () => _adjustZoom(0.1),
-              'history.zoomOut': () => _adjustZoom(-0.1),
-              'history.zoomReset': () =>
-                  ref.read(appSettingsProvider.notifier).setHistoryZoom(1.0),
-            })
+      bindings: live
+          ? resolveShortcuts(keymap, handlers)
           : const <ShortcutActivator, VoidCallback>{},
+      handlers: live ? handlers : const {},
       child: ResizableMasterDetail(
         paneId: PaneId.historyList,
         // The diff/detail pane hosts real patch content — keep it usable

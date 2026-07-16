@@ -153,6 +153,31 @@ void main() {
   );
 
   testWidgets(
+    'toggling side-by-side on grows a narrow pop-out toward 85% of its host',
+    (tester) async {
+      await _pump(tester);
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await tester.tap(_byMacosTooltip('Open diff in a larger window'));
+      await tester.pumpAndSettle();
+
+      // Opens at 60% of the host — narrower than two comfortable columns.
+      final initial = tester.getSize(find.byType(DiffPopoutWindow));
+
+      await tester.tap(_byMacosTooltip('Side-by-side'));
+      await tester.pumpAndSettle();
+      final grown = tester.getSize(find.byType(DiffPopoutWindow));
+      expect(grown.width, greaterThan(initial.width),
+          reason: 'split needs the room of two columns');
+
+      // Toggling split OFF leaves the size alone (a nudge, not a constraint).
+      await tester.tap(_byMacosTooltip('Side-by-side'));
+      await tester.pumpAndSettle();
+      expect(tester.getSize(find.byType(DiffPopoutWindow)).width, grown.width);
+    },
+  );
+
+  testWidgets(
     'the resize handle grows the window and clamps it to a minimum size',
     (tester) async {
       await _pump(tester);
