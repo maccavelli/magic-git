@@ -129,4 +129,25 @@ void main() {
         reason: 'the plain form silently omitted the untracked third parent');
     expect(patch, contains('untracked-content'));
   });
+
+  test('a path-scoped stash of a glob-named file takes exactly that file',
+      () async {
+    // The trap: a bare `a[1].txt` pathspec ALSO matches `a1.txt`, so an
+    // unwrapped partial stash would rip a second file's edits into the stash.
+    // :(literal) (see GitService._literal) turns matching off.
+    await write('a[1].txt', 'bracket-base\n');
+    await write('a1.txt', 'plain-base\n');
+    await raw(['add', '-A']);
+    await raw(['commit', '-q', '-m', 'two lookalike files']);
+    await write('a[1].txt', 'bracket-edit\n');
+    await write('a1.txt', 'plain-edit\n');
+
+    await git.stashPush(repo, includeUntracked: true, paths: ['a[1].txt']);
+
+    // Only the named file was stashed; the lookalike's edit stays in the tree.
+    expect(await File('$repo/a[1].txt').readAsString(), 'bracket-base\n');
+    expect(await File('$repo/a1.txt').readAsString(), 'plain-edit\n',
+        reason: 'a bare pathspec would have glob-stashed this file too');
+    expect(await git.stashList(repo), hasLength(1));
+  });
 }

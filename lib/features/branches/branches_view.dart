@@ -366,10 +366,11 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     // branches. The current branch keeps its green tint.
     return KeyedSubtree(
       key: _branchRowKeyFor(branch.shortName),
-      // Long-press drag (so the branch list still scrolls): drop a branch on the
-      // Worktrees tab to spin up a worktree for it.
+      // Immediate (mouse-first) drag — see DragItemDraggable: drop a branch on
+      // the Worktrees tab to spin up a worktree, or on Forge for a PR/MR.
       child: DragItemDraggable(
         item: DragRef(branch),
+        immediate: true,
         child: GestureDetector(
           onTap: () => _selectBranch(branch.shortName),
           child: Container(

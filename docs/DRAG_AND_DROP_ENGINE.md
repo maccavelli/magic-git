@@ -449,8 +449,21 @@ Legend: **payload** = new `DragItem` subtype; **source** = make a row/chip
 
 Drawn from the §6 complaint clusters — these harden the whole engine:
 
-- **ESC cancels an in-progress drag** — a global key handler active while
-  `dragStateProvider != null` that ends the drag. Ship with the next phase.
+- ~~**ESC cancels an in-progress drag**~~ ✅ shipped (debugging pass, July 2026):
+  `DragStateNotifier` installs a `HardwareKeyboard` handler for the drag's
+  lifetime; ESC nulls the drag state, the rail un-lights, and every drop target
+  (`DropZone`, the history commit row, `StagingDropBanner`) treats a null state
+  as cancelled and ignores the release. The ghost follows the pointer until
+  release — Flutter can't abort the gesture itself — but the release is a
+  guaranteed no-op. Same pass also fixed: `stashPush(paths:)` missing the
+  `:(literal)` pathspec wrap (glob-named files over-stashed — verified against
+  real git), the rebase todo starting with `squash` when leading rows are
+  dropped (first-*kept*-row normalization + fold gating), squash-drops onto
+  dropped rows, an unhandled async error in the Forge drop's forge resolution,
+  drag state sticking if the source row unmounts mid-drag, and switched every
+  row drag to **immediate (mouse-first)** activation — on macOS list scrolling
+  is wheel/trackpad events, so long-press-to-drag protected nothing and was
+  undiscoverable with a mouse.
 - **In-app abort** for a merge/rebase/cherry-pick left mid-conflict — surface
   `--abort` in the pending-op banner, not only Undo. (GitKraken's top DnD
   complaint; also needed by A3/E2.)

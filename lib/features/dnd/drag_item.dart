@@ -72,11 +72,16 @@ String _basename(String path) {
   return slash < 0 ? trimmed : trimmed.substring(slash + 1);
 }
 
-/// Wraps [child] so it can be dragged as a [DragItem]. Row-sized sources use the
-/// default long-press activation so the enclosing list still scrolls vertically;
-/// small targets (chips) pass [immediate] to start on touch. Drives
+/// Wraps [child] so it can be dragged as a [DragItem]. Drives
 /// [dragStateProvider] on start/end so reactive drop targets (the nav rail) can
 /// light up while a drag is live.
+///
+/// Every current surface passes [immediate]: this is a macOS-only app, where
+/// list scrolling is wheel/trackpad events (never a mouse click-drag on the
+/// list body), so an immediate drag steals nothing — and a long-press-to-drag
+/// is an undiscoverable mobile idiom with a mouse. Plain clicks still win:
+/// the drag only claims the gesture after movement exceeds the slop. The
+/// long-press variant is kept for any future touch surface.
 class DragItemDraggable extends ConsumerWidget {
   final DragItem item;
   final Widget child;
@@ -84,7 +89,7 @@ class DragItemDraggable extends ConsumerWidget {
   /// Custom drag ghost. Defaults to a small pill of [DragItem.shortLabel].
   final Widget? feedback;
 
-  /// Start dragging immediately (small chips) instead of on long-press (rows).
+  /// Start dragging on movement (mouse-first) instead of on long-press.
   final bool immediate;
 
   const DragItemDraggable({
@@ -98,12 +103,28 @@ class DragItemDraggable extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final ghost = feedback ?? _defaultGhost(context);
-    void begin() => ref.read(dragStateProvider.notifier).begin(item);
-    void end() => ref.read(dragStateProvider.notifier).end();
+    // Capture the notifier, not `ref`: a watcher-driven refresh can unmount
+    // this row MID-DRAG (its file stashed away, its stash popped by another
+    // tab), and `ref.read` on a disposed element throws — which would leave
+    // the drag state stuck and the nav rail lit forever. The notifier object
+    // stays valid for the tab's lifetime; if the whole tab closed mid-drag,
+    // clearing its state is moot, hence the swallow.
+    final drag = ref.watch(dragStateProvider.notifier);
+    void begin() => drag.begin(item);
+    void end() {
+      try {
+        drag.end();
+      } catch (_) {
+        // Tab container disposed mid-drag — nothing left to clear.
+      }
+    }
 
     if (immediate) {
       return Draggable<DragItem>(
         data: item,
+        // One live drag at a time: the shared drag state is a single slot, and
+        // a second simultaneous drag (a stray second pointer) would clobber it.
+        maxSimultaneousDrags: 1,
         dragAnchorStrategy: pointerDragAnchorStrategy,
         onDragStarted: begin,
         onDragEnd: (_) => end(),
@@ -114,6 +135,7 @@ class DragItemDraggable extends ConsumerWidget {
     }
     return LongPressDraggable<DragItem>(
       data: item,
+      maxSimultaneousDrags: 1,
       dragAnchorStrategy: pointerDragAnchorStrategy,
       onDragStarted: begin,
       onDragEnd: (_) => end(),

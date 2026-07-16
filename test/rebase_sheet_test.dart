@@ -190,4 +190,34 @@ void main() {
       RebaseAction.squash,
     ]);
   });
+
+  testWidgets(
+    'dropping the row a squash folds into resets the orphaned squash to pick',
+    (tester) async {
+      // The todo omits drop lines, so [drop, squash] would START with squash —
+      // git rejects that ("cannot 'squash' without a previous commit"). The
+      // sheet must normalize the first KEPT row, not merely the first row.
+      final git = await _pump(tester);
+
+      // second -> squash into first: rows are [first pick, second squash].
+      await _longDrag(
+        tester,
+        find.text('second'),
+        find.byKey(const ValueKey('rebase-row-0')),
+      );
+
+      // Now drop "first" via its action menu (row 0's pulldown).
+      await tester.tap(find.text('Pick').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Drop').last);
+      await tester.pumpAndSettle();
+
+      final steps = await _confirmAndCapture(tester, git);
+      expect(steps.map((s) => s.hash), ['aaa1111111', 'bbb2222222']);
+      expect(steps.map((s) => s.action), [
+        RebaseAction.drop,
+        RebaseAction.pick, // NOT squash — nothing kept above to fold into
+      ]);
+    },
+  );
 }

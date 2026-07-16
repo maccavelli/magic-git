@@ -133,13 +133,15 @@ class _NavRowVisualState extends State<_NavRowVisual> {
     final typography = MacosTheme.of(context).typography;
 
     // Precedence: an active drop hover > drag-eligible > selected > mouse hover.
+    // The selected pill uses the THEME's accent (like macos_ui SidebarItems),
+    // not a hard-coded blue, so it follows any future accent change in one spot.
     Color? bg;
     if (widget.activeDrop) {
       bg = MacosColors.systemGreenColor.withValues(alpha: 0.32);
     } else if (widget.eligible) {
       bg = MacosColors.systemGreenColor.withValues(alpha: 0.16);
     } else if (widget.selected) {
-      bg = MacosColors.systemBlueColor.withValues(alpha: 0.85);
+      bg = MacosTheme.of(context).primaryColor.withValues(alpha: 0.85);
     } else if (_hover) {
       bg = MacosColors.white.withValues(alpha: 0.06);
     }

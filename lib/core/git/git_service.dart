@@ -3473,9 +3473,10 @@ class GitService {
   ///
   /// [paths], when non-empty, scopes the stash to those pathspecs (a *partial*
   /// stash — e.g. the drag-selected-files-onto-Stashes gesture). They go after
-  /// `--` so a path that looks like a flag can't be misread as one; the flag
-  /// itself is fine to always pass since git ignores it when there are no
-  /// pathspecs.
+  /// `--` so a path that looks like a flag can't be misread as one, and each is
+  /// wrapped in [_literal]: these are exact paths the UI showed, and a bare
+  /// pathspec glob-matches (`pages/[id].tsx` would also stash `pages/i.tsx`'s
+  /// changes) while a leading `:` is read as pathspec magic.
   Future<SSHCommandResult> stashPush(
     String repoPath, {
     String? message,
@@ -3488,7 +3489,7 @@ class GitService {
     'push',
     if (includeUntracked) '--include-untracked',
     if (message != null && message.isNotEmpty) ...['-m', message],
-    if (paths.isNotEmpty) ...['--', ...paths],
+    if (paths.isNotEmpty) ...['--', ...paths.map(_literal)],
   ], 'git stash push');
 
   /// The stale-index guard both destructive stash ops run behind, and why:

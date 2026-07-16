@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/context_menu.dart';
 import 'drag_item.dart';
+import 'drag_state.dart';
 import 'drop_registry.dart';
 
 /// Wraps a target as a [DragItem] drop zone. It accepts a payload only when the
@@ -46,6 +47,9 @@ class _DropZoneState extends ConsumerState<DropZone> {
     return DragTarget<DragItem>(
       onWillAcceptWithDetails: (details) => canDrop(details.data, widget.id),
       onAcceptWithDetails: (details) {
+        // ESC cancelled this drag (the gesture itself can't be aborted, only
+        // its release) — a cancelled drop is a no-op everywhere.
+        if (ref.read(dragStateProvider) == null) return;
         final repoPath = ref.read(connectionProvider).repoPath;
         if (repoPath == null) return;
         runDrop(

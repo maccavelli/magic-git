@@ -54,15 +54,26 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
     RebaseAction.drop => 'Drop',
   };
 
-  /// The first commit has nothing above to fold into, so it can never be
-  /// squash/fixup — any move that lands a fold action there resets it to pick.
-  void _fixupFirstRow() {
-    if (_rows.isEmpty) return;
-    if (_rows.first.action == RebaseAction.squash ||
-        _rows.first.action == RebaseAction.fixup) {
-      _rows.first.action = RebaseAction.pick;
+  /// A squash/fixup folds into the nearest NON-DROPPED commit above it — so the
+  /// first *kept* row (not merely the first row) has nothing to fold into. The
+  /// generated todo omits drop lines entirely, and git rejects a todo that
+  /// starts with `squash`/`fixup` ("cannot 'squash' without a previous commit"),
+  /// so any edit that leaves the first kept row folding is normalized to pick.
+  /// Runs after every mutation: moves, drops onto rows, and action changes.
+  void _normalizeRows() {
+    for (final r in _rows) {
+      if (r.action == RebaseAction.drop) continue;
+      if (r.action == RebaseAction.squash || r.action == RebaseAction.fixup) {
+        r.action = RebaseAction.pick;
+      }
+      break; // only the first kept row is constrained
     }
   }
+
+  /// Whether row [i] has any kept (non-dropped) commit above it to fold into —
+  /// gates the Squash/Fixup menu entries and the squash drop target.
+  bool _canFoldAt(int i) =>
+      _rows.take(i).any((r) => r.action != RebaseAction.drop);
 
   void _move(int i, int delta) {
     final j = i + delta;
@@ -70,7 +81,7 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
     setState(() {
       final r = _rows.removeAt(i);
       _rows.insert(j, r);
-      _fixupFirstRow();
+      _normalizeRows();
     });
   }
 
@@ -85,13 +96,15 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
       // Removing shifts everything after `from` down one, so a slot past it
       // lands one index earlier than its raw value.
       _rows.insert(slot > from ? slot - 1 : slot, r);
-      _fixupFirstRow();
+      _normalizeRows();
     });
   }
 
   /// Dropping commit [dragged] onto commit [target] folds it in: it moves to sit
   /// immediately below [target] and is marked squash (keep both messages). The
-  /// user can switch it to fixup via the row's action menu.
+  /// user can switch it to fixup via the row's action menu. The drop target
+  /// rejects dropped rows — folding "into" a dropped commit would actually fold
+  /// into whatever kept commit sits above it, which is not what the drop said.
   void _squashInto(int dragged, int target) {
     if (_busy || dragged == target) return;
     setState(() {
@@ -100,7 +113,7 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
       final t = dragged < target ? target - 1 : target;
       _rows.insert(t + 1, r);
       r.action = RebaseAction.squash;
-      _fixupFirstRow();
+      _normalizeRows();
     });
   }
 
@@ -301,16 +314,19 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
   /// commit onto it folds that commit in (green highlight while hovering).
   Widget _row(BuildContext context, int i) {
     final content = _rowContent(context, i);
-    return LongPressDraggable<int>(
-      // Long-press (not immediate) so the list still scrolls; disabled while a
-      // rebase is running.
+    return Draggable<int>(
+      // Immediate (mouse-first) drag: on macOS list scrolling is wheel/trackpad
+      // events, so click-drag steals nothing; disabled while a rebase runs.
       data: i,
       maxSimultaneousDrags: _busy ? 0 : 1,
       dragAnchorStrategy: pointerDragAnchorStrategy,
       feedback: _ghost(context, i),
       childWhenDragging: Opacity(opacity: 0.35, child: content),
       child: DragTarget<int>(
-        onWillAcceptWithDetails: (d) => !_busy && d.data != i,
+        // A dropped (struck-through) row can't be a squash target — the fold
+        // would really land on the kept commit above it, not this one.
+        onWillAcceptWithDetails: (d) =>
+            !_busy && d.data != i && _rows[i].action != RebaseAction.drop,
         onAcceptWithDetails: (d) => _squashInto(d.data, i),
         builder: (context, candidate, rejected) {
           final active = candidate.isNotEmpty;
@@ -385,7 +401,10 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
     final typography = MacosTheme.of(context).typography;
     final r = _rows[i];
     final dropped = r.action == RebaseAction.drop;
-    final canFold = i > 0; // the first row has nothing above to fold into
+    // Fold needs a kept commit above — "row 0" isn't enough once rows above
+    // can be dropped ([drop, squash] generates a todo starting with squash,
+    // which git rejects).
+    final canFold = _canFoldAt(i);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
       child: Row(
@@ -416,7 +435,12 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
                         canFold ||
                         (a != RebaseAction.squash && a != RebaseAction.fixup),
                     title: Text(_label(a)),
-                    onTap: () => setState(() => r.action = a),
+                    // Normalize after ANY action change: dropping a row can
+                    // orphan a squash below it as the new first kept row.
+                    onTap: () => setState(() {
+                      r.action = a;
+                      _normalizeRows();
+                    }),
                   ),
               ],
             ),

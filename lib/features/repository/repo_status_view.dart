@@ -2375,8 +2375,10 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         : [file.path];
     return DragItemDraggable(
       // fromStaged makes the drag-to-stage banner directional: a staged row can
-      // only be unstaged, everything else only staged.
+      // only be unstaged, everything else only staged. Immediate (mouse-first)
+      // drag — see DragItemDraggable; plain clicks still select.
       item: DragFiles(dragPaths, fromStaged: kind == _SectionKind.staged),
+      immediate: true,
       child: KeyedSubtree(
       key: _rowKeyFor(file.path, kind),
       child: GestureDetector(

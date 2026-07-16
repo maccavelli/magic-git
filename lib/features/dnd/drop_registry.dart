@@ -5,6 +5,7 @@ import 'package:macos_ui/macos_ui.dart' show MacosColors, showMacosSheet;
 import '../../core/forge/forge.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
 import '../common/context_menu.dart';
 import '../common/prompt_text_sheet.dart';
@@ -351,7 +352,19 @@ Future<void> _createRequestFromBranch(DropContext ctx, String branch) async {
   // Which forge this repo talks to decides PR (GitHub) vs MR (GitLab). Resolve
   // it (cheap once the Forge tab has been visited) and open that forge's
   // existing create sheet, seeded with the dropped branch as the source.
-  final forge = await ctx.ref.read(forgeProvider(ctx.repoPath).future);
+  //
+  // The resolution can hit the network and throw (host unreachable, gh/glab
+  // missing) — and runDrop's future is fire-and-forget from the DragTarget, so
+  // an escaped exception here would be an unhandled async error, not a dialog.
+  final Forge forge;
+  try {
+    forge = await ctx.ref.read(forgeProvider(ctx.repoPath).future);
+  } catch (e) {
+    if (ctx.context.mounted) {
+      await showErrorDialog(ctx.context, displayError(e));
+    }
+    return;
+  }
   if (!ctx.context.mounted) return;
   switch (forge) {
     case Forge.github:

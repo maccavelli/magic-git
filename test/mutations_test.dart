@@ -875,6 +875,25 @@ void main() {
       expect(exec.calls.single, ['git', 'stash', 'push', '-m', 'wip']);
     });
 
+    test('stashPush path-scopes with :(literal) pathspecs after --', () async {
+      // The paths are exact files the UI showed — a bare pathspec would glob
+      // (`a[1].txt` also matches `a1.txt`), so each is wrapped in :(literal).
+      await git.stashPush(
+        '/repo',
+        includeUntracked: true,
+        paths: ['a[1].txt', 'lib/b.dart'],
+      );
+      expect(exec.calls.single, [
+        'git',
+        'stash',
+        'push',
+        '--include-untracked',
+        '--',
+        ':(literal)a[1].txt',
+        ':(literal)lib/b.dart',
+      ]);
+    });
+
     test('stashDrop drops behind the stale-OID guard, capturing the subject '
         'first', () async {
       await git.stashDrop('/repo', 1, expectedOid: 'dddddddddddddddddddddddddddddddddddddddd');

@@ -3,6 +3,7 @@
 // path runs through the drag source -> DropZone -> registry -> action handler.
 
 import 'package:flutter/cupertino.dart' hide ConnectionState;
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -122,5 +123,33 @@ void main() {
     // A destructive drop confirms first (no git runs until Continue is tapped).
     expect(find.textContaining('onto the current branch'), findsOneWidget);
     expect(find.text('Continue'), findsOneWidget);
+  });
+
+  testWidgets('ESC cancels the drag: releasing on a zone dispatches nothing', (
+    tester,
+  ) async {
+    await _pump(tester);
+
+    // Start dragging the commit and park it over Branches (lit + relabeled).
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('SOURCE')),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await gesture.moveBy(const Offset(0, -20));
+    await tester.pump();
+    await gesture.moveTo(tester.getCenter(find.text('New branch')));
+    await tester.pump();
+
+    // ESC mid-drag clears the shared drag state (the gesture itself can only
+    // end on release) — the rail reverts to its resting labels immediately...
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    expect(find.text('New branch'), findsNothing);
+    expect(find.text('Branches'), findsOneWidget);
+
+    // ...and the release over the zone is a no-op: no prompt opens.
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(find.text('New branch from commit'), findsNothing);
   });
 }

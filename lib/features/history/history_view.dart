@@ -27,6 +27,7 @@ import '../common/prompt_text_sheet.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/tool_icon_button.dart';
 import '../dnd/drag_item.dart';
+import '../dnd/drag_state.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'commit_graph_view.dart';
@@ -1648,6 +1649,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   return data is DragRef && _canDropBranch(data.ref);
                 },
                 onAcceptWithDetails: (details) {
+                  // ESC-cancelled drags release as a no-op (see DragStateNotifier).
+                  if (ref.read(dragStateProvider) == null) return;
                   final data = details.data;
                   if (data is DragRef) {
                     _onBranchDropped(data.ref, details.offset);
@@ -1655,10 +1658,12 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                 },
                 builder: (context, candidate, rejected) {
                   final dropHover = candidate.isNotEmpty;
-                  // The row is itself draggable (long-press, so the list still
-                  // scrolls) — drop a commit on the Branches tab to fork a branch.
+                  // The row is itself draggable (immediate: mouse-first — see
+                  // DragItemDraggable) — drop a commit on the Branches tab to
+                  // fork a branch, on Worktrees for a worktree, etc.
                   return DragItemDraggable(
                     item: DragCommit(commit),
+                    immediate: true,
                     child: GestureDetector(
                       key: _commitRowKeyFor(commit.hash),
                       onTap: () => _handleRowTap(commit.hash),

@@ -34,8 +34,11 @@ class StagingDropBanner extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final drag = ref.watch(dragStateProvider);
     // Only working-copy file drags get a staging target; anything else (or no
-    // drag) leaves the list unobstructed.
-    if (drag is! DragFiles) return const SizedBox.shrink();
+    // drag, or an ESC-cancelled one — the state nulls and this unmounts, so a
+    // cancelled release has nothing to hit) leaves the list unobstructed.
+    if (drag is! DragFiles || drag.paths.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     final toStage = !drag.fromStaged;
     final color = toStage

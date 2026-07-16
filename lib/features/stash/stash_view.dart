@@ -418,8 +418,8 @@ class _StashViewState extends ConsumerState<StashView>
     final typography = MacosTheme.of(context).typography;
     return DragItemDraggable(
       item: DragStash(stash),
-      // Long-press to start (the default): the stash list scrolls vertically,
-      // so an immediate drag would hijack the scroll gesture. Tap still selects.
+      // Immediate (mouse-first) drag — see DragItemDraggable. Tap still selects.
+      immediate: true,
       child: GestureDetector(
       key: _stashRowKeyFor(stash.oid),
       onTap: () {
