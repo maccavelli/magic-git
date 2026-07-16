@@ -18,7 +18,6 @@ import 'common/branch_switch.dart';
 import 'common/command_palette.dart';
 import 'common/diff_view.dart' show kDiffMono;
 import 'common/escape_dismissible.dart';
-import 'common/link_status_chip.dart';
 import 'common/palette_intents.dart';
 import 'common/sidebar_branding.dart';
 import 'common/undo_toast.dart';
@@ -710,13 +709,6 @@ class _AppShellState extends ConsumerState<AppShell> {
           return Column(
             children: [
               const ToolHealthBanner(),
-              // Ambient SSH latency + connection status for non-Repository
-              // pages. Repository hosts the same strip on its toolbar instead.
-              if (pageIndex != 0)
-                const Align(
-                  alignment: Alignment.centerRight,
-                  child: SshLinkStatusRow(horizontalPadding: 8),
-                ),
               Expanded(child: _pages(repoPath, pageIndex, visitedPages)),
             ],
           );
