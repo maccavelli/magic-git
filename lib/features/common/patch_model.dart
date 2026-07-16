@@ -48,7 +48,11 @@ class HunkHeaderRow extends PatchRow {
 class CodeRow extends PatchRow {
   final String text;
   final bool fromExpansion;
-  const CodeRow(this.text, {this.fromExpansion = false});
+
+  /// Which of the patch's files this line belongs to — lets the viewer group a
+  /// file's code rows and syntax-highlight them against that file's language.
+  final int fileIndex;
+  const CodeRow(this.text, {this.fromExpansion = false, this.fileIndex = 0});
 }
 
 /// A clickable row standing for lines that exist in the file but aren't in the
@@ -212,7 +216,7 @@ List<PatchRow> buildPatchRows(
 
       rows.add(HunkHeaderRow(hunk.header));
       for (final line in hunk.lines) {
-        rows.add(CodeRow(line));
+        rows.add(CodeRow(line, fileIndex: f));
       }
     }
 
@@ -297,7 +301,7 @@ void _emitGap(
 
   // Lines revealed from the top of the gap, downward.
   for (var i = 0; i < shownTop; i++) {
-    rows.add(_blobRow(blob, gapStart + i));
+    rows.add(_blobRow(blob, gapStart + i, fileIndex));
   }
 
   if (hidden > 0) {
@@ -314,19 +318,19 @@ void _emitGap(
 
   // Lines revealed from the bottom of the gap, upward.
   for (var i = 0; i < shownBottom; i++) {
-    rows.add(_blobRow(blob, gapEnd - shownBottom + i));
+    rows.add(_blobRow(blob, gapEnd - shownBottom + i, fileIndex));
   }
 }
 
 /// One blob line as a context row. [lineNumber] is 1-based; a number outside
 /// the blob yields nothing renderable rather than throwing — belt and braces,
 /// since [verifyBlobMatchesHunks] should already have caught the disagreement.
-CodeRow _blobRow(List<String> blob, int lineNumber) {
+CodeRow _blobRow(List<String> blob, int lineNumber, int fileIndex) {
   final i = lineNumber - 1;
   final text = (i >= 0 && i < blob.length) ? blob[i] : '';
   // Rendered as a context line: prefix it the way git would, so the viewer's
   // existing per-line coloring treats it as unchanged code.
-  return CodeRow(' $text', fromExpansion: true);
+  return CodeRow(' $text', fromExpansion: true, fileIndex: fileIndex);
 }
 
 /// Confirms the blob really is the post-image the hunks were computed against,

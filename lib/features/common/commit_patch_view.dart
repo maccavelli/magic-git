@@ -5,6 +5,8 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/git/unified_diff.dart';
 import '../../core/providers/app_providers.dart';
+import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
+import 'diff_highlight.dart';
 import 'diff_view.dart';
 import 'patch_model.dart';
 
@@ -83,6 +85,11 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
   List<PatchRow> _rows = const [];
   double _maxLineWidth = 0;
 
+  /// Syntax runs per row, parallel to [_rows] (null for non-code rows and when
+  /// highlighting is skipped). Precomputed with the rows so it's off the render
+  /// path — one highlight pass per file, not per visible line per frame.
+  List<List<ScopedRun>?> _rowRuns = const [];
+
   // The inputs the cached rows were built from. Compared by identity: the patch
   // is replaced only by a re-parse, and [_expansions] is rewritten wholesale on
   // every change rather than mutated, so identity is exactly the right question.
@@ -101,7 +108,41 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
     _rowsBlobs = blobs;
     _rows = buildPatchRows(patch, expansions: _expansions, blobs: blobs);
     _maxLineWidth = measureDiffWidth(_rowTexts(_rows));
+    _rowRuns = _computeRowRuns(patch, _rows);
   }
+
+  /// Highlights each file's code rows against its language, once per file, and
+  /// scatters the runs back to their row positions. Gated by total size — a
+  /// vendored-dependency-sized patch renders kind-coloured rather than paying
+  /// the highlighter on the UI thread.
+  static List<List<ScopedRun>?> _computeRowRuns(
+    CommitPatch patch,
+    List<PatchRow> rows,
+  ) {
+    final runs = List<List<ScopedRun>?>.filled(rows.length, null);
+    if (rows.length > kDiffIsolateLineThreshold) return runs;
+    final byFile = <int, List<int>>{};
+    for (var i = 0; i < rows.length; i++) {
+      final row = rows[i];
+      if (row is CodeRow) (byFile[row.fileIndex] ??= <int>[]).add(i);
+    }
+    for (final entry in byFile.entries) {
+      if (entry.key < 0 || entry.key >= patch.files.length) continue;
+      final lang = diffLanguageId(patch.files[entry.key]);
+      final indices = entry.value;
+      final contents = [
+        for (final i in indices) _stripMarker((rows[i] as CodeRow).text),
+      ];
+      final imageRuns = highlightImageRuns(contents, lang);
+      for (var k = 0; k < indices.length; k++) {
+        runs[indices[k]] = imageRuns[k];
+      }
+    }
+    return runs;
+  }
+
+  static String _stripMarker(String line) =>
+      line.isEmpty ? '' : line.substring(1);
 
   /// Riverpod hands back the *same* list instance for a blob until it is
   /// refetched, so identity per entry answers "did any blob actually change?".
@@ -244,15 +285,18 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
     };
     _deriveRows(patch, blobs);
 
+    final macosTheme = MacosTheme.of(context);
     final defaultColor =
-        MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
+        macosTheme.typography.body.color ?? MacosColors.textColor;
+    final codeTheme = codeThemeFor(macosTheme.brightness);
 
-    if (widget.wrap) return _list(defaultColor, null);
+    if (widget.wrap) return _list(defaultColor, codeTheme, null);
     return DiffPan(
       vertical: _vertical,
       horizontal: _horizontal,
       maxLineWidth: _maxLineWidth,
-      builder: (context, _, viewportWidth) => _list(defaultColor, viewportWidth),
+      builder: (context, _, viewportWidth) =>
+          _list(defaultColor, codeTheme, viewportWidth),
     );
   }
 
@@ -271,7 +315,7 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
     }
   }
 
-  Widget _list(Color defaultColor, double? viewportWidth) {
+  Widget _list(Color defaultColor, CodeTheme codeTheme, double? viewportWidth) {
     return SelectionArea(
       child: ListView.builder(
         controller: _vertical,
@@ -282,21 +326,31 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
         // the slot so text never clips against the itemExtent.
         itemExtent: widget.wrap ? null : kDiffLineExtent,
         itemCount: _rows.length,
-        itemBuilder: (context, index) =>
-            _row(_rows[index], defaultColor, viewportWidth),
+        itemBuilder: (context, index) => _row(
+          _rows[index],
+          index < _rowRuns.length ? _rowRuns[index] : null,
+          defaultColor,
+          codeTheme,
+          viewportWidth,
+        ),
       ),
     );
   }
 
-  Widget _row(PatchRow row, Color defaultColor, double? viewportWidth) =>
-      switch (row) {
-        ExpanderRow() => _pin(_expander(row), viewportWidth),
-        CollapseRow() => _pin(_collapser(row), viewportWidth),
-        PreambleRow(:final text) ||
-        FileHeaderRow(:final text) ||
-        HunkHeaderRow(:final text) ||
-        CodeRow(:final text) => _text(text, defaultColor, row),
-      };
+  Widget _row(
+    PatchRow row,
+    List<ScopedRun>? runs,
+    Color defaultColor,
+    CodeTheme codeTheme,
+    double? viewportWidth,
+  ) => switch (row) {
+    ExpanderRow() => _pin(_expander(row), viewportWidth),
+    CollapseRow() => _pin(_collapser(row), viewportWidth),
+    PreambleRow(:final text) ||
+    FileHeaderRow(:final text) ||
+    HunkHeaderRow(:final text) ||
+    CodeRow(:final text) => _text(text, runs, defaultColor, codeTheme, row),
+  };
 
   /// Gap rows are controls, so they hold still while the diff pans beneath them
   /// (see [DiffPinnedRow]) — panning right to read a long line must not carry
@@ -310,25 +364,45 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
           child: child,
         );
 
-  Widget _text(String text, Color defaultColor, PatchRow row) {
+  Widget _text(
+    String text,
+    List<ScopedRun>? runs,
+    Color defaultColor,
+    CodeTheme codeTheme,
+    PatchRow row,
+  ) {
     // An expanded line is unchanged code: colour it as context, and tint its
     // background faintly so it reads as "revealed", not "part of the change".
     // Additions/removals get the same soft band as DiffView/HunkDiffView.
     final expanded = row is CodeRow && row.fromExpansion;
-    final bg = expanded
-        ? const Color(0x0DFFFFFF)
-        : diffLineBackground(text);
+    final bg = expanded ? const Color(0x0DFFFFFF) : diffLineBackground(text);
+    // Code rows get syntax colouring (add/remove sense kept via the kind base
+    // colour); headers/preamble stay as their single flat colour.
+    final Widget child = (row is CodeRow && runs != null)
+        ? Text.rich(
+            diffLineSpan(
+              text,
+              DiffLineHighlight(diffLineKind(text), runs, const []),
+              kDiffMono,
+              defaultColor,
+              codeTheme,
+            ),
+            maxLines: widget.wrap ? null : 1,
+            softWrap: widget.wrap,
+            strutStyle: widget.wrap ? null : kDiffStrut,
+          )
+        : Text(
+            text,
+            maxLines: widget.wrap ? null : 1,
+            softWrap: widget.wrap,
+            strutStyle: widget.wrap ? null : kDiffStrut,
+            style: kDiffMono.copyWith(color: diffLineColor(text, defaultColor)),
+          );
     return Container(
       color: bg,
       padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
       alignment: Alignment.centerLeft,
-      child: Text(
-        text,
-        maxLines: widget.wrap ? null : 1,
-        softWrap: widget.wrap,
-        strutStyle: widget.wrap ? null : kDiffStrut,
-        style: kDiffMono.copyWith(color: diffLineColor(text, defaultColor)),
-      ),
+      child: child,
     );
   }
 
