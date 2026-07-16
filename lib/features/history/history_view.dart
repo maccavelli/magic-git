@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:isolate';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart'
     show GestureBinding, PointerScrollEvent;
@@ -427,12 +428,50 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   /// stay visible.
   List<GitRef> _stableRefs = const [];
 
+  /// Commit-count above which lane layout is built on a background isolate
+  /// rather than synchronously on the UI thread. `CommitGraph.build` is roughly
+  /// linear, so small histories lay out in well under a frame and the isolate's
+  /// copy-in/copy-out overhead isn't worth paying; large paged-in histories
+  /// (the case that janks) cross the boundary instead.
+  static const int _graphIsolateThreshold = 2000;
+
+  /// Bumped on every async build kick-off and on repo change; a completing
+  /// off-isolate build whose id no longer matches is stale and dropped.
+  int _graphBuildId = 0;
+
+  /// The commits instance an off-isolate build is currently in flight for, so
+  /// repeated rebuilds with the same list don't schedule duplicate builds.
+  List<GitCommit>? _pendingGraphCommits;
+
+  /// Returns the laid-out graph for [commits], always synchronously. Small
+  /// histories are laid out inline and memoized on list identity. Large ones
+  /// are laid out on a background isolate; until that lands we keep serving the
+  /// previous graph (or [CommitGraph.empty] on first load) so the frame never
+  /// blocks on layout — the view repaints via `setState` when it arrives.
   CommitGraph _graphFor(List<GitCommit> commits) {
-    if (!identical(commits, _lastCommits) || _graph == null) {
+    if (identical(commits, _lastCommits) && _graph != null) return _graph!;
+    if (commits.length < _graphIsolateThreshold) {
       _lastCommits = commits;
-      _graph = CommitGraph.build(commits);
+      _pendingGraphCommits = null;
+      return _graph = CommitGraph.build(commits);
     }
-    return _graph!;
+    if (!identical(commits, _pendingGraphCommits)) {
+      _pendingGraphCommits = commits;
+      final id = ++_graphBuildId;
+      unawaited(_buildGraphAsync(commits, id));
+    }
+    return _graph ?? CommitGraph.empty;
+  }
+
+  Future<void> _buildGraphAsync(List<GitCommit> commits, int id) async {
+    final graph = await Isolate.run(() => CommitGraph.build(commits));
+    // Superseded by a newer list (or a repo switch) while we were building.
+    if (!mounted || id != _graphBuildId) return;
+    setState(() {
+      _lastCommits = commits;
+      _pendingGraphCommits = null;
+      _graph = graph;
+    });
   }
 
   Map<String, List<GitRef>> _decorationsFor(List<GitRef> refs) {
@@ -492,6 +531,10 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       _clearSelection();
       _lastCommits = null;
       _graph = null;
+      // Invalidate any in-flight off-isolate layout for the old repo so it
+      // can't land and paint the wrong history.
+      _pendingGraphCommits = null;
+      _graphBuildId++;
       _lastRefs = null;
       _decorations = null;
       _stableRefs = const [];

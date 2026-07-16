@@ -12,6 +12,7 @@ import '../../core/git/watch_event.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
+import 'contribution_heatmap.dart';
 
 /// The Dashboard — a live overview of the current session: connection
 /// details and uptime, link latency, repository state, commit activity,
@@ -88,6 +89,8 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
                             _repoSection(typography, repoPath),
                             const SizedBox(height: 14),
                             _activitySection(typography, repoPath),
+                            const SizedBox(height: 14),
+                            _contributionSection(typography, repoPath),
                             const SizedBox(height: 14),
                           ],
                           _commandsSection(typography),
@@ -512,6 +515,29 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+      ],
+    );
+  }
+
+  /// A GitHub-style contribution calendar over the loaded history. Shares the
+  /// same `logProvider` payload as the 30-day activity chart above it; the
+  /// heatmap simply spans a full year and shades relative to the busiest day.
+  Widget _contributionSection(MacosTypography typography, String repoPath) {
+    final commits = ref.watch(logProvider(repoPath)).value;
+    if (commits == null) {
+      return _loadingSection(typography, 'Contributions');
+    }
+    final days = <DateTime>[
+      for (final c in commits) ?DateTime.tryParse(c.date),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _sectionTitle(typography, 'Contributions'),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: ContributionHeatmap(commitDays: days),
+        ),
       ],
     );
   }

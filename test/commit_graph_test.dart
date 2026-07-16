@@ -1,3 +1,5 @@
+import 'dart:isolate';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/commit_graph.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
@@ -11,6 +13,29 @@ GitCommit c(String hash, List<String> parents) => GitCommit(
   parents: parents,
   subject: hash,
 );
+
+/// Structural equality for two laid-out graphs — [GraphRow]/[GraphEdge] have no
+/// `==`, so compare the fields that determine what gets painted.
+void expectSameGraph(CommitGraph a, CommitGraph b) {
+  expect(a.laneCount, b.laneCount);
+  expect(a.rows.length, b.rows.length);
+  for (var i = 0; i < a.rows.length; i++) {
+    final ra = a.rows[i];
+    final rb = b.rows[i];
+    expect(ra.commit.hash, rb.commit.hash, reason: 'row $i hash');
+    expect(ra.column, rb.column, reason: 'row $i column');
+    expect(ra.edges.length, rb.edges.length, reason: 'row $i edge count');
+    for (var j = 0; j < ra.edges.length; j++) {
+      final ea = ra.edges[j];
+      final eb = rb.edges[j];
+      expect(
+        [ea.fromColumn, ea.toColumn, ea.kind.index, ea.colorLane],
+        [eb.fromColumn, eb.toColumn, eb.kind.index, eb.colorLane],
+        reason: 'row $i edge $j',
+      );
+    }
+  }
+}
 
 void main() {
   group('CommitGraph.build', () {
@@ -81,6 +106,37 @@ void main() {
       // At the F row, main2's lane (waiting for main1) must pass through.
       final fRow = g.rows[1];
       expect(fRow.edges.any((e) => e.kind == GraphEdgeKind.pass), isTrue);
+    });
+
+    // History view lays out large histories on a background isolate
+    // (`Isolate.run(() => CommitGraph.build(commits))`). Serializing
+    // GitCommit across the isolate boundary and running the pure algorithm
+    // there must produce byte-identical layout to the synchronous path.
+    test('off-isolate build matches the synchronous build', () async {
+      // A fixture with forks, merges, a long-lived side lane and enough volume
+      // to be a realistic large-history layout.
+      final commits = <GitCommit>[
+        c('M', ['T', 'F3']), // merge feature back into trunk
+        c('T', ['T2']),
+        c('F3', ['F2']),
+        c('T2', ['T3']),
+        c('F2', ['F1']),
+        c('T3', ['B']),
+        c('F1', ['B']), // feature forked from B
+      ];
+      // Extend the trunk into a long linear tail so the graph is sizeable.
+      var prev = 'B';
+      commits.add(c('B', ['L0']));
+      for (var i = 0; i < 500; i++) {
+        final next = i == 499 ? <String>[] : ['L${i + 1}'];
+        commits.add(c('L$i', next));
+        prev = 'L$i';
+      }
+      expect(prev, 'L499');
+
+      final sync = CommitGraph.build(commits);
+      final iso = await Isolate.run(() => CommitGraph.build(commits));
+      expectSameGraph(iso, sync);
     });
   });
 }

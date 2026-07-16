@@ -3130,6 +3130,45 @@ class GitService {
     );
   }
 
+  /// Rebases the current branch onto [upstream] (a branch, tag or commit) — a
+  /// plain, non-interactive `git rebase`, the operation a drag-a-branch-onto-a-
+  /// commit gesture performs. Replays the current branch's commits since its
+  /// merge-base with [upstream] on top of [upstream].
+  ///
+  /// Operates on the *current* branch (like [rebaseInteractive]) rather than
+  /// taking a `<branch>` argument, so undo stays sound: a completed rebase is
+  /// reversed with `reset --hard` back to the pre-rebase HEAD, which is only
+  /// meaningful when HEAD didn't jump to a different branch first. A conflicted
+  /// rebase exits non-zero, records nothing, and leaves the tree with markers
+  /// for [pendingOp]/abort to own. Refuses to start on a dirty tree (git's own
+  /// guard). `core.editor=true` accepts any non-interactive editor prompt (e.g.
+  /// a rebased merge commit's message) without hanging.
+  Future<SSHCommandResult> rebaseOnto(String repoPath, String upstream) {
+    final args = [
+      'git',
+      '-c',
+      'core.editor=true',
+      ..._idArgs,
+      'rebase',
+      // `--end-of-options` stops an [upstream] beginning with `-` from being
+      // parsed as a flag — same reasoning as [checkout] / [rebaseInteractive].
+      '--end-of-options',
+      upstream,
+    ];
+    return _runCaptured(
+      repoPath,
+      args,
+      'git rebase',
+      record: (c) => c.preHead.isEmpty || c.preHead == c.postHead
+          ? null // no-op rebase (already up to date)
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.resetHard,
+              description: 'Rebase onto $upstream',
+            ),
+    );
+  }
+
   /// Continues a paused rebase after conflicts are resolved and staged. Uses a
   /// no-op editor so any squashed-message prompt is accepted non-interactively.
   Future<SSHCommandResult> rebaseContinue(String repoPath) => _run(
