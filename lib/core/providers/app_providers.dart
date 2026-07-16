@@ -459,25 +459,28 @@ String _pathParent(String path) {
 const _kRecentRepoLimit = 5;
 
 /// The most-recently-used *repositories* (up to [_kRecentRepoLimit]), newest
-/// first — the landing page's recent list. Accuracy comes from two layers:
+/// first — the landing page's recent list. **The per-repo MRU
+/// ([recentRepoRefsProvider]) is the only ranking source**: it records each
+/// specific repo actually opened (local or remote), so the list is exactly the
+/// workspaces the user most recently used — never connections standing in for
+/// them.
 ///
-///  1. **The per-repo MRU** ([recentRepoRefsProvider]) is authoritative: it
-///     records each *specific* repo actually opened, so a repo appears because
-///     the user opened it, ranked by when. This is what fixes a multi-repo
-///     connection flooding the list with repos never opened — the old code
-///     flattened *every* `allRepoPaths` under the connection's single timestamp,
-///     which buried local repos and surfaced rarely-used remote ones.
+/// Two rules learned the hard way:
 ///
-///  2. **A fallback** fills any remaining slots (empty/partial MRU — e.g. first
-///     run after this shipped, or an entry whose saved profile was deleted) from
-///     the saved stores, contributing **one repo per connection** (its default)
-///     plus each local repo, ordered by `lastConnectedAt`. One-per-connection is
-///     the safeguard: without per-repo evidence, a connection may not stand in
-///     for all its repos.
+///  * **The MRU record is itself the evidence the repo exists.** It was written
+///    by a successful open. Requiring the path to also appear in the saved
+///    connection profile's `repoPaths` (an earlier hardening) silently dropped
+///    every repo opened via the in-session switcher — `setRepoPath` records the
+///    MRU but deliberately doesn't rewrite the saved profile — leaving the list
+///    showing connection defaults instead of the repos actually used. Only a
+///    *deleted profile* invalidates an entry (the list self-heals after
+///    deletions).
 ///
-/// MRU entries whose owning connection/local repo no longer exists (or whose
-/// repo path the connection has forgotten) are dropped, so the list self-heals
-/// after deletions.
+///  * **The fallback is bootstrap-only.** When the MRU resolves to nothing
+///    (fresh install, or every recorded profile was deleted) the saved stores
+///    seed the list — one default repo per connection plus each local repo, by
+///    `lastConnectedAt`. It never *pads* a non-empty MRU: padding put
+///    connections the user hadn't touched next to genuinely recent workspaces.
 final recentReposProvider = Provider<List<RecentRepo>>((ref) {
   final conns = ref.watch(savedConnectionsProvider).value ?? const [];
   final locals = ref.watch(savedLocalReposProvider).value ?? const [];
@@ -488,12 +491,10 @@ final recentReposProvider = Provider<List<RecentRepo>>((ref) {
 
   final out = <RecentRepo>[];
   final seenRepos = <String>{}; // repo identities already added
-  final shownConnIds = <String>{}; // connections with any entry shown
 
   void addRemote(SavedConnection c, String repoPath) {
     if (out.length >= _kRecentRepoLimit) return;
     if (!seenRepos.add('conn ${c.id} $repoPath')) return;
-    shownConnIds.add(c.id);
     out.add(RecentRemoteRepo(c, repoPath));
   }
 
@@ -503,7 +504,10 @@ final recentReposProvider = Provider<List<RecentRepo>>((ref) {
     out.add(RecentLocalRepoEntry(r));
   }
 
-  // 1) Authoritative per-repo recency, newest first.
+  // 1) Authoritative per-repo recency, newest first. An entry survives as long
+  //    as its owning profile still exists — the MRU record itself is the
+  //    evidence the repo was opened there (see the provider doc for why
+  //    requiring profile membership was a bug).
   for (final e in mru) {
     if (out.length >= _kRecentRepoLimit) break;
     if (e.isLocal) {
@@ -511,21 +515,18 @@ final recentReposProvider = Provider<List<RecentRepo>>((ref) {
       if (r != null) addLocal(r);
     } else {
       final c = connById[e.id];
-      // Only surface a path the connection still knows about.
-      if (c != null && c.allRepoPaths.contains(e.repoPath)) {
-        addRemote(c, e.repoPath);
-      }
+      if (c != null) addRemote(c, e.repoPath);
     }
   }
 
-  // 2) Fallback: one default repo per connection + each local repo, by
-  //    lastConnectedAt. Skips connections already represented by the MRU so a
-  //    single host can't reclaim slots its unopened repos never earned.
-  if (out.length < _kRecentRepoLimit) {
+  // 2) Bootstrap fallback — ONLY when the MRU resolved to nothing: one default
+  //    repo per connection + each local repo, by lastConnectedAt. A non-empty
+  //    MRU is never padded (the list must show recently OPENED workspaces, not
+  //    connections standing in for them).
+  if (out.isEmpty) {
     final fallback = <(DateTime?, int, RecentRepo)>[];
     var i = 0;
     for (final c in conns) {
-      if (shownConnIds.contains(c.id)) continue;
       fallback.add((c.lastConnectedAt, i++, RecentRemoteRepo(c, c.repoPath)));
     }
     for (final r in locals) {

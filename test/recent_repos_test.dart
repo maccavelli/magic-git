@@ -1,7 +1,10 @@
-// recentReposProvider: the repo-centric landing list. Authoritative ordering
-// comes from the per-repo MRU (recentRepoRefsProvider); a one-repo-per-connection
-// fallback fills any remaining slots. This is what stops a multi-repo connection
-// from flooding the list and burying local repos (the reported bug).
+// recentReposProvider: the repo-centric landing list. The per-repo MRU
+// (recentRepoRefsProvider) is the ONLY ranking source — exactly the workspaces
+// most recently opened, local or remote, never connections standing in for
+// them. A one-repo-per-connection fallback exists solely to bootstrap an EMPTY
+// MRU (fresh install); it never pads a non-empty one. An MRU entry survives as
+// long as its owning profile exists — profile-membership of the path is NOT
+// required (the in-session switcher records opens it never persists).
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -145,15 +148,42 @@ void main() {
     ]);
   });
 
-  test('an MRU path the connection no longer knows is dropped', () async {
+  test(
+    'an MRU repo not saved in the connection profile still shows '
+    '(the switcher records opens it never persists — the reported regression)',
+    () async {
+      // setRepoPath records the open but deliberately does not rewrite the
+      // saved profile, so requiring profile membership silently dropped every
+      // repo opened via the in-session switcher — the landing list then showed
+      // the CONNECTION default instead of the workspaces actually used.
+      final c = _container(
+        conns: [_c('host', DateTime.utc(2026, 1, 1), repoPath: '/a')],
+        mru: [_remote('host', '/switched-to', DateTime.utc(2026, 9, 1))],
+      );
+      await _warm(c);
+
+      final recent = c.read(recentReposProvider);
+      expect((recent.single as RecentRemoteRepo).repoPath, '/switched-to');
+    },
+  );
+
+  test('a non-empty MRU is never padded with connection stand-ins', () async {
+    // One genuinely recent workspace + two other saved connections: the list
+    // is ONLY the opened workspace — the fallback is bootstrap-only and must
+    // not fill remaining slots with connections the user hasn't touched.
     final c = _container(
-      conns: [_c('host', DateTime.utc(2026, 1, 1), repoPath: '/a')],
-      mru: [_remote('host', '/removed', DateTime.utc(2026, 9, 1))],
+      conns: [
+        _c('host', DateTime.utc(2026, 1, 1), repoPath: '/a'),
+        _c('other1', DateTime.utc(2026, 6, 1)),
+        _c('other2', DateTime.utc(2026, 6, 2)),
+      ],
+      locals: [_l('magic-git', DateTime.utc(2026, 6, 3))],
+      mru: [_remote('host', '/a', DateTime.utc(2026, 9, 1))],
     );
     await _warm(c);
 
-    // /removed isn't in allRepoPaths -> dropped; fallback surfaces the default.
     final recent = c.read(recentReposProvider);
+    expect(recent, hasLength(1));
     expect((recent.single as RecentRemoteRepo).repoPath, '/a');
   });
 
