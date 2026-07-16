@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:macos_ui/macos_ui.dart';
+import '../../core/git/git_service.dart' show BlameLine;
 import '../../core/git/unified_diff.dart';
 import '../common/diff_highlight.dart';
 import '../common/diff_view.dart';
@@ -11,6 +12,17 @@ import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
 /// What a per-hunk button does, given whether the index or worktree diff is
 /// shown.
 enum HunkAction { stage, unstage, discard }
+
+/// Fixed width of the inline blame gutter column.
+const double _kBlameGutterWidth = 150;
+
+/// One line's blame cell: the [blame] entry that touched it, and whether this
+/// row starts a new commit's run and so should print the meta ([showMeta]).
+class _Gutter {
+  final BlameLine blame;
+  final bool showMeta;
+  const _Gutter(this.blame, this.showMeta);
+}
 
 /// A tracked file's diff, grouped by hunk, each hunk carrying stage/unstage/
 /// discard actions. Falls back to a plain [DiffView] when the diff has no hunks
@@ -24,11 +36,18 @@ class HunkDiffView extends StatefulWidget {
   final bool staged;
   final void Function(DiffFile file, DiffHunk hunk, HunkAction action) onAction;
 
+  /// Per-line blame of the file's post-image (working copy), keyed by final-file
+  /// line number. When non-null, a collapsed blame gutter is drawn to the left
+  /// of each line. Null hides the gutter (the default — blame is an SSH round
+  /// trip, fetched only when the user turns it on).
+  final List<BlameLine>? blame;
+
   const HunkDiffView({
     super.key,
     required this.diff,
     required this.staged,
     required this.onAction,
+    this.blame,
   });
 
   @override
@@ -48,11 +67,13 @@ class _HeaderItem {
 
 /// A single hunk body line, plus its precomputed syntax/intra-line render data
 /// ([render] is null when highlighting was skipped — the line still renders,
-/// coloured by kind).
+/// coloured by kind) and its 1-based new-file line number ([newLine] is -1 for
+/// removed / no-newline lines, which have no post-image line to blame).
 class _LineItem {
   final String text;
   final DiffLineHighlight? render;
-  const _LineItem(this.text, this.render);
+  final int newLine;
+  const _LineItem(this.text, this.render, this.newLine);
 }
 
 /// Flattens [file]'s hunks into the header/line items [HunkDiffView] renders in
@@ -65,8 +86,22 @@ List<Object> _buildItems(DiffFile file, List<DiffLineHighlight> highlights) {
   for (var h = 0; h < file.hunks.length; h++) {
     final hunk = file.hunks[h];
     items.add(_HeaderItem(hunk, h));
+    // New-file line numbers advance on add + context lines, starting at the
+    // hunk's post-image start (mirrors DiffHunk.postImageLineCount).
+    var newNo = hunk.range?.newStart ?? -1;
     for (final line in hunk.lines) {
-      items.add(_LineItem(line, bi < highlights.length ? highlights[bi] : null));
+      final kind = diffLineKind(line);
+      final int lineNo;
+      if (newNo >= 0 &&
+          (kind == DiffLineKind.add || kind == DiffLineKind.context)) {
+        lineNo = newNo;
+        newNo++;
+      } else {
+        lineNo = -1;
+      }
+      items.add(
+        _LineItem(line, bi < highlights.length ? highlights[bi] : null, lineNo),
+      );
       bi++;
     }
   }
@@ -263,17 +298,54 @@ class _HunkDiffViewState extends State<HunkDiffView> {
         macosTheme.typography.body.color ?? MacosColors.textColor;
     final codeTheme = codeThemeFor(macosTheme.brightness);
 
+    final blame = widget.blame;
+    final gutters = blame == null ? null : _computeGutters(blame);
+    // The gutter widens the pan surface so a long line's tail still scrolls
+    // fully into view past it.
+    final maxLineWidth =
+        _maxLineWidth + (gutters == null ? 0 : _kBlameGutterWidth);
+
     return Focus(
       focusNode: _hunkFocus,
       onKeyEvent: _onKey,
       child: DiffPan(
         vertical: _vertical,
         horizontal: _horizontal,
-        maxLineWidth: _maxLineWidth,
-        builder: (context, contentWidth, viewportWidth) =>
-            _list(file, defaultColor, codeTheme, contentWidth, viewportWidth),
+        maxLineWidth: maxLineWidth,
+        builder: (context, contentWidth, viewportWidth) => _list(
+          file,
+          defaultColor,
+          codeTheme,
+          gutters,
+          contentWidth,
+          viewportWidth,
+        ),
       ),
     );
+  }
+
+  /// A blame cell per item, parallel to [_items] — resolved from the new-file
+  /// line number, and marked to print its meta only at the start of a run of
+  /// lines sharing a commit (so a block of one commit's lines reads as a block).
+  List<_Gutter?> _computeGutters(List<BlameLine> blame) {
+    final byLine = <int, BlameLine>{for (final b in blame) b.lineNumber: b};
+    final gutters = List<_Gutter?>.filled(_items.length, null);
+    String? lastHash;
+    for (var i = 0; i < _items.length; i++) {
+      final item = _items[i];
+      if (item is! _LineItem || item.newLine < 1) {
+        lastHash = null;
+        continue;
+      }
+      final b = byLine[item.newLine];
+      if (b == null) {
+        lastHash = null;
+        continue;
+      }
+      gutters[i] = _Gutter(b, b.hash != lastHash);
+      lastHash = b.hash;
+    }
+    return gutters;
   }
 
   // SelectionArea + plain Text lines so a drag can copy across lines (and across
@@ -282,6 +354,7 @@ class _HunkDiffViewState extends State<HunkDiffView> {
     DiffFile file,
     Color defaultColor,
     CodeTheme codeTheme,
+    List<_Gutter?>? gutters,
     double contentWidth,
     double viewportWidth,
   ) {
@@ -295,7 +368,14 @@ class _HunkDiffViewState extends State<HunkDiffView> {
           if (item is _HeaderItem) {
             return _header(file, item.hunk, item.index, viewportWidth);
           }
-          return _line(item as _LineItem, defaultColor, codeTheme, contentWidth);
+          return _line(
+            item as _LineItem,
+            defaultColor,
+            codeTheme,
+            contentWidth,
+            gutterOn: gutters != null,
+            gutter: gutters?[i],
+          );
         },
       ),
     );
@@ -399,22 +479,100 @@ class _HunkDiffViewState extends State<HunkDiffView> {
     _LineItem line,
     Color defaultColor,
     CodeTheme codeTheme,
-    double contentWidth,
-  ) {
+    double contentWidth, {
+    required bool gutterOn,
+    _Gutter? gutter,
+  }) {
+    final text = Text.rich(
+      // Marker in the kind colour + syntax-highlighted content with intra-line
+      // emphasis. Falls back to whole-line kind colour when no highlight data.
+      diffLineSpan(line.text, line.render, kDiffMono, defaultColor, codeTheme),
+      maxLines: 1,
+      softWrap: false,
+      strutStyle: kDiffStrut,
+    );
     // Full-width soft band (same as DiffView) so add/remove rows read as a
     // continuous gutter, not a tint that stops where the glyph run ends.
+    final band = diffLineBackground(line.text);
+    if (!gutterOn) {
+      return Container(
+        width: contentWidth,
+        color: band,
+        padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
+        alignment: Alignment.centerLeft,
+        child: text,
+      );
+    }
+    // Gutter mode: a fixed blame column, then the code. No Container alignment —
+    // that would loosen the Row's width and break its Expanded child.
     return Container(
       width: contentWidth,
-      color: diffLineBackground(line.text),
-      padding: const EdgeInsets.symmetric(horizontal: kDiffHPad, vertical: 1),
+      color: band,
+      child: Row(
+        children: [
+          _gutterCell(gutter),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
+              child: Align(alignment: Alignment.centerLeft, child: text),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// One inline blame cell: short hash + author date, printed only at the start
+  /// of a commit's run (see [_computeGutters]); a plain spacer otherwise, so the
+  /// code stays aligned. Full author + summary live on the tooltip.
+  Widget _gutterCell(_Gutter? gutter) {
+    const border = Border(
+      right: BorderSide(color: Color(0x1FEEF0F5), width: 0.5),
+    );
+    if (gutter == null || !gutter.showMeta) {
+      return Container(
+        width: _kBlameGutterWidth,
+        height: kDiffLineExtent,
+        decoration: const BoxDecoration(
+          color: Color(0x0DFFFFFF),
+          border: border,
+        ),
+      );
+    }
+    final b = gutter.blame;
+    return Container(
+      width: _kBlameGutterWidth,
+      height: kDiffLineExtent,
+      decoration: const BoxDecoration(color: Color(0x0DFFFFFF), border: border),
+      padding: const EdgeInsets.symmetric(horizontal: 6),
       alignment: Alignment.centerLeft,
-      child: Text.rich(
-        // Marker in the kind colour + syntax-highlighted content with intra-line
-        // emphasis. Falls back to whole-line kind colour when no highlight data.
-        diffLineSpan(line.text, line.render, kDiffMono, defaultColor, codeTheme),
-        maxLines: 1,
-        softWrap: false,
-        strutStyle: kDiffStrut,
+      child: MacosTooltip(
+        message: '${b.author} · ${b.date}\n${b.summary}',
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              b.hash.length >= 7 ? b.hash.substring(0, 7) : b.hash,
+              maxLines: 1,
+              style: kDiffMono.copyWith(
+                fontSize: 11,
+                color: MacosColors.systemBlueColor,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                b.date,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: kDiffMono.copyWith(
+                  fontSize: 11,
+                  color: MacosColors.systemGrayColor,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

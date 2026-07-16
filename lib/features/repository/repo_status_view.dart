@@ -112,6 +112,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   bool _diffSplit = false;
   bool _diffIgnoreWs = false;
   bool _diffExpandContext = false;
+
+  /// Show the inline blame gutter in the unified diff. Off by default — blame is
+  /// an SSH round trip, fetched only when turned on, and only for the tracked
+  /// unified diff (not split / whitespace-ignored / untracked renders).
+  bool _diffBlame = false;
   static const _defaultCtx = 3;
   static const _expandedCtx = 25;
   int get _diffCtx => _diffExpandContext ? _expandedCtx : _defaultCtx;
@@ -1522,6 +1527,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                 onPressed: () =>
                     setState(() => _diffExpandContext = !_diffExpandContext),
               ),
+              _diffToggle(
+                icon: CupertinoIcons.person_crop_circle,
+                tooltip: 'Blame (who last changed each line)',
+                active: _diffBlame,
+                onPressed: () => setState(() => _diffBlame = !_diffBlame),
+              ),
               const SizedBox(width: 4),
               ToolIconButton(
                 icon: CupertinoIcons.arrow_up_left_arrow_down_right,
@@ -1552,10 +1563,17 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             data: (diff) {
               if (_diffSplit) return SplitDiffView(diff: diff);
               if (untracked || _diffIgnoreWs) return DiffView(diff: diff);
+              // Blame gutter: fetched only while the toggle is on, and only for
+              // the tracked unified diff. Renders as soon as it lands; the diff
+              // shows immediately without waiting on it.
+              final blame = _diffBlame
+                  ? ref.watch(blameProvider((repoPath, path))).value
+                  : null;
               return HunkDiffView(
                 diff: diff,
                 staged: staged,
                 onAction: _applyHunk,
+                blame: blame,
               );
             },
           ),

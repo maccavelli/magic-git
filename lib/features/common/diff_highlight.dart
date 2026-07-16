@@ -217,6 +217,91 @@ List<List<ScopedRun>?> highlightImageRuns(
   ];
 }
 
+/// Highlights the content lines of a **raw multi-file unified diff** (the flat
+/// [DiffView]'s model), returning per source line its syntax [ScopedRun]s or
+/// null (headers, `\ No newline`, and — when highlighting is skipped — every
+/// line). Each file block (delimited by `diff --git`/`--cc`/`--combined`) is
+/// highlighted once against the language of its `+++`/`---` path; a diff with
+/// no file headers (already-split fallback text) is left plain.
+List<List<ScopedRun>?> highlightRawDiffLines(List<String> lines) {
+  final runs = List<List<ScopedRun>?>.filled(lines.length, null);
+  if (lines.length > _highlightMaxLines) return runs;
+  final starts = <int>[
+    for (var i = 0; i < lines.length; i++)
+      if (lines[i].startsWith('diff --git ') ||
+          lines[i].startsWith('diff --cc ') ||
+          lines[i].startsWith('diff --combined '))
+        i,
+  ];
+  if (starts.isEmpty) return runs;
+
+  for (var f = 0; f < starts.length; f++) {
+    final from = starts[f];
+    final to = f + 1 < starts.length ? starts[f + 1] : lines.length;
+    final lang = _diffBlockLanguage(lines, from, to);
+    final indices = <int>[];
+    final contents = <String>[];
+    for (var i = from; i < to; i++) {
+      final l = lines[i];
+      if (_isDiffContentLine(l)) {
+        indices.add(i);
+        contents.add(l.isEmpty ? '' : l.substring(1));
+      }
+    }
+    final blockRuns = highlightImageRuns(contents, lang);
+    for (var k = 0; k < indices.length; k++) {
+      runs[indices[k]] = blockRuns[k];
+    }
+  }
+  return runs;
+}
+
+/// The language of the file block `[from, to)`, from its `+++ b/path` (or
+/// `--- a/path` when the new side is `/dev/null`, i.e. a deletion).
+String? _diffBlockLanguage(List<String> lines, int from, int to) {
+  String? path;
+  for (var i = from; i < to; i++) {
+    final l = lines[i];
+    if (l.startsWith('+++ ')) {
+      final p = _diffHeaderPath(l.substring(4));
+      if (p != null) {
+        path = p;
+        break;
+      }
+    } else if (l.startsWith('--- ') && path == null) {
+      path = _diffHeaderPath(l.substring(4));
+    }
+  }
+  return path == null ? null : viewerFileTypeFor(path).languageId;
+}
+
+/// Extracts a usable path from a `---`/`+++` header value: drops any trailing
+/// tab metadata and the `a/`/`b/` prefix; null for `/dev/null`.
+String? _diffHeaderPath(String value) {
+  var p = value;
+  final tab = p.indexOf('\t');
+  if (tab >= 0) p = p.substring(0, tab);
+  if (p == '/dev/null') return null;
+  if (p.startsWith('a/') || p.startsWith('b/')) p = p.substring(2);
+  return p.isEmpty ? null : p;
+}
+
+/// A hunk body line (add/remove/context) — not a header, hunk marker, or
+/// no-newline note.
+bool _isDiffContentLine(String l) {
+  if (l.isEmpty) return false;
+  switch (l[0]) {
+    case '+':
+      return !l.startsWith('+++');
+    case '-':
+      return !l.startsWith('---');
+    case ' ':
+      return true;
+    default:
+      return false; // '@@', '\', 'diff', 'index', 'new file', …
+  }
+}
+
 /// A deeper add/remove wash marking the changed characters within a modified
 /// line, drawn behind the syntax colours. Null for unchanged/other kinds.
 Color? _emphasisBackground(DiffLineKind kind) => switch (kind) {

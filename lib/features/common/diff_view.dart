@@ -4,6 +4,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/unified_diff.dart';
+import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
+import 'diff_highlight.dart';
 
 /// Shared vocabulary for every diff surface in the app.
 ///
@@ -596,6 +598,11 @@ class _DiffViewState extends State<DiffView> {
   final DiffParser<List<String>> _parser = DiffParser(_splitDiffLines);
 
   List<String> _lines = const [];
+
+  /// Syntax runs per source line, parallel to [_lines] (null for headers and
+  /// when highlighting is skipped). Computed with the split so it's off the
+  /// render path.
+  List<List<ScopedRun>?> _lineRuns = const [];
   double _maxLineWidth = 0;
   bool _loading = false;
 
@@ -626,6 +633,7 @@ class _DiffViewState extends State<DiffView> {
   void _startLoad(String diff, {required bool initial}) {
     void apply(List<String> lines, {required bool loading}) {
       _lines = lines;
+      _lineRuns = highlightRawDiffLines(lines);
       _loading = loading;
       _maxLineWidth = measureDiffWidth(lines);
     }
@@ -665,15 +673,18 @@ class _DiffViewState extends State<DiffView> {
     if (widget.diff.trim().isEmpty) return const DiffEmpty();
     if (_loading) return const DiffPending();
 
+    final macosTheme = MacosTheme.of(context);
     final defaultColor =
-        MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
+        macosTheme.typography.body.color ?? MacosColors.textColor;
+    final codeTheme = codeThemeFor(macosTheme.brightness);
 
-    if (widget.wrap) return _list(defaultColor, null);
+    if (widget.wrap) return _list(defaultColor, codeTheme, null);
     return DiffPan(
       vertical: _vertical,
       horizontal: _horizontal,
       maxLineWidth: _maxLineWidth,
-      builder: (context, contentWidth, _) => _list(defaultColor, contentWidth),
+      builder: (context, contentWidth, _) =>
+          _list(defaultColor, codeTheme, contentWidth),
     );
   }
 
@@ -681,7 +692,7 @@ class _DiffViewState extends State<DiffView> {
   // selection state doesn't span separate SelectableText widgets, so the old
   // shape made it impossible to drag-copy a multi-line hunk. This is the same
   // pattern the blame sheet uses, and each row is lighter too.
-  Widget _list(Color defaultColor, double? contentWidth) {
+  Widget _list(Color defaultColor, CodeTheme codeTheme, double? contentWidth) {
     return SelectionArea(
       child: ListView.builder(
         controller: _vertical,
@@ -694,6 +705,8 @@ class _DiffViewState extends State<DiffView> {
           final line = _lines[index];
           return _diffTextRow(
             line,
+            runs: index < _lineRuns.length ? _lineRuns[index] : null,
+            codeTheme: codeTheme,
             defaultColor: defaultColor,
             contentWidth: contentWidth,
             wrap: widget.wrap,
@@ -710,23 +723,41 @@ List<String> _splitDiffLines(String diff) =>
 
 /// One unified-diff text row: soft add/remove band spanning the full content
 /// width, fixed strut so [kDiffLineExtent] never clips the glyphs, shared pad.
+/// Content lines ([runs] non-null) are syntax-coloured while keeping the
+/// add/remove sense; headers keep their single flat colour.
 Widget _diffTextRow(
   String line, {
   required Color defaultColor,
+  List<ScopedRun>? runs,
+  CodeTheme? codeTheme,
   double? contentWidth,
   bool wrap = false,
 }) {
+  final Widget child = (runs != null && codeTheme != null)
+      ? Text.rich(
+          diffLineSpan(
+            line,
+            DiffLineHighlight(diffLineKind(line), runs, const []),
+            kDiffMono,
+            defaultColor,
+            codeTheme,
+          ),
+          maxLines: wrap ? null : 1,
+          softWrap: wrap,
+          strutStyle: wrap ? null : kDiffStrut,
+        )
+      : Text(
+          line,
+          maxLines: wrap ? null : 1,
+          softWrap: wrap,
+          strutStyle: wrap ? null : kDiffStrut,
+          style: kDiffMono.copyWith(color: diffLineColor(line, defaultColor)),
+        );
   return Container(
     width: contentWidth,
     color: diffLineBackground(line),
     padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
     alignment: Alignment.centerLeft,
-    child: Text(
-      line,
-      maxLines: wrap ? null : 1,
-      softWrap: wrap,
-      strutStyle: wrap ? null : kDiffStrut,
-      style: kDiffMono.copyWith(color: diffLineColor(line, defaultColor)),
-    ),
+    child: child,
   );
 }
