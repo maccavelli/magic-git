@@ -36,6 +36,17 @@ const _remoteBranch = DragRef(
   ),
 );
 
+const _stash = DragStash(
+  GitStash(
+    index: 0,
+    oid: 'deadbeefdeadbeef',
+    branch: 'main',
+    message: 'WIP on main: 1234567 in-progress work',
+  ),
+);
+
+const _files = DragFiles(['lib/a.dart', 'lib/b.dart']);
+
 void main() {
   test('a commit dropped on Branches offers "New branch"', () {
     expect(canDrop(_commit, DropZoneId.branches), isTrue);
@@ -63,10 +74,29 @@ void main() {
     expect(canDrop(_commit, DropZoneId.forge), isFalse);
   });
 
+  test('a stash dropped on Repository offers apply and pop', () {
+    expect(canDrop(_stash, DropZoneId.repository), isTrue);
+    // Two actions -> the rail shows the primary verb (Apply); the menu on drop
+    // lists both. A stash isn't a valid payload for the other zones.
+    expect(dropVerb(_stash, DropZoneId.repository), 'Apply stash');
+    expect(canDrop(_stash, DropZoneId.stashes), isFalse);
+    expect(canDrop(_stash, DropZoneId.branches), isFalse);
+  });
+
+  test('files dropped on Stashes offer a partial stash', () {
+    expect(canDrop(_files, DropZoneId.stashes), isTrue);
+    expect(dropVerb(_files, DropZoneId.stashes), 'Stash files');
+    // Files only make sense as a stash source, and only when non-empty.
+    expect(canDrop(_files, DropZoneId.repository), isFalse);
+    expect(canDrop(_files, DropZoneId.branches), isFalse);
+    expect(canDrop(const DragFiles([]), DropZoneId.stashes), isFalse);
+  });
+
   test('payloads are rejected by zones with no action for them', () {
     // branch -> Branches is a future phase, not this cut.
     expect(canDrop(_branch, DropZoneId.branches), isFalse);
-    // Zones with no drop actions at all reject both payloads.
+    // Zones with no drop actions at all reject the commit/branch payloads.
+    // (Stashes now accepts DragFiles, but never a commit or a branch.)
     for (final zone in const [
       DropZoneId.history,
       DropZoneId.stashes,

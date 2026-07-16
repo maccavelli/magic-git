@@ -47,6 +47,7 @@ class _FakeGit extends GitService {
     String repoPath, {
     String? message,
     bool includeUntracked = false,
+    List<String> paths = const [],
   }) async {
     stashCalls++;
     stashIncludedUntracked = includeUntracked;

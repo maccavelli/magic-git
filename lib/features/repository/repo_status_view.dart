@@ -23,6 +23,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
 import '../common/tool_icon_button.dart';
+import '../dnd/drag_item.dart';
 import '../settings/settings_sheet.dart';
 import 'blame_sheet.dart';
 import 'commit_dialog.dart';
@@ -2344,7 +2345,16 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
 
     final staged = row.staged;
     final kind = _kindOfFileRow(row);
-    return KeyedSubtree(
+    // Dragging a row that's part of the current selection carries the whole
+    // selection; otherwise just this one path. Feeds the files→Stashes
+    // partial-stash drop. Conflict rows (handled above) aren't draggable —
+    // git stash refuses a tree with unmerged paths.
+    final dragPaths = _isPathSelected(file.path, kind)
+        ? _orderedSelectedPaths(rows, kind)
+        : [file.path];
+    return DragItemDraggable(
+      item: DragFiles(dragPaths),
+      child: KeyedSubtree(
       key: _rowKeyFor(file.path, kind),
       child: GestureDetector(
       onTap: () {
@@ -2405,6 +2415,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             ),
           ],
         ),
+      ),
       ),
       ),
     );

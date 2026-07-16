@@ -33,6 +33,37 @@ class DragCommit extends DragItem {
   String get shortLabel => '${commit.shortHash}  ${commit.subject}';
 }
 
+/// A stash entry — the operand for apply/pop drops onto the working copy
+/// (the Repository zone).
+class DragStash extends DragItem {
+  final GitStash stash;
+  const DragStash(this.stash);
+  @override
+  String get shortLabel => stash.subject.isEmpty ? stash.ref : stash.subject;
+}
+
+/// One or more working-copy paths — the operand for a partial (path-scoped)
+/// stash when dropped onto the Stashes zone. Carries the whole current
+/// selection when the dragged row is part of it, else just that one path.
+class DragFiles extends DragItem {
+  final List<String> paths;
+  const DragFiles(this.paths);
+  @override
+  String get shortLabel => paths.length == 1
+      ? _basename(paths.first)
+      : '${paths.length} files';
+}
+
+/// Last path segment, for a compact drag label. Splits on '/' (POSIX repos —
+/// the only remote target) and tolerates a trailing slash.
+String _basename(String path) {
+  final trimmed = path.endsWith('/')
+      ? path.substring(0, path.length - 1)
+      : path;
+  final slash = trimmed.lastIndexOf('/');
+  return slash < 0 ? trimmed : trimmed.substring(slash + 1);
+}
+
 /// Wraps [child] so it can be dragged as a [DragItem]. Row-sized sources use the
 /// default long-press activation so the enclosing list still scrolls vertically;
 /// small targets (chips) pass [immediate] to start on touch. Drives

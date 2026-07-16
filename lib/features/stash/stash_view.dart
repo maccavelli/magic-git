@@ -18,6 +18,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/tool_icon_button.dart';
+import '../dnd/drag_item.dart';
 
 /// The **Stashes** namespace — stash management lifted out of the Branches pane
 /// into its own top-level panel so parked work is easy to see and act on.
@@ -415,7 +416,11 @@ class _StashViewState extends ConsumerState<StashView>
     bool selected,
   ) {
     final typography = MacosTheme.of(context).typography;
-    return GestureDetector(
+    return DragItemDraggable(
+      item: DragStash(stash),
+      // Long-press to start (the default): the stash list scrolls vertically,
+      // so an immediate drag would hijack the scroll gesture. Tap still selects.
+      child: GestureDetector(
       key: _stashRowKeyFor(stash.oid),
       onTap: () {
         _stashFocus.requestFocus();
@@ -504,6 +509,7 @@ class _StashViewState extends ConsumerState<StashView>
             ),
           ],
         ),
+      ),
       ),
     );
   }

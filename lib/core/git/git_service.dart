@@ -3470,10 +3470,17 @@ class GitService {
   /// commit objects under the hood, so it needs [_idArgs] like every other
   /// object-creating command — without it, a host with no git identity
   /// configured fails to stash even though ordinary commits succeed.
+  ///
+  /// [paths], when non-empty, scopes the stash to those pathspecs (a *partial*
+  /// stash — e.g. the drag-selected-files-onto-Stashes gesture). They go after
+  /// `--` so a path that looks like a flag can't be misread as one; the flag
+  /// itself is fine to always pass since git ignores it when there are no
+  /// pathspecs.
   Future<SSHCommandResult> stashPush(
     String repoPath, {
     String? message,
     bool includeUntracked = false,
+    List<String> paths = const [],
   }) => _run(repoPath, [
     'git',
     ..._idArgs,
@@ -3481,6 +3488,7 @@ class GitService {
     'push',
     if (includeUntracked) '--include-untracked',
     if (message != null && message.isNotEmpty) ...['-m', message],
+    if (paths.isNotEmpty) ...['--', ...paths],
   ], 'git stash push');
 
   /// The stale-index guard both destructive stash ops run behind, and why:

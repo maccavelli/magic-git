@@ -154,10 +154,45 @@ List<DropAction> _actionsFor(DragItem item, DropZoneId zone) {
           ),
         ];
       }
+      // A stash dropped onto the working copy is restored into it — apply
+      // (keep it) or pop (apply and remove). Two safe, undoable choices, so
+      // this drop offers the verb menu rather than guessing.
+      if (item is DragStash) {
+        final stash = item.stash;
+        return [
+          DropAction(
+            label: 'Apply ${stash.ref} (keep in list)',
+            verb: 'Apply stash',
+            icon: CupertinoIcons.tray_arrow_up,
+            run: (ctx) => _applyStash(ctx, stash),
+          ),
+          DropAction(
+            label: 'Pop ${stash.ref} (apply & remove)',
+            verb: 'Pop stash',
+            icon: CupertinoIcons.arrow_up_bin,
+            run: (ctx) => _popStash(ctx, stash),
+          ),
+        ];
+      }
       return const [];
-    // No nav-drop actions yet (future phases add files->Stashes, etc.).
-    case DropZoneId.history:
     case DropZoneId.stashes:
+      // Working-copy files dropped onto Stashes become a partial stash — only
+      // those paths are parked, the rest of the tree stays. Reversible (pop),
+      // and the new stash is immediately visible, so it runs without a confirm.
+      if (item is DragFiles && item.paths.isNotEmpty) {
+        final paths = item.paths;
+        return [
+          DropAction(
+            label: 'Stash ${item.shortLabel}',
+            verb: 'Stash files',
+            icon: CupertinoIcons.tray_arrow_down,
+            run: (ctx) => _stashFiles(ctx, paths),
+          ),
+        ];
+      }
+      return const [];
+    // No nav-drop actions for these zones yet.
+    case DropZoneId.history:
     case DropZoneId.project:
       return const [];
   }
@@ -270,6 +305,46 @@ Future<void> _cherryPickIntoCurrent(DropContext ctx, GitCommit commit) async {
   if (!ok || !ctx.context.mounted) return;
   ctx.refresh();
   ctx.selectPage(DropZoneId.repository.pageIndex);
+}
+
+Future<void> _applyStash(DropContext ctx, GitStash stash) async {
+  final git = ctx.ref.read(gitServiceProvider);
+  // Addressed by OID: immune to the stash list shifting since it was rendered.
+  // A conflict throws and runAction surfaces it in a dialog.
+  final ok = await runAction(
+    ctx.context,
+    () => git.stashApply(ctx.repoPath, stash.oid),
+  );
+  if (!ok || !ctx.context.mounted) return;
+  ctx.refresh();
+  ctx.selectPage(DropZoneId.repository.pageIndex);
+}
+
+Future<void> _popStash(DropContext ctx, GitStash stash) async {
+  final git = ctx.ref.read(gitServiceProvider);
+  // Pop verifies stash@{index} still resolves to this OID before dropping it
+  // (StashStaleException otherwise, nothing touched); runAction shows either
+  // the stale note or a conflict in a dialog. The refresh brings in the truth.
+  final ok = await runAction(
+    ctx.context,
+    () => git.stashPop(ctx.repoPath, stash.index, expectedOid: stash.oid),
+  );
+  if (!ok || !ctx.context.mounted) return;
+  ctx.refresh();
+  ctx.selectPage(DropZoneId.repository.pageIndex);
+}
+
+Future<void> _stashFiles(DropContext ctx, List<String> paths) async {
+  final git = ctx.ref.read(gitServiceProvider);
+  // Path-scoped stash. includeUntracked so dragging a brand-new (unadded) file
+  // works too; with explicit pathspecs it only touches the dropped paths.
+  final ok = await runAction(
+    ctx.context,
+    () => git.stashPush(ctx.repoPath, paths: paths, includeUntracked: true),
+  );
+  if (!ok || !ctx.context.mounted) return;
+  ctx.refresh();
+  ctx.selectPage(DropZoneId.stashes.pageIndex);
 }
 
 Future<void> _createRequestFromBranch(DropContext ctx, String branch) async {

@@ -63,6 +63,7 @@ class _ActionGit extends GitService {
     String repoPath, {
     String? message,
     bool includeUntracked = false,
+    List<String> paths = const [],
   }) async {
     pushes.add((message, includeUntracked));
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
