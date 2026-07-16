@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/unified_diff.dart';
+import '../common/diff_highlight.dart';
 import '../common/diff_view.dart';
 import '../common/list_keyboard_nav.dart';
+import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
 
 /// What a per-hunk button does, given whether the index or worktree diff is
 /// shown.
@@ -44,22 +46,28 @@ class _HeaderItem {
   const _HeaderItem(this.hunk, this.index);
 }
 
-/// A single hunk body line.
+/// A single hunk body line, plus its precomputed syntax/intra-line render data
+/// ([render] is null when highlighting was skipped — the line still renders,
+/// coloured by kind).
 class _LineItem {
   final String text;
-  const _LineItem(this.text);
+  final DiffLineHighlight? render;
+  const _LineItem(this.text, this.render);
 }
 
 /// Flattens [file]'s hunks into the header/line items [HunkDiffView] renders in
 /// a single lazily-built list, so [ListView.builder] can build only the
-/// on-screen items instead of every line of every hunk up front.
-List<Object> _buildItems(DiffFile file) {
+/// on-screen items instead of every line of every hunk up front. [highlights]
+/// is one entry per hunk body line, in the same flatten order.
+List<Object> _buildItems(DiffFile file, List<DiffLineHighlight> highlights) {
   final items = <Object>[];
+  var bi = 0;
   for (var h = 0; h < file.hunks.length; h++) {
     final hunk = file.hunks[h];
     items.add(_HeaderItem(hunk, h));
     for (final line in hunk.lines) {
-      items.add(_LineItem(line));
+      items.add(_LineItem(line, bi < highlights.length ? highlights[bi] : null));
+      bi++;
     }
   }
   return items;
@@ -75,10 +83,17 @@ class _ParsedDiff {
 }
 
 /// Top-level, because [DiffParser] hands it to `Isolate.run` for a big patch.
+/// Syntax highlighting rides this same pass (so it's off the UI thread for a
+/// huge patch too), but is gated to the inline-sized diffs — a patch big enough
+/// to parse off-isolate is also big enough that re-registering the highlighter's
+/// grammars in an ephemeral isolate isn't worth it, so those render kind-coloured
+/// only. Intra-line diffing is cheap and always runs.
 _ParsedDiff _parseAndBuild(String diff) {
   final file = parseUnifiedDiff(diff);
   if (file == null) return const _ParsedDiff(null, []);
-  return _ParsedDiff(file, _buildItems(file));
+  final highlight = diffLineCount(diff) <= kDiffIsolateLineThreshold;
+  final highlights = computeDiffLineHighlights(file, enableHighlight: highlight);
+  return _ParsedDiff(file, _buildItems(file, highlights));
 }
 
 /// Test hook: exercises the exact parse+flatten payload the render path runs
@@ -243,8 +258,10 @@ class _HunkDiffViewState extends State<HunkDiffView> {
     final file = _file;
     if (file == null) return DiffView(diff: widget.diff);
 
+    final macosTheme = MacosTheme.of(context);
     final defaultColor =
-        MacosTheme.of(context).typography.body.color ?? MacosColors.textColor;
+        macosTheme.typography.body.color ?? MacosColors.textColor;
+    final codeTheme = codeThemeFor(macosTheme.brightness);
 
     return Focus(
       focusNode: _hunkFocus,
@@ -254,7 +271,7 @@ class _HunkDiffViewState extends State<HunkDiffView> {
         horizontal: _horizontal,
         maxLineWidth: _maxLineWidth,
         builder: (context, contentWidth, viewportWidth) =>
-            _list(file, defaultColor, contentWidth, viewportWidth),
+            _list(file, defaultColor, codeTheme, contentWidth, viewportWidth),
       ),
     );
   }
@@ -264,6 +281,7 @@ class _HunkDiffViewState extends State<HunkDiffView> {
   Widget _list(
     DiffFile file,
     Color defaultColor,
+    CodeTheme codeTheme,
     double contentWidth,
     double viewportWidth,
   ) {
@@ -277,7 +295,7 @@ class _HunkDiffViewState extends State<HunkDiffView> {
           if (item is _HeaderItem) {
             return _header(file, item.hunk, item.index, viewportWidth);
           }
-          return _line(item as _LineItem, defaultColor, contentWidth);
+          return _line(item as _LineItem, defaultColor, codeTheme, contentWidth);
         },
       ),
     );
@@ -377,7 +395,12 @@ class _HunkDiffViewState extends State<HunkDiffView> {
     );
   }
 
-  Widget _line(_LineItem line, Color defaultColor, double contentWidth) {
+  Widget _line(
+    _LineItem line,
+    Color defaultColor,
+    CodeTheme codeTheme,
+    double contentWidth,
+  ) {
     // Full-width soft band (same as DiffView) so add/remove rows read as a
     // continuous gutter, not a tint that stops where the glyph run ends.
     return Container(
@@ -385,14 +408,13 @@ class _HunkDiffViewState extends State<HunkDiffView> {
       color: diffLineBackground(line.text),
       padding: const EdgeInsets.symmetric(horizontal: kDiffHPad, vertical: 1),
       alignment: Alignment.centerLeft,
-      child: Text(
-        line.text,
+      child: Text.rich(
+        // Marker in the kind colour + syntax-highlighted content with intra-line
+        // emphasis. Falls back to whole-line kind colour when no highlight data.
+        diffLineSpan(line.text, line.render, kDiffMono, defaultColor, codeTheme),
         maxLines: 1,
         softWrap: false,
         strutStyle: kDiffStrut,
-        style: kDiffMono.copyWith(
-          color: diffLineColor(line.text, defaultColor),
-        ),
       ),
     );
   }
