@@ -438,7 +438,7 @@ String _pathParent(String path) {
   return '/${parts.sublist(0, parts.length - 1).join('/')}';
 }
 
-const _kRecentRepoLimit = 8;
+const _kRecentRepoLimit = 5;
 
 /// The most-recently-used *repositories* (up to [_kRecentRepoLimit]), newest
 /// first — the landing page's recent list. Flattens saved SSH connections (one

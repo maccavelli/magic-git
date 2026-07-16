@@ -111,7 +111,7 @@ void main() {
     expect(recent.single.location, '/Users/me/code');
   });
 
-  test('caps the list at eight entries', () async {
+  test('caps the list at five entries total', () async {
     final c = _container(
       conns: [
         _c(
@@ -123,7 +123,7 @@ void main() {
       ],
     );
     await _warm(c);
-    expect(c.read(recentReposProvider), hasLength(8));
+    expect(c.read(recentReposProvider), hasLength(5));
   });
 
   test('is empty when nothing is saved', () async {
