@@ -6,6 +6,8 @@ import '../../core/forge/forge.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/storage/saved_connection.dart';
+import '../tabs/tabs_controller.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'field_styles.dart';
 import 'sized_sheet.dart';
@@ -243,6 +245,11 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
     return bindings.first.label;
   }
 
+  static String _repoBasename(String path) {
+    final parts = path.split('/').where((s) => s.isNotEmpty).toList();
+    return parts.isEmpty ? path : parts.last;
+  }
+
   List<_PaletteCommand> _allCommands() {
     // Captured up front so the closures don't touch a torn-down ref/context
     // after the palette pops (the notifiers outlive this widget).
@@ -250,6 +257,8 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
     final output = ref.read(outputLogProvider.notifier);
     final recovery = ref.read(recoveryVisibleProvider.notifier);
     final keymap = ref.watch(keymapProvider);
+    final connNotifier = ref.read(connectionProvider.notifier);
+    final currentConn = ref.read(connectionProvider);
 
     const panels = [
       (0, CupertinoIcons.folder, 'Repository'),
@@ -418,6 +427,52 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
           run: () => widget.onOpenWorktree(wt.path),
         ),
       );
+    }
+
+    // ---- go: switch to another saved repository ---------------------------
+    // Fuzzy quick-switch, routed exactly like the connection switcher's own
+    // tap: a sibling repo on the current connection is a cheap in-session
+    // setRepoPath; another connection reconnects (in its tab, under a tab
+    // host). Local repos are omitted — they need sandbox-bookmark resolution
+    // with a live context the post-dismiss closure doesn't have; pick those
+    // from Manage Connections.
+    void switchTo(SavedConnection conn, String repo) {
+      final tabs = TabsController.current;
+      if (tabs == null) {
+        if (conn.id == currentConn.connectionId) {
+          if (repo != currentConn.repoPath) connNotifier.setRepoPath(repo);
+        } else {
+          connNotifier.connectToSaved(conn, repoPath: repo);
+        }
+        return;
+      }
+      tabs.openOrFocus(
+        connectionId: conn.id,
+        repoPath: repo,
+        connect: (container) => container
+            .read(connectionProvider.notifier)
+            .connectToSaved(conn, repoPath: repo),
+      );
+    }
+
+    final savedConns =
+        ref.watch(savedConnectionsProvider).value ?? const <SavedConnection>[];
+    for (final conn in savedConns) {
+      for (final repo in conn.allRepoPaths) {
+        // Skip the repo already active on the current connection.
+        if (conn.id == currentConn.connectionId &&
+            repo == currentConn.repoPath) {
+          continue;
+        }
+        commands.add(
+          _PaletteCommand(
+            icon: CupertinoIcons.folder,
+            label: 'Switch to ${_repoBasename(repo)} · ${conn.displayName}',
+            category: PaletteCategory.go,
+            run: () => switchTo(conn, repo),
+          ),
+        );
+      }
     }
     return commands;
   }
