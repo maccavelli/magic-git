@@ -55,6 +55,14 @@ class TabsController extends ChangeNotifier {
         }
       }),
     );
+    // A repo open recorded in one tab must refresh every tab's recent list.
+    _storeSubs.add(
+      StoreBus.instance.onRecentReposChanged.listen((_) {
+        for (final t in _tabs) {
+          t.container.invalidate(recentRepoRefsProvider);
+        }
+      }),
+    );
   }
 
   /// The live main-window controller while a [TabsHost] is mounted (null

@@ -16,6 +16,7 @@ class StoreBus {
 
   final _connections = StreamController<void>.broadcast();
   final _localRepos = StreamController<void>.broadcast();
+  final _recentRepos = StreamController<void>.broadcast();
 
   /// Fires after any container saves/deletes/updates a saved SSH connection.
   Stream<void> get onConnectionsChanged => _connections.stream;
@@ -23,6 +24,11 @@ class StoreBus {
   /// Fires after any container saves/deletes a saved local repo.
   Stream<void> get onLocalReposChanged => _localRepos.stream;
 
+  /// Fires after any container records a repo open into [RecentReposStore], so
+  /// every tab's recent-repos list refreshes.
+  Stream<void> get onRecentReposChanged => _recentRepos.stream;
+
   void notifyConnectionsChanged() => _connections.add(null);
   void notifyLocalReposChanged() => _localRepos.add(null);
+  void notifyRecentReposChanged() => _recentRepos.add(null);
 }

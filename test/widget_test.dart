@@ -20,7 +20,7 @@ void main() {
     expect(find.text('Magic Git'), findsWidgets);
     expect(find.text('Connections Manager'), findsOneWidget);
     // No saved profiles in a fresh test → the recent pulldown is disabled.
-    expect(find.text('No Recent Workspaces'), findsOneWidget);
+    expect(find.text('No Recent Repositories'), findsOneWidget);
     // The manager panel is not shown until its button is pressed.
     expect(find.text('Connections'), findsNothing);
   });

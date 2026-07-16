@@ -39,6 +39,7 @@ import '../ssh/ssh_error_messages.dart';
 import '../storage/connection_store.dart';
 import '../storage/known_hosts_store.dart';
 import '../storage/local_repo_store.dart';
+import '../storage/recent_repos_store.dart';
 import '../storage/saved_connection.dart';
 import '../storage/saved_local_repo.dart';
 import '../undo/undo_journal.dart';
@@ -273,6 +274,23 @@ final localRepoStoreProvider = Provider<LocalRepoStore>((ref) {
   return LocalRepoStore();
 });
 
+/// The per-repo most-recently-used log — the authoritative recency source for
+/// the landing page, recording each specific repo actually opened (see
+/// [recentReposProvider]).
+final recentReposStoreProvider = Provider<RecentReposStore>((ref) {
+  return RecentReposStore();
+});
+
+/// The MRU log of opened repos, newest first. Invalidated on every open and
+/// fanned out across tabs via [StoreBus.onRecentReposChanged].
+final recentRepoRefsProvider = FutureProvider<List<RecentRepoRef>>((ref) async {
+  try {
+    return await ref.watch(recentReposStoreProvider).list();
+  } catch (_) {
+    return const [];
+  }
+});
+
 /// The list of saved local repos, mirroring [savedConnectionsProvider] for
 /// the local backend.
 final savedLocalReposProvider = FutureProvider<List<SavedLocalRepo>>((
@@ -441,24 +459,80 @@ String _pathParent(String path) {
 const _kRecentRepoLimit = 5;
 
 /// The most-recently-used *repositories* (up to [_kRecentRepoLimit]), newest
-/// first — the landing page's recent list. Flattens saved SSH connections (one
-/// entry per known repo path, default repo first) and saved local repos into a
-/// single recency-ordered list. Repos of the same connection share its
-/// timestamp, so they cluster; the stable index tiebreaker keeps the default
-/// repo ahead of its siblings and preserves stored order on ties (mirrors
-/// [recentWorkspacesProvider]'s sort).
+/// first — the landing page's recent list. Accuracy comes from two layers:
+///
+///  1. **The per-repo MRU** ([recentRepoRefsProvider]) is authoritative: it
+///     records each *specific* repo actually opened, so a repo appears because
+///     the user opened it, ranked by when. This is what fixes a multi-repo
+///     connection flooding the list with repos never opened — the old code
+///     flattened *every* `allRepoPaths` under the connection's single timestamp,
+///     which buried local repos and surfaced rarely-used remote ones.
+///
+///  2. **A fallback** fills any remaining slots (empty/partial MRU — e.g. first
+///     run after this shipped, or an entry whose saved profile was deleted) from
+///     the saved stores, contributing **one repo per connection** (its default)
+///     plus each local repo, ordered by `lastConnectedAt`. One-per-connection is
+///     the safeguard: without per-repo evidence, a connection may not stand in
+///     for all its repos.
+///
+/// MRU entries whose owning connection/local repo no longer exists (or whose
+/// repo path the connection has forgotten) are dropped, so the list self-heals
+/// after deletions.
 final recentReposProvider = Provider<List<RecentRepo>>((ref) {
   final conns = ref.watch(savedConnectionsProvider).value ?? const [];
   final locals = ref.watch(savedLocalReposProvider).value ?? const [];
-  final all = <RecentRepo>[
-    for (final c in conns)
-      for (final p in c.allRepoPaths) RecentRemoteRepo(c, p),
-    for (final r in locals) RecentLocalRepoEntry(r),
-  ];
-  final indexed = [for (var i = 0; i < all.length; i++) (i, all[i])]
-    ..sort((a, b) {
-      final at = a.$2.lastUsedAt;
-      final bt = b.$2.lastUsedAt;
+  final mru = ref.watch(recentRepoRefsProvider).value ?? const [];
+
+  final connById = {for (final c in conns) c.id: c};
+  final localById = {for (final r in locals) r.id: r};
+
+  final out = <RecentRepo>[];
+  final seenRepos = <String>{}; // repo identities already added
+  final shownConnIds = <String>{}; // connections with any entry shown
+
+  void addRemote(SavedConnection c, String repoPath) {
+    if (out.length >= _kRecentRepoLimit) return;
+    if (!seenRepos.add('conn ${c.id} $repoPath')) return;
+    shownConnIds.add(c.id);
+    out.add(RecentRemoteRepo(c, repoPath));
+  }
+
+  void addLocal(SavedLocalRepo r) {
+    if (out.length >= _kRecentRepoLimit) return;
+    if (!seenRepos.add('local ${r.id}')) return;
+    out.add(RecentLocalRepoEntry(r));
+  }
+
+  // 1) Authoritative per-repo recency, newest first.
+  for (final e in mru) {
+    if (out.length >= _kRecentRepoLimit) break;
+    if (e.isLocal) {
+      final r = localById[e.id];
+      if (r != null) addLocal(r);
+    } else {
+      final c = connById[e.id];
+      // Only surface a path the connection still knows about.
+      if (c != null && c.allRepoPaths.contains(e.repoPath)) {
+        addRemote(c, e.repoPath);
+      }
+    }
+  }
+
+  // 2) Fallback: one default repo per connection + each local repo, by
+  //    lastConnectedAt. Skips connections already represented by the MRU so a
+  //    single host can't reclaim slots its unopened repos never earned.
+  if (out.length < _kRecentRepoLimit) {
+    final fallback = <(DateTime?, int, RecentRepo)>[];
+    var i = 0;
+    for (final c in conns) {
+      if (shownConnIds.contains(c.id)) continue;
+      fallback.add((c.lastConnectedAt, i++, RecentRemoteRepo(c, c.repoPath)));
+    }
+    for (final r in locals) {
+      fallback.add((r.lastConnectedAt, i++, RecentLocalRepoEntry(r)));
+    }
+    fallback.sort((a, b) {
+      final at = a.$1, bt = b.$1;
       if (at != null && bt != null) {
         final byTime = bt.compareTo(at);
         if (byTime != 0) return byTime;
@@ -467,9 +541,20 @@ final recentReposProvider = Provider<List<RecentRepo>>((ref) {
       } else if (at != null && bt == null) {
         return -1;
       }
-      return a.$1.compareTo(b.$1); // stable: preserve original stored order
+      return a.$2.compareTo(b.$2); // stable: preserve stored order
     });
-  return [for (final e in indexed.take(_kRecentRepoLimit)) e.$2];
+    for (final f in fallback) {
+      if (out.length >= _kRecentRepoLimit) break;
+      switch (f.$3) {
+        case RecentRemoteRepo(:final connection, :final repoPath):
+          addRemote(connection, repoPath);
+        case RecentLocalRepoEntry(:final repo):
+          addLocal(repo);
+      }
+    }
+  }
+
+  return out;
 });
 
 enum ConnectionPhase { disconnected, connecting, connected, error, lost }
@@ -1083,6 +1168,14 @@ class ConnectionController extends Notifier<ConnectionState> {
           await ref.read(connectionStoreProvider).touch(connectionId);
           ref.invalidate(savedConnectionsProvider);
         } catch (_) {}
+        // Per-repo recency: record the *specific* repo opened, not just the
+        // connection, so the recent list ranks this repo — not all the
+        // connection's known repos — by when it was actually used.
+        await _recordRecentOpen(
+          isLocal: false,
+          id: connectionId,
+          repoPath: repoPath,
+        );
       }
       _watchForDrop(attempt);
     } catch (e) {
@@ -1435,6 +1528,7 @@ class ConnectionController extends Notifier<ConnectionState> {
           await ref.read(localRepoStoreProvider).touch(id);
           ref.invalidate(savedLocalReposProvider);
         } catch (_) {}
+        await _recordRecentOpen(isLocal: true, id: id, repoPath: repoPath);
       }
     } catch (e) {
       if (attempt != _attempt || !ref.mounted) return;
@@ -1616,6 +1710,25 @@ class ConnectionController extends Notifier<ConnectionState> {
   }
 
   /// Switches the active repository on the current host (no reconnect).
+  /// Records that a *specific* repo was just opened into the per-repo MRU that
+  /// drives the landing page's recent list ([recentReposProvider]). Best-effort:
+  /// a persistence failure must never block or fail an open, and it's separate
+  /// from the per-connection `touch` (which can't distinguish which repo on a
+  /// connection was used).
+  Future<void> _recordRecentOpen({
+    required bool isLocal,
+    required String? id,
+    required String? repoPath,
+  }) async {
+    if (id == null || id.isEmpty || repoPath == null || repoPath.isEmpty) return;
+    try {
+      await ref
+          .read(recentReposStoreProvider)
+          .record(isLocal: isLocal, id: id, repoPath: repoPath);
+      if (ref.mounted) ref.invalidate(recentRepoRefsProvider);
+    } catch (_) {}
+  }
+
   void setRepoPath(String path) {
     if (!state.isConnected || path.isEmpty || path == state.repoPath) return;
     final repos = state.repoPaths.contains(path)
@@ -1630,6 +1743,15 @@ class ConnectionController extends Notifier<ConnectionState> {
       repoPath: path,
       repoPaths: repos,
       clearWarning: true,
+    );
+    // Switching repos on a connection is a genuine open of *this* repo — record
+    // it so the recent list reflects the repo, not just the connection.
+    unawaited(
+      _recordRecentOpen(
+        isLocal: state.backend == ConnectionBackend.local,
+        id: state.connectionId,
+        repoPath: path,
+      ),
     );
   }
 

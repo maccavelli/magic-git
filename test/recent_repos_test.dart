@@ -1,11 +1,12 @@
-// recentReposProvider: the repo-centric landing list. Flattens each saved SSH
-// connection into one entry per known repo path (default first) and adds every
-// saved local repo, newest-first by lastConnectedAt, so a user clicks a
-// specific repo instead of a connection.
+// recentReposProvider: the repo-centric landing list. Authoritative ordering
+// comes from the per-repo MRU (recentRepoRefsProvider); a one-repo-per-connection
+// fallback fills any remaining slots. This is what stops a multi-repo connection
+// from flooding the list and burying local repos (the reported bug).
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/storage/recent_repos_store.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 
@@ -33,14 +34,26 @@ SavedLocalRepo _l(String id, DateTime? at, {String repoPath = ''}) =>
       lastConnectedAt: at,
     );
 
+RecentRepoRef _remote(String connId, String repoPath, DateTime at) =>
+    RecentRepoRef(isLocal: false, id: connId, repoPath: repoPath, openedAt: at);
+
+RecentRepoRef _local(String localId, DateTime at) => RecentRepoRef(
+  isLocal: true,
+  id: localId,
+  repoPath: '/Users/me/code/$localId',
+  openedAt: at,
+);
+
 ProviderContainer _container({
   List<SavedConnection> conns = const [],
   List<SavedLocalRepo> locals = const [],
+  List<RecentRepoRef> mru = const [],
 }) {
   final c = ProviderContainer(
     overrides: [
       savedConnectionsProvider.overrideWith((ref) => conns),
       savedLocalReposProvider.overrideWith((ref) => locals),
+      recentRepoRefsProvider.overrideWith((ref) => mru),
     ],
   );
   addTearDown(c.dispose);
@@ -50,77 +63,103 @@ ProviderContainer _container({
 Future<void> _warm(ProviderContainer c) async {
   await c.read(savedConnectionsProvider.future);
   await c.read(savedLocalReposProvider.future);
+  await c.read(recentRepoRefsProvider.future);
 }
 
 void main() {
-  test('flattens a multi-repo connection into one entry per repo', () async {
+  test(
+    'a multi-repo connection contributes ONE entry, so a local repo is not '
+    'buried (the reported bug)',
+    () async {
+      final c = _container(
+        conns: [
+          _c(
+            'host',
+            DateTime.utc(2026, 1, 1),
+            repoPath: '/a',
+            repoPaths: ['/a', '/b', '/c', '/d', '/e'],
+          ),
+        ],
+        locals: [_l('magic-git', DateTime.utc(2026, 6, 1))],
+        // No MRU yet -> pure fallback (e.g. first run after the fix shipped).
+      );
+      await _warm(c);
+
+      final recent = c.read(recentReposProvider);
+      // The local repo (used more recently) leads; the connection adds only its
+      // default repo — NOT all five, which used to crowd the local one out.
+      expect(recent.map((r) => r.repoName).toList(), ['magic-git', 'a']);
+      expect(recent.whereType<RecentLocalRepoEntry>(), hasLength(1));
+    },
+  );
+
+  test('the MRU ranks the specific repo opened, ahead of the fallback', () async {
     final c = _container(
       conns: [
-        _c(
-          'conn',
-          DateTime.utc(2026, 1, 1),
-          repoPath: '/srv/alpha',
-          repoPaths: ['/srv/alpha', '/srv/beta', '/srv/gamma'],
-        ),
+        _c('host', DateTime.utc(2026, 1, 1), repoPath: '/a', repoPaths: ['/a', '/b']),
       ],
+      // The user actually opened /b (not the default /a).
+      mru: [_remote('host', '/b', DateTime.utc(2026, 5, 1))],
     );
     await _warm(c);
 
     final recent = c.read(recentReposProvider);
-    // One row per known repo path; default repo (alpha) stays first.
-    expect(recent.map((r) => r.repoName).toList(), ['alpha', 'beta', 'gamma']);
-    // Every row is a remote repo carrying the same owning connection...
-    expect(recent.every((r) => r is RecentRemoteRepo), isTrue);
-    expect(
-      recent.whereType<RecentRemoteRepo>().every((r) => r.connection.id == 'conn'),
-      isTrue,
-    );
-    // ...but each with its own repoPath, and the connection name as location.
-    expect(recent.map((r) => r.location).toSet(), {'conn'});
-    expect(
-      recent.whereType<RecentRemoteRepo>().map((r) => r.repoPath).toList(),
-      ['/srv/alpha', '/srv/beta', '/srv/gamma'],
-    );
+    // Exactly the opened repo shows; the connection does not also re-add its
+    // default, so one host can't reclaim a slot its unopened repo never earned.
+    expect(recent, hasLength(1));
+    final only = recent.single as RecentRemoteRepo;
+    expect(only.repoPath, '/b');
   });
 
-  test('remote and local repos interleave newest-first', () async {
+  test('MRU order interleaves local and remote by open time', () async {
     final c = _container(
-      conns: [
-        _c('old', DateTime.utc(2026, 1, 1), repoPath: '/srv/old'),
-        _c('new', DateTime.utc(2026, 6, 1), repoPath: '/srv/new'),
+      conns: [_c('host', DateTime.utc(2026, 1, 1), repoPath: '/a')],
+      locals: [_l('magic-git', DateTime.utc(2026, 1, 1))],
+      mru: [
+        _local('magic-git', DateTime.utc(2026, 8, 1)), // newest
+        _remote('host', '/a', DateTime.utc(2026, 7, 1)),
       ],
-      locals: [_l('localNewest', DateTime.utc(2026, 8, 1))],
     );
     await _warm(c);
 
-    final recent = c.read(recentReposProvider);
-    expect(recent.map((r) => r.repoName).toList(), ['localNewest', 'new', 'old']);
-    expect(recent.first, isA<RecentLocalRepoEntry>());
+    expect(c.read(recentReposProvider).map((r) => r.repoName).toList(), [
+      'magic-git',
+      'a',
+    ]);
   });
 
-  test('local repo location is its containing folder', () async {
+  test('an MRU entry for a deleted profile is dropped and the list self-heals', () async {
     final c = _container(
-      locals: [
-        _l('proj', DateTime.utc(2026, 2, 1), repoPath: '/Users/me/code/proj'),
+      conns: const [], // the 'gone' connection was deleted
+      locals: [_l('magic-git', DateTime.utc(2026, 6, 1))],
+      mru: [
+        _remote('gone', '/x', DateTime.utc(2026, 9, 1)),
+        _local('magic-git', DateTime.utc(2026, 6, 1)),
       ],
     );
     await _warm(c);
 
+    // The dangling remote entry vanishes; the resolvable local one remains.
+    expect(c.read(recentReposProvider).map((r) => r.repoName).toList(), [
+      'magic-git',
+    ]);
+  });
+
+  test('an MRU path the connection no longer knows is dropped', () async {
+    final c = _container(
+      conns: [_c('host', DateTime.utc(2026, 1, 1), repoPath: '/a')],
+      mru: [_remote('host', '/removed', DateTime.utc(2026, 9, 1))],
+    );
+    await _warm(c);
+
+    // /removed isn't in allRepoPaths -> dropped; fallback surfaces the default.
     final recent = c.read(recentReposProvider);
-    expect(recent.single.repoName, 'proj');
-    expect(recent.single.location, '/Users/me/code');
+    expect((recent.single as RecentRemoteRepo).repoPath, '/a');
   });
 
   test('caps the list at five entries total', () async {
     final c = _container(
-      conns: [
-        _c(
-          'conn',
-          DateTime.utc(2026, 1, 1),
-          repoPath: '/srv/r0',
-          repoPaths: [for (var i = 0; i < 12; i++) '/srv/r$i'],
-        ),
-      ],
+      conns: [for (var i = 0; i < 8; i++) _c('c$i', DateTime.utc(2026, 1, i + 1))],
     );
     await _warm(c);
     expect(c.read(recentReposProvider), hasLength(5));
