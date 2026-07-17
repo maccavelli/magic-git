@@ -187,6 +187,32 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   // coalescing window) rather than a genuinely concurrent external one.
   static const _ownMutationSuppressWindow = Duration(seconds: 3);
 
+  // An unscoped event-driven tick (watcher restart, overflowing burst) arrived
+  // while this page was hidden. Too blunt to act on repeatedly in the
+  // background — but it may have included git-state changes, so the
+  // didUpdateWidget re-sync must invalidate the full mutation set, not just
+  // status, when the page next becomes visible.
+  bool _missedUnscopedTick = false;
+
+  // Set when this panel invalidates the mutation families, consumed by the
+  // first status landing after it — that landing is the refetch the
+  // invalidation itself caused, so [_detectExternalHeadMove] must not read
+  // its moved oid as a NEW external change and pay for the refresh twice.
+  // A consume-once flag rather than a time window: a window would also
+  // swallow a genuinely new external commit landing shortly after the
+  // previous one, leaving it invisible until some unrelated refresh.
+  bool _familiesRefetchPending = false;
+
+  /// The one way this panel invalidates the shared post-mutation provider set
+  /// — flags the refetch it causes so the head-move detector stands down for
+  /// exactly that landing.
+  void _invalidateMutationFamilies() {
+    _familiesRefetchPending = true;
+    for (final p in repoMutationFamilies(repoPath)) {
+      ref.invalidate(p);
+    }
+  }
+
   // Right-click context menu, anchored at the tap point.
   final _contextMenu = ContextMenuOverlay();
 
@@ -249,7 +275,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       _selectionKind = kind;
       _selectedPaths = {row.file.path};
       _selectionAnchor = row.file.path;
-      _popout = false;
+      // Same rule as a click (_handleRowTap): a popped-out diff follows the
+      // selection rather than closing — popping out relocates WHERE the diff
+      // shows, not which. Arrow-keying used to close it, clicking didn't.
+      // It only drops when the selection lands where the popout can't follow
+      // (a conflict row, which it can't render).
+      if (kind == _SectionKind.conflict) _popout = false;
     });
     ensureRowVisible(_rowKeyFor(row.file.path, kind));
   }
@@ -292,11 +323,19 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     // build). Re-sync once when it becomes visible again so nothing missed while
     // away is left stale — cheaper than the per-tick background fetches the gate
     // avoids, and it makes the gate safe in both event-driven and polling modes.
+    // A missed *unscoped* tick widens the re-sync to the full mutation set: it
+    // may have included git-state changes no status refetch can reveal.
     // Deferred past this frame: invalidating synchronously in didUpdateWidget
     // (which runs during build) would mark the provider scope dirty mid-build.
     if (!oldWidget.isActive && widget.isActive) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) ref.invalidate(statusProvider(repoPath));
+        if (!mounted) return;
+        if (_missedUnscopedTick) {
+          _missedUnscopedTick = false;
+          _invalidateMutationFamilies();
+        } else {
+          ref.invalidate(statusProvider(repoPath));
+        }
       });
     }
   }
@@ -321,9 +360,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     //
     // sequencerStateProvider follows statusProvider, so it refreshes with it —
     // no separate invalidation needed.
-    for (final p in repoMutationFamilies(repoPath)) {
-      ref.invalidate(p);
-    }
+    _invalidateMutationFamilies();
     // The open file's worktree-backed caches — its diff at every key, its
     // conflict content, its blame — go stale through the edit stamp rather than
     // a direct `ref.invalidate` of the one key this panel happens to be
@@ -366,6 +403,39 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           .read(worktreeEditsProvider.notifier)
           .noteFiles(repoPath, _selectedPaths);
     }
+  }
+
+  /// HEAD moved between two landed statuses without this app mutating
+  /// anything — an external commit, checkout or reset. In event-driven mode
+  /// the watcher's git-state tick already catches these; this is what catches
+  /// them in **polling** mode, where a tick is a blind heartbeat that can only
+  /// refetch status: without it, an external commit updated the branch chip
+  /// (status carries the new oid) while History, the refs and the reflog sat
+  /// on the pre-commit state until ⌘R. Same answer as every other "the repo
+  /// changed" signal: the shared mutation set.
+  ///
+  /// Two suppressions keep it from double-paying:
+  ///  * a recent own mutation — its [refreshAfterMutation] already refreshed
+  ///    everything (possibly from another surface: the commit dialog, the
+  ///    file-tree pane, a pop-out window), and this status IS that refresh
+  ///    landing;
+  ///  * [_familiesRefetchPending], consumed at the call site — the watch
+  ///    listener's git-state branch got there first, and this status is its
+  ///    refetch.
+  /// Terminates by construction: the refetch this triggers lands with the
+  /// same oid/head, so the next comparison is equal.
+  void _detectExternalHeadMove(GitStatus? previous, GitStatus next) {
+    if (previous == null) return;
+    if (previous.branch.oid == next.branch.oid &&
+        previous.branch.head == next.branch.head) {
+      return;
+    }
+    if (ref
+        .read(ownMutationTrackerProvider)
+        .isRecent(repoPath, DateTime.now(), _ownMutationSuppressWindow)) {
+      return;
+    }
+    _invalidateMutationFamilies();
   }
 
   Future<void> _stage(String path) async {
@@ -1115,12 +1185,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           edits.noteRepo(repoPath);
         }
       }
-      // While this page is hidden (another tab is up) don't fire a `git status`
-      // round-trip on every tick — in polling mode that's a fetch every few
-      // seconds against a repo the user isn't looking at. Keep the subscription
-      // (so the watcher stays alive) but skip the refetch; didUpdateWidget
-      // re-syncs once when the page becomes visible again.
-      if (!widget.isActive) return;
       // A tick that moved git's own state — a commit, checkout, branch, rebase
       // or fetch run in a terminal or another tool — moved more than the file
       // list: HEAD, the refs, the stashes and the reflog can all be somewhere
@@ -1129,16 +1193,40 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       // still on the old tip, until you hit ⌘R. It is the same question a
       // mutation of our own asks, so it gets the same answer.
       //
+      // Deliberately NOT behind the visibility gate below: the providers this
+      // refreshes are shared across panels, and the other panels stay mounted
+      // (IndexedStack) and watching them while this page is hidden — a commit
+      // made in a terminal while the user sits on History must appear in
+      // History now, not after they detour through the Repository tab. Cheap
+      // by nature: it takes a real git operation, not a build, to trip this.
+      //
       // Deliberately gated on [RepoWatchEvent.touchesGitState] (an event-driven
       // tick naming a path under `.git`), not on every tick: a polling tick is a
       // blind heartbeat that fires every few seconds whether or not anything
       // happened, and re-walking the whole log on each of those would be a
-      // round trip per poll for nothing.
-      if (event.mode == WatchMode.eventDriven &&
-          (event.touchesGitState || !event.isScoped)) {
-        for (final p in repoMutationFamilies(repoPath)) {
-          ref.invalidate(p);
+      // round trip per poll for nothing. (Polling-mode external commits are
+      // still caught — by [_detectExternalHeadMove], off the status refetch.)
+      if (event.mode == WatchMode.eventDriven && event.touchesGitState) {
+        _invalidateMutationFamilies();
+        return;
+      }
+      // While this page is hidden (another tab is up) don't fire a `git status`
+      // round-trip on every tick — in polling mode that's a fetch every few
+      // seconds against a repo the user isn't looking at. Keep the subscription
+      // (so the watcher stays alive) but skip the refetch; didUpdateWidget
+      // re-syncs once when the page becomes visible again. An unscoped
+      // event-driven tick (watcher restart, overflowing burst) is remembered so
+      // that re-sync covers the git state it may have hidden.
+      if (!widget.isActive) {
+        if (event.mode == WatchMode.eventDriven && !event.isScoped) {
+          _missedUnscopedTick = true;
         }
+        return;
+      }
+      // An unscoped event-driven tick can't say what moved — git state
+      // included — so it gets the full-refresh answer too.
+      if (event.mode == WatchMode.eventDriven && !event.isScoped) {
+        _invalidateMutationFamilies();
         return;
       }
       // Otherwise only the working tree moved. Refresh status; the structure
@@ -1158,6 +1246,17 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       _prefetchDiffs(next.value);
       final status = next.value;
       if (status == null) return;
+      // Consume-once: this landing is (at most) the refetch our own families
+      // invalidation triggered — the world was refreshed alongside it, so a
+      // moved oid here is old news. Later landings detect normally. Gated on
+      // a genuine data landing: an invalidation first emits a loading state
+      // still carrying the OLD value, and consuming the flag on that
+      // transition would let the actual landing double-pay after all.
+      if (!next.isLoading) {
+        final skipDetect = _familiesRefetchPending;
+        _familiesRefetchPending = false;
+        if (!skipDetect) _detectExternalHeadMove(previous?.value, status);
+      }
       // Section-aware prune / single-file re-home. Path-only presence was not
       // enough: a bulk or external stage leaves the path in status.files but
       // under a different section, and the panel kept requesting the old
@@ -1326,7 +1425,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     final stagedCount = status.staged.length;
     // "Active" (accent-colored) while there's something left to stage; once
     // everything is staged it reverts to the same secondary look it always had.
-    final hasUnstaged = stagedCount < status.files.length;
+    // Asked of the actual unstaged/untracked lists, not a count comparison —
+    // a partially-staged file is one record in BOTH lists, so `stagedCount <
+    // files.length` read a lone mixed file as "everything staged" while its
+    // worktree half still had changes to stage.
+    final hasUnstaged =
+        status.unstaged.isNotEmpty || status.untracked.isNotEmpty;
     return Container(
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: MacosColors.separatorColor)),
@@ -1619,7 +1723,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     DiffHunk hunk,
     HunkAction action,
   ) async {
-    if (_selected == null) return;
+    // Captured before any await: the discard confirm dialog below spans one,
+    // and a watcher-driven _syncSelectionToStatus can clear the selection
+    // while it's up — the late `_selected!` fallback read then threw.
+    final selected = _selected;
+    if (selected == null) return;
     final git = ref.read(gitServiceProvider);
     final patch = buildHunkPatch(file, hunk);
 
@@ -1650,7 +1758,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           return git.discardHunk(
             repoPath,
             patch,
-            path: file.newPath ?? file.oldPath ?? _selected!.path,
+            path: file.newPath ?? file.oldPath ?? selected.path,
           );
       }
     });

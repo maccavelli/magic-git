@@ -156,11 +156,11 @@ repoDirtyIndex(GitStatus status) {
 /// the structure provider can serve its cached tree (no `ls-files`, no rebuild)
 /// while a genuine add/delete/rename bumps the hash and triggers one refetch.
 ///
-/// Edge case: a brand-new file inside an already wholly-untracked directory that
-/// git collapses to `dir/` doesn't move the hash (status still reports just
-/// `dir/`); it appears on the next shape-affecting change. Directories holding
-/// any tracked file list their untracked children individually, so ordinary
-/// refactoring is covered.
+/// Untracked files are always reported individually (status runs `-uall`
+/// precisely so per-file affordances — and this signature — see real paths),
+/// so a brand-new file inside an otherwise-untracked directory moves the hash
+/// like any other add. The `dir/` handling in [repoDirtyIndex] is kept as a
+/// defensive path only.
 int structureSignature(GitStatus status) {
   var acc = 0;
   var count = 0;

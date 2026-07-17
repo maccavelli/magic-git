@@ -19,7 +19,9 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/theme/app_theme.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/dnd/deselect.dart';
+import 'package:remote_magic_git/features/repository/diff_popout_window.dart';
 import 'package:remote_magic_git/features/repository/repo_status_view.dart';
 import 'package:riverpod/misc.dart' show Override;
 
@@ -1694,4 +1696,71 @@ void main() {
       expect(selectedRows(), findsNothing);
     });
   });
+
+  group('diff pop-out', () {
+    testWidgets('arrow-key navigation keeps the pop-out open and follows the '
+        'selection, matching a click', (tester) async {
+      await _pump(
+        tester,
+        status: _statusWith(
+          unstaged: const [
+            GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+            GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+          ],
+        ),
+      );
+
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await tester.tap(_icon(CupertinoIcons.arrow_up_left_arrow_down_right));
+      await tester.pumpAndSettle();
+      expect(find.byType(DiffPopoutWindow), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+
+      // Popping out relocates WHERE the diff shows, not which — the window
+      // stays up and now shows the newly selected file (its title bar path).
+      expect(find.byType(DiffPopoutWindow), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(DiffPopoutWindow),
+          matching: find.text('lib/b.dart'),
+        ),
+        findsOneWidget,
+      );
+    });
+  });
+
+  testWidgets(
+    'Stage All stays active while a partially-staged file still has '
+    'unstaged changes',
+    (tester) async {
+      // One record, in BOTH derived lists (added to the index, then edited
+      // again): the old files-vs-staged count comparison read this as
+      // "everything staged".
+      await _pump(
+        tester,
+        status: _statusWith(
+          staged: const [
+            GitFileStatus(path: 'lib/mixed.dart', statusX: 'A', statusY: 'M'),
+          ],
+        ),
+      );
+
+      final stageAll = tester.widget<AppPushButton>(
+        find.byWidgetPredicate(
+          (w) =>
+              w is AppPushButton &&
+              w.child is Text &&
+              (w.child as Text).data == 'Stage All',
+        ),
+      );
+      expect(
+        stageAll.secondary,
+        isFalse,
+        reason: 'the worktree half of a mixed file is still stageable',
+      );
+    },
+  );
 }

@@ -1413,7 +1413,17 @@ class GitService {
   Future<RepoSnapshot> _fetchSnapshot(String repoPath) async {
     final format = _refsFormat.join(fieldSep);
     final script =
-        'git --no-optional-locks status --porcelain=v2 --branch -z; s1=\$?; '
+        // `-uall`: list untracked files individually instead of collapsing a
+        // wholly-untracked directory to one `dir/` record. Every per-file
+        // affordance in the UI assumes real file paths — a collapsed `dir/`
+        // row rendered a silently blank diff pane (`git diff --no-index
+        // /dev/null dir/` exits 1 with empty stdout, indistinguishable from
+        // success — verified against git 2.55), hid the true untracked count,
+        // and blinded [structureSignature] to files added inside the
+        // directory. The enumeration cost is not new: the file-tree pane
+        // already runs a full `ls-files --others` for the same set on every
+        // shape change.
+        'git --no-optional-locks status --porcelain=v2 -uall --branch -z; s1=\$?; '
         "printf '$_snapshotSep%d$_snapshotSep' \"\$s1\"; "
         // `-c i18n.logOutputEncoding=UTF-8`: re-encodes `%(contents:subject)`
         // to UTF-8 for output regardless of the remote's stored commit
@@ -1944,6 +1954,18 @@ class GitService {
     // killed/unresolved channel, is a real failure and must not be presented
     // as a diff.
     if (result.exitCode != 0 && result.exitCode != 1) {
+      throw GitException('git diff (untracked) failed', result);
+    }
+    // Exit 1 with an EMPTY diff is a failure wearing success's exit code:
+    // a genuine "inputs differ" always prints something (a text diff, or the
+    // "Binary files … differ" line), so nothing on stdout means the diff
+    // itself errored — e.g. `error: Could not access '<path>'` for a path
+    // that vanished between status landing and this read (exit 1 either way,
+    // verified against git 2.55). Rendering it as an empty diff showed a
+    // silently blank pane; surface the error instead.
+    if (result.exitCode == 1 &&
+        result.stdout.isEmpty &&
+        result.stderr.trim().isNotEmpty) {
       throw GitException('git diff (untracked) failed', result);
     }
     return result.stdout;

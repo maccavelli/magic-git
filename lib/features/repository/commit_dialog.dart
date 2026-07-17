@@ -135,12 +135,12 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
     if (!mounted) return;
     setState(() => _committing = false);
     if (ok) {
-      // The shared set — see [repoMutationFamilies]. A commit moves HEAD, the
-      // refs, and the log History reads; naming them here is how they drifted
-      // apart in the first place.
-      for (final p in repoMutationFamilies(repoPath)) {
-        ref.invalidate(p);
-      }
+      // THE post-mutation refresh — invalidates the shared
+      // [repoMutationFamilies] set AND marks the mutation as our own. This
+      // used to hand-roll only the invalidation half, so the filesystem
+      // watcher's echo of the commit (it rewrites .git/HEAD and refs) was
+      // never suppressed and every commit paid for its full refresh twice.
+      refreshAfterMutation(ref, repoPath);
       // Best-effort — refreshes ahead/behind right away instead of leaving it
       // to the next manual/auto fetch. Routed through the connection
       // controller (not this dialog's own `ref`) since it outlives the sheet
