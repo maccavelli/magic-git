@@ -245,7 +245,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
             const Padding(
               padding: EdgeInsets.fromLTRB(18, 0, 18, 10),
               child: SheetDescription(
-                'Your saved SSH hosts and local repositories. Click a host '
+                'Your local repositories and saved SSH hosts. Click a host '
                 'to show its repositories, then click a repository to '
                 'connect. The toolbar above adds a connection or local '
                 'repo, or clones/creates a repository.',
@@ -258,11 +258,6 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                   : ListView(
                       padding: const EdgeInsets.symmetric(vertical: 6),
                       children: [
-                        if (showAdhoc || saved.isNotEmpty)
-                          _remoteReposHeader(context),
-                        if (showAdhoc) _adhocGroup(context, ref, connection),
-                        for (final c in saved)
-                          _connectionGroup(context, ref, c, connection),
                         if (showAdhocLocal || savedLocal.isNotEmpty) ...[
                           _localReposHeader(context),
                           if (showAdhocLocal)
@@ -270,6 +265,11 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                           for (final repo in savedLocal)
                             _localRepoTile(context, ref, repo, connection),
                         ],
+                        if (showAdhoc || saved.isNotEmpty)
+                          _remoteReposHeader(context),
+                        if (showAdhoc) _adhocGroup(context, ref, connection),
+                        for (final c in saved)
+                          _connectionGroup(context, ref, c, connection),
                         const SizedBox(height: 6),
                       ],
                     ),
@@ -283,7 +283,9 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
   Widget _localReposHeader(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 14, 10, 4),
+      // First section: flush with the list top (the remote header below gets
+      // the taller inset that separates the second section from the first).
+      padding: const EdgeInsets.fromLTRB(16, 8, 10, 4),
       child: Text(
         'Local Repositories',
         style: typography.caption1.copyWith(
@@ -297,9 +299,9 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
   Widget _remoteReposHeader(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 10, 4),
+      padding: const EdgeInsets.fromLTRB(16, 14, 10, 4),
       child: Text(
-        'Remote Repositories - SSH',
+        'Remote Repositories',
         style: typography.caption1.copyWith(
           fontWeight: FontWeight.bold,
           color: MacosColors.systemGrayColor,

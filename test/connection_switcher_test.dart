@@ -50,12 +50,14 @@ class _RecordingConnection extends ConnectionController {
 Future<void> _pump(
   WidgetTester tester, {
   List<SavedLocalRepo> savedLocal = const [],
+  List<SavedConnection> saved = const [],
 }) async {
   SharedPreferences.setMockInitialValues({});
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         savedLocalReposProvider.overrideWith((ref) async => savedLocal),
+        savedConnectionsProvider.overrideWith((ref) async => saved),
         // Opening the clone/create sheets from the header must not spawn a
         // real gh for the This-Mac browse list or the auth-host prefill.
         forgeRepoListProvider.overrideWith((ref, key) async => []),
@@ -96,6 +98,35 @@ void main() {
       expect(find.text('other-repo'), findsOneWidget);
     },
   );
+
+  testWidgets('Local Repositories section sits above Remote Repositories', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      savedLocal: const [
+        SavedLocalRepo(id: 'l1', label: 'My Project', repoPath: '/a/b/proj'),
+      ],
+      saved: const [
+        SavedConnection(
+          id: 'c1',
+          label: 'Prod',
+          host: 'h',
+          port: 22,
+          username: 'u',
+          repoPath: '/srv/alpha',
+        ),
+      ],
+    );
+
+    final localY = tester.getTopLeft(find.text('Local Repositories')).dy;
+    final remoteY = tester.getTopLeft(find.text('Remote Repositories')).dy;
+    expect(
+      localY,
+      lessThan(remoteY),
+      reason: 'local repos lead the panel; remote hosts follow',
+    );
+  });
 
   testWidgets('Add local repository opens the picker sheet', (tester) async {
     await _pump(tester);
@@ -175,7 +206,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('Remote Repositories - SSH'), findsOneWidget);
+      expect(find.text('Remote Repositories'), findsOneWidget);
       expect(find.text('2 repos'), findsOneWidget);
       expect(find.text('alpha'), findsNothing, reason: 'collapsed by default');
 
