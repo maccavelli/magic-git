@@ -39,8 +39,10 @@ class _ActionGit extends GitService {
   _ActionGit() : super(SSHCommandExecutor(SSHClientManager()));
 
   final List<(int, String)> drops = [];
+  final List<(int, String)> pops = [];
   final List<String> applies = [];
   final List<(String?, bool)> pushes = [];
+  bool cleared = false;
   bool stale = false;
 
   @override
@@ -51,6 +53,23 @@ class _ActionGit extends GitService {
   }) async {
     if (stale) throw const StashStaleException();
     drops.add((index, expectedOid));
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+
+  @override
+  Future<SSHCommandResult> stashPop(
+    String repoPath,
+    int index, {
+    required String expectedOid,
+  }) async {
+    if (stale) throw const StashStaleException();
+    pops.add((index, expectedOid));
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+
+  @override
+  Future<SSHCommandResult> stashClear(String repoPath) async {
+    cleared = true;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
 
@@ -283,5 +302,85 @@ void main() {
     await tester.tapAt(Offset(rect.left + 24, rect.bottom - 12));
     await tester.pumpAndSettle();
     expect(find.text('Select a stash to preview its contents'), findsOneWidget);
+  });
+
+  // ---- Header hamburger menu (stash-wide actions) --------------------------
+
+  Future<void> openMenu(WidgetTester tester, String item) async {
+    await tester.tap(find.byType(MacosPulldownButton));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(item));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('"Stash current changes" pushes with no message, tracked only', (
+    tester,
+  ) async {
+    final git = _ActionGit();
+    await _pump(tester, stashes: _stashes, git: git);
+    await openMenu(tester, 'Stash current changes');
+    expect(git.pushes, [(null, false)]);
+  });
+
+  testWidgets('"Stash including untracked" pushes with untracked included', (
+    tester,
+  ) async {
+    final git = _ActionGit();
+    await _pump(tester, stashes: _stashes, git: git);
+    await openMenu(tester, 'Stash including untracked');
+    expect(git.pushes, [(null, true)]);
+  });
+
+  testWidgets('"Apply latest stash" applies the top entry by OID', (
+    tester,
+  ) async {
+    final git = _ActionGit();
+    await _pump(tester, stashes: _stashes, git: git);
+    await openMenu(tester, 'Apply latest stash');
+    // Latest = stash@{0} = _oidA, read at tap time.
+    expect(git.applies, [_oidA]);
+  });
+
+  testWidgets('"Pop latest stash" pops the top entry with its index and OID', (
+    tester,
+  ) async {
+    final git = _ActionGit();
+    await _pump(tester, stashes: _stashes, git: git);
+    await openMenu(tester, 'Pop latest stash');
+    expect(git.pops, [(0, _oidA)]);
+  });
+
+  testWidgets('"Clear all stashes" confirms destructively, then clears', (
+    tester,
+  ) async {
+    final git = _ActionGit();
+    await _pump(tester, stashes: _stashes, git: git);
+    await openMenu(tester, 'Clear all stashes…');
+
+    expect(git.cleared, isFalse, reason: 'nothing before the confirm');
+    await tester.tap(find.text('Clear All'));
+    await tester.pumpAndSettle();
+    expect(git.cleared, isTrue);
+  });
+
+  testWidgets('with no stashes, act-on-existing menu items are disabled but '
+      'stashing stays enabled', (tester) async {
+    await _pump(tester, stashes: const []);
+    await tester.tap(find.byType(MacosPulldownButton));
+    await tester.pumpAndSettle();
+
+    // Inspect the built items' onTap directly — a null handler is the disabled
+    // state (tapping a disabled item has unreliable dismiss behavior to assert
+    // against).
+    MacosPulldownMenuItem itemFor(String title) => tester
+        .widgetList<MacosPulldownMenuItem>(find.byType(MacosPulldownMenuItem))
+        .firstWhere((i) => i.title is Text && (i.title as Text).data == title);
+
+    expect(itemFor('Apply latest stash').onTap, isNull);
+    expect(itemFor('Pop latest stash').onTap, isNull);
+    expect(itemFor('Clear all stashes…').onTap, isNull);
+    // Stashing the current tree doesn't require an existing stash.
+    expect(itemFor('Stash current changes').onTap, isNotNull);
+    expect(itemFor('Stash including untracked').onTap, isNotNull);
   });
 }
