@@ -80,6 +80,49 @@ Forge forgeFromRemoteUrl(String url) {
   return classifyForgeHost(host);
 }
 
+/// `-c credential.helper=…` argv fragments that make a single `git` invocation
+/// authenticate HTTPS forge remotes via the matching CLI (`gh` / `glab`),
+/// without mutating the host's permanent git config.
+///
+/// Why this exists: Magic Git creates forge projects through `gh`/`glab` (which
+/// use their own auth stores) but owns `git push` itself so the nested CLI
+/// git never runs under a bare GUI/SSH PATH. Plain `git push` over HTTPS does
+/// **not** consult `gh auth` unless a credential helper is configured — and a
+/// host-wide helper that answers for *every* host (e.g. a glab-only wrapper)
+/// will feed the wrong password to github.com, producing GitHub's
+/// "Support for password authentication was removed" even when `gh` is signed
+/// in. Clearing ambient helpers and installing the forge CLI for this one
+/// command is the scoped fix: no permanent `gh auth setup-git`, no tokens in
+/// argv/env. SSH remotes ignore credential helpers, so this is a no-op for them.
+///
+/// Returns an empty list for [Forge.none] / [Forge.unknown] so custom remotes
+/// keep using the host's ordinary credential setup.
+List<String> forgeGitAuthConfigArgs(Forge forge) {
+  final helper = switch (forge) {
+    Forge.github => '!gh auth git-credential',
+    Forge.gitlab => '!glab auth git-credential',
+    Forge.none || Forge.unknown => null,
+  };
+  if (helper == null) return const [];
+  return [
+    '-c',
+    'credential.helper=',
+    '-c',
+    'credential.helper=$helper',
+  ];
+}
+
+/// Both forge CLI helpers, for commands that may touch several remotes
+/// (e.g. `git fetch --all`). Same clear-first contract as
+/// [forgeGitAuthConfigArgs].
+List<String> forgeGitAuthConfigArgsAll() => const [
+  '-c',
+  'credential.helper=',
+  '-c',
+  'credential.helper=!gh auth git-credential',
+  '-c',
+  'credential.helper=!glab auth git-credential',
+];
 
 /// The outcome of resolving a just-created forge project's clone URL for
 /// origin wiring: the URL itself (null when every source failed), plus a

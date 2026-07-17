@@ -464,7 +464,8 @@ void main() {
           'git commit -m Initial commit',
           'gh repo create new-proj --private',
           'git remote add origin https://github.com/me/new-proj.git',
-          'git push -u origin main',
+          'git -c credential.helper= -c credential.helper=!gh auth git-credential '
+              'push -u origin main',
         ]),
       );
       expect(stub.repoPathsSet, ['/srv/new-proj']);
@@ -557,7 +558,8 @@ void main() {
           'glab repo create new-proj --private --skipGitInit',
           'git remote get-url origin',
           'git remote add origin https://gitlab.com/me/new-proj.git',
-          'git push -u origin main',
+          'git -c credential.helper= -c credential.helper=!glab auth git-credential '
+              'push -u origin main',
         ]),
       );
       expect(stub.repoPathsSet, ['/srv/new-proj']);
@@ -668,7 +670,8 @@ void main() {
           'git remote get-url origin',
           'gh repo view new-proj --json url,sshUrl',
           'git remote add origin https://github.com/me/new-proj.git',
-          'git push -u origin main',
+          'git -c credential.helper= -c credential.helper=!gh auth git-credential '
+              'push -u origin main',
         ]),
         reason: 'ensure runs after failed create; origin still wired',
       );
@@ -797,7 +800,8 @@ void main() {
         containsAllInOrder([
           'gh repo create app-repo --private',
           'git remote add origin https://github.com/me/app-repo.git',
-          'git push -u origin HEAD',
+          'git -c credential.helper= -c credential.helper=!gh auth git-credential '
+              'push -u origin HEAD',
         ]),
       );
       expect(

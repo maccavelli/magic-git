@@ -64,13 +64,17 @@ enum _SourceMode { newFolder, existingFolder }
 ///    `--push`), then Magic Git wires `origin` via
 ///    [GhService.resolveOriginUrl] (the create's own printed URL first, API
 ///    lookup as fallback) and pushes with PATH-hardened `git` when a commit
-///    exists.
+///    exists. HTTPS pushes authenticate via `gh auth git-credential` for that
+///    one command (see [forgeGitAuthConfigArgs]) — plain `git` does not use
+///    the `gh` store on its own.
 ///  * GitLab     — API-only `glab repo create <name> --skipGitInit`, then the
 ///    same hardened origin + push ownership as GitHub via
-///    [GlabService.resolveOriginUrl].
+///    [GlabService.resolveOriginUrl] (with `glab auth git-credential` for
+///    HTTPS).
 ///  * Custom URL — `git remote add origin &lt;url&gt;` (no forge CLI — for
 ///    repos already created on a web UI, bare repos on an SSH host, or any
-///    other pre-existing remote), then `git push -u` when a commit exists.
+///    other pre-existing remote), then `git push -u` when a commit exists
+///    (host credentials as-is).
 ///
 /// Once `git init` has succeeded, the repo is always kept and registered: a
 /// failure in any later step (commit, forge publish, push, verification)
@@ -629,6 +633,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             hasCommit,
             pushRef,
             warnings,
+            forge: Forge.github,
             lookupUrl: () => gh.resolveOriginUrl(
               repoPath: dest,
               name: name,
@@ -677,6 +682,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             hasCommit,
             pushRef,
             warnings,
+            forge: Forge.gitlab,
             lookupUrl: () => glab.resolveOriginUrl(
               repoPath: dest,
               name: name,
@@ -849,19 +855,24 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   }
 
   /// Pushes the initial commit and sets upstream with PATH-hardened `git`.
-  /// Best-effort: failures append to [warnings]; local repo + origin stay.
+  /// When [forge] is GitHub/GitLab, HTTPS auth rides that CLI's credential
+  /// helper for this one command (see [forgeGitAuthConfigArgs]) — matching
+  /// the store that just created the project. Best-effort: failures append
+  /// to [warnings]; local repo + origin stay.
   Future<void> _pushInitial(
     CommandExecutor executor,
     OutputLogNotifier log,
     String dest,
     String branch,
-    List<String> warnings,
-  ) async {
+    List<String> warnings, {
+    Forge forge = Forge.none,
+  }) async {
+    final auth = forgeGitAuthConfigArgs(forge);
     final label = 'git push -u origin $branch';
     try {
       final result = await executor.execute(
         repoPath: dest,
-        gitArgs: ['git', 'push', '-u', 'origin', branch],
+        gitArgs: ['git', ...auth, 'push', '-u', 'origin', branch],
         lane: ExecLane.sync,
         retries: 0,
       );
@@ -894,6 +905,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     bool hasCommit,
     String pushRef,
     List<String> warnings, {
+    required Forge forge,
     required Future<OriginUrlResolution> Function() lookupUrl,
   }) async {
     final existing = await executor.execute(
@@ -935,7 +947,14 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     }
     // We own push entirely (forge create is API-only).
     if (hasCommit && hasOrigin) {
-      await _pushInitial(executor, log, dest, pushRef, warnings);
+      await _pushInitial(
+        executor,
+        log,
+        dest,
+        pushRef,
+        warnings,
+        forge: forge,
+      );
     }
     return hasOrigin;
   }

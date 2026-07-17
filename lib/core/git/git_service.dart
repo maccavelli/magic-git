@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+import '../forge/forge.dart';
 import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../undo/undo_types.dart';
@@ -2774,15 +2775,26 @@ class GitService {
     String repoPath,
     String remote,
     String branch,
-  ) => _run(
-    repoPath,
-    ['git', 'push', '--delete', '--end-of-options', remote, branch],
-    'git push --delete',
-    timeout: networkTimeout,
-    // Sync lane, like every push: updates the remote and the local tracking
-    // ref, never the index/worktree.
-    lane: ExecLane.sync,
-  );
+  ) async {
+    final auth = await _forgeAuthArgs(repoPath, remote: remote);
+    return _run(
+      repoPath,
+      [
+        'git',
+        ...auth,
+        'push',
+        '--delete',
+        '--end-of-options',
+        remote,
+        branch,
+      ],
+      'git push --delete',
+      timeout: networkTimeout,
+      // Sync lane, like every push: updates the remote and the local tracking
+      // ref, never the index/worktree.
+      lane: ExecLane.sync,
+    );
+  }
 
   /// Discards working-tree changes to a path (`git restore`). Undoable via a
   /// pre-op snapshot — see [_discardCaptured].
@@ -3410,14 +3422,42 @@ class GitService {
 
   // ---- Remote sync ---------------------------------------------------------
 
+  /// `-c credential.helper=…` so HTTPS forge remotes authenticate via the
+  /// matching CLI store (`gh` / `glab`) for a single network command — see
+  /// [forgeGitAuthConfigArgs]. Looks up [remote]'s URL (default `origin`);
+  /// returns empty when the remote is missing or not a known forge so custom
+  /// remotes keep the host's ordinary helpers. Never throws.
+  Future<List<String>> _forgeAuthArgs(
+    String repoPath, {
+    String remote = 'origin',
+  }) async {
+    try {
+      final result = await _executor.execute(
+        repoPath: repoPath,
+        gitArgs: ['git', 'remote', 'get-url', remote],
+        timeout: const Duration(seconds: 15),
+        lane: ExecLane.read,
+        retries: 0,
+      );
+      if (!result.isSuccess) return const [];
+      return forgeGitAuthConfigArgs(forgeFromRemoteUrl(result.stdout.trim()));
+    } catch (_) {
+      return const [];
+    }
+  }
+
   /// Fetches all remotes and prunes deleted refs. Returns the command result so
   /// callers can surface its output. Sync lane: a fetch touches refs and the
   /// network but never the index/worktree, so reads keep flowing while a slow
   /// fetch (up to [networkTimeout]) runs — but only one sync op at a time, so
   /// an auto-fetch can never race a manual fetch on ref locks.
+  ///
+  /// Installs both forge CLI credential helpers for the duration of the
+  /// command ([forgeGitAuthConfigArgsAll]) because `--all` may touch remotes
+  /// of either forge.
   Future<SSHCommandResult> fetch(String repoPath) => _run(
     repoPath,
-    ['git', 'fetch', '--all', '--prune'],
+    ['git', ...forgeGitAuthConfigArgsAll(), 'fetch', '--all', '--prune'],
     'git fetch',
     timeout: networkTimeout,
     lane: ExecLane.sync,
@@ -3431,28 +3471,37 @@ class GitService {
     PullMode mode = PullMode.ffOnly,
     String? remote,
     String? branch,
-  }) => _run(
-    repoPath,
-    [
-      'git',
-      'pull',
-      switch (mode) {
-        PullMode.ffOnly => '--ff-only',
-        PullMode.rebase => '--rebase',
-        PullMode.merge => '--no-rebase',
-      },
-      if (remote != null) '--end-of-options',
-      ?remote,
-      if (remote != null && branch != null) branch,
-    ],
-    'git pull',
-    timeout: networkTimeout,
-  );
+  }) async {
+    final auth = await _forgeAuthArgs(repoPath, remote: remote ?? 'origin');
+    return _run(
+      repoPath,
+      [
+        'git',
+        ...auth,
+        'pull',
+        switch (mode) {
+          PullMode.ffOnly => '--ff-only',
+          PullMode.rebase => '--rebase',
+          PullMode.merge => '--no-rebase',
+        },
+        if (remote != null) '--end-of-options',
+        ?remote,
+        if (remote != null && branch != null) branch,
+      ],
+      'git pull',
+      timeout: networkTimeout,
+      // Exclusive: pull can rewrite the index/worktree (merge/rebase), so it
+      // must never overlap concurrent reads or mutations.
+    );
+  }
 
-  /// Pushes the current branch. Uses the remote host's own git credentials.
-  /// [force] selects `--force-with-lease` or the blunt `--force`; [setUpstream]
-  /// adds `-u`; [followTags] pushes annotated tags reachable from the pushed
-  /// commits. [remote]/[branch] target a specific ref.
+  /// Pushes the current branch. HTTPS GitHub/GitLab remotes authenticate via
+  /// the matching forge CLI credential helper for this command (see
+  /// [forgeGitAuthConfigArgs]); SSH and non-forge remotes use the host's
+  /// ordinary credentials. [force] selects `--force-with-lease` or the blunt
+  /// `--force`; [setUpstream] adds `-u`; [followTags] pushes annotated tags
+  /// reachable from the pushed commits. [remote]/[branch] target a specific
+  /// ref.
   Future<SSHCommandResult> push(
     String repoPath, {
     String? remote,
@@ -3460,25 +3509,29 @@ class GitService {
     bool setUpstream = false,
     PushForce force = PushForce.none,
     bool followTags = false,
-  }) => _run(
-    repoPath,
-    [
-      'git',
-      'push',
-      if (force == PushForce.withLease) '--force-with-lease',
-      if (force == PushForce.force) '--force',
-      if (setUpstream) '-u',
-      if (followTags) '--follow-tags',
-      if (remote != null) '--end-of-options',
-      ?remote,
-      if (remote != null && branch != null) branch,
-    ],
-    'git push',
-    timeout: networkTimeout,
-    // Sync lane: push updates the remote (and local tracking refs) but never
-    // the index/worktree — safe alongside reads, exclusive among sync ops.
-    lane: ExecLane.sync,
-  );
+  }) async {
+    final auth = await _forgeAuthArgs(repoPath, remote: remote ?? 'origin');
+    return _run(
+      repoPath,
+      [
+        'git',
+        ...auth,
+        'push',
+        if (force == PushForce.withLease) '--force-with-lease',
+        if (force == PushForce.force) '--force',
+        if (setUpstream) '-u',
+        if (followTags) '--follow-tags',
+        if (remote != null) '--end-of-options',
+        ?remote,
+        if (remote != null && branch != null) branch,
+      ],
+      'git push',
+      timeout: networkTimeout,
+      // Sync lane: push updates the remote (and local tracking refs) but never
+      // the index/worktree — safe alongside reads, exclusive among sync ops.
+      lane: ExecLane.sync,
+    );
+  }
 
   // ---- Tags ----------------------------------------------------------------
 
@@ -3563,19 +3616,23 @@ class GitService {
     String repoPath,
     List<String> names, {
     String remote = 'origin',
-  }) => _run(
-    repoPath,
-    [
-      'git',
-      'push',
-      '--end-of-options',
-      remote,
-      for (final n in names) 'refs/tags/$n',
-    ],
-    'git push tag',
-    timeout: networkTimeout,
-    lane: ExecLane.sync,
-  );
+  }) async {
+    final auth = await _forgeAuthArgs(repoPath, remote: remote);
+    return _run(
+      repoPath,
+      [
+        'git',
+        ...auth,
+        'push',
+        '--end-of-options',
+        remote,
+        for (final n in names) 'refs/tags/$n',
+      ],
+      'git push tag',
+      timeout: networkTimeout,
+      lane: ExecLane.sync,
+    );
+  }
 
   /// Deletes the tag on [remote] (`git push --delete`) — the remote sibling
   /// of [deleteTag]. The full `refs/tags/` refname disambiguates from a
@@ -3586,13 +3643,24 @@ class GitService {
     String repoPath,
     String remote,
     String name,
-  ) => _run(
-    repoPath,
-    ['git', 'push', '--delete', '--end-of-options', remote, 'refs/tags/$name'],
-    'git push --delete',
-    timeout: networkTimeout,
-    lane: ExecLane.sync,
-  );
+  ) async {
+    final auth = await _forgeAuthArgs(repoPath, remote: remote);
+    return _run(
+      repoPath,
+      [
+        'git',
+        ...auth,
+        'push',
+        '--delete',
+        '--end-of-options',
+        remote,
+        'refs/tags/$name',
+      ],
+      'git push --delete',
+      timeout: networkTimeout,
+      lane: ExecLane.sync,
+    );
+  }
 
   /// The tags currently on [remote], as `{shortName: oid}` — the remote-side
   /// truth for "is this local tag on the remote yet?".
@@ -3613,9 +3681,17 @@ class GitService {
   }) async {
     final SSHCommandResult result;
     try {
+      final auth = await _forgeAuthArgs(repoPath, remote: remote);
       result = await _run(
         repoPath,
-        ['git', 'ls-remote', '--tags', '--end-of-options', remote],
+        [
+          'git',
+          ...auth,
+          'ls-remote',
+          '--tags',
+          '--end-of-options',
+          remote,
+        ],
         'git ls-remote',
         timeout: networkTimeout,
         lane: ExecLane.sync,

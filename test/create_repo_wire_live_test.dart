@@ -21,6 +21,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
+import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/github/gh_service.dart';
 import 'package:remote_magic_git/core/gitlab/glab_service.dart';
 import 'package:remote_magic_git/core/ssh/environment_probe.dart';
@@ -156,9 +157,19 @@ void main() {
         );
         expect(add.isSuccess, isTrue, reason: 'remote add: ${add.stderr}');
 
+        // Same argv the create-repo sheet uses: forge CLI credential helper
+        // for this one command so ambient host helpers can't feed a wrong
+        // password over HTTPS.
         final push = await executor.execute(
           repoPath: dest,
-          gitArgs: ['git', 'push', '-u', 'origin', 'main'],
+          gitArgs: [
+            'git',
+            ...forgeGitAuthConfigArgs(Forge.gitlab),
+            'push',
+            '-u',
+            'origin',
+            'main',
+          ],
           timeout: const Duration(minutes: 2),
           retries: 0,
         );
@@ -176,7 +187,13 @@ void main() {
 
         final lsRemote = await executor.execute(
           repoPath: dest,
-          gitArgs: ['git', 'ls-remote', '--heads', 'origin'],
+          gitArgs: [
+            'git',
+            ...forgeGitAuthConfigArgs(Forge.gitlab),
+            'ls-remote',
+            '--heads',
+            'origin',
+          ],
           timeout: const Duration(minutes: 2),
           retries: 0,
         );
@@ -265,6 +282,75 @@ void main() {
       expect(resolved.url, isNotNull,
           reason: 'bare-name resolution must work (${resolved.detail})');
       expect(resolved.url, contains(name));
+    }, timeout: const Timeout(Duration(minutes: 3)));
+
+    // The create-repo regression: gh is authenticated, but plain `git` over
+    // HTTPS does not use that store — and a host-wide credential helper that
+    // answers for every host (e.g. a glab-only wrapper) feeds GitHub a wrong
+    // password. The sheet's push must clear ambient helpers and use
+    // `gh auth git-credential` for the one command.
+    test('https git auth via gh credential helper reaches an existing repo',
+        () async {
+      if (!await _cliReady('gh')) {
+        markTestSkipped('gh not installed/authenticated');
+        return;
+      }
+      final host = await _ghHost() ?? 'github.com';
+      final list = await executor.execute(
+        repoPath: tempDir.path,
+        gitArgs: [
+          'gh', 'repo', 'list', '--json', 'nameWithOwner,url', '--limit', '1',
+        ],
+        extraEnv: GhService.hostEnv(host),
+        retries: 0,
+      );
+      if (!list.isSuccess || list.stdout.trim().isEmpty) {
+        markTestSkipped('no repos on the account to probe');
+        return;
+      }
+      final decoded = jsonDecode(list.stdout.trim());
+      if (decoded is! List || decoded.isEmpty) {
+        markTestSkipped('gh repo list returned no entries');
+        return;
+      }
+      final first = decoded.first;
+      if (first is! Map) {
+        markTestSkipped('unexpected gh repo list shape');
+        return;
+      }
+      final https = first['url'];
+      if (https is! String || https.isEmpty) {
+        markTestSkipped('no https url on listed repo');
+        return;
+      }
+      final url = https.endsWith('.git') ? https : '$https.git';
+
+      // Init a throwaway repo so `git` has a cwd; origin is the live HTTPS URL.
+      final dest = await initLocalRepo('gh-auth-probe');
+      final add = await executor.execute(
+        repoPath: dest,
+        gitArgs: ['git', 'remote', 'add', 'origin', url],
+        retries: 0,
+      );
+      expect(add.isSuccess, isTrue, reason: add.stderr);
+
+      // Without the forge helper, ambient helpers (or none) often fail here
+      // under GIT_TERMINAL_PROMPT=0 — the app always sets that.
+      final ls = await executor.execute(
+        repoPath: dest,
+        gitArgs: [
+          'git',
+          ...forgeGitAuthConfigArgs(Forge.github),
+          'ls-remote',
+          '--heads',
+          'origin',
+        ],
+        timeout: const Duration(minutes: 2),
+        retries: 0,
+      );
+      expect(ls.isSuccess, isTrue,
+          reason: 'HTTPS ls-remote via gh auth git-credential must work '
+              '(${ls.stderr}\n${ls.stdout})');
     }, timeout: const Timeout(Duration(minutes: 3)));
   });
 }

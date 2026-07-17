@@ -83,6 +83,51 @@ void main() {
     });
   });
 
+  group('forgeGitAuthConfigArgs', () {
+    test('github clears ambient helpers and installs gh', () {
+      expect(
+        forgeGitAuthConfigArgs(Forge.github),
+        [
+          '-c',
+          'credential.helper=',
+          '-c',
+          'credential.helper=!gh auth git-credential',
+        ],
+      );
+    });
+
+    test('gitlab installs glab', () {
+      expect(
+        forgeGitAuthConfigArgs(Forge.gitlab),
+        [
+          '-c',
+          'credential.helper=',
+          '-c',
+          'credential.helper=!glab auth git-credential',
+        ],
+      );
+    });
+
+    test('none/unknown leave host credentials alone', () {
+      expect(forgeGitAuthConfigArgs(Forge.none), isEmpty);
+      expect(forgeGitAuthConfigArgs(Forge.unknown), isEmpty);
+    });
+
+    test('all installs both forge CLIs after a clear', () {
+      expect(
+        forgeGitAuthConfigArgsAll(),
+        [
+          '-c',
+          'credential.helper=',
+          '-c',
+          'credential.helper=!gh auth git-credential',
+          '-c',
+          'credential.helper=!glab auth git-credential',
+        ],
+      );
+    });
+  });
+
   group('forgeUrlFromCreateOutput', () {
     test('gh output: a bare URL line, normalized to .git', () {
       expect(
