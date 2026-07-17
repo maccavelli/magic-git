@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/escape_dismissible.dart';
+import '../common/hover_pop.dart';
 import '../switcher/connection_switcher.dart';
 import 'local_repo_form.dart';
 
@@ -79,22 +80,26 @@ class ConnectionLanding extends ConsumerWidget {
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,
-                child: PushButton(
-                  controlSize: ControlSize.large,
-                  onPressed: () =>
-                      ref.read(connectionProvider.notifier).reconnect(),
-                  child: const Text('Reconnect'),
+                child: HoverPop(
+                  child: PushButton(
+                    controlSize: ControlSize.large,
+                    onPressed: () =>
+                        ref.read(connectionProvider.notifier).reconnect(),
+                    child: const Text('Reconnect'),
+                  ),
                 ),
               ),
               const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,
-                child: PushButton(
-                  controlSize: ControlSize.large,
-                  secondary: true,
-                  onPressed: () =>
-                      ref.read(connectionProvider.notifier).disconnect(),
-                  child: const Text('Start Fresh'),
+                child: HoverPop(
+                  child: PushButton(
+                    controlSize: ControlSize.large,
+                    secondary: true,
+                    onPressed: () =>
+                        ref.read(connectionProvider.notifier).disconnect(),
+                    child: const Text('Start Fresh'),
+                  ),
                 ),
               ),
             ],
@@ -149,11 +154,13 @@ class ConnectionLanding extends ConsumerWidget {
               const SizedBox(height: 28),
               SizedBox(
                 width: double.infinity,
-                child: PushButton(
-                  controlSize: ControlSize.large,
-                  secondary: true,
-                  onPressed: () => _openConnectionsManager(context),
-                  child: const Text('Connections Manager'),
+                child: HoverPop(
+                  child: PushButton(
+                    controlSize: ControlSize.large,
+                    secondary: true,
+                    onPressed: () => _openConnectionsManager(context),
+                    child: const Text('Connections Manager'),
+                  ),
                 ),
               ),
               const SizedBox(height: 8),
@@ -328,12 +335,15 @@ class _RecentConnectionsButtonState
       child: SizedBox(
         key: _buttonKey,
         width: double.infinity,
-        child: PushButton(
-          controlSize: ControlSize.large,
-          secondary: true,
-          onPressed: empty ? null : _toggleMenu,
-          child: Text(
-            empty ? 'No Recent Repositories' : 'Recent Repositories',
+        child: HoverPop(
+          enabled: !empty,
+          child: PushButton(
+            controlSize: ControlSize.large,
+            secondary: true,
+            onPressed: empty ? null : _toggleMenu,
+            child: Text(
+              empty ? 'No Recent Repositories' : 'Recent Repositories',
+            ),
           ),
         ),
       ),
