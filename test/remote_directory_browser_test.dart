@@ -12,6 +12,7 @@ import 'package:remote_magic_git/core/git/host_fs_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/workspace/remote_directory_browser.dart';
 
 /// Serves a fixed virtual directory tree; records which paths were listed.
@@ -65,7 +66,7 @@ Future<String?> _open(
         debugShowCheckedModeBanner: false,
         home: Builder(
           builder: (context) => Center(
-            child: PushButton(
+            child: AppPushButton(
               controlSize: ControlSize.large,
               child: const Text('open'),
               onPressed: () async {

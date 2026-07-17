@@ -10,6 +10,7 @@ import '../../core/forge/auth_status.dart';
 import '../../core/forge/forge.dart';
 import '../../core/git/watch_event.dart';
 import '../../core/providers/app_providers.dart';
+import '../common/buttons.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'contribution_heatmap.dart';
@@ -683,7 +684,7 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
         if (!_footprintRequested)
           Row(
             children: [
-              PushButton(
+              AppPushButton(
                 controlSize: ControlSize.regular,
                 secondary: true,
                 onPressed: () => setState(() => _footprintRequested = true),

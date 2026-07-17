@@ -8,6 +8,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_theme.dart';
 import '../common/actions.dart';
+import '../common/buttons.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
@@ -616,14 +617,14 @@ class _BranchNamePromptState extends State<_BranchNamePrompt> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     secondary: true,
                     onPressed: () => Navigator.of(context).pop(),
                     child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 10),
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     onPressed: _submit,
                     child: const Text('Create'),

@@ -7,10 +7,10 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
-
 import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/command_palette.dart';
 import 'package:remote_magic_git/features/common/escape_dismissible.dart';
 
@@ -63,7 +63,7 @@ Future<void> _open(
         debugShowCheckedModeBanner: false,
         home: Builder(
           builder: (context) => Center(
-            child: PushButton(
+            child: AppPushButton(
               controlSize: ControlSize.large,
               // Mirrors the app shell's call site: dismissal comes from the
               // registry-backed EscapeDismissible, not palette-internal

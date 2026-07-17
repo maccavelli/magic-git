@@ -1,8 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/git/host_fs_service.dart';
 import '../../core/providers/app_providers.dart';
+import '../common/buttons.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
@@ -216,7 +218,7 @@ class _RemoteDirectoryBrowserSheetState
                     ),
                   ),
                   const SizedBox(width: 12),
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     onPressed: _currentPath == null
                         ? null

@@ -2,9 +2,11 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/utils/file_actions.dart';
+import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/tool_icon_button.dart';
 import 'code_view.dart';
@@ -572,7 +574,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
   Widget? _openExternallyButton() {
     final isLocal = ref.watch(connectionProvider.select((c) => c.isLocal));
     if (!isLocal) return null;
-    return PushButton(
+    return AppPushButton(
       controlSize: ControlSize.large,
       secondary: true,
       onPressed: () => openFiles(['${widget.repoPath}/${widget.path}']),

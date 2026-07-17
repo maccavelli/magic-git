@@ -70,6 +70,11 @@ class TabStrip extends StatelessWidget {
             child: MacosIconButton(
               icon: const MacosIcon(CupertinoIcons.add, size: 15),
               boxConstraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              // Canonical cursor policy (common/buttons.dart): hand when
+              // clickable, arrow at the cap.
+              mouseCursor: controller.canOpenTab
+                  ? SystemMouseCursors.click
+                  : SystemMouseCursors.basic,
               // Disabled at the cap (a null handler greys it out).
               onPressed: controller.canOpenTab ? controller.newTab : null,
             ),
@@ -163,6 +168,7 @@ class _CloseButton extends StatelessWidget {
       icon: const MacosIcon(CupertinoIcons.xmark, size: 11),
       boxConstraints: const BoxConstraints(minWidth: 22, minHeight: 22),
       padding: EdgeInsets.zero,
+      mouseCursor: SystemMouseCursors.click,
       onPressed: onClose,
     );
   }

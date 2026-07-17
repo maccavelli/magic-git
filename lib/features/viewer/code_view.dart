@@ -470,16 +470,25 @@ class _CodeViewState extends State<CodeView> {
             MacosIconButton(
               icon: const MacosIcon(CupertinoIcons.chevron_up, size: 14),
               boxConstraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+              // Canonical cursor policy (common/buttons.dart): hand when
+              // there are matches to step through.
+              mouseCursor: total == 0
+                  ? SystemMouseCursors.basic
+                  : SystemMouseCursors.click,
               onPressed: total == 0 ? null : () => _step(-1),
             ),
             MacosIconButton(
               icon: const MacosIcon(CupertinoIcons.chevron_down, size: 14),
               boxConstraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+              mouseCursor: total == 0
+                  ? SystemMouseCursors.basic
+                  : SystemMouseCursors.click,
               onPressed: total == 0 ? null : () => _step(1),
             ),
             MacosIconButton(
               icon: const MacosIcon(CupertinoIcons.xmark, size: 14),
               boxConstraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+              mouseCursor: SystemMouseCursors.click,
               onPressed: _closeFind,
             ),
           ],

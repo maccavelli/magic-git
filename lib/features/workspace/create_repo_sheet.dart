@@ -5,6 +5,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/forge/forge.dart';
 import '../../core/git/host_fs_service.dart';
 import '../../core/github/gh_service.dart';
@@ -13,6 +14,7 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/ssh/ssh_command_executor.dart';
 import '../../core/storage/saved_connection.dart';
+import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
@@ -1233,7 +1235,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
 
   Widget _sourceButton(String label, _SourceMode mode) {
     final active = _source == mode;
-    return PushButton(
+    return AppPushButton(
       controlSize: ControlSize.regular,
       secondary: !active,
       onPressed: () => setState(() {
@@ -1390,7 +1392,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               ),
             ),
             const SizedBox(width: 8),
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.regular,
               secondary: true,
               onPressed: _picking ? null : _pickLocalFolder,
@@ -1424,7 +1426,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               ),
             ),
             const SizedBox(width: 8),
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.regular,
               secondary: true,
               onPressed: _browseRemoteFolder,
@@ -1471,7 +1473,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               ),
             ),
             const SizedBox(width: 8),
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.regular,
               secondary: true,
               onPressed: _picking ? null : _pickLocalParent,
@@ -1505,7 +1507,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               ),
             ),
             const SizedBox(width: 8),
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.regular,
               secondary: true,
               onPressed: _browseRemote,
@@ -1657,7 +1659,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
 
   Widget _remoteButton(String label, _RemoteMode mode) {
     final active = _remote == mode;
-    return PushButton(
+    return AppPushButton(
       controlSize: ControlSize.regular,
       secondary: !active,
       onPressed: () => setState(() {
@@ -1753,7 +1755,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       return Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('Close'),
@@ -1782,7 +1784,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         else
           const Spacer(),
         const SizedBox(width: 12),
-        PushButton(
+        AppPushButton(
           controlSize: ControlSize.large,
           secondary: true,
           onPressed: _submitting ? null : _requestClose,
@@ -1790,7 +1792,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         ),
         if (_stepIndex > 0) ...[
           const SizedBox(width: 8),
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             secondary: true,
             onPressed: _submitting ? null : _goBack,
@@ -1799,13 +1801,13 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         ],
         const SizedBox(width: 8),
         if (last)
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             onPressed: _canSubmit ? _submit : null,
             child: const Text('Create'),
           )
         else
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             onPressed: !_submitting && steps[_stepIndex].valid()
                 ? _goNext

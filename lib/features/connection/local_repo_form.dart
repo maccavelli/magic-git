@@ -2,12 +2,14 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/local/linked_worktree_probe.dart';
 import '../../core/local/scoped_access.dart';
 import '../../core/local/security_scoped_bookmark.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_local_repo.dart';
 import '../common/actions.dart';
+import '../common/buttons.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
@@ -342,7 +344,7 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.regular,
                     secondary: true,
                     onPressed: _picking ? null : _pickFolder,
@@ -405,7 +407,7 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
               if (phase == ConnectionPhase.connecting)
                 const Center(child: ProgressCircle())
               else
-                PushButton(
+                AppPushButton(
                   controlSize: ControlSize.large,
                   onPressed: (_pickedPath != null && !_submitting)
                       ? _open

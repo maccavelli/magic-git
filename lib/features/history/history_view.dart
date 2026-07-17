@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:isolate';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart' show GestureBinding, PointerScrollEvent;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/git/commit_graph.dart';
 import '../../core/git/git_service.dart';
 import '../../core/git/log_search.dart';
@@ -16,6 +18,7 @@ import '../branches/create_tag_sheet.dart';
 import '../common/actions.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
+import '../common/buttons.dart';
 import '../common/commit_patch_view.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
@@ -1533,7 +1536,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.small,
             secondary: true,
             onPressed: _clearFilters,

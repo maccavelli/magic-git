@@ -13,9 +13,9 @@ import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
-
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/worktrees/add_worktree_sheet.dart';
 
 /// Pins the connection to a fixed state (the app default in tests is the SSH
@@ -99,10 +99,10 @@ String fieldText(WidgetTester tester, int index) => tester
     .controller!
     .text;
 
-PushButton createButton(WidgetTester tester) => tester.widget<PushButton>(
+AppPushButton createButton(WidgetTester tester) => tester.widget<AppPushButton>(
   find.ancestor(
     of: find.text('Create Worktree'),
-    matching: find.byType(PushButton),
+    matching: find.byType(AppPushButton),
   ),
 );
 
@@ -160,10 +160,10 @@ void main() {
       findsOneWidget,
     );
     // …and Create is unavailable while that is true.
-    final create = tester.widget<PushButton>(
+    final create = tester.widget<AppPushButton>(
       find.ancestor(
         of: find.text('Create Worktree'),
-        matching: find.byType(PushButton),
+        matching: find.byType(AppPushButton),
       ),
     );
     expect(create.onPressed, isNull);

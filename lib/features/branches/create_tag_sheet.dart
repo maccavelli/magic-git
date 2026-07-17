@@ -9,6 +9,7 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../common/actions.dart';
+import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
@@ -274,7 +275,7 @@ class _CreateTagSheetState extends ConsumerState<CreateTagSheet> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     secondary: true,
                     onPressed: _submitting
@@ -283,7 +284,7 @@ class _CreateTagSheetState extends ConsumerState<CreateTagSheet> {
                     child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 8),
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     onPressed: _valid && !_submitting ? _submit : null,
                     child: Text(_submitting ? 'Creating…' : 'Create Tag'),

@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/features/common/actions.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/context_menu.dart';
 import 'package:remote_magic_git/features/common/escape_dismissible.dart';
 import 'package:remote_magic_git/features/settings/keyboard_shortcuts_sheet.dart';
@@ -33,7 +34,7 @@ Future<BuildContext> _host(
         builder: (context) {
           captured = context;
           return Center(
-            child: PushButton(
+            child: AppPushButton(
               controlSize: ControlSize.large,
               onPressed: () => onPressed(context),
               child: const Text('go'),

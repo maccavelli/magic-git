@@ -4,6 +4,7 @@ import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/material.dart' show SelectableText;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/utils/display_error.dart';
 import '../core/git/git_service.dart';
 import '../core/output/output_log.dart';
@@ -15,6 +16,7 @@ import '../core/undo/undo_controller.dart';
 import 'branches/branches_view.dart';
 import 'common/actions.dart';
 import 'common/branch_switch.dart';
+import 'common/buttons.dart';
 import 'common/command_palette.dart';
 import 'common/diff_view.dart' show kDiffMono;
 import 'common/escape_dismissible.dart';
@@ -178,7 +180,7 @@ class _ReconnectingOverlayState extends State<_ReconnectingOverlay> {
               Row(
                 children: [
                   Expanded(
-                    child: PushButton(
+                    child: AppPushButton(
                       controlSize: ControlSize.large,
                       secondary: true,
                       onPressed: widget.onStopRetrying,
@@ -187,7 +189,7 @@ class _ReconnectingOverlayState extends State<_ReconnectingOverlay> {
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: PushButton(
+                    child: AppPushButton(
                       controlSize: ControlSize.large,
                       onPressed: widget.onCancel,
                       child: const Text('Cancel'),
@@ -445,7 +447,7 @@ class _AppShellState extends ConsumerState<AppShell> {
           ),
           title: const Text('Host Key Changed'),
           message: _HostKeyPromptMessage(prompt: prompt),
-          primaryButton: PushButton(
+          primaryButton: AppPushButton(
             controlSize: ControlSize.large,
             onPressed: () {
               Navigator.of(dialogContext).pop();
@@ -453,7 +455,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             },
             child: const Text('Cancel Connection'),
           ),
-          secondaryButton: PushButton(
+          secondaryButton: AppPushButton(
             controlSize: ControlSize.large,
             secondary: true,
             color: MacosColors.systemRedColor,

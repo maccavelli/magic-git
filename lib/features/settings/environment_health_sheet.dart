@@ -4,12 +4,14 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/install_planner.dart';
 import '../../core/settings/tool_catalog.dart';
 import '../../core/ssh/environment_probe.dart';
 import '../common/actions.dart';
+import '../common/buttons.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 
@@ -303,7 +305,7 @@ class _EnvironmentHealthSheetState
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     secondary: true,
                     onPressed: connected && _runningBin == null
@@ -312,7 +314,7 @@ class _EnvironmentHealthSheetState
                     child: const Text('Re-check'),
                   ),
                   const SizedBox(width: 10),
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     onPressed: () => Navigator.of(context).pop(),
                     child: const Text('Done'),
@@ -423,7 +425,7 @@ class _EnvironmentHealthSheetState
       padding: const EdgeInsets.only(top: 10),
       child: Row(
         children: [
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.regular,
             onPressed: busy ? null : () => _install(spec, cmd),
             child: running
@@ -482,7 +484,7 @@ class _EnvironmentHealthSheetState
           ),
           child: Row(
             children: [
-              PushButton(
+              AppPushButton(
                 controlSize: ControlSize.regular,
                 secondary: true,
                 onPressed: busy ? null : () => _sideload(spec),

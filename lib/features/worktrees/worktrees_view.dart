@@ -14,6 +14,7 @@ import '../branches/branches_view.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/busy_action.dart';
+import '../common/buttons.dart';
 import '../common/context_menu.dart';
 import '../common/label_chip.dart';
 import '../common/prompt_text_sheet.dart';
@@ -829,7 +830,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
               ),
             ),
             const SizedBox(height: 16),
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.large,
               onPressed: busy ? null : _add,
               child: const Text('Add Worktree…'),

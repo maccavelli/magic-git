@@ -8,7 +8,6 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
-
 import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/gitlab/glab_service.dart';
@@ -16,6 +15,7 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/gitlab/create_mr_sheet.dart';
 
 const _repo = '/repo';
@@ -206,7 +206,7 @@ void main() {
       'My change',
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(PushButton, 'Create'));
+    await tester.tap(find.widgetWithText(AppPushButton, 'Create'));
     await tester.pumpAndSettle();
 
     expect(git.pushes, [('origin', 'feature', true)]);

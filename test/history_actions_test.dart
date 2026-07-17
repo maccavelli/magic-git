@@ -11,12 +11,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
-
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/branches/create_tag_sheet.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/commit_patch_view.dart';
 import 'package:remote_magic_git/features/common/sheet_chrome.dart';
 import 'package:remote_magic_git/features/history/commit_graph_view.dart'
@@ -501,7 +501,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Cherry-pick 3 commits'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(PushButton, 'Cherry-pick'));
+    await tester.tap(find.widgetWithText(AppPushButton, 'Cherry-pick'));
     await tester.pumpAndSettle();
 
     expect(git.cherryPicked, [
@@ -527,7 +527,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Revert 3 commits'));
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(PushButton, 'Revert'));
+    await tester.tap(find.widgetWithText(AppPushButton, 'Revert'));
     await tester.pumpAndSettle();
 
     // Newest reverted first; the mid-commit conflict stopped the batch, so

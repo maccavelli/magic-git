@@ -8,12 +8,12 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
-
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/branches/create_tag_sheet.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _repo = '/repo';
@@ -76,7 +76,7 @@ Future<_RecordingGit> _pump(
         // Behind a launcher so the sheet sits on a poppable route — the
         // successful-submit path closes itself with Navigator.pop.
         home: Builder(
-          builder: (context) => PushButton(
+          builder: (context) => AppPushButton(
             controlSize: ControlSize.large,
             onPressed: () => showMacosSheet<bool>(
               context: context,
@@ -97,10 +97,10 @@ Future<_RecordingGit> _pump(
   return git;
 }
 
-Finder get _createButton => find.widgetWithText(PushButton, 'Create Tag');
+Finder get _createButton => find.widgetWithText(AppPushButton, 'Create Tag');
 
 VoidCallback? _createEnabled(WidgetTester tester) =>
-    tester.widget<PushButton>(_createButton).onPressed;
+    tester.widget<AppPushButton>(_createButton).onPressed;
 
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));

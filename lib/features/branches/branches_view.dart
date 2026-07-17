@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
@@ -9,6 +10,7 @@ import '../../core/theme/app_theme.dart';
 import '../common/actions.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
+import '../common/buttons.dart';
 import '../common/field_styles.dart';
 import '../common/label_chip.dart';
 import '../common/list_keyboard_nav.dart';
@@ -336,7 +338,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           // branch/tag list rebuild just to toggle this one button.
           ValueListenableBuilder<TextEditingValue>(
             valueListenable: _newBranch,
-            builder: (context, value, _) => PushButton(
+            builder: (context, value, _) => AppPushButton(
               controlSize: ControlSize.large,
               onPressed: value.text.trim().isEmpty || busy
                   ? null
@@ -693,7 +695,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
       child: Align(
         alignment: Alignment.centerLeft,
-        child: PushButton(
+        child: AppPushButton(
           controlSize: ControlSize.regular,
           secondary: true,
           onPressed: busy ? null : _openCreateTagSheet,
@@ -891,7 +893,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
             ),
           ),
           if (localOnly.isNotEmpty && remote != null)
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.small,
               secondary: true,
               onPressed: busy

@@ -1,12 +1,14 @@
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/local/scoped_access.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/storage/saved_local_repo.dart';
 import '../common/actions.dart';
+import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
@@ -54,7 +56,7 @@ class ConnectionSwitcher extends ConsumerWidget {
         border: Border(top: BorderSide(color: MacosColors.separatorColor)),
       ),
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
-      child: PushButton(
+      child: AppPushButton(
         controlSize: ControlSize.large,
         secondary: true,
         onPressed: () => showMacosSheet<void>(
@@ -100,7 +102,7 @@ class LogoutButton extends ConsumerWidget {
         border: Border(top: BorderSide(color: MacosColors.separatorColor)),
       ),
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
-      child: PushButton(
+      child: AppPushButton(
         controlSize: ControlSize.large,
         secondary: true,
         // Returns to ConnectionLanding: disconnect() drops the session, which
@@ -304,7 +306,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
         children: [
           Text('No saved connections', style: typography.body),
           const SizedBox(height: 12),
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             onPressed: () => _newConnection(context, ref),
             child: const Text('New connection'),
@@ -1137,14 +1139,14 @@ class _AddRepositorySheetState extends State<AddRepositorySheet> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     secondary: true,
                     onPressed: () => Navigator.of(context).pop(),
                     child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 8),
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     onPressed: _path.text.trim().isEmpty
                         ? null

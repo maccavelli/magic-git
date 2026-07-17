@@ -1,11 +1,13 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/git/git_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
+import '../common/buttons.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import '../dnd/drag_cell.dart';
@@ -249,14 +251,14 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
                       ),
                     ),
                   ),
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     secondary: true,
                     onPressed: _busy ? null : () => Navigator.of(context).pop(),
                     child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 10),
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     onPressed: (_busy || keepCount == 0) ? null : _apply,
                     child: _busy
@@ -503,6 +505,10 @@ class _MiniButton extends StatelessWidget {
       ),
       padding: const EdgeInsets.all(2),
       boxConstraints: const BoxConstraints(minWidth: 20, minHeight: 16),
+      // Canonical cursor policy (common/buttons.dart).
+      mouseCursor: onPressed == null
+          ? SystemMouseCursors.basic
+          : SystemMouseCursors.click,
       onPressed: onPressed,
     );
   }

@@ -9,6 +9,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/forge/forge_dashboard.dart';
 import '../../core/providers/app_providers.dart' hide ConnectionState;
 import '../../core/utils/display_error.dart';
+import '../common/buttons.dart';
 import '../common/diff_view.dart';
 import '../common/field_styles.dart';
 import '../common/labeled_text_field.dart';
@@ -168,7 +169,7 @@ class SheetSubmitRow extends StatelessWidget {
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        PushButton(
+        AppPushButton(
           controlSize: ControlSize.large,
           secondary: true,
           onPressed: () => Navigator.of(context).pop(),
@@ -178,7 +179,7 @@ class SheetSubmitRow extends StatelessWidget {
         if (submitting)
           const ProgressCircle()
         else
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             onPressed: canSubmit ? onSubmit : null,
             child: Text(submitLabel),
@@ -264,7 +265,7 @@ class _ForgeDiffPreviewState extends ConsumerState<ForgeDiffPreview> {
         const SizedBox(height: 8),
         Align(
           alignment: Alignment.centerLeft,
-          child: PushButton(
+          child: AppPushButton(
             controlSize: ControlSize.small,
             secondary: true,
             onPressed: () => setState(() {

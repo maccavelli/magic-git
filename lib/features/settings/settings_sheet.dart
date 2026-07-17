@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
@@ -11,6 +12,7 @@ import '../../core/settings/tool_health.dart';
 import '../../core/ssh/environment_probe.dart';
 import '../../core/storage/known_hosts_store.dart';
 import '../common/actions.dart';
+import '../common/buttons.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
@@ -254,14 +256,14 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     secondary: true,
                     onPressed: () => Navigator.of(context).pop(),
                     child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 10),
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     onPressed: _save,
                     child: const Text('Save'),

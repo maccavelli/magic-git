@@ -1,7 +1,9 @@
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/providers/app_providers.dart';
+import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/hover_pop.dart';
 import '../switcher/connection_switcher.dart';
@@ -81,7 +83,7 @@ class ConnectionLanding extends ConsumerWidget {
               SizedBox(
                 width: double.infinity,
                 child: HoverPop(
-                  child: PushButton(
+                  child: AppPushButton(
                     controlSize: ControlSize.large,
                     onPressed: () =>
                         ref.read(connectionProvider.notifier).reconnect(),
@@ -93,7 +95,7 @@ class ConnectionLanding extends ConsumerWidget {
               SizedBox(
                 width: double.infinity,
                 child: HoverPop(
-                  child: PushButton(
+                  child: AppPushButton(
                     controlSize: ControlSize.large,
                     secondary: true,
                     onPressed: () =>
@@ -155,7 +157,7 @@ class ConnectionLanding extends ConsumerWidget {
               SizedBox(
                 width: double.infinity,
                 child: HoverPop(
-                  child: PushButton(
+                  child: AppPushButton(
                     controlSize: ControlSize.large,
                     secondary: true,
                     onPressed: () => _openConnectionsManager(context),
@@ -337,7 +339,7 @@ class _RecentConnectionsButtonState
         width: double.infinity,
         child: HoverPop(
           enabled: !empty,
-          child: PushButton(
+          child: AppPushButton(
             controlSize: ControlSize.large,
             secondary: true,
             onPressed: empty ? null : _toggleMenu,

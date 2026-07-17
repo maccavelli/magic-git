@@ -10,6 +10,7 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/diff_view.dart';
 import 'package:remote_magic_git/features/recovery/recovery_sheet.dart';
 
@@ -146,7 +147,7 @@ void main() {
 
     expect(find.text('New branch from this state'), findsOneWidget);
     await tester.enterText(find.byType(MacosTextField), 'rescue/feature');
-    await tester.tap(find.widgetWithText(PushButton, 'Create'));
+    await tester.tap(find.widgetWithText(AppPushButton, 'Create'));
     // Settle fully: the prompt's exit animation runs with the text field
     // still holding its (widget-owned) controller — this is where a
     // caller-disposed controller used to be a landmine.
@@ -169,7 +170,7 @@ void main() {
     await tester.tap(find.text('Create branch here…'));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.widgetWithText(PushButton, 'Cancel'));
+    await tester.tap(find.widgetWithText(AppPushButton, 'Cancel'));
     await tester.pumpAndSettle();
 
     expect(git.branched, isEmpty);

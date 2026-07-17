@@ -18,6 +18,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/storage/connection_store.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/workspace/create_repo_sheet.dart';
 
 class _FakeExecutor extends SSHCommandExecutor {
@@ -134,9 +135,9 @@ Future<void> _pumpCreate(WidgetTester tester) async {
   while (tester.takeException() != null) {}
 }
 
-Finder _createButton() => find.widgetWithText(PushButton, 'Create');
+Finder _createButton() => find.widgetWithText(AppPushButton, 'Create');
 
-Finder _continueButton() => find.widgetWithText(PushButton, 'Continue');
+Finder _continueButton() => find.widgetWithText(AppPushButton, 'Continue');
 
 Finder _nameField() => find.byWidgetPredicate(
   (w) => w is MacosTextField && w.placeholder == 'my-project',
@@ -159,15 +160,15 @@ void main() {
     await _next(tester); // Source → Remote (parent prefilled from session)
     await _next(tester); // Remote → Details (default: no remote)
 
-    expect(tester.widget<PushButton>(_continueButton()).onPressed, isNull);
+    expect(tester.widget<AppPushButton>(_continueButton()).onPressed, isNull);
 
     await tester.enterText(_nameField(), 'new-proj');
     await tester.pumpAndSettle();
-    expect(tester.widget<PushButton>(_continueButton()).onPressed, isNotNull);
+    expect(tester.widget<AppPushButton>(_continueButton()).onPressed, isNotNull);
 
     await tester.enterText(_nameField(), '../evil');
     await tester.pumpAndSettle();
-    expect(tester.widget<PushButton>(_continueButton()).onPressed, isNull);
+    expect(tester.widget<AppPushButton>(_continueButton()).onPressed, isNull);
   });
 
   testWidgets(
@@ -206,7 +207,7 @@ void main() {
       await tester.pumpAndSettle();
       await _next(tester); // Source → Remote
 
-      await tester.tap(find.widgetWithText(PushButton, 'GitLab'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'GitLab'));
       await tester.pumpAndSettle();
 
       Finder hostField() => find.byWidgetPredicate(
@@ -342,7 +343,7 @@ void main() {
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
-      await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
       await tester.pumpAndSettle();
       await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'new-proj');
@@ -392,7 +393,7 @@ void main() {
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
-      await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
       await tester.pumpAndSettle();
       await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'new-proj');
@@ -432,7 +433,7 @@ void main() {
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
-      await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
       await tester.pumpAndSettle();
       await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'new-proj');
@@ -477,7 +478,7 @@ void main() {
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
-      await tester.tap(find.widgetWithText(PushButton, 'GitLab'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'GitLab'));
       await tester.pumpAndSettle();
       await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'new-proj');
@@ -515,7 +516,7 @@ void main() {
         findsWidgets,
       );
 
-      await tester.tap(find.widgetWithText(PushButton, 'Close'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'Close'));
       await tester.pumpAndSettle();
       expect(find.byType(CreateRepositorySheet), findsNothing);
     },
@@ -526,7 +527,7 @@ void main() {
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
-      await tester.tap(find.widgetWithText(PushButton, 'GitLab'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'GitLab'));
       await tester.pumpAndSettle();
       await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'new-proj');
@@ -569,10 +570,10 @@ void main() {
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
-      await tester.tap(find.widgetWithText(PushButton, 'Custom URL'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'Custom URL'));
       await tester.pumpAndSettle();
       expect(
-        tester.widget<PushButton>(_continueButton()).onPressed,
+        tester.widget<AppPushButton>(_continueButton()).onPressed,
         isNull,
         reason: 'no URL entered yet',
       );
@@ -618,7 +619,7 @@ void main() {
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
-      await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
       await tester.pumpAndSettle();
       await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'new-proj');
@@ -683,7 +684,7 @@ void main() {
     (tester) async {
       final (stub, exec, _) = await _pumpConnected(tester);
       await _next(tester); // Source
-      await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
       await tester.pumpAndSettle();
       await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'new-proj');
@@ -714,7 +715,7 @@ void main() {
   // --- Existing-folder source -----------------------------------------
 
   Future<void> toExistingFolder(WidgetTester tester, String path) async {
-    await tester.tap(find.widgetWithText(PushButton, 'Existing folder'));
+    await tester.tap(find.widgetWithText(AppPushButton, 'Existing folder'));
     await tester.pumpAndSettle();
     await tester.enterText(
       find.byWidgetPredicate(
@@ -740,7 +741,7 @@ void main() {
       final (stub, exec, _) = await _pumpConnected(tester);
       await toExistingFolder(tester, '/srv/app');
       await _next(tester); // Source
-      await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
       await tester.pumpAndSettle();
       await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'app-repo');
@@ -777,7 +778,7 @@ void main() {
       final (stub, exec, _) = await _pumpConnected(tester);
       await toExistingFolder(tester, '/srv/app');
       await _next(tester); // Source
-      await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
       await tester.pumpAndSettle();
       await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'app-repo');
@@ -816,7 +817,7 @@ void main() {
       final (stub, exec, _) = await _pumpConnected(tester);
       await toExistingFolder(tester, '/srv/app');
       await _next(tester); // Source
-      await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
       await tester.pumpAndSettle();
       await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'app-repo');
@@ -836,9 +837,9 @@ void main() {
       expect(find.byType(CreateRepositorySheet), findsOneWidget);
 
       // Go back to the Remote step, opt in, and retry.
-      await tester.tap(find.widgetWithText(PushButton, 'Back'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
       await tester.pumpAndSettle();
-      await tester.tap(find.widgetWithText(PushButton, 'Back'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
       await tester.pumpAndSettle();
       final replaceToggle = find.byWidgetPredicate(
         (w) =>
@@ -879,7 +880,7 @@ void main() {
     final (stub, exec, _) = await _pumpConnected(tester);
     await toExistingFolder(tester, '/srv/app');
     await _next(tester); // Source
-    await tester.tap(find.widgetWithText(PushButton, 'GitHub'));
+    await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
     await tester.pumpAndSettle();
     await _next(tester); // Remote → Details
     await tester.enterText(_nameField(), 'app-repo');
@@ -905,7 +906,7 @@ void main() {
       final (stub, exec, _) = await _pumpConnected(tester);
       await toExistingFolder(tester, '/srv/app');
       await _next(tester); // Source
-      await tester.tap(find.widgetWithText(PushButton, 'Custom URL'));
+      await tester.tap(find.widgetWithText(AppPushButton, 'Custom URL'));
       await tester.pumpAndSettle();
       const url = 'git@gitea.example.com:me/app.git';
       await tester.enterText(

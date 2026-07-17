@@ -3,6 +3,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/display_error.dart';
+import '../common/buttons.dart';
 import '../common/tool_icon_button.dart';
 
 /// Small widgets shared by the GitHub and GitLab panels and their jobs views.
@@ -271,7 +272,7 @@ class InFlightPushButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (busy) return const ProgressCircle();
-    return PushButton(
+    return AppPushButton(
       controlSize: ControlSize.large,
       secondary: secondary,
       onPressed: onPressed,

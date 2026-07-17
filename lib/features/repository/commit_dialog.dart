@@ -3,9 +3,11 @@ import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
+import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
@@ -311,7 +313,7 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
       spacing: 8,
       runSpacing: 8,
       children: [
-        PushButton(
+        AppPushButton(
           controlSize: ControlSize.large,
           secondary: true,
           onPressed: _committing ? null : () => Navigator.of(context).pop(),
@@ -321,18 +323,18 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
           const ProgressCircle()
         else if (!_loadingPreview) ...[
           if (_generated && !_editable)
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.large,
               secondary: true,
               onPressed: _beginEdit,
               child: const Text('Edit'),
             ),
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             onPressed: canAccept ? () => _commit(push: true) : null,
             child: const Text('Accept + Push'),
           ),
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             onPressed: canAccept ? () => _commit() : null,
             child: const Text('Accept'),

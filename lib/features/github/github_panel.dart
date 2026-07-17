@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/github/models.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
@@ -8,6 +9,7 @@ import '../../core/settings/pane_layout.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/branch_switch.dart';
+import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/resizable_master_detail.dart';
@@ -319,7 +321,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     final row = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        PushButton(
+        AppPushButton(
           controlSize: ControlSize.large,
           onPressed: pr.draft ? null : () => _merge(pr.number),
           child: const Text('Merge'),

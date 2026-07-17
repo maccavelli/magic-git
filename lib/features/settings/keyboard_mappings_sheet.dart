@@ -5,8 +5,10 @@ import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/settings/keymap.dart';
 import '../common/actions.dart';
+import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
@@ -252,7 +254,7 @@ class _KeyboardMappingsSheetState
                 const SizedBox(height: 14),
                 Row(
                   children: [
-                    PushButton(
+                    AppPushButton(
                       controlSize: ControlSize.large,
                       secondary: true,
                       onPressed: () async {
@@ -268,7 +270,7 @@ class _KeyboardMappingsSheetState
                       child: const Text('Reset All'),
                     ),
                     const Spacer(),
-                    PushButton(
+                    AppPushButton(
                       controlSize: ControlSize.large,
                       onPressed: () => Navigator.of(context).pop(),
                       child: const Text('Done'),

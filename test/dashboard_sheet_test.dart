@@ -15,6 +15,7 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/dashboard/dashboard_sheet.dart';
 
 class _StubConnection extends ConnectionController {
@@ -181,7 +182,7 @@ void main() {
     await _pump(tester);
 
     expect(find.text('2.85 GiB'), findsNothing);
-    final measure = find.widgetWithText(PushButton, 'Measure');
+    final measure = find.widgetWithText(AppPushButton, 'Measure');
     await tester.ensureVisible(measure);
     await tester.pump();
     await tester.tap(measure);

@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/git/git_service.dart';
 import '../../core/git/unified_diff.dart';
 import '../../core/git/watch_event.dart';
@@ -14,6 +15,7 @@ import '../../core/utils/file_actions.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
 import '../common/busy_action.dart';
+import '../common/buttons.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
@@ -1046,14 +1048,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           const SizedBox(width: 8),
           Expanded(child: Text(hint, style: typography.caption1)),
           if (op == PendingOp.rebase) ...[
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.small,
               onPressed: _continueRebase,
               child: const Text('Continue'),
             ),
             const SizedBox(width: 8),
           ],
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.small,
             secondary: true,
             onPressed: () => _abortPending(op),
@@ -1331,7 +1333,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             ).typography.caption1.copyWith(color: MacosColors.systemGrayColor),
           ),
           const Spacer(),
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             secondary: true,
             // The mirror of Stage All — nothing staged, nothing to do.
@@ -1339,14 +1341,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             child: const Text('Unstage All'),
           ),
           const SizedBox(width: 8),
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             secondary: !hasUnstaged,
             onPressed: _stageAll,
             child: const Text('Stage All'),
           ),
           const SizedBox(width: 8),
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             // Same convention as "Stage All": grey when idle, blue once
             // there's something to act on.
@@ -1450,14 +1452,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              PushButton(
+              AppPushButton(
                 controlSize: ControlSize.small,
                 secondary: true,
                 onPressed: () => _resolve(path, useOurs: true),
                 child: const Text('Use Ours'),
               ),
               const SizedBox(width: 6),
-              PushButton(
+              AppPushButton(
                 controlSize: ControlSize.small,
                 secondary: true,
                 onPressed: () => _resolve(path, useOurs: false),

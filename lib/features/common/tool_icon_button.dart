@@ -53,6 +53,11 @@ class ToolIconButton extends StatelessWidget {
           icon: MacosIcon(icon, size: size, color: color),
           padding: const EdgeInsets.all(6),
           disabledColor: const Color(0x00000000),
+          // Canonical cursor policy (see common/buttons.dart): pointing hand
+          // over anything clickable, arrow when disabled.
+          mouseCursor: disabled
+              ? SystemMouseCursors.basic
+              : SystemMouseCursors.click,
           onPressed: onPressed,
         ),
       ),

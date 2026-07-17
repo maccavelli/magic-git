@@ -7,12 +7,12 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
-
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/tool_icon_button.dart';
 
 const _repo = '/repo';
@@ -275,7 +275,7 @@ void main() {
     await tapTrash(tester, 'unpushed');
     expect(find.text('Delete Local and on origin'), findsNothing);
 
-    await tester.tap(find.widgetWithText(PushButton, 'Delete'));
+    await tester.tap(find.widgetWithText(AppPushButton, 'Delete'));
     await tester.pumpAndSettle();
 
     expect(git.deleted, ['unpushed']);
@@ -294,7 +294,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('exist only locally'), findsOneWidget);
 
-    await tester.tap(find.widgetWithText(PushButton, 'Push'));
+    await tester.tap(find.widgetWithText(AppPushButton, 'Push'));
     await tester.pumpAndSettle();
 
     expect(git.pushedBulk, [

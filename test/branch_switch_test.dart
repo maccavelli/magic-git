@@ -7,13 +7,13 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
-
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/branch_switch.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 
 const _repo = '/repo';
 
@@ -66,7 +66,7 @@ class _Harness extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return PushButton(
+    return AppPushButton(
       controlSize: ControlSize.large,
       onPressed: () async {
         final r = await guardedBranchSwitch(context, ref, _repo, () async {

@@ -2,6 +2,7 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/forge/forge.dart';
 import '../../core/forge/forge_repo_summary.dart';
 import '../../core/git/host_fs_service.dart';
@@ -9,6 +10,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/workspace/clone_controller.dart';
 import '../common/async_views.dart';
+import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
@@ -830,7 +832,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
               ),
             ),
             const SizedBox(width: 8),
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.regular,
               secondary: true,
               onPressed: _picking ? null : _pickLocalParent,
@@ -890,7 +892,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
               ),
             ),
             const SizedBox(width: 8),
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.regular,
               secondary: true,
               onPressed: _browseRemote,
@@ -997,14 +999,14 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           const Spacer(),
         const SizedBox(width: 12),
         if (job.isRunning)
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             secondary: true,
             onPressed: () => ref.read(cloneJobProvider.notifier).cancel(),
             child: const Text('Cancel'),
           )
         else ...[
-          PushButton(
+          AppPushButton(
             controlSize: ControlSize.large,
             secondary: true,
             onPressed: _submitting ? null : _requestClose,
@@ -1012,7 +1014,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           ),
           if (_stepIndex > 0) ...[
             const SizedBox(width: 8),
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.large,
               secondary: true,
               onPressed: _submitting || _finished ? null : _goBack,
@@ -1021,13 +1023,13 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           ],
           const SizedBox(width: 8),
           if (last)
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.large,
               onPressed: _canSubmit ? _submit : null,
               child: const Text('Clone'),
             )
           else
-            PushButton(
+            AppPushButton(
               controlSize: ControlSize.large,
               onPressed:
                   !_submitting && steps[_stepIndex.clamp(0, steps.length - 1)].valid()
@@ -1042,7 +1044,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
 
   Widget _tabButton(String label, _SourceTab tab) {
     final active = _tab == tab;
-    return PushButton(
+    return AppPushButton(
       controlSize: ControlSize.regular,
       secondary: !active,
       onPressed: () => setState(() {

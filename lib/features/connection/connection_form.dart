@@ -4,9 +4,11 @@ import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/providers/app_providers.dart';
 import '../../core/ssh/ssh_client_manager.dart';
 import '../../core/storage/saved_connection.dart';
+import '../common/buttons.dart';
 import '../common/field_styles.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sheet_chrome.dart';
@@ -273,7 +275,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: PushButton(
+                  child: AppPushButton(
                     controlSize: ControlSize.small,
                     secondary: true,
                     onPressed: _submitting ? null : _loadPrivateKeyFile,
@@ -351,7 +353,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
               if (phase == ConnectionPhase.connecting)
                 const Center(child: ProgressCircle())
               else
-                PushButton(
+                AppPushButton(
                   controlSize: ControlSize.large,
                   onPressed: (_canSubmit && !_submitting) ? _submit : null,
                   child: const Text('Connect'),

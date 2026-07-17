@@ -9,11 +9,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
-
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/escape_dismissible.dart';
 import 'package:remote_magic_git/features/repository/commit_dialog.dart';
 
@@ -46,7 +46,7 @@ Future<void> _openSheet(WidgetTester tester, _FakeGit git) async {
         debugShowCheckedModeBanner: false,
         home: Builder(
           builder: (context) => Center(
-            child: PushButton(
+            child: AppPushButton(
               controlSize: ControlSize.large,
               child: const Text('open'),
               // Mirrors the real call site: the EscapeDismissible wrapper owns
@@ -168,7 +168,7 @@ void main() {
           debugShowCheckedModeBanner: false,
           home: Builder(
             builder: (context) => Center(
-              child: PushButton(
+              child: AppPushButton(
                 controlSize: ControlSize.large,
                 child: const Text('open'),
                 onPressed: () async {
@@ -211,7 +211,7 @@ void main() {
           debugShowCheckedModeBanner: false,
           home: Builder(
             builder: (context) => Center(
-              child: PushButton(
+              child: AppPushButton(
                 controlSize: ControlSize.large,
                 child: const Text('open'),
                 onPressed: () => showMacosSheet<void>(

@@ -1,8 +1,10 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show Dialog;
 import 'package:macos_ui/macos_ui.dart';
+
 import '../../core/local/dock_progress.dart';
 import '../../core/utils/display_error.dart';
+import 'buttons.dart';
 import 'escape_dismissible.dart';
 
 /// Runs a mutating [action], surfacing any failure in a macOS error dialog.
@@ -42,7 +44,7 @@ Future<void> showErrorDialog(BuildContext context, String message) {
         ),
         title: const Text('Error'),
         message: Text(message, textAlign: TextAlign.center),
-        primaryButton: PushButton(
+        primaryButton: AppPushButton(
           controlSize: ControlSize.large,
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('OK'),
@@ -131,7 +133,7 @@ Widget _choiceButton<T>(
 ) => Row(
   children: [
     Expanded(
-      child: PushButton(
+      child: AppPushButton(
         controlSize: ControlSize.large,
         secondary: !primary,
         onPressed: () => Navigator.of(context).pop(value),
@@ -171,12 +173,12 @@ Future<bool> confirmAction(
         ),
         title: Text(title),
         message: Text(message, textAlign: TextAlign.center),
-        primaryButton: PushButton(
+        primaryButton: AppPushButton(
           controlSize: ControlSize.large,
           onPressed: () => Navigator.of(context).pop(true),
           child: Text(confirmLabel),
         ),
-        secondaryButton: PushButton(
+        secondaryButton: AppPushButton(
           controlSize: ControlSize.large,
           secondary: true,
           onPressed: () => Navigator.of(context).pop(false),

@@ -11,6 +11,7 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../common/actions.dart';
+import '../common/buttons.dart';
 import '../common/field_styles.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
@@ -441,7 +442,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
-                PushButton(
+                AppPushButton(
                   controlSize: ControlSize.large,
                   secondary: true,
                   onPressed: _submitting
@@ -450,7 +451,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
                   child: const Text('Cancel'),
                 ),
                 const SizedBox(width: 8),
-                PushButton(
+                AppPushButton(
                   controlSize: ControlSize.large,
                   onPressed: _valid && problem == null && !_submitting
                       ? _submit
@@ -494,7 +495,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
               (_Basis.existingBranch, 'Existing branch'),
               (_Basis.detached, 'Detached'),
             ])
-              PushButton(
+              AppPushButton(
                 controlSize: ControlSize.regular,
                 secondary: _basis != basis,
                 onPressed: () => setState(() {
@@ -574,7 +575,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
             // the Move/Repair prompts).
             if (isLocal) ...[
               const SizedBox(width: 6),
-              PushButton(
+              AppPushButton(
                 controlSize: ControlSize.regular,
                 secondary: true,
                 onPressed: _grantParent,

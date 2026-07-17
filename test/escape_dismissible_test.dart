@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/escape_dismissible.dart';
 
 Future<void> _open(WidgetTester tester, Widget sheetChild) async {
@@ -16,7 +17,7 @@ Future<void> _open(WidgetTester tester, Widget sheetChild) async {
       debugShowCheckedModeBanner: false,
       home: Builder(
         builder: (context) => Center(
-          child: PushButton(
+          child: AppPushButton(
             controlSize: ControlSize.large,
             child: const Text('open'),
             onPressed: () => showMacosSheet<void>(
@@ -129,7 +130,7 @@ void main() {
         debugShowCheckedModeBanner: false,
         home: Builder(
           builder: (outer) => Center(
-            child: PushButton(
+            child: AppPushButton(
               controlSize: ControlSize.large,
               child: const Text('open A'),
               onPressed: () => showMacosSheet<void>(
@@ -140,7 +141,7 @@ void main() {
                       width: 320,
                       height: 200,
                       child: Center(
-                        child: PushButton(
+                        child: AppPushButton(
                           controlSize: ControlSize.large,
                           child: const Text('open B'),
                           onPressed: () => showMacosSheet<void>(

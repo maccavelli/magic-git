@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'buttons.dart';
 
 import 'escape_dismissible.dart';
 import 'field_styles.dart';
@@ -98,14 +99,14 @@ class _PromptTextSheetState extends State<_PromptTextSheet> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     secondary: true,
                     onPressed: () => Navigator.of(context).pop(),
                     child: const Text('Cancel'),
                   ),
                   const SizedBox(width: 10),
-                  PushButton(
+                  AppPushButton(
                     controlSize: ControlSize.large,
                     onPressed: () => Navigator.of(context).pop(
                       _controller.text.trim().isEmpty

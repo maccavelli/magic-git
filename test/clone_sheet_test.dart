@@ -13,6 +13,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/storage/connection_store.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/workspace/clone_sheet.dart';
 
 class _FakeHandle implements SSHStreamHandle {
@@ -141,9 +142,9 @@ Future<(_StubConnection, _FakeExecutor, _FakeStore)> _pumpConnected(
   return (stub, exec, store);
 }
 
-Finder _cloneButton() => find.widgetWithText(PushButton, 'Clone');
+Finder _cloneButton() => find.widgetWithText(AppPushButton, 'Clone');
 
-Finder _continueButton() => find.widgetWithText(PushButton, 'Continue');
+Finder _continueButton() => find.widgetWithText(AppPushButton, 'Continue');
 
 Finder _urlField() => find.byWidgetPredicate(
   (w) =>
@@ -179,22 +180,22 @@ void main() {
     // Source step: URL tab with nothing entered yet.
     await tester.tap(find.text('URL'));
     await tester.pumpAndSettle();
-    expect(tester.widget<PushButton>(_continueButton()).onPressed, isNull);
+    expect(tester.widget<AppPushButton>(_continueButton()).onPressed, isNull);
 
     await tester.enterText(
       _urlField(),
       'https://example.com/things/my-repo.git',
     );
     await tester.pumpAndSettle();
-    expect(tester.widget<PushButton>(_continueButton()).onPressed, isNotNull);
+    expect(tester.widget<AppPushButton>(_continueButton()).onPressed, isNotNull);
     await _next(tester); // Source → Location
 
     // Name was derived from the URL; parent prefilled from the active repo.
     expect(find.text('my-repo'), findsOneWidget);
-    expect(tester.widget<PushButton>(_continueButton()).onPressed, isNotNull);
+    expect(tester.widget<AppPushButton>(_continueButton()).onPressed, isNotNull);
     await _next(tester); // Location → Review
 
-    expect(tester.widget<PushButton>(_cloneButton()).onPressed, isNotNull);
+    expect(tester.widget<AppPushButton>(_cloneButton()).onPressed, isNotNull);
   });
 
   testWidgets('the progress bar tracks the current step left to right', (
@@ -226,7 +227,7 @@ void main() {
       await tester.pump();
 
       // Running: Cancel visible, Clone gone.
-      expect(find.widgetWithText(PushButton, 'Cancel'), findsOneWidget);
+      expect(find.widgetWithText(AppPushButton, 'Cancel'), findsOneWidget);
       expect(_cloneButton(), findsNothing);
 
       await exec.handle.finish(0);
