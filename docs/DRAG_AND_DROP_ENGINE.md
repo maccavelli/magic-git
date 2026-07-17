@@ -392,6 +392,34 @@ interactive-rebase sheet (self-contained `LongPressDraggable<int>` + gap/row
 `DragTarget`s, no engine dependency). Remaining: **E1/E2** (move-pointer /
 cherry-pick-to-branch), plus the cross-cutting hardening below.
 
+**The lift-cell visual language (canonical, July 2026).** Every drag surface
+gets the same three-phase interaction automatically from `DragItemDraggable` +
+`drag_cell.dart` — no per-site ghosts (the old tooltip-text pill is gone; the
+rebase sheet shares `DragCellChrome` for its widget-copy ghost):
+
+1. **Press** — the row scales to 0.98 and a rounded macOS cell materializes
+   around it (`foregroundDecoration`, so rows' own opaque selection tints
+   can't hide it): the pressed-button affordance. A pixel-perfect snapshot of
+   the row is captured here (`RepaintBoundary.toImage`) so it's ready before
+   the drag crosses the slop.
+2. **Lift** — the snapshot rides under the pointer inside an elevated cell
+   (hairline border, two-layer soft shadow, 0.94 opacity), springing
+   0.98 → 1.03 in ~140ms — the standard lift microinteraction (Trello/NN-g/
+   Apple): elevation = "this item's state changed". Grab-point anchored and
+   clamped into the width-capped cell (`kDragCellMaxWidth`); one frame after
+   drag start it re-captures, so the cell shows the row WITH the selection bar
+   select-on-drag just painted (the overlay feedback is built once — a
+   ValueNotifier is what lets it update). Fallback when a capture can't land:
+   the item's label in the identical chrome.
+3. **Land / snap back** — accepted drops hand off to the target's action;
+   cancelled drags (released over nothing, or ESC) fly the cell home
+   (`SnapBackFlight`, 230ms ease-out, settle + fade) — nothing ever blinks
+   out of existence.
+
+Pinned by `drag_cell_test.dart` (lift appears, cancel flies home and settles,
+accepted drop doesn't) and the mouse-kind assertions in
+`history_mouse_drag_test.dart`.
+
 **Select-on-drag (canonical engine contract).** Picking an item up *selects*
 it: `DragItemDraggable.onDragSelect` fires the instant a drag begins (before
 the rail lights), and every selectable source wires it to its panel's own
@@ -457,6 +485,31 @@ Legend: **payload** = new `DragItem` subtype; **source** = make a row/chip
    "Merge…" / "Rebase…"). The menu machinery already exists; the new work is the
    `git branch -f` service method (journaled via `_runCaptured`, undo = move back)
    and a same-position guard.
+
+## Known structural limitation: pop-out windows
+
+Drags cannot cross windows. A popped-out History runs a **second FlutterEngine**
+(own widget tree, own overlay, own ProviderContainer) — a commit dragged there
+can never light or reach the MAIN window's nav rail; only in-window targets
+(e.g. the branch-chip → commit-row merge/rebase drop) work inside a pop-out.
+This is a Flutter architecture boundary, not an engine bug. If cross-window
+workflows are ever wanted, the affordance is a relay (drop onto an in-pop-out
+"send to main window" strip that dispatches over the existing window bridge),
+not a literal cross-engine drag.
+
+**Root-caused here (July 2026, "click-to-drag completely broken" report):** the
+drags were dead in the *main* window too — but the cause was outside the engine
+entirely. `activeExecutorProvider` watched `connectionProvider`, which put every
+service downstream of connection state, so `ConnectionController`'s own
+`ref.read(gitServiceProvider)` calls were self-references: debug builds crashed
+every connect on Riverpod's `CircularDependencyError` (nobody ran debug — the
+dev loop is release builds); release compiled the assert out and misbehaved
+silently. Fixed by lifting the transport choice into a root `backendProvider`
+(written from `ConnectionController`'s state setter, the single choke point) so
+the graph is acyclic by construction. Pinned by
+`connection_cycle_regression_test.dart` (real provider graph + real git — the
+override-everything tests could never catch it) and mouse-kind drag coverage in
+`history_mouse_drag_test.dart`.
 
 ## Cross-cutting hardening (do continuously, not a phase)
 

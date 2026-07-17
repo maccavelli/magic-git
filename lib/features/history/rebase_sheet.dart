@@ -8,6 +8,7 @@ import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
+import '../dnd/drag_cell.dart';
 
 /// Visual interactive-rebase editor: reorder commits, and set each to pick,
 /// squash (fold into the previous, keeping both messages), fixup (fold and drop
@@ -353,22 +354,18 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
     );
   }
 
-  /// The pointer-anchored drag ghost — the commit being moved.
+  /// The drag ghost — the commit being moved, in the engine's canonical cell
+  /// chrome (see drag_cell.dart) so rebase drags look like every other drag.
   Widget _ghost(BuildContext context, int i) {
     final c = _rows[i].commit;
     final typography = MacosTheme.of(context).typography;
     return Transform.translate(
       offset: const Offset(8, 8),
       child: Opacity(
-        opacity: 0.92,
+        opacity: 0.94,
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 320),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: const Color(0xFF2C2C2E),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: MacosColors.separatorColor),
-            ),
+          child: DragCellChrome(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               child: Row(

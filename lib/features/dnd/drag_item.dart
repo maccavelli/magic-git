@@ -1,8 +1,12 @@
+import 'dart:async';
+import 'dart:ui' as ui;
+
+import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/git/git_service.dart';
+import 'drag_cell.dart';
 import 'drag_state.dart';
 
 /// The unified drag payload vocabulary. Every draggable surface in the app
@@ -76,18 +80,34 @@ String _basename(String path) {
 /// [dragStateProvider] on start/end so reactive drop targets (the nav rail) can
 /// light up while a drag is live.
 ///
+/// **The canonical lift-cell interaction** (see drag_cell.dart) — every drag
+/// source gets it automatically, no per-site visuals:
+///
+///  1. **Press**: the row scales to 0.98 and a rounded macOS cell materializes
+///     around it — the pressed-button affordance. A pixel-perfect snapshot of
+///     the row is captured here (RepaintBoundary.toImage), so it's ready the
+///     instant a drag starts.
+///  2. **Lift**: on drag start the snapshot rides under the pointer inside the
+///     elevated cell ([LiftedDragCell]), springing 0.98 → 1.03 with a deep
+///     soft shadow — the item visibly detaches and floats. Grab-point
+///     anchored: the cell is held exactly where it was picked up (clamped
+///     into the cell for rows wider than [kDragCellMaxWidth]). The in-list
+///     row dims to 0.55, its selection tint (via [onDragSelect]) showing
+///     through.
+///  3. **Land / snap back**: an accepted drop hands off to the target's
+///     action; a cancelled drag (released over nothing, or ESC) flies the
+///     cell back to the source row ([SnapBackFlight]) — it returns home
+///     rather than blinking out.
+///
 /// Every current surface passes [immediate]: this is a macOS-only app, where
 /// list scrolling is wheel/trackpad events (never a mouse click-drag on the
 /// list body), so an immediate drag steals nothing — and a long-press-to-drag
 /// is an undiscoverable mobile idiom with a mouse. Plain clicks still win:
 /// the drag only claims the gesture after movement exceeds the slop. The
 /// long-press variant is kept for any future touch surface.
-class DragItemDraggable extends ConsumerWidget {
+class DragItemDraggable extends ConsumerStatefulWidget {
   final DragItem item;
   final Widget child;
-
-  /// Custom drag ghost. Defaults to a small pill of [DragItem.shortLabel].
-  final Widget? feedback;
 
   /// Start dragging on movement (mouse-first) instead of on long-press.
   final bool immediate;
@@ -106,14 +126,108 @@ class DragItemDraggable extends ConsumerWidget {
     super.key,
     required this.item,
     required this.child,
-    this.feedback,
     this.immediate = false,
     this.onDragSelect,
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final ghost = feedback ?? _defaultGhost(context);
+  ConsumerState<DragItemDraggable> createState() => _DragItemDraggableState();
+}
+
+class _DragItemDraggableState extends ConsumerState<DragItemDraggable> {
+  /// Isolates the row for the press-time snapshot.
+  final GlobalKey _boundaryKey = GlobalKey();
+
+  /// The row's live snapshot. Captured on pointer-down (ready by the time the
+  /// drag crosses the slop), then RE-captured one frame after the drag starts —
+  /// select-on-drag paints the selection bar in that frame, and the overlay
+  /// cell (which subscribes via this notifier: a Draggable's feedback is built
+  /// once, only listenables can update it) swaps to the selected-state pixels.
+  /// Null until the first capture lands — the cell then falls back to a label,
+  /// so a drag can never block on the capture.
+  final ValueNotifier<ui.Image?> _snapshot = ValueNotifier(null);
+  double _snapshotPixelRatio = 1;
+  Size _sourceSize = Size.zero;
+
+  /// Pressed-button state: pointer is down on the row, drag not yet started.
+  bool _pressed = false;
+
+  @override
+  void dispose() {
+    _snapshot.value?.dispose();
+    _snapshot.dispose();
+    super.dispose();
+  }
+
+  /// Captures the row's pixels. Best-effort: any failure (mid-paint, detached,
+  /// fake-async test environment) simply leaves the label fallback in place.
+  Future<void> _capture() async {
+    final boundary = _boundaryKey.currentContext?.findRenderObject();
+    if (boundary is! RenderRepaintBoundary || boundary.debugNeedsPaint) return;
+    final ratio = MediaQuery.devicePixelRatioOf(context);
+    try {
+      final image = await boundary.toImage(pixelRatio: ratio);
+      if (!mounted) {
+        image.dispose();
+        return;
+      }
+      // Swap first, dispose the old image a frame later: the overlay cell may
+      // be painting it at this very moment, and disposing an image out from
+      // under an in-flight RawImage paint is a crash.
+      final old = _snapshot.value;
+      _snapshotPixelRatio = ratio;
+      _sourceSize = boundary.size;
+      _snapshot.value = image;
+      if (old != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => old.dispose());
+      }
+    } catch (_) {
+      // Keep whatever snapshot (or fallback) we had.
+    }
+  }
+
+  /// Grab-point anchoring: the cell is held exactly where the row was picked
+  /// up, clamped inside the (possibly width-capped) cell so the pointer never
+  /// ends up past its right edge. The inset collapses for sources narrower
+  /// than twice the inset (small chips) — a clamp with min > max throws.
+  Offset _anchor(Draggable<Object> _, BuildContext context, Offset position) {
+    final box = context.findRenderObject()! as RenderBox;
+    final local = box.globalToLocal(position);
+    final cellWidth = box.size.width.clamp(0.0, kDragCellMaxWidth);
+    final inset = cellWidth >= 32 ? 16.0 : cellWidth / 2;
+    return Offset(
+      local.dx.clamp(inset, cellWidth - inset),
+      local.dy.clamp(0.0, box.size.height),
+    );
+  }
+
+  void _snapBack(Offset droppedTopLeft) {
+    final box = _boundaryKey.currentContext?.findRenderObject();
+    // The source row can be gone by now (list refreshed mid-drag) — then
+    // there's nowhere to fly home to, and skipping is the honest visual.
+    if (box is! RenderBox || !box.attached || !mounted) return;
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+    final home = box.localToGlobal(Offset.zero);
+    late final OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (_) => SnapBackFlight(
+        // The flight owns a clone: the live snapshot may be re-captured (or
+        // this row disposed) while the flight is still mid-air.
+        image: _snapshot.value?.clone(),
+        pixelRatio: _snapshotPixelRatio,
+        sourceSize: _sourceSize,
+        fallbackLabel: widget.item.shortLabel,
+        from: droppedTopLeft,
+        to: home,
+        onDone: () => entry.remove(),
+      ),
+    );
+    overlay.insert(entry);
+  }
+
+  @override
+  Widget build(BuildContext context) {
     // Capture the notifier, not `ref`: a watcher-driven refresh can unmount
     // this row MID-DRAG (its file stashed away, its stash popped by another
     // tab), and `ref.read` on a disposed element throws — which would leave
@@ -122,77 +236,109 @@ class DragItemDraggable extends ConsumerWidget {
     // clearing its state is moot, hence the swallow.
     final drag = ref.watch(dragStateProvider.notifier);
     void begin() {
+      if (mounted && _pressed) setState(() => _pressed = false);
       // Select first, then arm the drag state: by the time the rail lights up,
       // the source row is already showing its real selection bar.
-      onDragSelect?.call();
-      drag.begin(item);
+      widget.onDragSelect?.call();
+      drag.begin(widget.item);
+      // Select-on-drag just changed how this row paints (selection bar). The
+      // press-time snapshot predates that — re-capture next frame so the
+      // lifted cell carries the row in its SELECTED state.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_capture());
+      });
     }
 
-    void end() {
+    void end(DraggableDetails details) {
       try {
         drag.end();
       } catch (_) {
         // Tab container disposed mid-drag — nothing left to clear.
       }
+      // `details.offset` is the ghost's top-left at release — fly it home.
+      if (!details.wasAccepted) _snapBack(details.offset);
     }
+
+    // The press chrome, painted OVER the row (foregroundDecoration — rows have
+    // their own opaque selection tints that would cover a background border),
+    // plus the pressed-button scale-down. Both settle back if the press ends
+    // without a drag.
+    final pressWrapped = Listener(
+      behavior: HitTestBehavior.deferToChild,
+      onPointerDown: (_) {
+        setState(() => _pressed = true);
+        // Fire-and-forget: ready by the time the drag starts.
+        unawaited(_capture());
+      },
+      onPointerUp: (_) {
+        if (_pressed) setState(() => _pressed = false);
+      },
+      onPointerCancel: (_) {
+        if (_pressed) setState(() => _pressed = false);
+      },
+      child: AnimatedScale(
+        scale: _pressed ? 0.98 : 1.0,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 110),
+          curve: Curves.easeOut,
+          foregroundDecoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(kDragCellRadius),
+            border: Border.all(
+              color: _pressed
+                  ? const Color(0xFF5A5A5E)
+                  : const Color(0x005A5A5E),
+            ),
+            color: _pressed ? const Color(0x14FFFFFF) : const Color(0x00FFFFFF),
+          ),
+          child: RepaintBoundary(key: _boundaryKey, child: widget.child),
+        ),
+      ),
+    );
+
+    // The overlay ghost subscribes to the snapshot notifier: when the
+    // post-drag-start re-capture lands (selection bar painted), the lifted
+    // cell swaps to the selected-state pixels mid-flight, seamlessly.
+    final ghost = ValueListenableBuilder<ui.Image?>(
+      valueListenable: _snapshot,
+      builder: (context, image, _) => LiftedDragCell(
+        image: image,
+        pixelRatio: _snapshotPixelRatio,
+        sourceSize: _sourceSize == Size.zero
+            ? const Size(kDragCellMaxWidth / 2, 28)
+            : _sourceSize,
+        fallbackLabel: widget.item.shortLabel,
+      ),
+    );
 
     // Dimmed just enough to read "in flight" while the row's own selection
     // tint (applied via onDragSelect) still reads as selected underneath.
-    final whenDragging = Opacity(opacity: 0.55, child: child);
+    final whenDragging = Opacity(opacity: 0.55, child: pressWrapped);
 
-    if (immediate) {
+    if (widget.immediate) {
       return Draggable<DragItem>(
-        data: item,
+        data: widget.item,
         // One live drag at a time: the shared drag state is a single slot, and
         // a second simultaneous drag (a stray second pointer) would clobber it.
         maxSimultaneousDrags: 1,
-        dragAnchorStrategy: pointerDragAnchorStrategy,
+        dragAnchorStrategy: _anchor,
         onDragStarted: begin,
-        onDragEnd: (_) => end(),
+        onDragEnd: end,
         feedback: ghost,
         childWhenDragging: whenDragging,
-        child: child,
+        child: pressWrapped,
       );
     }
     return LongPressDraggable<DragItem>(
-      data: item,
+      data: widget.item,
       maxSimultaneousDrags: 1,
-      dragAnchorStrategy: pointerDragAnchorStrategy,
+      dragAnchorStrategy: _anchor,
       onDragStarted: begin,
-      onDragEnd: (_) => end(),
+      onDragEnd: end,
       feedback: ghost,
       childWhenDragging: whenDragging,
-      child: child,
-    );
-  }
-
-  Widget _defaultGhost(BuildContext context) {
-    // Offset from the pointer so the label isn't hidden under the cursor, and
-    // width-capped so a long commit subject can't paint a page-wide pill.
-    return Transform.translate(
-      offset: const Offset(8, 8),
-      child: Opacity(
-        opacity: 0.9,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 280),
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: const Color(0xFF2C2C2E),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: MacosColors.separatorColor),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              child: Text(
-                item.shortLabel,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: MacosTheme.of(context).typography.caption1,
-              ),
-            ),
-          ),
-        ),
-      ),
+      child: pressWrapped,
     );
   }
 }

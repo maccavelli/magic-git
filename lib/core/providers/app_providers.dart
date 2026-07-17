@@ -182,8 +182,36 @@ class LocalEnvironmentGuard {
 /// [ConnectionState.backend]. [GitService]/[GlabService] depend on this
 /// rather than [executorProvider] directly, so they work unchanged against
 /// either transport.
+/// The active transport backend, as its OWN root state — deliberately NOT
+/// derived from [connectionProvider].
+///
+/// This is the acyclicity keystone of the provider graph: every service
+/// (git/glab/gh/host-fs, and everything built on them) hangs off
+/// [activeExecutorProvider], and if that watched `connectionProvider` (as it
+/// originally did, via `select((c) => c.backend)`), then EVERY service would
+/// transitively depend on the connection — making any
+/// `ref.read(gitServiceProvider)` from inside [ConnectionController]'s own
+/// methods a self-reference. Riverpod's debug cycle detector throws
+/// `CircularDependencyError` on exactly that (it crashed every connect in
+/// debug builds; release compiles the assert out, leaving a silently cyclic
+/// graph). With the backend lifted upstream, services depend only on this
+/// leaf, and the connection notifier may freely read them.
+///
+/// Written from ONE choke point — [ConnectionController]'s `state` setter —
+/// so it can never drift from `ConnectionState.backend`.
+final backendProvider = NotifierProvider<BackendNotifier, ConnectionBackend>(
+  BackendNotifier.new,
+);
+
+class BackendNotifier extends Notifier<ConnectionBackend> {
+  @override
+  ConnectionBackend build() => ConnectionBackend.ssh; // ConnectionState default
+
+  void set(ConnectionBackend value) => state = value;
+}
+
 final activeExecutorProvider = Provider<CommandExecutor>((ref) {
-  final backend = ref.watch(connectionProvider.select((c) => c.backend));
+  final backend = ref.watch(backendProvider);
   // Exhaustive switch (no default): adding a third ConnectionBackend becomes a
   // compile error here rather than silently routing every command to the SSH
   // executor.
@@ -658,6 +686,18 @@ class ConnectionState {
 
 /// Owns the connect/disconnect lifecycle and the active connection + repo.
 class ConnectionController extends Notifier<ConnectionState> {
+  /// The single choke point for every state transition — and the writer that
+  /// keeps [backendProvider] (the provider graph's transport leaf, see its doc)
+  /// in lockstep with `state.backend`. The backend is published FIRST so that
+  /// anything reacting to the connection change already resolves the correct
+  /// executor. `build()` doesn't pass through here, but its initial state's
+  /// backend (ssh) matches [BackendNotifier]'s own default by construction.
+  @override
+  set state(ConnectionState next) {
+    ref.read(backendProvider.notifier).set(next.backend);
+    super.state = next;
+  }
+
   /// Monotonic attempt counter. Each connect/disconnect bumps it; a slow
   /// connect that resolves after a newer connect or a disconnect finds the
   /// counter changed and drops its terminal state instead of clobbering the
@@ -897,6 +937,12 @@ class ConnectionController extends Notifier<ConnectionState> {
     ConnectionBackend.local => ref.read(localExecutorProvider),
     ConnectionBackend.ssh => ref.read(executorProvider),
   };
+
+  // NOTE: reading gitServiceProvider (and the other executor-derived services)
+  // from inside this notifier is legal because activeExecutorProvider hangs off
+  // backendProvider, NOT connectionProvider — see backendProvider's doc. If a
+  // service is ever rewired to watch connectionProvider (directly or via a
+  // select), every such read becomes a CircularDependencyError again.
 
   /// Probes for the active backend's OS + binary locations (honoring settings
   /// overrides), configures the executor's augmented PATH / binary rewrites, and

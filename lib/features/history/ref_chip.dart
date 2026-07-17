@@ -173,15 +173,12 @@ class RefChip extends StatelessWidget {
     final draggable = enableDrag && (gitRef.isLocalBranch || gitRef.isRemote);
     if (!draggable) return tooltipped;
 
-    // Immediate (touch) drag: the chip is a small target, so it doesn't fight
-    // the history list's vertical scroll the way a full row would.
+    // Immediate (mouse-first) drag. The ghost is the engine's canonical lift
+    // cell — a snapshot of this chip in the rounded elevated cell, consistent
+    // with every other drag surface.
     return DragItemDraggable(
       item: DragRef(gitRef),
       immediate: true,
-      feedback: Transform.translate(
-        offset: const Offset(8, 8),
-        child: Opacity(opacity: 0.9, child: _chip(color, icon, label)),
-      ),
       child: tooltipped,
     );
   }

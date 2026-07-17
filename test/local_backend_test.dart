@@ -13,13 +13,13 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
-/// A ConnectionController stuck at a fixed state, so a test can pin `backend`
-/// without running a real connect.
+/// A ConnectionController that lets a test drive `state` directly, without a
+/// real connect — through the REAL inherited state setter, which is the choke
+/// point that publishes `state.backend` into [backendProvider] (what
+/// [activeExecutorProvider] actually routes on). Setting the state via
+/// `build()` would bypass that sync and pin nothing real.
 class _StubConnection extends ConnectionController {
-  final ConnectionState _state;
-  _StubConnection(this._state);
-  @override
-  ConnectionState build() => _state;
+  void force(ConnectionState next) => state = next;
 }
 
 class _NoopSsh extends SSHCommandExecutor {
@@ -47,18 +47,17 @@ void main() {
         overrides: [
           localExecutorProvider.overrideWithValue(local),
           executorProvider.overrideWithValue(ssh),
-          connectionProvider.overrideWith(
-            () => _StubConnection(
-              const ConnectionState(
-                phase: ConnectionPhase.connected,
-                backend: ConnectionBackend.local,
-                repoPath: '/repo',
-              ),
-            ),
-          ),
+          connectionProvider.overrideWith(_StubConnection.new),
         ],
       );
       addTearDown(container.dispose);
+      (container.read(connectionProvider.notifier) as _StubConnection).force(
+        const ConnectionState(
+          phase: ConnectionPhase.connected,
+          backend: ConnectionBackend.local,
+          repoPath: '/repo',
+        ),
+      );
       expect(container.read(activeExecutorProvider), same(local));
     });
 
@@ -69,18 +68,48 @@ void main() {
         overrides: [
           localExecutorProvider.overrideWithValue(local),
           executorProvider.overrideWithValue(ssh),
-          connectionProvider.overrideWith(
-            () => _StubConnection(
-              const ConnectionState(
-                phase: ConnectionPhase.connected,
-                repoPath: '/repo',
-                host: 'h',
-              ),
-            ),
-          ),
+          connectionProvider.overrideWith(_StubConnection.new),
         ],
       );
       addTearDown(container.dispose);
+      (container.read(connectionProvider.notifier) as _StubConnection).force(
+        const ConnectionState(
+          phase: ConnectionPhase.connected,
+          repoPath: '/repo',
+          host: 'h',
+        ),
+      );
+      expect(container.read(activeExecutorProvider), same(ssh));
+    });
+
+    test('switching backends re-routes: the setter syncs backendProvider', () {
+      // The linchpin of the acyclic graph: state.backend flows into
+      // backendProvider through ConnectionController's state setter, so the
+      // executor follows every transition (connect local -> drop to ssh).
+      final local = LocalCommandExecutor();
+      final ssh = _NoopSsh();
+      final container = ProviderContainer(
+        overrides: [
+          localExecutorProvider.overrideWithValue(local),
+          executorProvider.overrideWithValue(ssh),
+          connectionProvider.overrideWith(_StubConnection.new),
+        ],
+      );
+      addTearDown(container.dispose);
+      final stub =
+          container.read(connectionProvider.notifier) as _StubConnection;
+
+      expect(container.read(activeExecutorProvider), same(ssh),
+          reason: 'default backend is ssh');
+      stub.force(
+        const ConnectionState(
+          phase: ConnectionPhase.connected,
+          backend: ConnectionBackend.local,
+          repoPath: '/repo',
+        ),
+      );
+      expect(container.read(activeExecutorProvider), same(local));
+      stub.force(const ConnectionState());
       expect(container.read(activeExecutorProvider), same(ssh));
     });
   });
