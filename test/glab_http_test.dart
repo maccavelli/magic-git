@@ -93,6 +93,61 @@ void main() {
       },
     );
 
+    test('a non-zero glab exit with an HTTP 200 still returns the body '
+        '(exit code is advisory — HTTP status is the authority)', () async {
+      // glab #911: glab can exit non-zero on a perfectly good 200. The `-i`
+      // path exists to see through that; the exit-code throw used to preempt it.
+      exec.next = const SSHCommandResult(
+        exitCode: 1,
+        stdout:
+            'HTTP/2.0 200 OK\r\ncontent-type: application/json\r\n\r\n{"id":42}',
+        stderr: 'glab: some advisory noise',
+      );
+      final decoded = await glab.api('/repo', 'projects/:id');
+      expect(decoded, isA<Map<String, dynamic>>());
+      expect((decoded as Map)['id'], 42);
+    });
+
+    test('a non-zero glab exit with an HTTP 404 throws (real error)', () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 1,
+        stdout: 'HTTP/2.0 404 Not Found\r\n\r\n{"message":"404 Not Found"}',
+        stderr: '',
+      );
+      expect(
+        glab.api('/repo', 'projects/:id'),
+        throwsA(isA<GlabException>()),
+      );
+    });
+
+    test('a non-zero glab exit with no HTTP status line still throws '
+        '(truncated/transport failure)', () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 1,
+        stdout: '',
+        stderr: 'ssh: connection closed',
+      );
+      expect(
+        glab.api('/repo', 'projects/:id'),
+        throwsA(isA<GlabException>()),
+      );
+    });
+
+    test('graphql returns partial data despite a non-zero exit when HTTP is '
+        '200 (partial-dashboard case)', () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 1,
+        stdout:
+            'HTTP/2.0 200 OK\r\n\r\n'
+            '{"data":{"project":{"x":1}},'
+            '"errors":[{"message":"no access to field y"}]}',
+        stderr: 'glab: graphql error',
+      );
+      final data = await glab.graphql('/repo', 'q');
+      expect(data['project'], isA<Map<String, dynamic>>());
+      expect(glab.lastGraphqlWarning, contains('no access to field y'));
+    });
+
     test('jobs walks pages until a short page and accumulates all of them', () async {
       String jobRow(int id) =>
           '{"id":$id,"name":"j$id","stage":"build","status":"success"}';

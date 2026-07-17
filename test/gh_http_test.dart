@@ -131,14 +131,15 @@ void main() {
       expect(exec.calls, hasLength(2));
     });
 
-    test('runJobsStream gives up after sustained empty answers instead of '
-        'polling forever', () async {
-      // A run that never yields jobs (deleted mid-queue, API hiccup) used to
-      // poll every 3s until the view closed.
+    test('runJobsStream gives up after sustained empty answers from a '
+        'finished run instead of polling forever', () async {
+      // A *completed* run that yields no jobs (deleted mid-queue, API hiccup)
+      // used to poll every 3s until the view closed. Each empty poll now also
+      // reads the run's own status to confirm it's terminal before counting it.
       exec.results.addAll([
-        _ok('{"jobs":[]}'),
-        _ok('{"jobs":[]}'),
-        _ok('{"jobs":[]}'),
+        _ok('{"jobs":[]}'), _ok('{"status":"completed"}'), //
+        _ok('{"jobs":[]}'), _ok('{"status":"completed"}'), //
+        _ok('{"jobs":[]}'), _ok('{"status":"completed"}'), //
       ]);
       final emissions = await gh
           .runJobsStream(
@@ -150,7 +151,68 @@ void main() {
           .toList();
       expect(emissions, hasLength(3));
       expect(emissions, everyElement(isEmpty));
-      expect(exec.calls, hasLength(3), reason: 'stops at the cap');
+    });
+
+    test('runJobsStream keeps polling a queued run whose empty answers must '
+        'NOT count toward the give-up cap', () async {
+      // A run waiting on a busy/slow runner legitimately reports zero jobs for
+      // longer than the cap; abandoning the live view then is the bug. With
+      // maxEmptyPolls=2 the old code would have stopped before the jobs ever
+      // appeared.
+      exec.results.addAll([
+        _ok('{"jobs":[]}'), _ok('{"status":"queued"}'), //
+        _ok('{"jobs":[]}'), _ok('{"status":"in_progress"}'), //
+        _ok('{"jobs":[{"id":1,"name":"j","status":"completed",'
+            '"conclusion":"success"}]}'),
+      ]);
+      final emissions = await gh
+          .runJobsStream(
+            '/repo',
+            7,
+            pollInterval: Duration.zero,
+            maxEmptyPolls: 2,
+          )
+          .toList();
+      expect(emissions, hasLength(3),
+          reason: 'the two queued empties did not trip the cap');
+      expect(emissions.first, isEmpty);
+      expect(emissions.last.single.runState, GhRunState.success);
+    });
+
+    test('runJobsStream skips a transient poll error and recovers', () async {
+      // An SSH reconnect superseding the in-flight read, a one-off 5xx: the
+      // live view must survive it, not die permanently.
+      exec.results.addAll([
+        const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
+        const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
+        _ok('{"jobs":[{"id":1,"name":"j","status":"completed",'
+            '"conclusion":"success"}]}'),
+      ]);
+      final emissions = await gh
+          .runJobsStream('/repo', 7, pollInterval: Duration.zero)
+          .toList();
+      expect(emissions, hasLength(1), reason: 'errored polls yield nothing');
+      expect(emissions.single.single.runState, GhRunState.success);
+    });
+
+    test('runJobsStream ends with the error after a sustained failure streak',
+        () async {
+      exec.results.addAll([
+        const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
+        const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
+        const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
+      ]);
+      expect(
+        gh
+            .runJobsStream(
+              '/repo',
+              7,
+              pollInterval: Duration.zero,
+              maxConsecutiveErrors: 3,
+            )
+            .toList(),
+        throwsA(isA<GhException>()),
+      );
     });
 
     test('the PR list ceiling matches the GitLab paginated ceiling', () async {

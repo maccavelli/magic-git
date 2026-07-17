@@ -571,12 +571,18 @@ query($path: ID!) {
       lane: ExecLane.read,
       compress: true,
     );
-    if (!result.isSuccess) {
-      throw GlabException('$label failed', result);
-    }
+    // GraphQL always rides `-i`, so the HTTP status is authoritative — glab's
+    // advisory exit code (glab #911) must not preempt it. A GraphQL 200 that
+    // carries `errors[]` alongside partial `data` (the exact case the
+    // partial-dashboard logic below handles) can accompany a non-zero exit;
+    // throwing on the exit code here used to discard that usable data.
     final status = parseHttpStatus(result.stdout);
-    if (status != null && status >= 400) {
-      throw GlabException('$label failed with HTTP $status', result);
+    if (status != null) {
+      if (status >= 400) {
+        throw GlabException('$label failed with HTTP $status', result);
+      }
+    } else if (!result.isSuccess) {
+      throw GlabException('$label failed', result);
     }
     final body = bodyAfterHeaders(result.stdout).trim();
     if (body.isEmpty) return const {};
@@ -727,9 +733,16 @@ query($path: ID!) {
     // Set on cancel; re-checked after the executeStream await so a trace process
     // spawned during teardown is killed instead of leaked (#7).
     var cancelled = false;
+    // Whether any event has been delivered to the controller. A trace that
+    // finishes having emitted nothing still needs one terminal tick so the view
+    // can leave its initial spinner (see [finish]).
+    var emittedAny = false;
 
     void append(String chunk) {
-      if (!controller.isClosed) controller.add(chunk);
+      if (!controller.isClosed) {
+        emittedAny = true;
+        controller.add(chunk);
+      }
     }
 
     Future<void> start() async {
@@ -769,13 +782,18 @@ query($path: ID!) {
       // bound.
       final errBuf = BoundedTail(_kTraceStderrTailChars);
 
+      // Set once a terminal failure has been surfaced, so the clean-close
+      // terminal tick below isn't appended after an error.
+      var surfacedError = false;
       void finish() {
         if (!outDone || !errDone || controller.isClosed) return;
         final err = errBuf.toString().trim();
         Future<void> checkFailure() async {
           if (!sawStdout && err.isNotEmpty) {
-            // Already-fixed case, decided immediately — no need to wait on
-            // the exit status when this heuristic alone is conclusive.
+            // No log arrived and glab wrote to stderr — a real trace failure
+            // (bad/expired job id, unauthenticated, glab missing). Conclusive
+            // without waiting on the exit status.
+            surfacedError = true;
             controller.addError(
               GlabException(
                 'glab ci trace failed',
@@ -784,8 +802,17 @@ query($path: ID!) {
             );
             return;
           }
+          // #13 (defensive, pending a live check of `glab ci trace`'s exit
+          // semantics): once the log itself was delivered (stdout arrived and
+          // both streams closed cleanly), treat the trace as successful
+          // regardless of the trace *process's* exit code — a non-zero exit
+          // there plausibly just mirrors the traced job's own failed status,
+          // and flagging it would paint a spurious error over a complete log.
+          // Only a trace that produced no stdout at all is judged by its exit.
+          if (sawStdout) return;
           final code = await newHandle.exitCode;
           if (code != null && code != 0 && !controller.isClosed) {
+            surfacedError = true;
             controller.addError(
               GlabException(
                 'glab ci trace failed (exit $code)',
@@ -797,10 +824,19 @@ query($path: ID!) {
 
         checkFailure()
             .catchError((Object e) {
+              surfacedError = true;
               if (!controller.isClosed) controller.addError(e);
             })
             .whenComplete(() {
-              if (!controller.isClosed) controller.close();
+              if (!controller.isClosed) {
+                // A job that finished with no output at all still needs to
+                // release the view's initial spinner — one empty terminal tick
+                // lets the UI render its "no output" state instead of loading
+                // forever. Skipped when an error was surfaced (that error is the
+                // terminal event) or when real output already arrived.
+                if (!emittedAny && !surfacedError) controller.add('');
+                controller.close();
+              }
             });
       }
 
@@ -810,7 +846,13 @@ query($path: ID!) {
           append(chunk);
         },
         onError: (Object e) {
+          surfacedError = true;
           if (!controller.isClosed) controller.addError(e);
+          // Advance completion even when stdout ends on an error rather than a
+          // clean done, so finish()'s outDone guard can't wedge the controller
+          // open forever.
+          outDone = true;
+          finish();
         },
         onDone: () {
           outDone = true;
@@ -824,6 +866,16 @@ query($path: ID!) {
         (chunk) {
           errBuf.write(chunk);
           append(chunk);
+        },
+        onError: (Object e) {
+          // A dropped CI-trace channel can surface on the stderr substream; give
+          // it the same treatment as stdout (route to a stream error the view
+          // renders, and advance completion) instead of letting it escape to the
+          // Zone as an unhandled async error.
+          surfacedError = true;
+          if (!controller.isClosed) controller.addError(e);
+          errDone = true;
+          finish();
         },
         onDone: () {
           errDone = true;
@@ -1001,14 +1053,32 @@ query($path: ID!) {
       compress: lane == ExecLane.read,
       extraEnv: extraEnv,
     );
-    if (!result.isSuccess) {
-      throw GlabException('$label failed', result);
-    }
     if (expectHeaders) {
+      // glab's exit code is advisory (glab #911): it can exit non-zero on a
+      // perfectly good HTTP 200. We asked for the response headers (`-i`), so
+      // the HTTP status is the authority — a parseable status governs, and the
+      // exit code is consulted only when no status line came back at all.
+      // Verified live (glab 1.x): a 200 read exits 0, a 404 exits 1 *and*
+      // carries `HTTP/2.0 404`, so this keeps both cases correct while also
+      // rescuing the advisory non-zero-on-200 hazard the whole `-i` path exists
+      // to guard against.
       final status = parseHttpStatus(result.stdout);
-      if (status != null && status >= 400) {
-        throw GlabException('$label failed with HTTP $status', result);
+      if (status != null) {
+        if (status >= 400) {
+          throw GlabException('$label failed with HTTP $status', result);
+        }
+        // status < 400: a real response arrived — trust the body regardless of
+        // the advisory exit code.
+      } else if (!result.isSuccess) {
+        // No HTTP status to consult — a truncated/killed read (the compression
+        // trailer already maps that to a non-zero exit) or a transport failure
+        // that never reached the server. Fall back to the exit code.
+        throw GlabException('$label failed', result);
       }
+    } else if (!result.isSuccess) {
+      // Non-`-i` paths (subcommands, `--paginate`) have no HTTP status to read;
+      // the exit code is the only failure signal available.
+      throw GlabException('$label failed', result);
     }
     final body = expectHeaders
         ? bodyAfterHeaders(result.stdout)

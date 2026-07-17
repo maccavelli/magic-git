@@ -412,29 +412,80 @@ class GhService {
   /// separately via [runJobLog]. Stops once all jobs report `completed`; the
   /// caller's `autoDispose` provider cancels it when the view closes.
   ///
-  /// A run that never reports any jobs (deleted mid-queue, a workflow that
-  /// produces none, an API hiccup that keeps answering `[]`) must not poll
-  /// forever: after [maxEmptyPolls] consecutive empty answers the stream ends
-  /// — the view's manual refresh restarts it if the user still cares.
+  /// A run that has genuinely finished but reports no jobs (deleted mid-queue, a
+  /// workflow that produces none, an API hiccup that keeps answering `[]`) must
+  /// not poll forever: after [maxEmptyPolls] such empty answers the stream ends
+  /// — the view's manual refresh restarts it if the user still cares. Crucially,
+  /// an empty answer from a run that is still *queued* (waiting on a runner)
+  /// does NOT count toward that cap: a busy or slow-runner queue legitimately
+  /// reports zero jobs for minutes, and abandoning the view then is exactly when
+  /// it's needed most.
+  ///
+  /// A transient failure on any single poll — the SSH session being superseded
+  /// by a reconnect, a timeout, a one-off 5xx — is skipped rather than fatal:
+  /// the view keeps polling and recovers when the link does. Only
+  /// [maxConsecutiveErrors] failures in a row (a durable problem: auth lost, run
+  /// deleted) end the stream with the error surfaced.
   Stream<List<GhJob>> runJobsStream(
     String repoPath,
     int runId, {
     Duration pollInterval = const Duration(seconds: 3),
     int maxEmptyPolls = 40,
+    int maxConsecutiveErrors = 10,
   }) async* {
     var emptyPolls = 0;
+    var errorStreak = 0;
     while (true) {
-      final jobs = await runJobs(repoPath, runId);
+      final List<GhJob> jobs;
+      final bool runFinished;
+      try {
+        jobs = await runJobs(repoPath, runId);
+        // The run's own status is only needed to adjudicate an empty jobs list;
+        // skip the extra call whenever there are jobs to show.
+        runFinished = jobs.isEmpty
+            ? await _runReportsFinished(repoPath, runId)
+            : false;
+        errorStreak = 0;
+      } catch (e) {
+        errorStreak++;
+        if (errorStreak >= maxConsecutiveErrors) rethrow;
+        await Future<void>.delayed(pollInterval);
+        continue;
+      }
       yield jobs;
       if (jobs.isEmpty) {
-        emptyPolls++;
-        if (emptyPolls >= maxEmptyPolls) break;
+        if (runFinished) {
+          emptyPolls++;
+          if (emptyPolls >= maxEmptyPolls) break;
+        } else {
+          emptyPolls = 0; // still queued — a jobless answer here is expected.
+        }
       } else {
         emptyPolls = 0;
         if (jobs.every((j) => j.status == 'completed')) break;
       }
       await Future<void>.delayed(pollInterval);
     }
+  }
+
+  /// Whether the run reports a terminal top-level status — used only to
+  /// adjudicate an empty jobs list (queued-but-jobless vs. finished-with-no-
+  /// jobs). On any ambiguity (status unreadable or an unexpected shape) it
+  /// returns true, so the empty-poll give-up safety net still applies to a
+  /// genuinely dead run rather than polling it forever.
+  Future<bool> _runReportsFinished(String repoPath, int runId) async {
+    final decoded = await api(
+      repoPath,
+      'repos/{owner}/{repo}/actions/runs/$runId',
+    );
+    if (decoded is Map<String, dynamic>) {
+      // GitHub run status: queued | in_progress | completed (+ newer
+      // waiting/requested/pending, all non-terminal). Only 'completed' means no
+      // more jobs are coming.
+      final status = decoded['status'];
+      if (status is String) return status == 'completed';
+    }
+    return true;
   }
 
   /// A completed job's log via `gh run view --job <id> --log`. GitHub only

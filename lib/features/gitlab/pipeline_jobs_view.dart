@@ -167,6 +167,11 @@ class _TraceLogState extends ConsumerState<_TraceLog> {
   }
 
   void _append(String chunk) {
+    // Release the initial spinner on the first delivered event of any kind — a
+    // job that finishes with no output at all (traceStream emits one empty
+    // terminal tick) still leaves the loading state and renders the empty-log
+    // placeholder, instead of spinning forever.
+    if (_loading) setState(() => _loading = false);
     if (chunk.isEmpty) return;
     _chunks.add(chunk);
     _charCount += chunk.length;
@@ -236,6 +241,8 @@ class _TraceLogState extends ConsumerState<_TraceLog> {
       padding: const EdgeInsets.all(12),
       child: (_loading && !hasContent)
           ? const Center(child: ProgressCircle())
+          : (!hasContent)
+          ? const CenteredHint('No log output.')
           : Stack(
               children: [
                 Positioned.fill(child: _logList()),

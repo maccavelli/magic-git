@@ -144,6 +144,47 @@ void main() {
   );
 
   testWidgets(
+    'a job that finishes with no output shows an empty state, not a spinner',
+    (tester) async {
+      // traceStream emits one empty terminal tick on a clean no-output close;
+      // the view must render "No log output." rather than spinning forever.
+      final container = ProviderContainer(
+        overrides: [
+          jobsProvider((_repo, _pipelineId)).overrideWith(
+            (ref) async => const [
+              Job(id: _jobId, name: 'build', stage: 'build', status: 'success'),
+            ],
+          ),
+          jobTraceProvider(
+            (_repo, _jobId),
+          ).overrideWith((ref) => Stream<String>.value('')),
+        ],
+      );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: SizedBox(
+              width: 800,
+              height: 600,
+              child: PipelineJobsView(repoPath: _repo, pipelineId: _pipelineId),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+
+      await tester.tap(find.text('build'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No log output.'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'a failed job trace renders an error state (not a blank/short log)',
     (tester) async {
       // A failed `glab ci trace` surfaces as a stream error (traceStream now
