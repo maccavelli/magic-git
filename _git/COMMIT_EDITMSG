@@ -1,6 +1,0 @@
-feat(git): inject forge CLI credential helpers for HTTPS remotes
-
-- Added `forgeGitAuthConfigArgs` to provide scoped `git` configuration for GitHub (`gh`) and GitLab (`glab`) CLI authentication.
-- Modified `GitService` to dynamically lookup remote URLs and inject the appropriate credential helper for HTTPS forge remotes during `push`, `pull`, `fetch`, and `ls-remote` operations.
-- Updated `CreateRepositorySheet` to use these helpers when pushing initial commits, ensuring HTTPS authentication uses the forge-specific CLI store rather than host-wide helpers.
-- Adjusted tests to reflect the new `git` command arguments.
