@@ -11,6 +11,7 @@ import '../common/actions.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
+import '../common/hover_pop.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import '../connection/local_repo_form.dart';
@@ -56,32 +57,36 @@ class ConnectionSwitcher extends ConsumerWidget {
         border: Border(top: BorderSide(color: MacosColors.separatorColor)),
       ),
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
-      child: AppPushButton(
-        controlSize: ControlSize.large,
-        secondary: true,
-        onPressed: () => showMacosSheet<void>(
-          context: context,
-          builder: (_) => const EscapeDismissible(child: ConnectionsPanel()),
-        ),
-        child: Row(
-          children: [
-            // White reads far more clearly than the default accent-blue tint
-            // against this button's fill.
-            const MacosIcon(
-              CupertinoIcons.rectangle_stack,
-              size: 15,
-              color: MacosColors.white,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: MacosTheme.of(context).typography.body,
+      // Same pop-on-hover / press-in microinteraction as the landing screen's
+      // buttons — the two bottom-of-sidebar controls share that prominence.
+      child: HoverPop(
+        child: AppPushButton(
+          controlSize: ControlSize.large,
+          secondary: true,
+          onPressed: () => showMacosSheet<void>(
+            context: context,
+            builder: (_) => const EscapeDismissible(child: ConnectionsPanel()),
+          ),
+          child: Row(
+            children: [
+              // White reads far more clearly than the default accent-blue tint
+              // against this button's fill.
+              const MacosIcon(
+                CupertinoIcons.rectangle_stack,
+                size: 15,
+                color: MacosColors.white,
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: MacosTheme.of(context).typography.body,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -102,31 +107,36 @@ class LogoutButton extends ConsumerWidget {
         border: Border(top: BorderSide(color: MacosColors.separatorColor)),
       ),
       padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
-      child: AppPushButton(
-        controlSize: ControlSize.large,
-        secondary: true,
-        // Returns to ConnectionLanding: disconnect() drops the session, which
-        // flips `connected` false in the shell and pins content to the card.
-        onPressed: () => ref.read(connectionProvider.notifier).disconnect(),
-        child: Row(
-          children: [
-            // White for parity with the connections-manager button's icon,
-            // which reads more clearly than the default accent tint here.
-            const MacosIcon(
-              CupertinoIcons.square_arrow_right,
-              size: 15,
-              color: MacosColors.white,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Logout',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: MacosTheme.of(context).typography.body,
+      // Same pop-on-hover / press-in microinteraction as the landing screen's
+      // buttons (and the connections button above) — one bottom nav stack,
+      // one motion language.
+      child: HoverPop(
+        child: AppPushButton(
+          controlSize: ControlSize.large,
+          secondary: true,
+          // Returns to ConnectionLanding: disconnect() drops the session, which
+          // flips `connected` false in the shell and pins content to the card.
+          onPressed: () => ref.read(connectionProvider.notifier).disconnect(),
+          child: Row(
+            children: [
+              // White for parity with the connections-manager button's icon,
+              // which reads more clearly than the default accent tint here.
+              const MacosIcon(
+                CupertinoIcons.square_arrow_right,
+                size: 15,
+                color: MacosColors.white,
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Logout',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: MacosTheme.of(context).typography.body,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
