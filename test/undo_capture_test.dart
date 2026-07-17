@@ -199,6 +199,32 @@ void main() {
     expect(r.stashSubject, 'On main: wip thing');
   });
 
+  test('stashPop maps the subject, pre-pop snapshot and post-pop tree', () async {
+    exec.next = SSHCommandResult(
+      exitCode: 0,
+      // pop carries two pre-mutation extras (subject, snapshot S) and one
+      // postCapture (the post-pop worktree tree Pt), which lands after postref.
+      stdout: '${captured(
+        pre: 'a' * 40,
+        preref: 'main',
+        extras: ['On main: wip thing', 's' * 40],
+        mutOut: 'Dropped refs/stash@{0}\n',
+        post: 'a' * 40,
+        postref: 'main',
+      )}${'9' * 40}$sep',
+      stderr: '',
+    );
+    final result = await git.stashPop('/repo', 0, expectedOid: 'c' * 40);
+    expect(result.stdout, 'Dropped refs/stash@{0}\n',
+        reason: 'capture fields must be stripped from the surfaced result');
+    final r = records.single;
+    expect(r.kind, UndoOpKind.stashPop);
+    expect(r.deletedOid, 'c' * 40);
+    expect(r.stashSubject, 'On main: wip thing');
+    expect(r.snapshotOid, 's' * 40, reason: 'pre-pop snapshot S');
+    expect(r.worktreeTree, '9' * 40, reason: 'post-pop worktree tree Pt');
+  });
+
   test('mixed reset maps the write-tree capture; a degraded (empty) capture '
       'still records', () async {
     exec.next = SSHCommandResult(

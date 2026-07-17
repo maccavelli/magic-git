@@ -4027,6 +4027,14 @@ class GitService {
     required String expectedOid,
   }) async {
     final selector = ShellEscaper.escape('stash@{$index}');
+    // A clean pop = apply + drop, and undoing it must reverse BOTH: re-store
+    // the entry (like drop) AND un-apply the changes it just merged into the
+    // tree. The old undo did only the first, leaving the popped changes
+    // duplicated in the working tree. So capture a flavor-A snapshot of the
+    // pre-pop worktree+index (extraCaptures run before the mutation) to reset
+    // back to, plus the post-pop worktree tree (a postCapture) as the undo's
+    // "nothing changed since" guard. See [UndoOpKind.stashPop].
+    final refName = _newSnapshotRef();
     try {
       return await _runCaptured(
         repoPath,
@@ -4037,13 +4045,19 @@ class GitService {
           expectedOid,
           'pop',
         ),
-        extraCaptures: ['git log -1 --format=%s $selector 2>/dev/null'],
+        extraCaptures: [
+          'git log -1 --format=%s $selector 2>/dev/null', // extras[0]: subject
+          _snapshotCaptureA(refName), // extras[1]: pre-pop snapshot S
+        ],
+        postCaptures: [_worktreeTreeCapture], // postExtras[0]: post-pop tree Pt
         record: (c) => c.toRecord(
           repoPath: repoPath,
-          kind: UndoOpKind.stashDrop,
+          kind: UndoOpKind.stashPop,
           description: 'Stash pop',
           deletedOid: expectedOid,
           stashSubject: c.extras[0],
+          snapshotOid: c.extras[1],
+          worktreeTree: c.postExtras[0],
         ),
       );
     } on GitException catch (e) {
@@ -4286,6 +4300,18 @@ class GitService {
         'rm -f "\$idx"; '
         '$_snapshotPruneScript';
   }
+
+  /// The full worktree tree OID *as it stands now* — `git stash create`'s
+  /// `^{tree}` (index and unstaged content folded into one tree), or HEAD's
+  /// tree when the worktree is clean and `stash create` captures nothing.
+  /// Content-addressed and date-free, so two evaluations over identical content
+  /// compare equal: the basis of the [UndoOpKind.stashPop] guard. Emitted as a
+  /// [_runCaptured] postCapture (taken AFTER the pop applied) and recomputed at
+  /// undo time to detect any edit made since.
+  static const String _worktreeTreeCapture =
+      'wt=\$($_snapshotIdEnv git stash create 2>/dev/null); '
+      'if [ -n "\$wt" ]; then git rev-parse "\$wt^{tree}"; '
+      'else git rev-parse -q --verify HEAD^{tree} 2>/dev/null; fi';
 
   /// Lists the anchored snapshots — the Recovery sheet's "Snapshots"
   /// section. Newest first (ref names embed the creation epoch).
@@ -4558,6 +4584,35 @@ class GitService {
             : r.stashSubject;
         final id = _idFlagsForShell;
         return 'git${id.isEmpty ? '' : ' $id'} stash store -m ${esc(subject)} ${esc(r.deletedOid)}';
+      case UndoOpKind.stashPop:
+        // Reverse a clean pop: reset the tree to the captured HEAD (dropping
+        // the applied changes), re-apply the pre-pop snapshot's uncommitted
+        // content (empty snapshot ⇒ the pre-pop tree was clean, so the bare
+        // reset is already exact), then re-store the entry. headGuard already
+        // pins HEAD == postHead (a pop never moves HEAD).
+        final id = _idFlagsForShell;
+        final subject = r.stashSubject.isEmpty
+            ? 'Restored stash'
+            : r.stashSubject;
+        final store =
+            'git${id.isEmpty ? '' : ' $id'} stash store '
+            '-m ${esc(subject)} ${esc(r.deletedOid)}';
+        final reapply = r.snapshotOid.isEmpty
+            ? ''
+            : ' && git stash apply --index ${esc(r.snapshotOid)}';
+        // A popped tree is dirty by design, so the clean-tree guard the other
+        // snapshot undos use would always trip. Instead refuse (exit 43) if the
+        // live worktree tree no longer equals the post-pop tree we recorded —
+        // any edit since the pop is work the reset --hard would eat. Skipped
+        // when forced, or when the capture degraded to '' (nothing to compare).
+        final treeGuard = (force || r.worktreeTree.isEmpty)
+            ? ''
+            : 'wt=\$($_snapshotIdEnv git stash create 2>/dev/null); '
+                  'cur=\$(if [ -n "\$wt" ]; then git rev-parse "\$wt^{tree}"; '
+                  'else git rev-parse -q --verify HEAD^{tree} 2>/dev/null; fi); '
+                  '[ "\$cur" = ${esc(r.worktreeTree)} ] || exit 43; ';
+        return '$headGuard$treeGuard'
+            'git reset --hard ${esc(r.postHead)}$reapply && $store';
       case UndoOpKind.createBranch:
         // The created branch must still point where creation left it —
         // commits made on it since must not be silently discarded.

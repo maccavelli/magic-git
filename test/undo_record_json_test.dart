@@ -19,6 +19,7 @@ void main() {
       deletedOid: 'c' * 40,
       stashSubject: 'On main: wip',
       preIndexTree: 'd' * 40,
+      worktreeTree: '9' * 40,
       snapshotOid: 'e' * 40,
       paths: ['a.txt', 'dir with spaces/ü.txt'],
       stashEntries: ['${'f' * 40} On main: one', '${'0' * 40} On main: two'],
@@ -37,6 +38,7 @@ void main() {
     expect(decoded.deletedOid, record.deletedOid);
     expect(decoded.stashSubject, record.stashSubject);
     expect(decoded.preIndexTree, record.preIndexTree);
+    expect(decoded.worktreeTree, record.worktreeTree);
     expect(decoded.snapshotOid, record.snapshotOid);
     expect(decoded.paths, record.paths);
     expect(decoded.stashEntries, record.stashEntries);
@@ -55,6 +57,7 @@ void main() {
     );
     final decoded = UndoRecord.fromJson(record.toJson())!;
     expect(decoded.refName, '');
+    expect(decoded.worktreeTree, '');
     expect(decoded.snapshotOid, '');
     expect(decoded.paths, isEmpty);
     expect(decoded.stashEntries, isEmpty);

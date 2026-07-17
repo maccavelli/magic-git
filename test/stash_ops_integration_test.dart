@@ -90,7 +90,7 @@ void main() {
     expect(await git.stashList(repo), hasLength(2));
   });
 
-  test('pop journals the popped stash so it is recoverable', () async {
+  test('pop undo un-applies the changes AND re-stores the entry', () async {
     final entry = (await pushStash('alpha', message: 'alpha')).single;
 
     await git.stashPop(repo, entry.index, expectedOid: entry.oid);
@@ -98,10 +98,59 @@ void main() {
     expect(await File('$repo/f.txt').readAsString(), 'alpha\n',
         reason: 'popped content applied');
 
-    expect(records.single.kind, UndoOpKind.stashDrop);
+    expect(records.single.kind, UndoOpKind.stashPop);
     await git.undoExecute(records.single);
+    // Path (a): a clean reversal — the applied changes are gone from the tree
+    // (not left duplicated as the old stash-store-only undo did) and the entry
+    // is back.
+    expect(await File('$repo/f.txt').readAsString(), 'base\n',
+        reason: 'the popped changes were un-applied');
     expect(await git.stashList(repo), hasLength(1),
         reason: 'the stash entry itself is back');
+  });
+
+  test('pop undo keeps an unrelated change that was present before the pop',
+      () async {
+    // A second tracked file with an uncommitted edit that is NOT part of the
+    // stash — it must survive the undo (and its restore exercises the
+    // snapshot `apply --index` path).
+    await write('keep.txt', 'base\n');
+    await raw(['add', 'keep.txt']);
+    await raw(['commit', '-q', '-m', 'add keep']);
+
+    final entry = (await pushStash('alpha', message: 'alpha')).single;
+    await write('keep.txt', 'mine\n'); // unrelated, added AFTER the stash
+    await git.stashPop(repo, entry.index, expectedOid: entry.oid);
+    expect(await File('$repo/f.txt').readAsString(), 'alpha\n');
+    expect(await File('$repo/keep.txt').readAsString(), 'mine\n');
+
+    await git.undoExecute(records.single);
+    expect(await File('$repo/f.txt').readAsString(), 'base\n',
+        reason: 'the popped change is reversed');
+    expect(await File('$repo/keep.txt').readAsString(), 'mine\n',
+        reason: 'the unrelated pre-pop change is preserved');
+    expect(await git.stashList(repo), hasLength(1));
+  });
+
+  test('pop undo refuses to discard edits made since the pop, unless forced',
+      () async {
+    final entry = (await pushStash('alpha', message: 'alpha')).single;
+    await git.stashPop(repo, entry.index, expectedOid: entry.oid);
+    // The user keeps working after the pop.
+    await write('f.txt', 'edited-after-pop\n');
+
+    await expectLater(
+      git.undoExecute(records.single),
+      throwsA(isA<UndoDirtyException>()),
+      reason: 'reset --hard would eat the post-pop edit — guard it',
+    );
+    expect(await git.stashList(repo), isEmpty, reason: 'nothing restored yet');
+    expect(await File('$repo/f.txt').readAsString(), 'edited-after-pop\n');
+
+    // Forcing discards the post-pop edit and completes the reversal.
+    await git.undoExecute(records.single, force: true);
+    expect(await File('$repo/f.txt').readAsString(), 'base\n');
+    expect(await git.stashList(repo), hasLength(1));
   });
 
   test('apply by OID lands on the right stash however the list has shifted',

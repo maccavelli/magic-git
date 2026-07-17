@@ -41,8 +41,19 @@ enum UndoOpKind {
   createTag,
 
   /// `git stash drop` — undo re-stores the captured stash commit (it lands at
-  /// `stash@{0}`, not its original list position).
+  /// `stash@{0}`, not its original list position). The working tree is
+  /// untouched by a drop, so the undo is purely additive.
   stashDrop,
+
+  /// `git stash pop` — a clean pop is apply + drop, so undo must reverse both:
+  /// restore the exact pre-pop working tree (reset to the captured HEAD, then
+  /// re-apply the flavor-A snapshot of the pre-pop tree taken at pop time) AND
+  /// re-store the dropped entry. Guarded by worktree-tree equality rather than
+  /// the clean-tree check the other snapshot undos use — a popped tree is dirty
+  /// by design (it holds the applied changes), so a clean-tree guard would
+  /// always trip; instead any edit since the pop makes the reset --hard lossy
+  /// and yields exit 43 unless forced. See [UndoRecord.worktreeTree].
+  stashPop,
 
   /// `git reset --hard` — undo moves HEAD back and re-applies the pre-reset
   /// worktree+index from a flavor-A snapshot (`stash create` anchored on a
@@ -120,6 +131,13 @@ class UndoRecord {
   /// the capture degraded).
   final String preIndexTree;
 
+  /// [UndoOpKind.stashPop]: the full worktree tree OID captured right after the
+  /// pop applied (`git stash create`'s `^{tree}`, or HEAD's tree when the
+  /// post-pop tree was clean). Undo compares the live worktree tree against it
+  /// and refuses (exit 43) if they differ, so a `reset --hard` can't silently
+  /// discard edits made since the pop. '' when the capture degraded.
+  final String worktreeTree;
+
   /// The pre-destroy snapshot commit (flavor A for tracked-content destroys,
   /// flavor B for untracked deletions), anchored under
   /// `refs/magic-git/snapshots/` so gc can't reap it. '' when the snapshot
@@ -148,6 +166,7 @@ class UndoRecord {
     this.deletedOid = '',
     this.stashSubject = '',
     this.preIndexTree = '',
+    this.worktreeTree = '',
     this.snapshotOid = '',
     this.paths = const [],
     this.stashEntries = const [],
@@ -169,6 +188,7 @@ class UndoRecord {
     'deletedOid': deletedOid,
     'stashSubject': stashSubject,
     'preIndexTree': preIndexTree,
+    'worktreeTree': worktreeTree,
     'snapshotOid': snapshotOid,
     'paths': paths,
     'stashEntries': stashEntries,
@@ -193,6 +213,7 @@ class UndoRecord {
       deletedOid: json['deletedOid'] as String? ?? '',
       stashSubject: json['stashSubject'] as String? ?? '',
       preIndexTree: json['preIndexTree'] as String? ?? '',
+      worktreeTree: json['worktreeTree'] as String? ?? '',
       snapshotOid: json['snapshotOid'] as String? ?? '',
       paths: (json['paths'] as List?)?.cast<String>() ?? const [],
       stashEntries: (json['stashEntries'] as List?)?.cast<String>() ?? const [],
@@ -234,6 +255,7 @@ class UndoCapture {
     String deletedOid = '',
     String stashSubject = '',
     String preIndexTree = '',
+    String worktreeTree = '',
     String snapshotOid = '',
     List<String> paths = const [],
     List<String> stashEntries = const [],
@@ -249,6 +271,7 @@ class UndoCapture {
     deletedOid: deletedOid,
     stashSubject: stashSubject,
     preIndexTree: preIndexTree,
+    worktreeTree: worktreeTree,
     snapshotOid: snapshotOid,
     paths: paths,
     stashEntries: stashEntries,
