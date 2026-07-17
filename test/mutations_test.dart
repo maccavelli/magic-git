@@ -1079,6 +1079,45 @@ void main() {
       );
     });
 
+    test('stashApply adds --index only when asked', () async {
+      await git.stashApply('/repo', 'e' * 40);
+      expect(exec.calls.single,
+          ['git', 'stash', 'apply', '--end-of-options', 'e' * 40]);
+      exec.calls.clear();
+      await git.stashApply('/repo', 'e' * 40, restoreIndex: true);
+      expect(exec.calls.single,
+          ['git', 'stash', 'apply', '--index', '--end-of-options', 'e' * 40]);
+    });
+
+    test('stashPop --index runs `pop --index` inside the stale guard',
+        () async {
+      await git.stashPop('/repo', 0, expectedOid: 'e' * 40, restoreIndex: true);
+      expect(exec.calls.single[2],
+          contains("git stash pop --index 'stash@{0}' )"));
+    });
+
+    test('stashBranch runs `stash branch <name> <sel>` behind the stale guard, '
+        'capturing subject + snapshot', () async {
+      await git.stashBranch('/repo', 'feature-x', index: 2, expectedOid: 'e' * 40);
+      final script = exec.calls.single[2];
+      expect(
+        script,
+        contains('( [ "\$(git rev-parse -q --verify ' "'stash@{2}')\" = "
+            "'${'e' * 40}' ] || exit 42; git stash branch 'feature-x' 'stash@{2}' )"),
+      );
+      // Subject captured pre-op for undo's `stash store` message.
+      expect(script,
+          contains(r"x0=$(git log -1 --format=%s 'stash@{2}' 2>/dev/null); "));
+    });
+
+    test('a stale stashBranch surfaces StashStaleException', () async {
+      exec.next = const SSHCommandResult(exitCode: 42, stdout: '', stderr: '');
+      await expectLater(
+        git.stashBranch('/repo', 'x', index: 0, expectedOid: 'e' * 40),
+        throwsA(isA<StashStaleException>()),
+      );
+    });
+
     test('committer identity injects -c flags on stashPush', () async {
       // `git stash push` creates real commit objects under the hood and
       // needs an author identity on a host with none configured.

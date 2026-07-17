@@ -75,6 +75,15 @@ enum UndoOpKind {
   /// oldest first, so the original stash@{n} order is preserved.
   stashClear,
 
+  /// `git stash branch <name> stash@{n}` (create branch + checkout + apply +
+  /// drop) — undo checks the original branch back out (force: the applied
+  /// changes are re-stashed anyway), re-applies the pre-pop [snapshotOid] so an
+  /// unrelated pre-op change survives, deletes the created branch, and re-stores
+  /// the entry. Guarded like [stashPop] by [worktreeTree] equality, and stale
+  /// (exit 42) if a commit landed on the created branch since. See
+  /// `GitService.stashBranch`.
+  stashBranch,
+
   /// `git restore -- <paths>` (discard) — undo restores exactly those paths'
   /// working-tree content from the flavor-A snapshot's tree.
   discardPaths,

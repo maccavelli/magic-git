@@ -153,6 +153,91 @@ void main() {
     expect(await git.stashList(repo), hasLength(1));
   });
 
+  test('apply --index reinstates the staged state', () async {
+    await write('f.txt', 'staged-change\n');
+    await raw(['add', 'f.txt']); // staged when stashed
+    await raw(['stash', 'push', '-q']);
+    final entry = (await git.stashList(repo)).single;
+
+    await git.stashApply(repo, entry.oid, restoreIndex: true);
+    expect(await raw(['diff', '--cached', '--name-only']), 'f.txt',
+        reason: '--index brings the file back staged, not just in the worktree');
+  });
+
+  test('pop --index reinstates the staged state and still drops the entry',
+      () async {
+    await write('f.txt', 'staged-change\n');
+    await raw(['add', 'f.txt']);
+    await raw(['stash', 'push', '-q']);
+    final entry = (await git.stashList(repo)).single;
+
+    await git.stashPop(repo, entry.index,
+        expectedOid: entry.oid, restoreIndex: true);
+    expect(await raw(['diff', '--cached', '--name-only']), 'f.txt');
+    expect(await git.stashList(repo), isEmpty, reason: 'pop still consumes it');
+  });
+
+  test('stash branch recovers onto a new branch, and undo reverses all of it',
+      () async {
+    final entry = (await pushStash('wip', message: 'wip')).single;
+
+    await git.stashBranch(repo, 'feature-x',
+        index: entry.index, expectedOid: entry.oid);
+    expect(await raw(['symbolic-ref', '--short', 'HEAD']), 'feature-x');
+    expect(await File('$repo/f.txt').readAsString(), 'wip\n',
+        reason: 'the stash is applied on the new branch');
+    expect(await git.stashList(repo), isEmpty,
+        reason: 'the stash is dropped once applied');
+
+    expect(records.single.kind, UndoOpKind.stashBranch);
+    await git.undoExecute(records.single);
+    expect(await raw(['symbolic-ref', '--short', 'HEAD']), 'main',
+        reason: 'back on the original branch');
+    expect(await File('$repo/f.txt').readAsString(), 'base\n',
+        reason: 'the applied changes are reversed');
+    expect(await git.stashList(repo), hasLength(1),
+        reason: 'the stash is re-stored');
+    final branches = await raw(['branch', '--format=%(refname:short)']);
+    expect(branches.split('\n'), isNot(contains('feature-x')),
+        reason: 'the created branch is deleted');
+  });
+
+  test('stash branch aimed at a shifted list is refused', () async {
+    final rendered = (await pushStash('alpha', message: 'alpha')).single;
+    await pushStash('beta', message: 'beta'); // shifts the list under it
+
+    await expectLater(
+      git.stashBranch(repo, 'nope',
+          index: rendered.index, expectedOid: rendered.oid),
+      throwsA(isA<StashStaleException>()),
+    );
+    expect(await git.stashList(repo), hasLength(2),
+        reason: 'nothing consumed');
+    final branches = await raw(['branch', '--format=%(refname:short)']);
+    expect(branches.split('\n'), isNot(contains('nope')),
+        reason: 'no branch created behind the guard');
+  });
+
+  test('stash branch undo refuses to discard edits made since, unless forced',
+      () async {
+    final entry = (await pushStash('wip', message: 'wip')).single;
+    await git.stashBranch(repo, 'feature-x',
+        index: entry.index, expectedOid: entry.oid);
+    await write('f.txt', 'edited-after-branch\n'); // work on the new branch
+
+    await expectLater(
+      git.undoExecute(records.single),
+      throwsA(isA<UndoDirtyException>()),
+    );
+    // Still on the created branch, nothing reversed.
+    expect(await raw(['symbolic-ref', '--short', 'HEAD']), 'feature-x');
+    expect(await git.stashList(repo), isEmpty);
+
+    await git.undoExecute(records.single, force: true);
+    expect(await raw(['symbolic-ref', '--short', 'HEAD']), 'main');
+    expect(await git.stashList(repo), hasLength(1));
+  });
+
   test('apply by OID lands on the right stash however the list has shifted',
       () async {
     final alpha = (await pushStash('alpha', message: 'alpha')).single;

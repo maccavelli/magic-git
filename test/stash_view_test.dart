@@ -3,7 +3,7 @@
 // data→render wiring and provider overrides.
 
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/gestures.dart' show PointerDeviceKind;
+import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -40,8 +40,11 @@ class _ActionGit extends GitService {
 
   final List<(int, String)> drops = [];
   final List<(int, String)> pops = [];
+  final List<bool> popRestoreIndex = [];
   final List<String> applies = [];
+  final List<bool> applyRestoreIndex = [];
   final List<(String?, bool)> pushes = [];
+  final List<(String, int, String)> branches = []; // (name, index, oid)
   bool cleared = false;
   bool stale = false;
 
@@ -61,9 +64,11 @@ class _ActionGit extends GitService {
     String repoPath,
     int index, {
     required String expectedOid,
+    bool restoreIndex = false,
   }) async {
     if (stale) throw const StashStaleException();
     pops.add((index, expectedOid));
+    popRestoreIndex.add(restoreIndex);
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
 
@@ -74,8 +79,24 @@ class _ActionGit extends GitService {
   }
 
   @override
-  Future<SSHCommandResult> stashApply(String repoPath, String oid) async {
+  Future<SSHCommandResult> stashApply(
+    String repoPath,
+    String oid, {
+    bool restoreIndex = false,
+  }) async {
     applies.add(oid);
+    applyRestoreIndex.add(restoreIndex);
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+
+  @override
+  Future<SSHCommandResult> stashBranch(
+    String repoPath,
+    String branchName, {
+    required int index,
+    required String expectedOid,
+  }) async {
+    branches.add((branchName, index, expectedOid));
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
 
@@ -382,5 +403,58 @@ void main() {
     // Stashing the current tree doesn't require an existing stash.
     expect(itemFor('Stash current changes').onTap, isNotNull);
     expect(itemFor('Stash including untracked').onTap, isNotNull);
+  });
+
+  // ---- Card right-click menu (--index variants + create-branch) -----------
+
+  Future<void> openCardMenu(WidgetTester tester, String cardText) async {
+    await tester.tap(find.text(cardText), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('right-click a card offers the --index variants and create-branch',
+      (tester) async {
+    await _pump(tester, stashes: _stashes);
+    await openCardMenu(tester, 'tweak the parser');
+    expect(find.text('Apply, restoring staged files'), findsOneWidget);
+    expect(find.text('Pop, restoring staged files'), findsOneWidget);
+    expect(find.text('Create branch from stash…'), findsOneWidget);
+  });
+
+  testWidgets('"Apply, restoring staged files" applies that stash with --index',
+      (tester) async {
+    final git = _ActionGit();
+    await _pump(tester, stashes: _stashes, git: git);
+    await openCardMenu(tester, 'tweak the parser'); // stash@{0} = _oidA
+    await tester.tap(find.text('Apply, restoring staged files'));
+    await tester.pumpAndSettle();
+    expect(git.applies, [_oidA]);
+    expect(git.applyRestoreIndex, [true]);
+  });
+
+  testWidgets('"Pop, restoring staged files" pops that stash with --index',
+      (tester) async {
+    final git = _ActionGit();
+    await _pump(tester, stashes: _stashes, git: git);
+    await openCardMenu(tester, 'manual note'); // stash@{1} = _oidB
+    await tester.tap(find.text('Pop, restoring staged files'));
+    await tester.pumpAndSettle();
+    expect(git.pops, [(1, _oidB)]);
+    expect(git.popRestoreIndex, [true]);
+  });
+
+  testWidgets('"Create branch from stash…" prompts then calls stashBranch',
+      (tester) async {
+    final git = _ActionGit();
+    await _pump(tester, stashes: _stashes, git: git);
+    await openCardMenu(tester, 'tweak the parser'); // stash@{0}, index 0, _oidA
+    await tester.tap(find.text('Create branch from stash…'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(MacosTextField).last, 'recovered');
+    await tester.tap(find.text('OK'));
+    await tester.pumpAndSettle();
+
+    expect(git.branches, [('recovered', 0, _oidA)]);
   });
 }

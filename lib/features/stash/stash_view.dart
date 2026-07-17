@@ -11,11 +11,13 @@ import '../../core/theme/app_theme.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/busy_action.dart';
+import '../common/context_menu.dart';
 import '../common/diff_view.dart';
 import '../common/label_chip.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
+import '../common/ref_name_validation.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/tool_icon_button.dart';
 import '../dnd/deselect.dart';
@@ -60,10 +62,16 @@ class _StashViewState extends ConsumerState<StashView>
   final ScrollController _stashScroll = ScrollController();
   final Map<String, GlobalKey> _stashRowKeys = {};
 
+  /// Per-card right-click menu — the discoverable home for the less-common
+  /// affordances (apply/pop with `--index`, create-branch-from-stash) that
+  /// would clutter the card's inline buttons.
+  final ContextMenuOverlay _cardMenu = ContextMenuOverlay();
+
   String get repoPath => widget.repoPath;
 
   @override
   void dispose() {
+    _cardMenu.dispose();
     _stashFocus.dispose();
     _stashScroll.dispose();
     super.dispose();
@@ -143,24 +151,47 @@ class _StashViewState extends ConsumerState<StashView>
 
   // Apply/pop a specific stash — shared by the per-card icon buttons and the
   // apply/pop keyboard shortcuts so both take the identical logged path.
-  Future<void> _apply(GitService git, GitStash stash) => _runLogged(
-    'git stash apply ${stash.ref}',
-    (log) async => log.logResult(
-      'git stash apply ${stash.ref}',
-      // By OID: immune to the list shifting since render.
-      await git.stashApply(repoPath, stash.oid),
-    ),
-  );
+  Future<void> _apply(
+    GitService git,
+    GitStash stash, {
+    bool restoreIndex = false,
+  }) {
+    final label = restoreIndex
+        ? 'git stash apply --index ${stash.ref}'
+        : 'git stash apply ${stash.ref}';
+    return _runLogged(
+      label,
+      (log) async => log.logResult(
+        label,
+        // By OID: immune to the list shifting since render.
+        await git.stashApply(repoPath, stash.oid, restoreIndex: restoreIndex),
+      ),
+    );
+  }
 
-  Future<void> _pop(GitService git, GitStash stash) => _runLogged(
-    'git stash pop ${stash.ref}',
-    (log) async => log.logResult(
-      'git stash pop ${stash.ref}',
-      // The OID guard: pops only if stash@{n} still IS this stash —
-      // otherwise StashStaleException, and nothing was touched.
-      await git.stashPop(repoPath, stash.index, expectedOid: stash.oid),
-    ),
-  );
+  Future<void> _pop(
+    GitService git,
+    GitStash stash, {
+    bool restoreIndex = false,
+  }) {
+    final label = restoreIndex
+        ? 'git stash pop --index ${stash.ref}'
+        : 'git stash pop ${stash.ref}';
+    return _runLogged(
+      label,
+      (log) async => log.logResult(
+        label,
+        // The OID guard: pops only if stash@{n} still IS this stash —
+        // otherwise StashStaleException, and nothing was touched.
+        await git.stashPop(
+          repoPath,
+          stash.index,
+          expectedOid: stash.oid,
+          restoreIndex: restoreIndex,
+        ),
+      ),
+    );
+  }
 
   /// Runs a stash mutation through the shared [runLogged], adding this
   /// panel's one domain error: [StashStaleException] means the list shifted
@@ -457,6 +488,8 @@ class _StashViewState extends ConsumerState<StashView>
         _stashFocus.requestFocus();
         setState(() => _selected = stash.oid);
       },
+      onSecondaryTapUp: (d) =>
+          _showCardMenu(context, git, stash, d.globalPosition),
       child: Container(
         color: selected
             ? AppTheme.rowSelectionTint
@@ -570,6 +603,85 @@ class _StashViewState extends ConsumerState<StashView>
     // No selection re-targeting: `_selected` is an OID, which either still
     // names a surviving stash or matches nothing — positions shifting under
     // it cannot move the highlight onto the wrong entry.
+  }
+
+  /// Recovers the stash onto a brand-new branch (`git stash branch`) — the
+  /// escape hatch for a stash that won't apply to the current branch.
+  Future<void> _branchFromStash(GitService git, GitStash stash) async {
+    final name = await promptText(
+      context,
+      'Create branch from stash',
+      placeholder: 'branch name',
+      description:
+          'Creates a branch at ${stash.ref}’s base commit, applies the '
+          'stash there, and drops it. ⌘Z undoes the whole thing.',
+      validate: refNameProblem,
+    );
+    if (name == null || !mounted) return;
+    final label = 'git stash branch $name ${stash.ref}';
+    await _runLogged(
+      label,
+      (log) async => log.logResult(
+        label,
+        await git.stashBranch(
+          repoPath,
+          name,
+          index: stash.index,
+          expectedOid: stash.oid,
+        ),
+      ),
+    );
+  }
+
+  /// The stash card's right-click menu: the inline buttons cover apply/pop/drop
+  /// at a click; this adds the `--index` variants and create-branch-from-stash
+  /// without crowding the row. Selecting the card first mirrors the tap path.
+  void _showCardMenu(
+    BuildContext context,
+    GitService git,
+    GitStash stash,
+    Offset pos,
+  ) {
+    _stashFocus.requestFocus();
+    setState(() => _selected = stash.oid);
+    // Match the buttons' busy gate — no mutation menu while one is in flight.
+    if (busy) return;
+    _cardMenu.show(context, pos, [
+      ContextMenuItem(
+        icon: CupertinoIcons.tray_arrow_up,
+        label: 'Apply (keep in list)',
+        onTap: () => _apply(git, stash),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.tray_arrow_up,
+        label: 'Apply, restoring staged files',
+        onTap: () => _apply(git, stash, restoreIndex: true),
+      ),
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_up_bin,
+        label: 'Pop (apply & remove)',
+        onTap: () => _pop(git, stash),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_up_bin,
+        label: 'Pop, restoring staged files',
+        onTap: () => _pop(git, stash, restoreIndex: true),
+      ),
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_branch,
+        label: 'Create branch from stash…',
+        onTap: () => _branchFromStash(git, stash),
+      ),
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.trash,
+        label: 'Drop',
+        iconColor: MacosColors.systemRedColor,
+        onTap: () => _dropStash(context, git, stash),
+      ),
+    ], width: 260);
   }
 
   Widget _preview(BuildContext context, String? selected) {

@@ -25,7 +25,11 @@ class _KbGit extends GitService {
   final List<String> applies = [];
 
   @override
-  Future<SSHCommandResult> stashApply(String repoPath, String oid) async {
+  Future<SSHCommandResult> stashApply(
+    String repoPath,
+    String oid, {
+    bool restoreIndex = false,
+  }) async {
     applies.add(oid);
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
@@ -35,6 +39,7 @@ class _KbGit extends GitService {
     String repoPath,
     int index, {
     required String expectedOid,
+    bool restoreIndex = false,
   }) async {
     pops.add((index, expectedOid));
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

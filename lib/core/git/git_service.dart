@@ -4025,6 +4025,7 @@ class GitService {
     String repoPath,
     int index, {
     required String expectedOid,
+    bool restoreIndex = false,
   }) async {
     final selector = ShellEscaper.escape('stash@{$index}');
     // A clean pop = apply + drop, and undoing it must reverse BOTH: re-store
@@ -4043,7 +4044,10 @@ class GitService {
         mutationScript: _stashGuardedScript(
           'stash@{$index}',
           expectedOid,
-          'pop',
+          // `--index` also reinstates the staged/unstaged split the stash
+          // recorded (opt-in — it fails where a plain pop would succeed if the
+          // index can't be cleanly restored).
+          restoreIndex ? 'pop --index' : 'pop',
         ),
         extraCaptures: [
           'git log -1 --format=%s $selector 2>/dev/null', // extras[0]: subject
@@ -4068,9 +4072,24 @@ class GitService {
   /// Applies a stash without dropping it. Addressed by [oid], not index — an
   /// OID names the same stash no matter how the list has shifted since it
   /// was rendered, so apply needs no staleness guard at all.
-  Future<SSHCommandResult> stashApply(String repoPath, String oid) => _run(
+  ///
+  /// [restoreIndex] adds `--index` so the stash's staged/unstaged split is
+  /// reinstated too (opt-in: it fails, restoring nothing, when the index can't
+  /// be cleanly reapplied — e.g. the same paths are already staged).
+  Future<SSHCommandResult> stashApply(
+    String repoPath,
+    String oid, {
+    bool restoreIndex = false,
+  }) => _run(
     repoPath,
-    ['git', 'stash', 'apply', '--end-of-options', oid],
+    [
+      'git',
+      'stash',
+      'apply',
+      if (restoreIndex) '--index',
+      '--end-of-options',
+      oid,
+    ],
     'git stash apply',
   );
 
@@ -4101,6 +4120,61 @@ class GitService {
           description: 'Stash drop',
           deletedOid: expectedOid,
           stashSubject: c.extras[0],
+        ),
+      );
+    } on GitException catch (e) {
+      _rethrowStale(e);
+    }
+  }
+
+  /// Recovers a stash onto a fresh branch: `git stash branch <name> stash@{n}`
+  /// creates [branchName] at the commit the stash was based on, checks it out,
+  /// applies the stash there (so it cannot conflict — the base matches), and
+  /// drops the stash once applied. The escape hatch for a stash that won't
+  /// apply cleanly to the current branch.
+  ///
+  /// Guarded and undoable like [stashPop]: the positional `stash@{n}` is
+  /// verified against [expectedOid] first ([StashStaleException] otherwise),
+  /// and the same pre-op snapshot + post-op worktree tree are captured so undo
+  /// can check the old branch back out, re-apply the snapshot, delete the
+  /// created branch, and re-store the entry. See [UndoOpKind.stashBranch].
+  Future<SSHCommandResult> stashBranch(
+    String repoPath,
+    String branchName, {
+    required int index,
+    required String expectedOid,
+  }) async {
+    final refName = _newSnapshotRef();
+    final sel = ShellEscaper.escape('stash@{$index}');
+    final oid = ShellEscaper.escape(expectedOid);
+    final name = ShellEscaper.escape(branchName);
+    // Same stale guard as pop/drop, but `stash branch` puts the branch name
+    // between the subcommand and the selector, so it can't reuse
+    // [_stashGuardedScript]. [branchName] is check-ref-format-validated by the
+    // UI before it gets here, and shell-escaped here.
+    final mutationScript =
+        '( [ "\$(git rev-parse -q --verify $sel)" = $oid ] || exit 42; '
+        'git stash branch $name $sel )';
+    try {
+      return await _runCaptured(
+        repoPath,
+        const [], // unused — mutationScript below
+        'git stash branch',
+        mutationScript: mutationScript,
+        extraCaptures: [
+          'git log -1 --format=%s $sel 2>/dev/null', // extras[0]: subject
+          _snapshotCaptureA(refName), // extras[1]: pre-op snapshot S
+        ],
+        postCaptures: [_worktreeTreeCapture], // postExtras[0]: post-op tree Pt
+        record: (c) => c.toRecord(
+          repoPath: repoPath,
+          kind: UndoOpKind.stashBranch,
+          description: 'Stash branch $branchName',
+          refName: branchName,
+          deletedOid: expectedOid,
+          stashSubject: c.extras[0],
+          snapshotOid: c.extras[1],
+          worktreeTree: c.postExtras[0],
         ),
       );
     } on GitException catch (e) {
@@ -4613,6 +4687,34 @@ class GitService {
                   '[ "\$cur" = ${esc(r.worktreeTree)} ] || exit 43; ';
         return '$headGuard$treeGuard'
             'git reset --hard ${esc(r.postHead)}$reapply && $store';
+      case UndoOpKind.stashBranch:
+        // Reverse create-branch + checkout + apply + drop. headGuard already
+        // pins that HEAD is still the created branch at its tip (a commit made
+        // on it since ⇒ exit 42, stale). Force the original branch back out
+        // (the applied changes get re-stashed), re-apply the pre-op snapshot so
+        // an unrelated pre-op change survives, delete the created branch, and
+        // re-store the entry. Same worktree-equality guard as stashPop.
+        final id = _idFlagsForShell;
+        final subject = r.stashSubject.isEmpty
+            ? 'Restored stash'
+            : r.stashSubject;
+        final back = r.preRef.isNotEmpty
+            ? 'git checkout -f --end-of-options ${esc(r.preRef)}'
+            : 'git checkout -f --detach ${esc(r.preHead)}';
+        final reapply = r.snapshotOid.isEmpty
+            ? ''
+            : ' && git stash apply --index ${esc(r.snapshotOid)}';
+        final store =
+            'git${id.isEmpty ? '' : ' $id'} stash store '
+            '-m ${esc(subject)} ${esc(r.deletedOid)}';
+        final treeGuard = (force || r.worktreeTree.isEmpty)
+            ? ''
+            : 'wt=\$($_snapshotIdEnv git stash create 2>/dev/null); '
+                  'cur=\$(if [ -n "\$wt" ]; then git rev-parse "\$wt^{tree}"; '
+                  'else git rev-parse -q --verify HEAD^{tree} 2>/dev/null; fi); '
+                  '[ "\$cur" = ${esc(r.worktreeTree)} ] || exit 43; ';
+        return '$headGuard$treeGuard$back$reapply '
+            '&& git branch -D --end-of-options ${esc(r.refName)} && $store';
       case UndoOpKind.createBranch:
         // The created branch must still point where creation left it —
         // commits made on it since must not be silently discarded.
