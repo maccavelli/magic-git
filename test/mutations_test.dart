@@ -1288,13 +1288,14 @@ void main() {
 
     test('stashList parses index, branch, message and relative date', () async {
       const us = GitService.fieldSep;
+      // Field order is %gd, %H, %cr, %gs — the free-text message goes last.
       exec.next = const SSHCommandResult(
         exitCode: 0,
         stdout:
-            'stash@{0}${us}aaa111${us}WIP on main: abc1234 tweak'
-            '${us}2 hours ago\n'
-            'stash@{1}${us}bbb222${us}On feature: manual note'
-            '${us}3 days ago\n',
+            'stash@{0}${us}aaa111${us}2 hours ago'
+            '${us}WIP on main: abc1234 tweak\n'
+            'stash@{1}${us}bbb222${us}3 days ago'
+            '${us}On feature: manual note\n',
         stderr: '',
       );
       final stashes = await git.stashList('/repo');
@@ -1312,17 +1313,32 @@ void main() {
       expect(stashes[1].subject, 'manual note');
     });
 
-    test('stashList tolerates a missing date field', () async {
+    test('stashList tolerates an empty trailing message field', () async {
       const us = GitService.fieldSep;
+      // With the message last, %gs can be empty (a bare `git stash` with no
+      // subject leaves a trailing separator + empty field) — the date column,
+      // now a fixed middle field, still parses.
       exec.next = const SSHCommandResult(
         exitCode: 0,
-        stdout: 'stash@{0}${us}ccc333${us}WIP on main: abc1234 tweak\n',
+        stdout: 'stash@{0}${us}ccc333${us}2 hours ago$us\n',
         stderr: '',
       );
       final stashes = await git.stashList('/repo');
       expect(stashes.single.oid, 'ccc333');
-      expect(stashes.single.relativeDate, '');
-      expect(stashes.single.subject, 'tweak');
+      expect(stashes.single.relativeDate, '2 hours ago');
+      expect(stashes.single.message, '');
+    });
+
+    test('stashList skips a row truncated before the message field', () async {
+      const us = GitService.fieldSep;
+      // A transport hiccup that clips the row to three fields (no message
+      // separator at all) is dropped rather than mis-parsed.
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'stash@{0}${us}ccc333${us}2 hours ago\n',
+        stderr: '',
+      );
+      expect(await git.stashList('/repo'), isEmpty);
     });
 
     test('stash subject strips a full 64-hex SHA-256 short id', () async {
@@ -1334,8 +1350,8 @@ void main() {
       exec.next = const SSHCommandResult(
         exitCode: 0,
         stdout:
-            'stash@{0}${us}ddd444${us}WIP on main: $sha256 tweak'
-            '${us}2 hours ago\n',
+            'stash@{0}${us}ddd444${us}2 hours ago'
+            '${us}WIP on main: $sha256 tweak\n',
         stderr: '',
       );
       final stashes = await git.stashList('/repo');

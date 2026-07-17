@@ -4164,7 +4164,11 @@ class GitService {
         'git',
         'stash',
         'list',
-        '--format=%gd$fieldSep%H$fieldSep%gs$fieldSep%cr',
+        // %gs (the reflog subject) is free text and goes LAST: a stray field
+        // separator inside it then only over-splits the trailing field, which
+        // we rejoin, instead of shoving the %cr date out of position. Same
+        // reasoning that puts the commit subject last in parseRefs.
+        '--format=%gd$fieldSep%H$fieldSep%cr$fieldSep%gs',
       ],
       retries: _readRetries,
       lane: ExecLane.read,
@@ -4176,12 +4180,15 @@ class GitService {
     for (final line in result.stdout.split('\n')) {
       if (line.trim().isEmpty) continue;
       final f = line.split(fieldSep);
-      if (f.length < 3) continue;
+      if (f.length < 4) continue;
       // %gd is like "stash@{0}"; extract the index.
       final match = RegExp(r'stash@\{(\d+)\}').firstMatch(f[0]);
       final index = match != null ? int.parse(match.group(1)!) : stashes.length;
+      // Rejoin any separator-driven over-split of the trailing message, then
+      // strip residual separator bytes from the display fields (as parseRefs
+      // and parseGitLog do).
+      final desc = _stripSeps(f.length > 4 ? f.sublist(3).join(fieldSep) : f[3]);
       // %gs is like "WIP on main: <subject>" or "On main: <message>".
-      final desc = f[2];
       final branchMatch = RegExp(r'(?:WIP on|On) ([^:]+):').firstMatch(desc);
       stashes.add(
         GitStash(
@@ -4189,7 +4196,7 @@ class GitService {
           oid: f[1],
           branch: branchMatch?.group(1) ?? '',
           message: desc,
-          relativeDate: f.length >= 4 ? f[3].trim() : '',
+          relativeDate: _stripSeps(f[2]).trim(),
         ),
       );
     }

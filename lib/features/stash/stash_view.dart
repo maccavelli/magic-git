@@ -125,6 +125,12 @@ class _StashViewState extends ConsumerState<StashView>
     // it can never match here — clear it. Mirrors HistoryView / RepoStatusView.
     if (oldWidget.repoPath != widget.repoPath) {
       _selected = null;
+      // The row-key map and scroll offset belong to the old repo's list.
+      // Without this the OID-keyed keys accrete across every repo switch
+      // (a slow GlobalKey leak) and the new repo's list opens scrolled to
+      // the previous one's position. Mirrors BranchesView.didUpdateWidget.
+      _stashRowKeys.clear();
+      if (_stashScroll.hasClients) _stashScroll.jumpTo(0);
     }
   }
 
@@ -172,12 +178,11 @@ class _StashViewState extends ConsumerState<StashView>
 
   @override
   void refreshAfterAction() {
-    // The preview pane renders stashDiffProvider for the selected OID —
-    // re-fetch it alongside the list so a successful pop/drop can't leave a
-    // stale diff for an entry that no longer exists.
-    if (_selected != null) {
-      ref.invalidate(stashDiffProvider((repoPath, _selected!)));
-    }
+    // Only the stash LIST changes on a mutation. A stash's patch is immutable
+    // for a given OID and stashDiffProvider is keyed by that OID, so there is
+    // nothing to invalidate for the preview — refreshing the list is the whole
+    // job. (A dropped/popped OID simply stops being watched once the build
+    // filters _selected against the surviving stashes.)
     _refresh();
   }
 
@@ -417,7 +422,9 @@ class _StashViewState extends ConsumerState<StashView>
       confirmLabel: 'Clear All',
       destructive: true,
     );
-    if (!ok) return;
+    // The confirm awaited a dialog; the workspace can disconnect (this View
+    // unmounts) while it was open — guard the setState like _stashWithMessage.
+    if (!ok || !mounted) return;
     setState(() => _selected = null);
     await _runLogged(
       'git stash clear',
