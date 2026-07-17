@@ -4,6 +4,8 @@
 // opened/tapped, since the text fields only triggered a bare rebuild — never
 // re-fetching the preview.
 
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -48,6 +50,10 @@ class _FakeGit extends GitService {
   final List<String> ranges = [];
   final List<(String?, String?, bool)> pushes = [];
 
+  /// When set, [push] blocks on this until completed — lets a test hold a
+  /// submit "in flight" to observe the busy/disabled UI.
+  Completer<void>? pushGate;
+
   @override
   Future<SSHCommandResult> push(
     String repoPath, {
@@ -58,6 +64,7 @@ class _FakeGit extends GitService {
     bool followTags = false,
   }) async {
     pushes.add((remote, branch, setUpstream));
+    if (pushGate != null) await pushGate!.future;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
 
@@ -213,4 +220,110 @@ void main() {
     expect(glab.created, ['feature->main:My change']);
   });
 
+  testWidgets('Cancel is disabled while a submit is in flight (#4)', (
+    tester,
+  ) async {
+    final (git, glab) = await _pump(tester);
+    git.pushGate = Completer<void>(); // hold the submit open at the push
+
+    await tester.enterText(find.byType(MacosTextField).at(2), 'My change');
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(AppPushButton, 'Create'));
+    await tester.pump(); // enters _submitting; push is now awaiting the gate
+
+    final cancel = tester.widget<AppPushButton>(
+      find.widgetWithText(AppPushButton, 'Cancel'),
+    );
+    expect(
+      cancel.onPressed,
+      isNull,
+      reason: 'a create in flight must not be cancellable (would orphan it)',
+    );
+    expect(find.byType(ProgressCircle), findsWidgets);
+
+    // Release the push: the MR completes (never orphaned) and the busy state
+    // clears.
+    git.pushGate!.complete();
+    await tester.pumpAndSettle();
+    expect(glab.created, ['feature->main:My change']);
+  });
+
+  testWidgets('the source branch prefills after status resolves, without a '
+      'build-time crash (#12)', (tester) async {
+    // _pump's statusProvider resolves asynchronously — the field mounts first,
+    // then status arrives; the prefill must land (and not throw a
+    // setState-during-build).
+    await _pump(tester);
+    final source = tester.widget<MacosTextField>(
+      find.byType(MacosTextField).first,
+    );
+    expect(source.controller?.text, 'feature');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a selected milestone that vanishes on reload does not crash the '
+      'picker (#5)', (tester) async {
+    tester.view.physicalSize = const Size(900, 1000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    var first = true;
+    final container = ProviderContainer(
+      overrides: [
+        gitServiceProvider.overrideWithValue(_FakeGit()),
+        glabServiceProvider.overrideWithValue(_FakeGlab()),
+        statusProvider(_repo).overrideWith(
+          (ref) async => GitStatus(
+            branch: const GitBranchInfo(head: 'feature'),
+            files: const [],
+          ),
+        ),
+        projectDashboardProvider(_repo).overrideWith(
+          (ref) async => first
+              ? const ForgeProjectDashboard(
+                  milestones: [
+                    ForgeMilestone(id: 5, title: 'v1', state: 'active'),
+                  ],
+                )
+              // Reloads with a DIFFERENT milestone set — the selected id 5 is
+              // gone; passing it to the popup would assert without coercion.
+              : const ForgeProjectDashboard(
+                  milestones: [
+                    ForgeMilestone(id: 7, title: 'v2', state: 'active'),
+                  ],
+                ),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: CreateMrSheet(repoPath: _repo),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Select milestone v1 (id 5).
+    await tester.ensureVisible(find.text('Milestone'));
+    await tester.tap(find.text('None'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('v1').last);
+    await tester.pumpAndSettle();
+
+    // The dashboard reloads without v1.
+    first = false;
+    container.invalidate(projectDashboardProvider(_repo));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'the vanished selection must be coerced to null, not asserted',
+    );
+  });
 }

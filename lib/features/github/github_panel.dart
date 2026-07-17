@@ -250,6 +250,10 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         if (p.number == _selectedPrNumber) pr = p;
       }
       if (pr != null) return _prDetail(pr);
+      // Selected but not in the list: a failed list load should surface the
+      // error, not the neutral "select something" hint (which reads as "nothing
+      // is wrong") while the left-pane row still shows selected.
+      if (prs.hasError) return PaneError(prs.error!);
     }
 
     return const CenteredHint('Select a pull request or workflow run');

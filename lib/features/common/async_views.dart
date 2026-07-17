@@ -112,20 +112,31 @@ Widget asyncListSection<T>(
   int? limit,
   Widget Function(int hidden)? overflow,
 }) {
+  List<Widget> buildRows(List<T> items) {
+    if (items.isEmpty) return [SectionEmpty(emptyMessage)];
+    final visible = limit == null ? items : items.take(limit).toList();
+    final hidden = items.length - visible.length;
+    return [
+      ...visible.map(row),
+      if (hidden > 0 && overflow != null) overflow(hidden),
+    ];
+  }
+
+  // A transient error *after* rows were already shown (a flaky refresh, or a
+  // failed "show all") keeps the last good rows and surfaces the error inline
+  // above them, rather than collapsing the whole populated section to a lone
+  // red line and losing what the user was looking at. (Riverpod retains the
+  // prior value on a reload that errors, so `hasValue` is true here.)
+  if (async.hasError && async.hasValue) {
+    return Column(
+      children: [SectionError(async.error!), ...buildRows(async.requireValue)],
+    );
+  }
+
   return async.when(
     skipLoadingOnReload: skipLoadingOnReload,
     loading: () => const SectionLoading(),
     error: (err, _) => SectionError(err),
-    data: (items) {
-      if (items.isEmpty) return SectionEmpty(emptyMessage);
-      final visible = limit == null ? items : items.take(limit).toList();
-      final hidden = items.length - visible.length;
-      return Column(
-        children: [
-          ...visible.map(row),
-          if (hidden > 0 && overflow != null) overflow(hidden),
-        ],
-      );
-    },
+    data: (items) => Column(children: buildRows(items)),
   );
 }

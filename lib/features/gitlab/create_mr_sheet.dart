@@ -6,6 +6,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
 import '../common/dashboard_warning_banner.dart';
+import '../common/escape_dismissible.dart';
 import '../common/label_picker_field.dart';
 import '../common/sized_sheet.dart';
 import '../forge/forge_create_sheet_widgets.dart';
@@ -62,8 +63,13 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
     if (_sourcePrefilled || _source.text.trim().isNotEmpty) return;
     final head = status?.branch.head;
     if (head != null && head.isNotEmpty) {
-      _source.text = head;
-      _sourcePrefilled = true;
+      // Runs from a post-frame callback (never during build), so setState is
+      // safe — and needed, so the diff preview and validation recompute against
+      // the newly-filled source rather than staying on the empty value.
+      setState(() {
+        _source.text = head;
+        _sourcePrefilled = true;
+      });
     }
   }
 
@@ -103,66 +109,92 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
     // double-activation would otherwise push and create the MR twice.
     if (_submitting) return;
     setState(() => _submitting = true);
-    final glab = ref.read(glabServiceProvider);
-    // `glab mr create --milestone` takes a title (or global id) — [_milestoneIid]
-    // is only the *popup's* unique key (see its field doc), so resolve it back
-    // to the selected milestone's title from the same dashboard data the popup
-    // was built from.
-    final milestones =
-        ref.read(projectDashboardProvider(widget.repoPath)).value?.milestones ??
-        const [];
-    String? milestoneTitle;
-    for (final m in milestones) {
-      if (m.id == _milestoneIid) {
-        milestoneTitle = m.title;
-        break;
+    // The create is now in flight: the sheet must not be dismissable, or a
+    // cancel/Escape would orphan an MR that still gets created on the remote
+    // (the `!mounted` tail would skip the list refresh) and invite a duplicate
+    // re-submit. Swallow Escape here; the Cancel button is disabled via the
+    // `submitting` flag passed to [SheetSubmitRow].
+    final releaseEsc = EscapeInterceptor.of(context, () => true);
+    try {
+      final glab = ref.read(glabServiceProvider);
+      // `glab mr create --milestone` takes a title (or global id) —
+      // [_milestoneIid] is only the *popup's* unique key (see its field doc),
+      // so resolve it back to the selected milestone's title from the same
+      // dashboard data the popup was built from.
+      final milestones =
+          ref
+              .read(projectDashboardProvider(widget.repoPath))
+              .value
+              ?.milestones ??
+          const [];
+      String? milestoneTitle;
+      for (final m in milestones) {
+        if (m.id == _milestoneIid) {
+          milestoneTitle = m.title;
+          break;
+        }
       }
-    }
-    final git = ref.read(gitServiceProvider);
-    final source = _source.text.trim();
-    final ok = await runAction(context, () async {
-      // The GitLab API creates an MR from a branch that already exists on the
-      // remote — `glab mr create` only pushes with an opt-in `--push` flag
-      // this sheet never passes, so an unpushed branch used to die with a raw
-      // API error. Push first (`-u` sets upstream); an already-pushed branch
-      // is a no-op ("Everything up-to-date"). Mirrors the PR sheet.
-      await git.push(
-        widget.repoPath,
-        remote: 'origin',
-        branch: source,
-        setUpstream: true,
-      );
-      await glab.createMergeRequest(
-        widget.repoPath,
-        sourceBranch: source,
-        targetBranch: _target.text.trim(),
-        title: _title.text.trim(),
-        description: _description.text.trim(),
-        draft: _draft,
-        reviewers: csvUsernames(_reviewers.text),
-        assignees: csvUsernames(_assignees.text),
-        labels: _labels.toList(),
-        milestone: milestoneTitle,
-        squash: _squash,
-        removeSourceBranch: _removeSource,
-      );
-    }, dock: true);
-    if (!mounted) return;
-    setState(() => _submitting = false);
-    if (ok) {
-      ref.invalidate(mergeRequestsProvider(widget.repoPath));
-      // The push set upstream / advanced the remote branch — refresh the repo
-      // views so ahead/behind and refs reflect it (the shared helper, like
-      // every other mutation).
-      refreshAfterMutation(ref, widget.repoPath);
-      if (context.mounted) Navigator.of(context).pop();
+      final git = ref.read(gitServiceProvider);
+      final source = _source.text.trim();
+      final ok = await runAction(context, () async {
+        // The GitLab API creates an MR from a branch that already exists on the
+        // remote — `glab mr create` only pushes with an opt-in `--push` flag
+        // this sheet never passes, so an unpushed branch used to die with a raw
+        // API error. Push first (`-u` sets upstream); an already-pushed branch
+        // is a no-op ("Everything up-to-date"). Mirrors the PR sheet.
+        await git.push(
+          widget.repoPath,
+          remote: 'origin',
+          branch: source,
+          setUpstream: true,
+        );
+        await glab.createMergeRequest(
+          widget.repoPath,
+          sourceBranch: source,
+          targetBranch: _target.text.trim(),
+          title: _title.text.trim(),
+          description: _description.text.trim(),
+          draft: _draft,
+          reviewers: csvUsernames(_reviewers.text),
+          assignees: csvUsernames(_assignees.text),
+          labels: _labels.toList(),
+          milestone: milestoneTitle,
+          squash: _squash,
+          removeSourceBranch: _removeSource,
+        );
+      }, dock: true);
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      if (ok) {
+        ref.invalidate(mergeRequestsProvider(widget.repoPath));
+        // Creating the MR (and pushing the branch) commonly triggers a new
+        // pipeline — refresh the CI list so it appears without a manual tap.
+        ref.invalidate(pipelinesProvider(widget.repoPath));
+        // The push set upstream / advanced the remote branch — refresh the repo
+        // views so ahead/behind and refs reflect it (the shared helper, like
+        // every other mutation).
+        refreshAfterMutation(ref, widget.repoPath);
+        if (context.mounted) Navigator.of(context).pop();
+      }
+    } finally {
+      releaseEsc?.call();
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Prefill the source branch from the checked-out branch once status is
+    // available — scheduled after this frame, never applied synchronously in
+    // build, so setting the field's controller text can't rebuild it mid-build
+    // (a "setState() called during build" crash on a cold-cached status).
     final status = ref.watch(statusProvider(widget.repoPath));
-    status.whenData(_maybePrefillSource);
+    if (!_sourcePrefilled) {
+      status.whenData((s) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _maybePrefillSource(s);
+        });
+      });
+    }
     // Reuses the Project panel's one-round-trip GraphQL dashboard instead of
     // two separate REST calls — real duplicate work if the dashboard is
     // already cached for this repo, and still cheaper (one round trip, not
@@ -249,7 +281,13 @@ class _CreateMrSheetState extends ConsumerState<CreateMrSheet> {
                       if (milestones.isNotEmpty)
                         ForgeMilestonePicker(
                           milestones,
-                          value: _milestoneIid,
+                          // Coerce a stale selection to null: if the dashboard
+                          // reloaded without the previously-picked milestone,
+                          // passing its now-absent id would trip
+                          // MacosPopupButton's value-must-be-an-item assertion.
+                          value: milestones.any((m) => m.id == _milestoneIid)
+                              ? _milestoneIid
+                              : null,
                           onChanged: (v) => setState(() => _milestoneIid = v),
                         ),
                       const SizedBox(height: 6),

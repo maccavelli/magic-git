@@ -176,7 +176,10 @@ class SheetSubmitRow extends StatelessWidget {
         AppPushButton(
           controlSize: ControlSize.large,
           secondary: true,
-          onPressed: () => Navigator.of(context).pop(),
+          // Disabled while a submit is in flight: cancelling then would orphan
+          // a PR/MR that still gets created on the remote (and the sheet's
+          // Escape key is likewise suppressed while submitting).
+          onPressed: submitting ? null : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
         const SizedBox(width: 8),

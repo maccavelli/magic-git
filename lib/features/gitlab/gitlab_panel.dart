@@ -293,6 +293,10 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         if (m.iid == _selectedMrIid) mr = m;
       }
       if (mr != null) return _mrDetail(mr);
+      // Selected but not in the list: a failed list load should surface the
+      // error, not the neutral "select something" hint (which reads as "nothing
+      // is wrong") while the left-pane row still shows selected.
+      if (mrs.hasError) return PaneError(mrs.error!);
     }
 
     return const CenteredHint('Select a merge request or pipeline');
