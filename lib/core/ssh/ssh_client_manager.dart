@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../utils/pausable_timeout.dart';
 
@@ -168,6 +170,29 @@ class SSHClientManager {
   /// neither the stale client nor the not-yet-attached new one.
   int _clientGeneration = -1;
 
+  /// What a stream-client redial needs to dial with — the profile and verify
+  /// callback of the connect that produced the current session. Held only
+  /// while a session is attached; cleared by [_closeClient].
+  SSHConnectionProfile? _redialProfile;
+  FutureOr<bool> Function(String type, Uint8List fingerprint)? _redialVerify;
+
+  /// Pending stream-client redial (see [_onStreamClientLost]) and its
+  /// consecutive-failure count. The counter resets on a successful attach.
+  Timer? _redialTimer;
+  int _redialFailures = 0;
+
+  /// Consecutive failed stream redials before giving up for the session. A
+  /// host that structurally refuses a second session (MaxSessions 1, auth
+  /// rate limiting) must not be hammered with a handshake a minute forever —
+  /// past this the session simply stays degraded until the next reconnect.
+  static const int _maxRedialFailures = 5;
+
+  /// Backoff for stream-client redial attempt number [failures] (0-based):
+  /// 15s, 30s, 60s, 120s, 120s.
+  @visibleForTesting
+  static Duration streamRedialDelay(int failures) =>
+      Duration(seconds: math.min(15 << failures, 120));
+
   /// Primary client (commands, SFTP, health). Backward-compatible name.
   SSHClient? get client => _client;
 
@@ -215,15 +240,52 @@ class SSHClientManager {
     final previousCmd = _client;
     final previousStream = _streamClient;
 
+    // Both handshakes run CONCURRENTLY, so a connect pays max(cmd, stream)
+    // rather than their sum — a full extra TCP+KEX+auth round trip on every
+    // connect, felt hardest exactly where this app is meant to shine (high-
+    // RTT links). Concurrency is safe only because the verify callback is
+    // serialized (see [serializeHostKeyVerifier]): two handshakes verifying
+    // the same unknown/changed key at once would otherwise race the TOFU
+    // store — or, on a mismatch, stack two prompts on the UI's single
+    // decision slot and leave one handshake paused forever.
+    final verify = serializeHostKeyVerifier(onVerifyHostKey);
+    final cmdFuture = _openAuthenticatedClient(
+      profile,
+      gen: gen,
+      onVerifyHostKey: verify,
+      authTimeout: _authTimeout,
+    );
+    // Best-effort second client for streams. Never fail the whole connect if
+    // this fails — degrade to single-client (streams share command client).
+    // Errors are absorbed HERE, at creation, not at the later await: this
+    // future is also awaited on the command-failure path, where an unhandled
+    // second error would otherwise escape as an uncaught async exception.
+    final streamFuture =
+        _openAuthenticatedClient(
+          profile,
+          gen: gen,
+          onVerifyHostKey: verify,
+          authTimeout: _streamAuthTimeout,
+        ).then<SSHClient?>(
+          (c) => c,
+          onError: (Object e, StackTrace st) {
+            developer.log(
+              'stream SSH client failed; degrading to single client: $e',
+              name: 'SSHClientManager',
+              error: e,
+              stackTrace: st,
+            );
+            return null;
+          },
+        );
+
     final SSHClient? cmdClient;
     try {
-      cmdClient = await _openAuthenticatedClient(
-        profile,
-        gen: gen,
-        onVerifyHostKey: onVerifyHostKey,
-        authTimeout: _authTimeout,
-      );
+      cmdClient = await cmdFuture;
     } catch (_) {
+      // The stream handshake may still succeed in the background — close
+      // whatever it produces, since no session exists for it to serve.
+      unawaited(streamFuture.then((c) => c?.close()));
       // This attempt already bumped the generation past the previous session,
       // so every command pinned from here on refuses to run against it —
       // "keeping" it on failure would keep only its sockets and its ping
@@ -235,33 +297,18 @@ class SSHClientManager {
     }
     if (cmdClient == null) {
       // Superseded during command-client handshake — leave previous attached;
-      // the superseding attempt owns retirement now.
+      // the superseding attempt owns retirement now. The stream attempt makes
+      // the same generation checks and self-closes, but close defensively in
+      // case it finished before the supersession landed.
+      unawaited(streamFuture.then((c) => c?.close()));
       return;
     }
     // Non-nullable rebind: `cmdClient` was assigned inside a try, which bars
     // its promotion inside the monitor closures below.
     final cmd = cmdClient;
 
-    // Best-effort second client for streams. Never fail the whole connect if
-    // this fails — degrade to single-client (streams share command client).
-    SSHClient? streamClient;
-    try {
-      streamClient = await _openAuthenticatedClient(
-        profile,
-        gen: gen,
-        onVerifyHostKey: onVerifyHostKey,
-        authTimeout: _streamAuthTimeout,
-      );
-    } catch (e, st) {
-      developer.log(
-        'stream SSH client failed; degrading to single client: $e',
-        name: 'SSHClientManager',
-        error: e,
-        stackTrace: st,
-      );
-      streamClient = null;
-    }
-    // Superseded after stream attempt — drop both new clients.
+    final streamClient = await streamFuture;
+    // Superseded after the handshakes — drop both new clients.
     if (gen != _generation) {
       cmdClient.close();
       streamClient?.close();
@@ -272,6 +319,8 @@ class SSHClientManager {
     _health?.stop();
     _streamHealth?.stop();
     _streamHealth = null;
+    _redialTimer?.cancel();
+    _redialTimer = null;
     previousCmd?.close();
     // Avoid double-close when previous was already degraded (stream == null)
     // or when stream shared nothing with cmd.
@@ -281,6 +330,13 @@ class SSHClientManager {
     _client = cmd;
     _streamClient = streamClient;
     _clientGeneration = gen;
+    // What a mid-session stream redial dials with (see [_onStreamClientLost]).
+    // The raw verify callback, not this connect's serialized wrapper: a redial
+    // is a single handshake, and the wrapper would needlessly chain it behind
+    // this (long-finished) connect's verifications.
+    _redialProfile = profile;
+    _redialVerify = onVerifyHostKey;
+    _redialFailures = 0;
 
     // Health monitor on the command client only. onDead must close both
     // clients but *not* null [_client]: ConnectionController listens to
@@ -303,32 +359,137 @@ class SSHClientManager {
       cmd.done.then((_) {}, onError: (_) {}).whenComplete(monitor.stop),
     );
 
-    // The stream client gets its own monitor (see [_streamHealth]) — and,
-    // dead or alive, its slot is cleared the moment its transport closes, so
-    // the `streamClient` getter's fall-back to the command client (the
-    // documented degraded mode) engages mid-session too, not only when the
-    // second connect failed up front. Identity-guarded: by the time this
-    // client dies, a newer connect may already own the slot.
+    // The stream client gets its own monitor and death listener (see
+    // [_attachStreamClient]). A connect that starts degraded goes straight
+    // into the redial cycle instead — the up-front failure may have been the
+    // same transient the mid-session path recovers from.
     // (`streamClient` here is connect()'s local — the just-opened stream
     // client, null when degraded — NOT the like-named getter, whose fallback
-    // would wrongly hang a second monitor on the command client.)
-    final stream = streamClient;
-    if (stream != null) {
-      final streamMonitor = ConnectionHealthMonitor(
-        ping: () => stream.ping(),
-        onDead: () {
-          if (identical(_streamClient, stream)) _streamClient = null;
-          stream.close();
-        },
-      )..start();
-      _streamHealth = streamMonitor;
-      unawaited(
-        stream.done.then((_) {}, onError: (_) {}).whenComplete(() {
-          streamMonitor.stop();
-          if (identical(_streamClient, stream)) _streamClient = null;
-        }),
-      );
+    // would wrongly hang a monitor on the command client.)
+    if (streamClient != null) {
+      _attachStreamClient(streamClient, gen);
+    } else {
+      _onStreamClientLost(gen);
     }
+  }
+
+  /// Installs [stream] as the dedicated stream client for generation [gen]:
+  /// its own dead-peer monitor (see [_streamHealth]) plus a death listener
+  /// that — dead or alive — clears its slot the moment its transport closes,
+  /// so the `streamClient` getter's fall-back to the command client (the
+  /// documented degraded mode) engages mid-session too. Identity-guarded: by
+  /// the time this client dies, a newer connect may already own the slot.
+  void _attachStreamClient(SSHClient stream, int gen) {
+    _redialTimer?.cancel();
+    _redialTimer = null;
+    _streamClient = stream;
+    final streamMonitor = ConnectionHealthMonitor(
+      ping: () => stream.ping(),
+      onDead: () {
+        if (identical(_streamClient, stream)) _streamClient = null;
+        stream.close();
+      },
+    )..start();
+    _streamHealth = streamMonitor;
+    unawaited(
+      stream.done.then((_) {}, onError: (_) {}).whenComplete(() {
+        streamMonitor.stop();
+        if (identical(_streamClient, stream)) _streamClient = null;
+        // The stream connection is idle by design, which makes it exactly the
+        // one a NAT/firewall idle-drop kills — losing it must not degrade the
+        // session to single-client for the rest of its life.
+        _onStreamClientLost(gen);
+      }),
+    );
+  }
+
+  /// Schedules a background redial of the dedicated stream client (with
+  /// backoff — see [streamRedialDelay]), after its transport died mid-session
+  /// or the initial open degraded. Every step is generation-guarded, so a
+  /// reconnect/disconnect supersedes the cycle for free, and [_closeClient]
+  /// cancels the pending timer outright. Gives up for the session after
+  /// [_maxRedialFailures] consecutive failures.
+  void _onStreamClientLost(int gen) {
+    if (gen != _generation || _client == null) return;
+    final profile = _redialProfile;
+    if (profile == null) return;
+    if (_redialFailures >= _maxRedialFailures) {
+      developer.log(
+        'stream SSH client gave out $_redialFailures times; staying on a '
+        'single client for the rest of this session',
+        name: 'SSHClientManager',
+      );
+      return;
+    }
+    _redialTimer?.cancel();
+    _redialTimer = Timer(streamRedialDelay(_redialFailures), () async {
+      _redialTimer = null;
+      // Re-check everything at fire time: the session may have moved on, or a
+      // stream client may already be back (a full reconnect landed first).
+      if (gen != _generation || _client == null || _streamClient != null) {
+        return;
+      }
+      SSHClient? stream;
+      try {
+        stream = await _openAuthenticatedClient(
+          profile,
+          gen: gen,
+          onVerifyHostKey: _redialVerify,
+          authTimeout: _streamAuthTimeout,
+        );
+      } catch (e) {
+        developer.log(
+          'stream SSH client redial failed: $e',
+          name: 'SSHClientManager',
+        );
+        _redialFailures++;
+        _onStreamClientLost(gen);
+        return;
+      }
+      // Null means superseded mid-handshake (the open self-closed the
+      // client): a newer connect owns the session now — stop, don't count it
+      // as a failure.
+      if (stream == null) return;
+      if (gen != _generation || _client == null) {
+        stream.close();
+        return;
+      }
+      _redialFailures = 0;
+      _attachStreamClient(stream, gen);
+      developer.log(
+        'stream SSH client re-established after mid-session loss',
+        name: 'SSHClientManager',
+      );
+    });
+  }
+
+  /// Serializes concurrent host-key verification callbacks: each invocation
+  /// waits for every earlier one to resolve before [verify] runs. The two
+  /// parallel handshakes in [connect] both verify the same host — without
+  /// this, a first-contact (TOFU) connect double-writes the known-hosts
+  /// store, and a *changed* key stacks two prompts onto the UI's single
+  /// decision slot, leaving whichever handshake lost the race paused on a
+  /// completer nobody holds anymore. Serialized, the first verification
+  /// records the decision and the second resolves silently against the
+  /// updated store. Errors are routed to the caller whose verification threw;
+  /// the chain itself never breaks.
+  @visibleForTesting
+  static FutureOr<bool> Function(String, Uint8List)? serializeHostKeyVerifier(
+    FutureOr<bool> Function(String type, Uint8List fingerprint)? verify,
+  ) {
+    if (verify == null) return null;
+    var chain = Future<void>.value();
+    return (type, fingerprint) {
+      final result = Completer<bool>();
+      chain = chain.then((_) async {
+        try {
+          result.complete(await verify(type, fingerprint));
+        } catch (e, st) {
+          result.completeError(e, st);
+        }
+      });
+      return result.future;
+    };
   }
 
   /// Opens and authenticates one [SSHClient]. Returns null if [gen] was
@@ -454,6 +615,11 @@ class SSHClientManager {
     _health = null;
     _streamHealth?.stop();
     _streamHealth = null;
+    _redialTimer?.cancel();
+    _redialTimer = null;
+    _redialProfile = null;
+    _redialVerify = null;
+    _redialFailures = 0;
     final cmd = _client;
     final stream = _streamClient;
     _client = null;

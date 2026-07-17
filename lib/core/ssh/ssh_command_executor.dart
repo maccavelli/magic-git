@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io' show SocketException, gzip;
 import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../exec/command_drain.dart';
 import '../exec/command_lanes.dart';
 import '../exec/command_telemetry.dart';
@@ -294,10 +295,21 @@ class SSHCommandExecutor implements CommandExecutor {
   /// generation pinning, the timeout's TERM→KILL cleanup, and guaranteed
   /// channel close. [ExecLane.isolated] because a sideload touches neither
   /// the repo nor the resources the sync lane serializes.
+  /// Timeout for a sideload of [byteCount] bytes: the flat request/response
+  /// default plus transfer time at a conservative 64 KiB/s floor. A flat
+  /// [defaultTimeout] guaranteed failure for any payload bigger than a slow
+  /// link can move in 60s — and the sideload's whole audience is air-gapped
+  /// hosts behind exactly such links. The timeout stays a safety net against
+  /// a wedged transfer, not a clock a slow-but-progressing one can lose to.
+  @visibleForTesting
+  static Duration uploadTimeoutFor(int byteCount) =>
+      defaultTimeout + Duration(seconds: byteCount ~/ (64 * 1024));
+
   @override
   Future<void> uploadBytes(String remotePath, Uint8List bytes) async {
     final gen = _clientManager.generation;
     final gitArgs = ['sh', '-c', 'cat > ${ShellEscaper.escape(remotePath)}'];
+    final timeout = uploadTimeoutFor(bytes.length);
     final result = await runWithRetries(
       () => _run(
         gen,
@@ -305,7 +317,7 @@ class SSHCommandExecutor implements CommandExecutor {
         gitArgs,
         null,
         bytes,
-        defaultTimeout,
+        timeout,
         false,
         ExecLane.isolated,
       ),
@@ -313,7 +325,7 @@ class SSHCommandExecutor implements CommandExecutor {
       enqueue: (attempt) => _scheduler.run(
         ExecLane.isolated,
         attempt,
-        deadline: defaultTimeout + CommandLaneScheduler.watchdogMargin,
+        deadline: timeout + CommandLaneScheduler.watchdogMargin,
       ),
     );
     if (!result.isSuccess) {

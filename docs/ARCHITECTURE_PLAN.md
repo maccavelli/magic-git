@@ -17,8 +17,16 @@
 - **Dual `SSHClient` when possible** (`SSHClientManager`): command client for
   `execute` / SFTP / health pings, stream client for `executeStream` (watcher,
   CI trace). Shared generation pinning so a reconnect never runs work against
-  the wrong host. If the stream client fails to open, **degrade to single
-  client** (streams share the command client) rather than failing connect.
+  the wrong host. The two handshakes open **in parallel** (connect pays
+  max(cmd, stream), not their sum), with host-key verification **serialized**
+  across them (`serializeHostKeyVerifier`) so a TOFU first contact can't
+  double-write the store and a changed key can't stack two prompts on the
+  single decision slot. If the stream client fails to open, **degrade to
+  single client** (streams share the command client) rather than failing
+  connect — and a lost/degraded stream client is **re-dialed in the
+  background** with backoff (15s→120s, 5 consecutive failures then give up
+  for the session), so a NAT idle-drop of the idle stream connection no
+  longer degrades the session permanently.
 - **Auth:** password and/or PEM private key (file load or paste). No ssh-agent
   client auth in dartssh2; `agentHandler` is agent *forwarding* only and is not
   used for login. Empty password is never attempted for key-only profiles.
@@ -40,8 +48,9 @@
 - **Telemetry:** `CommandTelemetry` tracks channel-open errors and open stream
   counts (MaxSessions evidence).
 - **Safety:** `exec` so TERM/KILL hit the real process; output byte budgets
-  (`command_drain.dart`); transient-only retries; SFTP upload closed/timed/
-  generation-pinned.
+  (`command_drain.dart`); transient-only retries; sideload upload (exec-channel
+  `cat`, generation-pinned) with a timeout that **scales with payload size**
+  (`uploadTimeoutFor`: flat default + 64 KiB/s floor).
 
 ---
 
