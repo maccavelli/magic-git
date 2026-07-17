@@ -261,13 +261,20 @@ class _DragItemDraggableState extends ConsumerState<DragItemDraggable> {
 
     void end(DraggableDetails details) {
       _grabbing.hide();
+      var cancelled = false;
       try {
+        // ESC nulls the drag state before the release. The DragTarget still
+        // reports wasAccepted (its accept decision was made on entry, and its
+        // guarded onAccept just no-ops), so the state is the only signal that
+        // this "accepted" drop actually did nothing — and the cell should fly
+        // home like any other cancelled drag instead of blinking out.
+        cancelled = !drag.isActive;
         drag.end();
       } catch (_) {
         // Tab container disposed mid-drag — nothing left to clear.
       }
       // `details.offset` is the ghost's top-left at release — fly it home.
-      if (!details.wasAccepted) _snapBack(details.offset);
+      if (!details.wasAccepted || cancelled) _snapBack(details.offset);
     }
 
     // The press chrome, painted OVER the row (foregroundDecoration — rows have
@@ -322,7 +329,13 @@ class _DragItemDraggableState extends ConsumerState<DragItemDraggable> {
 
     // The overlay ghost subscribes to the snapshot notifier: when the
     // post-drag-start re-capture lands (selection bar painted), the lifted
-    // cell swaps to the selected-state pixels mid-flight, seamlessly.
+    // cell swaps to the selected-state pixels mid-flight, seamlessly. A
+    // multi-file drag carries the whole selection but snapshots only the
+    // grabbed row — the Finder-style count badge says what's really in hand.
+    final item = widget.item;
+    final badgeCount = item is DragFiles && item.paths.length > 1
+        ? item.paths.length
+        : null;
     final ghost = ValueListenableBuilder<ui.Image?>(
       valueListenable: _snapshot,
       builder: (context, image, _) => LiftedDragCell(
@@ -332,6 +345,7 @@ class _DragItemDraggableState extends ConsumerState<DragItemDraggable> {
             ? const Size(kDragCellMaxWidth / 2, 28)
             : _sourceSize,
         fallbackLabel: widget.item.shortLabel,
+        badgeCount: badgeCount,
       ),
     );
 

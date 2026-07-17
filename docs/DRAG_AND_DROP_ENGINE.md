@@ -443,6 +443,38 @@ Pinned by `drag_cursor_hover_test.dart` (grab at rest → grabbing while
 pressed, hover wash appears/clears, grabbing overlay pinned for the whole
 drag and released on drop).
 
+**Hardening pass 2 (July 2026) — the full-engine audit shipped four fixes,
+pinned by `dnd_hardening_test.dart`:**
+
+- **ESC during a rebase row drag cancels the drag, not the sheet.** The
+  sheet's local `Draggable<int>` rows sit inside an `EscapeDismissible`, so
+  ESC mid-drag used to close the whole sheet out from under the gesture. The
+  sheet now registers an `EscapeInterceptor` for the drag's lifetime: ESC
+  marks the drag cancelled (both drop targets no-op via `_dragCancelled`,
+  mirroring the engine's null-state guard) and the sheet stays open. The flag
+  resets on drag end, so the next drag is clean.
+- **ESC + release over an eligible zone snap-backs.** A DragTarget's accept
+  decision is made on entry, so an ESC-cancelled drag released over a zone
+  still reports `wasAccepted` even though the guarded handler no-ops — the
+  ghost used to blink out. `DragItemDraggable.end` now also consults
+  `DragStateNotifier.isActive` (readable through the notifier even if the row
+  unmounted mid-drag) and flies the cell home on either signal.
+- **Staging banner ESC race closed.** ESC unmounts the banner via its watch,
+  but the rebuild lands a frame later; a release inside that frame hit the
+  old target and staged anyway. Its `onAccept` now carries the same runtime
+  guard as every DropZone.
+- **Multi-file drags wear the Finder count badge.** The lifted cell snapshots
+  only the grabbed row; when a `DragFiles` payload carries more than one path
+  the cell now shows the macOS red count badge (`LiftedDragCell.badgeCount`),
+  so what's actually in hand is never understated.
+
+Audit notes, no change needed: every nav DropZone and the history commit-row
+target already guard accepts against the nulled drag state and a null
+repoPath; drop handlers check `ctx.context.mounted` before touching shell
+hooks (`_newBranchFromCommit` was the one gap — fixed); the grabbing-cursor
+overlay is released on drag end AND source unmount; drag-state ESC handlers
+are installed per-drag and torn down on notifier dispose.
+
 **Select-on-drag (canonical engine contract).** Picking an item up *selects*
 it: `DragItemDraggable.onDragSelect` fires the instant a drag begins (before
 the rail lights), and every selectable source wires it to its panel's own

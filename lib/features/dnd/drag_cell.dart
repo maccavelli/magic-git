@@ -136,29 +136,77 @@ class LiftedDragCell extends StatelessWidget {
   final Size sourceSize;
   final String fallbackLabel;
 
+  /// When set (> 1), a Finder-style red count badge rides the cell's top-right
+  /// corner — a multi-item drag snapshots only the grabbed row, and the badge
+  /// is what says the whole selection is in hand.
+  final int? badgeCount;
+
   const LiftedDragCell({
     super.key,
     required this.image,
     required this.pixelRatio,
     required this.sourceSize,
     required this.fallbackLabel,
+    this.badgeCount,
   });
 
   @override
   Widget build(BuildContext context) {
+    Widget cell = DragCellBody(
+      image: image,
+      pixelRatio: pixelRatio,
+      sourceSize: sourceSize,
+      fallbackLabel: fallbackLabel,
+    );
+    final count = badgeCount;
+    if (count != null) {
+      cell = Stack(
+        clipBehavior: Clip.none,
+        children: [
+          cell,
+          Positioned(top: -7, right: -7, child: _CountBadge(count: count)),
+        ],
+      );
+    }
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0.98, end: 1.03),
       duration: const Duration(milliseconds: 140),
       curve: Curves.easeOutCubic,
       builder: (context, scale, child) =>
           Transform.scale(scale: scale, child: child),
-      child: Opacity(
-        opacity: 0.94,
-        child: DragCellBody(
-          image: image,
-          pixelRatio: pixelRatio,
-          sourceSize: sourceSize,
-          fallbackLabel: fallbackLabel,
+      child: Opacity(opacity: 0.94, child: cell),
+    );
+  }
+}
+
+/// The macOS drag count badge: red circle, white number, riding the cell's
+/// corner (what Finder shows when several items are dragged together).
+class _CountBadge extends StatelessWidget {
+  final int count;
+  const _CountBadge({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 18),
+      height: 18,
+      padding: const EdgeInsets.symmetric(horizontal: 5),
+      alignment: Alignment.center,
+      decoration: const BoxDecoration(
+        color: MacosColors.systemRedColor,
+        borderRadius: BorderRadius.all(Radius.circular(9)),
+        boxShadow: [
+          BoxShadow(color: Color(0x4D000000), blurRadius: 3, offset: Offset(0, 1)),
+        ],
+      ),
+      child: Text(
+        '$count',
+        style: const TextStyle(
+          color: MacosColors.white,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          height: 1.0,
+          decoration: TextDecoration.none,
         ),
       ),
     );

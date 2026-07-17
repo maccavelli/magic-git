@@ -31,6 +31,12 @@ class DragStateNotifier extends Notifier<DragItem?> {
     }
   }
 
+  /// Whether a drag is still live (not ESC-cancelled). Readable through the
+  /// notifier — which stays valid even if the reading widget's element was
+  /// unmounted mid-drag — so [DragItemDraggable.end] can tell an accepted drop
+  /// from a cancelled one that happened to be released over a target.
+  bool get isActive => state != null;
+
   /// Called on every drag end (drop or cancel). Idempotent — an ESC-cancelled
   /// drag still ends with a pointer release, which calls this again.
   void end() {

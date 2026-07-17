@@ -271,7 +271,9 @@ Future<void> _newBranchFromCommit(DropContext ctx, GitCommit commit) async {
     ctx.context,
     () => git.branchFrom(ctx.repoPath, name, commit.hash),
   );
-  if (!ok) return;
+  // Mounted check matches every other handler: the shell (and its hooks) can
+  // be gone by the time the action resolves (disconnect mid-create).
+  if (!ok || !ctx.context.mounted) return;
   ctx.refresh();
   ctx.selectPage(DropZoneId.branches.pageIndex);
 }

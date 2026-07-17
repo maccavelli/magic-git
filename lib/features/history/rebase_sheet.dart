@@ -8,6 +8,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
 import '../common/buttons.dart';
+import '../common/escape_dismissible.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import '../dnd/drag_cell.dart';
@@ -47,8 +48,18 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
   /// convention as the engine's [DragItemDraggable] sources.
   final GrabbingCursor _grabbing = GrabbingCursor();
 
+  /// The engine's ESC-cancels-drag contract, for this sheet's local row drags.
+  /// These aren't [DragItemDraggable]s (no shared drag state), and the sheet
+  /// sits inside an [EscapeDismissible] — so without an interceptor, ESC
+  /// mid-drag would close the WHOLE SHEET out from under the gesture. While a
+  /// drag is live, ESC instead marks it cancelled (the release then no-ops,
+  /// exactly like the engine's null-state guard) and the sheet stays open.
+  bool _dragCancelled = false;
+  VoidCallback? _escDuringDrag;
+
   @override
   void dispose() {
+    _escDuringDrag?.call();
     _grabbing.hide();
     super.dispose();
   }
@@ -103,7 +114,7 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
   bool _isReorderNoop(int from, int slot) => slot == from || slot == from + 1;
 
   void _reorderTo(int from, int slot) {
-    if (_busy || _isReorderNoop(from, slot)) return;
+    if (_busy || _dragCancelled || _isReorderNoop(from, slot)) return;
     setState(() {
       final r = _rows.removeAt(from);
       // Removing shifts everything after `from` down one, so a slot past it
@@ -119,7 +130,7 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
   /// rejects dropped rows — folding "into" a dropped commit would actually fold
   /// into whatever kept commit sits above it, which is not what the drop said.
   void _squashInto(int dragged, int target) {
-    if (_busy || dragged == target) return;
+    if (_busy || _dragCancelled || dragged == target) return;
     setState(() {
       final r = _rows.removeAt(dragged);
       // `target`'s index after the removal, then insert just below it.
@@ -333,8 +344,22 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
       data: i,
       maxSimultaneousDrags: _busy ? 0 : 1,
       dragAnchorStrategy: pointerDragAnchorStrategy,
-      onDragStarted: () => _grabbing.show(context),
-      onDragEnd: (_) => _grabbing.hide(),
+      onDragStarted: () {
+        _dragCancelled = false;
+        _escDuringDrag = EscapeInterceptor.of(context, () {
+          _dragCancelled = true;
+          return true; // consumed: the sheet must NOT dismiss mid-drag
+        });
+        _grabbing.show(context);
+      },
+      onDragEnd: (_) {
+        _grabbing.hide();
+        _escDuringDrag?.call();
+        _escDuringDrag = null;
+        // The drop targets' accept guards have already run (accept precedes
+        // drag-end), so the flag can reset for the next drag.
+        _dragCancelled = false;
+      },
       feedback: _ghost(context, i),
       childWhenDragging: Opacity(opacity: 0.35, child: content),
       // Open hand on hover: these rows are grabbable. Deeper regions (the

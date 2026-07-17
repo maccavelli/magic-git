@@ -54,6 +54,10 @@ class StagingDropBanner extends ConsumerWidget {
     return DragTarget<DragItem>(
       onWillAcceptWithDetails: (details) => details.data is DragFiles,
       onAcceptWithDetails: (details) {
+        // ESC does unmount this banner (the build watches the drag state), but
+        // the rebuild lands a frame later — a release inside that frame would
+        // still hit the old target. Same runtime guard as every DropZone.
+        if (ref.read(dragStateProvider) is! DragFiles) return;
         final paths = (details.data as DragFiles).paths;
         if (toStage) {
           onStage(paths);
