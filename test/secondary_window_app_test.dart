@@ -18,6 +18,7 @@ import 'package:remote_magic_git/core/settings/app_settings.dart';
 import 'package:remote_magic_git/core/settings/pane_layout.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/core/window/window_channels.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
 import 'package:remote_magic_git/features/history/ref_chip.dart';
@@ -122,6 +123,38 @@ class _FakeGit extends GitService {
     int? context,
   }) async =>
       'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
+}
+
+/// A [_FakeGit] whose status carries a controllable HEAD oid, and which counts
+/// its log walks — the probe test's two observables.
+class _HeadMoveGit extends _FakeGit {
+  String currentOid = 'a' * 40;
+  int logCalls = 0;
+
+  @override
+  Future<GitStatus> status(String repoPath) async =>
+      GitStatus(branch: GitBranchInfo(oid: currentOid, head: 'main'), files: const []);
+
+  @override
+  Future<List<GitCommit>> log(
+    String repoPath, {
+    String revision = 'HEAD',
+    int maxCount = 200,
+    int skip = 0,
+    String? grep,
+    String? author,
+    String? since,
+    String? until,
+    String? path,
+    String? pathQuery,
+    String? sha,
+    bool all = false,
+    bool follow = false,
+    bool noMerges = false,
+  }) async {
+    logCalls++;
+    return const [_FakeGit.headCommit];
+  }
 }
 
 ConnectionEventPayload _connected(String repoPath) => ConnectionEventPayload(
@@ -342,6 +375,50 @@ void main() {
     await tester.pumpAndSettle();
     expect(executor.calls.length, greaterThan(before));
   });
+
+  testWidgets(
+    'polling ticks catch an external HEAD move in a History window',
+    (tester) async {
+      // In polling mode a tick carries no git-state signal, and the History
+      // shell used to drop it outright — an external (or main-window) commit
+      // never reached the pop-out while the watcher was degraded. The probe
+      // refetches status per polling tick; a HEAD move between two landed
+      // statuses refreshes the families exactly once.
+      mockChannels(_connected('/srv/repo'));
+      final git = _HeadMoveGit();
+      await pump(tester, _FakeExecutor(), gitService: git);
+
+      Future<void> pollTick() async {
+        await pushHubEvent('repoTick', {
+          'repoPath': '/srv/repo',
+          'mode': 'polling',
+          'atMs': DateTime.now()
+              .add(const Duration(seconds: 10))
+              .millisecondsSinceEpoch,
+        });
+        await tester.pumpAndSettle();
+      }
+
+      await pollTick(); // arms the probe, lands the baseline status
+      final walksBefore = git.logCalls;
+
+      git.currentOid = 'b' * 40; // an external commit moved HEAD
+      await pollTick();
+      expect(
+        git.logCalls,
+        greaterThan(walksBefore),
+        reason: 'the HEAD move refreshed the mutation families',
+      );
+
+      final walksAfter = git.logCalls;
+      await pollTick(); // same oid again — quiet
+      expect(
+        git.logCalls,
+        walksAfter,
+        reason: 'no move, no refresh — polling must not stampede the walk',
+      );
+    },
+  );
 
   testWidgets(
     'a working-tree-only tick does not re-walk history/refs in a History window',

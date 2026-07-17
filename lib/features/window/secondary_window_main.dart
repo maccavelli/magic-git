@@ -37,6 +37,7 @@ import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/settings/pane_layout.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/git_porcelain_parser.dart' show GitStatus;
 import '../../core/window/window_channels.dart';
 import '../../core/window/window_kind.dart';
 import '../common/actions.dart';
@@ -391,6 +392,55 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
   /// the main isolate should reload once, after the burst.
   Timer? _settingsSyncDebounce;
 
+  /// Polling-mode head-move probe for a HISTORY window. In polling mode a
+  /// tick carries no git-state signal, and this shell used to drop it
+  /// entirely for the History kind — an external (or main-window) commit
+  /// never reached the pop-out until the mode recovered. Mirror the main
+  /// window's answer (RepoStatusView's detector): each polling tick refetches
+  /// the cheap status snapshot, and a HEAD move between two landed statuses —
+  /// the one signal polling mode gets — refreshes the mutation families.
+  /// Created lazily on the first polling tick so the (fswatch-healthy)
+  /// event-driven case never pays the extra status subscription; torn down
+  /// when event-driven ticks resume, on a repo switch, and on dispose.
+  /// A detached-repo window needs none of this: its RepoStatusView already
+  /// watches status and runs the same detector itself.
+  ProviderSubscription<AsyncValue<GitStatus>>? _pollHeadProbe;
+  String? _pollHeadProbeRepo;
+
+  void _ensurePollHeadProbe(String repoPath) {
+    if (_pollHeadProbe != null && _pollHeadProbeRepo == repoPath) return;
+    _pollHeadProbe?.close();
+    _pollHeadProbeRepo = repoPath;
+    _pollHeadProbe = ref.listenManual(statusProvider(repoPath), (
+      previous,
+      next,
+    ) {
+      final prev = previous?.value;
+      final curr = next.value;
+      // Riverpod emits loading-with-previous-value before data lands — only
+      // compare two LANDED statuses.
+      if (next.isLoading || prev == null || curr == null) return;
+      if (prev.branch.oid == curr.branch.oid &&
+          prev.branch.head == curr.branch.head) {
+        return;
+      }
+      // A move our own proxied mutation caused already refreshed everything
+      // (onMutationCompleted → mark + refresh); this catches everyone else's.
+      if (ref
+          .read(ownMutationTrackerProvider)
+          .isRecent(repoPath, DateTime.now(), _ownMutationSuppressWindow)) {
+        return;
+      }
+      _invalidateRepoFamilies(repoPath);
+    });
+  }
+
+  void _dropPollHeadProbe() {
+    _pollHeadProbe?.close();
+    _pollHeadProbe = null;
+    _pollHeadProbeRepo = null;
+  }
+
   // Diagnostics (gated by kWindowDiagnostics): a 300ms animation measured after
   // 2s — if `value` isn't 1.0/completed, this engine's vsync never drives
   // tickers, which is exactly the "pushed routes stay at their opacity-0
@@ -456,6 +506,7 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
 
   @override
   void dispose() {
+    _dropPollHeadProbe();
     _settingsSyncDebounce?.cancel();
     _vsyncProbeTimer?.cancel();
     _vsyncProbe?.dispose();
@@ -503,6 +554,9 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       return;
     }
     if (session.repoPath != previous.repoPath && session.repoPath != null) {
+      // The probe is keyed to the old repo's status — the next polling tick
+      // (if the new repo's watcher is also degraded) re-arms it.
+      _dropPollHeadProbe();
       // A different repo (or the first one): drop everything fetched for the
       // old key. The private LRUs in app_providers keep their (hash-immutable)
       // entries — memory-only; the generation bump below covers the
@@ -666,12 +720,22 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
     // Full shared-state refresh only when git's own state may have moved
     // (commit/checkout/fetch/…) or the tick is unscoped. Working-tree-only
     // edits matter for a detached *repo* window (status), not for History.
-    if (mode == WatchMode.eventDriven &&
-        (tick.touchesGitState || !tick.isScoped)) {
-      _invalidateRepoFamilies(repoPath);
-      return;
+    if (mode == WatchMode.eventDriven) {
+      // Event-driven ticks carry the git-state signal themselves — the
+      // polling head-move probe (if one was armed during a polling spell) is
+      // redundant cost now.
+      _dropPollHeadProbe();
+      if (tick.touchesGitState || !tick.isScoped) {
+        _invalidateRepoFamilies(repoPath);
+        return;
+      }
     }
     if (_kind == WindowKind.detachedRepo) {
+      ref.invalidate(statusProvider(repoPath));
+    } else if (_kind == WindowKind.history && mode == WatchMode.polling) {
+      // Polling mode's only external-commit signal is a HEAD move between two
+      // landed statuses — arm the probe and land one (see [_pollHeadProbe]).
+      _ensurePollHeadProbe(repoPath);
       ref.invalidate(statusProvider(repoPath));
     }
   }

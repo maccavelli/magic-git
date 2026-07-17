@@ -195,10 +195,12 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
       // Whatever happened, refresh the repo-scoped views — guarded as one
       // unit: the sheet can be gone (repo switch, disconnect) by the time
       // this rebase resolves, and `ref` throws if touched after disposal.
+      // refreshAfterMutation, not a bare families loop: a rebase rewrites
+      // most of the working tree, and without the own-mutation mark the
+      // watcher's echo of those writes re-ran the whole refresh a second
+      // time moments later (the exact drift its doc comment warns about).
       if (mounted) {
-        for (final p in repoMutationFamilies(widget.repoPath)) {
-          ref.invalidate(p);
-        }
+        refreshAfterMutation(ref, widget.repoPath);
         Navigator.of(context).pop();
       }
     }

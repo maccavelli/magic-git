@@ -154,6 +154,28 @@ class _MinimapPainter extends CustomPainter {
     required this.density,
   }) : super(repaint: Listenable.merge([controller, metricsTick]));
 
+  // Paint runs on EVERY scroll tick (the repaint listenable), but rows,
+  // decorations and selection only change with a widget rebuild — which
+  // constructs a fresh painter. So everything derivable from the constructor
+  // inputs is computed once per painter and reused across scroll frames;
+  // without this, a deep paged-in history re-smoothed the whole density
+  // series and re-ranked every row's decorations on every scrolled pixel.
+  List<double>? _smoothedCache;
+  List<(int, Color)>? _refMarksCache;
+  List<int>? _selectedRowsCache;
+
+  List<(int, Color)> get _refMarks => _refMarksCache ??= [
+    for (var i = 0; i < graph.rows.length; i++)
+      if (_refColor(decorations[graph.rows[i].commit.hash]) case final c?)
+        (i, c),
+  ];
+
+  List<int> get _selectedRows => _selectedRowsCache ??= [
+    if (selected.isNotEmpty)
+      for (var i = 0; i < graph.rows.length; i++)
+        if (selected.contains(graph.rows[i].commit.hash)) i,
+  ];
+
   @override
   void paint(Canvas canvas, Size size) {
     final rows = graph.rows;
@@ -184,24 +206,21 @@ class _MinimapPainter extends CustomPainter {
     // Ref markers (left-inset ticks) and selection markers (right-inset), so
     // a selected, decorated row shows both side by side.
     final tick = Paint();
-    for (var i = 0; i < rows.length; i++) {
-      final hash = rows[i].commit.hash;
-      final color = _refColor(decorations[hash]);
+    for (final (i, color) in _refMarks) {
       final y = yFor(i);
-      if (color != null) {
-        tick.color = color;
-        canvas.drawRect(
-          Rect.fromLTRB(1.5, y - 1, size.width * 0.6, y + 1),
-          tick,
-        );
-      }
-      if (selected.contains(hash)) {
-        tick.color = const Color(0xCCFFFFFF);
-        canvas.drawRect(
-          Rect.fromLTRB(size.width * 0.6, y - 1, size.width - 1.5, y + 1),
-          tick,
-        );
-      }
+      tick.color = color;
+      canvas.drawRect(
+        Rect.fromLTRB(1.5, y - 1, size.width * 0.6, y + 1),
+        tick,
+      );
+    }
+    tick.color = const Color(0xCCFFFFFF);
+    for (final i in _selectedRows) {
+      final y = yFor(i);
+      canvas.drawRect(
+        Rect.fromLTRB(size.width * 0.6, y - 1, size.width - 1.5, y + 1),
+        tick,
+      );
     }
 
     // Viewport band — filled with a visible border, since a fill alone
@@ -236,7 +255,7 @@ class _MinimapPainter extends CustomPainter {
   /// step. Each strip fades on its right edge; the whole layer is blurred
   /// slightly so remaining steps melt together.
   void _paintVolumeHeat(Canvas canvas, Size size, List<double> raw) {
-    final smoothed = _smoothDensity(raw);
+    final smoothed = _smoothedCache ??= _smoothDensity(raw);
     final n = smoothed.length;
     if (n == 0) return;
 

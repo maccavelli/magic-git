@@ -2952,8 +2952,6 @@ class LogSearchNotifier extends AsyncNotifier<List<GitCommit>> {
   bool get exhausted => _exhausted;
   bool _exhausted = false;
 
-  int get depth => _depth;
-
   Future<List<GitCommit>> _walk(
     GitService git, {
     required int skip,
@@ -2989,6 +2987,12 @@ class LogSearchNotifier extends AsyncNotifier<List<GitCommit>> {
 
   @override
   Future<List<GitCommit>> build() async {
+    // A refresh re-walks from the top, so a previously failed page is moot —
+    // without this reset, one transient page failure (an SSH hiccup) latched
+    // [pageFailed] forever: every later refresh rebuilt the list but paging
+    // stayed dead, with the sentinel spinning over a fetch that never runs.
+    _pageFailed = false;
+
     // Watched, not read: a new session's [GitService] (reconnect, backend
     // switch) must re-walk this log rather than leave the previous host's
     // commits on screen. [loadMore] reads instead — it runs outside a build,
@@ -3058,6 +3062,11 @@ class LogSearchNotifier extends AsyncNotifier<List<GitCommit>> {
         skip: current.length,
         count: kHistoryPageSize,
       );
+      // A rebuild (mutation refresh, reconnect) replaced the list while this
+      // page was in flight: the rebuild's walk is the fresher truth, and
+      // stitching a pre-rebuild page onto it would resurrect rows from a
+      // history that may no longer exist. Drop the stale page.
+      if (!identical(state.value, current)) return;
       // What git returned for the page it was actually asked for — the honest
       // end-of-history signal. The merged length is not, because the dedupe
       // below can shorten it without the history having ended.
@@ -3070,6 +3079,14 @@ class LogSearchNotifier extends AsyncNotifier<List<GitCommit>> {
     } finally {
       _loadingMore = false;
     }
+  }
+
+  /// Clears a failed page and tries again — the sentinel row's click target.
+  /// Distinct from a refresh: the rows already walked stay put; only the next
+  /// page is re-attempted.
+  Future<void> retryPage() {
+    _pageFailed = false;
+    return loadMore();
   }
 }
 
@@ -3302,18 +3319,21 @@ int _estimateBlameBytes(List<BlameLine> lines) => lines.fold(
 );
 
 /// Commits that touched a single file, newest first, following renames — the
-/// "file history" view. Keyed by (repoPath, path). Kept alive (bounded LRU)
-/// so reopening a file's history doesn't re-fetch over SSH — see
-/// [KeepAliveLru].
+/// "file history" view. Each entry carries the path the file bore AT that
+/// commit ([FileHistoryEntry]), so per-commit diffs can be scoped to the name
+/// the commit actually used (scoping by the current name is empty below a
+/// rename). Keyed by (repoPath, path). Kept alive (bounded LRU) so reopening
+/// a file's history doesn't re-fetch over SSH — see [KeepAliveLru].
 final fileLogProvider = FutureProvider.autoDispose
-    .family<List<GitCommit>, (String, String)>((ref, key) {
+    .family<List<FileHistoryEntry>, (String, String)>((ref, key) {
       _fileLogLru.touch(key, ref.keepAlive());
       final (repoPath, path) = key;
-      final future = ref
-          .watch(gitServiceProvider)
-          .log(repoPath, path: path, follow: true);
+      final future = ref.watch(gitServiceProvider).fileHistory(repoPath, path);
       future.then(
-        (v) => _fileLogLru.reportSize(key, _estimateCommitListBytes(v)),
+        (v) => _fileLogLru.reportSize(
+          key,
+          _estimateCommitListBytes([for (final e in v) e.commit]),
+        ),
         // Release a failed fetch so a re-watch retries rather than serving the
         // pinned error (see KeepAliveLru.evict).
         onError: (_) => _fileLogLru.evict(key),

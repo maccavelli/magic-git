@@ -43,40 +43,79 @@ GitCommit _c(String hash, String subject) => GitCommit(
   subject: subject,
 );
 
+Future<(ProviderContainer, _FakeGit)> _pump(
+  WidgetTester tester,
+  List<FileHistoryEntry> entries,
+) async {
+  final git = _FakeGit();
+  final container = ProviderContainer(
+    overrides: [
+      gitServiceProvider.overrideWithValue(git),
+      fileLogProvider((_repo, _path)).overrideWith((ref) async => entries),
+    ],
+  );
+  addTearDown(container.dispose);
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: const MacosApp(
+        debugShowCheckedModeBanner: false,
+        home: FileHistorySheet(repoPath: _repo, path: _path),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return (container, git);
+}
+
 void main() {
   testWidgets(
     'selecting a commit fetches the diff scoped to this file, not the whole '
     'commit',
     (tester) async {
-      final git = _FakeGit();
-      final commits = [_c('aaa1111', 'First change'), _c('bbb2222', 'Second change')];
-      final container = ProviderContainer(
-        overrides: [
-          gitServiceProvider.overrideWithValue(git),
-          fileLogProvider(
-            (_repo, _path),
-          ).overrideWith((ref) async => commits),
-        ],
-      );
-      addTearDown(container.dispose);
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: const MacosApp(
-            debugShowCheckedModeBanner: false,
-            home: FileHistorySheet(repoPath: _repo, path: _path),
-          ),
-        ),
-      );
-      await tester.pumpAndSettle();
+      final (_, git) = await _pump(tester, [
+        FileHistoryEntry(commit: _c('aaa1111', 'First change')),
+        FileHistoryEntry(commit: _c('bbb2222', 'Second change')),
+      ]);
 
-      // The most recent commit's diff loads by default.
+      // The most recent commit's diff loads by default. Entries without a
+      // per-commit path fall back to the queried path.
       expect(git.showCommitCalls, [('aaa1111', _path)]);
 
       await tester.tap(find.text('Second change'));
       await tester.pumpAndSettle();
 
       expect(git.showCommitCalls, [('aaa1111', _path), ('bbb2222', _path)]);
+    },
+  );
+
+  testWidgets(
+    'a pre-rename commit\'s diff is scoped to the name the file bore THEN — '
+    'scoping by the current name yields an empty diff below a rename',
+    (tester) async {
+      const oldPath = 'lib/old_a.dart';
+      final (_, git) = await _pump(tester, [
+        FileHistoryEntry(
+          commit: _c('aaa1111', 'Rename to a.dart'),
+          pathAtCommit: _path,
+        ),
+        FileHistoryEntry(
+          commit: _c('bbb2222', 'Edit under the old name'),
+          pathAtCommit: oldPath,
+        ),
+      ]);
+
+      expect(git.showCommitCalls, [('aaa1111', _path)]);
+
+      await tester.tap(find.text('Edit under the old name'));
+      await tester.pumpAndSettle();
+
+      expect(
+        git.showCommitCalls,
+        [('aaa1111', _path), ('bbb2222', oldPath)],
+        reason: 'the pre-rename commit must be asked about lib/old_a.dart — '
+            'asking about the current name shows nothing at all',
+      );
     },
   );
 }

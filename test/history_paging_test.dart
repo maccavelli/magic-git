@@ -32,6 +32,10 @@ class _PagingGit extends GitService {
   final List<String?> greps = [];
   final List<String?> shas = [];
 
+  /// When set, the next walk throws (one transient SSH failure) and the flag
+  /// clears — the shape of a single dropped page fetch.
+  bool failNextWalk = false;
+
   // 40-char hashes that differ in their LEADING characters (`c007ffff…`), so a
   // `sha:` prefix can single one out — real hashes are distinctive up front, and
   // a prefix match is only meaningful against that.
@@ -68,6 +72,10 @@ class _PagingGit extends GitService {
     walks.add((skip: skip, count: maxCount));
     greps.add(grep);
     shas.add(sha);
+    if (failNextWalk) {
+      failNextWalk = false;
+      throw StateError('transport hiccup');
+    }
 
     // Git resolves a `sha:` against the object database and answers with the
     // commit itself, so the result is what the hash *matched* — not a page of
@@ -333,6 +341,68 @@ void main() {
     expect(git.greps, contains('added'), reason: 'and fell back to message');
     // The fake applies no grep narrowing, so the full page proves the walk ran.
     expect(find.text('commit 1'), findsOneWidget);
+  });
+
+  testWidgets('a failed page renders a retry row, and clicking it pages on', (
+    tester,
+  ) async {
+    // The regression this pins: pageFailed latched on the notifier with no way
+    // back — one transient SSH failure ended paging for that query forever
+    // (and the sentinel kept spinning over a fetch that would never run).
+    final git = _PagingGit(page * 2);
+    final container = await _pump(tester, git);
+
+    git.failNextWalk = true;
+    final controller = _listController(tester);
+    controller.jumpTo(controller.position.maxScrollExtent);
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    const retryLabel = 'Couldn\'t load more commits — click to retry';
+    expect(
+      find.text(retryLabel),
+      findsOneWidget,
+      reason: 'a failed page must say so, not spin forever over nothing',
+    );
+
+    await tester.tap(find.text(retryLabel));
+    await tester.pumpAndSettle();
+
+    expect(
+      container.read(logSearchProvider(_defaultQuery)).value,
+      hasLength(page * 2),
+      reason: 'the retried page lands on top of the rows already held',
+    );
+    expect(find.text(retryLabel), findsNothing);
+  });
+
+  testWidgets('a refresh clears a failed page — paging resumes on its own', (
+    tester,
+  ) async {
+    final git = _PagingGit(page * 2);
+    final container = await _pump(tester, git);
+
+    git.failNextWalk = true;
+    final controller = _listController(tester);
+    controller.jumpTo(controller.position.maxScrollExtent);
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.text('Couldn\'t load more commits — click to retry'),
+        findsOneWidget);
+
+    // Exactly what a commit/checkout/watcher tick does. The rebuild re-walks
+    // from the top AND un-latches paging.
+    container.invalidate(logSearchProvider);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Couldn\'t load more commits — click to retry'),
+        findsNothing);
+    // The sentinel is live again: sitting at the end of the list, it pages.
+    expect(
+      container.read(logSearchProvider(_defaultQuery)).value,
+      hasLength(page * 2),
+      reason: 'paging resumed after the refresh instead of staying dead',
+    );
   });
 
   testWidgets('a sha: match in a deep repo does not stampede the walk', (

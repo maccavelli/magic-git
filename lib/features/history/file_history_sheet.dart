@@ -25,6 +25,19 @@ class FileHistorySheet extends ConsumerStatefulWidget {
 class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
   String? _selected;
 
+  /// The path to scope [hash]'s diff to — the name the file bore AT that
+  /// commit. `--follow` lists commits from before a rename, where a diff
+  /// scoped to the current name is empty (verified against real git:
+  /// `git show pre-rename -- new-name` prints the header and no patch), so
+  /// each commit's diff must use its own name. Falls back to the queried path
+  /// when the walk couldn't say.
+  String _pathAt(List<FileHistoryEntry> entries, String hash) {
+    for (final e in entries) {
+      if (e.commit.hash == hash) return e.pathAtCommit ?? widget.path;
+    }
+    return widget.path;
+  }
+
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
@@ -83,7 +96,8 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
     );
   }
 
-  Widget _body(BuildContext context, List<GitCommit> commits) {
+  Widget _body(BuildContext context, List<FileHistoryEntry> entries) {
+    final commits = [for (final e in entries) e.commit];
     if (commits.isEmpty) {
       return Center(
         child: Text(
@@ -106,7 +120,7 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
           ),
         ),
         Container(width: 1, color: MacosColors.separatorColor),
-        Expanded(child: _diff(selected)),
+        Expanded(child: _diff(selected, _pathAt(entries, selected))),
       ],
     );
   }
@@ -145,9 +159,9 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
     );
   }
 
-  Widget _diff(String hash) {
+  Widget _diff(String hash, String pathAtCommit) {
     final async = ref.watch(
-      commitFileDiffProvider((widget.repoPath, hash, widget.path)),
+      commitFileDiffProvider((widget.repoPath, hash, pathAtCommit)),
     );
     return async.when(
       loading: () => const DiffPending(),

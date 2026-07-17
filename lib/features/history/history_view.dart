@@ -555,6 +555,10 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repoPath != widget.repoPath) {
       _clearSelection();
+      // Per-hash row keys are meaningless for another repo's hashes; without
+      // this, a long session hopping between repos retains one GlobalKey per
+      // commit ever displayed.
+      _commitRowKeys.clear();
       _lastCommits = null;
       _graph = null;
       // Invalidate any in-flight off-isolate layout for the old repo so it
@@ -1027,15 +1031,22 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   /// HEAD (rebased onto [commit]'s parent). The sheet performs the rebase and
   /// refreshes the repo-scoped providers itself.
   ///
-  /// Always resolves the range from a fresh, *unfiltered* HEAD log — never
-  /// from `_lastCommits`, which is whatever the panel is currently displaying
-  /// and can be a search/grep- or all-branches-filtered subset. Building the
+  /// Always resolves the range from a fresh, *unfiltered* walk — never from
+  /// `_lastCommits`, which is whatever the panel is currently displaying and
+  /// can be a search/grep- or all-branches-filtered subset. Building the
   /// rebase todo from a filtered list would silently drop every real,
   /// non-matching commit between `onto` and HEAD, since the rebase replaces
-  /// history with exactly the `commits` list passed in. If [commit] isn't
-  /// actually a HEAD ancestor (reachable only via the all-branches view), it
-  /// won't be found in the unfiltered log either — correctly a no-op, since
-  /// "rebase from here" isn't meaningful for a non-ancestor commit anyway.
+  /// history with exactly the `commits` list passed in.
+  ///
+  /// The walk is `git log <parent>..HEAD` — exactly the commits the rebase
+  /// would rewrite, however deep the selected commit sits. (A depth-capped
+  /// `git log HEAD` was used before, capped at the *filtered* walk's depth:
+  /// a commit found via search 3 000 commits down was then "not found" in a
+  /// 200-deep raw log, and the dialog wrongly claimed it wasn't part of the
+  /// branch at all.) The range contains [commit] itself precisely when it IS
+  /// a HEAD ancestor — commits reachable from HEAD but not from the parent —
+  /// so the membership check below doubles as the ancestry test, verified
+  /// against real git.
   Future<void> _actRebaseFrom(GitCommit commit) async {
     // Also gated on `busy` — the same flag cherry-pick/revert/etc. use via
     // `_run`/`_runLogged` — so a rebase can't start while another History
@@ -1044,12 +1055,12 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     if (busy || _rebaseSheetOpen || commit.parents.isEmpty) return;
     List<GitCommit> commits;
     try {
-      // Walked at least as deep as the panel currently displays: a commit the
-      // user paged down to and selected must still be findable here, or
-      // "rebase from here" would silently do nothing on deep history.
+      // The cap only bounds a pathological range — a todo of thousands of
+      // rows is unusable well before git objects to it.
       commits = await _git.log(
         repoPath,
-        maxCount: ref.read(logSearchProvider(_query).notifier).depth,
+        revision: '${commit.parents.first}..HEAD',
+        maxCount: 10000,
       );
     } catch (_) {
       return;
@@ -1057,9 +1068,10 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     if (!mounted) return;
     final idx = commits.indexWhere((c) => c.hash == commit.hash);
     if (idx < 0) {
-      // Not an ancestor of HEAD (reachable only via the all-branches view), or
-      // deeper than the walk above. Either way the HEAD..commit range this
-      // rebase would rewrite doesn't exist — say so instead of no-op'ing.
+      // The range from its parent to HEAD doesn't contain it, so HEAD does
+      // not descend from it (reachable only via the all-branches view). The
+      // HEAD..commit range this rebase would rewrite doesn't exist — say so
+      // instead of no-op'ing.
       await showErrorDialog(
         context,
         '${commit.shortHash} isn\'t part of the current branch\'s history. '
@@ -1566,18 +1578,63 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   /// Not deepening the walk while a fetch is in flight is also what keeps
   /// [LogSearchNotifier.loadMore]'s `--skip` honest: it offsets past the list it
   /// is extending, so it must only ever run against a settled one.
+  ///
+  /// A FAILED page renders as a tappable retry row rather than the spinner: a
+  /// page failure changes no provider state (the loaded rows are kept, by
+  /// design), so nothing rebuilds this row on its own — [_pageAndRepaint] is
+  /// what brings the failure to screen, and the row it paints is honest about
+  /// there being no fetch in flight.
   Widget _loadMoreRow(double rowHeight, bool canLoadMore) {
+    final log = ref.read(logSearchProvider(_query).notifier);
+    if (log.pageFailed) {
+      final typography = MacosTheme.of(context).typography;
+      return SizedBox(
+        height: rowHeight,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {
+            _pageAndRepaint(log.retryPage);
+            // retryPage cleared the flag synchronously — swap back to the
+            // spinner now, not when the retried fetch settles.
+            setState(() {});
+          },
+          child: Center(
+            child: Text(
+              'Couldn\'t load more commits — click to retry',
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemBlueColor,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
     if (canLoadMore) {
       // Post-frame: this runs inside build, and loadMore writes provider state.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          ref.read(logSearchProvider(_query).notifier).loadMore();
+          _pageAndRepaint(
+            ref.read(logSearchProvider(_query).notifier).loadMore,
+          );
         }
       });
     }
     return SizedBox(
       height: rowHeight,
       child: const Center(child: ProgressCircle(radius: 8)),
+    );
+  }
+
+  /// Runs a page fetch and repaints when it settles WITHOUT new data: a
+  /// successful page changes the provider state (which rebuilds everything),
+  /// but a failed one deliberately doesn't — the loaded rows stay — so the
+  /// sentinel needs this nudge to swap its spinner for the retry row (and
+  /// back again after a retry kicks off).
+  void _pageAndRepaint(Future<void> Function() page) {
+    unawaited(
+      page().then((_) {
+        if (mounted) setState(() {});
+      }),
     );
   }
 

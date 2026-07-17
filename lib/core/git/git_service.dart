@@ -508,6 +508,121 @@ List<GitCommit> parseGitLog(String raw) {
   return commits;
 }
 
+/// Parses the file-history walk: [parseGitLog]'s wire format interleaved with
+/// `--name-status` records. Top-level so it can run in a background isolate.
+///
+/// Shape (single pathspec, so one status line per commit): each commit emits
+/// `<fields><recordSep>` followed by a blank line and its status line
+/// (`M\t<path>`, `A\t<path>`, `R<score>\t<old>\t<new>`, …). Splitting on
+/// [GitService.recordSep] therefore yields chunks in which the status lines
+/// belong to the PREVIOUS chunk's commit and the fieldSep-bearing line opens
+/// the next one.
+List<FileHistoryEntry> parseFileHistory(String raw) {
+  final entries = <FileHistoryEntry>[];
+  for (final chunk in raw.split(GitService.recordSep)) {
+    String? fieldsLine;
+    String? statusLine;
+    for (final line in chunk.split('\n')) {
+      if (line.contains(GitService.fieldSep)) {
+        fieldsLine = line;
+      } else if (statusLine == null && line.trim().isNotEmpty) {
+        // First status line only: the walk has exactly one pathspec, so any
+        // further lines are unexpected noise, never a better answer.
+        statusLine = line;
+      }
+    }
+    if (statusLine != null && entries.isNotEmpty) {
+      final path = _pathFromNameStatus(statusLine);
+      if (path != null) {
+        final last = entries.last;
+        entries[entries.length - 1] = FileHistoryEntry(
+          commit: last.commit,
+          pathAtCommit: path,
+        );
+      }
+    }
+    if (fieldsLine != null) {
+      final f = fieldsLine.split(GitService.fieldSep);
+      if (f.length < 7) continue; // truncated/malformed — same posture as log
+      entries.add(
+        FileHistoryEntry(
+          commit: GitCommit(
+            hash: f[0],
+            shortHash: f[1],
+            authorName: f[2],
+            authorEmail: f[3],
+            date: f[4],
+            parents: f[5].isEmpty ? const [] : f[5].split(' '),
+            subject: _stripSeps(f[6]),
+          ),
+        ),
+      );
+    }
+  }
+  return entries;
+}
+
+/// The path a `--name-status` line assigns the file **at that commit** — the
+/// sole path for M/A/D records, the NEW name for an R/C record (old\tnew).
+/// Null for a line that doesn't parse as a status record.
+String? _pathFromNameStatus(String line) {
+  final parts = line.split('\t');
+  if (parts.length < 2) return null;
+  return _unquoteGitPath(parts.last);
+}
+
+/// Undoes git's C-style path quoting (`core.quotePath` handles most of it via
+/// `-c core.quotepath=false`, but paths containing quotes/backslashes/control
+/// bytes are quoted regardless). A path not wrapped in double quotes passes
+/// through untouched.
+///
+/// Escapes name raw BYTES (an octal pair like `\303\251` is one UTF-8 é), so
+/// the unquote accumulates bytes and decodes once at the end — decoding each
+/// escape as a code point would mangle every non-ASCII name into mojibake.
+String _unquoteGitPath(String path) {
+  if (path.length < 2 || !path.startsWith('"') || !path.endsWith('"')) {
+    return path;
+  }
+  final inner = path.substring(1, path.length - 1);
+  final bytes = <int>[];
+  for (var i = 0; i < inner.length; i++) {
+    final ch = inner[i];
+    if (ch != r'\' || i + 1 >= inner.length) {
+      bytes.addAll(utf8.encode(ch));
+      continue;
+    }
+    final next = inner[++i];
+    switch (next) {
+      case 'n':
+        bytes.add(0x0A);
+      case 't':
+        bytes.add(0x09);
+      case 'r':
+        bytes.add(0x0D);
+      case '"':
+      case r'\':
+        bytes.addAll(utf8.encode(next));
+      default:
+        // Octal escape (\NNN) — up to three digits, one raw byte.
+        if (next.codeUnitAt(0) >= 0x30 && next.codeUnitAt(0) <= 0x37) {
+          var value = next.codeUnitAt(0) - 0x30;
+          var digits = 1;
+          while (digits < 3 && i + 1 < inner.length) {
+            final c = inner.codeUnitAt(i + 1);
+            if (c < 0x30 || c > 0x37) break;
+            value = value * 8 + (c - 0x30);
+            i++;
+            digits++;
+          }
+          bytes.add(value);
+        } else {
+          bytes.addAll(utf8.encode(next)); // unknown escape — keep the char
+        }
+    }
+  }
+  return const Utf8Decoder(allowMalformed: true).convert(bytes);
+}
+
 /// Parses `git reflog` output (field/record separated, same wire format as
 /// [parseGitLog]). Top-level so it can run in a background isolate.
 List<ReflogEntry> parseReflog(String raw) {
@@ -641,6 +756,24 @@ class GitCommit {
   });
 
   bool get isMerge => parents.length > 1;
+}
+
+/// One row of a single file's history: the commit, plus the path the file bore
+/// **in that commit**. `--follow` walks through renames, so commits below a
+/// rename touched the file under its old name — and a diff scoped to the
+/// current name comes back empty for them. The per-commit path is what lets
+/// the file-history view scope each commit's diff to the name that commit
+/// actually used.
+class FileHistoryEntry {
+  final GitCommit commit;
+
+  /// Repo-relative path of the file as of [commit], from the walk's
+  /// `--name-status` output (the new name for a rename record). Null when the
+  /// status record was missing/unparseable — callers fall back to the queried
+  /// path, which is the pre-fix behavior.
+  final String? pathAtCommit;
+
+  const FileHistoryEntry({required this.commit, this.pathAtCommit});
 }
 
 /// The combined result of [GitService.status], [GitService.refs], and
@@ -1749,6 +1882,66 @@ class GitService {
       return Isolate.run(() => parseGitLog(stdout));
     }
     return parseGitLog(stdout);
+  }
+
+  /// A single file's history, following renames, with the path the file bore
+  /// at each commit — see [FileHistoryEntry] for why the per-commit path is
+  /// load-bearing (a diff scoped to the current name is EMPTY for commits
+  /// below a rename, which silently blanked the file-history pane for exactly
+  /// the renamed files `--follow` exists to handle).
+  ///
+  /// Same wire hardening as [log] (separator format, `--no-show-signature`,
+  /// UTF-8 re-encoding, isolate-offloaded parse), plus `--name-status` to
+  /// carry the per-commit name and `core.quotepath=false` so non-ASCII paths
+  /// arrive unquoted (quotes forced by control bytes are undone in
+  /// [parseFileHistory]).
+  Future<List<FileHistoryEntry>> fileHistory(
+    String repoPath,
+    String path, {
+    int maxCount = 200,
+  }) async {
+    final format = ['%H', '%h', '%an', '%ae', '%aI', '%P', '%s'].join(fieldSep);
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: [
+        'git',
+        '-c',
+        'i18n.logOutputEncoding=UTF-8',
+        '-c',
+        'core.quotepath=false',
+        'log',
+        '--topo-order',
+        '--no-show-signature',
+        '--pretty=format:$format$recordSep',
+        '--max-count=$maxCount',
+        // `--follow` requires exactly one pathspec; it accepts a magic
+        // pathspec (verified against git 2.55), so the literal form keeps a
+        // path like `pages/[id].tsx` meaning one file, not a glob.
+        '--follow',
+        '--name-status',
+        '--end-of-options',
+        'HEAD',
+        '--',
+        _literal(path),
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
+    );
+    if (!result.isSuccess) {
+      // Unborn HEAD — mirror [log]'s handling so the sheet's empty state
+      // applies to a freshly initialized repo.
+      if (result.exitCode == 128 &&
+          result.stderr.contains('does not have any commits yet')) {
+        return const [];
+      }
+      throw GitException('git log (file history) failed', result);
+    }
+    final stdout = result.stdout;
+    if (stdout.length > _isolateThreshold) {
+      return Isolate.run(() => parseFileHistory(stdout));
+    }
+    return parseFileHistory(stdout);
   }
 
   /// Which of [paths] git ignores — asked in one batch, over stdin, so a burst

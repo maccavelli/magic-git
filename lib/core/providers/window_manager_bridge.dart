@@ -337,7 +337,12 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     if (repoPath == null) return;
     _tickSubs[id] = container.listen(repoWatchProvider(repoPath), (_, next) {
       final event = next.value;
-      if (event != null) forwardTick(repoPath, event);
+      // Push to THIS window only. Fanning out via [forwardTick] here would
+      // multiply deliveries: with N windows showing the same repo, each of
+      // the N subscriptions fires per tick and each fan-out hits all N
+      // windows — N copies of every tick per window, each one a families
+      // refetch.
+      if (event != null) _pushTick(id, repoPath, event);
     });
   }
 
@@ -400,9 +405,19 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
   }
 
   /// Forwards one watcher tick to every window showing [repoPath]. Deliberately
-  /// unsuppressed — each window applies its own own-mutation logic.
+  /// unsuppressed — each window applies its own own-mutation logic. The live
+  /// per-window subscriptions use [_pushTick] directly (each window already
+  /// has its own subscription, so a fan-out there would deliver N copies);
+  /// this remains the broadcast seam for externally sourced ticks.
   void forwardTick(String repoPath, RepoWatchEvent event) {
-    final payload = {
+    for (final w in state) {
+      if (w.repoPath == repoPath) _pushTick(w.id, repoPath, event);
+    }
+  }
+
+  /// Pushes one watcher tick to window [id].
+  void _pushTick(String id, String repoPath, RepoWatchEvent event) {
+    _hubs[id]?.invokeMethod<void>('repoTick', {
       'repoPath': repoPath,
       'mode': event.mode.name,
       'atMs': event.at.millisecondsSinceEpoch,
@@ -411,12 +426,7 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
       // scope is unknown (poll/restart), not that nothing changed — see
       // [RepoWatchEvent.paths].
       'paths': event.paths.toList(),
-    };
-    for (final w in state) {
-      if (w.repoPath == repoPath) {
-        _hubs[w.id]?.invokeMethod<void>('repoTick', payload).catchError((_) {});
-      }
-    }
+    }).catchError((_) {});
   }
 
   Future<Object?> _onControlCall(MethodCall call) async {

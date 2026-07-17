@@ -4,6 +4,8 @@
 // journal, mutation-driven refresh marks, forwarded undo execution, per-window
 // event fan-out (tick/invalidate/connectionChanged), and close-on-disconnect.
 
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -376,6 +378,56 @@ void main() {
     expect((tick.arguments as Map)['mode'], 'eventDriven');
     expect((tick.arguments as Map)['atMs'], 1234567);
     expect(hubCalls.map((c) => c.method), contains('invalidateAll'));
+  });
+
+  test('one watcher tick reaches each window exactly once, however many '
+      'windows show the repo', () async {
+    // The regression this pins: every window holds its own subscription to the
+    // repo's watch stream, and each subscription used to FAN OUT to every
+    // window showing the repo — so with a History pop-out and a detached
+    // window open on the same repo, every tick landed twice in each window,
+    // and each landing is a full families refetch over SSH.
+    final watch = StreamController<RepoWatchEvent>.broadcast();
+    addTearDown(() => unawaited(watch.close()));
+    stub = _StubConnection(_connected);
+    executor = _FakeExecutor();
+    container = ProviderContainer(
+      overrides: [
+        connectionProvider.overrideWith(() => stub),
+        activeExecutorProvider.overrideWithValue(executor),
+        repoWatchProvider.overrideWith((ref, repoPath) => watch.stream),
+      ],
+    );
+    addTearDown(container.dispose);
+    container.read(windowManagerBridgeProvider.notifier)
+      ..sessionContainerFor = ((_) => container)
+      ..activeTabId = (() => 'tab-1');
+
+    // Second window (detached repo, id '2') on the SAME repo.
+    final hub2Calls = <MethodCall>[];
+    final hub2 = MethodChannel(windowHubChannel('2'));
+    messenger.setMockMethodCallHandler(hub2, (call) async {
+      hub2Calls.add(call);
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(hub2, null));
+
+    await openHistory();
+    await container
+        .read(windowManagerBridgeProvider.notifier)
+        .openDetachedRepo();
+    expect(container.read(windowManagerBridgeProvider), hasLength(2));
+
+    watch.add(RepoWatchEvent(
+      at: DateTime.fromMillisecondsSinceEpoch(99),
+      mode: WatchMode.eventDriven,
+    ));
+    // Let the stream event propagate through the provider to the listeners.
+    await container.pump();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(hubCalls.where((c) => c.method == 'repoTick'), hasLength(1));
+    expect(hub2Calls.where((c) => c.method == 'repoTick'), hasLength(1));
   });
 
   test('while open, connection changes are pushed; disconnect also closes',
