@@ -55,6 +55,22 @@ void main() {
     expect(EnvironmentResolver.probeScriptForTest, isNot(contains('--version')));
   });
 
+  test('augmented PATH puts per-user dirs ahead of /usr/local/bin', () {
+    // A system shim (e.g. a glab/gh wrapper) in /usr/local/bin must never
+    // shadow the user's own ~/.local/bin install — otherwise the injected
+    // `!glab auth git-credential` helper resolves to the shim and HTTPS forge
+    // auth breaks with "could not read Username".
+    final script = EnvironmentResolver.probeScriptForTest;
+    expect(script, contains(r'u="$HOME/.local/bin:$HOME/bin"'));
+    // `u` is spliced ahead of the shared package dirs (`c`) in the aug PATH.
+    expect(script, contains(r'aug="$u:$c:'));
+    expect(
+      script.indexOf(r'$HOME/.local/bin'),
+      lessThan(script.indexOf('/usr/local/bin')),
+      reason: 'per-user dirs must precede /usr/local/bin in the probe script',
+    );
+  });
+
   test('probeVersions parses VER lines, normalizing to x.y.z', () async {
     const out =
         'VER=git=git version 2.39.3 (Apple Git-145)\n'

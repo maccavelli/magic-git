@@ -82,6 +82,9 @@ class _RecordingExecutor implements CommandExecutor {
   void configureEnvironment({String? path, Map<String, String> binaries = const {}}) {}
 
   @override
+  String? resolvedBinaryPath(String name) => null;
+
+  @override
   void setForgeTokenNeutralization(Iterable<String> vars) {}
 
   @override

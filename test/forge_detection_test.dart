@@ -209,6 +209,68 @@ void main() {
         ],
       );
     });
+
+    // Pinning the resolved absolute path stops git's credential subprocess
+    // from re-resolving `glab`/`gh` on PATH and picking up a shadowing system
+    // shim — the failure that broke HTTPS fetch/push with "could not read
+    // Username".
+    test('a resolved path pins the helper to the absolute binary', () {
+      expect(
+        forgeGitAuthConfigArgs(Forge.gitlab, glabPath: '/home/u/.local/bin/glab'),
+        [
+          '-c',
+          'credential.helper=',
+          '-c',
+          'credential.helper=!/home/u/.local/bin/glab auth git-credential',
+        ],
+      );
+      expect(
+        forgeGitAuthConfigArgs(Forge.github, ghPath: '/opt/homebrew/bin/gh'),
+        [
+          '-c',
+          'credential.helper=',
+          '-c',
+          'credential.helper=!/opt/homebrew/bin/gh auth git-credential',
+        ],
+      );
+    });
+
+    test('the matching forge ignores the other CLI\'s resolved path', () {
+      // A GitLab remote pins glab; a stray ghPath must not leak in.
+      expect(
+        forgeGitAuthConfigArgs(
+          Forge.gitlab,
+          ghPath: '/x/gh',
+          glabPath: '/x/glab',
+        ),
+        contains('credential.helper=!/x/glab auth git-credential'),
+      );
+    });
+
+    test('all pins both resolved paths', () {
+      expect(
+        forgeGitAuthConfigArgsAll(ghPath: '/x/gh', glabPath: '/x/glab'),
+        [
+          '-c',
+          'credential.helper=',
+          '-c',
+          'credential.helper=!/x/gh auth git-credential',
+          '-c',
+          'credential.helper=!/x/glab auth git-credential',
+        ],
+      );
+    });
+
+    test('an unknown (null/empty) path falls back to the bare CLI name', () {
+      expect(
+        forgeGitAuthConfigArgs(Forge.gitlab, glabPath: null),
+        contains('credential.helper=!glab auth git-credential'),
+      );
+      expect(
+        forgeGitAuthConfigArgs(Forge.gitlab, glabPath: ''),
+        contains('credential.helper=!glab auth git-credential'),
+      );
+    });
   });
 
   group('forgeUrlFromCreateOutput', () {

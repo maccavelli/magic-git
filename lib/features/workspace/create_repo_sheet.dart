@@ -867,7 +867,11 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     List<String> warnings, {
     Forge forge = Forge.none,
   }) async {
-    final auth = forgeGitAuthConfigArgs(forge);
+    final auth = forgeGitAuthConfigArgs(
+      forge,
+      ghPath: executor.resolvedBinaryPath('gh'),
+      glabPath: executor.resolvedBinaryPath('glab'),
+    );
     final label = 'git push -u origin $branch';
     try {
       final result = await executor.execute(

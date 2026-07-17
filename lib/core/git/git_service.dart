@@ -3588,7 +3588,11 @@ class GitService {
         retries: 0,
       );
       if (!result.isSuccess) return const [];
-      return forgeGitAuthConfigArgs(forgeFromRemoteUrl(result.stdout.trim()));
+      return forgeGitAuthConfigArgs(
+        forgeFromRemoteUrl(result.stdout.trim()),
+        ghPath: _executor.resolvedBinaryPath('gh'),
+        glabPath: _executor.resolvedBinaryPath('glab'),
+      );
     } catch (_) {
       return const [];
     }
@@ -3641,7 +3645,16 @@ class GitService {
   /// of either forge.
   Future<SSHCommandResult> fetch(String repoPath) => _run(
     repoPath,
-    ['git', ...forgeGitAuthConfigArgsAll(), 'fetch', '--all', '--prune'],
+    [
+      'git',
+      ...forgeGitAuthConfigArgsAll(
+        ghPath: _executor.resolvedBinaryPath('gh'),
+        glabPath: _executor.resolvedBinaryPath('glab'),
+      ),
+      'fetch',
+      '--all',
+      '--prune',
+    ],
     'git fetch',
     timeout: networkTimeout,
     lane: ExecLane.sync,

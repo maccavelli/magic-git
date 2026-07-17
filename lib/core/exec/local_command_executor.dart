@@ -53,6 +53,9 @@ class LocalCommandExecutor implements CommandExecutor {
   }
 
   @override
+  String? resolvedBinaryPath(String name) => _binaryPaths[name];
+
+  @override
   void setForgeTokenNeutralization(Iterable<String> vars) {
     _neutralizeTokens = List.unmodifiable(vars);
   }

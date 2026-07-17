@@ -238,6 +238,15 @@ class ProxyCommandExecutor implements CommandExecutor {
   @override
   void configureEnvironment({String? path, Map<String, String> binaries = const {}}) {}
 
+  /// Null: this proxy holds no resolved environment (it lives in a pop-out
+  /// window and relays exec calls to the main isolate, whose real executor
+  /// owns binary resolution and does the `argv[0]` rewrite). Forge credential
+  /// helpers fall back to the bare CLI name here, which still resolves via the
+  /// augmented PATH the main isolate exports — and pop-out windows are
+  /// read-only viewers that never push/pull/fetch anyway.
+  @override
+  String? resolvedBinaryPath(String name) => null;
+
   @override
   void setForgeTokenNeutralization(Iterable<String> vars) {}
 

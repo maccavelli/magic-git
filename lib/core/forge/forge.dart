@@ -120,10 +120,18 @@ Forge forgeFromRemoteUrl(String url) {
 ///
 /// Returns an empty list for [Forge.none] / [Forge.unknown] so custom remotes
 /// keep using the host's ordinary credential setup.
-List<String> forgeGitAuthConfigArgs(Forge forge) {
+///
+/// [ghPath]/[glabPath] pin the helper to the connect-time-resolved absolute
+/// path of that CLI (see [_forgeCredentialHelper]); pass them so git's
+/// credential subprocess can't re-resolve a shadowing shim on PATH.
+List<String> forgeGitAuthConfigArgs(
+  Forge forge, {
+  String? ghPath,
+  String? glabPath,
+}) {
   final helper = switch (forge) {
-    Forge.github => '!gh auth git-credential',
-    Forge.gitlab => '!glab auth git-credential',
+    Forge.github => _forgeCredentialHelper('gh', ghPath),
+    Forge.gitlab => _forgeCredentialHelper('glab', glabPath),
     Forge.none || Forge.unknown => null,
   };
   if (helper == null) return const [];
@@ -137,15 +145,36 @@ List<String> forgeGitAuthConfigArgs(Forge forge) {
 
 /// Both forge CLI helpers, for commands that may touch several remotes
 /// (e.g. `git fetch --all`). Same clear-first contract as
-/// [forgeGitAuthConfigArgs].
-List<String> forgeGitAuthConfigArgsAll() => const [
+/// [forgeGitAuthConfigArgs]; [ghPath]/[glabPath] pin the resolved absolute
+/// paths (see [_forgeCredentialHelper]).
+List<String> forgeGitAuthConfigArgsAll({String? ghPath, String? glabPath}) => [
   '-c',
   'credential.helper=',
   '-c',
-  'credential.helper=!gh auth git-credential',
+  'credential.helper=${_forgeCredentialHelper('gh', ghPath)}',
   '-c',
-  'credential.helper=!glab auth git-credential',
+  'credential.helper=${_forgeCredentialHelper('glab', glabPath)}',
 ];
+
+/// The `!<cli> auth git-credential` value for a `credential.helper` `-c`
+/// override. Pinned to [resolvedPath] (the connect-time-discovered absolute
+/// path) when known, so git's credential subprocess — which re-resolves the
+/// helper's command against the exec environment's `$PATH` — cannot pick up a
+/// system-wide `gh`/`glab` shim that shadows the user's real CLI (the failure
+/// that breaks HTTPS forge auth with "could not read Username"). Falls back to
+/// the bare [cli] name when the path is unknown (an unconfigured executor, or a
+/// relay proxy that holds no environment): still correct, since the augmented
+/// PATH is exported for the command and now prefers per-user dirs.
+///
+/// The resolved path is embedded unquoted, matching the working host-managed
+/// helper format (`!/home/u/.local/bin/glab auth git-credential`); every real
+/// gh/glab install path is whitespace-free.
+String _forgeCredentialHelper(String cli, String? resolvedPath) {
+  final bin = (resolvedPath != null && resolvedPath.isNotEmpty)
+      ? resolvedPath
+      : cli;
+  return '!$bin auth git-credential';
+}
 
 /// The outcome of resolving a just-created forge project's clone URL for
 /// origin wiring: the URL itself (null when every source failed), plus a

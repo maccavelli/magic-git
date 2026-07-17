@@ -12,8 +12,14 @@ class RemoteEnvironment {
   /// 'macos' | 'linux' | 'unknown'.
   final String os;
 
-  /// Augmented PATH: override dirs and common user dirs first, then the login
-  /// shell's PATH, then the system dirs — so user installs win over system ones.
+  /// Augmented PATH: override dirs, then per-user dirs (`$HOME/.local/bin`,
+  /// `$HOME/bin`), then the OS's shared package-manager dirs, then the login
+  /// shell's PATH, then the system dirs — so a user's own install always wins
+  /// over a system-wide one. Keeping the per-user dirs ahead of
+  /// `/usr/local/bin` is load-bearing: a system shim there (e.g. a `glab`/`gh`
+  /// wrapper) must not shadow the user's real CLI, or the injected
+  /// `!glab auth git-credential` helper resolves to the shim and HTTPS forge
+  /// auth dies with "could not read Username".
   final String path;
 
   /// Binary name → absolute path, for every required tool that resolved
@@ -80,8 +86,9 @@ class EnvironmentResolver {
   final CommandExecutor _executor;
   const EnvironmentResolver(this._executor);
 
-  /// One round trip: detect OS, compute an augmented PATH (common user dirs and
-  /// the login shell's PATH ahead of system dirs), and `command -v` each binary
+  /// One round trip: detect OS, compute an augmented PATH (per-user dirs, then
+  /// shared package dirs and the login shell's PATH, ahead of system dirs), and
+  /// `command -v` each binary
   /// under it. [overrides] (binary → absolute path) win over discovery, and
   /// their directories are prepended to the PATH.
   ///
@@ -257,8 +264,9 @@ class EnvironmentResolver {
   static String get probeScriptForTest => _probeScript;
 
   // POSIX sh probe. Emits `OS=`, `PATH=` (augmented), and `BIN=<name>=<path>`
-  // lines. Common user dirs and the login shell's PATH come before system
-  // dirs, so `command -v` resolves user-installed tools first. Pure lookups
+  // lines. Per-user dirs, then the OS's shared package dirs and the login
+  // shell's PATH, come before system dirs, so `command -v` resolves a user's
+  // own install ahead of a system-wide one. Pure lookups
   // only — no tool is actually spawned (see [probeVersions] for the deferred
   // `--version` pass), keeping this connect-blocking round trip as close to
   // shell-builtin speed as the login-shell PATH capture allows.
@@ -284,12 +292,17 @@ class EnvironmentResolver {
       'else wait \$lp_pid 2>/dev/null; '
       'lp=\$(cat "\$_mg_lp" 2>/dev/null); fi; '
       'rm -f "\$_mg_lp" 2>/dev/null; '
+      // Per-user dirs (`u`) come before the OS's shared package-manager dirs
+      // (`c`) so the user's own install always wins — a system shim in
+      // /usr/local/bin must never shadow ~/.local/bin (it would break the
+      // injected forge credential helper; see [RemoteEnvironment.path]).
+      'u="\$HOME/.local/bin:\$HOME/bin"; '
       'case "\$os" in '
-      'Darwin) c="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin:\$HOME/.local/bin:\$HOME/bin" ;; '
-      'Linux) c="/usr/local/bin:/usr/local/sbin:\$HOME/.local/bin:\$HOME/bin:/home/linuxbrew/.linuxbrew/bin:/snap/bin" ;; '
-      '*) c="/usr/local/bin:\$HOME/.local/bin:\$HOME/bin" ;; '
+      'Darwin) c="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/local/sbin" ;; '
+      'Linux) c="/usr/local/bin:/usr/local/sbin:/home/linuxbrew/.linuxbrew/bin:/snap/bin" ;; '
+      '*) c="/usr/local/bin" ;; '
       'esac; '
-      'aug="\$c:\$lp:\$PATH:/usr/bin:/bin:/usr/sbin:/sbin"; '
+      'aug="\$u:\$c:\$lp:\$PATH:/usr/bin:/bin:/usr/sbin:/sbin"; '
       'echo "OS=\$os"; '
       'echo "PATH=\$aug"; '
       // Bare names, unquoted, in a `for` list: safe because every entry is a

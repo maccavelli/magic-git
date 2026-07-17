@@ -197,6 +197,15 @@ abstract class CommandExecutor {
   /// [SSHCommandExecutor.configureEnvironment].
   void configureEnvironment({String? path, Map<String, String> binaries});
 
+  /// The connect-time-resolved absolute path for a bare tool name (e.g.
+  /// `glab`), or null when unknown — an unconfigured executor, or a relay
+  /// proxy that holds no environment of its own. Unlike `argv[0]` (rewritten
+  /// by [CommandFormatter.format]), a tool name embedded inside an argument —
+  /// notably the `!glab auth git-credential` in a `git -c credential.helper=…`
+  /// override — is opaque to that rewrite, so callers pin it explicitly via
+  /// this. See [forgeGitAuthConfigArgs].
+  String? resolvedBinaryPath(String name);
+
   /// Sets the ambient env var names to neutralize before every command (a
   /// forge's token vars — [CommandFormatter.gitlabTokenVars]/[githubTokenVars] —
   /// when this connection supplied that forge's token, so Magic Git's managed
@@ -269,6 +278,9 @@ class SSHCommandExecutor implements CommandExecutor {
     _envPath = (path != null && path.isNotEmpty) ? path : null;
     _binaryPaths = binaries;
   }
+
+  @override
+  String? resolvedBinaryPath(String name) => _binaryPaths[name];
 
   @override
   void setForgeTokenNeutralization(Iterable<String> vars) {

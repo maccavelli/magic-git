@@ -511,6 +511,49 @@ void main() {
       expect(exec.calls[6], ['git', 'push']);
     });
 
+    test('a resolved environment pins fetch/push auth to the absolute CLI '
+        'path (no PATH re-resolution of a shadowing shim)', () async {
+      // The connect-time probe resolved gh/glab to these absolute paths.
+      exec.configureEnvironment(
+        binaries: const {
+          'gh': '/home/u/.local/bin/gh',
+          'glab': '/home/u/.local/bin/glab',
+        },
+      );
+
+      await git.fetch('/repo');
+      expect(exec.calls[0], [
+        'git',
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!/home/u/.local/bin/gh auth git-credential',
+        '-c',
+        'credential.helper=!/home/u/.local/bin/glab auth git-credential',
+        'fetch',
+        '--all',
+        '--prune',
+      ]);
+
+      exec.results.addAll(const [
+        SSHCommandResult(exitCode: 1, stdout: '', stderr: ''), // upstream probe
+        SSHCommandResult(
+          exitCode: 0,
+          stdout: 'https://gitlab.example.com/me/r.git\n',
+          stderr: '',
+        ),
+      ]);
+      await git.push('/repo');
+      expect(exec.calls[3], [
+        'git',
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!/home/u/.local/bin/glab auth git-credential',
+        'push',
+      ]);
+    });
+
     test('pull mode maps to the right flag', () async {
       await git.pull('/repo', mode: PullMode.rebase);
       await git.pull('/repo', mode: PullMode.merge);
