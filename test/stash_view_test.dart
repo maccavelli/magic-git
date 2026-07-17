@@ -4,6 +4,7 @@
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -11,6 +12,7 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/dnd/deselect.dart';
 import 'package:remote_magic_git/features/stash/stash_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -254,5 +256,32 @@ void main() {
       findsNothing,
     );
     expect(find.textContaining('@@ -1 +1 @@'), findsOneWidget);
+  });
+
+  // Canonical deselect affordances (see lib/features/dnd/deselect.dart).
+  testWidgets('Esc clears the stash selection', (tester) async {
+    await _pump(tester, stashes: _stashes);
+    await tester.tap(find.text('tweak the parser'));
+    await tester.pumpAndSettle();
+    expect(find.text('Select a stash to preview its contents'), findsNothing);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.text('Select a stash to preview its contents'), findsOneWidget);
+  });
+
+  testWidgets('a click on empty list space clears the stash selection', (
+    tester,
+  ) async {
+    await _pump(tester, stashes: _stashes);
+    await tester.tap(find.text('tweak the parser'));
+    await tester.pumpAndSettle();
+    expect(find.text('Select a stash to preview its contents'), findsNothing);
+
+    // Below the two cards: inside the master list pane, on nothing.
+    final rect = tester.getRect(find.byType(DeselectOnEmptyClick));
+    await tester.tapAt(Offset(rect.left + 24, rect.bottom - 12));
+    await tester.pumpAndSettle();
+    expect(find.text('Select a stash to preview its contents'), findsOneWidget);
   });
 }

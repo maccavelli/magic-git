@@ -17,7 +17,9 @@ import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/theme/app_theme.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'package:remote_magic_git/features/dnd/deselect.dart';
 import 'package:remote_magic_git/features/repository/repo_status_view.dart';
 import 'package:riverpod/misc.dart' show Override;
 
@@ -1624,4 +1626,72 @@ void main() {
       );
     },
   );
+
+  // The canonical deselect affordances (see lib/features/dnd/deselect.dart):
+  // Esc and click-on-empty are the two ways OUT of a selection — including
+  // the one an abandoned drag leaves behind.
+  group('deselect', () {
+    GitStatus twoUnstaged() => _statusWith(
+      unstaged: const [
+        GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+        GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+      ],
+    );
+
+    Finder selectedRows() => find.byWidgetPredicate(
+      (w) => w is Container && w.color == AppTheme.rowSelectionTint,
+    );
+
+    testWidgets('Esc clears the file selection', (tester) async {
+      await _pump(tester, status: twoUnstaged());
+
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      expect(selectedRows(), findsOneWidget);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(selectedRows(), findsNothing);
+    });
+
+    testWidgets('a click on empty list space clears the selection', (
+      tester,
+    ) async {
+      await _pump(tester, status: twoUnstaged());
+
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      expect(selectedRows(), findsOneWidget);
+
+      // Well below the last row: inside the list pane, on nothing.
+      final rect = tester.getRect(find.byType(DeselectOnEmptyClick));
+      await tester.tapAt(Offset(rect.left + 24, rect.bottom - 12));
+      await tester.pumpAndSettle();
+      expect(selectedRows(), findsNothing);
+    });
+
+    testWidgets('one Esc during a live drag cancels the drag AND clears the '
+        'selection it made', (tester) async {
+      await _pump(tester, status: twoUnstaged());
+
+      final gesture = await tester.startGesture(
+        tester.getCenter(find.text('lib/a.dart')),
+      );
+      await tester.pump(const Duration(milliseconds: 60));
+      await gesture.moveBy(const Offset(90, 0));
+      await tester.pump();
+      // Select-on-drag has selected the row under the drag.
+      expect(selectedRows(), findsOneWidget);
+
+      // The shared drag-state handler cancels the drag, then the focus tree
+      // (which sees the same key event) clears the selection — one press.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      expect(selectedRows(), findsNothing);
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(selectedRows(), findsNothing);
+    });
+  });
 }

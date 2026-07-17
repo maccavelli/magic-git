@@ -488,6 +488,39 @@ under it. Wired: history commit rows, branch rows, stash cards, repo file rows.
 Ref chips (labels, not list items) and rebase rows (no selection model) are
 deliberately exempt.
 
+**Deselect affordances (canonical, July 2026 — `lib/features/dnd/deselect.dart`).**
+Select-on-drag means an abandoned drag leaves its selection behind, so every
+selectable panel (files, commits, branches, stashes) offers the same two ways
+OUT of a selection without touching another row:
+
+- **Esc** — each panel's list key handler returns `escDeselect(...)` from its
+  `escape` case. Escape peels layers outermost-first, and the ordering falls
+  out of how Flutter dispatches keys (`HardwareKeyboard` handlers run before
+  the focus tree sees the same event, and both always run — `KeyEventManager`
+  ORs them): an open overlay (sheet / pop-out / menu, via
+  `EscapeDismissRegistry` — `escDeselect` checks `isActive` and stands down)
+  closes first; a live drag cancels together with the selection it created
+  (the drag-state handler has already nulled the state by the time the focus
+  handler runs, so one press aborts the whole gesture); only then does a bare
+  selection clear.
+- **Click on empty space** — `DeselectOnEmptyClick` wrapped around each
+  panel's list (inside its `Focus`). A `RawGestureDetector` (deliberately not
+  a `GestureDetector`: rows are addressed as "the GestureDetector above this
+  text" in tests, and a wrapper of that type would ambiguate every such
+  query) with `HitTestBehavior.translucent` — deeper recognizers (rows,
+  buttons, fields) win the arena, so it fires only for clicks nothing else
+  claims. Finder's convention.
+
+A third affordance was considered and **rejected** (user decision, July 2026):
+plain re-click on the selected row toggling it off — nonstandard for macOS
+lists, and it fights the click-collapses-multi-selection convention.
+
+Pinned by `deselect_test.dart` (arena semantics), the `deselect` group in
+`repo_status_view_test.dart` (Esc, empty-click, and the one-press
+drag+selection abort), and Esc/empty-click tests in `stash_view_test.dart` /
+`branches_view_test.dart`; `diff_popout_window_test.dart`'s Escape test pins
+the overlay layering (pop-out closes, selection survives).
+
 **C1 architecture note (supersedes engine-refinement #1).** In-panel drops
 turned out *not* to want the global nav registry: staging must dispatch to the
 panel's own `stageMany`/`unstageMany` (which keep the selection + diff panel in

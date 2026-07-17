@@ -29,6 +29,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/tool_icon_button.dart';
+import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/drag_state.dart';
 import '../worktrees/add_worktree_sheet.dart';
@@ -375,6 +376,13 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       case LogicalKeyboardKey.arrowUp:
         _moveCommitSelection(-1, extend: extend);
         return KeyEventResult.handled;
+      case LogicalKeyboardKey.escape:
+        // Canonical deselect — see dnd/deselect.dart for the Esc layering
+        // (overlay closes first, then a live drag cancels, then this).
+        return escDeselect(
+          hasSelection: _selectedHashes.isNotEmpty,
+          clear: () => setState(_clearSelection),
+        );
     }
     return KeyEventResult.ignored;
   }
@@ -1637,7 +1645,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
             _adjustZoom(-event.panDelta.dy / 300);
           }
         },
-        child: MediaQuery(
+        child: DeselectOnEmptyClick(
+          onDeselect: () => setState(_clearSelection),
+          child: MediaQuery(
           // Scale the list's text in lockstep with its geometry. Replaces
           // (rather than multiplies) the ambient scaler: the app is
           // desktop-only with no OS text scaling in play.
@@ -1778,6 +1788,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                 },
               );
             },
+          ),
           ),
         ),
       ),

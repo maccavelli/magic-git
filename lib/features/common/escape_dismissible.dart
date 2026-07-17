@@ -23,6 +23,14 @@ class EscapeDismissRegistry {
 
   static final List<EscapeHandler> _stack = [];
 
+  /// Whether any Escape consumer (sheet, pop-out window, menu) is currently
+  /// open. Panel-level Escape fallbacks — deselect, see dnd/deselect.dart —
+  /// must stand down while one is: the registry runs off [HardwareKeyboard],
+  /// which fires BEFORE the focus tree sees the same key event, so without
+  /// this check a single Escape would close the overlay AND fall through to
+  /// the panel. One Escape closes exactly one layer.
+  static bool get isActive => _stack.isNotEmpty;
+
   /// Pushes [handler] onto the top of the stack and returns a disposer that
   /// removes it. Call the disposer when the popup closes. The handler is
   /// offered Escape before any registered earlier.

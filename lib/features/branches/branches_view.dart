@@ -18,6 +18,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/show_more_row.dart';
 import '../common/tool_icon_button.dart';
+import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
@@ -140,6 +141,13 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           _checkout(ref.read(gitServiceProvider), sel.shortName);
         }
         return KeyEventResult.handled;
+      case LogicalKeyboardKey.escape:
+        // Canonical deselect — see dnd/deselect.dart for the Esc layering
+        // (overlay closes first, then a live drag cancels, then this).
+        return escDeselect(
+          hasSelection: _selectedBranch != null,
+          clear: () => setState(() => _selectedBranch = null),
+        );
     }
     return KeyEventResult.ignored;
   }
@@ -280,7 +288,9 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           return Focus(
             focusNode: _branchFocus,
             onKeyEvent: _onBranchKey,
-            child: ListView.builder(
+            child: DeselectOnEmptyClick(
+              onDeselect: () => setState(() => _selectedBranch = null),
+              child: ListView.builder(
               controller: _branchScroll,
               itemCount: rows.length,
               itemBuilder: (context, i) => switch (rows[i]) {
@@ -310,6 +320,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                   onTap: () => setState(() => _showAllTags = true),
                 ),
               },
+              ),
             ),
           );
         },

@@ -18,6 +18,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/tool_icon_button.dart';
+import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 
 /// The **Stashes** namespace — stash management lifted out of the Branches pane
@@ -99,6 +100,13 @@ class _StashViewState extends ConsumerState<StashView>
       case LogicalKeyboardKey.arrowUp:
         _moveStashSelection(-1);
         return KeyEventResult.handled;
+      case LogicalKeyboardKey.escape:
+        // Canonical deselect — see dnd/deselect.dart for the Esc layering
+        // (overlay closes first, then a live drag cancels, then this).
+        return escDeselect(
+          hasSelection: _selected != null,
+          clear: () => setState(() => _selected = null),
+        );
     }
     return KeyEventResult.ignored;
   }
@@ -220,15 +228,18 @@ class _StashViewState extends ConsumerState<StashView>
                 master: Focus(
                   focusNode: _stashFocus,
                   onKeyEvent: _onStashKey,
-                  child: ListView.builder(
-                    controller: _stashScroll,
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                    itemCount: stashes.length,
-                    itemBuilder: (context, i) => _stashCard(
-                      context,
-                      git,
-                      stashes[i],
-                      stashes[i].oid == selected,
+                  child: DeselectOnEmptyClick(
+                    onDeselect: () => setState(() => _selected = null),
+                    child: ListView.builder(
+                      controller: _stashScroll,
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      itemCount: stashes.length,
+                      itemBuilder: (context, i) => _stashCard(
+                        context,
+                        git,
+                        stashes[i],
+                        stashes[i].oid == selected,
+                      ),
                     ),
                   ),
                 ),

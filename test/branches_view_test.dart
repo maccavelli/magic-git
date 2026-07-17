@@ -7,6 +7,7 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -15,8 +16,10 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/theme/app_theme.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
+import 'package:remote_magic_git/features/dnd/deselect.dart';
 
 const _repo = '/repo';
 
@@ -208,6 +211,40 @@ void main() {
       expect(git.checkoutCalls, 1, reason: 'still exactly one checkout call');
     },
   );
+
+  // Canonical deselect affordances (see lib/features/dnd/deselect.dart).
+  Finder selectedRows() => find.byWidgetPredicate(
+    (w) => w is Container && w.color == AppTheme.rowSelectionTint,
+  );
+
+  testWidgets('Esc deselects the selected branch', (tester) async {
+    await _pump(tester);
+
+    // Exact match hits only the local row ('origin/feature' is the remote's).
+    await tester.tap(find.text('feature'));
+    await tester.pumpAndSettle();
+    expect(selectedRows(), findsOneWidget);
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(selectedRows(), findsNothing);
+  });
+
+  testWidgets('a click on empty list space deselects the branch', (
+    tester,
+  ) async {
+    await _pump(tester);
+
+    await tester.tap(find.text('feature'));
+    await tester.pumpAndSettle();
+    expect(selectedRows(), findsOneWidget);
+
+    // Below the last row: inside the list, on nothing.
+    final rect = tester.getRect(find.byType(DeselectOnEmptyClick));
+    await tester.tapAt(Offset(rect.left + 24, rect.bottom - 12));
+    await tester.pumpAndSettle();
+    expect(selectedRows(), findsNothing);
+  });
 }
 
 class _GatedCheckoutGit extends GitService {

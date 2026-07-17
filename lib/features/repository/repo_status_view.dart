@@ -25,6 +25,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
 import '../common/tool_icon_button.dart';
+import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/staging_drop_banner.dart';
 import '../settings/settings_sheet.dart';
@@ -264,6 +265,13 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       case LogicalKeyboardKey.arrowUp:
         _moveFileSelection(-1);
         return KeyEventResult.handled;
+      case LogicalKeyboardKey.escape:
+        // Canonical deselect — see dnd/deselect.dart for the Esc layering
+        // (overlay closes first, then a live drag cancels, then this).
+        return escDeselect(
+          hasSelection: _selectedPaths.isNotEmpty,
+          clear: _clearSelection,
+        );
     }
     return KeyEventResult.ignored;
   }
@@ -2021,7 +2029,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       // drag is live (idle it's zero-size and the list is fully interactive).
       // It dispatches to the same bulk stage/unstage the row icons and context
       // menu use, so drag-to-stage stays consistent with every other path.
-      child: Stack(
+      child: DeselectOnEmptyClick(
+        onDeselect: _clearSelection,
+        child: Stack(
         children: [
           Positioned.fill(
             child: ListView.builder(
@@ -2041,6 +2051,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             ),
           ),
         ],
+        ),
       ),
     );
   }
