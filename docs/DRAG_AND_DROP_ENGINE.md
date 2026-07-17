@@ -420,6 +420,29 @@ Pinned by `drag_cell_test.dart` (lift appears, cancel flies home and settles,
 accepted drop doesn't) and the mouse-kind assertions in
 `history_mouse_drag_test.dart`.
 
+**Hover + cursor semantics (canonical, July 2026).** The two standard
+grabbability signifiers (NN/g's drag-and-drop guidance; the macOS
+open/closed-hand convention), built into `DragItemDraggable` so every source
+gets them for free:
+
+- **Hover wash** — a faint highlight (`0x0AFFFFFF`, same rounded chrome as the
+  press state, 110ms ease-out) the moment the pointer is over a draggable row.
+  This is the app's canonical row-hover affordance; rows that can be picked up
+  are the rows that light up.
+- **Open hand on hover, closed hand from pickup to release** —
+  `SystemMouseCursors.grab` over the row, `grabbing` while pressed. A
+  `MouseRegion` on the source can't hold the cursor once the ghost travels
+  (cursor resolution follows the pointer's hit test), so on drag start the
+  engine pins a full-screen hit-test-transparent `MouseRegion(opaque: false)`
+  into the root overlay (`GrabbingCursor` in `drag_cell.dart`) — it wins
+  cursor resolution as the topmost entry while returning `false` from
+  `hitTest`, so drop-target detection underneath is untouched. Removed on drag
+  end and on unmount; the rebase sheet's `Draggable<int>` rows share it.
+
+Pinned by `drag_cursor_hover_test.dart` (grab at rest → grabbing while
+pressed, hover wash appears/clears, grabbing overlay pinned for the whole
+drag and released on drop).
+
 **Select-on-drag (canonical engine contract).** Picking an item up *selects*
 it: `DragItemDraggable.onDragSelect` fires the instant a drag begins (before
 the rail lights), and every selectable source wires it to its panel's own

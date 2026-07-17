@@ -41,9 +41,7 @@ class DragCellChrome extends StatelessWidget {
         color: const Color(0xF2323236),
         borderRadius: BorderRadius.circular(kDragCellRadius),
         border: Border.all(
-          color: lifted
-              ? const Color(0xFF5A5A5E)
-              : MacosColors.separatorColor,
+          color: lifted ? const Color(0xFF5A5A5E) : MacosColors.separatorColor,
         ),
         boxShadow: lifted
             ? const [
@@ -164,6 +162,48 @@ class LiftedDragCell extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Forces the macOS closed-hand ("grabbing") cursor for the whole lifetime of
+/// a drag — the platform convention (open hand over a grabbable item, closed
+/// hand from pickup to release). A [MouseRegion] on the source widget can't do
+/// this: cursor resolution follows the pointer's hit test, so the moment the
+/// ghost leaves the source row the cursor would revert to whatever it happens
+/// to pass over. Instead [show] pins a full-screen, hit-test-transparent
+/// region (`opaque: false` — it wins cursor resolution as the topmost overlay
+/// entry but returns false from hitTest, so drop-target detection and
+/// everything under it keep working) into the root overlay for the drag's
+/// duration.
+///
+/// Each drag source owns one; [hide] is idempotent and safe after the overlay
+/// is gone (tab closed mid-drag).
+class GrabbingCursor {
+  OverlayEntry? _entry;
+
+  void show(BuildContext context) {
+    if (_entry != null) return;
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return;
+    final entry = OverlayEntry(
+      builder: (_) => const MouseRegion(
+        cursor: SystemMouseCursors.grabbing,
+        opaque: false,
+        child: SizedBox.expand(),
+      ),
+    );
+    _entry = entry;
+    overlay.insert(entry);
+  }
+
+  void hide() {
+    try {
+      _entry?.remove();
+    } catch (_) {
+      // The overlay (whole tab/window) was disposed mid-drag — nothing to
+      // restore.
+    }
+    _entry = null;
   }
 }
 

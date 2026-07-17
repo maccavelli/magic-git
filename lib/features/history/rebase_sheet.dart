@@ -41,6 +41,16 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
   ];
   bool _busy = false;
 
+  /// Closed-hand cursor for the duration of a row drag — same platform
+  /// convention as the engine's [DragItemDraggable] sources.
+  final GrabbingCursor _grabbing = GrabbingCursor();
+
+  @override
+  void dispose() {
+    _grabbing.hide();
+    super.dispose();
+  }
+
   static const _actions = [
     RebaseAction.pick,
     RebaseAction.squash,
@@ -321,35 +331,42 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
       data: i,
       maxSimultaneousDrags: _busy ? 0 : 1,
       dragAnchorStrategy: pointerDragAnchorStrategy,
+      onDragStarted: () => _grabbing.show(context),
+      onDragEnd: (_) => _grabbing.hide(),
       feedback: _ghost(context, i),
       childWhenDragging: Opacity(opacity: 0.35, child: content),
-      child: DragTarget<int>(
-        // A dropped (struck-through) row can't be a squash target — the fold
-        // would really land on the kept commit above it, not this one.
-        onWillAcceptWithDetails: (d) =>
-            !_busy && d.data != i && _rows[i].action != RebaseAction.drop,
-        onAcceptWithDetails: (d) => _squashInto(d.data, i),
-        builder: (context, candidate, rejected) {
-          final active = candidate.isNotEmpty;
-          return KeyedSubtree(
-            key: ValueKey('rebase-row-$i'),
-            child: Container(
-              margin: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: BoxDecoration(
-                color: active
-                    ? MacosColors.systemGreenColor.withValues(alpha: 0.16)
-                    : null,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
+      // Open hand on hover: these rows are grabbable. Deeper regions (the
+      // action pulldown) still win cursor resolution over their own bounds.
+      child: MouseRegion(
+        cursor: _busy ? MouseCursor.defer : SystemMouseCursors.grab,
+        child: DragTarget<int>(
+          // A dropped (struck-through) row can't be a squash target — the fold
+          // would really land on the kept commit above it, not this one.
+          onWillAcceptWithDetails: (d) =>
+              !_busy && d.data != i && _rows[i].action != RebaseAction.drop,
+          onAcceptWithDetails: (d) => _squashInto(d.data, i),
+          builder: (context, candidate, rejected) {
+            final active = candidate.isNotEmpty;
+            return KeyedSubtree(
+              key: ValueKey('rebase-row-$i'),
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 8),
+                decoration: BoxDecoration(
                   color: active
-                      ? MacosColors.systemGreenColor.withValues(alpha: 0.6)
-                      : const Color(0x00000000),
+                      ? MacosColors.systemGreenColor.withValues(alpha: 0.16)
+                      : null,
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: active
+                        ? MacosColors.systemGreenColor.withValues(alpha: 0.6)
+                        : const Color(0x00000000),
+                  ),
                 ),
+                child: content,
               ),
-              child: content,
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }

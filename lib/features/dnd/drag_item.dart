@@ -61,9 +61,8 @@ class DragFiles extends DragItem {
   final bool fromStaged;
   const DragFiles(this.paths, {this.fromStaged = false});
   @override
-  String get shortLabel => paths.length == 1
-      ? _basename(paths.first)
-      : '${paths.length} files';
+  String get shortLabel =>
+      paths.length == 1 ? _basename(paths.first) : '${paths.length} files';
 }
 
 /// Last path segment, for a compact drag label. Splits on '/' (POSIX repos —
@@ -152,8 +151,17 @@ class _DragItemDraggableState extends ConsumerState<DragItemDraggable> {
   /// Pressed-button state: pointer is down on the row, drag not yet started.
   bool _pressed = false;
 
+  /// Hover state: pointer is over the row — drives the canonical hover tint
+  /// and the open-hand cursor, the two standard "you can pick this up"
+  /// signifiers (NN/g; macOS open/closed-hand convention).
+  bool _hovered = false;
+
+  /// Pins the closed-hand cursor for the whole drag (see [GrabbingCursor]).
+  final GrabbingCursor _grabbing = GrabbingCursor();
+
   @override
   void dispose() {
+    _grabbing.hide();
     _snapshot.value?.dispose();
     _snapshot.dispose();
     super.dispose();
@@ -241,6 +249,8 @@ class _DragItemDraggableState extends ConsumerState<DragItemDraggable> {
       // the source row is already showing its real selection bar.
       widget.onDragSelect?.call();
       drag.begin(widget.item);
+      // Closed-hand from pickup to release, wherever the ghost travels.
+      _grabbing.show(context);
       // Select-on-drag just changed how this row paints (selection bar). The
       // press-time snapshot predates that — re-capture next frame so the
       // lifted cell carries the row in its SELECTED state.
@@ -250,6 +260,7 @@ class _DragItemDraggableState extends ConsumerState<DragItemDraggable> {
     }
 
     void end(DraggableDetails details) {
+      _grabbing.hide();
       try {
         drag.end();
       } catch (_) {
@@ -262,37 +273,49 @@ class _DragItemDraggableState extends ConsumerState<DragItemDraggable> {
     // The press chrome, painted OVER the row (foregroundDecoration — rows have
     // their own opaque selection tints that would cover a background border),
     // plus the pressed-button scale-down. Both settle back if the press ends
-    // without a drag.
-    final pressWrapped = Listener(
-      behavior: HitTestBehavior.deferToChild,
-      onPointerDown: (_) {
-        setState(() => _pressed = true);
-        // Fire-and-forget: ready by the time the drag starts.
-        unawaited(_capture());
-      },
-      onPointerUp: (_) {
-        if (_pressed) setState(() => _pressed = false);
-      },
-      onPointerCancel: (_) {
-        if (_pressed) setState(() => _pressed = false);
-      },
-      child: AnimatedScale(
-        scale: _pressed ? 0.98 : 1.0,
-        duration: const Duration(milliseconds: 110),
-        curve: Curves.easeOut,
-        child: AnimatedContainer(
+    // without a drag. The MouseRegion adds the two canonical hover
+    // affordances: a faint highlight wash and the open-hand cursor (closing
+    // while pressed) — together they signal grabbability before any drag
+    // starts.
+    final pressWrapped = MouseRegion(
+      cursor: _pressed ? SystemMouseCursors.grabbing : SystemMouseCursors.grab,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: Listener(
+        behavior: HitTestBehavior.deferToChild,
+        onPointerDown: (_) {
+          setState(() => _pressed = true);
+          // Fire-and-forget: ready by the time the drag starts.
+          unawaited(_capture());
+        },
+        onPointerUp: (_) {
+          if (_pressed) setState(() => _pressed = false);
+        },
+        onPointerCancel: (_) {
+          if (_pressed) setState(() => _pressed = false);
+        },
+        child: AnimatedScale(
+          scale: _pressed ? 0.98 : 1.0,
           duration: const Duration(milliseconds: 110),
           curve: Curves.easeOut,
-          foregroundDecoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(kDragCellRadius),
-            border: Border.all(
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 110),
+            curve: Curves.easeOut,
+            foregroundDecoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(kDragCellRadius),
+              border: Border.all(
+                color: _pressed
+                    ? const Color(0xFF5A5A5E)
+                    : const Color(0x005A5A5E),
+              ),
               color: _pressed
-                  ? const Color(0xFF5A5A5E)
-                  : const Color(0x005A5A5E),
+                  ? const Color(0x14FFFFFF)
+                  : _hovered
+                  ? const Color(0x0AFFFFFF)
+                  : const Color(0x00FFFFFF),
             ),
-            color: _pressed ? const Color(0x14FFFFFF) : const Color(0x00FFFFFF),
+            child: RepaintBoundary(key: _boundaryKey, child: widget.child),
           ),
-          child: RepaintBoundary(key: _boundaryKey, child: widget.child),
         ),
       ),
     );
