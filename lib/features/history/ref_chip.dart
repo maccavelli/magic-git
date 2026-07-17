@@ -27,6 +27,8 @@ List<GitRef> filterHistoryRefDecorations(List<GitRef> refs) {
     if (r.isRemote) {
       final short = r.shortName;
       // origin/HEAD, upstream/HEAD — symbolic defaults, not useful chips.
+      // parseRefs now drops symrefs at the source (via %(symref)); this stays
+      // as belt-and-braces for refs that arrive from any other path.
       if (short.endsWith('/HEAD') || short == 'HEAD') continue;
       final slash = short.indexOf('/');
       if (slash > 0) {

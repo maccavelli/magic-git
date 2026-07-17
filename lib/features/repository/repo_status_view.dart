@@ -289,6 +289,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     if (event is KeyUpEvent || !widget.isActive || busy) {
       return KeyEventResult.ignored;
     }
+    // Keys typed into a text field belong to the field, not the list — the
+    // same gate PanelShortcuts applies to the ⌘-bindings (Esc in a field
+    // must not clear the list selection).
+    if (PanelShortcuts.textInteractionHasFocus()) {
+      return KeyEventResult.ignored;
+    }
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowDown:
         _moveFileSelection(1);

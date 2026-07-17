@@ -1,4 +1,6 @@
-import 'package:flutter/cupertino.dart';
+// hide OverlayVisibilityMode: MacosTextField takes macos_ui's own enum of
+// the same name (used by the filter bar's clear button).
+import 'package:flutter/cupertino.dart' hide OverlayVisibilityMode;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -16,6 +18,7 @@ import '../common/label_chip.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
+import '../common/ref_name_validation.dart';
 import '../common/show_more_row.dart';
 import '../common/tool_icon_button.dart';
 import '../dnd/deselect.dart';
@@ -58,6 +61,19 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   /// what anyone comes here for.
   static const int _collapsedTagCount = 10;
   bool _showAllTags = false;
+
+  /// Remote branches get the same collapse: an active repo accumulates
+  /// hundreds of remote-tracking refs, and unlike locals nothing here prunes
+  /// them. A higher cap than tags — remotes are what the checkout-tracking
+  /// flow browses.
+  static const int _collapsedRemoteCount = 25;
+  bool _showAllRemotes = false;
+
+  /// Live filter over all three sections (case-insensitive substring on the
+  /// short name). While non-empty it overrides both collapses — a filter IS
+  /// a request to see every match.
+  final _filterCtl = TextEditingController();
+
   final FocusNode _branchFocus = FocusNode(debugLabel: 'branch-list');
   final ScrollController _branchScroll = ScrollController();
   final Map<String, GlobalKey> _branchRowKeys = {};
@@ -69,8 +85,19 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repoPath != widget.repoPath) {
       // Same State survives a repo switch (the panel isn't keyed by repoPath)
-      // — an expanded tag list from the old repo shouldn't leak into the new.
-      setState(() => _showAllTags = false);
+      // — nothing from the old repo may leak into the new: not the expanded
+      // tag list, not the selection (Enter would check out a same-named
+      // branch in the NEW repo), not row keys for branches that don't exist
+      // here, not the scroll offset.
+      setState(() {
+        _showAllTags = false;
+        _showAllRemotes = false;
+        _selectedBranch = null;
+        _locals = const [];
+        _filterCtl.clear();
+      });
+      _branchRowKeys.clear();
+      if (_branchScroll.hasClients) _branchScroll.jumpTo(0);
     }
   }
 
@@ -80,6 +107,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     _newBranchFocus.dispose();
     _branchFocus.dispose();
     _branchScroll.dispose();
+    _filterCtl.dispose();
     super.dispose();
   }
 
@@ -125,6 +153,14 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
   KeyEventResult _onBranchKey(FocusNode node, KeyEvent event) {
     if (event is KeyUpEvent || !widget.isActive || busy) {
+      return KeyEventResult.ignored;
+    }
+    // The create-branch text field lives INSIDE this Focus scope, and key
+    // events bubble leaf-to-root — without this gate, Enter typed into the
+    // field checked out the selected branch (and Esc cleared the selection)
+    // while the user was just naming a branch. Same guard PanelShortcuts
+    // applies to the ⌘-bindings.
+    if (PanelShortcuts.textInteractionHasFocus()) {
       return KeyEventResult.ignored;
     }
     switch (event.logicalKey) {
@@ -235,9 +271,19 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         loading: () => const Center(child: ProgressCircle()),
         error: (err, _) => _error(context, err),
         data: (refs) {
-          final locals = refs.where((r) => r.isLocalBranch).toList();
-          final remotes = refs.where((r) => r.isRemote).toList();
-          final tags = refs.where((r) => r.isTag).toList();
+          final filter = _filterCtl.text.trim().toLowerCase();
+          bool matches(GitRef r) =>
+              filter.isEmpty || r.shortName.toLowerCase().contains(filter);
+          final totalLocals = refs.where((r) => r.isLocalBranch).length;
+          final totalRemotes = refs.where((r) => r.isRemote).length;
+          final locals =
+              refs.where((r) => r.isLocalBranch && matches(r)).toList();
+          final remotes = refs.where((r) => r.isRemote && matches(r)).toList();
+          final allTags = refs.where((r) => r.isTag).toList();
+          final tags = allTags.where(matches).toList();
+          // Section headers carry "shown of total" while a filter narrows.
+          String sectionTitle(String base, int shown, int total) =>
+              filter.isEmpty ? '$base ($total)' : '$base ($shown of $total)';
           // The remote's tag listing (null = unknown: unreachable, or no
           // remote) and the remote the tag actions target — the same
           // origin-preferred choice remoteTagsProvider makes. While the
@@ -250,10 +296,12 @@ class _BranchesViewState extends ConsumerState<BranchesView>
               : remotesList.isEmpty
               ? null
               : defaultRemote(remotesList);
+          // From ALL tags, not the filtered view — "Push N to origin" is a
+          // repo-level affordance and must not silently shrink to the filter.
           final localOnlyTags = remoteTags == null
               ? const <String>[]
               : [
-                  for (final t in tags)
+                  for (final t in allTags)
                     if (!remoteTags.containsKey(t.shortName)) t.shortName,
                 ];
           // Newest first: for-each-ref's default order is refname-ascending,
@@ -265,22 +313,36 @@ class _BranchesViewState extends ConsumerState<BranchesView>
             final cmp = (b.creatorDate ?? -1).compareTo(a.creatorDate ?? -1);
             return cmp != 0 ? cmp : a.shortName.compareTo(b.shortName);
           });
-          final visibleTags = _showAllTags
+          // An active filter overrides both collapses: filtering IS asking
+          // to see every match.
+          final visibleTags = _showAllTags || filter.isNotEmpty
               ? tags
               : tags.take(_collapsedTagCount).toList();
           final hiddenTags = tags.length - visibleTags.length;
-          // Cache for the arrow-key handler (which runs outside build).
+          final visibleRemotes = _showAllRemotes || filter.isNotEmpty
+              ? remotes
+              : remotes.take(_collapsedRemoteCount).toList();
+          final hiddenRemotes = remotes.length - visibleRemotes.length;
+          // Cache for the arrow-key handler (which runs outside build) — the
+          // FILTERED list, so ↑/↓/Enter walk exactly what's on screen.
           _locals = locals;
           // A flat descriptor list, not built Widgets — ListView.builder below
           // only ever constructs the handful currently on-screen, so this stays
           // cheap even for a repo with hundreds of branches/tags.
           final rows = <_Row>[
             const _CreateBranchRow(),
-            _HeaderRow('Local Branches (${locals.length})'),
+            _HeaderRow(
+              sectionTitle('Local Branches', locals.length, totalLocals),
+            ),
             for (final b in locals) _BranchRow(b, remote: false),
-            _HeaderRow('Remote Branches (${remotes.length})'),
-            for (final b in remotes) _BranchRow(b, remote: true),
-            _TagsHeaderRow(tags.length),
+            _RemotesHeaderRow(
+              sectionTitle('Remote Branches', remotes.length, totalRemotes),
+            ),
+            for (final b in visibleRemotes) _BranchRow(b, remote: true),
+            if (hiddenRemotes > 0) _ShowMoreRemotesRow(hiddenRemotes),
+            _TagsHeaderRow(
+              sectionTitle('Tags', tags.length, allTags.length),
+            ),
             const _CreateTagRow(),
             for (final t in visibleTags) _TagRefRow(t),
             if (hiddenTags > 0) _ShowMoreTagsRow(hiddenTags),
@@ -288,39 +350,59 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           return Focus(
             focusNode: _branchFocus,
             onKeyEvent: _onBranchKey,
-            child: DeselectOnEmptyClick(
-              onDeselect: () => setState(() => _selectedBranch = null),
-              child: ListView.builder(
-              controller: _branchScroll,
-              itemCount: rows.length,
-              itemBuilder: (context, i) => switch (rows[i]) {
-                _CreateBranchRow() => _createBranchBar(git),
-                _CreateTagRow() => _createTagBar(),
-                _HeaderRow(:final title) => _sectionHeader(context, title),
-                _TagsHeaderRow(:final count) => _tagsHeader(
-                  context,
-                  git,
-                  count,
-                  localOnlyTags,
-                  tagRemote,
+            child: Column(
+              children: [
+                _filterBar(),
+                Expanded(
+                  child: DeselectOnEmptyClick(
+                    onDeselect: () => setState(() => _selectedBranch = null),
+                    child: ListView.builder(
+                      controller: _branchScroll,
+                      itemCount: rows.length,
+                      itemBuilder: (context, i) => switch (rows[i]) {
+                        _CreateBranchRow() => _createBranchBar(git),
+                        _CreateTagRow() => _createTagBar(),
+                        _HeaderRow(:final title) =>
+                          _sectionHeader(context, title),
+                        _RemotesHeaderRow(:final title) => _remotesHeader(
+                          context,
+                          git,
+                          title,
+                        ),
+                        _TagsHeaderRow(:final title) => _tagsHeader(
+                          context,
+                          git,
+                          title,
+                          localOnlyTags,
+                          tagRemote,
+                        ),
+                        _BranchRow(:final branch, :final remote) =>
+                          remote
+                              ? _remoteRow(context, git, branch)
+                              : _localRow(context, git, branch),
+                        _TagRefRow(:final tag) => _tagRow(
+                          context,
+                          git,
+                          tag,
+                          _tagStatus(tag, remoteTags),
+                          tagRemote,
+                        ),
+                        _ShowMoreTagsRow(:final hidden) => ShowMoreRow(
+                          label:
+                              'Show $hidden more ${hidden == 1 ? "tag" : "tags"}',
+                          onTap: () => setState(() => _showAllTags = true),
+                        ),
+                        _ShowMoreRemotesRow(:final hidden) => ShowMoreRow(
+                          label:
+                              'Show $hidden more remote '
+                              '${hidden == 1 ? "branch" : "branches"}',
+                          onTap: () => setState(() => _showAllRemotes = true),
+                        ),
+                      },
+                    ),
+                  ),
                 ),
-                _BranchRow(:final branch, :final remote) =>
-                  remote
-                      ? _remoteRow(context, git, branch)
-                      : _localRow(context, git, branch),
-                _TagRefRow(:final tag) => _tagRow(
-                  context,
-                  git,
-                  tag,
-                  _tagStatus(tag, remoteTags),
-                  tagRemote,
-                ),
-                _ShowMoreTagsRow(:final hidden) => ShowMoreRow(
-                  label: 'Show $hidden more ${hidden == 1 ? "tag" : "tags"}',
-                  onTap: () => setState(() => _showAllTags = true),
-                ),
-              },
-              ),
+              ],
             ),
           );
         },
@@ -328,43 +410,73 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     );
   }
 
+  /// Creates the branch named in the create bar — shared by the Create
+  /// button and the field's Enter submit, so both paths carry the same
+  /// guards (including the ref-format check the button greys out on).
+  Future<void> _createBranchFromField(GitService git) async {
+    final name = _newBranch.text.trim();
+    if (name.isEmpty || busy || refNameProblem(name) != null) return;
+    await runGuarded(() => git.createBranch(repoPath, name));
+    // Guard: _run spans an SSH/local round-trip, during which a tab switch
+    // or disconnect can dispose this State (and _newBranch); clearing a
+    // disposed controller throws.
+    if (mounted) _newBranch.clear();
+  }
+
   Widget _createBranchBar(GitService git) {
+    final typography = MacosTheme.of(context).typography;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: MacosTextField(
-              controller: _newBranch,
-              focusNode: _newBranchFocus,
-              placeholder: 'New branch name',
-              placeholderStyle: kAppPlaceholderStyle,
-              decoration: kAppTextFieldDecoration,
-              focusedDecoration: kAppTextFieldFocusedDecoration,
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Listens to the controller directly instead of `setState`-ing the
-          // whole view on every keystroke — that used to re-run the entire
-          // branch/tag list rebuild just to toggle this one button.
-          ValueListenableBuilder<TextEditingValue>(
-            valueListenable: _newBranch,
-            builder: (context, value, _) => AppPushButton(
-              controlSize: ControlSize.large,
-              onPressed: value.text.trim().isEmpty || busy
-                  ? null
-                  : () async {
-                      final name = value.text.trim();
-                      await runGuarded(() => git.createBranch(repoPath, name));
-                      // Guard: _run spans an SSH/local round-trip, during which
-                      // a tab switch or disconnect can dispose this State (and
-                      // _newBranch); clearing a disposed controller throws.
-                      if (mounted) _newBranch.clear();
-                    },
-              child: const Text('Create'),
-            ),
-          ),
-        ],
+      // Listens to the controller directly instead of `setState`-ing the
+      // whole view on every keystroke — that used to re-run the entire
+      // branch/tag list rebuild just to toggle one button. Wrapping the row
+      // (rather than the button alone) also lets the inline ref-format error
+      // live in the same rebuild scope.
+      child: ValueListenableBuilder<TextEditingValue>(
+        valueListenable: _newBranch,
+        builder: (context, value, _) {
+          final name = value.text.trim();
+          final problem = refNameProblem(name);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: MacosTextField(
+                      controller: _newBranch,
+                      focusNode: _newBranchFocus,
+                      placeholder: 'New branch name',
+                      placeholderStyle: kAppPlaceholderStyle,
+                      decoration: kAppTextFieldDecoration,
+                      focusedDecoration: kAppTextFieldFocusedDecoration,
+                      onSubmitted: (_) => _createBranchFromField(git),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  AppPushButton(
+                    controlSize: ControlSize.large,
+                    onPressed: name.isEmpty || problem != null || busy
+                        ? null
+                        : () => _createBranchFromField(git),
+                    child: const Text('Create'),
+                  ),
+                ],
+              ),
+              // Same inline-error presentation as the Create Tag sheet.
+              if (problem != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    problem,
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemRedColor,
+                    ),
+                  ),
+                ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -492,6 +604,17 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                       ? null
                       : () => _renameBranch(git, branch.shortName),
                 ),
+                // Upstream management applies to the CURRENT branch above all
+                // (`git branch -u origin/main` is most often run on HEAD) —
+                // non-head rows get the same items inside their merge menu.
+                if (branch.isHead) ...[
+                  const SizedBox(width: 4),
+                  MacosPulldownButton(
+                    icon: CupertinoIcons.ellipsis_circle,
+                    // null while busy = disabled, like every sibling button.
+                    items: busy ? null : _upstreamMenuItems(git, branch),
+                  ),
+                ],
                 if (!branch.isHead) ...[
                   const SizedBox(width: 4),
                   if (elsewhere != null)
@@ -531,7 +654,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                   const SizedBox(width: 4),
                   MacosPulldownButton(
                     icon: CupertinoIcons.arrow_merge,
-                    items: [
+                    // null while busy = disabled, like every sibling button.
+                    items: busy
+                        ? null
+                        : [
                       MacosPulldownMenuItem(
                         title: const Text('Merge into current'),
                         onTap: () => _mergeBranch(
@@ -561,6 +687,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                           MergeMode.squash,
                         ),
                       ),
+                      const MacosPulldownMenuDivider(),
+                      ..._upstreamMenuItems(git, branch),
                     ],
                   ),
                   const SizedBox(width: 4),
@@ -632,24 +760,39 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           );
           if (!removeToo || worktree == null || !mounted) return;
           await git.removeWorktree(repoPath, worktree, force: true);
-          await git.deleteBranch(repoPath, name, force: true);
+          // Plain delete, NOT force: the user confirmed removing a worktree,
+          // which says nothing about losing unmerged commits — that separate
+          // decision goes through the same escalation the direct path uses.
+          try {
+            await git.deleteBranch(repoPath, name);
+          } on GitException catch (e2) {
+            if (!mounted || !e2.branchNotFullyMerged) rethrow;
+            await _confirmForceDelete(git, name);
+          }
           return;
         }
         if (!e.branchNotFullyMerged) rethrow;
-        final force = await confirmAction(
-          context,
-          title: 'Branch not fully merged',
-          message:
-              '"$name" has commits not merged into the current branch. '
-              "Force-deleting will permanently lose them unless they're "
-              'reachable from elsewhere (another branch, a tag, or a stash). '
-              'Force delete anyway?',
-          confirmLabel: 'Force Delete',
-        );
-        if (!force || !mounted) return;
-        await git.deleteBranch(repoPath, name, force: true);
+        await _confirmForceDelete(git, name);
       }
     });
+  }
+
+  /// The not-fully-merged escalation — one confirm, one force retry, shared
+  /// by the direct delete path and the after-worktree-removal retry so the
+  /// data-loss decision is worded (and gated) in exactly one place.
+  Future<void> _confirmForceDelete(GitService git, String name) async {
+    final force = await confirmAction(
+      context,
+      title: 'Branch not fully merged',
+      message:
+          '"$name" has commits not merged into the current branch. '
+          "Force-deleting will permanently lose them unless they're "
+          'reachable from elsewhere (another branch, a tag, or a stash). '
+          'Force delete anyway?',
+      confirmLabel: 'Force Delete',
+    );
+    if (!force || !mounted) return;
+    await git.deleteBranch(repoPath, name, force: true);
   }
 
   Future<void> _mergeBranch(
@@ -657,6 +800,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     String branch,
     MergeMode mode,
   ) async {
+    // Same gate every other row action carries: without it, the confirm
+    // dialog appeared during an in-flight op and the confirmed merge then
+    // silently no-opped on runLogged's own busy check.
+    if (busy) return;
     final message = switch (mode) {
       MergeMode.normal => 'Merge "$branch" into the current branch?',
       MergeMode.noFf =>
@@ -858,8 +1005,12 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       if (choice == null || choice == _TagDeleteScope.cancel || !mounted) {
         return;
       }
-      await runGuarded(() => git.deleteTag(repoPath, name));
-      if (choice == _TagDeleteScope.both && mounted) {
+      final deletedLocally = await runGuarded(() => git.deleteTag(repoPath, name));
+      // The remote delete is gated on the local one succeeding: "Delete Local
+      // and on origin" describes a sequence, and pushing the remote delete
+      // after the local half failed (its error dialog just showed) would act
+      // beyond what the user still expects to happen.
+      if (deletedLocally && choice == _TagDeleteScope.both && mounted) {
         await runLogged('git push --delete', (log) async {
           log.logResult(
             'git push --delete $remote refs/tags/$name',
@@ -882,12 +1033,61 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     }
   }
 
+  /// The one always-visible control above the list: a live filter across all
+  /// three sections. Lives OUTSIDE the scrolling list (it must not scroll
+  /// away) but INSIDE the panel's Focus scope — safe since the list's key
+  /// handler yields to text interaction.
+  Widget _filterBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      child: MacosTextField(
+        controller: _filterCtl,
+        placeholder: 'Filter branches and tags',
+        placeholderStyle: kAppPlaceholderStyle,
+        decoration: kAppTextFieldDecoration,
+        focusedDecoration: kAppTextFieldFocusedDecoration,
+        prefix: const MacosIcon(CupertinoIcons.search, size: 14),
+        clearButtonMode: OverlayVisibilityMode.editing,
+        // The rows list is computed in build, so the whole panel rebuilds per
+        // keystroke — cheap: descriptors are plain data and ListView.builder
+        // only constructs the rows on screen.
+        onChanged: (_) => setState(() {}),
+      ),
+    );
+  }
+
+  /// The Remote Branches section header — carries the fetch-and-prune
+  /// affordance ([_fetchPrune]) alongside the title.
+  Widget _remotesHeader(BuildContext context, GitService git, String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              style: MacosTheme.of(
+                context,
+              ).typography.caption1.copyWith(fontWeight: FontWeight.bold),
+            ),
+          ),
+          ToolIconButton(
+            icon: CupertinoIcons.arrow_2_circlepath,
+            tooltip: 'Fetch all remotes and prune deleted branches',
+            size: 14,
+            onPressed: busy ? null : () => _fetchPrune(git),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// The Tags section header — with, when the remote listing shows local-only
   /// tags, the bulk escape hatch: push exactly those tags in one round trip.
   Widget _tagsHeader(
     BuildContext context,
     GitService git,
-    int count,
+    String title,
     List<String> localOnly,
     String? remote,
   ) {
@@ -897,7 +1097,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         children: [
           Expanded(
             child: Text(
-              'Tags ($count)',
+              title,
               style: MacosTheme.of(
                 context,
               ).typography.caption1.copyWith(fontWeight: FontWeight.bold),
@@ -1013,6 +1213,57 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     }, dock: true);
   }
 
+  /// The Set/Unset-upstream menu items — on the current branch's own menu
+  /// and appended (after a divider) to every other local row's merge menu.
+  List<MacosPulldownMenuEntry> _upstreamMenuItems(GitService git, GitRef branch) => [
+    MacosPulldownMenuItem(
+      title: const Text('Set upstream…'),
+      onTap: () => _setUpstream(git, branch),
+    ),
+    if (branch.upstream != null)
+      MacosPulldownMenuItem(
+        title: const Text('Unset upstream'),
+        onTap: () => _unsetUpstream(git, branch.shortName),
+      ),
+  ];
+
+  /// Points a branch's upstream at a remote-tracking branch — what pull,
+  /// push, and the ↑/↓ badges follow. Complements the "gone" marker: a
+  /// branch whose upstream was deleted can be re-aimed without a terminal.
+  Future<void> _setUpstream(GitService git, GitRef branch) async {
+    if (busy) return;
+    final name = branch.shortName;
+    final target = await promptText(
+      context,
+      'Set upstream',
+      placeholder: 'origin/$name',
+      initial: branch.upstream ?? 'origin/$name',
+      description:
+          'The remote-tracking branch (remote/branch) that pull, push, and '
+          'the ahead/behind badges follow.',
+      confirmLabel: 'Set Upstream',
+      validate: refNameProblem,
+    );
+    if (target == null || !mounted) return;
+    await runGuarded(() => git.setUpstream(repoPath, name, target));
+  }
+
+  Future<void> _unsetUpstream(GitService git, String name) async {
+    if (busy) return;
+    await runGuarded(() => git.unsetUpstream(repoPath, name));
+  }
+
+  /// One-click `git fetch --all --prune` — the complement of the "gone"
+  /// markers: pruning is what turns a deleted remote branch INTO [gone], and
+  /// this tab is where the evidence lands.
+  Future<void> _fetchPrune(GitService git) async {
+    await runLogged('git fetch --all --prune', (log) async {
+      log.logResult('git fetch --all --prune', await git.fetch(repoPath));
+    }, dock: true);
+    // A fetch can move remote tags too — re-check the badge listing.
+    if (mounted) refreshRemoteTags(ref, repoPath);
+  }
+
   /// Renames a local branch via the shared name prompt. git carries reflog,
   /// upstream config, and any worktree HEADs across — see
   /// [GitService.renameBranch].
@@ -1022,6 +1273,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       'Rename branch',
       placeholder: 'new name',
       initial: oldName,
+      validate: refNameProblem,
     );
     if (newName == null || newName == oldName || !mounted) return;
     await runGuarded(() => git.renameBranch(repoPath, oldName, newName));
@@ -1095,13 +1347,25 @@ class _TagRefRow extends _Row {
 /// The Tags section header — its own descriptor (not [_HeaderRow]) because it
 /// carries the "Push N to origin" affordance alongside the title.
 class _TagsHeaderRow extends _Row {
-  final int count;
-  const _TagsHeaderRow(this.count);
+  final String title;
+  const _TagsHeaderRow(this.title);
+}
+
+/// The Remote Branches header — its own descriptor (not [_HeaderRow]) because
+/// it carries the fetch-and-prune affordance alongside the title.
+class _RemotesHeaderRow extends _Row {
+  final String title;
+  const _RemotesHeaderRow(this.title);
 }
 
 class _ShowMoreTagsRow extends _Row {
   final int hidden;
   const _ShowMoreTagsRow(this.hidden);
+}
+
+class _ShowMoreRemotesRow extends _Row {
+  final int hidden;
+  const _ShowMoreRemotesRow(this.hidden);
 }
 
 /// Where a local tag stands relative to the remote's copy.

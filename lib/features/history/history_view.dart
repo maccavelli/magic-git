@@ -368,6 +368,12 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     if (event is KeyUpEvent || !widget.isActive || busy) {
       return KeyEventResult.ignored;
     }
+    // Keys typed into a text field (the commit-filter bar) belong to the
+    // field, not the list — the same gate PanelShortcuts applies to the
+    // ⌘-bindings (Esc in the filter must not clear the commit selection).
+    if (PanelShortcuts.textInteractionHasFocus()) {
+      return KeyEventResult.ignored;
+    }
     final extend = HardwareKeyboard.instance.isShiftPressed;
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowDown:

@@ -20,6 +20,13 @@ class CommandFormatter {
     // `git add`/`commit` fail spuriously. Only optional sub-operations are
     // skipped; required locks for real writes (commit, checkout) still work.
     'GIT_OPTIONAL_LOCKS': '0',
+    // Error classification (GitException.branchNotFullyMerged and friends)
+    // matches English substrings of git's gettext-localized stderr. A remote
+    // host with a non-English LANG would defeat every such match and dead-end
+    // the UI's escalation flows on a raw message. LC_MESSAGES (not LC_ALL)
+    // pins message language only, leaving LC_CTYPE — and with it non-ASCII
+    // path handling — untouched.
+    'LC_MESSAGES': 'C',
     // gh/glab periodically phone home to check for a newer release when
     // invoked. That check is a hidden network round trip from the host that
     // can stall any forge call (including a bare `--version`) on slow or

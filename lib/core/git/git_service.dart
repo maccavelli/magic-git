@@ -861,34 +861,54 @@ class SnapshotRef {
 /// Parses `git for-each-ref`'s `fieldSep`-delimited output (see
 /// [GitService.refs]) into [GitRef]s. Top-level so [GitService._fetchSnapshot]
 /// and [GitService.refs] share one implementation.
+/// The only shapes a peeled OID may take (SHA-1 / SHA-256). Anything else in
+/// that field position — an echoed format atom, or spillover from an
+/// adversarial field — must read as "no peeled OID", never corrupt
+/// [GitRef.commitOid]-based grouping.
+final RegExp _oidShape = RegExp(r'^[0-9a-f]{40,64}$');
+
 List<GitRef> parseRefs(String raw, String fieldSep) {
   final refs = <GitRef>[];
   for (final line in raw.split('\n')) {
     if (line.trim().isEmpty) continue;
     final f = line.split(fieldSep);
     if (f.length < 5) continue;
-    final peeled = f.length >= 6 ? f[5] : '';
+    String at(int i) => f.length > i ? f[i] : '';
+    // Peeled commit for annotated tags. Shape-validated (see [_oidShape]) so
+    // no non-OID text can ever land here.
+    final peeled = at(4);
     // A git older than 2.23 doesn't know `%(worktreepath)` and echoes the
     // format atom back verbatim. Requiring a leading `/` rejects that (and any
     // other non-path) without needing a version probe here.
-    final wt = f.length >= 7 ? f[6] : '';
+    final wt = at(5);
     // `%(upstream:track)`: `[ahead 2, behind 1]` (either half alone), `[gone]`,
     // or empty. Parsed by shape, so an old git echoing the atom back verbatim
     // reads as "no tracking data" rather than garbage — same defense as the
     // worktreepath field above.
-    final track = f.length >= 8 ? f[7] : '';
+    final track = at(6);
     // `%(creatordate:unix)`: epoch seconds, or the echoed atom on a pre-2.7
     // git — int.tryParse turns that (and any other non-number) into null, the
     // same no-probe defense as the fields above.
-    final created = f.length >= 9 ? int.tryParse(f[8].trim()) : null;
+    final created = int.tryParse(at(7).trim());
+    // `%(symref)`: non-empty (the target refname) for symbolic refs like
+    // refs/remotes/origin/HEAD — aliases, not real branches, so they are
+    // dropped here for every consumer (the sidebar once offered checkout and
+    // remote-delete on a bogus "origin/HEAD" row). Shape-tested against a
+    // `refs/` prefix so an old git echoing the atom back doesn't drop every
+    // ref.
+    if (at(8).startsWith('refs/')) continue;
+    // The subject is the LAST format field (see [_refsFormat]): one that
+    // contains the separator byte splits into extra trailing fields, which
+    // rejoining reconstructs — the machine fields above can never shift.
+    final subject = f.length > 9 ? f.sublist(9).join(fieldSep) : '';
     refs.add(
       GitRef(
         isHead: f[0] == '*',
         name: f[1],
         oid: f[2],
         upstream: f[3].isEmpty ? null : f[3],
-        subject: _stripSeps(f[4]),
-        peeledOid: peeled.isEmpty ? null : peeled,
+        subject: _stripSeps(subject),
+        peeledOid: _oidShape.hasMatch(peeled) ? peeled : null,
         worktreePath: wt.startsWith('/') ? wt : null,
         ahead: _trackCount(track, 'ahead'),
         behind: _trackCount(track, 'behind'),
@@ -1467,25 +1487,33 @@ class GitService {
     '%(refname)',
     '%(objectname)',
     '%(upstream:short)',
-    '%(contents:subject)',
     '%(*objectname)', // peeled commit for annotated tags (empty otherwise)
     // Which worktree (if any) has this branch checked out — see
-    // [GitRef.worktreePath]. Appended last so the field indices of everything
-    // above are unchanged. Empty for refs that aren't checked out, and for
+    // [GitRef.worktreePath]. Empty for refs that aren't checked out, and for
     // remotes/tags. Available since git 2.23; older gits emit the literal
     // format string, which parses harmlessly as a non-path and is filtered by
     // the absolute-path check in [parseRefs].
     '%(worktreepath)',
     // Divergence from upstream: `[ahead 2, behind 1]` / `[gone]` / empty —
-    // see [GitRef.ahead]/[GitRef.upstreamGone]. Appended last, same index
-    // reasoning as above; parsed by shape, so an old git echoing the atom
-    // reads as "no tracking data".
+    // see [GitRef.ahead]/[GitRef.upstreamGone]. Parsed by shape, so an old
+    // git echoing the atom reads as "no tracking data".
     '%(upstream:track)',
     // Creation time in epoch seconds — the tags list's newest-first sort key
     // (tagger date for annotated tags, committer date for lightweight ones;
-    // see [GitRef.creatorDate]). Appended last, same index reasoning; a
-    // pre-2.7 git echoing the atom parses as null via int.tryParse.
+    // see [GitRef.creatorDate]). A pre-2.7 git echoing the atom parses as
+    // null via int.tryParse.
     '%(creatordate:unix)',
+    // Non-empty (the target refname) for symbolic refs — how [parseRefs]
+    // drops alias entries like refs/remotes/origin/HEAD, which are not real
+    // branches (checking one out DWIMs the bogus local name "HEAD"; deleting
+    // one would target a ref the remote doesn't have).
+    '%(symref)',
+    // The subject is deliberately LAST: it is the one field whose content git
+    // does not constrain, so a subject containing the separator byte can only
+    // spill into extra trailing fields — which [parseRefs] rejoins — instead
+    // of shifting the machine fields after it (a shifted fragment once could
+    // impersonate a peeled OID).
+    '%(contents:subject)',
   ];
 
   // A plain `git am` and an am-based rebase both create `$d/rebase-apply`, so
@@ -1506,12 +1534,16 @@ class GitService {
       'else echo none; fi';
 
   /// Separates each section's raw stdout in [_fetchSnapshot]'s combined
-  /// script. STX (0x02) never appears in porcelain status's NUL-delimited
-  /// (`-z`) records, the refs format's unit-separator (`fieldSep`)-delimited
-  /// fields, or plain ref/path text, so splitting the combined stdout on it
-  /// unambiguously recovers each section (and, bracketing an exit code, each
-  /// section's own success/failure — the combined script's own exit code is
-  /// just the last command's, which can't distinguish an earlier failure).
+  /// script. STX (0x02) effectively never appears in porcelain status's
+  /// NUL-delimited (`-z`) records, the refs format's unit-separator
+  /// (`fieldSep`)-delimited fields, or plain ref/path text, so splitting the
+  /// combined stdout on it recovers each section (and, bracketing an exit
+  /// code, each section's own success/failure — the combined script's own
+  /// exit code is just the last command's, which can't distinguish an
+  /// earlier failure). "Effectively": git does not forbid the byte in commit
+  /// subjects or file paths, so a collision is *possible* — when the split
+  /// doesn't yield exactly the expected sections, [_fetchSnapshot] falls
+  /// back to marker-free per-section round trips instead of failing.
   static const String _snapshotSep = '\u0002RMGSNAP\u0002';
 
   /// Separates the pre/post state fields from the mutation's own stdout in
@@ -1586,24 +1618,112 @@ class GitService {
     );
 
     final parts = result.stdout.split(_snapshotSep);
-    if (parts.length < 7) {
-      throw GitException('malformed combined status/refs/pending-op output', result);
+    if (parts.length != 7) {
+      // Fewer parts: the script died before printing every marker (not a
+      // repo, killed shell). MORE parts: a marker collision — a commit
+      // subject or a path that itself contains the marker bytes, which no
+      // split can disambiguate. Either way the combined output is
+      // unparseable; re-fetch each section as its own round trip, where no
+      // in-band marker exists to collide (a genuine failure then surfaces
+      // from its own section with a precise error, instead of the old
+      // blanket "malformed output" throw that permanently wedged the repo's
+      // status pane on adversarial-but-legal content).
+      return _fetchSnapshotSeparately(repoPath, format);
     }
-    final statusStdout = parts[0];
-    final statusExit = int.tryParse(parts[1].trim()) ?? 1;
-    final refsStdout = parts[2];
-    final refsExit = int.tryParse(parts[3].trim()) ?? 1;
-    final remotesStdout = parts[4];
-    final remotesExit = int.tryParse(parts[5].trim()) ?? 1;
-    final pendingStdout = parts[6];
+    return _assembleSnapshot(
+      statusStdout: parts[0],
+      statusExit: int.tryParse(parts[1].trim()) ?? 1,
+      refsStdout: parts[2],
+      refsExit: int.tryParse(parts[3].trim()) ?? 1,
+      remotesStdout: parts[4],
+      remotesExit: int.tryParse(parts[5].trim()) ?? 1,
+      pendingStdout: parts[6],
+      stderr: result.stderr,
+    );
+  }
 
+  /// The marker-free fallback for [_fetchSnapshot]: the same four sections as
+  /// individual round trips. Slower (4× the latency), but immune to marker
+  /// collisions by construction — each command's stdout arrives on its own
+  /// channel. Only ever taken when the combined output failed to split.
+  Future<RepoSnapshot> _fetchSnapshotSeparately(
+    String repoPath,
+    String format,
+  ) async {
+    final status = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: [
+        'git',
+        '--no-optional-locks',
+        'status',
+        '--porcelain=v2',
+        '-uall',
+        '--branch',
+        '-z',
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
+    );
+    final refs = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: [
+        'git',
+        '-c',
+        'i18n.logOutputEncoding=UTF-8',
+        'for-each-ref',
+        '--format=$format',
+        'refs/heads',
+        'refs/remotes',
+        'refs/tags',
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
+    );
+    final remotes = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['git', 'remote'],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    final pending = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['sh', '-c', _pendingOpScript],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    return _assembleSnapshot(
+      statusStdout: status.stdout,
+      statusExit: status.exitCode,
+      refsStdout: refs.stdout,
+      refsExit: refs.exitCode,
+      remotesStdout: remotes.stdout,
+      remotesExit: remotes.exitCode,
+      pendingStdout: pending.stdout,
+      stderr: [status.stderr, refs.stderr].join('\n'),
+    );
+  }
+
+  /// Turns the four raw snapshot sections into a [RepoSnapshot] — shared by
+  /// the combined fast path and the marker-collision fallback.
+  Future<RepoSnapshot> _assembleSnapshot({
+    required String statusStdout,
+    required int statusExit,
+    required String refsStdout,
+    required int refsExit,
+    required String remotesStdout,
+    required int remotesExit,
+    required String pendingStdout,
+    required String stderr,
+  }) async {
     if (statusExit != 0) {
       throw GitException(
         'git status failed',
         SSHCommandResult(
           exitCode: statusExit,
           stdout: statusStdout,
-          stderr: result.stderr,
+          stderr: stderr,
         ),
       );
     }
@@ -1613,7 +1733,7 @@ class GitService {
         SSHCommandResult(
           exitCode: refsExit,
           stdout: refsStdout,
-          stderr: result.stderr,
+          stderr: stderr,
         ),
       );
     }
@@ -2767,6 +2887,34 @@ class GitService {
     newName,
   ], 'git branch -m');
 
+  /// Points [branch]'s upstream at [upstream] (e.g. `origin/main`) —
+  /// `git branch --set-upstream-to`. Pure config (`branch.<name>.remote` /
+  /// `.merge`): nothing is destroyed, so not journaled — setting it back IS
+  /// the undo. The `=` form keeps a leading-dash [upstream] out of option
+  /// position; `--end-of-options` guards the branch positional.
+  Future<void> setUpstream(
+    String repoPath,
+    String branch,
+    String upstream,
+  ) => _runVoid(repoPath, [
+    'git',
+    'branch',
+    '--set-upstream-to=$upstream',
+    '--end-of-options',
+    branch,
+  ], 'git branch --set-upstream-to');
+
+  /// Removes [branch]'s upstream config (`git branch --unset-upstream`) —
+  /// the counterpart of [setUpstream], same not-journaled reasoning.
+  Future<void> unsetUpstream(String repoPath, String branch) =>
+      _runVoid(repoPath, [
+        'git',
+        'branch',
+        '--unset-upstream',
+        '--end-of-options',
+        branch,
+      ], 'git branch --unset-upstream');
+
   /// Deletes [branch] on [remote] (`git push --delete`) — the remote sibling
   /// of [deleteBranch]. Deliberately NOT journaled: the commits may exist
   /// nowhere but the remote, and resurrecting a remote ref is a push the
@@ -3446,6 +3594,42 @@ class GitService {
     }
   }
 
+  /// The remote a remote-less `git pull`/`git push` will actually target: the
+  /// current branch's configured upstream remote, falling back to `origin`
+  /// when there is none (detached/unborn HEAD, no upstream configured).
+  ///
+  /// Exists for [_forgeAuthArgs]: those commands follow the *tracked*
+  /// upstream, so hardcoding `origin` meant a branch tracking a remote named
+  /// anything else got no forge credential helper (`get-url origin` fails →
+  /// empty args) and HTTPS auth failed exactly where the origin-named case
+  /// succeeded.
+  Future<String> _upstreamRemote(String repoPath) async {
+    try {
+      final result = await _executor.execute(
+        repoPath: repoPath,
+        gitArgs: [
+          'sh',
+          '-c',
+          // The $(…) output is data — the shell never re-expands command
+          // substitution results, so a branch name containing quotes or `$`
+          // cannot inject here.
+          'git config --get '
+              r'"branch.$(git symbolic-ref --short -q HEAD).remote"',
+        ],
+        timeout: const Duration(seconds: 15),
+        lane: ExecLane.read,
+        retries: 0,
+      );
+      final r = result.stdout.trim();
+      // `.` names the local repository itself (a branch tracking a local
+      // branch) — no network remote, nothing to authenticate.
+      if (result.isSuccess && r.isNotEmpty && r != '.') return r;
+    } catch (_) {
+      // Fall through — auth degradation, never a blocked pull/push.
+    }
+    return 'origin';
+  }
+
   /// Fetches all remotes and prunes deleted refs. Returns the command result so
   /// callers can surface its output. Sync lane: a fetch touches refs and the
   /// network but never the index/worktree, so reads keep flowing while a slow
@@ -3472,7 +3656,12 @@ class GitService {
     String? remote,
     String? branch,
   }) async {
-    final auth = await _forgeAuthArgs(repoPath, remote: remote ?? 'origin');
+    // No explicit remote → git follows the tracked upstream, so the auth
+    // lookup must too (see [_upstreamRemote]).
+    final auth = await _forgeAuthArgs(
+      repoPath,
+      remote: remote ?? await _upstreamRemote(repoPath),
+    );
     return _run(
       repoPath,
       [
@@ -3510,7 +3699,12 @@ class GitService {
     PushForce force = PushForce.none,
     bool followTags = false,
   }) async {
-    final auth = await _forgeAuthArgs(repoPath, remote: remote ?? 'origin');
+    // No explicit remote → git follows the tracked upstream (or push.default),
+    // so the auth lookup must too (see [_upstreamRemote]).
+    final auth = await _forgeAuthArgs(
+      repoPath,
+      remote: remote ?? await _upstreamRemote(repoPath),
+    );
     return _run(
       repoPath,
       [
@@ -3617,6 +3811,11 @@ class GitService {
     List<String> names, {
     String remote = 'origin',
   }) async {
+    if (names.isEmpty) {
+      // Without refspecs the argv degenerates to a plain `git push <remote>`
+      // — a default branch push nobody asked for. Safe by construction.
+      throw ArgumentError.value(names, 'names', 'must not be empty');
+    }
     final auth = await _forgeAuthArgs(repoPath, remote: remote);
     return _run(
       repoPath,
@@ -3722,7 +3921,7 @@ class GitService {
   Future<String?> revParse(String repoPath, String rev) async {
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: ['git', 'rev-parse', '--verify', '--quiet', rev],
+      gitArgs: ['git', 'rev-parse', '--verify', '--quiet', '--end-of-options', rev],
       retries: _readRetries,
       lane: ExecLane.read,
     );

@@ -157,6 +157,41 @@ void main() {
       ]);
     });
 
+    test('rebaseContinue silences the editor; rebaseAbort is bare', () async {
+      await git.rebaseContinue('/repo');
+      await git.rebaseAbort('/repo');
+      // core.editor=true: --continue opens an editor for the folded message
+      // without it, and a remote host has no editor to open.
+      expect(exec.calls[0], [
+        'git',
+        '-c',
+        'core.editor=true',
+        'rebase',
+        '--continue',
+      ]);
+      expect(exec.calls[1], ['git', 'rebase', '--abort']);
+    });
+
+    test('setUpstream uses the = form; unsetUpstream guards the positional',
+        () async {
+      await git.setUpstream('/repo', 'feature', 'origin/feature');
+      await git.unsetUpstream('/repo', 'feature');
+      expect(exec.calls[0], [
+        'git',
+        'branch',
+        '--set-upstream-to=origin/feature',
+        '--end-of-options',
+        'feature',
+      ]);
+      expect(exec.calls[1], [
+        'git',
+        'branch',
+        '--unset-upstream',
+        '--end-of-options',
+        'feature',
+      ]);
+    });
+
     test('deleteRemoteBranch pushes a delete to the named remote', () async {
       await git.deleteRemoteBranch('/repo', 'origin', 'feature');
       expect(exec.calls[0], ['git', 'remote', 'get-url', 'origin']);
@@ -440,6 +475,15 @@ void main() {
       ]);
     });
 
+    // A remote-less pull/push first resolves the current branch's upstream
+    // remote (auth must follow the remote git will actually contact); an
+    // empty answer falls back to origin.
+    const upstreamProbe = [
+      'sh',
+      '-c',
+      r'git config --get "branch.$(git symbolic-ref --short -q HEAD).remote"',
+    ];
+
     test('fetch / pull / push', () async {
       await git.fetch('/repo');
       await git.pull('/repo');
@@ -457,24 +501,30 @@ void main() {
         '--all',
         '--prune',
       ]);
-      // pull/push probe origin first; empty URL → no forge auth args.
-      expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[2], ['git', 'pull', '--ff-only']);
-      expect(exec.calls[3], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[4], ['git', 'push']);
+      // pull/push resolve the tracked remote, then probe it; empty URL → no
+      // forge auth args.
+      expect(exec.calls[1], upstreamProbe);
+      expect(exec.calls[2], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[3], ['git', 'pull', '--ff-only']);
+      expect(exec.calls[4], upstreamProbe);
+      expect(exec.calls[5], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[6], ['git', 'push']);
     });
 
     test('pull mode maps to the right flag', () async {
       await git.pull('/repo', mode: PullMode.rebase);
       await git.pull('/repo', mode: PullMode.merge);
       await git.pull('/repo', remote: 'origin', branch: 'main');
-      // Each pull probes the remote; empty get-url → bare pull argv.
-      expect(exec.calls[0], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[1], ['git', 'pull', '--rebase']);
-      expect(exec.calls[2], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[3], ['git', 'pull', '--no-rebase']);
+      // Each remote-less pull resolves the upstream remote, then probes it;
+      // an explicit remote skips the resolve.
+      expect(exec.calls[0], upstreamProbe);
+      expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[2], ['git', 'pull', '--rebase']);
+      expect(exec.calls[3], upstreamProbe);
       expect(exec.calls[4], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[5], [
+      expect(exec.calls[5], ['git', 'pull', '--no-rebase']);
+      expect(exec.calls[6], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[7], [
         'git',
         'pull',
         '--ff-only',
@@ -486,19 +536,50 @@ void main() {
 
     test('pull omits the branch when no remote is given', () async {
       await git.pull('/repo', branch: 'main');
-      expect(exec.calls[0], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[1], ['git', 'pull', '--ff-only']);
+      expect(exec.calls[0], upstreamProbe);
+      expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[2], ['git', 'pull', '--ff-only']);
     });
 
     test('push injects gh credential helper for https github remotes', () async {
-      exec.next = const SSHCommandResult(
-        exitCode: 0,
-        stdout: 'https://github.com/me/r.git\n',
-        stderr: '',
-      );
+      exec.results.addAll(const [
+        // Upstream probe: no upstream configured → falls back to origin.
+        SSHCommandResult(exitCode: 1, stdout: '', stderr: ''),
+        SSHCommandResult(
+          exitCode: 0,
+          stdout: 'https://github.com/me/r.git\n',
+          stderr: '',
+        ),
+      ]);
       await git.push('/repo');
-      expect(exec.calls[0], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[1], [
+      expect(exec.calls[0], upstreamProbe);
+      expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[2], [
+        'git',
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!gh auth git-credential',
+        'push',
+      ]);
+    });
+
+    test('a branch tracking a non-origin remote routes auth through THAT '
+        'remote', () async {
+      exec.results.addAll(const [
+        // Upstream probe: the branch tracks `upstream`, not origin.
+        SSHCommandResult(exitCode: 0, stdout: 'upstream\n', stderr: ''),
+        SSHCommandResult(
+          exitCode: 0,
+          stdout: 'https://github.com/them/r.git\n',
+          stderr: '',
+        ),
+      ]);
+      await git.push('/repo');
+      expect(exec.calls[0], upstreamProbe);
+      expect(exec.calls[1], ['git', 'remote', 'get-url', 'upstream'],
+          reason: 'the auth probe must follow the tracked remote');
+      expect(exec.calls[2], [
         'git',
         '-c',
         'credential.helper=',
@@ -513,15 +594,19 @@ void main() {
       await git.push('/repo', force: PushForce.force);
       await git.push('/repo', setUpstream: true, followTags: true);
       await git.push('/repo', remote: 'origin', branch: 'feat');
-      // Probe + push pairs (empty origin → no auth -c flags).
-      expect(exec.calls[0], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[1], ['git', 'push', '--force-with-lease']);
-      expect(exec.calls[2], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[3], ['git', 'push', '--force']);
+      // Resolve + probe + push triples (empty origin → no auth -c flags);
+      // the explicit-remote push skips the resolve.
+      expect(exec.calls[0], upstreamProbe);
+      expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[2], ['git', 'push', '--force-with-lease']);
+      expect(exec.calls[3], upstreamProbe);
       expect(exec.calls[4], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[5], ['git', 'push', '-u', '--follow-tags']);
-      expect(exec.calls[6], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[7], [
+      expect(exec.calls[5], ['git', 'push', '--force']);
+      expect(exec.calls[6], upstreamProbe);
+      expect(exec.calls[7], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[8], ['git', 'push', '-u', '--follow-tags']);
+      expect(exec.calls[9], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[10], [
         'git',
         'push',
         '--end-of-options',
@@ -611,6 +696,27 @@ void main() {
         'refs/tags/v1.0.0',
         'refs/tags/v1.1.0',
       ]);
+    });
+
+    test('revParse guards the rev positional with --end-of-options', () async {
+      await git.revParse('/repo', 'HEAD');
+      expect(exec.calls[0], [
+        'git',
+        'rev-parse',
+        '--verify',
+        '--quiet',
+        '--end-of-options',
+        'HEAD',
+      ]);
+    });
+
+    test('pushTags rejects an empty list — the argv would degenerate to a '
+        'default branch push', () async {
+      await expectLater(
+        () => git.pushTags('/repo', []),
+        throwsArgumentError,
+      );
+      expect(exec.calls, isEmpty, reason: 'nothing may reach the remote');
     });
 
     test('deleteRemoteTag uses the full refname', () async {

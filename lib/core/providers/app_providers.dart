@@ -2221,6 +2221,14 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   logProvider,
   logSearchProvider,
   refsProvider,
+  // remotesProvider is cheap (bundled in the snapshot); remoteTagsProvider
+  // costs an `ls-remote` round trip, which is exactly what an EXPLICIT ⌘R
+  // asks for — and both must die on connect/disconnect, or a keepAlive'd
+  // remote-tag map can survive into a different host that reuses the same
+  // repo path. (They stay OUT of repoMutationFamilies' network half — see
+  // the remoteTagsProvider doc — this list is user-gesture + reset only.)
+  remotesProvider,
+  remoteTagsProvider,
   stashesProvider,
   stashDiffProvider,
   repoStructureProvider,

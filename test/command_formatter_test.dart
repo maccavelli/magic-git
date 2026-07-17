@@ -11,6 +11,10 @@ void main() {
       expect(cmd, contains("GIT_TERMINAL_PROMPT='0'"));
       expect(cmd, contains("GIT_EDITOR='true'"));
       expect(cmd, contains("GIT_OPTIONAL_LOCKS='0'"));
+      // Error classification matches English stderr substrings; a host with a
+      // non-English LANG must not defeat it (LC_MESSAGES, not LC_ALL, so path
+      // encoding is untouched).
+      expect(cmd, contains("LC_MESSAGES='C'"));
       expect(cmd, contains("cd '/srv/repo'"));
       expect(cmd, endsWith("&& exec 'git' 'status'"));
     });

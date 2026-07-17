@@ -93,6 +93,12 @@ class _StashViewState extends ConsumerState<StashView>
     if (event is KeyUpEvent || !widget.isActive || busy) {
       return KeyEventResult.ignored;
     }
+    // Keys typed into a text field belong to the field, not the list — the
+    // same gate PanelShortcuts applies to the ⌘-bindings (Esc in a field
+    // must not clear the stash selection).
+    if (PanelShortcuts.textInteractionHasFocus()) {
+      return KeyEventResult.ignored;
+    }
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowDown:
         _moveStashSelection(1);

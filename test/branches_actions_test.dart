@@ -157,7 +157,13 @@ void main() {
   testWidgets('the merge menu offers fast-forward only', (tester) async {
     final git = await _pump(tester);
 
-    await tester.tap(find.byType(MacosPulldownButton).first);
+    // By icon: the head row's upstream menu (ellipsis) also renders as a
+    // MacosPulldownButton above this one.
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) => w is MacosPulldownButton && w.icon == CupertinoIcons.arrow_merge,
+      ),
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Merge (fast-forward only)'));
     await tester.pumpAndSettle();

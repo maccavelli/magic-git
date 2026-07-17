@@ -11,6 +11,11 @@ import 'sized_sheet.dart';
 /// left empty. Extracted from the History panel, which grew it first; every
 /// panel that needs to ask for one string uses this rather than growing its
 /// own subtly-different sheet.
+///
+/// [validate] (optional) maps the trimmed draft to a problem message, shown
+/// inline under the field; while non-null the confirm button is disabled and
+/// Enter is inert — so a caller like rename-branch can reject an invalid ref
+/// name with a specific message before any round trip.
 Future<String?> promptText(
   BuildContext context,
   String title, {
@@ -18,6 +23,7 @@ Future<String?> promptText(
   String initial = '',
   String? description,
   String confirmLabel = 'OK',
+  String? Function(String value)? validate,
 }) async {
   final value = await showMacosSheet<String>(
     context: context,
@@ -27,6 +33,7 @@ Future<String?> promptText(
       initial: initial,
       description: description,
       confirmLabel: confirmLabel,
+      validate: validate,
     ),
   );
   final trimmed = value?.trim();
@@ -43,6 +50,7 @@ class _PromptTextSheet extends StatefulWidget {
   final String initial;
   final String? description;
   final String confirmLabel;
+  final String? Function(String value)? validate;
 
   const _PromptTextSheet({
     required this.title,
@@ -50,6 +58,7 @@ class _PromptTextSheet extends StatefulWidget {
     required this.initial,
     this.description,
     this.confirmLabel = 'OK',
+    this.validate,
   });
 
   @override
@@ -67,8 +76,17 @@ class _PromptTextSheetState extends State<_PromptTextSheet> {
     super.dispose();
   }
 
+  String? get _problem => widget.validate?.call(_controller.text.trim());
+
+  void _submit() {
+    if (_problem != null) return;
+    final text = _controller.text;
+    Navigator.of(context).pop(text.trim().isEmpty ? null : text);
+  }
+
   @override
   Widget build(BuildContext context) {
+    final typography = MacosTheme.of(context).typography;
     return EscapeDismissible(
       child: SizedSheet(
         width: kSheetWidth,
@@ -78,44 +96,60 @@ class _PromptTextSheetState extends State<_PromptTextSheet> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                widget.title,
-                style: MacosTheme.of(context).typography.title3,
-              ),
+              Text(widget.title, style: typography.title3),
               if (widget.description != null)
                 SheetDescription(widget.description!),
               const SizedBox(height: 14),
-              MacosTextField(
-                controller: _controller,
-                placeholder: widget.placeholder,
-                placeholderStyle: kAppPlaceholderStyle,
-                autofocus: true,
-                decoration: kAppTextFieldDecoration,
-                focusedDecoration: kAppTextFieldFocusedDecoration,
-                onSubmitted: (v) =>
-                    Navigator.of(context).pop(v.trim().isEmpty ? null : v),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  AppPushButton(
-                    controlSize: ControlSize.large,
-                    secondary: true,
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 10),
-                  AppPushButton(
-                    controlSize: ControlSize.large,
-                    onPressed: () => Navigator.of(context).pop(
-                      _controller.text.trim().isEmpty
-                          ? null
-                          : _controller.text,
-                    ),
-                    child: Text(widget.confirmLabel),
-                  ),
-                ],
+              // The listener scope covers the field, the inline error, and
+              // the confirm button — all three react per keystroke without a
+              // whole-sheet setState.
+              ValueListenableBuilder<TextEditingValue>(
+                valueListenable: _controller,
+                builder: (context, value, _) {
+                  final problem = _problem;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      MacosTextField(
+                        controller: _controller,
+                        placeholder: widget.placeholder,
+                        placeholderStyle: kAppPlaceholderStyle,
+                        autofocus: true,
+                        decoration: kAppTextFieldDecoration,
+                        focusedDecoration: kAppTextFieldFocusedDecoration,
+                        onSubmitted: (_) => _submit(),
+                      ),
+                      if (problem != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            problem,
+                            style: typography.caption1.copyWith(
+                              color: MacosColors.systemRedColor,
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          AppPushButton(
+                            controlSize: ControlSize.large,
+                            secondary: true,
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: const Text('Cancel'),
+                          ),
+                          const SizedBox(width: 10),
+                          AppPushButton(
+                            controlSize: ControlSize.large,
+                            onPressed: problem != null ? null : _submit,
+                            child: Text(widget.confirmLabel),
+                          ),
+                        ],
+                      ),
+                    ],
+                  );
+                },
               ),
             ],
           ),

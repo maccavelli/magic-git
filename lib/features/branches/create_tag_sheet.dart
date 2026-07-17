@@ -12,6 +12,7 @@ import '../common/actions.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
+import '../common/ref_name_validation.dart';
 import '../common/sized_sheet.dart';
 
 /// Creates a tag — annotated by default, at HEAD or at a commit handed in by
@@ -74,32 +75,10 @@ class _CreateTagSheetState extends ConsumerState<CreateTagSheet> {
     super.dispose();
   }
 
-  /// Client-side approximation of `git check-ref-format` for one-component
-  /// tag names — enough to catch every common mistake with a specific
-  /// message before a round trip. git itself remains the authority (and
-  /// `--end-of-options` already keeps any name out of argv-option position).
-  static String? nameProblem(String name) {
-    if (name.isEmpty) return null; // emptiness disables the button silently
-    if (name.contains(RegExp(r'\s'))) return 'No spaces in a tag name.';
-    const forbidden = ['~', '^', ':', '?', '*', '[', '\\'];
-    for (final ch in forbidden) {
-      if (name.contains(ch)) return 'A tag name cannot contain "$ch".';
-    }
-    if (name.contains('..')) return 'A tag name cannot contain "..".';
-    if (name.contains('@{')) return 'A tag name cannot contain "@{".';
-    if (name.startsWith('-')) return 'A tag name cannot start with "-".';
-    if (name.startsWith('/') || name.endsWith('/') || name.contains('//')) {
-      return 'A tag name cannot start or end with "/" (or contain "//").';
-    }
-    if (name.startsWith('.') || name.endsWith('.')) {
-      return 'A tag name cannot start or end with ".".';
-    }
-    if (name.endsWith('.lock')) return 'A tag name cannot end with ".lock".';
-    if (name.contains(RegExp(r'[\x00-\x1F\x7F]'))) {
-      return 'A tag name cannot contain control characters.';
-    }
-    return null;
-  }
+  /// The shared `git check-ref-format` approximation ([refNameProblem]) with
+  /// tag wording — kept as a static so existing references (and tests) keep
+  /// one obvious entry point on this sheet.
+  static String? nameProblem(String name) => refNameProblem(name, kind: 'tag');
 
   bool get _valid {
     final name = _name.text.trim();

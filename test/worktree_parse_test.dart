@@ -225,8 +225,20 @@ void main() {
   });
 
   group('GitRef.worktreePath', () {
-    // `%(worktreepath)` is field index 6, appended after `%(*objectname)` so the
-    // existing field indices are untouched.
+    // _refsFormat field order: HEAD, refname, oid, upstream, peeled,
+    // worktreepath, track, creatordate, symref, subject (subject last — see
+    // refs_parse_test.dart).
+    const peeledHash = 'cccccccccccccccccccccccccccccccccccccccc';
+    List<String> row(
+      String head,
+      String name,
+      String oid, {
+      String upstream = '',
+      String peeled = '',
+      String worktree = '',
+      String subject = 'subject',
+    }) => [head, name, oid, upstream, peeled, worktree, '', '', '', subject];
+
     List<GitRef> parse(List<List<String>> rows) => parseRefs(
       rows.map((r) => r.join(GitService.fieldSep)).join('\n'),
       GitService.fieldSep,
@@ -234,7 +246,7 @@ void main() {
 
     test('populated for a branch checked out in a linked worktree', () {
       final refs = parse([
-        [' ', 'refs/heads/feat', 'bbb', '', 'subject', '', '/wt-feat'],
+        row(' ', 'refs/heads/feat', 'bbb', worktree: '/wt-feat'),
       ]);
 
       expect(refs.single.worktreePath, '/wt-feat');
@@ -246,7 +258,7 @@ void main() {
       // worktrees. It is in fact set for the current/main one as well, so a
       // non-null value alone does not mean "checked out somewhere else".
       final refs = parse([
-        ['*', 'refs/heads/master', 'aaa', '', 'subject', '', '/repo'],
+        row('*', 'refs/heads/master', 'aaa', worktree: '/repo'),
       ]);
 
       expect(refs.single.isHead, isTrue);
@@ -254,9 +266,7 @@ void main() {
     });
 
     test('null for a branch that is not checked out anywhere', () {
-      final refs = parse([
-        [' ', 'refs/heads/idle', 'ccc', '', 'subject', '', ''],
-      ]);
+      final refs = parse([row(' ', 'refs/heads/idle', 'ccc')]);
 
       expect(refs.single.worktreePath, isNull);
     });
@@ -265,7 +275,7 @@ void main() {
       // Pre-2.23 git doesn't know `%(worktreepath)` and emits it verbatim.
       // Requiring a leading `/` rejects that without a version probe.
       final refs = parse([
-        [' ', 'refs/heads/old', 'ddd', '', 'subject', '', '%(worktreepath)'],
+        row(' ', 'refs/heads/old', 'ddd', worktree: '%(worktreepath)'),
       ]);
 
       expect(refs.single.worktreePath, isNull);
@@ -273,16 +283,23 @@ void main() {
 
     test('the pre-existing fields still parse with the new column present', () {
       final refs = parse([
-        ['*', 'refs/heads/main', 'aaa', 'origin/main', 'hello', '', '/repo'],
-        [' ', 'refs/tags/v1', 'ttt', '', 'tag msg', 'ccc', ''],
+        row(
+          '*',
+          'refs/heads/main',
+          'aaa',
+          upstream: 'origin/main',
+          worktree: '/repo',
+          subject: 'hello',
+        ),
+        row(' ', 'refs/tags/v1', 'ttt', peeled: peeledHash, subject: 'tag msg'),
       ]);
 
       expect(refs[0].upstream, 'origin/main');
       expect(refs[0].subject, 'hello');
       expect(refs[0].peeledOid, isNull);
       expect(refs[1].isTag, isTrue);
-      expect(refs[1].peeledOid, 'ccc');
-      expect(refs[1].commitOid, 'ccc');
+      expect(refs[1].peeledOid, peeledHash);
+      expect(refs[1].commitOid, peeledHash);
     });
   });
 }
