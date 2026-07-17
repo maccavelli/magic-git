@@ -1,0 +1,20 @@
+[core]
+	repositoryformatversion = 0
+	filemode = true
+	bare = false
+	logallrefupdates = true
+	ignorecase = true
+	precomposeunicode = true
+	fsmonitor = true
+	untrackedCache = true
+[remote "origin"]
+	url = https://gitlab.lkqdev.com/saxsmith/magic-git.git
+	fetch = +refs/heads/*:refs/remotes/origin/*
+	glab-resolved-base = base
+[branch "master"]
+	remote = origin
+	merge = refs/heads/master
+[feature]
+	manyFiles = true
+[lfs]
+	repositoryformatversion = 0
