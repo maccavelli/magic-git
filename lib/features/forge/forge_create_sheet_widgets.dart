@@ -118,8 +118,12 @@ class ForgeMilestonePicker extends StatelessWidget {
             onChanged: onChanged,
             items: [
               const MacosPopupMenuItem<int?>(value: null, child: Text('None')),
+              // Skip any milestone without a parseable id: it can't serve as a
+              // unique popup value, and two such entries would otherwise share
+              // one key and trip MacosPopupButton's duplicate-value assertion.
               for (final m in milestones)
-                MacosPopupMenuItem<int?>(value: m.id, child: Text(m.title)),
+                if (m.id != null)
+                  MacosPopupMenuItem<int?>(value: m.id, child: Text(m.title)),
             ],
           ),
         ],

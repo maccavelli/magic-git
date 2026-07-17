@@ -3629,7 +3629,9 @@ final forgeProvider = FutureProvider.autoDispose.family<Forge, String>((
 
     // Unrecognized (self-hosted) host: ask the CLIs which hosts they're logged
     // in to. `gh auth status` / `glab auth status` print their configured hosts;
-    // their exit codes are unreliable, so scan the combined stdout+stderr text.
+    // their exit codes are unreliable, so match the host as an exact token in
+    // the combined stdout+stderr ([authStatusListsHost]) — a raw substring scan
+    // would misclassify on an incidental mention of the host string.
     final host = forgeHostFromRemoteUrl(url);
     if (host == null) return Forge.unknown;
     try {
@@ -3639,14 +3641,18 @@ final forgeProvider = FutureProvider.autoDispose.family<Forge, String>((
         timeout: const Duration(seconds: 20),
         lane: ExecLane.read,
       );
-      if ('${gh.stdout}\n${gh.stderr}'.contains(host)) return Forge.github;
+      if (authStatusListsHost('${gh.stdout}\n${gh.stderr}', host)) {
+        return Forge.github;
+      }
       final glab = await executor.execute(
         repoPath: repoPath,
         gitArgs: ['glab', 'auth', 'status'],
         timeout: const Duration(seconds: 20),
         lane: ExecLane.read,
       );
-      if ('${glab.stdout}\n${glab.stderr}'.contains(host)) return Forge.gitlab;
+      if (authStatusListsHost('${glab.stdout}\n${glab.stderr}', host)) {
+        return Forge.gitlab;
+      }
     } catch (_) {
       // A missing CLI / timeout during the probe just leaves it unclassified.
     }
@@ -3710,8 +3716,11 @@ final forgeAuthProvider = FutureProvider.autoDispose
       final (forge, local) = key;
       // Re-resolve when the connection generation moves (a landing wizard
       // can ask before its SSH session finishes provisioning — the answer
-      // must not stay cached as signed-out once the host is reachable).
-      ref.watch(connectionProvider.select((c) => (c.phase, c.backend)));
+      // must not stay cached as signed-out once the host is reachable), and
+      // when the target host itself changes: a switch between two same-backend
+      // hosts must not keep serving host A's auth/host for host B (matches
+      // [sessionAuthStatusProvider], which also keys on host).
+      ref.watch(connectionProvider.select((c) => (c.phase, c.backend, c.host)));
       final executor = local
           ? ref.read(localExecutorProvider)
           : ref.read(activeExecutorProvider);

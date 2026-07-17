@@ -42,33 +42,56 @@ String? remotePathFromUrl(String url) {
   if (path.contains('://')) {
     final uri = Uri.tryParse(path);
     if (uri == null) return null;
-    path = uri.path.startsWith('/') ? uri.path.substring(1) : uri.path;
+    path = uri.path;
   } else {
     final colon = path.indexOf(':');
     if (colon < 0) return null;
     path = path.substring(colon + 1);
   }
+  // Trim leading and trailing slashes uniformly: `/group/repo`, `group/repo/`
+  // and `group/repo` all name the same project — a kept trailing slash
+  // otherwise becomes part of the GitLab project id and 404s.
+  path = path.replaceAll(RegExp(r'^/+|/+$'), '');
   return path.isEmpty ? null : path;
 }
 
 /// Classifies a remote [host] as a known forge by hostname alone.
 ///
-/// Recognizes `github.com` / `*.github.com` and `gitlab.com` / `*.gitlab.com`
-/// by exact suffix, plus a looser substring match (`github`/`gitlab`) that
-/// catches common self-hosted naming (`github.mycorp.com`, `gitlab.internal`).
-/// A GitHub Enterprise / GitLab instance on a custom domain with no telltale
-/// substring falls through to [Forge.unknown]; the provider layer resolves
-/// those by asking the CLIs which hosts they're authenticated to.
+/// Recognizes the `github`/`gitlab` telltale as a whole dot-separated label —
+/// `github.com`, `gitlab.mycorp.com`, `git.gitlab.io` — which catches both the
+/// public hosts and common self-hosted naming, without the false positives an
+/// unanchored substring match produces (`mygithub-mirror.example`, or a GitLab
+/// vanity host that merely *contains* `github`). A host that carries both
+/// telltales, or neither, is ambiguous and falls through to [Forge.unknown];
+/// the provider layer resolves those by asking the CLIs which hosts they're
+/// authenticated to (see [authStatusListsHost]) rather than guessing by which
+/// forge happened to be tested first.
 Forge classifyForgeHost(String host) {
   final h = host.trim().toLowerCase();
   if (h.isEmpty) return Forge.unknown;
-  if (h == 'github.com' || h.endsWith('.github.com') || h.contains('github')) {
-    return Forge.github;
-  }
-  if (h == 'gitlab.com' || h.endsWith('.gitlab.com') || h.contains('gitlab')) {
-    return Forge.gitlab;
-  }
+  final isGithub = RegExp(r'(^|\.)github(\.|$)').hasMatch(h);
+  final isGitlab = RegExp(r'(^|\.)gitlab(\.|$)').hasMatch(h);
+  if (isGithub && !isGitlab) return Forge.github;
+  if (isGitlab && !isGithub) return Forge.gitlab;
   return Forge.unknown;
+}
+
+/// Whether a `gh`/`glab auth status` dump reports being signed in to [host],
+/// matched as an exact host token — a column-0 host header (`github.com`) or a
+/// `Logged in to <host>` line — never as an incidental substring of a tip URL
+/// or a longer configured host. Forge detection's self-hosted fallback uses
+/// this to classify an unrecognized host by which CLI owns it, so a stray
+/// mention of the host string elsewhere in the output can't misclassify it.
+bool authStatusListsHost(String statusOutput, String host) {
+  final h = host.trim().toLowerCase();
+  if (h.isEmpty) return false;
+  for (final raw in statusOutput.split('\n')) {
+    final line = raw.trim().toLowerCase();
+    if (line == h) return true;
+    final m = RegExp(r'logged in to (\S+)').firstMatch(line);
+    if (m != null && m.group(1) == h) return true;
+  }
+  return false;
 }
 
 /// Classifies a forge straight from a remote URL. Returns [Forge.none] for a
@@ -157,8 +180,24 @@ String? forgeUrlFromCreateOutput(String output, {required String name}) {
     }
     final slash = base.lastIndexOf('/');
     if (slash < 0) continue;
-    final last = base.substring(slash + 1);
-    if (last.toLowerCase() == name.toLowerCase()) return '$base.git';
+    final last = base.substring(slash + 1).toLowerCase();
+    // Accept the raw name (GitHub keeps it verbatim) OR its slug: GitLab
+    // derives the project's URL path by slugifying the name, so `"My Repo"` is
+    // created at `.../my-repo` and a strict name-equality check would miss it,
+    // dropping the round-trip-free origin-URL read.
+    if (last == name.toLowerCase() || last == _forgePathSlug(name)) {
+      return '$base.git';
+    }
   }
   return null;
 }
+
+/// Slugifies a project [name] the way GitLab derives its URL path: lowercased,
+/// each run of characters outside `[a-z0-9._-]` collapsed to a single `-`, and
+/// leading/trailing `-`/`.` trimmed. `"My Repo"` → `my-repo`.
+String _forgePathSlug(String name) => name
+    .trim()
+    .toLowerCase()
+    .replaceAll(RegExp(r'[^a-z0-9._-]+'), '-')
+    .replaceAll(RegExp(r'-{2,}'), '-')
+    .replaceAll(RegExp(r'^[-.]+|[-.]+$'), '');

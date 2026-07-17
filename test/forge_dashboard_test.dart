@@ -9,20 +9,20 @@ import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
 import 'package:remote_magic_git/core/forge/forge_json.dart';
 
 void main() {
-  group('jsonInt', () {
+  group('jsonIntOrNull', () {
     test('passes numbers through', () {
-      expect(jsonInt(42), 42);
-      expect(jsonInt(42.0), 42);
+      expect(jsonIntOrNull(42), 42);
+      expect(jsonIntOrNull(42.0), 42);
     });
 
     test('parses GitLab string iids', () {
-      expect(jsonInt('606072'), 606072);
+      expect(jsonIntOrNull('606072'), 606072);
     });
 
-    test('degrades to 0 on garbage', () {
-      expect(jsonInt(null), 0);
-      expect(jsonInt('not-a-number'), 0);
-      expect(jsonInt(<int>[]), 0);
+    test('returns null on garbage — not a fabricated 0 that would collide', () {
+      expect(jsonIntOrNull(null), isNull);
+      expect(jsonIntOrNull('not-a-number'), isNull);
+      expect(jsonIntOrNull(<int>[]), isNull);
     });
   });
 
@@ -160,7 +160,10 @@ void main() {
   });
 
   test('factories tolerate empty nodes', () {
-    expect(ForgeIssue.fromGhGql({}).id, 0);
+    // A missing id is null (not a fabricated 0), so two id-less rows stay
+    // distinguishable and can't collide on a shared key.
+    expect(ForgeIssue.fromGhGql({}).id, isNull);
+    expect(ForgeMilestone.fromGlabGql({}).id, isNull);
     expect(ForgeIssue.fromGlabGql({}).labels, isEmpty);
     expect(ForgeMilestone.fromGlabGql({}).due, isNull);
     expect(ForgeRelease.fromGhGql({}).publishedDate, isNull);

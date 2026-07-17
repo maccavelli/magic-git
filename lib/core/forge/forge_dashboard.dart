@@ -20,8 +20,9 @@ String normalizeLabelColor(String? raw) {
 
 /// An open issue on the forge.
 class ForgeIssue {
-  /// The user-visible issue number: GitHub `number`, GitLab `iid`.
-  final int id;
+  /// The user-visible issue number: GitHub `number`, GitLab `iid`. Null when
+  /// the forge didn't report a parseable number (see [jsonIntOrNull]).
+  final int? id;
   final String title;
 
   /// Lowercased wire state (`open`/`closed` on GitHub, `opened`/`closed` on
@@ -44,7 +45,7 @@ class ForgeIssue {
   factory ForgeIssue.fromGhGql(Map<String, dynamic> n) {
     final author = n['author'];
     return ForgeIssue(
-      id: jsonInt(n['number']),
+      id: jsonIntOrNull(n['number']),
       title: n['title'] as String? ?? '',
       state: (n['state'] as String? ?? 'open').toLowerCase(),
       author: author is Map ? author['login'] as String? : null,
@@ -53,11 +54,11 @@ class ForgeIssue {
   }
 
   /// From a GitLab GraphQL `Issue` node. `iid` arrives as a **String**
-  /// (`"606072"`) — see [jsonInt].
+  /// (`"606072"`) — see [jsonIntOrNull].
   factory ForgeIssue.fromGlabGql(Map<String, dynamic> n) {
     final author = n['author'];
     return ForgeIssue(
-      id: jsonInt(n['iid']),
+      id: jsonIntOrNull(n['iid']),
       title: n['title'] as String? ?? '',
       state: (n['state'] as String? ?? 'opened').toLowerCase(),
       author: author is Map ? author['username'] as String? : null,
@@ -100,8 +101,10 @@ class ForgeLabel {
 
 /// An open/active milestone.
 class ForgeMilestone {
-  /// The user-visible milestone number: GitHub `number`, GitLab `iid`.
-  final int id;
+  /// The user-visible milestone number: GitHub `number`, GitLab `iid`. Null
+  /// when the forge didn't report a parseable number (see [jsonIntOrNull]);
+  /// the milestone picker skips such entries since it can't key on them.
+  final int? id;
   final String title;
 
   /// Lowercased wire state (`open` on GitHub, `active` on GitLab).
@@ -121,16 +124,16 @@ class ForgeMilestone {
 
   /// From a GitHub GraphQL `Milestone` node.
   factory ForgeMilestone.fromGhGql(Map<String, dynamic> n) => ForgeMilestone(
-    id: jsonInt(n['number']),
+    id: jsonIntOrNull(n['number']),
     title: n['title'] as String? ?? '',
     state: (n['state'] as String? ?? 'open').toLowerCase(),
     due: _dateOnly(n['dueOn'] as String?),
   );
 
   /// From a GitLab GraphQL `Milestone` node. `iid` arrives as a **String** —
-  /// see [jsonInt].
+  /// see [jsonIntOrNull].
   factory ForgeMilestone.fromGlabGql(Map<String, dynamic> n) => ForgeMilestone(
-    id: jsonInt(n['iid']),
+    id: jsonIntOrNull(n['iid']),
     title: n['title'] as String? ?? '',
     state: (n['state'] as String? ?? 'active').toLowerCase(),
     due: _dateOnly(n['dueDate'] as String?),

@@ -165,7 +165,7 @@ class ProjectDashboardPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '#${issue.id}',
+            '#${issue.id ?? '—'}',
             style: typography.caption1.copyWith(
               color: MacosColors.systemGrayColor,
             ),

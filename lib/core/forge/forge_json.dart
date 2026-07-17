@@ -20,16 +20,21 @@ List<T> mapJsonList<T>(
   return decoded.whereType<Map<String, dynamic>>().map(from).toList();
 }
 
-/// Coerces a JSON scalar to an int. GitLab's GraphQL API returns `iid`
-/// fields as **strings** (`"606072"`) while its REST API returns numbers and
-/// GitHub's GraphQL returns Int — one tolerant reader instead of per-site
-/// casts. (A blind `as num?` cast here crashed the entire GitLab dashboard
-/// parse on any real project, because every issue and milestone iid arrives
-/// as a String.)
-int jsonInt(dynamic v) => switch (v) {
+/// Coerces a JSON scalar to an int, or `null` when the value is absent or
+/// unparseable. GitLab's GraphQL API returns `iid` fields as **strings**
+/// (`"606072"`) while its REST API returns numbers and GitHub's GraphQL
+/// returns Int — one tolerant reader instead of per-site casts. (A blind
+/// `as num?` cast here crashed the entire GitLab dashboard parse on any real
+/// project, because every issue and milestone iid arrives as a String.)
+///
+/// Returns `null` — not a fabricated `0` — for a missing/garbage id, so an
+/// unknown id stays distinguishable from a real one and two unparseable rows
+/// don't collide on `0` (which would, e.g., produce duplicate milestone-picker
+/// keys). Callers decide how to render/skip an unknown id.
+int? jsonIntOrNull(dynamic v) => switch (v) {
   final num n => n.toInt(),
-  final String s => int.tryParse(s) ?? 0,
-  _ => 0,
+  final String s => int.tryParse(s),
+  _ => null,
 };
 
 /// Maps a GraphQL connection object's `nodes` list through [from]. Anything

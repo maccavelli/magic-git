@@ -57,6 +57,89 @@ void main() {
     test('blank host is unknown', () {
       expect(classifyForgeHost(''), Forge.unknown);
     });
+
+    test('a telltale only as a substring of a larger label is NOT a match', () {
+      // The unanchored contains() this replaced would have called these github.
+      // Deferring to unknown routes them through the CLI-auth fallback instead.
+      expect(classifyForgeHost('mygithub-mirror.example'), Forge.unknown);
+      expect(classifyForgeHost('notgitlab.example.com'), Forge.unknown);
+    });
+
+    test('a host carrying both telltales is ambiguous (unknown)', () {
+      expect(classifyForgeHost('github.gitlab.com'), Forge.unknown);
+    });
+
+    test('the telltale as a whole middle/leading label still matches', () {
+      expect(classifyForgeHost('git.github.io'), Forge.github);
+      expect(classifyForgeHost('gitlab.mycorp.com'), Forge.gitlab);
+    });
+  });
+
+  group('authStatusListsHost', () {
+    const glabStatus =
+        'gitlab.lkqdev.com\n'
+        '  ✓ Logged in to gitlab.lkqdev.com as saxsmith (config.yml)\n'
+        '  ✓ API calls for gitlab.lkqdev.com are made over https protocol.';
+    const ghStatus =
+        'github.com\n'
+        '  ✓ Logged in to github.com account maccavelli (keyring)';
+
+    test('matches a column-0 host header', () {
+      expect(authStatusListsHost(glabStatus, 'gitlab.lkqdev.com'), isTrue);
+    });
+
+    test('matches a "Logged in to <host>" line (gh "account" phrasing too)', () {
+      expect(authStatusListsHost(ghStatus, 'github.com'), isTrue);
+    });
+
+    test('an incidental substring mention is NOT a match', () {
+      // The raw contains() scan this replaced would have wrongly matched here.
+      expect(
+        authStatusListsHost('See https://docs for git.acme.io tips', 'git.acme.io'),
+        isFalse,
+      );
+    });
+
+    test('a longer host that merely contains the target is NOT a match', () {
+      expect(
+        authStatusListsHost('deploy.git.acme.io\n  ✓ Logged in', 'git.acme.io'),
+        isFalse,
+      );
+    });
+
+    test('a blank host never matches', () {
+      expect(authStatusListsHost(glabStatus, ''), isFalse);
+    });
+  });
+
+  group('remotePathFromUrl', () {
+    test('https path, .git stripped', () {
+      expect(remotePathFromUrl('https://host/owner/repo.git'), 'owner/repo');
+    });
+
+    test('scp-like path', () {
+      expect(remotePathFromUrl('git@host:group/repo.git'), 'group/repo');
+    });
+
+    test('a trailing slash is trimmed (would otherwise 404 the project)', () {
+      expect(remotePathFromUrl('https://gitlab.acme.com/group/repo/'), 'group/repo');
+    });
+
+    test('a leading slash after the scp colon is trimmed', () {
+      expect(remotePathFromUrl('git@host:/group/repo'), 'group/repo');
+    });
+
+    test('nested (subgroup) paths are preserved', () {
+      expect(
+        remotePathFromUrl('https://gitlab.com/group/sub/repo.git'),
+        'group/sub/repo',
+      );
+    });
+
+    test('blank / hostless urls yield null', () {
+      expect(remotePathFromUrl('   '), isNull);
+      expect(remotePathFromUrl('git@host'), isNull);
+    });
   });
 
   group('forgeFromRemoteUrl', () {
@@ -195,6 +278,29 @@ void main() {
     test('empty output or name yields null', () {
       expect(forgeUrlFromCreateOutput('', name: 'r'), isNull);
       expect(forgeUrlFromCreateOutput('https://x.com/r', name: ''), isNull);
+    });
+
+    test('GitLab slugifies the name into the path — the slug still matches', () {
+      // `glab repo create --name "My Repo"` creates `.../my-repo`; a strict
+      // name-equality check missed it and lost the round-trip-free URL read.
+      expect(
+        forgeUrlFromCreateOutput(
+          '✓ Created project on GitLab: Group / My Repo - '
+          'https://gitlab.corp.example/group/my-repo\n',
+          name: 'My Repo',
+        ),
+        'https://gitlab.corp.example/group/my-repo.git',
+      );
+    });
+
+    test('the slug match still rejects an unrelated URL in the output', () {
+      expect(
+        forgeUrlFromCreateOutput(
+          'See https://gitlab.com/help/user/project for details',
+          name: 'My Repo',
+        ),
+        isNull,
+      );
     });
   });
 }
