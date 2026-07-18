@@ -26,6 +26,7 @@ class _MergeCapturingGh extends GhService {
     String repoPath,
     int number, {
     String method = 'merge',
+    bool deleteBranch = false,
   }) async {
     merges.add((number, method));
   }
@@ -208,7 +209,9 @@ void main() {
 
     await tester.tap(find.text('Add the parser'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(MacosPulldownButton).last);
+    // The merge-strategy pulldown is the first in the action bar; the "More"
+    // overflow pulldown is the last.
+    await tester.tap(find.byType(MacosPulldownButton).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Squash and merge'));
     await tester.pumpAndSettle();

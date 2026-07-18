@@ -1625,6 +1625,80 @@ void main() {
       ]);
     });
 
+    test('mergeMergeRequest sends should_remove_source_branch when asked',
+        () async {
+      await glab.mergeMergeRequest('/repo', 12, removeSourceBranch: true);
+      expect(exec.calls.single, [
+        'glab',
+        'api',
+        'projects/:id/merge_requests/12/merge',
+        '--method',
+        'PUT',
+        '-f',
+        'should_remove_source_branch=true',
+        '-i',
+      ]);
+    });
+
+    test('closeMergeRequest / reopenMergeRequest PUT a state_event', () async {
+      await glab.closeMergeRequest('/repo', 12);
+      expect(exec.calls.single, [
+        'glab',
+        'api',
+        'projects/:id/merge_requests/12',
+        '--method',
+        'PUT',
+        '-f',
+        'state_event=close',
+        '-i',
+      ]);
+      exec.calls.clear();
+      await glab.reopenMergeRequest('/repo', 12);
+      expect(exec.calls.single, [
+        'glab',
+        'api',
+        'projects/:id/merge_requests/12',
+        '--method',
+        'PUT',
+        '-f',
+        'state_event=reopen',
+        '-i',
+      ]);
+    });
+
+    test('setMergeRequestDraft toggles --draft / --ready via the subcommand',
+        () async {
+      await glab.setMergeRequestDraft('/repo', 12, draft: true);
+      expect(exec.calls.single, ['glab', 'mr', 'update', '12', '--draft']);
+      exec.calls.clear();
+      await glab.setMergeRequestDraft('/repo', 12, draft: false);
+      expect(exec.calls.single, ['glab', 'mr', 'update', '12', '--ready']);
+    });
+
+    test('commentOnMergeRequest notes the body as a discrete token', () async {
+      await glab.commentOnMergeRequest('/repo', 12, 'looks good = ship it');
+      expect(exec.calls.single, [
+        'glab',
+        'mr',
+        'note',
+        '12',
+        '--message',
+        'looks good = ship it',
+      ]);
+    });
+
+    test('editMergeRequest sends only the provided fields', () async {
+      await glab.editMergeRequest('/repo', 12, title: 'New title');
+      expect(exec.calls.single, [
+        'glab',
+        'mr',
+        'update',
+        '12',
+        '--title',
+        'New title',
+      ]);
+    });
+
     test(
       'read endpoints pass an explicit --method GET (never implicit POST)',
       () async {

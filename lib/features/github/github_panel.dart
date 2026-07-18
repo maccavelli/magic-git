@@ -14,6 +14,7 @@ import '../common/branch_switch.dart';
 import '../common/buttons.dart';
 import '../common/context_menu.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/prompt_text_sheet.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/show_more_row.dart';
 import '../forge/forge_inbox.dart';
@@ -71,6 +72,13 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   final Set<int> _rerunningRuns = {};
   final Set<int> _checkingOutPrs = {};
 
+  /// Re-entry guard shared by the secondary PR mutations (close / ready-draft /
+  /// comment / request-changes / edit), keyed by PR number. These don't each
+  /// need a dedicated spinner like approve/merge do; the guard just stops a
+  /// second invocation (from the row menu and the detail "More" pulldown both)
+  /// while one is mid-flight.
+  final Set<int> _busyPrs = {};
+
   /// The row right-click menu (one controller for the whole panel; the entries
   /// close over whichever row was clicked). Disposed with the State.
   final ContextMenuOverlay _menu = ContextMenuOverlay();
@@ -98,6 +106,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       _mergingPrs.clear();
       _rerunningRuns.clear();
       _checkingOutPrs.clear();
+      _busyPrs.clear();
       _lastRuns = null;
       _runByBranch = const {};
     } else if (oldWidget.isActive && !widget.isActive) {
@@ -427,10 +436,11 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     );
   }
 
-  /// The PR row's right-click menu. Phase 1: only actions the service layer
-  /// already supports — navigate (open/copy), local (checkout), and the same
-  /// approve/merge the detail pane offers. Merge variants grey out for a draft
-  /// (GitHub rejects merging a draft), matching [_mergeButton].
+  /// The PR row's right-click menu — grouped navigate → local → collaborate →
+  /// state-change, the last group ending in destructive Close. Merge variants
+  /// grey out for a draft (GitHub rejects merging a draft), matching
+  /// [_mergeButton]; the same actions are mirrored in the detail pane
+  /// (primary trio as buttons, the rest under its "More" pulldown).
   List<ContextMenuEntry> _prMenu(PullRequest pr) {
     const draftTip =
         "Draft pull requests can't be merged — mark it ready first.";
@@ -460,10 +470,33 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       ),
       const ContextMenuDivider(),
       ContextMenuItem(
+        icon: CupertinoIcons.text_bubble,
+        label: 'Comment…',
+        onTap: () => _commentPr(pr.number),
+      ),
+      ContextMenuItem(
         icon: CupertinoIcons.checkmark_seal,
         label: 'Approve',
         onTap: () => _approve(pr.number),
       ),
+      ContextMenuItem(
+        icon: CupertinoIcons.exclamationmark_bubble,
+        label: 'Request changes…',
+        onTap: () => _requestChangesPr(pr.number),
+      ),
+      ContextMenuItem(
+        icon: pr.draft
+            ? CupertinoIcons.checkmark_circle
+            : CupertinoIcons.arrow_uturn_left,
+        label: pr.draft ? 'Mark ready for review' : 'Convert to draft',
+        onTap: () => _setPrDraft(pr.number, draft: !pr.draft),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.pencil,
+        label: 'Edit title…',
+        onTap: () => _editPrTitle(pr),
+      ),
+      const ContextMenuDivider(),
       ContextMenuItem(
         icon: CupertinoIcons.arrow_merge,
         label: 'Merge',
@@ -484,6 +517,12 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         enabled: !pr.draft,
         disabledTooltip: draftTip,
         onTap: () => _merge(pr.number, method: 'rebase'),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.xmark_circle,
+        label: 'Close',
+        iconColor: MacosColors.systemRedColor,
+        onTap: () => _closePr(pr.number),
       ),
     ];
   }
@@ -626,6 +665,38 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
           const ProgressCircle()
         else
           _mergeButton(pr),
+        _prMorePulldown(pr),
+      ],
+    );
+  }
+
+  /// The detail pane's overflow for the secondary PR actions — the same set as
+  /// the row's right-click menu below the primary trio, so the detail pane is a
+  /// full action surface without a wall of buttons.
+  Widget _prMorePulldown(PullRequest pr) {
+    return MacosPulldownButton(
+      title: 'More',
+      items: [
+        MacosPulldownMenuItem(
+          title: const Text('Comment…'),
+          onTap: () => _commentPr(pr.number),
+        ),
+        MacosPulldownMenuItem(
+          title: const Text('Request changes…'),
+          onTap: () => _requestChangesPr(pr.number),
+        ),
+        MacosPulldownMenuItem(
+          title: Text(pr.draft ? 'Mark ready for review' : 'Convert to draft'),
+          onTap: () => _setPrDraft(pr.number, draft: !pr.draft),
+        ),
+        MacosPulldownMenuItem(
+          title: const Text('Edit title…'),
+          onTap: () => _editPrTitle(pr),
+        ),
+        MacosPulldownMenuItem(
+          title: const Text('Close'),
+          onTap: () => _closePr(pr.number),
+        ),
       ],
     );
   }
@@ -734,18 +805,28 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       'rebase' => 'Rebase-merge',
       _ => 'Merge',
     };
-    final ok = await confirmAction(
+    // The delete-branch choice IS the confirm: the primary keeps the head
+    // branch, the secondary merges and deletes it (the web UI's "delete
+    // branch after merge" checkbox). Null → cancelled.
+    final deleteBranch = await chooseAction<bool>(
       context,
       title: 'Merge pull request',
       message: '$verb #$number into its base branch?',
-      confirmLabel: verb,
+      primaryLabel: verb,
+      primaryValue: false,
+      secondary: [('$verb & delete branch', true)],
     );
-    if (!ok || !mounted) return;
+    if (deleteBranch == null || !mounted) return;
     setState(() => _mergingPrs.add(number));
     final gh = ref.read(ghServiceProvider);
     final success = await runAction(
       context,
-      () => gh.mergePullRequest(repoPath, number, method: method),
+      () => gh.mergePullRequest(
+        repoPath,
+        number,
+        method: method,
+        deleteBranch: deleteBranch,
+      ),
     );
     if (!mounted) return;
     setState(() => _mergingPrs.remove(number));
@@ -753,6 +834,112 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       setState(() => _sel = const ForgeNothingSel());
       ref.invalidate(pullRequestsProvider(repoPath));
     }
+  }
+
+  Future<void> _closePr(int number) async {
+    if (_busyPrs.contains(number)) return;
+    final repoPath = this.repoPath;
+    final ok = await confirmAction(
+      context,
+      title: 'Close pull request',
+      message: 'Close #$number without merging? You can reopen it later.',
+      confirmLabel: 'Close',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    setState(() => _busyPrs.add(number));
+    final gh = ref.read(ghServiceProvider);
+    final success = await runAction(
+      context,
+      () => gh.closePullRequest(repoPath, number),
+    );
+    if (!mounted) return;
+    setState(() => _busyPrs.remove(number));
+    if (success) {
+      // Closed → drops out of the open-PR list; clear the now-stale detail.
+      setState(() => _sel = const ForgeNothingSel());
+      ref.invalidate(pullRequestsProvider(repoPath));
+    }
+  }
+
+  Future<void> _setPrDraft(int number, {required bool draft}) async {
+    if (_busyPrs.contains(number)) return;
+    final repoPath = this.repoPath;
+    setState(() => _busyPrs.add(number));
+    final gh = ref.read(ghServiceProvider);
+    final success = await runAction(
+      context,
+      () => gh.setPullRequestDraft(repoPath, number, draft: draft),
+    );
+    if (!mounted) return;
+    setState(() => _busyPrs.remove(number));
+    if (success) ref.invalidate(pullRequestsProvider(repoPath));
+  }
+
+  Future<void> _commentPr(int number) async {
+    if (_busyPrs.contains(number)) return;
+    final repoPath = this.repoPath;
+    final body = await promptText(
+      context,
+      'Comment on #$number',
+      placeholder: 'Write a comment…',
+      description: 'Adds a comment to the pull request on GitHub.',
+      confirmLabel: 'Comment',
+    );
+    if (body == null || !mounted) return;
+    setState(() => _busyPrs.add(number));
+    final gh = ref.read(ghServiceProvider);
+    await runAction(
+      context,
+      () => gh.commentOnPullRequest(repoPath, number, body),
+    );
+    if (!mounted) return;
+    setState(() => _busyPrs.remove(number));
+    // A comment changes no list-visible field — nothing to invalidate.
+  }
+
+  Future<void> _requestChangesPr(int number) async {
+    if (_busyPrs.contains(number)) return;
+    final repoPath = this.repoPath;
+    final body = await promptText(
+      context,
+      'Request changes on #$number',
+      placeholder: 'What needs to change?',
+      description:
+          'Submits a "request changes" review on GitHub (a comment is required).',
+      confirmLabel: 'Request changes',
+    );
+    if (body == null || !mounted) return;
+    setState(() => _busyPrs.add(number));
+    final gh = ref.read(ghServiceProvider);
+    await runAction(
+      context,
+      () => gh.requestChangesOnPullRequest(repoPath, number, body),
+    );
+    if (!mounted) return;
+    setState(() => _busyPrs.remove(number));
+  }
+
+  Future<void> _editPrTitle(PullRequest pr) async {
+    if (_busyPrs.contains(pr.number)) return;
+    final repoPath = this.repoPath;
+    final title = await promptText(
+      context,
+      'Edit title of #${pr.number}',
+      placeholder: 'Pull request title',
+      initial: pr.title,
+      confirmLabel: 'Save',
+    );
+    if (title == null || title == pr.title || !mounted) return;
+    setState(() => _busyPrs.add(pr.number));
+    final gh = ref.read(ghServiceProvider);
+    final success = await runAction(
+      context,
+      () => gh.editPullRequest(repoPath, pr.number, title: title),
+    );
+    if (!mounted) return;
+    setState(() => _busyPrs.remove(pr.number));
+    if (success) ref.invalidate(pullRequestsProvider(repoPath));
   }
 
   /// Checks out the PR's branch (`gh pr checkout`) behind the dirty-tree

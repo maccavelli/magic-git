@@ -32,6 +32,7 @@ class _MergeCapturingGh extends GhService {
     String repoPath,
     int number, {
     String method = 'merge',
+    bool deleteBranch = false,
   }) async {
     merges.add((number, method));
   }
@@ -46,8 +47,72 @@ class _MergeCapturingGlab extends GlabService {
     String repoPath,
     int iid, {
     bool squash = false,
+    bool removeSourceBranch = false,
   }) async {
     merges.add((iid, squash));
+  }
+}
+
+/// Captures the Phase-2 GitHub write actions.
+class _Phase2Gh extends GhService {
+  _Phase2Gh() : super(SSHCommandExecutor(SSHClientManager()));
+  final merges = <(int, String, bool)>[]; // number, method, deleteBranch
+  final closed = <int>[];
+  final draftSet = <(int, bool)>[]; // number, draft
+  final comments = <(int, String)>[];
+
+  @override
+  Future<void> mergePullRequest(
+    String repoPath,
+    int number, {
+    String method = 'merge',
+    bool deleteBranch = false,
+  }) async {
+    merges.add((number, method, deleteBranch));
+  }
+
+  @override
+  Future<void> closePullRequest(String repoPath, int number) async {
+    closed.add(number);
+  }
+
+  @override
+  Future<void> setPullRequestDraft(
+    String repoPath,
+    int number, {
+    required bool draft,
+  }) async {
+    draftSet.add((number, draft));
+  }
+
+  @override
+  Future<void> commentOnPullRequest(
+    String repoPath,
+    int number,
+    String body,
+  ) async {
+    comments.add((number, body));
+  }
+}
+
+/// Captures the Phase-2 GitLab write actions.
+class _Phase2Glab extends GlabService {
+  _Phase2Glab() : super(SSHCommandExecutor(SSHClientManager()));
+  final closed = <int>[];
+  final comments = <(int, String)>[];
+
+  @override
+  Future<void> closeMergeRequest(String repoPath, int iid) async {
+    closed.add(iid);
+  }
+
+  @override
+  Future<void> commentOnMergeRequest(
+    String repoPath,
+    int iid,
+    String body,
+  ) async {
+    comments.add((iid, body));
   }
 }
 
@@ -223,5 +288,74 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(glab.merges, [(7, false)]);
+  });
+
+  testWidgets('the merge dialog offers delete-branch as the second choice', (
+    tester,
+  ) async {
+    final gh = _Phase2Gh();
+    await _pumpGithub(tester, gh: gh);
+
+    await tester.tap(find.text('Add the parser'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Merge'));
+    await tester.pumpAndSettle();
+    // The secondary choice merges and deletes the head branch.
+    await tester.tap(find.text('Merge & delete branch'));
+    await tester.pumpAndSettle();
+
+    expect(gh.merges, [(7, 'merge', true)]);
+  });
+
+  testWidgets('closing a PR from the menu confirms, then closes', (
+    tester,
+  ) async {
+    final gh = _Phase2Gh();
+    await _pumpGithub(tester, gh: gh);
+
+    await tester.tap(find.text('Add the parser'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+
+    expect(gh.closed, isEmpty, reason: 'nothing before the confirm');
+    await tester.tap(find.text('Close')); // the confirm button
+    await tester.pumpAndSettle();
+
+    expect(gh.closed, [7]);
+  });
+
+  testWidgets('converting a PR to draft needs no confirm', (tester) async {
+    final gh = _Phase2Gh();
+    await _pumpGithub(tester, gh: gh);
+
+    await tester.tap(find.text('Add the parser'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    // The open, non-draft PR offers "Convert to draft" (no confirm dialog).
+    await tester.tap(find.text('Convert to draft'));
+    await tester.pumpAndSettle();
+
+    expect(gh.draftSet, [(7, true)]);
+  });
+
+  testWidgets('commenting on an MR prompts for a body, then posts it', (
+    tester,
+  ) async {
+    final glab = _Phase2Glab();
+    await _pumpGitlab(tester, glab: glab);
+
+    await tester.tap(find.text('Add the parser'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Comment…'));
+    await tester.pumpAndSettle();
+
+    // The prompt sheet's field is the last MacosTextField (the list filter is
+    // the first).
+    await tester.enterText(find.byType(MacosTextField).last, 'Looks good');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Comment')); // the sheet's confirm button
+    await tester.pumpAndSettle();
+
+    expect(glab.comments, [(7, 'Looks good')]);
   });
 }

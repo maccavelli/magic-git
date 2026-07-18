@@ -385,6 +385,83 @@ void main() {
       expect(exec.calls.single, ['gh', 'pr', 'merge', '6', '--squash']);
     });
 
+    test('mergePullRequest adds --delete-branch only when asked', () async {
+      await gh.mergePullRequest('/repo', 5, deleteBranch: true);
+      expect(exec.calls.single, [
+        'gh',
+        'pr',
+        'merge',
+        '5',
+        '--merge',
+        '--delete-branch',
+      ]);
+      exec.calls.clear();
+      await gh.mergePullRequest('/repo', 5, method: 'squash', deleteBranch: true);
+      expect(exec.calls.single, [
+        'gh',
+        'pr',
+        'merge',
+        '5',
+        '--squash',
+        '--delete-branch',
+      ]);
+    });
+
+    test('closePullRequest / reopenPullRequest', () async {
+      await gh.closePullRequest('/repo', 5);
+      expect(exec.calls.single, ['gh', 'pr', 'close', '5']);
+      exec.calls.clear();
+      await gh.reopenPullRequest('/repo', 5);
+      expect(exec.calls.single, ['gh', 'pr', 'reopen', '5']);
+    });
+
+    test('setPullRequestDraft: --undo converts to draft, else marks ready',
+        () async {
+      await gh.setPullRequestDraft('/repo', 5, draft: false);
+      expect(exec.calls.single, ['gh', 'pr', 'ready', '5']);
+      exec.calls.clear();
+      await gh.setPullRequestDraft('/repo', 5, draft: true);
+      expect(exec.calls.single, ['gh', 'pr', 'ready', '5', '--undo']);
+    });
+
+    test('commentOnPullRequest passes the body as a discrete token', () async {
+      await gh.commentOnPullRequest('/repo', 5, 'looks good = ship it');
+      expect(exec.calls.single, [
+        'gh',
+        'pr',
+        'comment',
+        '5',
+        '--body',
+        'looks good = ship it',
+      ]);
+    });
+
+    test('requestChangesOnPullRequest sends --request-changes with a body',
+        () async {
+      await gh.requestChangesOnPullRequest('/repo', 5, 'needs tests');
+      expect(exec.calls.single, [
+        'gh',
+        'pr',
+        'review',
+        '5',
+        '--request-changes',
+        '--body',
+        'needs tests',
+      ]);
+    });
+
+    test('editPullRequest sends only the provided fields', () async {
+      await gh.editPullRequest('/repo', 5, title: 'New title');
+      expect(exec.calls.single, [
+        'gh',
+        'pr',
+        'edit',
+        '5',
+        '--title',
+        'New title',
+      ]);
+    });
+
     test('checkoutPullRequest', () async {
       await gh.checkoutPullRequest('/repo', 9);
       expect(exec.calls.single, ['gh', 'pr', 'checkout', '9']);

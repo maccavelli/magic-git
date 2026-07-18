@@ -46,6 +46,7 @@ class _MergeCapturingGlab extends GlabService {
     String repoPath,
     int iid, {
     bool squash = false,
+    bool removeSourceBranch = false,
   }) async {
     merges.add((iid, squash));
   }
@@ -240,7 +241,9 @@ void main() {
 
     await tester.tap(find.text('Add the parser'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byType(MacosPulldownButton).last);
+    // The merge-strategy pulldown is the first in the action bar; the "More"
+    // overflow pulldown is the last.
+    await tester.tap(find.byType(MacosPulldownButton).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Squash and merge'));
     await tester.pumpAndSettle();

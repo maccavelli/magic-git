@@ -685,11 +685,14 @@ class GhService {
 
   /// Merges a pull request via `gh pr merge`. [method] is `merge` (default),
   /// `squash`, or `rebase`; passing a method flag makes `gh` run
-  /// non-interactively.
+  /// non-interactively. [deleteBranch] adds `--delete-branch`, which removes
+  /// the (now-merged) head branch on the remote and locally — the web UI's
+  /// "delete branch after merge" checkbox.
   Future<void> mergePullRequest(
     String repoPath,
     int number, {
     String method = 'merge',
+    bool deleteBranch = false,
   }) async {
     final flag = switch (method) {
       'squash' => '--squash',
@@ -698,11 +701,130 @@ class GhService {
     };
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: ['gh', 'pr', 'merge', '$number', flag],
+      gitArgs: [
+        'gh',
+        'pr',
+        'merge',
+        '$number',
+        flag,
+        if (deleteBranch) '--delete-branch',
+      ],
       lane: ExecLane.sync,
     );
     if (!result.isSuccess) {
       throw GhException('gh pr merge failed', result);
+    }
+  }
+
+  /// Closes an open pull request via `gh pr close` (reversible — see
+  /// [reopenPullRequest]).
+  Future<void> closePullRequest(String repoPath, int number) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['gh', 'pr', 'close', '$number'],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh pr close failed', result);
+    }
+  }
+
+  /// Reopens a closed pull request via `gh pr reopen`.
+  Future<void> reopenPullRequest(String repoPath, int number) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['gh', 'pr', 'reopen', '$number'],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh pr reopen failed', result);
+    }
+  }
+
+  /// Marks a PR ready for review, or converts it back to a draft, via
+  /// `gh pr ready [<number>] [--undo]`. [draft] true converts a ready PR back
+  /// to draft (`--undo`); false marks a draft ready.
+  Future<void> setPullRequestDraft(
+    String repoPath,
+    int number, {
+    required bool draft,
+  }) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['gh', 'pr', 'ready', '$number', if (draft) '--undo'],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh pr ready failed', result);
+    }
+  }
+
+  /// Adds a comment to a PR via `gh pr comment --body`. The body is a discrete
+  /// argv token (shell-escaped), so it carries newlines/`=`/markdown intact.
+  Future<void> commentOnPullRequest(
+    String repoPath,
+    int number,
+    String body,
+  ) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['gh', 'pr', 'comment', '$number', '--body', body],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh pr comment failed', result);
+    }
+  }
+
+  /// Submits a "request changes" review via `gh pr review --request-changes`.
+  /// GitHub requires a non-empty body for this review type (and rejects
+  /// requesting changes on your own PR — both surface as a [GhException]).
+  Future<void> requestChangesOnPullRequest(
+    String repoPath,
+    int number,
+    String body,
+  ) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: [
+        'gh',
+        'pr',
+        'review',
+        '$number',
+        '--request-changes',
+        '--body',
+        body,
+      ],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh pr review --request-changes failed', result);
+    }
+  }
+
+  /// Edits a PR's title and/or description via `gh pr edit`. Only the provided
+  /// fields are sent, so a title-only edit leaves the body untouched.
+  Future<void> editPullRequest(
+    String repoPath,
+    int number, {
+    String? title,
+    String? body,
+  }) async {
+    final args = <String>[
+      'gh',
+      'pr',
+      'edit',
+      '$number',
+      if (title != null) ...['--title', title],
+      if (body != null) ...['--body', body],
+    ];
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: args,
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh pr edit failed', result);
     }
   }
 

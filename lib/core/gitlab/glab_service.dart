@@ -1156,18 +1156,117 @@ query($path: ID!) {
   /// commits are squashed into a single commit on merge (`squash=true` — the
   /// API's only per-merge strategy knob; a rebase-style merge is a
   /// project-level setting on GitLab, not a per-request choice, so unlike
-  /// `gh pr merge` there is no rebase flag here).
+  /// `gh pr merge` there is no rebase flag here). [removeSourceBranch] adds
+  /// `should_remove_source_branch=true` — the web UI's "delete source branch"
+  /// checkbox.
+  ///
+  /// This goes through the REST `PUT .../merge` (never the `glab mr merge`
+  /// subcommand), which merges immediately — the subcommand's `--auto-merge`
+  /// defaults to *true* (merge-when-pipeline-succeeds), a footgun this path
+  /// sidesteps entirely.
   Future<void> mergeMergeRequest(
     String repoPath,
     int iid, {
     bool squash = false,
+    bool removeSourceBranch = false,
   }) async {
     await api(
       repoPath,
       'projects/:id/merge_requests/$iid/merge',
       method: 'PUT',
-      fields: [if (squash) 'squash=true'],
+      fields: [
+        if (squash) 'squash=true',
+        if (removeSourceBranch) 'should_remove_source_branch=true',
+      ],
     );
+  }
+
+  /// Closes an open merge request (reversible — see [reopenMergeRequest]).
+  /// REST `PUT .../merge_requests/:iid` with `state_event=close` — a
+  /// text-free, side-effect-free boolean field, so the `-f key=value`
+  /// fragility that pushes text-bearing mutations to subcommands doesn't apply.
+  Future<void> closeMergeRequest(String repoPath, int iid) async {
+    await api(
+      repoPath,
+      'projects/:id/merge_requests/$iid',
+      method: 'PUT',
+      fields: ['state_event=close'],
+    );
+  }
+
+  /// Reopens a closed merge request (REST `state_event=reopen`).
+  Future<void> reopenMergeRequest(String repoPath, int iid) async {
+    await api(
+      repoPath,
+      'projects/:id/merge_requests/$iid',
+      method: 'PUT',
+      fields: ['state_event=reopen'],
+    );
+  }
+
+  /// Marks an MR ready for review, or converts it back to a draft, via
+  /// `glab mr update <iid> --ready | --draft`. GitLab models draft as a
+  /// `Draft:` title prefix; the subcommand owns that title rewrite, which is
+  /// why this uses it rather than a REST title edit.
+  Future<void> setMergeRequestDraft(
+    String repoPath,
+    int iid, {
+    required bool draft,
+  }) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['glab', 'mr', 'update', '$iid', if (draft) '--draft' else '--ready'],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GlabException('glab mr update (draft) failed', result);
+    }
+  }
+
+  /// Adds a comment to an MR via `glab mr note --message`. A subcommand (not
+  /// REST `-f body=…`) so the message rides as a discrete argv token and
+  /// carries newlines/`=`/markdown intact — the same reasoning as
+  /// [createMergeRequest].
+  Future<void> commentOnMergeRequest(
+    String repoPath,
+    int iid,
+    String body,
+  ) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['glab', 'mr', 'note', '$iid', '--message', body],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GlabException('glab mr note failed', result);
+    }
+  }
+
+  /// Edits an MR's title and/or description via `glab mr update`. Subcommand
+  /// (not REST `-f`) so the values ride as discrete argv tokens. Only the
+  /// provided fields are sent.
+  Future<void> editMergeRequest(
+    String repoPath,
+    int iid, {
+    String? title,
+    String? description,
+  }) async {
+    final args = <String>[
+      'glab',
+      'mr',
+      'update',
+      '$iid',
+      if (title != null) ...['--title', title],
+      if (description != null) ...['--description', description],
+    ];
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: args,
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GlabException('glab mr update failed', result);
+    }
   }
 
   Future<dynamic> _runJson(

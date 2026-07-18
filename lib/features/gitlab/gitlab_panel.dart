@@ -14,6 +14,7 @@ import '../common/branch_switch.dart';
 import '../common/buttons.dart';
 import '../common/context_menu.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/prompt_text_sheet.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/show_more_row.dart';
 import '../forge/forge_inbox.dart';
@@ -79,6 +80,10 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   final Set<int> _retryingPipelines = {};
   final Set<int> _checkingOutMrs = {};
 
+  /// Re-entry guard shared by the secondary MR mutations (close / ready-draft /
+  /// comment / edit), keyed by MR iid — mirrors the GitHub panel's `_busyPrs`.
+  final Set<int> _busyMrs = {};
+
   /// The row right-click menu (one controller for the whole panel; the entries
   /// close over whichever row was clicked). Disposed with the State.
   final ContextMenuOverlay _menu = ContextMenuOverlay();
@@ -111,6 +116,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       _mergingMrs.clear();
       _retryingPipelines.clear();
       _checkingOutMrs.clear();
+      _busyMrs.clear();
       _lastPipelines = null;
       _pipeByRef = const {};
     } else if (oldWidget.isActive && !widget.isActive) {
@@ -465,11 +471,13 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     );
   }
 
-  /// The MR row's right-click menu. Phase 1: only actions the service layer
-  /// already supports — navigate (open/copy), local (checkout), and the same
-  /// approve/merge the detail pane offers. Merge greys out for a draft (GitLab
-  /// rejects merging a draft), matching [_mergeButton]. GitLab has no per-merge
-  /// rebase (that's a project setting), so squash is the only merge variant.
+  /// The MR row's right-click menu — grouped navigate → local → collaborate →
+  /// state-change, ending in destructive Close. Merge greys out for a draft
+  /// (GitLab rejects merging a draft), matching [_mergeButton]; GitLab has no
+  /// per-merge rebase (project setting) so squash is the only merge variant,
+  /// and no clean `glab` "request changes", so that GitHub-only action is
+  /// absent here. The same actions mirror in the detail pane (primary trio as
+  /// buttons, the rest under its "More" pulldown).
   List<ContextMenuEntry> _mrMenu(MergeRequest mr) {
     const draftTip =
         "Draft merge requests can't be merged — mark it ready first.";
@@ -499,10 +507,28 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       ),
       const ContextMenuDivider(),
       ContextMenuItem(
+        icon: CupertinoIcons.text_bubble,
+        label: 'Comment…',
+        onTap: () => _commentMr(mr.iid),
+      ),
+      ContextMenuItem(
         icon: CupertinoIcons.checkmark_seal,
         label: 'Approve',
         onTap: () => _approve(mr.iid),
       ),
+      ContextMenuItem(
+        icon: mr.draft
+            ? CupertinoIcons.checkmark_circle
+            : CupertinoIcons.arrow_uturn_left,
+        label: mr.draft ? 'Mark ready for review' : 'Convert to draft',
+        onTap: () => _setMrDraft(mr.iid, draft: !mr.draft),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.pencil,
+        label: 'Edit title…',
+        onTap: () => _editMrTitle(mr),
+      ),
+      const ContextMenuDivider(),
       ContextMenuItem(
         icon: CupertinoIcons.arrow_merge,
         label: 'Merge',
@@ -516,6 +542,12 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         enabled: !mr.draft,
         disabledTooltip: draftTip,
         onTap: () => _merge(mr.iid, squash: true),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.xmark_circle,
+        label: 'Close',
+        iconColor: MacosColors.systemRedColor,
+        onTap: () => _closeMr(mr.iid),
       ),
     ];
   }
@@ -662,6 +694,34 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
           const ProgressCircle()
         else
           _mergeButton(mr),
+        _mrMorePulldown(mr),
+      ],
+    );
+  }
+
+  /// The detail pane's overflow for the secondary MR actions — the same set as
+  /// the row's right-click menu below the primary trio, so the detail pane is a
+  /// full action surface without a wall of buttons.
+  Widget _mrMorePulldown(MergeRequest mr) {
+    return MacosPulldownButton(
+      title: 'More',
+      items: [
+        MacosPulldownMenuItem(
+          title: const Text('Comment…'),
+          onTap: () => _commentMr(mr.iid),
+        ),
+        MacosPulldownMenuItem(
+          title: Text(mr.draft ? 'Mark ready for review' : 'Convert to draft'),
+          onTap: () => _setMrDraft(mr.iid, draft: !mr.draft),
+        ),
+        MacosPulldownMenuItem(
+          title: const Text('Edit title…'),
+          onTap: () => _editMrTitle(mr),
+        ),
+        MacosPulldownMenuItem(
+          title: const Text('Close'),
+          onTap: () => _closeMr(mr.iid),
+        ),
       ],
     );
   }
@@ -776,20 +836,30 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     if (_mergingMrs.contains(iid)) return; // already in flight
     final repoPath = this.repoPath; // see _approve
     final verb = squash ? 'Squash-merge' : 'Merge';
-    final ok = await confirmAction(
+    // The delete-source-branch choice IS the confirm: the primary keeps the
+    // source branch, the secondary merges and removes it (the web UI's "delete
+    // source branch" checkbox). Null → cancelled.
+    final removeSource = await chooseAction<bool>(
       context,
       title: 'Merge merge request',
       message: '$verb !$iid into its target branch?',
-      confirmLabel: verb,
+      primaryLabel: verb,
+      primaryValue: false,
+      secondary: [('$verb & delete source branch', true)],
     );
-    if (!ok || !mounted) return;
-    // Guard added after confirm so its spinner means "merging", not "confirm
-    // dialog open" — see _approve.
+    if (removeSource == null || !mounted) return;
+    // Guard added after the choice so its spinner means "merging", not "dialog
+    // open" — see _approve.
     setState(() => _mergingMrs.add(iid));
     final glab = ref.read(glabServiceProvider);
     final success = await runAction(
       context,
-      () => glab.mergeMergeRequest(repoPath, iid, squash: squash),
+      () => glab.mergeMergeRequest(
+        repoPath,
+        iid,
+        squash: squash,
+        removeSourceBranch: removeSource,
+      ),
     );
     if (!mounted) return;
     setState(() => _mergingMrs.remove(iid));
@@ -798,6 +868,90 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       setState(() => _sel = const ForgeNothingSel());
       ref.invalidate(mergeRequestsProvider(repoPath));
     }
+  }
+
+  Future<void> _closeMr(int iid) async {
+    if (_busyMrs.contains(iid)) return;
+    final repoPath = this.repoPath;
+    final ok = await confirmAction(
+      context,
+      title: 'Close merge request',
+      message: 'Close !$iid without merging? You can reopen it later.',
+      confirmLabel: 'Close',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    setState(() => _busyMrs.add(iid));
+    final glab = ref.read(glabServiceProvider);
+    final success = await runAction(
+      context,
+      () => glab.closeMergeRequest(repoPath, iid),
+    );
+    if (!mounted) return;
+    setState(() => _busyMrs.remove(iid));
+    if (success) {
+      // Closed → drops out of the open-MR list; clear the now-stale detail.
+      setState(() => _sel = const ForgeNothingSel());
+      ref.invalidate(mergeRequestsProvider(repoPath));
+    }
+  }
+
+  Future<void> _setMrDraft(int iid, {required bool draft}) async {
+    if (_busyMrs.contains(iid)) return;
+    final repoPath = this.repoPath;
+    setState(() => _busyMrs.add(iid));
+    final glab = ref.read(glabServiceProvider);
+    final success = await runAction(
+      context,
+      () => glab.setMergeRequestDraft(repoPath, iid, draft: draft),
+    );
+    if (!mounted) return;
+    setState(() => _busyMrs.remove(iid));
+    if (success) ref.invalidate(mergeRequestsProvider(repoPath));
+  }
+
+  Future<void> _commentMr(int iid) async {
+    if (_busyMrs.contains(iid)) return;
+    final repoPath = this.repoPath;
+    final body = await promptText(
+      context,
+      'Comment on !$iid',
+      placeholder: 'Write a comment…',
+      description: 'Adds a comment to the merge request on GitLab.',
+      confirmLabel: 'Comment',
+    );
+    if (body == null || !mounted) return;
+    setState(() => _busyMrs.add(iid));
+    final glab = ref.read(glabServiceProvider);
+    await runAction(
+      context,
+      () => glab.commentOnMergeRequest(repoPath, iid, body),
+    );
+    if (!mounted) return;
+    setState(() => _busyMrs.remove(iid));
+    // A comment changes no list-visible field — nothing to invalidate.
+  }
+
+  Future<void> _editMrTitle(MergeRequest mr) async {
+    if (_busyMrs.contains(mr.iid)) return;
+    final repoPath = this.repoPath;
+    final title = await promptText(
+      context,
+      'Edit title of !${mr.iid}',
+      placeholder: 'Merge request title',
+      initial: mr.title,
+      confirmLabel: 'Save',
+    );
+    if (title == null || title == mr.title || !mounted) return;
+    setState(() => _busyMrs.add(mr.iid));
+    final glab = ref.read(glabServiceProvider);
+    final success = await runAction(
+      context,
+      () => glab.editMergeRequest(repoPath, mr.iid, title: title),
+    );
+    if (!mounted) return;
+    setState(() => _busyMrs.remove(mr.iid));
+    if (success) ref.invalidate(mergeRequestsProvider(repoPath));
   }
 
   /// Checks out the MR's source branch (`glab mr checkout`) behind the dirty-tree
