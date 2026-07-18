@@ -2815,6 +2815,20 @@ final refsProvider = FutureProvider.autoDispose.family<List<GitRef>, String>((
   return ref.watch(gitServiceProvider).refs(repoPath);
 });
 
+/// Local branches fully merged into the current HEAD — the source of the
+/// Branches tab's grey "merged" (already-landed) badge. Watches [refsProvider]
+/// so it re-runs whenever the ref set (and thus HEAD) moves; returns an empty
+/// set on any error so a badge never breaks the list.
+final mergedBranchesProvider = FutureProvider.autoDispose
+    .family<Set<String>, String>((ref, repoPath) async {
+      ref.watch(refsProvider(repoPath));
+      try {
+        return await ref.watch(gitServiceProvider).mergedBranchNames(repoPath);
+      } catch (_) {
+        return const <String>{};
+      }
+    });
+
 /// The repo's *configured* remotes (`git remote`), e.g. `['origin']` — the
 /// canonical "does this repo have a remote" signal. NOT derivable from
 /// [refsProvider]: an empty repository (fresh create, clone of an empty

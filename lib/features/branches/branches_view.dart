@@ -1,10 +1,14 @@
 // hide OverlayVisibilityMode: MacosTextField takes macos_ui's own enum of
 // the same name (used by the filter bar's clear button).
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart' hide OverlayVisibilityMode;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:url_launcher/url_launcher.dart' show launchUrl;
 
+import '../../core/forge/branch_forge_status.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
@@ -27,9 +31,11 @@ import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
+import '../forge/forge_widgets.dart' show CiDot;
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'create_tag_sheet.dart';
+import 'pinned_branches.dart';
 
 /// Source-control pane: local branches (checkout/delete/create), remote-tracking
 /// branches, and tags. Stashes have their own top-level namespace (StashView).
@@ -101,6 +107,16 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   final ScrollController _branchScroll = ScrollController();
   final Map<String, GlobalKey> _rowKeys = {};
   final _menu = ContextMenuOverlay();
+
+  /// Forge signal fused per branch (open PR/MR + latest CI) and the set of
+  /// branches already merged into HEAD — both refreshed from providers in
+  /// [_content], both empty until (and unless) their lazy data lands.
+  Map<String, BranchForge> _forge = const {};
+  Set<String> _merged = const {};
+
+  /// Pinned (favorite) branch short-names for this repo — hoisted into their
+  /// own top section, refreshed from [pinnedBranchesProvider] in [_content].
+  Set<String> _pinned = const {};
 
   String get repoPath => widget.repoPath;
 
@@ -275,6 +291,17 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     Clipboard.setData(ClipboardData(text: name));
   }
 
+  void _togglePin(String branch) {
+    unawaited(
+      setPinnedBranch(
+        ref,
+        repoPath,
+        branch,
+        pinned: !_pinned.contains(branch),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final refsAsync = ref.watch(refsProvider(repoPath));
@@ -309,6 +336,11 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   }
 
   Widget _content(BuildContext context, GitService git, List<GitRef> refs) {
+    // Lazy forge + merged signal — never blocks the list; `.value` is null
+    // until (and unless) the providers resolve, then badges pop in.
+    _forge = ref.watch(branchForgeProvider(repoPath)).value ?? const {};
+    _merged = ref.watch(mergedBranchesProvider(repoPath)).value ?? const {};
+    _pinned = ref.watch(pinnedBranchesProvider(repoPath)).value ?? const {};
     final filter = _filterCtl.text.trim().toLowerCase();
     bool matches(GitRef r) =>
         filter.isEmpty || r.shortName.toLowerCase().contains(filter);
@@ -340,12 +372,18 @@ class _BranchesViewState extends ConsumerState<BranchesView>
               if (!remoteTags.containsKey(t.shortName)) t.shortName,
           ];
 
-    // Local branches: split active vs stale (current branch always active),
-    // preserving the incoming order within each.
+    // Local branches: pinned ones hoist into their own top section; the rest
+    // split active vs stale (current branch always active), preserving the
+    // incoming order within each.
+    final pinnedLocals = <GitRef>[];
     final activeLocals = <GitRef>[];
     final staleLocals = <GitRef>[];
     for (final b in locals) {
-      (_isStale(b) ? staleLocals : activeLocals).add(b);
+      if (_pinned.contains(b.shortName)) {
+        pinnedLocals.add(b);
+      } else {
+        (_isStale(b) ? staleLocals : activeLocals).add(b);
+      }
     }
 
     tags.sort((a, b) {
@@ -361,14 +399,22 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         : remotes.take(_collapsedRemoteCount).toList();
     final hiddenRemotes = remotes.length - visibleRemotes.length;
 
-    // ↑/↓ walk exactly the local branches on screen (active, plus stale when
-    // expanded) in display order.
-    _locals = [...activeLocals, if (_showStale || filter.isNotEmpty) ...staleLocals];
+    // ↑/↓ walk exactly the local branches on screen (pinned, then active, plus
+    // stale when expanded) in display order.
+    _locals = [
+      ...pinnedLocals,
+      ...activeLocals,
+      if (_showStale || filter.isNotEmpty) ...staleLocals,
+    ];
 
     // A flat descriptor list, not built Widgets — ListView.builder only ever
     // constructs the handful currently on-screen, so this stays cheap even for
     // a repo with hundreds of branches/tags.
     final rows = <_Row>[
+      if (pinnedLocals.isNotEmpty) ...[
+        _PinnedHeaderRow(pinnedLocals.length),
+        for (final b in pinnedLocals) _BranchRow(b, remote: false, depth: 0),
+      ],
       _LocalHeaderRow(
         sectionTitle('Local Branches', locals.length, totalLocals),
       ),
@@ -432,6 +478,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     required List<String> localOnly,
   }) =>
       switch (row) {
+        _PinnedHeaderRow(:final count) => _pinnedHeader(context, count),
         _LocalHeaderRow(:final title) => _localHeader(context, git, title),
         _RemotesHeaderRow(:final title) => _remotesHeader(context, git, title),
         _TagsHeaderRow(:final title) =>
@@ -509,6 +556,23 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   }
 
   // ---- Section headers -----------------------------------------------------
+
+  Widget _pinnedHeader(BuildContext context, int count) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 10, 4),
+      child: Row(
+        children: [
+          const MacosIcon(
+            CupertinoIcons.star_fill,
+            size: 12,
+            color: MacosColors.systemYellowColor,
+          ),
+          const SizedBox(width: 6),
+          _headerText(context, 'Pinned ($count)'),
+        ],
+      ),
+    );
+  }
 
   Widget _localHeader(BuildContext context, GitService git, String title) {
     return Padding(
@@ -733,9 +797,6 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     GitRef branch,
     int depth,
   ) {
-    final typography = MacosTheme.of(context).typography;
-    final selected = _selectedRef == branch.name;
-    final elsewhere = branch.elsewhereWorktreePath;
     // In grouped mode the branch shows only its leaf segment (the folder rows
     // carry the prefix); flat mode shows the full short name.
     final label = _grouped && branch.shortName.contains('/')
@@ -743,9 +804,51 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         : branch.shortName;
     return KeyedSubtree(
       key: _rowKeyFor(branch.name),
-      // Immediate (mouse-first) drag — drop a branch on the Worktrees tab to
-      // spin up a worktree, or on Forge for a PR/MR.
-      child: DragItemDraggable(
+      // The current branch is a drop target: dropping another branch on it
+      // offers merge-into / rebase-onto (see [_dropOnCurrent]). Only HEAD
+      // accepts, so both operations act on the checked-out branch.
+      child: DragTarget<DragItem>(
+        onWillAcceptWithDetails: (d) =>
+            branch.isHead &&
+            d.data is DragRef &&
+            (d.data as DragRef).ref.name != branch.name,
+        onAcceptWithDetails: (d) => _dropOnCurrent(
+          git,
+          source: (d.data as DragRef).ref,
+          current: branch,
+        ),
+        builder: (context, candidate, rejected) {
+          final hovering = candidate.isNotEmpty;
+          final row = _localRowBody(context, git, branch, depth, label);
+          if (!hovering) return row;
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              color: _accentTint,
+              border: const Border(
+                left: BorderSide(color: MacosColors.systemBlueColor, width: 2),
+              ),
+            ),
+            child: row,
+          );
+        },
+      ),
+    );
+  }
+
+  static final Color _accentTint =
+      MacosColors.systemBlueColor.withValues(alpha: 0.12);
+
+  Widget _localRowBody(
+    BuildContext context,
+    GitService git,
+    GitRef branch,
+    int depth,
+    String label,
+  ) {
+    final typography = MacosTheme.of(context).typography;
+    final selected = _selectedRef == branch.name;
+    final elsewhere = branch.elsewhereWorktreePath;
+    return DragItemDraggable(
         item: DragRef(branch),
         immediate: true,
         onDragSelect: () => _select(branch),
@@ -798,13 +901,71 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                   ),
                 ],
                 const Spacer(),
+                ..._forgeBadges(branch),
                 _divergenceCluster(context, branch),
               ],
             ),
           ),
         ),
-      ),
-    );
+      );
+  }
+
+  /// The trailing forge/merged signal for a local row: a grey "merged" chip
+  /// (already landed in HEAD), the open PR/MR number, and a CI dot — each
+  /// present only when its data is in. All degrade silently to nothing.
+  List<Widget> _forgeBadges(GitRef branch) {
+    final bf = _forge[branch.shortName];
+    final isMerged = !branch.isHead && _merged.contains(branch.shortName);
+    return [
+      if (isMerged) ...[
+        const LabelChip('merged', color: MacosColors.systemGrayColor),
+        const SizedBox(width: 6),
+      ],
+      if (bf != null && bf.hasRequest) ...[
+        MacosTooltip(
+          message: bf.requestDraft
+              ? 'Draft ${bf.isMr ? 'merge' : 'pull'} request ${bf.requestLabel}'
+              : 'Open ${bf.isMr ? 'merge' : 'pull'} request ${bf.requestLabel}',
+          child: LabelChip(
+            bf.requestLabel,
+            color: bf.requestDraft
+                ? MacosColors.systemGrayColor
+                : MacosColors.systemBlueColor,
+          ),
+        ),
+        const SizedBox(width: 6),
+      ],
+      if (bf?.ci != null) ...[
+        MacosTooltip(
+          message: 'CI: ${_ciLabel(bf!.ci!)}',
+          child: CiDot(_forgeCiColor(bf.ci!), size: 9),
+        ),
+        const SizedBox(width: 6),
+      ],
+    ];
+  }
+
+  static Color _forgeCiColor(ForgeCi c) => switch (c) {
+    ForgeCi.success => MacosColors.systemGreenColor,
+    ForgeCi.failure => MacosColors.systemRedColor,
+    ForgeCi.running => MacosColors.systemBlueColor,
+    ForgeCi.canceled || ForgeCi.skipped => MacosColors.systemGrayColor,
+    ForgeCi.unknown => MacosColors.systemOrangeColor,
+  };
+
+  static String _ciLabel(ForgeCi c) => switch (c) {
+    ForgeCi.success => 'passing',
+    ForgeCi.failure => 'failing',
+    ForgeCi.running => 'running',
+    ForgeCi.canceled => 'canceled',
+    ForgeCi.skipped => 'skipped',
+    ForgeCi.unknown => 'unknown',
+  };
+
+  void _open(String? url) {
+    if (url != null && url.isNotEmpty) {
+      unawaited(launchUrl(Uri.parse(url)));
+    }
   }
 
   /// The upstream-divergence signal: a compact split bar (behind │ ahead) plus
@@ -1002,6 +1163,13 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         icon: CupertinoIcons.pencil,
         label: 'Rename…',
         onTap: () => _renameBranch(git, b.shortName),
+      ),
+      ContextMenuItem(
+        icon: _pinned.contains(b.shortName)
+            ? CupertinoIcons.star_slash
+            : CupertinoIcons.star,
+        label: _pinned.contains(b.shortName) ? 'Unpin' : 'Pin to top',
+        onTap: () => _togglePin(b.shortName),
       ),
       ContextMenuItem(
         icon: CupertinoIcons.doc_on_doc,
@@ -1205,6 +1373,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
   Widget _localDetail(BuildContext context, GitService git, GitRef b) {
     final elsewhere = b.elsewhereWorktreePath;
+    final bf = _forge[b.shortName];
+    final isMerged = !b.isHead && _merged.contains(b.shortName);
     final info = <Widget>[
       _infoLine(context, 'Tip commit', b.subject.isEmpty ? '—' : b.subject),
       if (b.creatorDate != null)
@@ -1223,14 +1393,31 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           'Divergence',
           '${b.ahead} ahead · ${b.behind} behind',
         ),
+      if (bf != null && bf.hasRequest)
+        _infoLine(
+          context,
+          bf.isMr ? 'Merge request' : 'Pull request',
+          '${bf.requestLabel}${bf.requestDraft ? ' (draft)' : ''}'
+              '${(bf.requestTitle ?? '').isEmpty ? '' : ' — ${bf.requestTitle}'}',
+        ),
+      if (bf?.ci != null)
+        _infoLine(context, 'CI', _ciLabel(bf!.ci!),
+            valueColor: _forgeCiColor(bf.ci!)),
       if (elsewhere != null)
         _infoLine(context, 'Worktree', elsewhere,
             valueColor: MacosColors.systemPurpleColor),
     ];
-    // A local, forge-free "next action" hint from divergence alone. PR/CI
-    // callouts arrive with the forge coupling in phase 2.
+    // "Next action" hint. An open request wins; then merged/gone cleanup; then
+    // the forge-free divergence hint.
     Widget? callout;
-    if (b.upstreamGone) {
+    if (isMerged) {
+      callout = _calloutBox(
+        context,
+        MacosColors.systemGrayColor,
+        CupertinoIcons.checkmark_seal,
+        'Already merged into the current branch — safe to delete.',
+      );
+    } else if (b.upstreamGone) {
       callout = _calloutBox(
         context,
         MacosColors.systemOrangeColor,
@@ -1238,16 +1425,31 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         'Its upstream is gone — likely merged and pruned. Safe to delete once '
         'you\'ve confirmed the work landed.',
       );
+    } else if (bf != null && bf.hasRequest) {
+      callout = _calloutBox(
+        context,
+        MacosColors.systemBlueColor,
+        CupertinoIcons.arrow_up_right_square,
+        '${bf.isMr ? 'Merge' : 'Pull'} request ${bf.requestLabel} is open'
+        '${bf.requestDraft ? ' (draft)' : ''}.',
+      );
     } else if (!b.isHead && b.ahead > 0 && b.behind == 0) {
       callout = _calloutBox(
         context,
         MacosColors.systemGreenColor,
         CupertinoIcons.arrow_up_circle,
         '${b.ahead} commit${b.ahead == 1 ? '' : 's'} ahead, none behind — '
-        'ready to merge into the current branch.',
+        'ready to merge into the current branch'
+        '${b.upstream == null ? '' : ', or open a pull request'}.',
       );
     }
     final actions = <Widget>[
+      if (bf != null && bf.hasRequest)
+        _detailButton(
+          'Open ${bf.requestLabel}',
+          CupertinoIcons.arrow_up_right_square,
+          () => _open(bf.requestUrl),
+        ),
       if (!b.isHead && elsewhere == null)
         _detailButton(
           'Check out',
@@ -1280,6 +1482,13 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         'Rename…',
         CupertinoIcons.pencil,
         busy ? null : () => _renameBranch(git, b.shortName),
+      ),
+      _detailButton(
+        _pinned.contains(b.shortName) ? 'Unpin' : 'Pin to top',
+        _pinned.contains(b.shortName)
+            ? CupertinoIcons.star_slash
+            : CupertinoIcons.star,
+        () => _togglePin(b.shortName),
       ),
       if (!b.isHead && elsewhere == null)
         _detailButton(
@@ -1559,6 +1768,13 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       confirmLabel: 'Merge',
     );
     if (!ok) return;
+    await _runMerge(git, branch, mode);
+  }
+
+  /// The merge itself, past its confirmation — shared by the menu/detail merge
+  /// (which confirms via [confirmAction]) and the drag-drop merge (which
+  /// confirms via its own Merge-vs-Rebase choice).
+  Future<void> _runMerge(GitService git, String branch, MergeMode mode) async {
     final label = [
       'git merge',
       if (mode == MergeMode.noFf) '--no-ff',
@@ -1571,6 +1787,53 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       (log) async =>
           log.logResult(label, await git.merge(repoPath, branch, mode: mode)),
     );
+  }
+
+  /// `git rebase <onto>` — rebases the CURRENT branch onto [onto]. A conflict
+  /// throws and lands in the app-wide pending-op flow (Continue/Abort in the
+  /// repo panel), same as any other rebase.
+  Future<void> _runRebaseOnto(GitService git, String onto) async {
+    final label = 'git rebase $onto';
+    await runLogged(
+      label,
+      (log) async => log.logResult(label, await git.rebaseOnto(repoPath, onto)),
+      dock: true,
+    );
+  }
+
+  /// A branch was dropped onto the current branch's row: offer to merge it in
+  /// or rebase the current branch onto it. Restricted to a drop onto the
+  /// current branch so both operations act on HEAD — no surprise checkout, and
+  /// the choice dialog IS the confirmation. Merge conflicts / rebase conflicts
+  /// fall through to the existing pending-op handling.
+  Future<void> _dropOnCurrent(
+    GitService git, {
+    required GitRef source,
+    required GitRef current,
+  }) async {
+    if (busy || !source.isLocalBranch || source.name == current.name) return;
+    final op = await chooseAction<_DropOp>(
+      context,
+      title: 'Combine with ${current.shortName}',
+      message:
+          'Bring "${source.shortName}" and the current branch together.',
+      primaryLabel: 'Merge "${source.shortName}" into "${current.shortName}"',
+      primaryValue: _DropOp.merge,
+      secondary: [
+        (
+          'Rebase "${current.shortName}" onto "${source.shortName}"',
+          _DropOp.rebase,
+        ),
+        ('Cancel', _DropOp.cancel),
+      ],
+    );
+    if (op == null || op == _DropOp.cancel || !mounted) return;
+    final g = ref.read(gitServiceProvider);
+    if (op == _DropOp.merge) {
+      await _runMerge(g, source.shortName, MergeMode.normal);
+    } else {
+      await _runRebaseOnto(g, source.shortName);
+    }
   }
 
   /// Opens the Create Tag sheet (annotated toggle, message, push-after-create).
@@ -1840,6 +2103,11 @@ sealed class _Row {
   const _Row();
 }
 
+class _PinnedHeaderRow extends _Row {
+  final int count;
+  const _PinnedHeaderRow(this.count);
+}
+
 class _LocalHeaderRow extends _Row {
   final String title;
   const _LocalHeaderRow(this.title);
@@ -1913,3 +2181,6 @@ enum _TagRemoteStatus {
 
 /// The three-way outcome of deleting a tag that also exists on the remote.
 enum _TagDeleteScope { local, both, cancel }
+
+/// The choice offered when a branch is dropped onto the current branch's row.
+enum _DropOp { merge, rebase, cancel }

@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import 'package:remote_magic_git/core/forge/branch_forge_status.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
@@ -215,6 +216,11 @@ void main() {
           // Sibling of the refs override: the views now read CONFIGURED
           // remotes (remotesProvider), not remote-tracking refs.
           remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
+          // The Branches tab watches the forge fusion + merged-branch signal;
+          // unoverridden they hit the fake executor and leave a retry timer.
+          branchForgeProvider(_repo).overrideWith((ref) async => const {}),
+          mergedBranchesProvider(_repo)
+              .overrideWith((ref) async => const <String>{}),
         ],
       );
       addTearDown(container.dispose);
@@ -282,6 +288,8 @@ void main() {
           // executor and leave Riverpod retry timers pending.
           remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
           remoteTagsProvider(_repo).overrideWith((ref) async => null),
+          branchForgeProvider(_repo).overrideWith((ref) async => const {}),
+          mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
         ],
       );
       addTearDown(container.dispose);

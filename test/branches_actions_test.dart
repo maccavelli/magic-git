@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import 'package:remote_magic_git/core/forge/branch_forge_status.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -89,6 +90,8 @@ Future<_FakeGit> _pump(WidgetTester tester) async {
       // The real provider keeps a five-minute keepAlive timer that widget
       // tests would flag as still pending; null = unknown, no badges.
       remoteTagsProvider(_repo).overrideWith((ref) async => null),
+      branchForgeProvider(_repo).overrideWith((ref) async => const {}),
+      mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
     ],
   );
   addTearDown(container.dispose);

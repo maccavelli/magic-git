@@ -2809,6 +2809,25 @@ class GitService {
   /// git rejects it as an invalid ref format rather than parsing it as a
   /// flag. The plain `git branch` form takes [name] positionally and keeps
   /// the guard.
+  /// Local branches fully merged into the current HEAD (`git branch --merged`)
+  /// — one cheap read. These are the "already landed, safe to delete" branches
+  /// the grey merged badge marks. Returns short names (the current branch,
+  /// which is trivially merged into itself, is included — callers filter it by
+  /// [GitRef.isHead]). Throws like any read on failure; the provider swallows
+  /// it so a badge never breaks the list.
+  Future<Set<String>> mergedBranchNames(String repoPath) async {
+    final result = await _run(
+      repoPath,
+      ['git', 'branch', '--merged', '--format=%(refname:short)'],
+      'git branch --merged',
+      lane: ExecLane.read,
+    );
+    return {
+      for (final line in result.stdout.split('\n'))
+        if (line.trim().isNotEmpty) line.trim(),
+    };
+  }
+
   Future<void> createBranch(
     String repoPath,
     String name, {
