@@ -9,7 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import 'package:remote_magic_git/core/git/unified_diff.dart';
-import 'package:remote_magic_git/features/common/diff_view.dart';
+import 'package:remote_magic_git/features/common/inline_action_button.dart';
 import 'package:remote_magic_git/features/repository/hunk_diff_view.dart';
 
 const _diff =
@@ -280,7 +280,7 @@ void main() {
     BoxDecoration skinOf(WidgetTester tester, String label) {
       final container = tester.widget<Container>(
         find.descendant(
-          of: find.widgetWithText(DiffActionButton, label),
+          of: find.widgetWithText(InlineActionButton, label),
           matching: find.byType(Container),
         ),
       );

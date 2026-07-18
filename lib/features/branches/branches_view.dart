@@ -14,6 +14,7 @@ import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
 import '../common/buttons.dart';
 import '../common/field_styles.dart';
+import '../common/inline_action_button.dart';
 import '../common/label_chip.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
@@ -1104,13 +1105,12 @@ class _BranchesViewState extends ConsumerState<BranchesView>
             ),
           ),
           if (localOnly.isNotEmpty && remote != null)
-            AppPushButton(
-              controlSize: ControlSize.small,
-              secondary: true,
+            InlineActionButton(
+              label: 'Push ${localOnly.length} to $remote',
+              icon: CupertinoIcons.arrow_up,
               onPressed: busy
                   ? null
                   : () => _pushAllLocalOnly(git, localOnly, remote),
-              child: Text('Push ${localOnly.length} to $remote'),
             ),
         ],
       ),

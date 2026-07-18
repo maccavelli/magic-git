@@ -13,9 +13,9 @@ import '../../core/ssh/environment_probe.dart';
 import '../../core/storage/known_hosts_store.dart';
 import '../common/actions.dart';
 import '../common/buttons.dart';
-import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
+import '../common/inline_action_button.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'environment_health_sheet.dart';
@@ -298,7 +298,7 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
             style: MacosTheme.of(context).typography.body,
           ),
         ),
-        DiffActionButton(
+        InlineActionButton(
           label: 'Customize',
           icon: CupertinoIcons.keyboard,
           tooltip: 'Customize keyboard mappings',
@@ -425,7 +425,7 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
         Expanded(
           child: Text(text, style: typography.body.copyWith(color: color)),
         ),
-        DiffActionButton(
+        InlineActionButton(
           label: 'Scan',
           icon: CupertinoIcons.search,
           tooltip: 'Scan environment',

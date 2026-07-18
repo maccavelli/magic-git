@@ -18,12 +18,12 @@ import '../branches/create_tag_sheet.dart';
 import '../common/actions.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
-import '../common/buttons.dart';
 import '../common/commit_patch_view.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
+import '../common/inline_action_button.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
@@ -1563,11 +1563,10 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          AppPushButton(
-            controlSize: ControlSize.small,
-            secondary: true,
+          InlineActionButton(
+            label: 'Clear filters',
+            icon: CupertinoIcons.xmark,
             onPressed: _clearFilters,
-            child: const Text('Clear filters'),
           ),
         ],
       ),

@@ -10,6 +10,7 @@ import '../../core/ssh/ssh_client_manager.dart';
 import '../../core/storage/saved_connection.dart';
 import '../common/buttons.dart';
 import '../common/field_styles.dart';
+import '../common/inline_action_button.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sheet_chrome.dart';
 
@@ -275,11 +276,10 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
                 padding: const EdgeInsets.only(bottom: 12),
                 child: Align(
                   alignment: Alignment.centerLeft,
-                  child: AppPushButton(
-                    controlSize: ControlSize.small,
-                    secondary: true,
+                  child: InlineActionButton(
+                    label: 'Load private key…',
+                    icon: CupertinoIcons.folder,
                     onPressed: _submitting ? null : _loadPrivateKeyFile,
-                    child: const Text('Load private key…'),
                   ),
                 ),
               ),

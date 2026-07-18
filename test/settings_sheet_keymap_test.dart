@@ -1,5 +1,5 @@
 // The Settings sheet's "Keyboard Mappings" section: it summarizes the
-// current customization count and its "Customize" DiffActionButton opens
+// current customization count and its "Customize" InlineActionButton opens
 // the KeyboardMappingsSheet.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,7 +10,7 @@ import 'package:remote_magic_git/features/settings/keyboard_mappings_sheet.dart'
 import 'package:remote_magic_git/features/settings/settings_sheet.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// DiffActionButton wraps MacosTooltip (not Flutter's Tooltip).
+/// InlineActionButton wraps MacosTooltip (not Flutter's Tooltip).
 Finder _byMacosTooltip(String message) => find.byWidgetPredicate(
   (w) => w is MacosTooltip && w.message == message,
 );

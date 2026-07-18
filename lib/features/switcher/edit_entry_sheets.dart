@@ -7,6 +7,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/storage/saved_local_repo.dart';
 import '../common/buttons.dart';
+import '../common/inline_action_button.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
@@ -195,11 +196,12 @@ class _EditConnectionSheetState extends State<EditConnectionSheet> {
                       padding: const EdgeInsets.only(bottom: 12),
                       child: Align(
                         alignment: Alignment.centerLeft,
-                        child: AppPushButton(
-                          controlSize: ControlSize.small,
-                          secondary: true,
+                        // The canonical inline action capsule (the diff views'
+                        // Stage/Unstage/Discard button).
+                        child: InlineActionButton(
+                          label: 'Load private key…',
+                          icon: CupertinoIcons.folder,
                           onPressed: _loadPrivateKeyFile,
-                          child: const Text('Load private key…'),
                         ),
                       ),
                     ),

@@ -19,6 +19,7 @@ import '../common/buttons.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
+import '../common/inline_action_button.dart';
 import '../common/link_status_chip.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
@@ -1133,18 +1134,20 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           const SizedBox(width: 8),
           Expanded(child: Text(hint, style: typography.caption1)),
           if (op == PendingOp.rebase) ...[
-            AppPushButton(
-              controlSize: ControlSize.small,
+            InlineActionButton(
+              label: 'Continue',
+              icon: CupertinoIcons.play,
               onPressed: _continueRebase,
-              child: const Text('Continue'),
             ),
             const SizedBox(width: 8),
           ],
-          AppPushButton(
-            controlSize: ControlSize.small,
-            secondary: true,
+          InlineActionButton(
+            label: 'Abort $verb',
+            // Aborting throws the in-progress operation (and any conflict
+            // resolution done so far) away — it gets the red.
+            icon: CupertinoIcons.arrow_uturn_left,
+            tone: InlineActionTone.destructive,
             onPressed: () => _abortPending(op),
-            child: Text('Abort $verb'),
           ),
         ],
       ),
@@ -1571,18 +1574,19 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              AppPushButton(
-                controlSize: ControlSize.small,
-                secondary: true,
+              // Ours is the left/HEAD side, theirs the incoming right — the
+              // arrows carry the same left/right convention the conflict
+              // view's columns do.
+              InlineActionButton(
+                label: 'Use Ours',
+                icon: CupertinoIcons.arrow_left,
                 onPressed: () => _resolve(path, useOurs: true),
-                child: const Text('Use Ours'),
               ),
               const SizedBox(width: 6),
-              AppPushButton(
-                controlSize: ControlSize.small,
-                secondary: true,
+              InlineActionButton(
+                label: 'Use Theirs',
+                icon: CupertinoIcons.arrow_right,
                 onPressed: () => _resolve(path, useOurs: false),
-                child: const Text('Use Theirs'),
               ),
               const SizedBox(width: 6),
               ToolIconButton(

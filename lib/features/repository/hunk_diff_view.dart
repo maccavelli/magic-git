@@ -6,6 +6,7 @@ import '../../core/git/git_service.dart' show BlameLine;
 import '../../core/git/unified_diff.dart';
 import '../common/diff_highlight.dart';
 import '../common/diff_view.dart';
+import '../common/inline_action_button.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/tappable.dart';
 import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
@@ -444,26 +445,26 @@ class _HunkDiffViewState extends State<HunkDiffView> {
                   ),
                 ),
                 if (widget.staged)
-                  DiffActionButton(
+                  InlineActionButton(
                     label: 'Unstage',
                     icon: CupertinoIcons.minus,
                     onPressed: () =>
                         widget.onAction(file, hunk, HunkAction.unstage),
                   )
                 else ...[
-                  DiffActionButton(
+                  InlineActionButton(
                     label: 'Stage',
                     icon: CupertinoIcons.plus,
                     onPressed: () =>
                         widget.onAction(file, hunk, HunkAction.stage),
                   ),
                   const SizedBox(width: 6),
-                  DiffActionButton(
+                  InlineActionButton(
                     label: 'Discard',
                     icon: CupertinoIcons.arrow_uturn_left,
                     // Throws the hunk's work away — it gets the red, and the
                     // hover that says so before the click, not after.
-                    tone: DiffActionTone.destructive,
+                    tone: InlineActionTone.destructive,
                     onPressed: () =>
                         widget.onAction(file, hunk, HunkAction.discard),
                   ),

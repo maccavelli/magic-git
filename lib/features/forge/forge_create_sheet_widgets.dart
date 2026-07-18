@@ -12,6 +12,7 @@ import '../../core/utils/display_error.dart';
 import '../common/buttons.dart';
 import '../common/diff_view.dart';
 import '../common/field_styles.dart';
+import '../common/inline_action_button.dart';
 import '../common/labeled_text_field.dart';
 
 /// Form pieces shared by the create-PR and create-MR sheets. The two sheets
@@ -280,14 +281,13 @@ class _ForgeDiffPreviewState extends ConsumerState<ForgeDiffPreview> {
         const SizedBox(height: 8),
         Align(
           alignment: Alignment.centerLeft,
-          child: AppPushButton(
-            controlSize: ControlSize.small,
-            secondary: true,
+          child: InlineActionButton(
+            label: _show ? 'Hide preview' : 'Preview changes',
+            icon: _show ? CupertinoIcons.eye_slash : CupertinoIcons.eye,
             onPressed: () => setState(() {
               _show = !_show;
               if (_show) _refresh();
             }),
-            child: Text(_show ? 'Hide preview' : 'Preview changes'),
           ),
         ),
         if (_show) ...[
