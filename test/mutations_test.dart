@@ -1699,6 +1699,38 @@ void main() {
       ]);
     });
 
+    test('closeIssue / reopenIssue', () async {
+      await glab.closeIssue('/repo', 8);
+      expect(exec.calls.single, ['glab', 'issue', 'close', '8']);
+      exec.calls.clear();
+      await glab.reopenIssue('/repo', 8);
+      expect(exec.calls.single, ['glab', 'issue', 'reopen', '8']);
+    });
+
+    test('commentOnIssue notes the body as a discrete token', () async {
+      await glab.commentOnIssue('/repo', 8, 'thanks for the report');
+      expect(exec.calls.single, [
+        'glab',
+        'issue',
+        'note',
+        '8',
+        '--message',
+        'thanks for the report',
+      ]);
+    });
+
+    test('editIssue updates only the provided fields', () async {
+      await glab.editIssue('/repo', 8, title: 'Retitled');
+      expect(exec.calls.single, [
+        'glab',
+        'issue',
+        'update',
+        '8',
+        '--title',
+        'Retitled',
+      ]);
+    });
+
     test(
       'read endpoints pass an explicit --method GET (never implicit POST)',
       () async {

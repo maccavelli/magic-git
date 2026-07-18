@@ -462,6 +462,61 @@ void main() {
       ]);
     });
 
+    test('closeIssue / reopenIssue', () async {
+      await gh.closeIssue('/repo', 8);
+      expect(exec.calls.single, ['gh', 'issue', 'close', '8']);
+      exec.calls.clear();
+      await gh.reopenIssue('/repo', 8);
+      expect(exec.calls.single, ['gh', 'issue', 'reopen', '8']);
+    });
+
+    test('commentOnIssue passes the body as a discrete token', () async {
+      await gh.commentOnIssue('/repo', 8, 'thanks for the report');
+      expect(exec.calls.single, [
+        'gh',
+        'issue',
+        'comment',
+        '8',
+        '--body',
+        'thanks for the report',
+      ]);
+    });
+
+    test('editIssue sends only the provided fields', () async {
+      await gh.editIssue('/repo', 8, title: 'Retitled');
+      expect(exec.calls.single, [
+        'gh',
+        'issue',
+        'edit',
+        '8',
+        '--title',
+        'Retitled',
+      ]);
+    });
+
+    test('assignIssueToMe adds the @me assignee', () async {
+      await gh.assignIssueToMe('/repo', 8);
+      expect(exec.calls.single, [
+        'gh',
+        'issue',
+        'edit',
+        '8',
+        '--add-assignee',
+        '@me',
+      ]);
+    });
+
+    test('developIssueBranch checks out a linked branch', () async {
+      await gh.developIssueBranch('/repo', 8);
+      expect(exec.calls.single, [
+        'gh',
+        'issue',
+        'develop',
+        '8',
+        '--checkout',
+      ]);
+    });
+
     test('checkoutPullRequest', () async {
       await gh.checkoutPullRequest('/repo', 9);
       expect(exec.calls.single, ['gh', 'pr', 'checkout', '9']);

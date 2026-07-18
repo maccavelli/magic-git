@@ -670,6 +670,98 @@ class GhService {
     }
   }
 
+  /// Closes an issue via `gh issue close` (reversible — see [reopenIssue]).
+  Future<void> closeIssue(String repoPath, int number) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['gh', 'issue', 'close', '$number'],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh issue close failed', result);
+    }
+  }
+
+  /// Reopens a closed issue via `gh issue reopen`.
+  Future<void> reopenIssue(String repoPath, int number) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['gh', 'issue', 'reopen', '$number'],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh issue reopen failed', result);
+    }
+  }
+
+  /// Adds a comment to an issue via `gh issue comment --body` (a discrete argv
+  /// token, so newlines/`=`/markdown survive).
+  Future<void> commentOnIssue(String repoPath, int number, String body) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['gh', 'issue', 'comment', '$number', '--body', body],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh issue comment failed', result);
+    }
+  }
+
+  /// Edits an issue's title (and/or body) via `gh issue edit`. Only the
+  /// provided fields are sent.
+  Future<void> editIssue(
+    String repoPath,
+    int number, {
+    String? title,
+    String? body,
+  }) async {
+    final args = <String>[
+      'gh',
+      'issue',
+      'edit',
+      '$number',
+      if (title != null) ...['--title', title],
+      if (body != null) ...['--body', body],
+    ];
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: args,
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh issue edit failed', result);
+    }
+  }
+
+  /// Assigns the authenticated user to an issue via
+  /// `gh issue edit --add-assignee @me` (`@me` is gh's own current-user token).
+  Future<void> assignIssueToMe(String repoPath, int number) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['gh', 'issue', 'edit', '$number', '--add-assignee', '@me'],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh issue edit --add-assignee failed', result);
+    }
+  }
+
+  /// "Start work": creates a branch linked to the issue and checks it out, via
+  /// `gh issue develop <number> --checkout`. Switches the working tree (fetch +
+  /// branch + checkout), so it rides the exclusive lane — callers guard a dirty
+  /// tree and refresh status/refs/log afterwards, exactly like
+  /// [checkoutPullRequest].
+  Future<void> developIssueBranch(String repoPath, int number) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['gh', 'issue', 'develop', '$number', '--checkout'],
+      lane: ExecLane.exclusive,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh issue develop failed', result);
+    }
+  }
+
   /// Approves a pull request via `gh pr review --approve`. (GitHub rejects
   /// approving your own PR; that surfaces as a [GhException] the UI shows.)
   Future<void> approvePullRequest(String repoPath, int number) async {

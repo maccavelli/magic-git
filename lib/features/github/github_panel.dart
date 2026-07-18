@@ -21,6 +21,7 @@ import '../forge/forge_inbox.dart';
 import '../forge/forge_prefs.dart';
 import '../forge/forge_selection.dart';
 import '../forge/forge_widgets.dart';
+import '../forge/issue_actions.dart';
 import '../forge/project_sections.dart';
 import 'create_pr_form.dart';
 import 'run_jobs_view.dart';
@@ -285,6 +286,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
             collapsed: collapsed,
             onToggleCollapsed: toggle,
             onCreateIssue: () => _select(const ForgeCreatingIssue()),
+            onIssueContextMenu: _showIssueMenu,
             changeRequests: [
               ForgeSectionHeader(
                 'Pull Requests',
@@ -392,6 +394,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
               sel: _sel,
               onSelect: (next) => _select(next),
               trailing: forgeCombineTrailing(null, extras),
+              onSecondaryTapUp: (d) => _showIssueMenu(d, i),
             ),
           ),
     ];
@@ -778,6 +781,19 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   void _createPr() {
     _select(const ForgeCreatingChangeRequest());
   }
+
+  /// Opens an issue row's right-click menu (shared with the GitLab panel via
+  /// [showIssueContextMenu]); wired to both the Browse Issues section and the
+  /// Inbox's issue rows.
+  void _showIssueMenu(TapUpDetails d, ForgeIssue issue) => showIssueContextMenu(
+    _menu,
+    context: context,
+    ref: ref,
+    repoPath: repoPath,
+    forge: Forge.github,
+    details: d,
+    issue: issue,
+  );
 
   Future<void> _approve(int number) async {
     if (_approvingPrs.contains(number)) return;

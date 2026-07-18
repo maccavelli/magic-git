@@ -12,6 +12,7 @@ import '../common/dashboard_warning_banner.dart';
 import '../common/show_more_row.dart';
 import 'forge_selection.dart';
 import 'forge_widgets.dart';
+import 'issue_actions.dart';
 import 'issue_create_form.dart';
 
 /// The project sections of the Forge workspace — Issues, Milestones, Labels,
@@ -67,6 +68,7 @@ List<Widget> projectSectionChildren({
   required VoidCallback onCreateIssue,
   required List<Widget> changeRequests,
   required List<Widget> ci,
+  void Function(TapUpDetails, ForgeIssue)? onIssueContextMenu,
 }) {
   const collapsedCount = 10;
   final dashboard = forge == Forge.github
@@ -111,7 +113,7 @@ List<Widget> projectSectionChildren({
       asyncListSection(
         issues,
         filter.trim().isEmpty ? 'No open issues' : 'No matching issues',
-        (i) => _issueRow(i, palette, sel, onSelect),
+        (i) => _issueRow(i, palette, sel, onSelect, onIssueContextMenu),
         where: issueMatches,
         skipLoadingOnReload: true,
         limit: issuesFull ? null : collapsedCount,
@@ -236,8 +238,16 @@ Widget _issueRow(
   Map<String, ForgeLabel> palette,
   ForgeSel sel,
   void Function(ForgeSel) onSelect,
-) =>
-    forgeIssueRow(issue: issue, palette: palette, sel: sel, onSelect: onSelect);
+  void Function(TapUpDetails, ForgeIssue)? onContextMenu,
+) => forgeIssueRow(
+  issue: issue,
+  palette: palette,
+  sel: sel,
+  onSelect: onSelect,
+  onSecondaryTapUp: onContextMenu == null
+      ? null
+      : (d) => onContextMenu(d, issue),
+);
 
 /// An issue list row — shared by the Issues section and the Inbox (which
 /// appends its pin/snooze buttons via [trailing]).
@@ -247,6 +257,7 @@ Widget forgeIssueRow({
   required ForgeSel sel,
   required void Function(ForgeSel) onSelect,
   Widget? trailing,
+  GestureTapUpCallback? onSecondaryTapUp,
 }) {
   final selected = switch (sel) {
     ForgeIssueSel(:final id) => id == issue.id,
@@ -265,6 +276,7 @@ Widget forgeIssueRow({
     // A row whose forge didn't report a parseable number can't drive a detail
     // fetch — leave it un-tappable rather than key the pane on a null id.
     onTap: issue.id == null ? null : () => onSelect(ForgeIssueSel(issue.id!)),
+    onSecondaryTapUp: onSecondaryTapUp,
   );
 }
 
@@ -376,7 +388,8 @@ Widget? projectDetailFor({
       return detail.when(
         loading: () => const Center(child: ProgressCircle()),
         error: (err, _) => PaneError(err),
-        data: (issue) => _issueDetail(issue, palette, forge, remoteUrl),
+        data: (issue) =>
+            _issueDetail(issue, palette, forge, remoteUrl, repoPath),
       );
     case ForgeMilestoneSel(:final id):
       return _milestoneDetail(ref, repoPath, id, forge, remoteUrl);
@@ -390,6 +403,7 @@ Widget _issueDetail(
   Map<String, ForgeLabel> palette,
   Forge forge,
   String? remoteUrl,
+  String repoPath,
 ) {
   final body = issue.body?.trim() ?? '';
   return ForgeDetailScaffold(
@@ -418,6 +432,11 @@ Widget _issueDetail(
     body: body.isEmpty
         ? const CenteredHint('No description')
         : _detailBody(body),
+    // Issues become actionable here (they were view-only before): the same
+    // set as the row's right-click menu, as buttons + a "More" pulldown.
+    actions: [
+      IssueDetailActions(repoPath: repoPath, forge: forge, issue: issue),
+    ],
   );
 }
 

@@ -1131,6 +1131,71 @@ query($path: ID!) {
     }
   }
 
+  /// Closes an issue via `glab issue close` (reversible — see [reopenIssue]).
+  /// GitLab has no close-with-reason, so unlike `gh issue close` there is no
+  /// completed/not-planned distinction to pass.
+  Future<void> closeIssue(String repoPath, int iid) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['glab', 'issue', 'close', '$iid'],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GlabException('glab issue close failed', result);
+    }
+  }
+
+  /// Reopens a closed issue via `glab issue reopen`.
+  Future<void> reopenIssue(String repoPath, int iid) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['glab', 'issue', 'reopen', '$iid'],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GlabException('glab issue reopen failed', result);
+    }
+  }
+
+  /// Adds a comment to an issue via `glab issue note --message` (a discrete
+  /// argv token — same reasoning as [createIssue]).
+  Future<void> commentOnIssue(String repoPath, int iid, String body) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['glab', 'issue', 'note', '$iid', '--message', body],
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GlabException('glab issue note failed', result);
+    }
+  }
+
+  /// Edits an issue's title (and/or description) via `glab issue update`.
+  /// Only the provided fields are sent.
+  Future<void> editIssue(
+    String repoPath,
+    int iid, {
+    String? title,
+    String? description,
+  }) async {
+    final args = <String>[
+      'glab',
+      'issue',
+      'update',
+      '$iid',
+      if (title != null) ...['--title', title],
+      if (description != null) ...['--description', description],
+    ];
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: args,
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GlabException('glab issue update failed', result);
+    }
+  }
+
   /// Checks out an MR's source branch locally via `glab mr checkout <iid>`, so
   /// a reviewer can pull it down and test without the manual fetch/branch dance.
   /// Switches the working tree to the MR branch — callers should guard against a
