@@ -27,6 +27,7 @@ class _Recorder extends ConnectionController {
     String? label,
     String? id,
     String? mainRepoPath,
+    String? gitDir,
   }) async {
     calls.add('local:$repoPath:$id');
   }

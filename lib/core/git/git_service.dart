@@ -931,6 +931,26 @@ int _trackCount(String track, String key) {
 class GitService {
   final CommandExecutor _executor;
 
+  /// Per-repo environment overlays keyed by the exact `repoPath` string a
+  /// command is issued against. Injected into every command's `extraEnv` by
+  /// [_scopeEnvFor], so a repo registered here runs *all* of its git commands
+  /// with that environment — no call site changes.
+  ///
+  /// The load-bearing use is the **bare repo with a separate work tree** (the
+  /// dotfiles pattern: a bare `~/.home.git` whose work tree is `$HOME`). Git
+  /// otherwise discovers its repository by walking up from the process's
+  /// working directory to a `.git`; a bare repo has none in the work tree, so
+  /// discovery fails. Registering `GIT_DIR`/`GIT_WORK_TREE` here makes git
+  /// target the bare repo explicitly instead — the exact env form of the
+  /// canonical `git --git-dir=… --work-tree=… …` alias. See [registerRepoScope].
+  ///
+  /// Prototype note: the two command funnels ([_run]/[_runVoid] and
+  /// [_runCaptured]) consult this. The handful of direct `_executor.execute`
+  /// sites (snapshot fetch, [validateRepoPath], `uploadBytes`) do not yet —
+  /// productionizing bare-repo support means routing those through the same
+  /// lookup (or giving each a `extraEnv: _scopeEnvFor(repoPath)`).
+  final Map<String, Map<String, String>> _repoScopeEnv = {};
+
   // Field/record separators for log output: ASCII Unit/Record Separators, which
   // cannot appear in commit metadata, so they parse unambiguously without the
   // NUL collision that `-z` + `%00` would cause.
@@ -1000,6 +1020,61 @@ class GitService {
       'user.email=${committerEmail!.trim()}',
     ],
   ];
+
+  /// Registers a git-dir / work-tree scope for every command issued against
+  /// [repoPath]. After this, all `_run`/`_runCaptured`-based reads and
+  /// mutations for [repoPath] carry `GIT_DIR=`[gitDir] and (when given)
+  /// `GIT_WORK_TREE=`[workTree] — the environment equivalent of
+  /// `git --git-dir=<gitDir> --work-tree=<workTree>`.
+  ///
+  /// For the bare dotfiles repo, [repoPath] and [workTree] are both the work
+  /// tree (e.g. `$HOME`) and [gitDir] is the bare repo (e.g. `~/.home.git`).
+  /// [repoPath] is matched by exact string, so pass the same value the app
+  /// uses to issue commands. Idempotent; re-registering replaces the scope.
+  void registerRepoScope(
+    String repoPath, {
+    required String gitDir,
+    String? workTree,
+  }) {
+    _repoScopeEnv[repoPath] = {
+      'GIT_DIR': gitDir,
+      'GIT_WORK_TREE': ?workTree,
+    };
+  }
+
+  /// Removes any scope registered for [repoPath] (on disconnect / repo close),
+  /// reverting it to ordinary working-directory-based discovery.
+  void unregisterRepoScope(String repoPath) {
+    _repoScopeEnv.remove(repoPath);
+  }
+
+  /// Whether [repoPath] currently has a git-dir/work-tree scope registered.
+  bool isRepoScoped(String repoPath) => _repoScopeEnv.containsKey(repoPath);
+
+  /// The repo's tracked files (`git ls-files`, NUL-delimited so paths with
+  /// newlines survive), work-tree-relative and forward-slash — exactly the
+  /// shape [computeBoundedWatchSpec] wants to build the bounded watch surface
+  /// for a scoped work-tree repo. Scope-aware: routed through [_run], so for a
+  /// scoped repo it lists the *external* git-dir's index, not the work tree.
+  Future<List<String>> listTrackedFiles(String repoPath) async {
+    final result = await _run(
+      repoPath,
+      ['git', 'ls-files', '-z'],
+      'List tracked files',
+      retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
+    );
+    return result.stdout.split('\u0000').where((s) => s.isNotEmpty).toList();
+  }
+
+  /// The env overlay to inject for a command against [repoPath], or null when
+  /// the repo has no registered scope (the overwhelming common case — an
+  /// ordinary repo with a `.git` in its work tree). Null rather than an empty
+  /// map so the executors' `...?extraEnv` spread is a true no-op for unscoped
+  /// repos, leaving their behavior byte-for-byte unchanged.
+  Map<String, String>? _scopeEnvFor(String repoPath) =>
+      _repoScopeEnv[repoPath];
 
   /// Verifies [repoPath] is a git working tree on the remote host. Called at
   /// connect time so the session fails fast instead of surfacing errors on the
@@ -4579,6 +4654,7 @@ class GitService {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['sh', '-c', script],
+      extraEnv: _scopeEnvFor(repoPath),
       timeout: timeout ?? SSHCommandExecutor.defaultTimeout,
       stdin: stdin,
     );
@@ -4856,6 +4932,7 @@ class GitService {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: gitArgs,
+      extraEnv: _scopeEnvFor(repoPath),
       timeout: timeout ?? SSHCommandExecutor.defaultTimeout,
       stdin: stdin,
       retries: retries,

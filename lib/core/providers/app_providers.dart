@@ -14,6 +14,7 @@ import '../forge/auth_status.dart';
 import '../forge/forge.dart';
 import '../forge/forge_dashboard.dart';
 import '../forge/forge_repo_summary.dart';
+import '../git/bounded_watch.dart';
 import '../git/git_service.dart';
 import '../git/host_fs_service.dart';
 import '../git/ignore_oracle.dart';
@@ -239,7 +240,7 @@ final gitServiceProvider = Provider<GitService>((ref) {
           ),
         ),
       );
-  return GitService(
+  final service = GitService(
     ref.watch(activeExecutorProvider),
     commitTimeout: commitTimeout,
     networkTimeout: networkTimeout,
@@ -251,6 +252,16 @@ final gitServiceProvider = Provider<GitService>((ref) {
     onUndoRecord: (record) =>
         ref.read(undoJournalProvider.notifier).push(record),
   );
+  // Re-apply any scoped (dotfiles) git-dir overrides on rebuild. GitService's
+  // scope registry is in-memory, so a settings change that reconstructs it here
+  // would otherwise silently drop the GIT_DIR/GIT_WORK_TREE scoping mid-session.
+  // `read`, not `watch`: the connect flow registers scopes directly on connect;
+  // this only heals a rebuild, and must not itself rebuild on every connection
+  // change. ConnectionState is the single durable source (see its scopedGitDirs).
+  ref.read(connectionProvider).scopedGitDirs.forEach((repoPath, gitDir) {
+    service.registerRepoScope(repoPath, gitDir: gitDir, workTree: repoPath);
+  });
+  return service;
 });
 
 final glabServiceProvider = Provider<GlabService>((ref) {
@@ -626,6 +637,13 @@ class ConnectionState {
   /// while not connected. Drives the dashboard's session-uptime readout.
   final DateTime? connectedAt;
 
+  /// Scoped work-tree (dotfiles) repos on this connection: repo path → its
+  /// external git-dir. The in-memory, backend-agnostic source of truth for
+  /// [repoWatchProvider] (to run bounded) and anything else that must know a
+  /// repo is scoped, without a second store round-trip. Empty for an ordinary
+  /// session. Set at connect from the saved model; see [scopedGitDirFor].
+  final Map<String, String> scopedGitDirs;
+
   const ConnectionState({
     this.phase = ConnectionPhase.disconnected,
     this.backend = ConnectionBackend.ssh,
@@ -640,12 +658,17 @@ class ConnectionState {
     this.reconnecting = false,
     this.hostKeyPrompt,
     this.connectedAt,
+    this.scopedGitDirs = const {},
   });
 
   bool get isConnected => phase == ConnectionPhase.connected;
   bool get isConnecting => phase == ConnectionPhase.connecting;
   bool get isLost => phase == ConnectionPhase.lost;
   bool get isLocal => backend == ConnectionBackend.local;
+
+  /// The external git-dir for [repoPath] if it's a scoped work-tree (dotfiles)
+  /// repo on this connection, else null (an ordinary repo).
+  String? scopedGitDirFor(String repoPath) => scopedGitDirs[repoPath];
 
   ConnectionState copyWith({
     ConnectionPhase? phase,
@@ -663,6 +686,7 @@ class ConnectionState {
     HostKeyPrompt? hostKeyPrompt,
     bool clearHostKeyPrompt = false,
     DateTime? connectedAt,
+    Map<String, String>? scopedGitDirs,
   }) {
     return ConnectionState(
       phase: phase ?? this.phase,
@@ -680,6 +704,7 @@ class ConnectionState {
           ? null
           : (hostKeyPrompt ?? this.hostKeyPrompt),
       connectedAt: connectedAt ?? this.connectedAt,
+      scopedGitDirs: scopedGitDirs ?? this.scopedGitDirs,
     );
   }
 }
@@ -1048,6 +1073,10 @@ class ConnectionController extends Notifier<ConnectionState> {
     String? connectionLabel,
     List<String>? repoPaths,
     List<String> fsmonitorPaths = const [],
+    // Scoped work-tree (dotfiles) repos on this connection: repo path → external
+    // git-dir. When [repoPath] is a key, connect registers GIT_DIR/GIT_WORK_TREE
+    // and the watcher runs bounded. Empty for an ordinary connection.
+    Map<String, String> scopedGitDirs = const {},
     bool reconnecting = false,
   }) async {
     final attempt = ++_attempt;
@@ -1170,7 +1199,23 @@ class ConnectionController extends Notifier<ConnectionState> {
       if (attempt != _attempt || !ref.mounted) return;
       final envMs = timings.elapsedMilliseconds;
 
-      await ref.read(gitServiceProvider).validateRepoPath(repoPath);
+      final scopedGitDir = scopedGitDirs[repoPath];
+      if (scopedGitDir != null && scopedGitDir.isNotEmpty) {
+        // Scoped (dotfiles) repo: register GIT_DIR/GIT_WORK_TREE so every command
+        // targets the external git-dir, and SKIP validateRepoPath — it runs
+        // `rev-parse --is-inside-work-tree` through the executor directly (not
+        // scope-aware, see GitService._scopeEnvFor's doc), so it would fail for a
+        // bare/separate-git-dir repo. The scope registration is the validation.
+        ref
+            .read(gitServiceProvider)
+            .registerRepoScope(
+              repoPath,
+              gitDir: scopedGitDir,
+              workTree: repoPath,
+            );
+      } else {
+        await ref.read(gitServiceProvider).validateRepoPath(repoPath);
+      }
       if (attempt != _attempt || !ref.mounted) return;
 
       // The session is usable NOW: publish `connected` and let the UI switch.
@@ -1188,6 +1233,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         connectionLabel: connectionLabel ?? profile.host,
         host: profile.host,
         connectedAt: DateTime.now(),
+        scopedGitDirs: scopedGitDirs,
       );
       ref
           .read(outputLogProvider.notifier)
@@ -1433,6 +1479,11 @@ class ConnectionController extends Notifier<ConnectionState> {
     String? label,
     String? id,
     String? mainRepoPath,
+    // Set only for a **scoped work-tree (dotfiles)** repo: the external git-dir,
+    // with [repoPath] as the work tree. Registers GIT_DIR/GIT_WORK_TREE and runs
+    // the watcher bounded. The sandbox grant on [repoPath] (the work tree)
+    // covers the git-dir too when it's nested inside (e.g. `~/.home.git` ⊂ `$HOME`).
+    String? gitDir,
   }) async {
     final attempt = ++_attempt;
     // Session-scoped dashboard metrics start over with the session.
@@ -1516,23 +1567,35 @@ class ConnectionController extends Notifier<ConnectionState> {
       await _resolveEnvironment(repoPath, attempt: attempt);
       if (attempt != _attempt || !ref.mounted) return;
 
-      // Doubles as "is this actually a git repo" validation — a folder that
-      // isn't fails here with a clear GitException rather than silently
-      // landing in the connected shell with nothing to show.
-      await ref.read(gitServiceProvider).validateRepoPath(repoPath);
-      if (attempt != _attempt || !ref.mounted) return;
+      if (gitDir != null && gitDir.isNotEmpty) {
+        // Scoped (dotfiles) repo: register GIT_DIR/GIT_WORK_TREE so every command
+        // targets the external git-dir, and SKIP both validators. validateRepoPath
+        // and validateLocalRepoRoot run through the executor directly (not
+        // scope-aware) and validateLocalRepoRoot explicitly REJECTS a
+        // separate-git-dir repo — the very shape this is. The scope registration
+        // is the validation; a genuinely broken git-dir surfaces on the first read.
+        ref
+            .read(gitServiceProvider)
+            .registerRepoScope(repoPath, gitDir: gitDir, workTree: repoPath);
+      } else {
+        // Doubles as "is this actually a git repo" validation — a folder that
+        // isn't fails here with a clear GitException rather than silently
+        // landing in the connected shell with nothing to show.
+        await ref.read(gitServiceProvider).validateRepoPath(repoPath);
+        if (attempt != _attempt || !ref.mounted) return;
 
-      // Local-only: the sandbox grant covers only the folders we were given, so
-      // reject a picked subdirectory / submodule / separate-git-dir repo whose
-      // real git dir is unreachable — with a clear message, rather than a raw
-      // permission error on the first real read.
-      //
-      // A linked worktree is NOT rejected: it is returned classified, and by
-      // this point we are already holding its main repository's grant (see
-      // [mainRepoPath] above), which is what makes the git calls here succeed
-      // at all.
-      await ref.read(gitServiceProvider).validateLocalRepoRoot(repoPath);
-      if (attempt != _attempt || !ref.mounted) return;
+        // Local-only: the sandbox grant covers only the folders we were given, so
+        // reject a picked subdirectory / submodule / separate-git-dir repo whose
+        // real git dir is unreachable — with a clear message, rather than a raw
+        // permission error on the first real read.
+        //
+        // A linked worktree is NOT rejected: it is returned classified, and by
+        // this point we are already holding its main repository's grant (see
+        // [mainRepoPath] above), which is what makes the git calls here succeed
+        // at all.
+        await ref.read(gitServiceProvider).validateLocalRepoRoot(repoPath);
+        if (attempt != _attempt || !ref.mounted) return;
+      }
 
       bool? fsmonitorEnabled;
       if (id != null) {
@@ -1564,6 +1627,9 @@ class ConnectionController extends Notifier<ConnectionState> {
         connectionId: id,
         connectionLabel: label,
         connectedAt: DateTime.now(),
+        scopedGitDirs: (gitDir != null && gitDir.isNotEmpty)
+            ? {repoPath: gitDir}
+            : const {},
       );
       // Tool versions for the Settings health panel — same background pass as
       // the SSH path, and for the same reason: spawning gh/glab `--version`
@@ -1631,6 +1697,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       connectionLabel: conn.displayName,
       repoPaths: conn.allRepoPaths,
       fsmonitorPaths: conn.fsmonitorPaths,
+      scopedGitDirs: conn.scopedGitDirs,
     );
   }
 
@@ -2733,17 +2800,41 @@ final repoFootprintProvider = FutureProvider.autoDispose
 final repoWatchProvider = StreamProvider.autoDispose
     .family<RepoWatchEvent, String>((ref, repoPath) {
       final backend = ref.watch(connectionProvider.select((c) => c.backend));
-      // Keep the connection-scoped services alive while the watcher runs.
-      // Exhaustive switch (no default) so a new backend can't silently fall
-      // through to the SSH watcher.
-      final raw = switch (backend) {
-        ConnectionBackend.local => ref
-            .watch(localWatchServiceProvider)
-            .watch(repoPath),
-        ConnectionBackend.ssh => ref
-            .watch(remoteWatchServiceProvider)
-            .watch(repoPath),
+      // A scoped work-tree (dotfiles) repo can't be watched recursively — its
+      // work tree may be all of $HOME. Watch the bounded surface (git-dir points
+      // + tracked-file dirs) instead. The tracked-file list is fetched once at
+      // arm; a productionization TODO is to re-arm on index change.
+      final scopedGitDir = ref.watch(
+        connectionProvider.select((c) => c.scopedGitDirFor(repoPath)),
+      );
+      final local = ref.watch(localWatchServiceProvider);
+      final remote = ref.watch(remoteWatchServiceProvider);
+
+      Stream<RepoWatchEvent> armed(BoundedWatchSpec? bounded) => switch (backend) {
+        // Keep the connection-scoped services alive while the watcher runs.
+        // Exhaustive switch (no default) so a new backend can't silently fall
+        // through to the SSH watcher.
+        ConnectionBackend.local => local.watch(repoPath, bounded: bounded),
+        ConnectionBackend.ssh => remote.watch(repoPath, bounded: bounded),
       };
+
+      final Stream<RepoWatchEvent> raw;
+      if (scopedGitDir != null && scopedGitDir.isNotEmpty) {
+        final git = ref.watch(gitServiceProvider);
+        // Build the bounded spec from the repo's tracked files, then arm — as a
+        // single stream so the async fetch doesn't block provider construction.
+        raw = Stream.fromFuture(
+          git.listTrackedFiles(repoPath).then(
+            (tracked) => computeBoundedWatchSpec(
+              gitDir: scopedGitDir,
+              workTree: repoPath,
+              trackedFiles: tracked,
+            ),
+          ),
+        ).asyncExpand((spec) => armed(spec));
+      } else {
+        raw = armed(null);
+      }
       final oracle = ref.watch(ignoreOracleProvider);
       return _withoutIgnoredPaths(oracle, repoPath, raw);
     });

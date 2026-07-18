@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
 import '../local/linked_worktree_probe.dart';
+import 'bounded_watch.dart';
 import 'watch_event.dart';
 import 'watch_lifecycle.dart';
 import 'watch_path_filter.dart';
@@ -16,7 +17,13 @@ class _WatchRoot {
   /// drops the event ([shouldTriggerWatch] rejects the empty string).
   final String Function(String absolutePath) relativize;
 
-  const _WatchRoot(this.dir, this.relativize);
+  /// Watch the whole subtree ([recursive] = true, ordinary and linked-worktree
+  /// roots) or only this directory's own entries (false). Non-recursive is what
+  /// keeps a scoped work-tree ($HOME) from arming a recursive watch over its
+  /// entire tree — see the bounded-dotfiles roots in [LocalWatchService.watch].
+  final bool recursive;
+
+  const _WatchRoot(this.dir, this.relativize, {this.recursive = true});
 }
 
 /// Native-filesystem-event equivalent of [RemoteWatchService] for a repo on
@@ -99,8 +106,33 @@ class LocalWatchService {
     return roots;
   }
 
+  /// The bounded, **non-recursive** roots for a scoped work-tree (dotfiles)
+  /// repo: each directory in [spec] watched on its own, with git-dir events
+  /// remapped to `.git/…` by [relativizeBoundedEvent] so the shared filter and
+  /// [RepoWatchEvent.touchesGitState] work unchanged — the local-backend twin
+  /// of [RemoteWatchService]'s bounded arming. `?? ''` drops any event outside
+  /// the spec (the empty string is rejected by [shouldTriggerWatch]).
+  static List<_WatchRoot> _boundedRoots(BoundedWatchSpec spec) => [
+    for (final dir in spec.watchDirs)
+      _WatchRoot(
+        dir,
+        (path) => relativizeBoundedEvent(path, spec) ?? '',
+        recursive: false,
+      ),
+  ];
+
+  /// Watches [repoPath] for changes.
+  ///
+  /// [bounded], when supplied, switches to the scoped work-tree surface for a
+  /// dotfiles-style repo (git-dir points + tracked-file dirs, watched
+  /// non-recursively) instead of a recursive watch of the whole work tree — see
+  /// [BoundedWatchSpec]. Only pass it when the repo's type toggle marks it as
+  /// such; an ordinary repo leaves it null and behaves exactly as before. Mirror
+  /// of [RemoteWatchService.watch]'s `bounded` so the DI hub can pick the backend
+  /// without either caring which it got.
   Stream<RepoWatchEvent> watch(
     String repoPath, {
+    BoundedWatchSpec? bounded,
     Duration trailing = const Duration(milliseconds: 150),
     Duration maxWait = const Duration(seconds: 1),
     Duration minInterval = const Duration(seconds: 1),
@@ -110,7 +142,7 @@ class LocalWatchService {
     // Resolved once per watch, not per restart: the layout of a checkout can't
     // change while it's open (only `worktree move`/`repair` does that, and both
     // go through a full reconnect).
-    final roots = _rootsFor(repoPath);
+    final roots = bounded != null ? _boundedRoots(bounded) : _rootsFor(repoPath);
 
     return watchLifecycle(
       trailing: trailing,
@@ -130,7 +162,7 @@ class LocalWatchService {
         try {
           for (final root in roots) {
             subs.add(
-              Directory(root.dir).watch(recursive: true).listen(
+              Directory(root.dir).watch(recursive: root.recursive).listen(
                 (event) {
                   hooks.noteActivity();
                   final path = root.relativize(event.path);

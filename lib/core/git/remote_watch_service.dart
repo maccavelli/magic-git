@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 import '../ssh/ssh_command_executor.dart';
+import 'bounded_watch.dart';
 import 'watch_event.dart';
 import 'watch_lifecycle.dart';
 import 'watch_path_filter.dart';
@@ -30,8 +31,17 @@ class RemoteWatchService {
   /// we drop what's accumulated and resync on the next delimiter.
   static const int _maxBufferChars = 1 << 20; // 1 MiB
 
+  /// Watches [repoPath] for changes.
+  ///
+  /// [bounded], when supplied, switches to the **scoped work-tree** surface for
+  /// a dotfiles-style repo (git-dir + tracked-file dirs, non-recursive) instead
+  /// of a recursive watch of the whole work tree — see [BoundedWatchSpec] for
+  /// why a recursive `$HOME` watch is unacceptable. Only pass it when the repo's
+  /// type toggle marks it as such; an ordinary repo leaves it null and gets the
+  /// unchanged recursive behaviour.
   Stream<RepoWatchEvent> watch(
     String repoPath, {
+    BoundedWatchSpec? bounded,
     Duration trailing = const Duration(milliseconds: 150),
     Duration maxWait = const Duration(seconds: 1),
     Duration minInterval = const Duration(seconds: 1),
@@ -59,7 +69,7 @@ class RemoteWatchService {
 
         final handle = await _executor.executeStream(
           repoPath: repoPath,
-          gitArgs: _watcherArgs(tool),
+          gitArgs: _watcherArgs(tool, bounded),
         );
         if (hooks.isCancelled()) {
           await handle.cancel();
@@ -76,8 +86,14 @@ class RemoteWatchService {
             while (idx >= 0) {
               final event = buffer.substring(0, idx);
               buffer = buffer.substring(idx + 1);
-              if (shouldTriggerWatch(event)) {
-                hooks.signalPath(event);
+              // Bounded mode watches absolute paths; remap them to the
+              // repo-relative (`.git/…` for git-dir) shape the filter expects.
+              // Recursive mode already emits repo-relative paths (cwd = repo).
+              final path = bounded == null
+                  ? event
+                  : relativizeBoundedEvent(event, bounded);
+              if (path != null && shouldTriggerWatch(path)) {
+                hooks.signalPath(path);
               }
               idx = buffer.indexOf(delimiter);
             }
@@ -130,7 +146,19 @@ class RemoteWatchService {
     }
   }
 
-  List<String> _watcherArgs(_WatcherTool tool) {
+  List<String> _watcherArgs(_WatcherTool tool, BoundedWatchSpec? bounded) {
+    // Scoped work-tree repo: watch the explicit, non-recursive bounded surface
+    // (git-dir points + tracked-file dirs) instead of the whole work tree.
+    if (bounded != null) {
+      switch (tool) {
+        case _WatcherTool.fswatch:
+          return boundedFswatchArgs(bounded.watchDirs);
+        case _WatcherTool.inotifywait:
+          return ['sh', '-c', boundedInotifyScript(bounded.watchDirs)];
+        case _WatcherTool.none:
+          return const [];
+      }
+    }
     switch (tool) {
       case _WatcherTool.fswatch:
         return [

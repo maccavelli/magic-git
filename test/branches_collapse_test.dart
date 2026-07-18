@@ -46,7 +46,7 @@ List<GitRef> _refs() => [
   ),
 ];
 
-Future<void> _pump(WidgetTester tester, {TextEditingController? filter}) async {
+Future<void> _pump(WidgetTester tester) async {
   tester.view.physicalSize = const Size(900, 1800);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);

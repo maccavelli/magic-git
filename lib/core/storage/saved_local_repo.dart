@@ -40,6 +40,17 @@ class SavedLocalRepo {
   /// an SSH one.
   final bool fsmonitorEnabled;
 
+  /// For a **scoped work-tree repo** (the dotfiles pattern): the git-dir that
+  /// lives OUTSIDE [repoPath], with [repoPath] itself as the work tree (e.g.
+  /// `repoPath` = `$HOME`, `gitDir` = `~/.home.git`). Empty for an ordinary
+  /// repo whose `.git` is inside [repoPath].
+  ///
+  /// When set, the connect flow registers `GIT_DIR`/`GIT_WORK_TREE` on the
+  /// GitService (so every command targets the external git-dir) and the watcher
+  /// switches to the bounded, tracked-files-only surface instead of recursing
+  /// the whole work tree. See `bounded_watch.dart` / `GitService.registerRepoScope`.
+  final String gitDir;
+
   /// When this repo was last opened — drives recency ordering, mirroring
   /// [SavedConnection.lastConnectedAt]. Null for never-opened entries.
   final DateTime? lastConnectedAt;
@@ -52,6 +63,7 @@ class SavedLocalRepo {
     this.mainRepoPath = '',
     this.mainRepoBookmarkData = '',
     this.fsmonitorEnabled = false,
+    this.gitDir = '',
     this.lastConnectedAt,
   });
 
@@ -59,12 +71,17 @@ class SavedLocalRepo {
   /// must be granted alongside it.
   bool get isLinkedWorktree => mainRepoPath.isNotEmpty;
 
+  /// True when this entry is a scoped work-tree (dotfiles) repo — its git-dir
+  /// lives outside the work tree.
+  bool get isScoped => gitDir.isNotEmpty;
+
   SavedLocalRepo copyWith({
     String? label,
     String? bookmarkData,
     String? mainRepoPath,
     String? mainRepoBookmarkData,
     bool? fsmonitorEnabled,
+    String? gitDir,
     DateTime? lastConnectedAt,
   }) => SavedLocalRepo(
     id: id,
@@ -74,6 +91,7 @@ class SavedLocalRepo {
     mainRepoPath: mainRepoPath ?? this.mainRepoPath,
     mainRepoBookmarkData: mainRepoBookmarkData ?? this.mainRepoBookmarkData,
     fsmonitorEnabled: fsmonitorEnabled ?? this.fsmonitorEnabled,
+    gitDir: gitDir ?? this.gitDir,
     lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,
   );
 
@@ -88,6 +106,8 @@ class SavedLocalRepo {
     if (mainRepoBookmarkData.isNotEmpty)
       'mainRepoBookmarkData': mainRepoBookmarkData,
     'fsmonitorEnabled': fsmonitorEnabled,
+    // Omitted for an ordinary repo, so existing entries round-trip identically.
+    if (gitDir.isNotEmpty) 'gitDir': gitDir,
     if (lastConnectedAt != null)
       'lastConnectedAt': lastConnectedAt!.toIso8601String(),
   };
@@ -103,6 +123,9 @@ class SavedLocalRepo {
         mainRepoPath: json['mainRepoPath'] as String? ?? '',
         mainRepoBookmarkData: json['mainRepoBookmarkData'] as String? ?? '',
         fsmonitorEnabled: json['fsmonitorEnabled'] as bool? ?? false,
+        // Absent on entries persisted before scoped repos existed → empty,
+        // migrating them silently as ordinary repos.
+        gitDir: json['gitDir'] as String? ?? '',
         lastConnectedAt: DateTime.tryParse(
           json['lastConnectedAt'] as String? ?? '',
         ),

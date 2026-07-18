@@ -171,9 +171,13 @@ class NewLocalRepoSheet extends ConsumerStatefulWidget {
 
 class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
   final _label = TextEditingController();
+  final _gitDir = TextEditingController();
   String? _pickedPath;
   bool _save = true;
   bool _fsmonitor = false;
+  /// Scoped work-tree (dotfiles) repo: the picked folder is the work tree and
+  /// [_gitDir] the external git-dir (e.g. a `~/.home.git` nested inside `$HOME`).
+  bool _scoped = false;
   bool _picking = false;
   bool _submitting = false;
   String? _saveWarning;
@@ -181,6 +185,7 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
   @override
   void dispose() {
     _label.dispose();
+    _gitDir.dispose();
     super.dispose();
   }
 
@@ -211,6 +216,7 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
       // entry in the switcher panel.
       final id = DateTime.now().microsecondsSinceEpoch.toString();
       final label = _label.text.trim();
+      final gitDir = _scoped ? _gitDir.text.trim() : '';
       // The picked folder may be a linked worktree, whose git data lives in the
       // main repository — a second grant, without which no git command works.
       // Ask for it BEFORE connecting, since connectLocal's own validation runs
@@ -224,6 +230,7 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
             label: label.isEmpty ? null : label,
             id: _save ? id : null,
             mainRepoPath: grants.mainRepoPath,
+            gitDir: gitDir.isEmpty ? null : gitDir,
           );
       if (!mounted) return;
       // connectLocal surfaced an error (not a git repo, permission denied,
@@ -260,6 +267,9 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
                   mainRepoPath: grants.mainRepoPath ?? '',
                   mainRepoBookmarkData: grants.newMainRepoBookmark ?? '',
                   fsmonitorEnabled: _fsmonitor,
+                  // Empty for an ordinary repo; the external git-dir for a
+                  // scoped (dotfiles) repo, so reopening re-registers the scope.
+                  gitDir: gitDir,
                 ),
               );
           if (!mounted) return;
@@ -291,7 +301,10 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
 
     return SizedSheet(
       width: kSheetWidth,
-      child: SizedBox(
+      // Scroll when the content exceeds the sheet's max height (SizedSheet caps
+      // it near the window height) — the scoped-repo toggle + git-dir field can
+      // push a short window over. Mirrors the SSH form's scrolling body.
+      child: SingleChildScrollView(
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
@@ -403,13 +416,50 @@ class _NewLocalRepoSheetState extends ConsumerState<NewLocalRepoSheet> {
                 'Turns on git\'s filesystem monitor daemon in this '
                 'repository — speeds up status on big working trees.',
               ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  MacosSwitch(
+                    value: _scoped,
+                    onChanged: (v) => setState(() => _scoped = v),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Scoped work-tree repo (dotfiles)',
+                      style: typography.body,
+                    ),
+                  ),
+                ],
+              ),
+              const FieldHint(
+                'For a bare / separate-git-dir repo whose work tree is the '
+                'folder above — e.g. a ~/.home.git dotfiles repo with \$HOME as '
+                'its work tree. Targets the external git-dir and watches only '
+                'tracked files, never the whole tree.',
+              ),
+              if (_scoped) ...[
+                const SizedBox(height: 8),
+                MacosTextField(
+                  controller: _gitDir,
+                  placeholder: 'Git directory — e.g. /Users/you/.home.git',
+                  placeholderStyle: kAppPlaceholderStyle,
+                  decoration: kAppTextFieldDecoration,
+                  focusedDecoration: kAppTextFieldFocusedDecoration,
+                  // Re-evaluate the Open button as the git-dir is typed.
+                  onChanged: (_) => setState(() {}),
+                ),
+              ],
               const SizedBox(height: 20),
               if (phase == ConnectionPhase.connecting)
                 const Center(child: ProgressCircle())
               else
                 AppPushButton(
                   controlSize: ControlSize.large,
-                  onPressed: (_pickedPath != null && !_submitting)
+                  onPressed:
+                      (_pickedPath != null &&
+                          !_submitting &&
+                          (!_scoped || _gitDir.text.trim().isNotEmpty))
                       ? _open
                       : null,
                   child: const Text('Open'),

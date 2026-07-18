@@ -33,10 +33,15 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
   final _privateKey = TextEditingController();
   final _passphrase = TextEditingController();
   final _repoPath = TextEditingController();
+  final _gitDir = TextEditingController();
   final _gitlabToken = TextEditingController();
   final _githubToken = TextEditingController();
 
   bool _save = true;
+  /// Scoped work-tree (dotfiles) repo: [_repoPath] is the work tree and
+  /// [_gitDir] the external git-dir. Registers GIT_DIR/GIT_WORK_TREE and runs
+  /// the watcher bounded — see `bounded_watch.dart`.
+  bool _scoped = false;
   String? _saveWarning;
 
   // Guards the window between tapping Connect and `connect()` flipping the
@@ -55,6 +60,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
     _privateKey.dispose();
     _passphrase.dispose();
     _repoPath.dispose();
+    _gitDir.dispose();
     _gitlabToken.dispose();
     _githubToken.dispose();
     super.dispose();
@@ -66,6 +72,9 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
         _repoPath.text.trim().isEmpty) {
       return false;
     }
+    // A scoped repo needs its external git-dir — without it there's nothing to
+    // target and the toggle is meaningless.
+    if (_scoped && _gitDir.text.trim().isEmpty) return false;
     // A profile with no auth method at all can never authenticate — require a
     // password or a private key before enabling Connect. A passphrase alone
     // (with no key for it to unlock) is never sufficient by itself; it only
@@ -123,6 +132,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
     final token = _gitlabToken.text.trim();
     final ghToken = _githubToken.text.trim();
     final key = _privateKey.text.trim();
+    final gitDir = _scoped ? _gitDir.text.trim() : '';
     final profile = SSHConnectionProfile(
       host: _host.text.trim(),
       port: int.tryParse(_port.text.trim()) ?? 22,
@@ -133,6 +143,10 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
     );
 
     var repoPaths = SavedConnection.dedupePaths([repoPath]);
+    // The scope map passed to connect(), and persisted when saving. Starts with
+    // just this repo's scope; the save branch merges in the profile's other
+    // repos' scopes so a re-save never drops them.
+    var scopedGitDirs = <String, String>{if (gitDir.isNotEmpty) repoPath: gitDir};
     String? connectionId;
     String? connectionLabel;
 
@@ -153,6 +167,14 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
         repoPath,
         ...?match?.allRepoPaths,
       ]);
+      // Merge into the profile's existing scopes: set this repo's git-dir when
+      // the toggle is on, else clear any stale scope for it.
+      scopedGitDirs = Map<String, String>.from(match?.scopedGitDirs ?? const {});
+      if (gitDir.isNotEmpty) {
+        scopedGitDirs[repoPath] = gitDir;
+      } else {
+        scopedGitDirs.remove(repoPath);
+      }
       final conn = SavedConnection(
         id: id,
         label: _label.text.trim(),
@@ -163,6 +185,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
         repoPaths: repoPaths,
         fsmonitorPaths: match?.fsmonitorPaths ?? const [],
         repoLabels: match?.repoLabels ?? const {},
+        scopedGitDirs: scopedGitDirs,
         lastConnectedAt: match?.lastConnectedAt,
       );
       // Saving is best-effort: the Keychain is unavailable on an unsigned build
@@ -225,6 +248,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
           connectionId: connectionId,
           connectionLabel: connectionLabel,
           repoPaths: repoPaths,
+          scopedGitDirs: scopedGitDirs,
         );
   }
 
@@ -307,6 +331,34 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
                 hint: 'Absolute path of the repository to open after '
                     'connecting.',
               ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  MacosSwitch(
+                    value: _scoped,
+                    onChanged: (v) => setState(() => _scoped = v),
+                  ),
+                  const SizedBox(width: 8),
+                  Text('Scoped work-tree repo (dotfiles)', style: typography.body),
+                ],
+              ),
+              const FieldHint(
+                'For a bare / separate-git-dir repo whose work tree is the path '
+                'above — e.g. a ~/.home.git dotfiles repo with \$HOME as its '
+                'work tree. Targets the external git-dir and watches only '
+                'tracked files, never the whole tree.',
+              ),
+              if (_scoped) ...[
+                const SizedBox(height: 8),
+                _field(
+                  'Git directory',
+                  _gitDir,
+                  placeholder: '/home/you/.home.git',
+                  hint: 'Absolute path of the external git-dir (GIT_DIR). The '
+                      'repository path above is used as the work tree '
+                      '(GIT_WORK_TREE).',
+                ),
+              ],
               _field(
                 'GitLab token',
                 _gitlabToken,
