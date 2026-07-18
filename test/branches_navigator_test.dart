@@ -1,0 +1,155 @@
+// Phase-1 structure of the redesigned Branches tab: the master–detail split,
+// selecting a row drives the detail pane's actions, the flat-default list with
+// a group-by-folder toggle, and the stale-branch collapse.
+
+import 'package:flutter/cupertino.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:macos_ui/macos_ui.dart';
+
+import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/branches/branches_view.dart';
+import 'package:remote_magic_git/features/common/inline_action_button.dart';
+import 'package:remote_magic_git/features/common/resizable_master_detail.dart';
+
+const _repo = '/repo';
+
+class _NoopGit extends GitService {
+  _NoopGit() : super(SSHCommandExecutor(SSHClientManager()));
+}
+
+int _daysAgo(int days) =>
+    DateTime.now().subtract(Duration(days: days)).millisecondsSinceEpoch ~/ 1000;
+
+List<GitRef> _refs() => [
+  const GitRef(name: 'refs/heads/main', oid: 'a', isHead: true, subject: 's'),
+  const GitRef(
+    name: 'refs/heads/feature/login',
+    oid: 'b',
+    isHead: false,
+    subject: 's',
+  ),
+  const GitRef(
+    name: 'refs/heads/feature/signup',
+    oid: 'c',
+    isHead: false,
+    subject: 's',
+  ),
+  const GitRef(name: 'refs/heads/fix/crash', oid: 'd', isHead: false, subject: 's'),
+];
+
+/// main + a fresh branch + one branch untouched for ~200 days (stale).
+List<GitRef> _staleRefs() => [
+  const GitRef(name: 'refs/heads/main', oid: 'a', isHead: true, subject: 's'),
+  GitRef(
+    name: 'refs/heads/fresh',
+    oid: 'b',
+    isHead: false,
+    subject: 's',
+    creatorDate: _daysAgo(3),
+  ),
+  GitRef(
+    name: 'refs/heads/ancient',
+    oid: 'c',
+    isHead: false,
+    subject: 's',
+    creatorDate: _daysAgo(200),
+  ),
+];
+
+Future<void> _pump(WidgetTester tester, {List<GitRef>? refs}) async {
+  tester.view.physicalSize = const Size(1400, 1400);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+  final container = ProviderContainer(
+    overrides: [
+      gitServiceProvider.overrideWithValue(_NoopGit()),
+      refsProvider(_repo).overrideWith((ref) async => refs ?? _refs()),
+      remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+      remoteTagsProvider(_repo).overrideWith((ref) async => null),
+    ],
+  );
+  addTearDown(container.dispose);
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: const MacosApp(
+        debugShowCheckedModeBanner: false,
+        home: BranchesView(repoPath: _repo),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+void main() {
+  testWidgets('renders as a master–detail split with an empty detail prompt',
+      (tester) async {
+    await _pump(tester);
+    expect(find.byType(ResizableMasterDetail), findsOneWidget);
+    expect(find.text('Select a branch or tag'), findsOneWidget);
+  });
+
+  testWidgets('selecting a branch fills the detail pane with its actions', (
+    tester,
+  ) async {
+    await _pump(tester);
+
+    // Nothing selected → no per-branch actions yet.
+    expect(find.widgetWithText(InlineActionButton, 'Rename…'), findsNothing);
+
+    await tester.tap(find.text('fix/crash'));
+    await tester.pumpAndSettle();
+
+    // The detail pane now offers this branch's actions.
+    expect(find.widgetWithText(InlineActionButton, 'Check out'), findsOneWidget);
+    expect(
+      find.widgetWithText(InlineActionButton, 'Merge into current'),
+      findsOneWidget,
+    );
+    expect(find.widgetWithText(InlineActionButton, 'Rename…'), findsOneWidget);
+  });
+
+  testWidgets('flat by default; the toggle groups branches into folders', (
+    tester,
+  ) async {
+    await _pump(tester);
+
+    // Flat: the full slash name is one row, no folder rows.
+    expect(find.text('feature/login'), findsOneWidget);
+    expect(find.text('feature/'), findsNothing);
+
+    // Toggle grouping (the flat-list icon in the toolbar).
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.list_bullet,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Grouped: a feature/ folder with leaves shown by their last segment.
+    expect(find.text('feature/'), findsOneWidget);
+    expect(find.text('fix/'), findsOneWidget);
+    expect(find.text('login'), findsOneWidget);
+    expect(find.text('feature/login'), findsNothing);
+  });
+
+  testWidgets('stale branches collapse behind a summary row that expands', (
+    tester,
+  ) async {
+    await _pump(tester, refs: _staleRefs());
+
+    // The stale branch is hidden; a summary row stands in.
+    expect(find.text('ancient'), findsNothing);
+    expect(find.text('fresh'), findsOneWidget);
+    expect(find.textContaining('stale'), findsOneWidget);
+
+    await tester.tap(find.textContaining('stale'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('ancient'), findsOneWidget);
+  });
+}

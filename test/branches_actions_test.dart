@@ -1,7 +1,7 @@
 // The Branches panel's newer affordances: upstream-divergence badges, rename,
 // delete-on-remote, and the fast-forward-only merge item.
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -105,6 +105,10 @@ Future<_FakeGit> _pump(WidgetTester tester) async {
   return git;
 }
 
+// Row actions live on a right-click context menu now.
+Future<void> _rightClick(WidgetTester tester, Finder f) =>
+    tester.tap(f, buttons: kSecondaryButton, warnIfMissed: false);
+
 void main() {
   testWidgets('divergence badges: ↑/↓ for a diverged branch, "gone" for a '
       'deleted upstream', (tester) async {
@@ -119,12 +123,10 @@ void main() {
   ) async {
     final git = await _pump(tester);
 
-    // The current branch is renameable too — tap its pencil.
-    await tester.tap(
-      find.byWidgetPredicate(
-        (w) => w is MacosIcon && w.icon == CupertinoIcons.pencil,
-      ).first,
-    );
+    // The current branch is renameable too — right-click it → Rename….
+    await _rightClick(tester, find.text('main'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Rename…'));
     await tester.pumpAndSettle();
 
     // Pre-filled with the old name; replace and confirm.
@@ -140,11 +142,10 @@ void main() {
   ) async {
     final git = await _pump(tester);
 
-    await tester.tap(
-      find.byWidgetPredicate(
-        (w) => w is MacosIcon && w.icon == CupertinoIcons.trash,
-      ).last, // the remote row's — local rows render above it
-    );
+    // Right-click the remote branch → Delete branch on the remote.
+    await _rightClick(tester, find.text('origin/feature'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete branch on the remote'));
     await tester.pumpAndSettle();
 
     expect(git.remoteDeletes, isEmpty, reason: 'nothing before the confirm');
@@ -157,13 +158,8 @@ void main() {
   testWidgets('the merge menu offers fast-forward only', (tester) async {
     final git = await _pump(tester);
 
-    // By icon: the head row's upstream menu (ellipsis) also renders as a
-    // MacosPulldownButton above this one.
-    await tester.tap(
-      find.byWidgetPredicate(
-        (w) => w is MacosPulldownButton && w.icon == CupertinoIcons.arrow_merge,
-      ),
-    );
+    // Right-click the non-current local branch → its merge modes.
+    await _rightClick(tester, find.text('stale'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Merge (fast-forward only)'));
     await tester.pumpAndSettle();

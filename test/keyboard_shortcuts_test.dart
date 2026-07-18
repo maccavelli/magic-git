@@ -230,18 +230,23 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('⌘B focuses the new-branch field', (tester) async {
+    testWidgets('⌘B opens the new-branch prompt', (tester) async {
       await pump(tester, isActive: true);
 
-      final field = find.byWidgetPredicate(
-        (w) => w is MacosTextField && w.placeholder == 'New branch name',
-      );
-      expect(tester.widget<MacosTextField>(field).focusNode!.hasFocus, isFalse);
+      // No prompt until the shortcut fires.
+      expect(find.text('New branch'), findsNothing);
 
       _bindingFor(tester, LogicalKeyboardKey.keyB, meta: true)!();
       await tester.pumpAndSettle();
 
-      expect(tester.widget<MacosTextField>(field).focusNode!.hasFocus, isTrue);
+      // The name prompt is up with its field.
+      expect(find.text('New branch'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is MacosTextField && w.placeholder == 'branch name',
+        ),
+        findsOneWidget,
+      );
     });
 
     testWidgets('a backgrounded panel (isActive: false) registers no shortcuts', (

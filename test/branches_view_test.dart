@@ -7,6 +7,7 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -71,11 +72,10 @@ class _FakeGit extends GitService {
   }
 }
 
-// `.first`: local rows render above remote rows, and the remote row now has
-// its own (delete-on-remote) trash icon.
-Finder get _deleteBranchIcon => find
-    .byWidgetPredicate((w) => w is MacosIcon && w.icon == CupertinoIcons.trash)
-    .first;
+// Actions moved off the rows into a right-click context menu + the detail
+// pane; open a row's menu with a secondary (right) click.
+Future<void> _rightClick(WidgetTester tester, Finder f) =>
+    tester.tap(f, buttons: kSecondaryButton, warnIfMissed: false);
 
 Future<_FakeGit> _pump(WidgetTester tester) async {
   final git = _FakeGit();
@@ -112,7 +112,10 @@ void main() {
     (tester) async {
       final git = await _pump(tester);
 
-      await tester.tap(_deleteBranchIcon);
+      // Right-click the local branch → Delete branch (menu item).
+      await _rightClick(tester, find.text('feature'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete branch'));
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
       expect(find.text('Delete branch'), findsWidgets);
@@ -139,7 +142,9 @@ void main() {
     (tester) async {
       final git = await _pump(tester);
 
-      await tester.tap(_deleteBranchIcon);
+      await _rightClick(tester, find.text('feature'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete branch'));
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
       await tester.tap(find.text('Delete').last);
@@ -192,16 +197,15 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Local and remote rows both expose a checkout affordance now; target the
-      // first (the local branch's) and tap it twice.
-      final checkoutIcon = find
-          .byWidgetPredicate(
-            (w) => w is MacosIcon && w.icon == CupertinoIcons.square_arrow_down,
-          )
-          .first;
-      await tester.tap(checkoutIcon);
+      // Select the local branch, then double-tap its detail-pane Check out
+      // button: the first checkout marks the panel busy, disabling the button,
+      // so the second tap is inert.
+      await tester.tap(find.text('feature'));
+      await tester.pumpAndSettle();
+      final checkoutBtn = find.text('Check out');
+      await tester.tap(checkoutBtn);
       await tester.pump();
-      await tester.tap(checkoutIcon); // fired while the first is still gated
+      await tester.tap(checkoutBtn); // fired while the first is still gated
       await tester.pump();
 
       expect(git.checkoutCalls, 1);

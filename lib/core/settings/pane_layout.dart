@@ -28,6 +28,9 @@ enum PaneId {
   /// Stashes tab: the stash cards beside the preview.
   stashList,
 
+  /// Branches tab: the branch/tag navigator beside the branch detail pane.
+  branchesList,
+
   /// The right-docked Files tree (file_view). Keeps its own drag handle and
   /// relative display clamps; only the chosen width is persisted here.
   filesTree,
@@ -62,6 +65,9 @@ const paneSpecs = <PaneId, PaneSpec>{
   PaneId.forgeList: PaneSpec(defaultWidth: 360, min: 280, max: 640),
   PaneId.jobsList: PaneSpec(defaultWidth: 240, min: 180, max: 480),
   PaneId.stashList: PaneSpec(defaultWidth: 360, min: 280, max: 640),
+  // The navigator holds branch names + a divergence bar + badges; 300 is the
+  // comfortable floor before names start truncating on nested folders.
+  PaneId.branchesList: PaneSpec(defaultWidth: 380, min: 300, max: 680),
   // file_view's own floor is 220 and its ceiling is relative (55% of its
   // host); these bounds only sanitize what lands on disk.
   PaneId.filesTree: PaneSpec(defaultWidth: 280, min: 220, max: 800),

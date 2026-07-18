@@ -3,6 +3,7 @@
 // tags), collapsed to the 10 most recent, with a "Show more" row that expands
 // the rest in place.
 
+import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,6 +14,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
+import 'package:remote_magic_git/features/common/inline_action_button.dart';
 import 'package:remote_magic_git/features/common/tool_icon_button.dart';
 
 const _repo = '/repo';
@@ -163,23 +165,24 @@ void main() {
       ),
   ];
 
-  ToolIconButton pushButtonFor(WidgetTester tester, String tag) {
-    final row = find.ancestor(
-      of: find.text(tag),
-      matching: find.byWidgetPredicate(
-        (w) => w is Padding && w.child is Row,
+  // The per-tag push affordance is the detail pane's button now (select the
+  // tag row to reveal it): 'Push to origin' when it can push, a disabled
+  // 'Already on origin' when in sync.
+  Future<void> expectPush(
+    WidgetTester tester,
+    String tag, {
+    required bool enabled,
+  }) async {
+    await tester.tap(find.text(tag));
+    await tester.pumpAndSettle();
+    final btn = tester.widget<InlineActionButton>(
+      find.byWidgetPredicate(
+        (w) =>
+            w is InlineActionButton &&
+            (w.label == 'Push to origin' || w.label == 'Already on origin'),
       ),
     );
-    return tester.widget<ToolIconButton>(
-      find
-          .descendant(
-            of: row.first,
-            matching: find.byWidgetPredicate(
-              (w) => w is ToolIconButton && w.tooltip.contains('origin'),
-            ),
-          )
-          .first,
-    );
+    expect(btn.onPressed != null, enabled);
   }
 
   testWidgets('badges follow the remote listing: local-only orange, differs '
@@ -193,13 +196,9 @@ void main() {
     expect(find.text('local only'), findsOneWidget);
     expect(find.text('differs from origin'), findsOneWidget);
 
-    expect(pushButtonFor(tester, 'unpushed').onPressed, isNotNull,
-        reason: 'a local-only tag is exactly what the push button is for');
-    expect(pushButtonFor(tester, 'synced').onPressed, isNull,
-        reason: 'pushing an in-sync tag is a no-op — disabled, says why');
-    expect(pushButtonFor(tester, 'moved').onPressed, isNotNull,
-        reason: 'a diverged push is allowed; the tooltip warns it will be '
-            'rejected');
+    await expectPush(tester, 'unpushed', enabled: true);
+    await expectPush(tester, 'synced', enabled: false);
+    await expectPush(tester, 'moved', enabled: true);
 
     expect(find.text('Push 1 to origin'), findsOneWidget,
         reason: 'only the local-only tag counts — not the diverged one');
@@ -211,8 +210,10 @@ void main() {
 
     expect(find.text('local only'), findsNothing);
     expect(find.text('differs from origin'), findsNothing);
+    // Nothing selected → no push affordance anywhere (header hidden too).
     expect(find.textContaining('Push', findRichText: true), findsNothing);
-    expect(pushButtonFor(tester, 'unpushed').onPressed, isNotNull);
+    // Selecting a tag reveals an enabled push (unknown is not forbidden).
+    await expectPush(tester, 'unpushed', enabled: true);
   });
 
   testWidgets('a repo with NO configured remote hides the push affordances '
@@ -227,21 +228,12 @@ void main() {
     );
   });
 
+  // Delete lives on the tag row's right-click menu now.
   Future<void> tapTrash(WidgetTester tester, String tag) async {
-    final row = find.ancestor(
-      of: find.text(tag),
-      matching: find.byWidgetPredicate((w) => w is Padding && w.child is Row),
-    );
-    await tester.tap(
-      find
-          .descendant(
-            of: row.first,
-            matching: find.byWidgetPredicate(
-              (w) => w is ToolIconButton && w.tooltip == 'Delete tag',
-            ),
-          )
-          .first,
-    );
+    await tester.tap(find.text(tag),
+        buttons: kSecondaryButton, warnIfMissed: false);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete tag'));
     await tester.pumpAndSettle();
   }
 

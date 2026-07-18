@@ -17,6 +17,7 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -29,7 +30,11 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/theme/app_theme.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
+import 'package:remote_magic_git/features/common/inline_action_button.dart';
 import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
+
+Future<void> _rightClick(WidgetTester tester, Finder f) =>
+    tester.tap(f, buttons: kSecondaryButton, warnIfMissed: false);
 
 const _repo = '/repo';
 const _repoB = '/repo-b';
@@ -191,73 +196,74 @@ Finder _selectedRows() => find.byWidgetPredicate(
   (w) => w is Container && w.color == AppTheme.rowSelectionTint,
 );
 
-/// The create-branch field specifically — the filter bar is also a
-/// MacosTextField and sits above it in the tree.
-Finder _newBranchField() => find.byWidgetPredicate(
-  (w) => w is MacosTextField && w.placeholder == 'New branch name',
+/// The compact filter field in the navigator toolbar.
+Finder _filterField() => find.byWidgetPredicate(
+  (w) => w is MacosTextField && w.placeholder == 'Filter branches and tags',
 );
 
 void main() {
-  testWidgets('Enter in the New-branch field creates the branch and never '
-      'checks out the selected one', (tester) async {
+  testWidgets('creating a branch via the prompt never checks out the '
+      'selected one', (tester) async {
     final git = await _pump(tester);
 
-    // Select a branch, exactly the state the old bug needed.
+    // Select a branch, then open the New-branch prompt from the Local header.
     await tester.tap(find.text('feature'));
     await tester.pumpAndSettle();
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.add,
+      ),
+    );
+    await tester.pumpAndSettle();
 
-    await tester.enterText(_newBranchField(), 'my-new-branch');
+    await tester.enterText(find.byType(MacosTextField).last, 'my-new-branch');
     await tester.pump();
-    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
     expect(git.checkouts, isEmpty,
-        reason: 'Enter in the field must not bubble into a checkout');
+        reason: 'creating a branch must not check out the selection');
     expect(git.created, ['my-new-branch']);
   });
 
-  testWidgets('Enter pressed as a raw key in the field also does not check '
-      'out (focus-guarded key handler)', (tester) async {
+  testWidgets('Enter typed into the filter field does not check out the '
+      'selection (focus-guarded key handler)', (tester) async {
     final git = await _pump(tester);
     await tester.tap(find.text('feature'));
     await tester.pumpAndSettle();
-    await tester.tap(_newBranchField());
+    await tester.tap(_filterField());
     await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
     expect(git.checkouts, isEmpty);
   });
 
-  testWidgets('the merge pulldown is disabled while an operation is in '
-      'flight', (tester) async {
+  testWidgets('detail actions are disabled while an operation is in flight',
+      (tester) async {
     final git = await _pump(tester);
     git.checkoutGate = Completer<void>();
 
-    // Start a gated checkout — the panel is now busy.
-    await tester.tap(
-      find
-          .byWidgetPredicate(
-            (w) => w is MacosIcon && w.icon == CupertinoIcons.square_arrow_down,
-          )
-          .first,
-    );
-    await tester.pump();
+    // Select a non-current branch; its detail pane offers Merge + Check out.
+    await tester.tap(find.text('feature'));
+    await tester.pumpAndSettle();
 
-    final pulldown = tester.widget<MacosPulldownButton>(
-      find.byType(MacosPulldownButton).first,
+    InlineActionButton mergeBtn() => tester.widget<InlineActionButton>(
+      find.byWidgetPredicate(
+        (w) => w is InlineActionButton && w.label == 'Merge into current',
+      ),
     );
-    expect(pulldown.items, isNull,
-        reason: 'null items = disabled, like every sibling button');
+    expect(mergeBtn().onPressed, isNotNull);
+
+    // Start a gated checkout — the panel is now busy.
+    await tester.tap(find.text('Check out'));
+    await tester.pump();
+    expect(mergeBtn().onPressed, isNull,
+        reason: 'every action goes inert while an op is in flight');
 
     git.checkoutGate!.complete();
     await tester.pumpAndSettle();
-    expect(
-      tester
-          .widget<MacosPulldownButton>(find.byType(MacosPulldownButton).first)
-          .items,
-      isNotNull,
-      reason: 're-enabled once the operation completes',
-    );
+    expect(mergeBtn().onPressed, isNotNull,
+        reason: 're-enabled once the operation completes');
   });
 
   testWidgets('a failed local tag delete stops the remote half of "Delete '
@@ -273,13 +279,9 @@ void main() {
     );
     git.failDeleteTag = true;
 
-    await tester.tap(
-      find
-          .byWidgetPredicate(
-            (w) => w is MacosIcon && w.icon == CupertinoIcons.trash,
-          )
-          .last,
-    );
+    await _rightClick(tester, find.text('v1'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete tag'));
     await tester.pump();
     await tester.pump(const Duration(seconds: 1));
     await tester.tap(find.text('Delete Local and on origin'));
@@ -359,12 +361,11 @@ void main() {
     ]);
   });
 
-  testWidgets('the current branch row offers Set upstream via its own menu',
+  testWidgets('the current branch offers Set upstream via its right-click menu',
       (tester) async {
     final git = await _pump(tester);
 
-    // The head row's ellipsis menu is the first pulldown (main sorts first).
-    await tester.tap(find.byType(MacosPulldownButton).first);
+    await _rightClick(tester, find.text('main'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Set upstream…'));
     await tester.pumpAndSettle();

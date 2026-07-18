@@ -12,6 +12,7 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
+import 'package:remote_magic_git/features/common/inline_action_button.dart';
 
 const _repo = '/Users/x/wt-demo/app';
 
@@ -124,24 +125,25 @@ void main() {
     expect(find.text('app'), findsNothing);
   });
 
-  testWidgets('checkout is replaced by switch-to-worktree; delete disabled', (
-    tester,
-  ) async {
+  testWidgets('a worktree-held branch offers switch-to-worktree in place of '
+      'checkout, and no delete', (tester) async {
     await pump(tester);
 
-    // Two badged branches get "switch to worktree"; the one free branch gets
-    // checkout + "new worktree from this branch".
+    // The free branch: its detail pane offers Check out and Delete.
+    await tester.tap(find.text('hotfix/login'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(InlineActionButton, 'Check out'), findsOneWidget);
+    expect(find.widgetWithText(InlineActionButton, 'Delete'), findsOneWidget);
+
+    // A branch checked out elsewhere: Switch to worktree replaces Check out,
+    // and Delete is withheld (git refuses, with no override flag).
+    await tester.tap(find.text('feature/auth'));
+    await tester.pumpAndSettle();
     expect(
-      find.byWidgetPredicate(
-        (w) => w is MacosIcon && w.icon == CupertinoIcons.square_arrow_right,
-      ),
-      findsNWidgets(2),
-    );
-    expect(
-      find.byWidgetPredicate(
-        (w) => w is MacosIcon && w.icon == CupertinoIcons.square_arrow_down,
-      ),
+      find.widgetWithText(InlineActionButton, 'Switch to worktree'),
       findsOneWidget,
     );
+    expect(find.widgetWithText(InlineActionButton, 'Check out'), findsNothing);
+    expect(find.widgetWithText(InlineActionButton, 'Delete'), findsNothing);
   });
 }
