@@ -13,6 +13,7 @@ import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/hover_pop.dart';
 import '../common/label_chip.dart';
+import '../common/prompt_text_sheet.dart';
 import '../common/sized_sheet.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
@@ -20,6 +21,7 @@ import '../connection/local_repo_form.dart';
 import '../tabs/tabs_controller.dart';
 import '../workspace/clone_sheet.dart';
 import '../workspace/create_repo_sheet.dart';
+import 'edit_entry_sheets.dart';
 
 String _basename(String path) {
   final parts = path.split('/').where((s) => s.isNotEmpty).toList();
@@ -406,6 +408,12 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                     ),
                   ),
                 ToolIconButton(
+                  icon: CupertinoIcons.pencil,
+                  tooltip: 'Edit connection',
+                  size: 15,
+                  onPressed: () => _editConnection(context, ref, conn),
+                ),
+                ToolIconButton(
                   icon: CupertinoIcons.trash,
                   tooltip: 'Delete connection',
                   size: 15,
@@ -468,6 +476,12 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                   size: 13,
                   color: _accent,
                 ),
+              ToolIconButton(
+                icon: CupertinoIcons.pencil,
+                tooltip: 'Edit repository path',
+                size: 14,
+                onPressed: () => _editRepoPath(context, ref, conn, repo),
+              ),
               ToolIconButton(
                 icon: conn.fsmonitorEnabledFor(repo)
                     ? CupertinoIcons.bolt_fill
@@ -680,6 +694,12 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                   color: _accent,
                 ),
               ToolIconButton(
+                icon: CupertinoIcons.pencil,
+                tooltip: 'Edit repository',
+                size: 14,
+                onPressed: () => _editLocalRepo(context, ref, repo),
+              ),
+              ToolIconButton(
                 icon: repo.fsmonitorEnabled
                     ? CupertinoIcons.bolt_fill
                     : CupertinoIcons.bolt,
@@ -802,6 +822,73 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     if (current.connectionId == conn.id && current.repoPath == repo) {
       notifier.setRepoPath(newDefault);
     }
+  }
+
+  /// Opens the edit card for a saved connection and persists the result.
+  /// Secrets the user left blank are re-supplied from the store — `save()`
+  /// treats a null/empty secret as "delete", so "untouched" has to mean
+  /// re-writing whatever is already stored (the same dance the connection
+  /// form does when re-saving an existing profile).
+  Future<void> _editConnection(
+    BuildContext context,
+    WidgetRef ref,
+    SavedConnection conn,
+  ) async {
+    final result = await showMacosSheet<EditConnectionResult>(
+      context: context,
+      builder: (_) => EscapeDismissible(child: EditConnectionSheet(conn: conn)),
+    );
+    if (result == null || !context.mounted) return;
+    await runAction(context, () async {
+      final store = ref.read(connectionStoreProvider);
+      await store.save(
+        result.conn,
+        secret: result.password ?? await store.secretFor(conn.id),
+        privateKey: result.privateKey ?? await store.privateKeyFor(conn.id),
+        passphrase: result.passphrase ?? await store.passphraseFor(conn.id),
+        gitlabToken: result.gitlabToken ?? await store.gitlabTokenFor(conn.id),
+        githubToken: result.githubToken ?? await store.githubTokenFor(conn.id),
+      );
+      ref.invalidate(savedConnectionsProvider);
+    });
+  }
+
+  /// Repoints one repository entry of a connection at a different path on the
+  /// host (the repo moved or was renamed there). The entry's fsmonitor
+  /// preference travels with it; nothing is touched on the host itself, and
+  /// an active session on the old path keeps running until reconnect.
+  Future<void> _editRepoPath(
+    BuildContext context,
+    WidgetRef ref,
+    SavedConnection conn,
+    String repo,
+  ) async {
+    final newPath = await promptText(
+      context,
+      'Edit repository path',
+      placeholder: '/srv/git/my-project',
+      initial: repo,
+      description:
+          'Points this entry at a different path on ${conn.host} — nothing '
+          'is moved or renamed on the host itself.',
+      confirmLabel: 'Save',
+      validate: (v) => v.startsWith('/') ? null : 'Enter an absolute path',
+    );
+    if (newPath == null || newPath == repo || !context.mounted) return;
+    final hadFsmonitor = conn.fsmonitorEnabledFor(repo);
+    var updated = conn
+        .copyWith(
+          repoPath: conn.repoPath == repo ? newPath : conn.repoPath,
+          repoPaths: [
+            for (final p in conn.allRepoPaths) p == repo ? newPath : p,
+          ],
+        )
+        .withFsmonitor(repo, false);
+    if (hadFsmonitor) updated = updated.withFsmonitor(newPath, true);
+    await runAction(context, () async {
+      await ref.read(connectionStoreProvider).updateMetadata(updated);
+      ref.invalidate(savedConnectionsProvider);
+    });
   }
 
   Future<void> _toggleFsmonitor(
@@ -1058,9 +1145,45 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
       ref.invalidate(savedLocalReposProvider);
     });
     if (!saved) return;
-    // Apply live only when this repo is the active session — re-read now,
-    // not before the await, since the active session may have changed while
-    // the metadata write was in flight.
+    await _applyLocalFsmonitorLive(ref, repo, enabled);
+  }
+
+  /// Opens the edit card for a saved local repo and persists the result;
+  /// an fsmonitor change made in the card gets the same live application a
+  /// direct toggle does.
+  Future<void> _editLocalRepo(
+    BuildContext context,
+    WidgetRef ref,
+    SavedLocalRepo repo,
+  ) async {
+    final result = await showMacosSheet<(String, bool)?>(
+      context: context,
+      builder: (_) => EscapeDismissible(child: EditLocalRepoSheet(repo: repo)),
+    );
+    if (result == null || !context.mounted) return;
+    final (label, fsmonitor) = result;
+    if (label == repo.label && fsmonitor == repo.fsmonitorEnabled) return;
+    final saved = await runAction(context, () async {
+      await ref
+          .read(localRepoStoreProvider)
+          .updateMetadata(
+            repo.copyWith(label: label, fsmonitorEnabled: fsmonitor),
+          );
+      ref.invalidate(savedLocalReposProvider);
+    });
+    if (!saved || fsmonitor == repo.fsmonitorEnabled) return;
+    await _applyLocalFsmonitorLive(ref, repo, fsmonitor);
+  }
+
+  /// Applies an fsmonitor change to the running git session, when this repo
+  /// is the active one. Best-effort — on failure the saved preference still
+  /// applies on the next open. Reads the connection *now* (not before the
+  /// caller's awaits) so a session switched mid-write is never mis-targeted.
+  Future<void> _applyLocalFsmonitorLive(
+    WidgetRef ref,
+    SavedLocalRepo repo,
+    bool enabled,
+  ) async {
     final connection = ref.read(connectionProvider);
     if (connection.isLocal && connection.connectionId == repo.id) {
       try {
