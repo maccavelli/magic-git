@@ -28,7 +28,6 @@ import 'dashboard/dashboard_sheet.dart';
 import 'dnd/drop_registry.dart';
 import 'dnd/nav_rail.dart';
 import 'forge/forge_panel.dart';
-import 'forge/forge_project_panel.dart';
 import 'history/history_view.dart';
 import 'recovery/recovery_sheet.dart';
 import 'repository/repo_status_view.dart';
@@ -49,7 +48,7 @@ import 'worktrees/worktrees_view.dart';
 
 /// Top-level per-tab content shell. Content is driven by connection state: the
 /// connection form until a session is established, then the feature panels
-/// (Status, History, Branches, Stashes, Forge, Project) selected from the
+/// (Status, History, Branches, Stashes, Forge, Worktrees) selected from the
 /// sidebar.
 ///
 /// Mounted by [TabsHost] inside the active tab's own [ProviderContainer], so
@@ -698,11 +697,6 @@ class _AppShellState extends ConsumerState<AppShell> {
                 zone: DropZoneId.forge,
               ),
               NavRailItem(
-                icon: CupertinoIcons.cube_box,
-                label: 'Project',
-                zone: DropZoneId.project,
-              ),
-              NavRailItem(
                 icon: kWorktreeIcon,
                 label: 'Worktrees',
                 zone: DropZoneId.worktrees,
@@ -773,10 +767,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             ? ForgePanel(repoPath: repoPath, isActive: pageIndex == 4)
             : const SizedBox.shrink(),
         visitedPages.contains(5)
-            ? ForgeProjectPanel(repoPath: repoPath, isActive: pageIndex == 5)
-            : const SizedBox.shrink(),
-        visitedPages.contains(6)
-            ? WorktreesView(repoPath: repoPath, isActive: pageIndex == 6)
+            ? WorktreesView(repoPath: repoPath, isActive: pageIndex == 5)
             : const SizedBox.shrink(),
       ],
     );

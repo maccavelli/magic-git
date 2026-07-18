@@ -1,4 +1,4 @@
-// Verifies the create-PR sheet pushes the head branch to origin *before* it
+// Verifies the (now inline) create-PR form pushes the head branch to origin *before* it
 // calls `gh pr create` — `gh pr create --head` assumes the branch already
 // exists on the remote (unlike `glab mr create`, which pushes implicitly), so
 // creating a PR from a not-yet-pushed branch must still work.
@@ -14,7 +14,7 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
-import 'package:remote_magic_git/features/github/create_pr_sheet.dart';
+import 'package:remote_magic_git/features/github/create_pr_form.dart';
 
 const _repo = '/repo';
 
@@ -93,9 +93,9 @@ Future<void> _pump(WidgetTester tester) async {
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
-      child: const MacosApp(
+      child: MacosApp(
         debugShowCheckedModeBanner: false,
-        home: CreatePrSheet(repoPath: _repo),
+        home: CreatePrForm(repoPath: _repo, onClose: () {}),
       ),
     ),
   );
@@ -113,8 +113,8 @@ void main() {
     await tester.enterText(find.byType(MacosTextField).at(2), 'My change');
     await tester.pumpAndSettle();
 
-    await tester.ensureVisible(find.text('Create'));
-    await tester.tap(find.text('Create'));
+    await tester.ensureVisible(find.text('Create pull request'));
+    await tester.tap(find.text('Create pull request'));
     await tester.pumpAndSettle();
 
     expect(_calls, [

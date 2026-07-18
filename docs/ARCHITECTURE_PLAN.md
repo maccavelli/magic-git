@@ -6,51 +6,130 @@
 > cloning locally.
 >
 > Status: historical plan + living transport notes. Many items below shipped;
-> **§0.1** is the current transport truth. Older sections may still say
-> “serialized `_tail`” or “shell probe” — treat §0.1 as authoritative.
+> **§0.1** is the current transport truth (refreshed 2026-07-17). Older sections
+> may still say “serialized `_tail`” or “shell probe” — treat §0.1 as
+> authoritative. The app's scope has also outgrown this document's title: it now
+> speaks **GitHub via `gh`** as a first-class forge alongside GitLab, manages
+> **local repos on this Mac** (`LocalCommandExecutor`, sandbox-bookmarked)
+> through the same service layer, and opens **native secondary windows** whose
+> exec calls relay to the main isolate. The historical sections below are
+> GitLab/SSH-only because that's what was being planned at the time.
 
 ---
 
-## 0.1 Current SSH transport (authoritative, 2026-07)
+## 0.1 Current SSH transport (authoritative, 2026-07-17)
 
 - **POSIX remotes only** — no Windows shell dialect; `ShellEscaper` is POSIX-only.
+  Every script sent via `sh -c` must additionally be **dash-clean** (Debian-family
+  remotes run `sh` as dash): no `read -d ''`, and `set -o pipefail` only via the
+  subshell probe `(set -o pipefail) 2>/dev/null && set -o pipefail` — `set` is a
+  POSIX special builtin whose failure *aborts* a non-interactive shell.
+- **The executor seam:** `abstract class CommandExecutor` with three
+  implementations, so every service works unchanged against any backend —
+  `SSHCommandExecutor` (remote over dartssh2), `LocalCommandExecutor` (this Mac,
+  `Process.start` with native argv/cwd/env — no shell string exists to escape),
+  and `ProxyCommandExecutor` (pop-out windows: relays `execute` to the main
+  isolate's real executor over the per-window channel, so mutations stay
+  globally serialized and telemetry stays unified; payloads cross as `Uint8List`
+  because the native codec truncates strings at NUL; a liveness probe abandons
+  calls with a readable error if the main window stops answering, instead of
+  letting a pane spin forever; `executeStream` is deliberately not proxied —
+  watcher ticks are *pushed* to child windows as events).
 - **Dual `SSHClient` when possible** (`SSHClientManager`): command client for
-  `execute` / SFTP / health pings, stream client for `executeStream` (watcher,
-  CI trace). Shared generation pinning so a reconnect never runs work against
-  the wrong host. The two handshakes open **in parallel** (connect pays
-  max(cmd, stream), not their sum), with host-key verification **serialized**
-  across them (`serializeHostKeyVerifier`) so a TOFU first contact can't
-  double-write the store and a changed key can't stack two prompts on the
-  single decision slot. If the stream client fails to open, **degrade to
-  single client** (streams share the command client) rather than failing
-  connect — and a lost/degraded stream client is **re-dialed in the
-  background** with backoff (15s→120s, 5 consecutive failures then give up
-  for the session), so a NAT idle-drop of the idle stream connection no
-  longer degrades the session permanently.
+  `execute` / sideload / health pings, stream client for `executeStream`
+  (watcher, CI trace). Shared generation pinning so a reconnect never runs work
+  against the wrong host: commands pin the generation at enqueue time and
+  re-check both the attempt counter and the *attached-client* generation at run
+  time (`SSHCommandSuperseded` on mismatch — never retried). The two handshakes
+  open **in parallel** (connect pays max(cmd, stream), not their sum), with
+  host-key verification **serialized** across them (`serializeHostKeyVerifier`)
+  so a TOFU first contact can't double-write the store and a changed key can't
+  stack two prompts on the single decision slot. If the stream client fails to
+  open, **degrade to single client** (streams share the command client) rather
+  than failing connect — and a lost/degraded stream client is **re-dialed in
+  the background** with backoff (15s→120s, 5 consecutive failures then give up
+  for the session), so a NAT idle-drop of the idle stream connection no longer
+  degrades the session permanently.
 - **Auth:** password and/or PEM private key (file load or paste). No ssh-agent
   client auth in dartssh2; `agentHandler` is agent *forwarding* only and is not
   used for login. Empty password is never attempted for key-only profiles.
 - **Host keys:** app-scoped TOFU (`KnownHostsStore`) + mismatch prompt; pausable
-  auth timeout while the user decides.
-- **Dead peer:** `ConnectionHealthMonitor` owns keepalive pings (reply-checked)
-  on the command client only; library `keepAliveInterval` is off; `onDead`
-  closes both clients.
-- **Scheduling:** `CommandLaneScheduler` — concurrent reads (default ceiling
-  **4**, soft-throttled by RTT via `AdaptiveReadConcurrency` under high latency),
-  one sync, exclusive mutations as barrier, isolated long hooks.
-- **Compression:** dartssh2 has no transport compression; large text reads use
-  application `gzip` (absolute path when discovered) + in-band exit trailer.
-- **Streams:** `executeStream` off-queue (watcher, CI trace); generation-guarded;
-  prefers the stream client when dual mode is active.
+  auth timeout while the user decides; a superseding connect resolves an
+  orphaned prompt safely (reject) so nothing awaits a completer nobody holds.
+- **Dead peer:** `ConnectionHealthMonitor` owns keepalive pings (reply-checked,
+  never stacked; 15 s interval, 3 consecutive failures) on **both** clients —
+  the idle-by-design stream client is exactly the connection a NAT idle-drop
+  kills first, and nothing else would notice. Library `keepAliveInterval` is
+  off. The command monitor's answered-ping RTTs feed the dashboard's latency
+  sparkline **and** `AdaptiveReadConcurrency`; `onDead` closes both clients but
+  leaves `_client` set so the drop path can observe `done`.
+- **Reconnect:** `ConnectionController` watches the command client's `done`
+  (normal *or* error completion) → `lost` phase → auto-reconnect with bounded
+  backoff (1/2/4/8/15 s, then 15 s repeated), pausing after 20 attempts
+  (~4 min) until the user explicitly resumes. Every step is guarded by the
+  controller's `_attempt` counter, kept in lockstep with the manager's
+  generation (`stopReconnect` bumps both and force-closes in-flight
+  handshakes).
+- **Scheduling:** `CommandLaneScheduler` — concurrent reads (hard ceiling **4**;
+  starts at the no-sample cap **3** until RTT arrives, then RTT-banded by
+  `AdaptiveReadConcurrency`: <80 ms→4, 80–200 ms→3, >200 ms→2, with 3-sample
+  hysteresis), one sync, exclusive mutations as a FIFO barrier, isolated
+  long-running side work (hooks, sideloads; cap 2) exempt from the barrier in
+  both directions. A **watchdog** (command timeout + 30 s margin) reclaims the
+  slot of any body that never settles — a backstop, not a timeout. Retries are
+  transient-transport-only (allowlist), and each attempt is a separate enqueue
+  with the 400 ms backoff taken *between* enqueues, so a retry wait never
+  head-of-line-blocks the lane.
+- **Compression:** dartssh2 has no transport compression; large git text reads
+  *and* forge-CLI JSON reads (`glab`/`gh` GETs) use application `gzip -c -1`
+  (absolute path, honored only when discovery found gzip) + an in-band
+  `\x01EXIT=n\x01` trailer carrying the real exit code. A missing trailer
+  (killed/truncated stream) never reads as success, and a prelude failure
+  (e.g. `cd` into a deleted repo) degrades to a clean non-zero exit — Dart's
+  gzip decoder tolerates the resulting empty stream.
+- **Environment:** one connect-time probe resolves the remote OS and an
+  augmented PATH (settings overrides → per-user dirs → OS package-manager dirs →
+  the login shell's PATH, captured in the background and killed after ~3 s if a
+  shellrc hangs → system dirs; per-user ahead of `/usr/local/bin` is
+  load-bearing — a system shim must not shadow the user's real CLI) and
+  `command -v`s the whole tool catalog. `argv[0]` is rewritten to the resolved
+  absolute path; tool versions are probed in a separate background pass off the
+  connect critical path. Forge-token env vars are neutralized per connection
+  (`unset` prelude over SSH, empty env entries locally) so Magic Git's managed
+  identity beats ambient tokens.
+- **Streams:** `executeStream` off-queue (they never return; queuing one would
+  wedge the lane), generation-guarded at open and re-checked after, bounded by
+  an open-timeout; prefers the stream client when dual mode is active. Watcher
+  streams (`fswatch`/`inotifywait`, two-stage coalescing) restart via
+  `watchLifecycle`: 2 s·n backoff, 3 restarts, then 5 s polling with an
+  event-driven recovery retry every 3 min. CI trace and clone streams are
+  cancel-driven.
 - **Object multi-read:** `git cat-file --batch` one-shot batching
   (`GitService.showBlobsBatch` / `GitCatFileBatch`) for multi-blob revision
   content; worktree files still use `cat` / `readFile`.
-- **Telemetry:** `CommandTelemetry` tracks channel-open errors and open stream
-  counts (MaxSessions evidence).
-- **Safety:** `exec` so TERM/KILL hit the real process; output byte budgets
-  (`command_drain.dart`); transient-only retries; sideload upload (exec-channel
-  `cat`, generation-pinned) with a timeout that **scales with payload size**
-  (`uploadTimeoutFor`: flat default + 64 KiB/s floor).
+- **Telemetry:** `CommandTelemetry` (process-wide, reset per session) — a
+  200-sample ring of per-command lane/duration/bytes/wire-bytes plus totals,
+  gzip wire savings, channel-open errors (MaxSessions evidence), and open/peak
+  stream counts (epoch-guarded so a reconnect can't misattribute a closing
+  handle). The dashboard surfaces commands/avg/p95, gzip savings, the keepalive
+  latency sparkline, and dual-vs-single client state.
+- **Safety:** `exec` so TERM/KILL hit the real process (compressed reads forgo
+  `exec` for the trailer shell — acceptable because they're read-only and die
+  on SIGPIPE); TERM→KILL escalation with a 400 ms grace; a combined
+  stdout+stderr **byte budget** (50 MB, charged pre-decode; compressed reads
+  are budgeted post-gunzip so a gzip bomb can't OOM) with the remote process
+  *killed* — not just closed — on overrun; sideload upload (exec-channel `cat`,
+  generation-pinned, isolated lane) with a timeout that **scales with payload
+  size** (`uploadTimeoutFor`: flat default + 64 KiB/s floor).
+- **Known gaps (2026-07-17 audit — accepted, not yet built):** after a
+  stream-client redial, already-running long-lived streams stay on the command
+  client until their next restart (nothing migrates them back); auto-reconnect
+  re-runs the environment probe on the critical path instead of reusing the
+  same-host result; the adaptive read cap reacts only to RTT (channel-open
+  errors are recorded but not fed back); channel-open/stream counters and the
+  current adaptive cap aren't on the dashboard; the login-shell PATH capture
+  mis-parses under fish (space-joined list → one bogus PATH entry, common dirs
+  still covered).
 
 ---
 
@@ -465,35 +544,43 @@ call:**
 6. **Secure storage + polish.** `flutter_secure_storage` profiles + Keychain
    entitlements ✅; commit-graph DAG + ref decorations ✅.
 
-### Implementation status (as built)
+### Implementation status (as of 2026-07-17)
 
-**Done & unit-tested (60 tests, analyze-clean):** SSH transport (persistent,
-streaming `executeStream`, serialized writes, `GIT_OPTIONAL_LOCKS=0`); porcelain
-v2 status + isolate parsing; remote `fswatch`/`inotifywait` watcher with the
-tuned coalescer; multi-lane commit graph + branch/tag decorations; file & commit
-diffs; branches/remotes/stashes pane; git mutations (stage/unstage/discard/
-commit/checkout/branch±/fetch/pull/push/stash±); conflict resolution
-(ours/theirs/abort with a marker-shaded viewer); GitLab MR list + create/approve/
-merge, pipelines + retry, jobs + live trace; project dashboard (issues/labels/
-milestones/releases); secure connection profiles; GitLab auth via the remote's
-own `glab auth` store, with an optional one-time stdin `glab auth login`
-(token piped over stdin — never argv/env/command-string; Keychain-persisted
-locally only to drive that login). See §4.3.
+**Done & tested (229 test files / ~1,860 tests, analyze-clean under strict
+casts/inference/raw-types):** SSH transport as described in §0.1; porcelain v2
+status + isolate parsing; remote `fswatch`/`inotifywait` watcher with the tuned
+coalescer (local backend uses `Directory.watch` into the same pipeline);
+multi-lane commit graph + branch/tag decorations; file & commit diffs; blame;
+branches/remotes/stashes panes; git mutations (stage/unstage/discard/commit/
+checkout/branch±/fetch/pull/push/stash±); conflict resolution (ours/theirs/
+abort with a marker-shaded viewer); interactive rebase (reorder/squash/fixup/
+drop); recovery/reflog tools + undo journal; **GitLab** MR list + create/
+approve/merge, pipelines + retry, jobs + live trace; **GitHub** as a peer forge
+via `gh` (PRs, workflow runs/jobs, checks); forge-neutral **Project tab**
+(issues create/view, labels, milestones view-only, paginated) over a shared
+GraphQL dashboard query per forge — the §4.2 "one query per screen" design is
+built, not deferred; **create-repo wiring** on both forges with injected
+credential helpers; **Worktrees tab** (add/move/remove/prune, per-worktree
+workspace reusing the status/history/branches/stash views, sandbox grant
+management); **local backend** ("This Mac": `Process.start`, security-scoped
+bookmarks, Keychain with a 0600 dotfile fallback for unsigned builds);
+**multi-window** (native pop-outs on a second `FlutterEngine`, exec relayed to
+the main isolate — §0.1); session **dashboard** (command telemetry, gzip
+savings, keepalive latency, dual/single client); **guided install** with
+air-gapped sideload; per-repo `core.fsmonitor` toggle (default off).
 
-**Deferred (not yet built):** submodules, worktrees UI, GraphQL dashboard
-batching (REST used today), issue create. (`core.fsmonitor` is now a per-repo
-toggle in the connections management panel, default off.)
+**Deferred (not yet built):** a submodules management UI (submodules are
+*recognized* — opening one explains that its git data lives in the parent —
+but not managed); the §0.1 "known gaps" list. Interactive rebase deliberately
+omits **reword**: the headless `GIT_EDITOR=true` invocation would silently
+no-op the prompt, so the action was removed from the enum rather than left
+reachable-but-broken.
 
-Interactive rebase **is built** (`rebase_sheet.dart` + `GitService.
-rebaseInteractive`, a real reorder/squash/fixup/drop editor over `git rebase
--i` with `GIT_SEQUENCE_EDITOR`) — this list previously and incorrectly called
-it deferred. It doesn't support reword: the headless `GIT_EDITOR=true`
-invocation would silently no-op a reword prompt, so that action was removed
-from the enum entirely rather than left reachable-but-broken.
-
-**Not verified (no remote to drive):** all live SSH/glab/git execution paths —
-covered by unit tests at the parse/argv level only; end-to-end verification
-against a real host + GitLab project is pending.
+**Live verification:** `integration`-tagged tests run real git against temp
+repos in every `flutter test` run; the `live-forge`-tagged suites (skipped by
+default — they create/delete real projects) exercise the create-repo and
+issue wiring against real GitHub/GitLab when run explicitly. See
+`dart_test.yaml` and CLAUDE.md.
 
 ---
 
@@ -527,10 +614,11 @@ the referenced sections.
    `fsmonitor.allowRemote` **not** needed (repo is on the remote's local disk).
    External watcher and fsmonitor are complementary.
 
-Remaining lower-priority validations (non-blocking, confirm during build): exact
-isolate/`compute` plumbing for streaming vs one-shot parses (§6.2); whether MR
-*approve* is in-editor vs web-handoff in your target flows; live behavior of
-GraphQL 429 rate-limit headers.
+Remaining lower-priority validations — since settled in the build: isolate
+parsing landed as one-shot `compute`-style parses of complete command output
+(streams are line/NUL-delimited and cheap to parse inline); MR/PR *approve* is
+in-editor; GraphQL rate-limit behavior has not been hit in practice (single-user
+desktop traffic sits far under the 2,000 req/min budget).
 
 ---
 

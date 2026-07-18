@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../common/tappable.dart';
 import 'drag_state.dart';
 import 'drop_registry.dart';
 import 'drop_zone.dart';
@@ -155,41 +156,38 @@ class _NavRowVisualState extends State<_NavRowVisual> {
       fg = MacosColors.systemGrayColor;
     }
 
-    final row = MouseRegion(
+    final row = Tappable(
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 1),
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: bg,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Row(
-            children: [
-              MacosIcon(widget.icon, size: 16, color: fg),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  widget.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: typography.body.copyWith(
-                    color: widget.selected && !widget.eligible
-                        ? MacosColors.white
-                        : null,
-                    fontWeight: widget.eligible
-                        ? FontWeight.w600
-                        : FontWeight.normal,
-                  ),
+      onTap: widget.onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 1),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          children: [
+            MacosIcon(widget.icon, size: 16, color: fg),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                widget.label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: typography.body.copyWith(
+                  color: widget.selected && !widget.eligible
+                      ? MacosColors.white
+                      : null,
+                  fontWeight: widget.eligible
+                      ? FontWeight.w600
+                      : FontWeight.normal,
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

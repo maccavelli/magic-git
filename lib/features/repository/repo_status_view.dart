@@ -24,6 +24,7 @@ import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
@@ -2458,7 +2459,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     if (row.conflict) {
       return KeyedSubtree(
         key: _rowKeyFor(file.path, _SectionKind.conflict),
-        child: GestureDetector(
+        child: Tappable(
         onTap: () {
           _listFocus.requestFocus();
           _handleRowTap(rows, file.path, _SectionKind.conflict);

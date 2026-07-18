@@ -28,6 +28,7 @@ import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/resizable_master_detail.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
@@ -1508,7 +1509,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   onChanged: (v) => setState(() => _hideMerges = v),
                 ),
                 const SizedBox(width: 5),
-                GestureDetector(
+                Tappable(
                   onTap: () => setState(() => _hideMerges = !_hideMerges),
                   child: Text(
                     'Hide merges',
@@ -1596,7 +1597,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       final typography = MacosTheme.of(context).typography;
       return SizedBox(
         height: rowHeight,
-        child: GestureDetector(
+        child: Tappable(
           behavior: HitTestBehavior.opaque,
           onTap: () {
             _pageAndRepaint(log.retryPage);

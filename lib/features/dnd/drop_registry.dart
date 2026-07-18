@@ -9,8 +9,7 @@ import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
 import '../common/context_menu.dart';
 import '../common/prompt_text_sheet.dart';
-import '../github/create_pr_sheet.dart';
-import '../gitlab/create_mr_sheet.dart';
+import '../forge/forge_prefs.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart' show kWorktreeIcon;
 import 'drag_item.dart';
@@ -23,7 +22,6 @@ enum DropZoneId {
   branches,
   stashes,
   forge,
-  project,
   worktrees,
 }
 
@@ -192,9 +190,8 @@ List<DropAction> _actionsFor(DragItem item, DropZoneId zone) {
         ];
       }
       return const [];
-    // No nav-drop actions for these zones yet.
+    // No nav-drop actions for this zone yet.
     case DropZoneId.history:
-    case DropZoneId.project:
       return const [];
   }
 }
@@ -352,8 +349,8 @@ Future<void> _stashFiles(DropContext ctx, List<String> paths) async {
 
 Future<void> _createRequestFromBranch(DropContext ctx, String branch) async {
   // Which forge this repo talks to decides PR (GitHub) vs MR (GitLab). Resolve
-  // it (cheap once the Forge tab has been visited) and open that forge's
-  // existing create sheet, seeded with the dropped branch as the source.
+  // it (cheap once the Forge tab has been visited) so an unknown forge fails
+  // with a dialog here rather than a dead Forge tab.
   //
   // The resolution can hit the network and throw (host unreachable, gh/glab
   // missing) — and runDrop's future is fire-and-forget from the DragTarget, so
@@ -370,26 +367,17 @@ Future<void> _createRequestFromBranch(DropContext ctx, String branch) async {
   if (!ctx.context.mounted) return;
   switch (forge) {
     case Forge.github:
-      await showMacosSheet<void>(
-        context: ctx.context,
-        builder: (_) =>
-            CreatePrSheet(repoPath: ctx.repoPath, initialHead: branch),
-      );
     case Forge.gitlab:
-      await showMacosSheet<void>(
-        context: ctx.context,
-        builder: (_) =>
-            CreateMrSheet(repoPath: ctx.repoPath, initialSource: branch),
-      );
+      // Seed the Forge tab's inline create form with the dropped branch and
+      // bring the tab forward; the mounted forge panel consumes the seed
+      // (see forgeCreateSeedProvider).
+      ctx.ref.read(forgeCreateSeedProvider.notifier).set(ctx.repoPath, branch);
+      ctx.selectPage(DropZoneId.forge.pageIndex);
     case Forge.none:
     case Forge.unknown:
       await showErrorDialog(
         ctx.context,
         'No GitHub or GitLab remote detected for this repository.',
       );
-      return;
   }
-  if (!ctx.context.mounted) return;
-  ctx.refresh();
-  ctx.selectPage(DropZoneId.forge.pageIndex);
 }

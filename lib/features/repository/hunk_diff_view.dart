@@ -7,6 +7,7 @@ import '../../core/git/unified_diff.dart';
 import '../common/diff_highlight.dart';
 import '../common/diff_view.dart';
 import '../common/list_keyboard_nav.dart';
+import '../common/tappable.dart';
 import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
 
 /// What a per-hunk button does, given whether the index or worktree diff is
@@ -398,7 +399,7 @@ class _HunkDiffViewState extends State<HunkDiffView> {
       // the SelectionArea means a drag-copy of the diff doesn't pick up
       // "Stage"/"Discard" along with the code.
       child: SelectionContainer.disabled(
-        child: GestureDetector(
+        child: Tappable(
           key: _headerKeyFor(index),
           // Click a header to focus its hunk for keyboard nav; the Stage/
           // Unstage/Discard buttons inside keep their own taps.

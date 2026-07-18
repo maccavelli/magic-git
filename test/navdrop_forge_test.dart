@@ -1,8 +1,7 @@
-// A1 dispatch: dragging a local branch onto the Forge tab opens the right
-// create sheet (PR for GitHub) seeded with that branch, or reports that the repo
-// has no forge. Providers are stubbed so no gh/glab/git runs.
-
-import 'dart:async';
+// A1 dispatch: dragging a local branch onto the Forge tab seeds the Forge
+// panel's inline create form with that branch and navigates to the tab — or
+// reports that the repo has no forge. Providers are stubbed so no gh/glab/git
+// runs.
 
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,14 +9,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import 'package:remote_magic_git/core/forge/forge.dart';
-import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
-import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/dnd/drag_item.dart';
 import 'package:remote_magic_git/features/dnd/drop_registry.dart';
 import 'package:remote_magic_git/features/dnd/nav_rail.dart';
-import 'package:remote_magic_git/features/github/create_pr_sheet.dart';
+import 'package:remote_magic_git/features/forge/forge_prefs.dart';
 
 const _repo = '/srv/repo';
 
@@ -62,22 +59,21 @@ Future<void> _dragOnto(WidgetTester tester, Finder source, Finder target) async 
   await tester.pumpAndSettle();
 }
 
-Future<void> _pump(WidgetTester tester, Forge forge) async {
-  // The full create sheet is tall; give it room so it doesn't overflow.
-  await tester.binding.setSurfaceSize(const Size(1200, 1400));
-  addTearDown(() => tester.binding.setSurfaceSize(null));
+Future<(ProviderContainer, List<int>)> _pump(
+  WidgetTester tester,
+  Forge forge,
+) async {
+  final selected = <int>[];
+  final container = ProviderContainer(
+    overrides: [
+      connectionProvider.overrideWith(_FakeConnection.new),
+      forgeProvider.overrideWith((ref, repo) async => forge),
+    ],
+  );
+  addTearDown(container.dispose);
   await tester.pumpWidget(
-    ProviderScope(
-      overrides: [
-        connectionProvider.overrideWith(_FakeConnection.new),
-        forgeProvider.overrideWith((ref, repo) async => forge),
-        // Keep the create sheet's data deps pending so nothing real runs; the
-        // sheet still renders its form (and the seeded head field).
-        statusProvider.overrideWith((ref, repo) => Completer<GitStatus>().future),
-        githubProjectDashboardProvider.overrideWith(
-          (ref, repo) => Completer<ForgeProjectDashboard>().future,
-        ),
-      ],
+    UncontrolledProviderScope(
+      container: container,
       child: MacosApp(
         debugShowCheckedModeBanner: false,
         home: Row(
@@ -98,7 +94,7 @@ Future<void> _pump(WidgetTester tester, Forge forge) async {
                 currentIndex: 0,
                 onChanged: (_) {},
                 items: _items,
-                selectPage: (_) {},
+                selectPage: selected.add,
                 refresh: () {},
               ),
             ),
@@ -108,32 +104,36 @@ Future<void> _pump(WidgetTester tester, Forge forge) async {
     ),
   );
   await tester.pumpAndSettle();
+  return (container, selected);
 }
 
 void main() {
-  testWidgets('a branch dropped on Forge (GitHub) opens the seeded PR sheet', (
-    tester,
-  ) async {
-    await _pump(tester, Forge.github);
-    await _dragOnto(tester, find.text('SOURCE'), find.text('Forge'));
+  testWidgets(
+    'a branch dropped on Forge (GitHub) seeds the inline create form and '
+    'navigates to the Forge tab',
+    (tester) async {
+      final (container, selected) = await _pump(tester, Forge.github);
+      await _dragOnto(tester, find.text('SOURCE'), find.text('Forge'));
 
-    // The full sheet slightly overflows the headless viewport while its data
-    // providers are still loading — cosmetic and unrelated to the drop, so
-    // drain the layout exception(s) before asserting.
-    while (tester.takeException() != null) {}
-
-    expect(find.byType(CreatePrSheet), findsOneWidget);
-    // The dropped branch seeds the head field.
-    expect(find.text('feature'), findsOneWidget);
-  });
+      // The drop hands the branch to the Forge panel via the seed provider
+      // (the panel — not mounted in this harness — consumes and clears it)
+      // and brings the Forge tab forward.
+      expect(
+        container.read(forgeCreateSeedProvider),
+        (repoPath: _repo, branch: 'feature'),
+      );
+      expect(selected, [DropZoneId.forge.pageIndex]);
+    },
+  );
 
   testWidgets('a branch dropped on Forge with no forge reports it', (
     tester,
   ) async {
-    await _pump(tester, Forge.none);
+    final (container, selected) = await _pump(tester, Forge.none);
     await _dragOnto(tester, find.text('SOURCE'), find.text('Forge'));
 
-    expect(find.byType(CreatePrSheet), findsNothing);
+    expect(container.read(forgeCreateSeedProvider), isNull);
+    expect(selected, isEmpty);
     expect(
       find.textContaining('No GitHub or GitLab remote'),
       findsOneWidget,

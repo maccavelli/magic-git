@@ -1,14 +1,25 @@
-import 'package:flutter/cupertino.dart';
-import 'package:macos_ui/macos_ui.dart';
+import 'dart:async' show unawaited;
 
+import 'package:flutter/cupertino.dart' hide OverlayVisibilityMode;
+import 'package:macos_ui/macos_ui.dart';
+import 'package:url_launcher/url_launcher.dart' show launchUrl;
+
+import '../../core/forge/forge_dashboard.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/display_error.dart';
 import '../common/buttons.dart';
+import '../common/field_styles.dart';
+import '../common/label_colors.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 
-/// Small widgets shared by the GitHub and GitLab panels and their jobs views.
-/// These were byte-identical private copies in the two forge features (the
-/// panels are deliberately parallel); one definition here keeps them that way.
+/// The Forge workspace's shared widget kit: one row idiom, one detail
+/// scaffold, one section-header idiom — used identically by the GitHub and
+/// GitLab panels so every forge item (MR/PR, pipeline/run, issue, milestone,
+/// release, job) reads as the same family of surfaces.
+///
+/// Badge palette (semantic, not per-panel): blue = change request, green =
+/// issue, grey = draft. CI status dots use the per-forge status colors.
 
 /// The colored pill badge (`#123`, `!45`, `DRAFT`): [color] at a 15% fill with
 /// the same color as bold caption text.
@@ -34,9 +45,9 @@ class StatusBadge extends StatelessWidget {
   }
 }
 
-/// A list-section header: bold caption title, then (right-aligned) an optional
-/// add button and a refresh button. The panels use the default padding; the
-/// narrower jobs columns pass their own.
+/// A list-section header: bold caption title (optionally a disclosure toggle),
+/// a grey count caption, then (right-aligned) an optional add button and a
+/// refresh button.
 class ForgeSectionHeader extends StatelessWidget {
   final String title;
   final VoidCallback onRefresh;
@@ -49,6 +60,12 @@ class ForgeSectionHeader extends StatelessWidget {
   /// whose fetch is capped says so instead of silently truncating.
   final String? count;
 
+  /// When non-null the title becomes a disclosure toggle (chevron + click to
+  /// collapse/expand); the caller owns the collapsed state and hides the
+  /// section body itself.
+  final bool? collapsed;
+  final VoidCallback? onToggleCollapsed;
+
   const ForgeSectionHeader(
     this.title, {
     super.key,
@@ -58,29 +75,54 @@ class ForgeSectionHeader extends StatelessWidget {
     this.refreshTooltip = 'Refresh',
     this.padding = const EdgeInsets.fromLTRB(16, 8, 8, 4),
     this.count,
+    this.collapsed,
+    this.onToggleCollapsed,
   });
 
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
+    final titleRow = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (collapsed != null) ...[
+          MacosIcon(
+            collapsed!
+                ? CupertinoIcons.chevron_right
+                : CupertinoIcons.chevron_down,
+            size: 10,
+            color: MacosColors.systemGrayColor,
+          ),
+          const SizedBox(width: 4),
+        ],
+        Text(
+          title,
+          style: typography.caption1.copyWith(fontWeight: FontWeight.bold),
+        ),
+        if (count != null)
+          Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Text(
+              count!,
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ),
+      ],
+    );
     return Padding(
       padding: padding,
       child: Row(
         children: [
-          Text(
-            title,
-            style: typography.caption1.copyWith(fontWeight: FontWeight.bold),
-          ),
-          if (count != null)
-            Padding(
-              padding: const EdgeInsets.only(left: 6),
-              child: Text(
-                count!,
-                style: typography.caption1.copyWith(
-                  color: MacosColors.systemGrayColor,
-                ),
-              ),
-            ),
+          if (onToggleCollapsed != null)
+            Tappable(
+              onTap: onToggleCollapsed,
+              behavior: HitTestBehavior.opaque,
+              child: titleRow,
+            )
+          else
+            titleRow,
           const Spacer(),
           if (onAdd != null)
             ToolIconButton(
@@ -101,8 +143,8 @@ class ForgeSectionHeader extends StatelessWidget {
   }
 }
 
-/// A labelled detail row (70px grey label, body value) for the PR/MR detail
-/// header.
+/// A labelled detail row (70px grey label, body value) for the detail
+/// scaffold's metadata block.
 class DetailLine extends StatelessWidget {
   final String label;
   final String value;
@@ -157,7 +199,7 @@ class PaneError extends StatelessWidget {
 }
 
 /// Centered grey hint for a pane with nothing selected ("Select a job to view
-/// its log", "Select a pull request or workflow run").
+/// its log", "Select an item on the left").
 class CenteredHint extends StatelessWidget {
   final String text;
 
@@ -176,8 +218,137 @@ class CenteredHint extends StatelessWidget {
   }
 }
 
-/// One row in a jobs column: status dot, job name, grey caption; highlighted
-/// when selected.
+/// **The one list-row idiom for every forge item.** Leading badge/dot/icon,
+/// a title (1 or 2 lines), an optional grey caption (with an optional CI dot
+/// before it), an optional wrap of label chips, and optional trailing widgets
+/// (an action button, a grey right-aligned caption). One padding rhythm and
+/// one selection tint for every configuration.
+class ForgeListRow extends StatelessWidget {
+  final Widget? leading;
+  final String title;
+  final int titleMaxLines;
+  final String? caption;
+
+  /// A CI status dot rendered just before [caption].
+  final Color? captionDotColor;
+
+  /// Label chips rendered in a wrap under the caption (issues).
+  final List<Widget> chips;
+
+  /// Right-aligned grey caption (a milestone's due date, a release's tag).
+  final String? trailingCaption;
+
+  /// Trailing action (retry/re-run button).
+  final Widget? trailing;
+
+  final bool selected;
+  final VoidCallback? onTap;
+  final EdgeInsets? padding;
+
+  const ForgeListRow({
+    super.key,
+    this.leading,
+    required this.title,
+    this.titleMaxLines = 1,
+    this.caption,
+    this.captionDotColor,
+    this.chips = const [],
+    this.trailingCaption,
+    this.trailing,
+    this.selected = false,
+    this.onTap,
+    this.padding,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final typography = MacosTheme.of(context).typography;
+    final captionStyle = typography.caption1.copyWith(
+      color: MacosColors.systemGrayColor,
+    );
+    final hasTrailing = trailing != null || trailingCaption != null;
+    return Tappable(
+      onTap: onTap,
+      child: Container(
+        color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
+        // Right inset 8 when a trailing icon must line up flush with the
+        // section header's icons; 16 (matching the left) otherwise.
+        padding:
+            padding ?? EdgeInsets.fromLTRB(16, 7, hasTrailing ? 8 : 16, 7),
+        child: Row(
+          crossAxisAlignment: titleMaxLines > 1 || chips.isNotEmpty
+              ? CrossAxisAlignment.start
+              : CrossAxisAlignment.center,
+          children: [
+            if (leading != null) ...[leading!, const SizedBox(width: 8)],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: typography.body,
+                    maxLines: titleMaxLines,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (caption != null) ...[
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        if (captionDotColor != null) ...[
+                          MacosIcon(
+                            CupertinoIcons.circle_fill,
+                            size: 8,
+                            color: captionDotColor,
+                          ),
+                          const SizedBox(width: 5),
+                        ],
+                        Flexible(
+                          child: Text(
+                            caption!,
+                            style: captionStyle,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (chips.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 3),
+                      child: Wrap(spacing: 4, runSpacing: 3, children: chips),
+                    ),
+                ],
+              ),
+            ),
+            if (trailingCaption != null)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Text(trailingCaption!, style: captionStyle),
+              ),
+            ?trailing,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// A CI status dot sized for list-row leading position.
+class CiDot extends StatelessWidget {
+  final Color color;
+  final double size;
+
+  const CiDot(this.color, {super.key, this.size = 10});
+
+  @override
+  Widget build(BuildContext context) =>
+      MacosIcon(CupertinoIcons.circle_fill, size: size, color: color);
+}
+
+/// One row in a jobs column: status dot, job name, grey caption. A
+/// [ForgeListRow] configuration with the narrower jobs-column padding.
 class JobRow extends StatelessWidget {
   final String name;
   final String caption;
@@ -196,38 +367,13 @@ class JobRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final typography = MacosTheme.of(context).typography;
-    return GestureDetector(
+    return ForgeListRow(
+      leading: CiDot(dotColor, size: 9),
+      title: name,
+      caption: caption,
+      selected: selected,
       onTap: onTap,
-      child: Container(
-        color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        child: Row(
-          children: [
-            MacosIcon(CupertinoIcons.circle_fill, size: 9, color: dotColor),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    name,
-                    style: typography.body,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  Text(
-                    caption,
-                    style: typography.caption1.copyWith(
-                      color: MacosColors.systemGrayColor,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
     );
   }
 }
@@ -295,211 +441,62 @@ class InFlightPushButton extends StatelessWidget {
   }
 }
 
-/// A left-pane PR/MR row: badge, two-line title, then an optional CI dot
-/// beside the `source → target` caption.
-class ChangeRequestRow extends StatelessWidget {
-  final Widget badge;
-  final String title;
-  final String branches;
-  final Color? ciDotColor;
-  final bool selected;
-  final VoidCallback onTap;
+/// The header icon that opens a forge item's web page in the default browser.
+/// Hidden (not disabled) when no URL could be determined.
+class OpenInBrowserButton extends StatelessWidget {
+  final String? url;
 
-  const ChangeRequestRow({
-    super.key,
-    required this.badge,
-    required this.title,
-    required this.branches,
-    required this.selected,
-    required this.onTap,
-    this.ciDotColor,
-  });
+  const OpenInBrowserButton(this.url, {super.key});
 
   @override
   Widget build(BuildContext context) {
-    final typography = MacosTheme.of(context).typography;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            badge,
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: typography.body,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 2),
-                  Row(
-                    children: [
-                      if (ciDotColor != null) ...[
-                        MacosIcon(
-                          CupertinoIcons.circle_fill,
-                          size: 8,
-                          color: ciDotColor,
-                        ),
-                        const SizedBox(width: 5),
-                      ],
-                      Flexible(
-                        child: Text(
-                          branches,
-                          style: typography.caption1.copyWith(
-                            color: MacosColors.systemGrayColor,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+    final url = this.url;
+    if (url == null || url.isEmpty) return const SizedBox.shrink();
+    return ToolIconButton(
+      icon: CupertinoIcons.arrow_up_right_square,
+      tooltip: 'Open in browser',
+      size: 15,
+      onPressed: () {
+        final uri = Uri.tryParse(url);
+        // Fire-and-forget: NSWorkspace either opens the browser or it
+        // doesn't; there's no recovery worth a dialog here.
+        if (uri != null) unawaited(launchUrl(uri));
+      },
     );
   }
 }
 
-/// A left-pane CI run/pipeline row: status dot, title (with an optional grey
-/// caption line beneath), and an optional trailing affordance (retry).
-///
-/// The right inset matches the section headers so every trailing icon lines
-/// up flush against the same right margin.
-class CiRunRow extends StatelessWidget {
-  final Color dotColor;
+/// **The one detail-pane shape for every forge item.** Header band (leading
+/// badge/dot/icon + title + trailing header actions), the [DetailLine]
+/// metadata block, a separator, the scrollable/filling body — and, when the
+/// item has mutations, a pinned action bar along the bottom, so Check out /
+/// Approve / Merge live in the same place for every item type.
+class ForgeDetailScaffold extends StatelessWidget {
+  final Widget? leading;
   final String title;
-  final String? caption;
-  final bool selected;
-  final VoidCallback onTap;
-  final Widget? trailing;
 
-  const CiRunRow({
-    super.key,
-    required this.dotColor,
-    required this.title,
-    required this.selected,
-    required this.onTap,
-    this.caption,
-    this.trailing,
-  });
+  /// Header-trailing cluster: open-in-browser, retry — icon-sized actions
+  /// that belong to the item as a whole.
+  final List<Widget> headerActions;
 
-  @override
-  Widget build(BuildContext context) {
-    final typography = MacosTheme.of(context).typography;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
-        padding: const EdgeInsets.fromLTRB(16, 7, 8, 7),
-        child: Row(
-          children: [
-            MacosIcon(CupertinoIcons.circle_fill, size: 10, color: dotColor),
-            const SizedBox(width: 8),
-            Expanded(
-              child: caption == null
-                  ? Text(
-                      title,
-                      style: typography.body,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    )
-                  : Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          style: typography.body,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        Text(
-                          caption!,
-                          style: typography.caption1.copyWith(
-                            color: MacosColors.systemGrayColor,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ],
-                    ),
-            ),
-            ?trailing,
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The main pane's CI detail header: status dot, title, an optional trailing
-/// action, then a separator line. The body (jobs view) is the caller's.
-class CiDetailHeader extends StatelessWidget {
-  final Color dotColor;
-  final String title;
-  final Widget? trailing;
-
-  const CiDetailHeader({
-    super.key,
-    required this.dotColor,
-    required this.title,
-    this.trailing,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final typography = MacosTheme.of(context).typography;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-          child: Row(
-            children: [
-              MacosIcon(CupertinoIcons.circle_fill, size: 11, color: dotColor),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: typography.title3,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              ?trailing,
-            ],
-          ),
-        ),
-        Container(height: 1, color: MacosColors.separatorColor),
-      ],
-    );
-  }
-}
-
-/// The main pane's PR/MR detail: badge + title, the [DetailLine]s, the action
-/// buttons row, then a separator line.
-class ChangeRequestDetail extends StatelessWidget {
-  final Widget badge;
-  final String title;
+  /// [DetailLine]s and chip wraps under the title.
   final List<Widget> lines;
+
+  /// Fills the area between header and action bar. Null renders nothing
+  /// (an item with no body content).
+  final Widget? body;
+
+  /// Pinned bottom action bar (buttons). Empty → no bar.
   final List<Widget> actions;
 
-  const ChangeRequestDetail({
+  const ForgeDetailScaffold({
     super.key,
-    required this.badge,
+    this.leading,
     required this.title,
-    required this.lines,
-    required this.actions,
+    this.headerActions = const [],
+    this.lines = const [],
+    this.body,
+    this.actions = const [],
   });
 
   @override
@@ -509,34 +506,137 @@ class ChangeRequestDetail extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+          padding: const EdgeInsets.fromLTRB(20, 16, 12, 12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  badge,
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(title, style: typography.title3)),
+                  if (leading != null) ...[leading!, const SizedBox(width: 8)],
+                  Expanded(
+                    child: Text(
+                      title,
+                      style: typography.title3,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  ...headerActions,
                 ],
               ),
-              const SizedBox(height: 10),
-              ...lines,
-              const SizedBox(height: 16),
-              // Wrap, not Row: the detail pane's width is user-controlled now
-              // (the panel divider drags), so the action buttons must flow to
-              // a second line in a narrow pane instead of overflowing.
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: actions,
-              ),
+              if (lines.isNotEmpty) ...[
+                const SizedBox(height: 10),
+                ...lines,
+              ],
             ],
           ),
         ),
         Container(height: 1, color: MacosColors.separatorColor),
+        Expanded(child: body ?? const SizedBox.shrink()),
+        if (actions.isNotEmpty) ...[
+          Container(height: 1, color: MacosColors.separatorColor),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: actions,
+            ),
+          ),
+        ],
       ],
+    );
+  }
+}
+
+/// The filter field at the top of the Forge list column: one query scoping
+/// every section at once (titles, branches, refs, labels).
+class ForgeFilterField extends StatelessWidget {
+  final TextEditingController controller;
+  final ValueChanged<String> onChanged;
+
+  const ForgeFilterField({
+    super.key,
+    required this.controller,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
+      child: MacosTextField(
+        controller: controller,
+        placeholder: 'Filter',
+        clearButtonMode: OverlayVisibilityMode.editing,
+        decoration: kAppTextFieldDecoration,
+        focusedDecoration: kAppTextFieldFocusedDecoration,
+        onChanged: onChanged,
+      ),
+    );
+  }
+}
+
+/// A full-size label chip (the Labels section), colored from the forge's
+/// palette, with the label description as a tooltip.
+class ForgeLabelChip extends StatelessWidget {
+  final ForgeLabel label;
+
+  const ForgeLabelChip(this.label, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = parseLabelColor(label.color);
+    final chip = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(
+        label.name,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: labelTextColor(bg),
+        ),
+      ),
+    );
+    final description = label.description;
+    if (description == null || description.isEmpty) return chip;
+    return MacosTooltip(message: description, child: chip);
+  }
+}
+
+/// A compact chip for a label attached to an issue row/detail, colored from
+/// the project palette when the label is among the fetched ones (else neutral
+/// gray).
+class MiniLabelChip extends StatelessWidget {
+  final String name;
+  final ForgeLabel? label;
+
+  const MiniLabelChip(this.name, this.label, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = label == null
+        ? const Color(0xFF888888)
+        : parseLabelColor(label!.color);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        name,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: labelTextColor(bg),
+        ),
+      ),
     );
   }
 }

@@ -10,12 +10,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/github/models.dart';
 import 'package:remote_magic_git/core/gitlab/models.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/features/forge/forge_prefs.dart';
 import 'package:remote_magic_git/features/github/github_panel.dart';
 import 'package:remote_magic_git/features/gitlab/gitlab_panel.dart';
+import 'package:riverpod/misc.dart' show Override;
 
 const _repo = '/repo';
 
@@ -46,6 +49,30 @@ List<WorkflowRun> _runs(int count) => [
       workflowName: 'wf$i',
       url: '',
     ),
+];
+
+/// These tests exercise the Browse sections; the panels open in Inbox mode
+/// by default, so pin them to Browse.
+class _BrowseMode extends ForgeInboxMode {
+  @override
+  bool build() => false;
+}
+
+/// The unified Forge panels also render the project sections — settle their
+/// providers so no section is left spinning (pumpAndSettle would hang).
+List<Override> _projectOverrides({required bool github}) => [
+  forgeInboxModeProvider.overrideWith(_BrowseMode.new),
+  projectIssuesProvider(_repo).overrideWith((ref) async => const []),
+  projectMilestonesProvider(_repo).overrideWith((ref) async => const []),
+  if (github)
+    githubProjectDashboardProvider(
+      _repo,
+    ).overrideWith((ref) async => const ForgeProjectDashboard())
+  else
+    projectDashboardProvider(
+      _repo,
+    ).overrideWith((ref) async => const ForgeProjectDashboard()),
+  originRemoteUrlProvider(_repo).overrideWith((ref) async => null),
 ];
 
 Future<void> _pumpPanel(
@@ -84,6 +111,7 @@ void main() {
           final full = ref.watch(pipelinesScopeProvider(_repo));
           return full ? fullFetch.future : Future.value(_pipelines(30));
         }),
+        ..._projectOverrides(github: false),
       ]);
       await _pumpPanel(tester, const GitLabPanel(repoPath: _repo), container);
 
@@ -120,6 +148,7 @@ void main() {
           final full = ref.watch(workflowRunsScopeProvider(_repo));
           return _runs(full ? 45 : 30);
         }),
+        ..._projectOverrides(github: true),
       ]);
       await _pumpPanel(tester, const GitHubPanel(repoPath: _repo), container);
 
@@ -145,6 +174,7 @@ void main() {
         remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
         mergeRequestsProvider(_repo).overrideWith((ref) async => const []),
         pipelinesProvider(_repo).overrideWith((ref) async => _pipelines(3)),
+        ..._projectOverrides(github: false),
       ]);
       await _pumpPanel(tester, const GitLabPanel(repoPath: _repo), container);
 

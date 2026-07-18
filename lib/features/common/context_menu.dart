@@ -1,6 +1,7 @@
 import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'escape_dismissible.dart';
+import 'tappable.dart';
 
 /// One entry in a [ContextMenuOverlay]-shown menu: either an actionable
 /// [ContextMenuItem] or a visual [ContextMenuDivider] between groups.
@@ -17,6 +18,7 @@ class ContextMenuItem extends ContextMenuEntry {
   final VoidCallback onTap;
   final bool enabled;
   final String? disabledTooltip;
+
   /// Tints the leading icon (e.g. a red trash can for a destructive action).
   /// Only the icon is tinted, not the label. Ignored while the row is disabled
   /// — a greyed-out row's uniform grey takes precedence.
@@ -155,32 +157,32 @@ class _ContextMenuCard extends StatelessWidget {
           ),
           child: SingleChildScrollView(
             child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final e in entries)
-              switch (e) {
-                ContextMenuDivider() => Container(
-                  height: 1,
-                  margin: const EdgeInsets.symmetric(vertical: 4),
-                  color: MacosColors.separatorColor,
-                ),
-                ContextMenuItem() => _ContextMenuRow(
-                  icon: e.icon,
-                  label: e.label,
-                  enabled: e.enabled,
-                  disabledTooltip: e.disabledTooltip,
-                  iconColor: e.iconColor,
-                  // Dismiss first, then act — matches a click on a native
-                  // menu item, and lets item callbacks freely rebuild the
-                  // widget that showed this menu without it fighting a still
-                  // -open overlay pointed at now-stale data.
-                  onTap: () {
-                    onDismiss();
-                    e.onTap();
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final e in entries)
+                  switch (e) {
+                    ContextMenuDivider() => Container(
+                      height: 1,
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      color: MacosColors.separatorColor,
+                    ),
+                    ContextMenuItem() => _ContextMenuRow(
+                      icon: e.icon,
+                      label: e.label,
+                      enabled: e.enabled,
+                      disabledTooltip: e.disabledTooltip,
+                      iconColor: e.iconColor,
+                      // Dismiss first, then act — matches a click on a native
+                      // menu item, and lets item callbacks freely rebuild the
+                      // widget that showed this menu without it fighting a still
+                      // -open overlay pointed at now-stale data.
+                      onTap: () {
+                        onDismiss();
+                        e.onTap();
+                      },
+                    ),
                   },
-                ),
-              },
               ],
             ),
           ),
@@ -220,34 +222,31 @@ class _ContextMenuRowState extends State<_ContextMenuRow> {
     // A disabled row greys everything uniformly; an enabled row lets an
     // explicit iconColor (e.g. a red trash can) tint just the icon.
     final iconColor = enabled ? widget.iconColor : color;
-    final row = MouseRegion(
+    final row = Tappable(
       onEnter: enabled ? (_) => setState(() => _hover = true) : null,
       onExit: enabled ? (_) => setState(() => _hover = false) : null,
-      cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
-      child: GestureDetector(
-        onTap: enabled ? widget.onTap : null,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          color: _hover && enabled
-              ? MacosColors.systemBlueColor.withValues(alpha: 0.25)
-              : const Color(0x00000000),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-          child: Row(
-            children: [
-              MacosIcon(widget.icon, size: 14, color: iconColor),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  widget.label,
-                  style: MacosTheme.of(
-                    context,
-                  ).typography.body.copyWith(color: color),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+      onTap: enabled ? widget.onTap : null,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        color: _hover && enabled
+            ? MacosColors.systemBlueColor.withValues(alpha: 0.25)
+            : const Color(0x00000000),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+        child: Row(
+          children: [
+            MacosIcon(widget.icon, size: 14, color: iconColor),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                widget.label,
+                style: MacosTheme.of(
+                  context,
+                ).typography.body.copyWith(color: color),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

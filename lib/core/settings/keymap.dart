@@ -211,15 +211,9 @@ final List<KeymapAction> kKeymapActions = [
   ),
   KeymapAction(
     id: 'global.panel6',
-    label: 'Switch to Project',
-    category: KeymapCategory.global,
-    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.digit6, meta: true)],
-  ),
-  KeymapAction(
-    id: 'global.panel7',
     label: 'Switch to Worktrees',
     category: KeymapCategory.global,
-    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.digit7, meta: true)],
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.digit6, meta: true)],
   ),
   KeymapAction(
     id: 'repository.fetch',

@@ -1,6 +1,8 @@
 import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import 'tappable.dart';
+
 /// The inline "Show more" control at the bottom of a truncated list — the
 /// panel-list counterpart of the diff view's "Show N lines" gap rows
 /// (`commit_patch_view.dart`), and styled to read as the same idiom: a small
@@ -25,37 +27,36 @@ class ShowMoreRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = busy ? MacosColors.systemGrayColor : MacosColors.systemBlueColor;
+    final color = busy
+        ? MacosColors.systemGrayColor
+        : MacosColors.systemBlueColor;
     final tap = busy ? null : onTap;
-    return MouseRegion(
-      cursor: tap == null ? SystemMouseCursors.basic : SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: tap,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          color: busy
-              ? MacosColors.systemGrayColor.withValues(alpha: 0.08)
-              : const Color(0x14007AFF),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-          child: Row(
-            children: [
-              if (busy)
-                const SizedBox(width: 11, height: 11, child: ProgressCircle())
-              else
-                MacosIcon(CupertinoIcons.chevron_down, size: 11, color: color),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: MacosTheme.of(
-                    context,
-                  ).typography.caption1.copyWith(color: color),
-                ),
+    return Tappable(
+      onTap: tap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        color: busy
+            ? MacosColors.systemGrayColor.withValues(alpha: 0.08)
+            : const Color(0x14007AFF),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Row(
+          children: [
+            if (busy)
+              const SizedBox(width: 11, height: 11, child: ProgressCircle())
+            else
+              MacosIcon(CupertinoIcons.chevron_down, size: 11, color: color),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: MacosTheme.of(
+                  context,
+                ).typography.caption1.copyWith(color: color),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

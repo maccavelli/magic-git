@@ -14,6 +14,7 @@ import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import 'remote_directory_browser.dart';
 import 'wizard.dart';
@@ -1096,7 +1097,7 @@ class _RepoRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
-    return GestureDetector(
+    return Tappable(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(

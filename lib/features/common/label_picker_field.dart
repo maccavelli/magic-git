@@ -3,6 +3,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/forge/forge_dashboard.dart';
 import 'label_colors.dart';
+import 'tappable.dart';
 
 /// The create-sheet "Labels" field: a caption plus a wrap of toggleable
 /// label chips. This widget existed as byte-identical twins in the PR and MR
@@ -50,7 +51,7 @@ class LabelPickerField extends StatelessWidget {
     final isSelected = selected.contains(label.name);
     final color =
         tryParseLabelColor(label.color) ?? MacosColors.systemBlueColor;
-    return GestureDetector(
+    return Tappable(
       onTap: () => onToggle(label.name),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),

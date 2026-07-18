@@ -8,6 +8,7 @@ import '../../core/settings/pane_layout.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/display_error.dart';
 import '../common/resizable_master_detail.dart';
+import '../common/tappable.dart';
 import '../forge/forge_widgets.dart';
 import 'status_color.dart';
 
@@ -287,7 +288,7 @@ class _JumpToLatestPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    return Tappable(
       onTap: onTap,
       child: DecoratedBox(
         decoration: BoxDecoration(

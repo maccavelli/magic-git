@@ -6,6 +6,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/unified_diff.dart';
 import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
 import 'diff_highlight.dart';
+import 'tappable.dart';
 
 /// Shared vocabulary for every diff surface in the app.
 ///
@@ -57,9 +58,7 @@ const double kDiffSplitSeparator = 1;
 Color? diffKindBackground(DiffLineKind kind) => switch (kind) {
   DiffLineKind.add => MacosColors.systemGreenColor.withValues(alpha: 0.12),
   DiffLineKind.remove => MacosColors.systemRedColor.withValues(alpha: 0.12),
-  DiffLineKind.context ||
-  DiffLineKind.noNewline ||
-  DiffLineKind.other => null,
+  DiffLineKind.context || DiffLineKind.noNewline || DiffLineKind.other => null,
 };
 
 /// Soft fill for a *raw* unified-diff line (still carrying its `+`/`-` marker).
@@ -432,76 +431,74 @@ class _DiffActionButtonState extends State<DiffActionButton> {
       ),
     };
 
-    final button = MouseRegion(
-      // The signal the old button never gave. Note this MouseRegion has to sit
-      // *outside* everything: a Text under a SelectionArea wraps itself in an
-      // I-beam MouseRegion, and the deepest annotation under the pointer is the
-      // one that wins — which is exactly how the pointer stayed an I-beam over a
-      // perfectly live button. Callers keep these out of the selection scope
-      // (see SelectionContainer.disabled); this is the belt to that's braces.
-      cursor: SystemMouseCursors.click,
+    // The hand cursor is the signal the old button never gave. Note Tappable's
+    // MouseRegion has to sit *outside* everything: a Text under a
+    // SelectionArea wraps itself in an I-beam MouseRegion, and the deepest
+    // annotation under the pointer is the one that wins — which is exactly how
+    // the pointer stayed an I-beam over a perfectly live button. Callers keep
+    // these out of the selection scope (see SelectionContainer.disabled); this
+    // is the belt to that's braces.
+    final button = Tappable(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() {
         _hovered = false;
         _pressed = false;
       }),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: (_) => setState(() => _pressed = true),
-        onTapUp: (_) => setState(() => _pressed = false),
-        onTapCancel: () => setState(() => _pressed = false),
-        onTap: widget.onPressed,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 110),
-          curve: Curves.easeOut,
-          height: 18,
-          padding: const EdgeInsets.symmetric(horizontal: 7),
-          decoration: BoxDecoration(
-            // A vertical sheen rather than a flat fill — the thing that makes a
-            // small macOS control look like a physical surface catching light
-            // from above instead of a rectangle of colour.
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color.alphaBlend(
-                  MacosColors.white.withValues(alpha: dark ? 0.08 : 0.35),
-                  fill,
-                ),
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      onTap: widget.onPressed,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOut,
+        height: 18,
+        padding: const EdgeInsets.symmetric(horizontal: 7),
+        decoration: BoxDecoration(
+          // A vertical sheen rather than a flat fill — the thing that makes a
+          // small macOS control look like a physical surface catching light
+          // from above instead of a rectangle of colour.
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color.alphaBlend(
+                MacosColors.white.withValues(alpha: dark ? 0.08 : 0.35),
                 fill,
-              ],
-            ),
-            borderRadius: BorderRadius.circular(9),
-            border: Border.all(color: border, width: 0.5),
-            boxShadow: [
-              // Lifted while hovered, sunk while pressed, resting otherwise.
-              if (!_pressed)
-                BoxShadow(
-                  color: MacosColors.black.withValues(
-                    alpha: _hovered ? 0.22 : 0.10,
-                  ),
-                  blurRadius: _hovered ? 3 : 1,
-                  offset: Offset(0, _hovered ? 1 : 0.5),
-                ),
-            ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              MacosIcon(widget.icon, size: 9, color: fg),
-              const SizedBox(width: 4),
-              Text(
-                widget.label,
-                style: theme.typography.body.copyWith(
-                  fontSize: 11,
-                  height: 1.0,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.1,
-                  color: fg,
-                ),
               ),
+              fill,
             ],
           ),
+          borderRadius: BorderRadius.circular(9),
+          border: Border.all(color: border, width: 0.5),
+          boxShadow: [
+            // Lifted while hovered, sunk while pressed, resting otherwise.
+            if (!_pressed)
+              BoxShadow(
+                color: MacosColors.black.withValues(
+                  alpha: _hovered ? 0.22 : 0.10,
+                ),
+                blurRadius: _hovered ? 3 : 1,
+                offset: Offset(0, _hovered ? 1 : 0.5),
+              ),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            MacosIcon(widget.icon, size: 9, color: fg),
+            const SizedBox(width: 4),
+            Text(
+              widget.label,
+              style: theme.typography.body.copyWith(
+                fontSize: 11,
+                height: 1.0,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.1,
+                color: fg,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -520,8 +517,7 @@ class DiffPending extends StatelessWidget {
   const DiffPending({super.key});
 
   @override
-  Widget build(BuildContext context) =>
-      const Center(child: ProgressCircle());
+  Widget build(BuildContext context) => const Center(child: ProgressCircle());
 }
 
 /// The message every diff surface shows when its patch could not be fetched.
@@ -656,15 +652,11 @@ class _DiffViewState extends State<DiffView> {
     );
 
     if (initial) {
-      inline == null
-          ? _loading = true
-          : apply(inline.result, loading: false);
+      inline == null ? _loading = true : apply(inline.result, loading: false);
       return;
     }
     setState(() {
-      inline == null
-          ? _loading = true
-          : apply(inline.result, loading: false);
+      inline == null ? _loading = true : apply(inline.result, loading: false);
     });
   }
 
@@ -718,8 +710,7 @@ class _DiffViewState extends State<DiffView> {
 }
 
 /// Top-level so [DiffParser] can ship it to `Isolate.run`.
-List<String> _splitDiffLines(String diff) =>
-    const LineSplitter().convert(diff);
+List<String> _splitDiffLines(String diff) => const LineSplitter().convert(diff);
 
 /// One unified-diff text row: soft add/remove band spanning the full content
 /// width, fixed strut so [kDiffLineExtent] never clips the glyphs, shared pad.

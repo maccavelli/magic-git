@@ -104,6 +104,11 @@ class NoRemoteNotice extends StatelessWidget {
 /// affordance. [skipLoadingOnReload] keeps the current rows on screen while a
 /// dependency-triggered re-fetch runs (e.g. the Forge panels expanding a list
 /// to full history) instead of collapsing the section to a spinner.
+///
+/// [where] filters the items (the Forge panels' shared filter field). It
+/// lives HERE — not in a caller-side AsyncValue transform — because mapping
+/// an AsyncValue drops the previous value a reload retains, which would
+/// break [skipLoadingOnReload] the moment a filter is composed with it.
 Widget asyncListSection<T>(
   AsyncValue<List<T>> async,
   String emptyMessage,
@@ -111,8 +116,15 @@ Widget asyncListSection<T>(
   bool skipLoadingOnReload = false,
   int? limit,
   Widget Function(int hidden)? overflow,
+  bool Function(T)? where,
 }) {
-  List<Widget> buildRows(List<T> items) {
+  List<Widget> buildRows(List<T> all) {
+    final items = where == null
+        ? all
+        : [
+            for (final e in all)
+              if (where(e)) e,
+          ];
     if (items.isEmpty) return [SectionEmpty(emptyMessage)];
     final visible = limit == null ? items : items.take(limit).toList();
     final hidden = items.length - visible.length;

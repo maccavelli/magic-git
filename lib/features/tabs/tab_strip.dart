@@ -4,6 +4,7 @@ import 'package:flutter/material.dart'
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/providers/app_providers.dart';
+import '../common/tappable.dart';
 import 'tabs_controller.dart';
 import 'tabs_scope.dart';
 
@@ -111,7 +112,7 @@ class _TabChip extends StatelessWidget {
         ? 'New Tab'
         : (tab.repoPath != null ? _basename(tab.repoPath!) : 'Connecting…');
 
-    return GestureDetector(
+    return Tappable(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(

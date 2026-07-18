@@ -7,9 +7,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
+import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/features/forge/forge_panel.dart';
+import 'package:remote_magic_git/features/forge/forge_prefs.dart';
 
 const _repo = '/repo';
 
@@ -22,9 +24,17 @@ final _remoteRefs = [
   ),
 ];
 
+/// These tests assert on the Browse sections' headers; the panels open in
+/// Inbox mode by default, so pin them to Browse.
+class _BrowseMode extends ForgeInboxMode {
+  @override
+  bool build() => false;
+}
+
 Future<void> _pumpForge(WidgetTester tester, Forge forge) async {
   final container = ProviderContainer(
     overrides: [
+      forgeInboxModeProvider.overrideWith(_BrowseMode.new),
       forgeProvider(_repo).overrideWith((ref) async => forge),
       // Keep the underlying forge panels from hitting a real executor.
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
@@ -33,6 +43,17 @@ Future<void> _pumpForge(WidgetTester tester, Forge forge) async {
       workflowRunsProvider(_repo).overrideWith((ref) async => const []),
       mergeRequestsProvider(_repo).overrideWith((ref) async => const []),
       pipelinesProvider(_repo).overrideWith((ref) async => const []),
+      // The unified Forge panels also render the project sections — settle
+      // their providers so no section is left spinning.
+      projectIssuesProvider(_repo).overrideWith((ref) async => const []),
+      projectMilestonesProvider(_repo).overrideWith((ref) async => const []),
+      projectDashboardProvider(
+        _repo,
+      ).overrideWith((ref) async => const ForgeProjectDashboard()),
+      githubProjectDashboardProvider(
+        _repo,
+      ).overrideWith((ref) async => const ForgeProjectDashboard()),
+      originRemoteUrlProvider(_repo).overrideWith((ref) async => null),
     ],
   );
   addTearDown(container.dispose);

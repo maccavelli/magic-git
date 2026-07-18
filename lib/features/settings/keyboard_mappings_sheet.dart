@@ -12,6 +12,7 @@ import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 
 /// Modifier-only keys — pressing one alone while recording a shortcut isn't a
@@ -327,7 +328,7 @@ class _KeyboardMappingsSheetState
   Widget _bindingChip(String actionId, int slot, KeyBinding binding) {
     final recording =
         _recordingActionId == actionId && _recordingSlot == slot;
-    return GestureDetector(
+    return Tappable(
       onTap: () => _startRecording(actionId, slot),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -351,7 +352,7 @@ class _KeyboardMappingsSheetState
             ),
             if (!recording) ...[
               const SizedBox(width: 5),
-              GestureDetector(
+              Tappable(
                 onTap: () => _removeBinding(actionId, slot),
                 child: const MacosIcon(
                   CupertinoIcons.xmark,
@@ -368,7 +369,7 @@ class _KeyboardMappingsSheetState
 
   Widget _addChip(String actionId) {
     final recording = _recordingActionId == actionId && _recordingSlot == null;
-    return GestureDetector(
+    return Tappable(
       onTap: () => _startRecording(actionId, null),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),

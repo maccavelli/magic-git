@@ -7,6 +7,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/undo/undo_journal.dart';
+import 'tappable.dart';
 
 /// One transient toast: what happened, and whether ⌘Z applies to it.
 class UndoToast {
@@ -141,66 +142,61 @@ class _UndoToastOverlayState extends ConsumerState<UndoToastOverlay> {
         ? bindings.first.label
         : null;
 
-    return MouseRegion(
+    return Tappable(
       onEnter: (_) => notifier.pause(),
       onExit: (_) => notifier.resume(),
-      cursor: toast.showUndoHint
-          ? SystemMouseCursors.click
-          : MouseCursor.defer,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          if (toast.showUndoHint) {
-            notifier.dismiss();
-            widget.onUndo();
-          } else {
-            notifier.dismiss();
-          }
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-          decoration: BoxDecoration(
-            color: brightness.resolve(
-              CupertinoColors.systemGrey6.color,
-              MacosColors.controlBackgroundColor.darkColor,
+      // Defer (not arrow) while the hint is hidden: the toast is dismissable
+      // but not advertising an action yet.
+      cursor: toast.showUndoHint ? SystemMouseCursors.click : MouseCursor.defer,
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        if (toast.showUndoHint) {
+          notifier.dismiss();
+          widget.onUndo();
+        } else {
+          notifier.dismiss();
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+        decoration: BoxDecoration(
+          color: brightness.resolve(
+            CupertinoColors.systemGrey6.color,
+            MacosColors.controlBackgroundColor.darkColor,
+          ),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: MacosColors.separatorColor),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x33000000),
+              blurRadius: 16,
+              offset: Offset(0, 6),
             ),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: MacosColors.separatorColor),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x33000000),
-                blurRadius: 16,
-                offset: Offset(0, 6),
+          ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(toast.message, style: typography.body),
+            if (toast.showUndoHint && hintLabel != null) ...[
+              const SizedBox(width: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(5),
+                  border: Border.all(color: MacosColors.separatorColor),
+                ),
+                child: Text(hintLabel, style: typography.caption1),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                'to undo',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
               ),
             ],
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(toast.message, style: typography.body),
-              if (toast.showUndoHint && hintLabel != null) ...[
-                const SizedBox(width: 10),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(5),
-                    border: Border.all(color: MacosColors.separatorColor),
-                  ),
-                  child: Text(hintLabel, style: typography.caption1),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  'to undo',
-                  style: typography.caption1.copyWith(
-                    color: MacosColors.systemGrayColor,
-                  ),
-                ),
-              ],
-            ],
-          ),
+          ],
         ),
       ),
     );

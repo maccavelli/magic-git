@@ -14,6 +14,7 @@ import '../common/actions.dart';
 import '../common/context_menu.dart';
 import '../common/escape_dismissible.dart';
 import '../common/status_style.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../history/file_history_sheet.dart';
 import '../viewer/viewer_providers.dart';
@@ -621,7 +622,7 @@ class _FileViewState extends ConsumerState<FileView> {
     final selected = _selectedPath == node.path;
     final status = node.isDir ? null : overlay.statusFor(node.path);
 
-    return GestureDetector(
+    return Tappable(
       key: ValueKey(node.path),
       onTap: () => _onTap(node),
       onSecondaryTapUp: node.isDir

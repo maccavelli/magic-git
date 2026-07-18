@@ -2,6 +2,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../../core/forge/forge.dart';
+import '../../core/forge/forge_dashboard.dart';
 import '../../core/gitlab/models.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
@@ -10,23 +12,28 @@ import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/branch_switch.dart';
 import '../common/buttons.dart';
-import '../common/escape_dismissible.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/show_more_row.dart';
+import '../forge/forge_inbox.dart';
+import '../forge/forge_prefs.dart';
+import '../forge/forge_selection.dart';
 import '../forge/forge_widgets.dart';
-import 'create_mr_sheet.dart';
+import '../forge/project_sections.dart';
+import 'create_mr_form.dart';
 import 'pipeline_jobs_view.dart';
 import 'status_color.dart';
 
-/// GitLab overview in a left-pane / main-panel layout (mirroring History):
-/// merge requests and CI/CD pipelines list on the left; selecting one opens the
-/// relevant detail on the right — an MR's actions, or a pipeline's jobs and live
-/// job logs. Driven through `glab` (JSON contract) over the remote connection.
+/// The GitLab half of the unified Forge workspace: one master list (Merge
+/// Requests, Pipelines, Issues, Milestones, Labels, Releases — collapsible,
+/// jointly filtered) beside one detail pane (MR actions + checks, pipeline
+/// jobs and live logs, issue/milestone details, and the inline create forms).
+/// Driven through `glab` (JSON contract) plus the forge-neutral project
+/// providers.
 class GitLabPanel extends ConsumerStatefulWidget {
   final String repoPath;
 
-  /// Whether the GitLab tab is the one currently showing. [AppShell] keeps
+  /// Whether the Forge tab is the one currently showing. [AppShell] keeps
   /// every visited tab mounted (in an `IndexedStack`) so switching tabs
   /// preserves state — but a mounted-though-invisible panel still counts as a
   /// live listener on its providers, including [jobTraceProvider]'s
@@ -47,9 +54,19 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   /// what the panel is for.
   static const int _collapsedPipelineCount = 10;
 
-  // Exactly one of these is non-null: the selected left-pane item.
-  int? _selectedMrIid;
-  int? _selectedPipelineId;
+  ForgeSel _sel = const ForgeNothingSel();
+
+  /// Whether an inline create form holds unsaved content (reported via
+  /// onDirtyChanged). Guards row clicks and tab-away from silently
+  /// destroying a draft.
+  bool _draftDirty = false;
+
+  final _filter = TextEditingController();
+  String _filterQuery = '';
+
+  /// The Inbox's type-chip filter (session-local; the Inbox/Browse mode
+  /// itself is persisted via [forgeInboxModeProvider]).
+  ForgeInboxKind? _inboxType;
 
   // In-flight guards for the outward-facing mutations, keyed by MR iid /
   // pipeline id: without these, the confirm-dialog-to-network-call window is
@@ -64,17 +81,25 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   String get repoPath => widget.repoPath;
 
   @override
+  void dispose() {
+    _filter.dispose();
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(GitLabPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repoPath != widget.repoPath) {
       // The panel isn't keyed by repoPath, so this same State survives a repo
-      // switch — without this reset, a selected MR/pipeline id (and its
-      // in-flight guards) from the old repo would leak into the new one,
-      // potentially rendering an unrelated pipeline's jobs or mutating the
-      // wrong project.
+      // switch — without this reset, a selection (and its in-flight guards)
+      // from the old repo would leak into the new one, potentially rendering
+      // an unrelated pipeline's jobs or mutating the wrong project. A draft
+      // belongs to the repo it was typed for — never carry it either.
       setState(() {
-        _selectedMrIid = null;
-        _selectedPipelineId = null;
+        _sel = const ForgeNothingSel();
+        _draftDirty = false;
+        _filter.clear();
+        _filterQuery = '';
       });
       _approvingMrs.clear();
       _mergingMrs.clear();
@@ -87,10 +112,11 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       // IndexedStack) — clear the selection so the pipeline-jobs/job-trace
       // subtree unmounts, letting jobTraceProvider's stream actually stop
       // instead of tailing `glab ci trace` in the background indefinitely.
-      setState(() {
-        _selectedMrIid = null;
-        _selectedPipelineId = null;
-      });
+      // EXCEPT a dirty create draft, which stays mounted so tabbing away and
+      // back doesn't destroy typed work.
+      if (!isForgeCreateSel(_sel) || !_draftDirty) {
+        setState(() => _sel = const ForgeNothingSel());
+      }
     }
   }
 
@@ -135,15 +161,25 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     return null;
   }
 
-  void _selectMr(int iid) => setState(() {
-    _selectedMrIid = iid;
-    _selectedPipelineId = null;
-  });
-
-  void _selectPipeline(int id) => setState(() {
-    _selectedPipelineId = id;
-    _selectedMrIid = null;
-  });
+  /// Switches the detail pane to [next]; when that would discard a dirty
+  /// inline-create draft, asks first (safe default: keep editing).
+  Future<void> _select(ForgeSel next) async {
+    if (isForgeCreateSel(_sel) && _draftDirty) {
+      final discard = await chooseAction<bool>(
+        context,
+        title: 'Discard draft?',
+        message: 'The item you are composing has unsaved content.',
+        primaryLabel: 'Keep Editing',
+        primaryValue: false,
+        secondary: const [('Discard Draft', true)],
+      );
+      if (discard != true || !mounted) return;
+    }
+    setState(() {
+      _sel = next;
+      _draftDirty = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -164,9 +200,28 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     // CI status.
     final pipeByRef = _pipeByRefFor(pipelines.value ?? const <Pipeline>[]);
 
+    // A branch dropped on the Forge nav item opens the inline create form
+    // seeded with that branch (see drop_registry). Consumed post-frame so the
+    // build stays pure.
+    final seed = ref.watch(forgeCreateSeedProvider);
+    if (seed != null && seed.repoPath == repoPath) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (ref.read(forgeCreateSeedProvider)?.repoPath != repoPath) return;
+        ref.read(forgeCreateSeedProvider.notifier).clear();
+        _select(ForgeCreatingChangeRequest(seedSource: seed.branch));
+      });
+    }
+
     final keymap = ref.watch(keymapProvider);
-    final mrIid = _selectedMrIid;
-    final pipelineId = _selectedPipelineId;
+    final mrIid = switch (_sel) {
+      ForgeChangeRequestSel(:final id) => id,
+      _ => null,
+    };
+    final pipelineId = switch (_sel) {
+      ForgeCiRunSel(:final id) => id,
+      _ => null,
+    };
 
     // One handler map for both consumers: the keyboard shortcuts and the
     // command palette's dispatched intents (see PanelShortcuts.handlers).
@@ -184,12 +239,30 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       child: ResizableMasterDetail(
         paneId: PaneId.forgeList,
         master: _leftPane(mrs, pipelines, pipeByRef),
-        detail: _mainPane(mrs, pipelines),
+        detail: _mainPane(mrs, pipelines, pipeByRef),
       ),
     );
   }
 
   // ---- Left pane -----------------------------------------------------------
+
+  bool _mrMatches(MergeRequest mr) => forgeFilterMatch(_filterQuery, [
+    mr.title,
+    '!${mr.iid}',
+    mr.sourceBranch,
+    mr.targetBranch,
+    mr.authorUsername,
+  ]);
+
+  bool _pipelineFilterMatches(Pipeline p) =>
+      forgeFilterMatch(_filterQuery, [p.ref, p.shortSha, p.status]);
+
+  bool _issueMatches(ForgeIssue i) => forgeFilterMatch(_filterQuery, [
+    i.title,
+    i.author,
+    '#${i.id}',
+    ...i.labels,
+  ]);
 
   Widget _leftPane(
     AsyncValue<List<MergeRequest>> mrs,
@@ -197,79 +270,218 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     Map<String, Pipeline> pipeByRef,
   ) {
     final fullHistory = ref.watch(pipelinesScopeProvider(repoPath));
+    final collapsed = ref.watch(forgeCollapsedSectionsProvider);
+    final mrsCollapsed = collapsed.contains(ForgeSections.changeRequests);
+    final ciCollapsed = collapsed.contains(ForgeSections.ci);
+    void toggle(String s) =>
+        ref.read(forgeCollapsedSectionsProvider.notifier).toggle(s);
+    final inboxMode = ref.watch(forgeInboxModeProvider);
+
+    final mrMatches = _mrMatches;
+    final pipelineMatches = _pipelineFilterMatches;
+
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
-        ForgeSectionHeader(
-          'Merge Requests',
-          onRefresh: () => ref.invalidate(mergeRequestsProvider(repoPath)),
-          onAdd: _createMr,
-          addTooltip: 'New merge request',
+        ForgeFilterField(
+          controller: _filter,
+          onChanged: (q) => setState(() => _filterQuery = q),
         ),
-        asyncListSection(
-          mrs,
-          'No open merge requests',
-          (mr) => _mrRow(mr, _headPipelineFor(mr, pipeByRef)),
+        ForgeModeSwitch(
+          inbox: inboxMode,
+          onChanged: (v) => ref.read(forgeInboxModeProvider.notifier).set(v),
         ),
-        const SizedBox(height: 16),
-        ForgeSectionHeader(
-          'Pipelines',
-          onRefresh: () => ref.invalidate(pipelinesProvider(repoPath)),
-        ),
-        // Newest 10 by default; "Show more" flips the scope notifier, which
-        // re-fetches this same provider with the full (bounded) history —
-        // skipLoadingOnReload keeps the current rows up while that runs, and
-        // the busy row below is the only loading signal.
-        asyncListSection(
-          pipelines,
-          'No recent pipelines',
-          (p) => _pipelineRow(p),
-          skipLoadingOnReload: true,
-          limit: fullHistory ? null : _collapsedPipelineCount,
-          overflow: (hidden) => ShowMoreRow(
-            label: 'Show all pipelines',
-            onTap: () =>
-                ref.read(pipelinesScopeProvider(repoPath).notifier).expand(),
+        if (inboxMode)
+          ..._inboxChildren(mrs, pipelines, pipeByRef)
+        else ...[
+          ForgeSectionHeader(
+            'Merge Requests',
+            count: forgeCountLabel(mrs.value?.length, null),
+            collapsed: mrsCollapsed,
+            onToggleCollapsed: () => toggle(ForgeSections.changeRequests),
+            onRefresh: () => ref.invalidate(mergeRequestsProvider(repoPath)),
+            onAdd: _createMr,
+            addTooltip: 'New merge request',
           ),
-        ),
-        if (fullHistory && pipelines.isLoading)
-          const ShowMoreRow(label: 'Loading pipeline history…', busy: true),
+          if (!mrsCollapsed)
+            asyncListSection(
+              mrs,
+              _filterQuery.trim().isEmpty
+                  ? 'No open merge requests'
+                  : 'No matching merge requests',
+              (mr) => _mrRow(mr, _headPipelineFor(mr, pipeByRef)),
+              where: mrMatches,
+            ),
+          const SizedBox(height: 16),
+          ForgeSectionHeader(
+            'Pipelines',
+            count: forgeCountLabel(pipelines.value?.length, null),
+            collapsed: ciCollapsed,
+            onToggleCollapsed: () => toggle(ForgeSections.ci),
+            onRefresh: () => ref.invalidate(pipelinesProvider(repoPath)),
+          ),
+          // Newest 10 by default; "Show more" flips the scope notifier, which
+          // re-fetches this same provider with the full (bounded) history —
+          // skipLoadingOnReload keeps the current rows up while that runs, and
+          // the busy row below is the only loading signal.
+          if (!ciCollapsed) ...[
+            asyncListSection(
+              pipelines,
+              _filterQuery.trim().isEmpty
+                  ? 'No recent pipelines'
+                  : 'No matching pipelines',
+              (p) => _pipelineRow(p),
+              where: pipelineMatches,
+              skipLoadingOnReload: true,
+              limit: fullHistory ? null : _collapsedPipelineCount,
+              overflow: (hidden) => ShowMoreRow(
+                label: 'Show all pipelines',
+                onTap: () => ref
+                    .read(pipelinesScopeProvider(repoPath).notifier)
+                    .expand(),
+              ),
+            ),
+            if (fullHistory && pipelines.isLoading)
+              const ShowMoreRow(label: 'Loading pipeline history…', busy: true),
+          ],
+          const SizedBox(height: 16),
+          ...projectSectionChildren(
+            ref: ref,
+            repoPath: repoPath,
+            forge: Forge.gitlab,
+            sel: _sel,
+            onSelect: (next) => _select(next),
+            filter: _filterQuery,
+            collapsed: collapsed,
+            onToggleCollapsed: toggle,
+            onCreateIssue: () => _select(const ForgeCreatingIssue()),
+          ),
+        ],
       ],
     );
   }
 
-  Widget _mrRow(MergeRequest mr, Pipeline? headPipeline) {
-    return ChangeRequestRow(
-      badge: mr.draft
+  /// The Inbox's triage entries: open MRs, CI runs that need attention
+  /// (failed, or still moving), and open issues — in that order, jointly
+  /// filtered by the shared filter field.
+  List<Widget> _inboxChildren(
+    AsyncValue<List<MergeRequest>> mrs,
+    AsyncValue<List<Pipeline>> pipelines,
+    Map<String, Pipeline> pipeByRef,
+  ) {
+    final issues = ref.watch(projectIssuesProvider(repoPath));
+    final dashboard = ref.watch(projectDashboardProvider(repoPath));
+    final palette = {
+      for (final l in dashboard.value?.labels ?? const <ForgeLabel>[])
+        l.name: l,
+    };
+    // Machine status values from the glab JSON contract: a succeeded (or
+    // canceled/skipped) pipeline isn't work, so it stays out of the Inbox.
+    bool needsAttention(Pipeline p) =>
+        const {'failed', 'running', 'pending'}.contains(p.status);
+
+    final entries = <ForgeInboxEntry>[
+      for (final mr in mrs.value ?? const <MergeRequest>[])
+        if (_mrMatches(mr))
+          ForgeInboxEntry(
+            itemKey: 'mr:${mr.iid}',
+            kind: ForgeInboxKind.changeRequest,
+            build: (extras) => _mrRow(
+              mr,
+              _headPipelineFor(mr, pipeByRef),
+              trailingExtras: extras,
+            ),
+          ),
+      for (final p in pipelines.value ?? const <Pipeline>[])
+        if (needsAttention(p) && _pipelineFilterMatches(p))
+          ForgeInboxEntry(
+            itemKey: 'ci:${p.id}',
+            kind: ForgeInboxKind.ci,
+            build: (extras) => _pipelineRow(p, trailingExtras: extras),
+          ),
+      for (final i in issues.value ?? const <ForgeIssue>[])
+        if (i.id != null && _issueMatches(i))
+          ForgeInboxEntry(
+            itemKey: 'issue:${i.id}',
+            kind: ForgeInboxKind.issue,
+            build: (extras) => forgeIssueRow(
+              issue: i,
+              palette: palette,
+              sel: _sel,
+              onSelect: (next) => _select(next),
+              trailing: forgeCombineTrailing(null, extras),
+            ),
+          ),
+    ];
+    bool settled(AsyncValue<Object?> v) => v.hasValue || v.hasError;
+    return [
+      ...forgeInboxChildren(
+        ref: ref,
+        repoPath: repoPath,
+        entries: entries,
+        typeFilter: _inboxType,
+        onTypeFilter: (k) => setState(() => _inboxType = k),
+        changeRequestLabel: 'MRs',
+        listsReady: settled(mrs) && settled(pipelines) && settled(issues),
+      ),
+      // A failed source list must say so — an Inbox that silently omits a
+      // whole category reads as "nothing needs attention".
+      if (mrs.hasError) SectionError(mrs.error!),
+      if (pipelines.hasError) SectionError(pipelines.error!),
+      if (issues.hasError) SectionError(issues.error!),
+    ];
+  }
+
+  Widget _mrRow(
+    MergeRequest mr,
+    Pipeline? headPipeline, {
+    List<Widget> trailingExtras = const [],
+  }) {
+    final selected = switch (_sel) {
+      ForgeChangeRequestSel(:final id) => id == mr.iid,
+      _ => false,
+    };
+    return ForgeListRow(
+      leading: mr.draft
           ? const StatusBadge('DRAFT', MacosColors.systemGrayColor)
           : StatusBadge('!${mr.iid}', MacosColors.systemBlueColor),
       title: mr.title,
-      branches: '${mr.sourceBranch} → ${mr.targetBranch}',
-      ciDotColor: headPipeline == null
+      titleMaxLines: 2,
+      caption: '${mr.sourceBranch} → ${mr.targetBranch}',
+      captionDotColor: headPipeline == null
           ? null
           : ciStatusColor(headPipeline.ciStatus),
-      selected: mr.iid == _selectedMrIid,
-      onTap: () => _selectMr(mr.iid),
+      trailing: forgeCombineTrailing(null, trailingExtras),
+      selected: selected,
+      onTap: () => _select(ForgeChangeRequestSel(mr.iid)),
     );
   }
 
-  Widget _pipelineRow(Pipeline pipeline) {
-    return CiRunRow(
-      dotColor: ciStatusColor(pipeline.ciStatus),
+  Widget _pipelineRow(
+    Pipeline pipeline, {
+    List<Widget> trailingExtras = const [],
+  }) {
+    final selected = switch (_sel) {
+      ForgeCiRunSel(:final id) => id == pipeline.id,
+      _ => false,
+    };
+    // Retry is green; only plain refresh icons stay blue.
+    final retry = pipeline.isRetryable
+        ? InFlightIconButton(
+            busy: _retryingPipelines.contains(pipeline.id),
+            icon: CupertinoIcons.refresh_thick,
+            tooltip: 'Retry pipeline',
+            size: 15,
+            color: MacosColors.systemGreenColor,
+            onPressed: () => _retry(pipeline.id),
+          )
+        : null;
+    return ForgeListRow(
+      leading: CiDot(ciStatusColor(pipeline.ciStatus)),
       title: '${pipeline.ref}  ·  ${pipeline.shortSha}',
-      selected: pipeline.id == _selectedPipelineId,
-      onTap: () => _selectPipeline(pipeline.id),
-      // Retry is green; only plain refresh icons stay blue.
-      trailing: pipeline.isRetryable
-          ? InFlightIconButton(
-              busy: _retryingPipelines.contains(pipeline.id),
-              icon: CupertinoIcons.refresh_thick,
-              tooltip: 'Retry pipeline',
-              size: 15,
-              color: MacosColors.systemGreenColor,
-              onPressed: () => _retry(pipeline.id),
-            )
-          : null,
+      selected: selected,
+      onTap: () => _select(ForgeCiRunSel(pipeline.id)),
+      trailing: forgeCombineTrailing(retry, trailingExtras),
     );
   }
 
@@ -278,63 +490,90 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   Widget _mainPane(
     AsyncValue<List<MergeRequest>> mrs,
     AsyncValue<List<Pipeline>> pipelines,
+    Map<String, Pipeline> pipeByRef,
   ) {
-    if (_selectedPipelineId != null) {
-      Pipeline? pipeline;
-      for (final p in pipelines.value ?? const <Pipeline>[]) {
-        if (p.id == _selectedPipelineId) pipeline = p;
-      }
-      return _pipelineDetail(pipeline, _selectedPipelineId!);
+    final remoteUrl = ref.watch(originRemoteUrlProvider(repoPath)).value;
+    switch (_sel) {
+      case ForgeCiRunSel(:final id):
+        Pipeline? pipeline;
+        for (final p in pipelines.value ?? const <Pipeline>[]) {
+          if (p.id == id) pipeline = p;
+        }
+        return _pipelineDetail(pipeline, id);
+      case ForgeChangeRequestSel(:final id):
+        MergeRequest? mr;
+        for (final m in mrs.value ?? const <MergeRequest>[]) {
+          if (m.iid == id) mr = m;
+        }
+        if (mr != null) return _mrDetail(mr, pipeByRef);
+        // Selected but not in the list: a failed list load should surface the
+        // error, not the neutral "select something" hint (which reads as
+        // "nothing is wrong") while the left-pane row still shows selected.
+        if (mrs.hasError) return PaneError(mrs.error!);
+        return const CenteredHint('Select an item on the left');
+      case ForgeCreatingChangeRequest(:final seedSource):
+        return CreateMrForm(
+          repoPath: repoPath,
+          initialSource: seedSource,
+          onClose: () => setState(() {
+            _sel = const ForgeNothingSel();
+            _draftDirty = false;
+          }),
+          // No setState: dirtiness changes nothing visual until a row click
+          // or tab-away consults it.
+          onDirtyChanged: (dirty) => _draftDirty = dirty,
+        );
+      default:
+        final project = projectDetailFor(
+          ref: ref,
+          repoPath: repoPath,
+          forge: Forge.gitlab,
+          sel: _sel,
+          remoteUrl: remoteUrl,
+          onCloseCreate: () => setState(() {
+            _sel = const ForgeNothingSel();
+            _draftDirty = false;
+          }),
+          onDirtyChanged: (dirty) => _draftDirty = dirty,
+        );
+        if (project != null) return project;
+        return const CenteredHint('Select an item on the left');
     }
-
-    if (_selectedMrIid != null) {
-      MergeRequest? mr;
-      for (final m in mrs.value ?? const <MergeRequest>[]) {
-        if (m.iid == _selectedMrIid) mr = m;
-      }
-      if (mr != null) return _mrDetail(mr);
-      // Selected but not in the list: a failed list load should surface the
-      // error, not the neutral "select something" hint (which reads as "nothing
-      // is wrong") while the left-pane row still shows selected.
-      if (mrs.hasError) return PaneError(mrs.error!);
-    }
-
-    return const CenteredHint('Select a merge request or pipeline');
   }
 
   Widget _pipelineDetail(Pipeline? pipeline, int pipelineId) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        CiDetailHeader(
-          dotColor: ciStatusColor(pipeline?.ciStatus ?? CiStatus.unknown),
-          title: pipeline == null
-              ? 'Pipeline #$pipelineId'
-              : 'Pipeline #$pipelineId  ·  ${pipeline.ref}',
-          trailing: pipeline != null && pipeline.isRetryable
-              ? InFlightIconButton(
-                  busy: _retryingPipelines.contains(pipelineId),
-                  icon: CupertinoIcons.refresh_thick,
-                  tooltip: 'Retry pipeline',
-                  size: 16,
-                  color: MacosColors.systemGreenColor,
-                  onPressed: () => _retry(pipelineId),
-                )
-              : null,
-        ),
-        Expanded(
-          child: PipelineJobsView(repoPath: repoPath, pipelineId: pipelineId),
-        ),
+    return ForgeDetailScaffold(
+      leading: CiDot(
+        ciStatusColor(pipeline?.ciStatus ?? CiStatus.unknown),
+        size: 11,
+      ),
+      title: pipeline == null
+          ? 'Pipeline #$pipelineId'
+          : 'Pipeline #$pipelineId  ·  ${pipeline.ref}',
+      headerActions: [
+        if (pipeline != null && pipeline.isRetryable)
+          InFlightIconButton(
+            busy: _retryingPipelines.contains(pipelineId),
+            icon: CupertinoIcons.refresh_thick,
+            tooltip: 'Retry pipeline',
+            size: 16,
+            color: MacosColors.systemGreenColor,
+            onPressed: () => _retry(pipelineId),
+          ),
+        OpenInBrowserButton(pipeline?.webUrl),
       ],
+      body: PipelineJobsView(repoPath: repoPath, pipelineId: pipelineId),
     );
   }
 
-  Widget _mrDetail(MergeRequest mr) {
-    return ChangeRequestDetail(
-      badge: mr.draft
+  Widget _mrDetail(MergeRequest mr, Map<String, Pipeline> pipeByRef) {
+    final pipeline = _headPipelineFor(mr, pipeByRef);
+    return ForgeDetailScaffold(
+      leading: mr.draft
           ? const StatusBadge('DRAFT', MacosColors.systemGrayColor)
           : StatusBadge('!${mr.iid}', MacosColors.systemBlueColor),
       title: mr.title,
+      headerActions: [OpenInBrowserButton(mr.webUrl)],
       lines: [
         DetailLine('Source', mr.sourceBranch),
         DetailLine('Target', mr.targetBranch),
@@ -342,6 +581,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
           DetailLine('Author', '@${mr.authorUsername}'),
         DetailLine('State', mr.state),
       ],
+      body: _mrChecks(pipeline),
       actions: [
         InFlightPushButton(
           busy: _checkingOutMrs.contains(mr.iid),
@@ -359,6 +599,34 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
           const ProgressCircle()
         else
           _mergeButton(mr),
+      ],
+    );
+  }
+
+  /// The MR detail's body: its head pipeline's jobs (checks), inline — the
+  /// selected MR and its CI live on one screen instead of two selections.
+  Widget _mrChecks(Pipeline? pipeline) {
+    if (pipeline == null) {
+      return const CenteredHint('No pipeline for this branch');
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+          child: Builder(
+            builder: (context) => Text(
+              'Checks  ·  Pipeline #${pipeline.id}',
+              style: MacosTheme.of(context).typography.caption1.copyWith(
+                fontWeight: FontWeight.bold,
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: PipelineJobsView(repoPath: repoPath, pipelineId: pipeline.id),
+        ),
       ],
     );
   }
@@ -403,11 +671,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   // ---- Actions -------------------------------------------------------------
 
   void _createMr() {
-    showMacosSheet<void>(
-      context: context,
-      builder: (_) =>
-          EscapeDismissible(child: CreateMrSheet(repoPath: repoPath)),
-    );
+    _select(const ForgeCreatingChangeRequest());
   }
 
   Future<void> _approve(int iid) async {
@@ -468,7 +732,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     setState(() => _mergingMrs.remove(iid));
     if (success) {
       // The MR is gone after a merge — clear the detail selection.
-      setState(() => _selectedMrIid = null);
+      setState(() => _sel = const ForgeNothingSel());
       ref.invalidate(mergeRequestsProvider(repoPath));
     }
   }
@@ -526,5 +790,4 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       ref.invalidate(jobsProvider((repoPath, id)));
     }
   }
-
 }

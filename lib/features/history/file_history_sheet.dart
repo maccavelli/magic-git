@@ -5,6 +5,7 @@ import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/theme/app_theme.dart';
 import '../common/diff_view.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 
 /// "File history" — the commits that touched a single file (following renames),
@@ -128,7 +129,7 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
   Widget _commitRow(GitCommit c, String selected) {
     final typography = MacosTheme.of(context).typography;
     final isSel = c.hash == selected;
-    return GestureDetector(
+    return Tappable(
       onTap: () => setState(() => _selected = c.hash),
       child: Container(
         color: isSel

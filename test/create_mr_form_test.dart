@@ -1,4 +1,4 @@
-// Regression coverage for the MR-creation diff preview going stale: editing
+// Regression coverage for the (now inline) MR-creation form's diff preview going stale: editing
 // the source/target branch while the preview is open used to leave it showing
 // the diff for whichever branches were selected when it was last
 // opened/tapped, since the text fields only triggered a bare rebuild — never
@@ -18,7 +18,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
-import 'package:remote_magic_git/features/gitlab/create_mr_sheet.dart';
+import 'package:remote_magic_git/features/gitlab/create_mr_form.dart';
 
 const _repo = '/repo';
 
@@ -110,9 +110,9 @@ Future<(_FakeGit, _FakeGlab)> _pump(WidgetTester tester) async {
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
-      child: const MacosApp(
+      child: MacosApp(
         debugShowCheckedModeBanner: false,
-        home: CreateMrSheet(repoPath: _repo),
+        home: CreateMrForm(repoPath: _repo, onClose: () {}),
       ),
     ),
   );
@@ -213,7 +213,7 @@ void main() {
       'My change',
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(AppPushButton, 'Create'));
+    await tester.tap(find.widgetWithText(AppPushButton, 'Create merge request'));
     await tester.pumpAndSettle();
 
     expect(git.pushes, [('origin', 'feature', true)]);
@@ -228,7 +228,7 @@ void main() {
 
     await tester.enterText(find.byType(MacosTextField).at(2), 'My change');
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(AppPushButton, 'Create'));
+    await tester.tap(find.widgetWithText(AppPushButton, 'Create merge request'));
     await tester.pump(); // enters _submitting; push is now awaiting the gate
 
     final cancel = tester.widget<AppPushButton>(
@@ -300,9 +300,9 @@ void main() {
     await tester.pumpWidget(
       UncontrolledProviderScope(
         container: container,
-        child: const MacosApp(
+        child: MacosApp(
           debugShowCheckedModeBanner: false,
-          home: CreateMrSheet(repoPath: _repo),
+          home: CreateMrForm(repoPath: _repo, onClose: () {}),
         ),
       ),
     );

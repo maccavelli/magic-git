@@ -2,6 +2,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../../core/forge/forge.dart';
+import '../../core/forge/forge_dashboard.dart';
 import '../../core/github/models.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
@@ -10,19 +12,24 @@ import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/branch_switch.dart';
 import '../common/buttons.dart';
-import '../common/escape_dismissible.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/show_more_row.dart';
+import '../forge/forge_inbox.dart';
+import '../forge/forge_prefs.dart';
+import '../forge/forge_selection.dart';
 import '../forge/forge_widgets.dart';
-import 'create_pr_sheet.dart';
+import '../forge/project_sections.dart';
+import 'create_pr_form.dart';
 import 'run_jobs_view.dart';
 import 'status_color.dart';
 
-/// GitHub overview in a left-pane / main-panel layout (mirroring the GitLab
-/// panel): pull requests and workflow runs list on the left; selecting one opens
-/// the relevant detail on the right — a PR's actions, or a run's jobs and logs.
-/// Driven through `gh` (JSON contract) over the remote connection.
+/// The GitHub half of the unified Forge workspace (mirroring the GitLab
+/// panel): one master list (Pull Requests, Workflow Runs, Issues, Milestones,
+/// Labels, Releases — collapsible, jointly filtered) beside one detail pane
+/// (PR actions + checks, run jobs and logs, issue/milestone details, and the
+/// inline create forms). Driven through `gh` (JSON contract) plus the
+/// forge-neutral project providers.
 class GitHubPanel extends ConsumerStatefulWidget {
   final String repoPath;
 
@@ -43,9 +50,19 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   /// mirrors `GitLabPanel`'s collapsed pipeline count.
   static const int _collapsedRunCount = 10;
 
-  // Exactly one of these is non-null: the selected left-pane item.
-  int? _selectedPrNumber;
-  int? _selectedRunId;
+  ForgeSel _sel = const ForgeNothingSel();
+
+  /// Whether an inline create form holds unsaved content (reported via
+  /// onDirtyChanged). Guards row clicks and tab-away from silently
+  /// destroying a draft.
+  bool _draftDirty = false;
+
+  final _filter = TextEditingController();
+  String _filterQuery = '';
+
+  /// The Inbox's type-chip filter (session-local; the Inbox/Browse mode
+  /// itself is persisted via [forgeInboxModeProvider]).
+  ForgeInboxKind? _inboxType;
 
   // In-flight guards for the mutations, keyed by PR number / run id.
   final Set<int> _approvingPrs = {};
@@ -56,12 +73,20 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   String get repoPath => widget.repoPath;
 
   @override
+  void dispose() {
+    _filter.dispose();
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(GitHubPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.repoPath != widget.repoPath) {
       setState(() {
-        _selectedPrNumber = null;
-        _selectedRunId = null;
+        _sel = const ForgeNothingSel();
+        _draftDirty = false;
+        _filter.clear();
+        _filterQuery = '';
       });
       _approvingPrs.clear();
       _mergingPrs.clear();
@@ -71,11 +96,12 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       _runByBranch = const {};
     } else if (oldWidget.isActive && !widget.isActive) {
       // Leaving the tab — clear the selection so the run-jobs poll stream stops
-      // instead of polling `gh` in the background indefinitely.
-      setState(() {
-        _selectedPrNumber = null;
-        _selectedRunId = null;
-      });
+      // instead of polling `gh` in the background indefinitely. EXCEPT a dirty
+      // create draft, which stays mounted so tabbing away and back doesn't
+      // destroy typed work.
+      if (!isForgeCreateSel(_sel) || !_draftDirty) {
+        setState(() => _sel = const ForgeNothingSel());
+      }
     }
   }
 
@@ -99,15 +125,25 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   WorkflowRun? _headRunFor(PullRequest pr, Map<String, WorkflowRun> byBranch) =>
       byBranch[pr.headRefName];
 
-  void _selectPr(int number) => setState(() {
-    _selectedPrNumber = number;
-    _selectedRunId = null;
-  });
-
-  void _selectRun(int id) => setState(() {
-    _selectedRunId = id;
-    _selectedPrNumber = null;
-  });
+  /// Switches the detail pane to [next]; when that would discard a dirty
+  /// inline-create draft, asks first (safe default: keep editing).
+  Future<void> _select(ForgeSel next) async {
+    if (isForgeCreateSel(_sel) && _draftDirty) {
+      final discard = await chooseAction<bool>(
+        context,
+        title: 'Discard draft?',
+        message: 'The item you are composing has unsaved content.',
+        primaryLabel: 'Keep Editing',
+        primaryValue: false,
+        secondary: const [('Discard Draft', true)],
+      );
+      if (discard != true || !mounted) return;
+    }
+    setState(() {
+      _sel = next;
+      _draftDirty = false;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -123,9 +159,28 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     final runs = ref.watch(workflowRunsProvider(repoPath));
     final runByBranch = _runByBranchFor(runs.value ?? const <WorkflowRun>[]);
 
+    // A branch dropped on the Forge nav item opens the inline create form
+    // seeded with that branch (see drop_registry). Consumed post-frame so the
+    // build stays pure.
+    final seed = ref.watch(forgeCreateSeedProvider);
+    if (seed != null && seed.repoPath == repoPath) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (ref.read(forgeCreateSeedProvider)?.repoPath != repoPath) return;
+        ref.read(forgeCreateSeedProvider.notifier).clear();
+        _select(ForgeCreatingChangeRequest(seedSource: seed.branch));
+      });
+    }
+
     final keymap = ref.watch(keymapProvider);
-    final prNumber = _selectedPrNumber;
-    final runId = _selectedRunId;
+    final prNumber = switch (_sel) {
+      ForgeChangeRequestSel(:final id) => id,
+      _ => null,
+    };
+    final runId = switch (_sel) {
+      ForgeCiRunSel(:final id) => id,
+      _ => null,
+    };
 
     // One handler map for both consumers: the keyboard shortcuts and the
     // command palette's dispatched intents (see PanelShortcuts.handlers).
@@ -143,12 +198,33 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       child: ResizableMasterDetail(
         paneId: PaneId.forgeList,
         master: _leftPane(prs, runs, runByBranch),
-        detail: _mainPane(prs, runs),
+        detail: _mainPane(prs, runs, runByBranch),
       ),
     );
   }
 
   // ---- Left pane -----------------------------------------------------------
+
+  bool _prMatches(PullRequest pr) => forgeFilterMatch(_filterQuery, [
+    pr.title,
+    '#${pr.number}',
+    pr.headRefName,
+    pr.baseRefName,
+    pr.authorLogin,
+  ]);
+
+  bool _runFilterMatches(WorkflowRun r) => forgeFilterMatch(_filterQuery, [
+    r.workflowName,
+    r.headBranch,
+    r.shortSha,
+  ]);
+
+  bool _issueMatches(ForgeIssue i) => forgeFilterMatch(_filterQuery, [
+    i.title,
+    i.author,
+    '#${i.id}',
+    ...i.labels,
+  ]);
 
   Widget _leftPane(
     AsyncValue<List<PullRequest>> prs,
@@ -156,77 +232,215 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     Map<String, WorkflowRun> runByBranch,
   ) {
     final fullHistory = ref.watch(workflowRunsScopeProvider(repoPath));
+    final collapsed = ref.watch(forgeCollapsedSectionsProvider);
+    final prsCollapsed = collapsed.contains(ForgeSections.changeRequests);
+    final ciCollapsed = collapsed.contains(ForgeSections.ci);
+    void toggle(String s) =>
+        ref.read(forgeCollapsedSectionsProvider.notifier).toggle(s);
+    final inboxMode = ref.watch(forgeInboxModeProvider);
+
+    final prMatches = _prMatches;
+    final runMatches = _runFilterMatches;
+
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
-        ForgeSectionHeader(
-          'Pull Requests',
-          onRefresh: () => ref.invalidate(pullRequestsProvider(repoPath)),
-          onAdd: _createPr,
-          addTooltip: 'New pull request',
+        ForgeFilterField(
+          controller: _filter,
+          onChanged: (q) => setState(() => _filterQuery = q),
         ),
-        asyncListSection(
-          prs,
-          'No open pull requests',
-          (pr) => _prRow(pr, _headRunFor(pr, runByBranch)),
+        ForgeModeSwitch(
+          inbox: inboxMode,
+          onChanged: (v) => ref.read(forgeInboxModeProvider.notifier).set(v),
         ),
-        const SizedBox(height: 16),
-        ForgeSectionHeader(
-          'Workflow Runs',
-          onRefresh: () => ref.invalidate(workflowRunsProvider(repoPath)),
-        ),
-        // Newest 10 by default; "Show more" re-fetches the same provider with
-        // the full (bounded) history — see GitLabPanel._leftPane for the
-        // skipLoadingOnReload / busy-row reasoning.
-        asyncListSection(
-          runs,
-          'No recent workflow runs',
-          (r) => _runRow(r),
-          skipLoadingOnReload: true,
-          limit: fullHistory ? null : _collapsedRunCount,
-          overflow: (hidden) => ShowMoreRow(
-            label: 'Show all workflow runs',
-            onTap: () => ref
-                .read(workflowRunsScopeProvider(repoPath).notifier)
-                .expand(),
+        if (inboxMode)
+          ..._inboxChildren(prs, runs, runByBranch)
+        else ...[
+          ForgeSectionHeader(
+            'Pull Requests',
+            count: forgeCountLabel(prs.value?.length, null),
+            collapsed: prsCollapsed,
+            onToggleCollapsed: () => toggle(ForgeSections.changeRequests),
+            onRefresh: () => ref.invalidate(pullRequestsProvider(repoPath)),
+            onAdd: _createPr,
+            addTooltip: 'New pull request',
           ),
-        ),
-        if (fullHistory && runs.isLoading)
-          const ShowMoreRow(label: 'Loading run history…', busy: true),
+          if (!prsCollapsed)
+            asyncListSection(
+              prs,
+              _filterQuery.trim().isEmpty
+                  ? 'No open pull requests'
+                  : 'No matching pull requests',
+              (pr) => _prRow(pr, _headRunFor(pr, runByBranch)),
+              where: prMatches,
+            ),
+          const SizedBox(height: 16),
+          ForgeSectionHeader(
+            'Workflow Runs',
+            count: forgeCountLabel(runs.value?.length, null),
+            collapsed: ciCollapsed,
+            onToggleCollapsed: () => toggle(ForgeSections.ci),
+            onRefresh: () => ref.invalidate(workflowRunsProvider(repoPath)),
+          ),
+          // Newest 10 by default; "Show more" re-fetches the same provider with
+          // the full (bounded) history — see GitLabPanel._leftPane for the
+          // skipLoadingOnReload / busy-row reasoning.
+          if (!ciCollapsed) ...[
+            asyncListSection(
+              runs,
+              _filterQuery.trim().isEmpty
+                  ? 'No recent workflow runs'
+                  : 'No matching workflow runs',
+              (r) => _runRow(r),
+              where: runMatches,
+              skipLoadingOnReload: true,
+              limit: fullHistory ? null : _collapsedRunCount,
+              overflow: (hidden) => ShowMoreRow(
+                label: 'Show all workflow runs',
+                onTap: () => ref
+                    .read(workflowRunsScopeProvider(repoPath).notifier)
+                    .expand(),
+              ),
+            ),
+            if (fullHistory && runs.isLoading)
+              const ShowMoreRow(label: 'Loading run history…', busy: true),
+          ],
+          const SizedBox(height: 16),
+          ...projectSectionChildren(
+            ref: ref,
+            repoPath: repoPath,
+            forge: Forge.github,
+            sel: _sel,
+            onSelect: (next) => _select(next),
+            filter: _filterQuery,
+            collapsed: collapsed,
+            onToggleCollapsed: toggle,
+            onCreateIssue: () => _select(const ForgeCreatingIssue()),
+          ),
+        ],
       ],
     );
   }
 
-  Widget _prRow(PullRequest pr, WorkflowRun? headRun) {
-    return ChangeRequestRow(
-      badge: pr.draft
+  /// The Inbox's triage entries: open PRs, workflow runs that need attention
+  /// (failed, or still moving), and open issues — in that order, jointly
+  /// filtered by the shared filter field.
+  List<Widget> _inboxChildren(
+    AsyncValue<List<PullRequest>> prs,
+    AsyncValue<List<WorkflowRun>> runs,
+    Map<String, WorkflowRun> runByBranch,
+  ) {
+    final issues = ref.watch(projectIssuesProvider(repoPath));
+    final dashboard = ref.watch(githubProjectDashboardProvider(repoPath));
+    final palette = {
+      for (final l in dashboard.value?.labels ?? const <ForgeLabel>[])
+        l.name: l,
+    };
+    // Machine status/conclusion values from the gh JSON contract: a
+    // succeeded (or canceled/skipped) run isn't work, so it stays out.
+    bool needsAttention(WorkflowRun r) =>
+        r.conclusion == 'failure' ||
+        const {'queued', 'in_progress'}.contains(r.status);
+
+    final entries = <ForgeInboxEntry>[
+      for (final pr in prs.value ?? const <PullRequest>[])
+        if (_prMatches(pr))
+          ForgeInboxEntry(
+            itemKey: 'pr:${pr.number}',
+            kind: ForgeInboxKind.changeRequest,
+            build: (extras) => _prRow(
+              pr,
+              _headRunFor(pr, runByBranch),
+              trailingExtras: extras,
+            ),
+          ),
+      for (final r in runs.value ?? const <WorkflowRun>[])
+        if (needsAttention(r) && _runFilterMatches(r))
+          ForgeInboxEntry(
+            itemKey: 'ci:${r.id}',
+            kind: ForgeInboxKind.ci,
+            build: (extras) => _runRow(r, trailingExtras: extras),
+          ),
+      for (final i in issues.value ?? const <ForgeIssue>[])
+        if (i.id != null && _issueMatches(i))
+          ForgeInboxEntry(
+            itemKey: 'issue:${i.id}',
+            kind: ForgeInboxKind.issue,
+            build: (extras) => forgeIssueRow(
+              issue: i,
+              palette: palette,
+              sel: _sel,
+              onSelect: (next) => _select(next),
+              trailing: forgeCombineTrailing(null, extras),
+            ),
+          ),
+    ];
+    bool settled(AsyncValue<Object?> v) => v.hasValue || v.hasError;
+    return [
+      ...forgeInboxChildren(
+        ref: ref,
+        repoPath: repoPath,
+        entries: entries,
+        typeFilter: _inboxType,
+        onTypeFilter: (k) => setState(() => _inboxType = k),
+        changeRequestLabel: 'PRs',
+        listsReady: settled(prs) && settled(runs) && settled(issues),
+      ),
+      // A failed source list must say so — an Inbox that silently omits a
+      // whole category reads as "nothing needs attention".
+      if (prs.hasError) SectionError(prs.error!),
+      if (runs.hasError) SectionError(runs.error!),
+      if (issues.hasError) SectionError(issues.error!),
+    ];
+  }
+
+  Widget _prRow(
+    PullRequest pr,
+    WorkflowRun? headRun, {
+    List<Widget> trailingExtras = const [],
+  }) {
+    final selected = switch (_sel) {
+      ForgeChangeRequestSel(:final id) => id == pr.number,
+      _ => false,
+    };
+    return ForgeListRow(
+      leading: pr.draft
           ? const StatusBadge('DRAFT', MacosColors.systemGrayColor)
           : StatusBadge('#${pr.number}', MacosColors.systemBlueColor),
       title: pr.title,
-      branches: '${pr.headRefName} → ${pr.baseRefName}',
-      ciDotColor: headRun == null ? null : ghRunStateColor(headRun.runState),
-      selected: pr.number == _selectedPrNumber,
-      onTap: () => _selectPr(pr.number),
+      titleMaxLines: 2,
+      caption: '${pr.headRefName} → ${pr.baseRefName}',
+      captionDotColor: headRun == null
+          ? null
+          : ghRunStateColor(headRun.runState),
+      trailing: forgeCombineTrailing(null, trailingExtras),
+      selected: selected,
+      onTap: () => _select(ForgeChangeRequestSel(pr.number)),
     );
   }
 
-  Widget _runRow(WorkflowRun run) {
-    return CiRunRow(
-      dotColor: ghRunStateColor(run.runState),
+  Widget _runRow(WorkflowRun run, {List<Widget> trailingExtras = const []}) {
+    final selected = switch (_sel) {
+      ForgeCiRunSel(:final id) => id == run.id,
+      _ => false,
+    };
+    final rerun = run.isRerunnable
+        ? InFlightIconButton(
+            busy: _rerunningRuns.contains(run.id),
+            icon: CupertinoIcons.refresh_thick,
+            tooltip: 'Re-run failed jobs',
+            size: 15,
+            color: MacosColors.systemGreenColor,
+            onPressed: () => _rerun(run.id),
+          )
+        : null;
+    return ForgeListRow(
+      leading: CiDot(ghRunStateColor(run.runState)),
       title: run.workflowName.isEmpty ? run.headBranch : run.workflowName,
       caption: '${run.headBranch}  ·  ${run.shortSha}',
-      selected: run.id == _selectedRunId,
-      onTap: () => _selectRun(run.id),
-      trailing: run.isRerunnable
-          ? InFlightIconButton(
-              busy: _rerunningRuns.contains(run.id),
-              icon: CupertinoIcons.refresh_thick,
-              tooltip: 'Re-run failed jobs',
-              size: 15,
-              color: MacosColors.systemGreenColor,
-              onPressed: () => _rerun(run.id),
-            )
-          : null,
+      selected: selected,
+      onTap: () => _select(ForgeCiRunSel(run.id)),
+      trailing: forgeCombineTrailing(rerun, trailingExtras),
     );
   }
 
@@ -235,67 +449,97 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   Widget _mainPane(
     AsyncValue<List<PullRequest>> prs,
     AsyncValue<List<WorkflowRun>> runs,
+    Map<String, WorkflowRun> runByBranch,
   ) {
-    if (_selectedRunId != null) {
-      WorkflowRun? run;
-      for (final r in runs.value ?? const <WorkflowRun>[]) {
-        if (r.id == _selectedRunId) run = r;
-      }
-      return _runDetail(run, _selectedRunId!);
+    final remoteUrl = ref.watch(originRemoteUrlProvider(repoPath)).value;
+    switch (_sel) {
+      case ForgeCiRunSel(:final id):
+        WorkflowRun? run;
+        for (final r in runs.value ?? const <WorkflowRun>[]) {
+          if (r.id == id) run = r;
+        }
+        return _runDetail(run, id);
+      case ForgeChangeRequestSel(:final id):
+        PullRequest? pr;
+        for (final p in prs.value ?? const <PullRequest>[]) {
+          if (p.number == id) pr = p;
+        }
+        if (pr != null) return _prDetail(pr, runByBranch);
+        // Selected but not in the list: a failed list load should surface the
+        // error, not the neutral "select something" hint (which reads as
+        // "nothing is wrong") while the left-pane row still shows selected.
+        if (prs.hasError) return PaneError(prs.error!);
+        return const CenteredHint('Select an item on the left');
+      case ForgeCreatingChangeRequest(:final seedSource):
+        return CreatePrForm(
+          repoPath: repoPath,
+          initialHead: seedSource,
+          onClose: () => setState(() {
+            _sel = const ForgeNothingSel();
+            _draftDirty = false;
+          }),
+          // No setState: dirtiness changes nothing visual until a row click
+          // or tab-away consults it.
+          onDirtyChanged: (dirty) => _draftDirty = dirty,
+        );
+      default:
+        final project = projectDetailFor(
+          ref: ref,
+          repoPath: repoPath,
+          forge: Forge.github,
+          sel: _sel,
+          remoteUrl: remoteUrl,
+          onCloseCreate: () => setState(() {
+            _sel = const ForgeNothingSel();
+            _draftDirty = false;
+          }),
+          onDirtyChanged: (dirty) => _draftDirty = dirty,
+        );
+        if (project != null) return project;
+        return const CenteredHint('Select an item on the left');
     }
-
-    if (_selectedPrNumber != null) {
-      PullRequest? pr;
-      for (final p in prs.value ?? const <PullRequest>[]) {
-        if (p.number == _selectedPrNumber) pr = p;
-      }
-      if (pr != null) return _prDetail(pr);
-      // Selected but not in the list: a failed list load should surface the
-      // error, not the neutral "select something" hint (which reads as "nothing
-      // is wrong") while the left-pane row still shows selected.
-      if (prs.hasError) return PaneError(prs.error!);
-    }
-
-    return const CenteredHint('Select a pull request or workflow run');
   }
 
   Widget _runDetail(WorkflowRun? run, int runId) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        CiDetailHeader(
-          dotColor: ghRunStateColor(run?.runState ?? GhRunState.unknown),
-          title: run == null
-              ? 'Run #$runId'
-              : '${run.workflowName}  ·  ${run.headBranch}',
-          trailing: run != null && run.isRerunnable
-              ? InFlightIconButton(
-                  busy: _rerunningRuns.contains(runId),
-                  icon: CupertinoIcons.refresh_thick,
-                  tooltip: 'Re-run failed jobs',
-                  size: 16,
-                  color: MacosColors.systemGreenColor,
-                  onPressed: () => _rerun(runId),
-                )
-              : null,
-        ),
-        Expanded(child: RunJobsView(repoPath: repoPath, runId: runId)),
+    return ForgeDetailScaffold(
+      leading: CiDot(
+        ghRunStateColor(run?.runState ?? GhRunState.unknown),
+        size: 11,
+      ),
+      title: run == null
+          ? 'Run #$runId'
+          : '${run.workflowName}  ·  ${run.headBranch}',
+      headerActions: [
+        if (run != null && run.isRerunnable)
+          InFlightIconButton(
+            busy: _rerunningRuns.contains(runId),
+            icon: CupertinoIcons.refresh_thick,
+            tooltip: 'Re-run failed jobs',
+            size: 16,
+            color: MacosColors.systemGreenColor,
+            onPressed: () => _rerun(runId),
+          ),
+        OpenInBrowserButton(run?.url),
       ],
+      body: RunJobsView(repoPath: repoPath, runId: runId),
     );
   }
 
-  Widget _prDetail(PullRequest pr) {
-    return ChangeRequestDetail(
-      badge: pr.draft
+  Widget _prDetail(PullRequest pr, Map<String, WorkflowRun> runByBranch) {
+    final headRun = _headRunFor(pr, runByBranch);
+    return ForgeDetailScaffold(
+      leading: pr.draft
           ? const StatusBadge('DRAFT', MacosColors.systemGrayColor)
           : StatusBadge('#${pr.number}', MacosColors.systemBlueColor),
       title: pr.title,
+      headerActions: [OpenInBrowserButton(pr.url)],
       lines: [
         DetailLine('Head', pr.headRefName),
         DetailLine('Base', pr.baseRefName),
         if (pr.authorLogin != null) DetailLine('Author', '@${pr.authorLogin}'),
         DetailLine('State', pr.merged ? 'merged' : pr.state),
       ],
+      body: _prChecks(headRun),
       actions: [
         InFlightPushButton(
           busy: _checkingOutPrs.contains(pr.number),
@@ -313,6 +557,35 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
           const ProgressCircle()
         else
           _mergeButton(pr),
+      ],
+    );
+  }
+
+  /// The PR detail's body: its head branch's latest workflow run (checks),
+  /// inline — the selected PR and its CI live on one screen instead of two
+  /// selections.
+  Widget _prChecks(WorkflowRun? run) {
+    if (run == null) {
+      return const CenteredHint('No workflow runs for this branch');
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+          child: Builder(
+            builder: (context) => Text(
+              'Checks  ·  ${run.workflowName.isEmpty ? 'Run' : run.workflowName} #${run.id}',
+              style: MacosTheme.of(context).typography.caption1.copyWith(
+                fontWeight: FontWeight.bold,
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: RunJobsView(repoPath: repoPath, runId: run.id),
+        ),
       ],
     );
   }
@@ -358,11 +631,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   // ---- Actions -------------------------------------------------------------
 
   void _createPr() {
-    showMacosSheet<void>(
-      context: context,
-      builder: (_) =>
-          EscapeDismissible(child: CreatePrSheet(repoPath: repoPath)),
-    );
+    _select(const ForgeCreatingChangeRequest());
   }
 
   Future<void> _approve(int number) async {
@@ -412,7 +681,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     if (!mounted) return;
     setState(() => _mergingPrs.remove(number));
     if (success) {
-      setState(() => _selectedPrNumber = null);
+      setState(() => _sel = const ForgeNothingSel());
       ref.invalidate(pullRequestsProvider(repoPath));
     }
   }
@@ -461,5 +730,4 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       ref.invalidate(runJobsProvider((repoPath, id)));
     }
   }
-
 }

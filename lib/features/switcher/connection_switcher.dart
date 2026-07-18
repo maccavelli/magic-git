@@ -14,6 +14,7 @@ import '../common/field_styles.dart';
 import '../common/hover_pop.dart';
 import '../common/label_chip.dart';
 import '../common/sized_sheet.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../connection/local_repo_form.dart';
 import '../tabs/tabs_controller.dart';
@@ -348,7 +349,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
         // The connection row is a disclosure toggle, not a connect action —
         // it reveals the server's repositories; clicking one of those is
         // what actually connects.
-        GestureDetector(
+        Tappable(
           behavior: HitTestBehavior.opaque,
           onTap: () => _toggleExpanded(conn.id),
           child: Container(
@@ -439,7 +440,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
 
     return MacosTooltip(
       message: repo,
-      child: GestureDetector(
+      child: Tappable(
         behavior: HitTestBehavior.opaque,
         onTap: () => _openRepo(context, ref, conn, repo),
         child: Container(
@@ -511,7 +512,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     SavedConnection conn,
   ) {
     final typography = MacosTheme.of(context).typography;
-    return GestureDetector(
+    return Tappable(
       behavior: HitTestBehavior.opaque,
       onTap: () => _addRepo(context, ref, conn),
       child: Padding(
@@ -644,7 +645,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
 
     return MacosTooltip(
       message: repo.repoPath,
-      child: GestureDetector(
+      child: Tappable(
         behavior: HitTestBehavior.opaque,
         onTap: () => _openLocalRepo(context, ref, repo),
         child: Container(

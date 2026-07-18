@@ -3602,6 +3602,23 @@ final projectDashboardProvider = FutureProvider.autoDispose
 
 // ---- Forge detection + GitHub providers ------------------------------------
 
+/// The repo's `origin` remote URL, or null when none is configured. Feeds the
+/// Forge tab's open-in-browser affordances (web URLs for issues/milestones/
+/// releases are constructed from it — see `core/forge/forge_urls.dart`).
+final originRemoteUrlProvider = FutureProvider.autoDispose
+    .family<String?, String>((ref, repoPath) async {
+      final executor = ref.watch(activeExecutorProvider);
+      final remote = await executor.execute(
+        repoPath: repoPath,
+        gitArgs: ['git', 'remote', 'get-url', 'origin'],
+        timeout: const Duration(seconds: 20),
+        lane: ExecLane.read,
+      );
+      if (!remote.isSuccess) return null;
+      final url = remote.stdout.trim();
+      return url.isEmpty ? null : url;
+    });
+
 /// The forge (GitHub/GitLab) the repo's `origin` remote points at — decides
 /// which forge panel/service the "Forge" and "Project" tabs drive. Detects by
 /// hostname first; for an unrecognized self-hosted host (a custom-domain GitHub

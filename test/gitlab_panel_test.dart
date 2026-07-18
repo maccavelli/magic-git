@@ -9,13 +9,16 @@ import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/gitlab/glab_service.dart';
 import 'package:remote_magic_git/core/gitlab/models.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/forge/forge_prefs.dart';
 import 'package:remote_magic_git/features/gitlab/gitlab_panel.dart';
+import 'package:riverpod/misc.dart' show Override;
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Records approveMergeRequest calls and, while [gate] is set, pauses before
@@ -96,9 +99,30 @@ final _remoteRefs = [
   ),
 ];
 
+/// These tests exercise the Browse sections; the panel opens in Inbox mode
+/// by default, so pin it to Browse.
+class _BrowseMode extends ForgeInboxMode {
+  @override
+  bool build() => false;
+}
+
+/// The unified Forge panel also renders the project sections — settle their
+/// providers so no section is left spinning (pumpAndSettle would hang).
+/// (The Browse-mode override lives at each container, not here — this helper
+/// is spread once per repo and a container may cover two repos.)
+List<Override> _projectOverrides(String repo) => [
+  projectIssuesProvider(repo).overrideWith((ref) async => const []),
+  projectMilestonesProvider(repo).overrideWith((ref) async => const []),
+  projectDashboardProvider(
+    repo,
+  ).overrideWith((ref) async => const ForgeProjectDashboard()),
+  originRemoteUrlProvider(repo).overrideWith((ref) async => null),
+];
+
 Future<void> _pump(WidgetTester tester, {GlabService? glab}) async {
   final container = ProviderContainer(
     overrides: [
+      forgeInboxModeProvider.overrideWith(_BrowseMode.new),
       if (glab != null) glabServiceProvider.overrideWithValue(glab),
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
       // Sibling of the refs override: the views now read CONFIGURED
@@ -107,6 +131,10 @@ Future<void> _pump(WidgetTester tester, {GlabService? glab}) async {
       mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
       pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
       jobsProvider((_repo, 100)).overrideWith((ref) async => _jobs),
+      // The MR detail's inline Checks body mounts the head pipeline's jobs
+      // (pipeline 101 — ref 'feat' matches the MR's source branch).
+      jobsProvider((_repo, 101)).overrideWith((ref) async => _jobs),
+      ..._projectOverrides(_repo),
     ],
   );
   addTearDown(container.dispose);
@@ -149,7 +177,7 @@ void main() {
     expect(_macosIcon(CupertinoIcons.refresh_thick), findsOneWidget);
 
     // Nothing selected yet.
-    expect(find.text('Select a merge request or pipeline'), findsOneWidget);
+    expect(find.text('Select an item on the left'), findsOneWidget);
   });
 
   testWidgets('the left-pane divider drags and persists its width', (
@@ -183,7 +211,7 @@ void main() {
     await tester.tap(find.textContaining('aaaaaaa1'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Select a merge request or pipeline'), findsNothing);
+    expect(find.text('Select an item on the left'), findsNothing);
     expect(find.textContaining('Pipeline #100'), findsOneWidget);
     expect(find.text('build'), findsOneWidget); // job row
     expect(find.text('Select a job to view its log'), findsOneWidget);
@@ -231,13 +259,16 @@ void main() {
       final glab = _GatedGlab()..gate = Completer<void>();
       final container = ProviderContainer(
         overrides: [
+          forgeInboxModeProvider.overrideWith(_BrowseMode.new),
           refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
           // Sibling of the refs override: the views now read CONFIGURED
           // remotes (remotesProvider), not remote-tracking refs.
           remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
           mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
           pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
+          jobsProvider((_repo, 101)).overrideWith((ref) async => _jobs),
           glabServiceProvider.overrideWithValue(glab),
+          ..._projectOverrides(_repo),
         ],
       );
       addTearDown(container.dispose);
@@ -301,6 +332,7 @@ void main() {
       const repoB = '/repo-b';
       final container = ProviderContainer(
         overrides: [
+          forgeInboxModeProvider.overrideWith(_BrowseMode.new),
           refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
           // Sibling of the refs override: the views now read CONFIGURED
           // remotes (remotesProvider), not remote-tracking refs.
@@ -314,6 +346,8 @@ void main() {
           jobsProvider((_repo, 100)).overrideWith((ref) async => _jobs),
           mergeRequestsProvider(repoB).overrideWith((ref) async => const []),
           pipelinesProvider(repoB).overrideWith((ref) async => const []),
+          ..._projectOverrides(_repo),
+          ..._projectOverrides(repoB),
         ],
       );
       addTearDown(container.dispose);
@@ -342,7 +376,7 @@ void main() {
       await tester.pumpWidget(host(repoB));
       await tester.pumpAndSettle();
 
-      expect(find.text('Select a merge request or pipeline'), findsOneWidget);
+      expect(find.text('Select an item on the left'), findsOneWidget);
       expect(find.textContaining('Pipeline #100'), findsNothing);
     },
   );

@@ -7,6 +7,7 @@ import '../../core/providers/app_providers.dart';
 import '../common/buttons.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 
 /// A navigable, dirs-only browser for the connected host's filesystem, used to
@@ -119,7 +120,10 @@ class _RemoteDirectoryBrowserSheetState
 
   List<String> get _visibleEntries => _showHidden
       ? _entries
-      : [for (final e in _entries) if (!e.startsWith('.')) e];
+      : [
+          for (final e in _entries)
+            if (!e.startsWith('.')) e,
+        ];
 
   @override
   Widget build(BuildContext context) {
@@ -242,7 +246,9 @@ class _RemoteDirectoryBrowserSheetState
     if (entries.isEmpty) {
       return Center(
         child: Text(
-          _error != null ? 'Could not read this folder.' : 'No subfolders here.',
+          _error != null
+              ? 'Could not read this folder.'
+              : 'No subfolders here.',
           style: typography.caption1.copyWith(
             color: MacosColors.systemGrayColor,
           ),
@@ -256,8 +262,7 @@ class _RemoteDirectoryBrowserSheetState
         final name = entries[i];
         return _DirRow(
           name: name,
-          onTap: () =>
-              _navigateTo(HostFsService.joinPath(_currentPath!, name)),
+          onTap: () => _navigateTo(HostFsService.joinPath(_currentPath!, name)),
         );
       },
     );
@@ -297,41 +302,38 @@ class _DirRowState extends State<_DirRow> {
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
+    return Tappable(
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onTap,
-        child: Container(
-          color: _hover
-              ? MacosColors.systemBlueColor.withValues(alpha: 0.14)
-              : const Color(0x00000000),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Row(
-            children: [
-              const MacosIcon(
-                CupertinoIcons.folder_fill,
-                size: 15,
-                color: MacosColors.systemBlueColor,
+      behavior: HitTestBehavior.opaque,
+      onTap: widget.onTap,
+      child: Container(
+        color: _hover
+            ? MacosColors.systemBlueColor.withValues(alpha: 0.14)
+            : const Color(0x00000000),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Row(
+          children: [
+            const MacosIcon(
+              CupertinoIcons.folder_fill,
+              size: 15,
+              color: MacosColors.systemBlueColor,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                widget.name,
+                style: typography.body,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  widget.name,
-                  style: typography.body,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              const MacosIcon(
-                CupertinoIcons.chevron_right,
-                size: 12,
-                color: MacosColors.systemGrayColor,
-              ),
-            ],
-          ),
+            ),
+            const MacosIcon(
+              CupertinoIcons.chevron_right,
+              size: 12,
+              color: MacosColors.systemGrayColor,
+            ),
+          ],
         ),
       ),
     );

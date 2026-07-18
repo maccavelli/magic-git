@@ -100,7 +100,6 @@ void main() {
     for (final zone in const [
       DropZoneId.history,
       DropZoneId.stashes,
-      DropZoneId.project,
     ]) {
       expect(canDrop(_commit, zone), isFalse, reason: '$zone');
       expect(canDrop(_branch, zone), isFalse, reason: '$zone');
@@ -111,6 +110,6 @@ void main() {
   test('a zone id maps to its sidebar page index', () {
     expect(DropZoneId.repository.pageIndex, 0);
     expect(DropZoneId.branches.pageIndex, 2);
-    expect(DropZoneId.worktrees.pageIndex, 6);
+    expect(DropZoneId.worktrees.pageIndex, 5);
   });
 }

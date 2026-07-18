@@ -18,12 +18,9 @@ enum PaneId {
   /// History tab / pop-out window: the commit list beside the diff pane.
   historyList,
 
-  /// GitHub and GitLab panels: the PR/MR + CI list beside the detail pane.
+  /// GitHub and GitLab panels: the unified forge list (PR/MR + CI + issues +
+  /// milestones + labels + releases) beside the detail pane.
   forgeList,
-
-  /// Project tab: the issues/milestones/labels list beside the issue/milestone
-  /// detail (and inline create) pane.
-  projectList,
 
   /// Both CI jobs views: the job list beside the log pane.
   jobsList,
@@ -63,7 +60,6 @@ const paneSpecs = <PaneId, PaneSpec>{
   // pane (ref_chip.dart) and degrade gracefully down to about this floor.
   PaneId.historyList: PaneSpec(defaultWidth: 420, min: 360, max: 800),
   PaneId.forgeList: PaneSpec(defaultWidth: 360, min: 280, max: 640),
-  PaneId.projectList: PaneSpec(defaultWidth: 360, min: 280, max: 640),
   PaneId.jobsList: PaneSpec(defaultWidth: 240, min: 180, max: 480),
   PaneId.stashList: PaneSpec(defaultWidth: 360, min: 280, max: 640),
   // file_view's own floor is 220 and its ceiling is relative (55% of its

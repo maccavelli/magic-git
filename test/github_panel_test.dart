@@ -6,12 +6,14 @@ import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/github/gh_service.dart';
 import 'package:remote_magic_git/core/github/models.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/forge/forge_prefs.dart';
 import 'package:remote_magic_git/features/github/github_panel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -79,9 +81,17 @@ final _remoteRefs = [
   ),
 ];
 
+/// These tests exercise the Browse sections; the panel opens in Inbox mode
+/// by default, so pin it to Browse.
+class _BrowseMode extends ForgeInboxMode {
+  @override
+  bool build() => false;
+}
+
 Future<void> _pump(WidgetTester tester, {GhService? gh}) async {
   final container = ProviderContainer(
     overrides: [
+      forgeInboxModeProvider.overrideWith(_BrowseMode.new),
       if (gh != null) ghServiceProvider.overrideWithValue(gh),
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
       // Sibling of the refs override: the views now read CONFIGURED
@@ -90,6 +100,17 @@ Future<void> _pump(WidgetTester tester, {GhService? gh}) async {
       pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
       workflowRunsProvider(_repo).overrideWith((ref) async => _runs),
       runJobsProvider((_repo, 200)).overrideWith((ref) => Stream.value(_jobs)),
+      // The PR detail's inline Checks body mounts the head branch's latest
+      // run (run 201 — branch 'feat' matches the PR's head).
+      runJobsProvider((_repo, 201)).overrideWith((ref) => Stream.value(_jobs)),
+      // The unified Forge panel also renders the project sections — settle
+      // their providers so no section is left spinning.
+      projectIssuesProvider(_repo).overrideWith((ref) async => const []),
+      projectMilestonesProvider(_repo).overrideWith((ref) async => const []),
+      githubProjectDashboardProvider(
+        _repo,
+      ).overrideWith((ref) async => const ForgeProjectDashboard()),
+      originRemoteUrlProvider(_repo).overrideWith((ref) async => null),
     ],
   );
   addTearDown(container.dispose);
@@ -130,7 +151,7 @@ void main() {
     expect(_macosIcon(CupertinoIcons.refresh_thick), findsOneWidget);
 
     // Nothing selected yet.
-    expect(find.text('Select a pull request or workflow run'), findsOneWidget);
+    expect(find.text('Select an item on the left'), findsOneWidget);
   });
 
   testWidgets('the left-pane divider drags and persists its width', (
@@ -162,7 +183,7 @@ void main() {
     await tester.tap(find.text('Build'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Select a pull request or workflow run'), findsNothing);
+    expect(find.text('Select an item on the left'), findsNothing);
     expect(find.text('build'), findsOneWidget); // job row
     expect(find.text('Select a job to view its log'), findsOneWidget);
   });

@@ -17,7 +17,12 @@ import 'package:macos_ui/macos_ui.dart';
 /// Rules for new code, pinned by `button_cursor_canon_test.dart`:
 ///  * use [AppPushButton], never a raw `PushButton`;
 ///  * use `ToolIconButton` for toolbar/row icon actions; a raw
-///    `MacosIconButton` must pass `mouseCursor:` explicitly.
+///    `MacosIconButton` must pass `mouseCursor:` explicitly;
+///  * use `Tappable` (common/tappable.dart) for every non-button clickable —
+///    rows, chips, tabs, links — never a bare `GestureDetector(onTap:)`.
+///    The only bare-detector exceptions are invisible dismiss scrims and rows
+///    inside `DragItemDraggable` (whose grab cursor must win); each lives in
+///    the test's allowlist.
 ///
 /// Known gap: `MacosPulldownButton` hardcodes a basic-cursor region
 /// internally and exposes no override, so pulldowns keep the arrow until

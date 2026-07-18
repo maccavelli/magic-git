@@ -9,6 +9,7 @@ import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
 import 'diff_highlight.dart';
 import 'diff_view.dart';
 import 'patch_model.dart';
+import 'tappable.dart';
 
 /// A commit's patch with **inline context expanders**: the `⋯` rows between
 /// hunks reveal the code git left out (it emits only three context lines, so a
@@ -241,9 +242,7 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         setState(() {
-          failed
-              ? _blobFailed.add(fileIndex)
-              : _blobFailed.remove(fileIndex);
+          failed ? _blobFailed.add(fileIndex) : _blobFailed.remove(fileIndex);
         });
       });
     }
@@ -463,34 +462,29 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
     Color color = MacosColors.systemBlueColor,
   }) {
     return SelectionContainer.disabled(
-      child: MouseRegion(
-        cursor: onTap == null
-            ? SystemMouseCursors.basic
-            : SystemMouseCursors.click,
-        child: GestureDetector(
-          onTap: onTap,
-          behavior: HitTestBehavior.opaque,
-          child: Container(
-            color: onTap == null
-                ? MacosColors.systemGrayColor.withValues(alpha: 0.08)
-                : const Color(0x14007AFF),
-            padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
-            alignment: Alignment.centerLeft,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                MacosIcon(icon, size: 11, color: color),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: kDiffMono.copyWith(color: color, fontSize: 11),
-                  ),
+      child: Tappable(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          color: onTap == null
+              ? MacosColors.systemGrayColor.withValues(alpha: 0.08)
+              : const Color(0x14007AFF),
+          padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
+          alignment: Alignment.centerLeft,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              MacosIcon(icon, size: 11, color: color),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: kDiffMono.copyWith(color: color, fontSize: 11),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

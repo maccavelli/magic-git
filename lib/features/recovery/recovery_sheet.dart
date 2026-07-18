@@ -13,6 +13,7 @@ import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../history/ref_chip.dart';
 
@@ -301,7 +302,7 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
     required bool selected,
     required VoidCallback onTap,
     required Widget child,
-  }) => GestureDetector(
+  }) => Tappable(
     behavior: HitTestBehavior.opaque,
     onTap: onTap,
     child: Container(

@@ -18,6 +18,7 @@ import '../common/buttons.dart';
 import '../common/context_menu.dart';
 import '../common/label_chip.dart';
 import '../common/prompt_text_sheet.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../history/history_view.dart';
 import '../repository/repo_status_view.dart';
@@ -619,7 +620,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
     VoidCallback? onClose,
   }) {
     final typography = MacosTheme.of(context).typography;
-    final tab = GestureDetector(
+    final tab = Tappable(
       onTap: onTap,
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 2),

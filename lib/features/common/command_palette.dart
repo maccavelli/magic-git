@@ -11,6 +11,7 @@ import '../tabs/tabs_controller.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'field_styles.dart';
 import 'sized_sheet.dart';
+import 'tappable.dart';
 
 /// The four buckets every palette command sorts into, VS Code-style: typing
 /// `git: pu` narrows to the git category, and every row wears its category as
@@ -266,8 +267,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
       (2, CupertinoIcons.arrow_branch, 'Branches'),
       (3, CupertinoIcons.tray_2, 'Stashes'),
       (4, CupertinoIcons.cloud, 'Forge'),
-      (5, CupertinoIcons.cube_box, 'Project'),
-      (6, kWorktreeIcon, 'Worktrees'),
+      (5, kWorktreeIcon, 'Worktrees'),
     ];
 
     final commands = <_PaletteCommand>[
@@ -595,7 +595,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
 
   Widget _row(BuildContext context, _PaletteCommand command, bool highlighted) {
     final typography = MacosTheme.of(context).typography;
-    return GestureDetector(
+    return Tappable(
       onTap: () => _run(command),
       child: Container(
         height: _rowHeight,

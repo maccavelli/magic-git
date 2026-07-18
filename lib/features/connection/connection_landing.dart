@@ -6,6 +6,7 @@ import '../../core/providers/app_providers.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/hover_pop.dart';
+import '../common/tappable.dart';
 import '../switcher/connection_switcher.dart';
 import 'local_repo_form.dart';
 
@@ -379,50 +380,47 @@ class _MenuRowState extends State<_MenuRow> {
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
-    return MouseRegion(
+    return Tappable(
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        onTap: widget.onTap,
-        behavior: HitTestBehavior.opaque,
-        child: Container(
-          color: _hover
-              ? MacosColors.systemBlueColor.withValues(alpha: 0.25)
-              : const Color(0x00000000),
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: [
-              MacosIcon(
-                widget.icon,
-                size: 16,
-                color: MacosColors.systemGrayColor,
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      widget.title,
-                      style: typography.body,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+      onTap: widget.onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        color: _hover
+            ? MacosColors.systemBlueColor.withValues(alpha: 0.25)
+            : const Color(0x00000000),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        child: Row(
+          children: [
+            MacosIcon(
+              widget.icon,
+              size: 16,
+              color: MacosColors.systemGrayColor,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.title,
+                    style: typography.body,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    widget.subtitle,
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
                     ),
-                    Text(
-                      widget.subtitle,
-                      style: typography.caption1.copyWith(
-                        color: MacosColors.systemGrayColor,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
