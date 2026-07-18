@@ -1035,15 +1035,16 @@ query($path: ID!) {
     return all;
   }
 
-  /// A single issue including its description body. Powers the detail pane (the
-  /// list queries omit the body): `glab issue view <iid> -F json`.
+  /// A single issue including its description body. Powers the detail pane
+  /// (the list queries omit the body); `--output json` is the same machine
+  /// contract every other glab list/view call here uses.
   Future<ForgeIssue> issueDetail(String repoPath, int iid) async {
     final decoded = await _runJson(repoPath, [
       'glab',
       'issue',
       'view',
       '$iid',
-      '-F',
+      '--output',
       'json',
     ], 'glab issue view');
     if (decoded is Map<String, dynamic>) return ForgeIssue.fromGlabCli(decoded);
@@ -1057,6 +1058,14 @@ query($path: ID!) {
   /// (`projects/:id/milestones?state=active`). Page-walked like [listIssues];
   /// the REST payload already carries each milestone's description, so no
   /// separate detail fetch is needed.
+  ///
+  /// `include_ancestors=true` pulls in group-inherited milestones, which org
+  /// projects routinely use (`--milestone` on create accepts them, so the list
+  /// should show them too). Only the current param name is sent — GitLab
+  /// declares it mutually exclusive with the deprecated
+  /// `include_parent_milestones`, so passing both would 400; a server too old
+  /// to know `include_ancestors` ignores the unknown param and simply returns
+  /// project-level milestones.
   Future<List<ForgeMilestone>> listMilestones(
     String repoPath, {
     int perPage = 30,
@@ -1067,7 +1076,12 @@ query($path: ID!) {
       final decoded = await api(
         repoPath,
         'projects/:id/milestones',
-        fields: ['state=active', 'per_page=$perPage', 'page=$page'],
+        fields: [
+          'state=active',
+          'include_ancestors=true',
+          'per_page=$perPage',
+          'page=$page',
+        ],
       );
       final batch = _mapList(
         decoded,

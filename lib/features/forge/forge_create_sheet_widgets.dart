@@ -86,11 +86,11 @@ class ForgeSheetToggle extends StatelessWidget {
   }
 }
 
-/// The milestone popup. [value]/[onChanged] carry the milestone's unique id
-/// (GitHub `number` / GitLab `iid`), never its title: two milestones can share
-/// a title (project-level + group-inherited) and `MacosPopupButton` requires
-/// unique item values. The owning sheet resolves the id back to a title at
-/// submit time.
+/// The milestone popup. [value]/[onChanged] carry the milestone's unique key
+/// ([ForgeMilestone.id] — GitHub `number`, GitLab `iid` or global REST id),
+/// never its title: two milestones can share a title (project-level +
+/// group-inherited) and `MacosPopupButton` requires unique item values. The
+/// owning sheet resolves the key back to a title at submit time.
 class ForgeMilestonePicker extends StatelessWidget {
   final List<ForgeMilestone> milestones;
   final int? value;

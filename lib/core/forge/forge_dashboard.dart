@@ -152,9 +152,12 @@ class ForgeLabel {
 
 /// An open/active milestone.
 class ForgeMilestone {
-  /// The user-visible milestone number: GitHub `number`, GitLab `iid`. Null
-  /// when the forge didn't report a parseable number (see [jsonIntOrNull]);
-  /// the milestone picker skips such entries since it can't key on them.
+  /// A unique key for selection/popup identity: GitHub `number`, GitLab `iid`
+  /// (GraphQL) or the **global** `id` (REST — see [fromGlabRest] for why iid
+  /// isn't unique there). Null when the forge didn't report a parseable number
+  /// (see [jsonIntOrNull]); the milestone picker skips such entries since it
+  /// can't key on them. Never shown to the user or sent back to the forge —
+  /// creates resolve the key back to the milestone's title.
   final int? id;
   final String title;
 
@@ -196,10 +199,14 @@ class ForgeMilestone {
     due: _dateOnly(n['dueDate'] as String?),
   );
 
-  /// From a `glab api projects/:id/milestones` REST object: `iid` is a number,
-  /// `state` active/closed, `due_date` already date-only, plus `description`.
+  /// From a `glab api projects/:id/milestones` REST object: `state`
+  /// active/closed, `due_date` already date-only, plus `description`. Keyed on
+  /// the **global** `id`, not `iid`: the list is fetched with
+  /// `include_ancestors=true`, which mixes project and group milestones whose
+  /// per-parent iids can collide — the global id is unique across both, and
+  /// [ForgeMilestone.id] is only ever a selection/popup key.
   factory ForgeMilestone.fromGlabRest(Map<String, dynamic> n) => ForgeMilestone(
-    id: jsonIntOrNull(n['iid']),
+    id: jsonIntOrNull(n['id']),
     title: n['title'] as String? ?? '',
     state: (n['state'] as String? ?? 'active').toLowerCase(),
     due: _dateOnly(n['due_date'] as String?),

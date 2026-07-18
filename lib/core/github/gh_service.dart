@@ -46,6 +46,10 @@ class GhService {
   /// walk, because `gh run list --limit` paginates internally.
   static const int fullHistoryLimit = 2000;
 
+  /// Safety bound on manual REST page walks ([listMilestones]) — matches
+  /// `GlabService._maxListPages` so both forges stop at the same depth.
+  static const int _maxListPages = 20;
+
   final CommandExecutor _executor;
 
   GhService(this._executor);
@@ -317,15 +321,20 @@ class GhService {
   /// `repos/{owner}/{repo}/actions/runs/:id/jobs`. `gh` substitutes the
   /// `{owner}`/`{repo}` placeholders from the repo's remote. [fields] are
   /// `key=value` pairs sent via `-f` (query params on GET, body otherwise).
+  ///
+  /// Deliberately no `--paginate` option: for a REST endpoint that returns an
+  /// array, `gh api --paginate` emits one JSON array **per page** back-to-back
+  /// (`[…][…]`) — not a single document — which [jsonDecode] rejects. (glab's
+  /// `--paginate` merges pages into one array; gh's does not.) Callers that
+  /// need more than a page hand-walk with `per_page`/`page` fields instead,
+  /// like [listMilestones].
   Future<dynamic> api(
     String repoPath,
     String endpoint, {
     List<String> fields = const [],
-    bool paginate = false,
     String method = 'GET',
   }) async {
     final args = <String>['gh', 'api', endpoint, '--method', method];
-    if (paginate) args.add('--paginate');
     for (final field in fields) {
       args.addAll(['-f', field]);
     }
@@ -599,24 +608,32 @@ class GhService {
 
   /// Open milestones for the current repo via the REST passthrough. GitHub has
   /// no `gh milestone` command, so this uses `gh api …/milestones`; the payload
-  /// already carries each milestone's description. [allHistory] follows every
-  /// page (`--paginate`); otherwise the newest [perPage].
+  /// already carries each milestone's description. Hand page-walked like the
+  /// GitLab side (`GlabService.listMilestones`) because `gh api --paginate`
+  /// concatenates per-page arrays into invalid JSON (see [api]): [allHistory]
+  /// walks until a short page (capped at [_maxListPages]); otherwise just the
+  /// newest [perPage].
   Future<List<ForgeMilestone>> listMilestones(
     String repoPath, {
     int perPage = 30,
     bool allHistory = false,
   }) async {
-    final decoded = await api(
-      repoPath,
-      'repos/{owner}/{repo}/milestones',
-      fields: ['state=open', 'per_page=${allHistory ? 100 : perPage}'],
-      paginate: allHistory,
-    );
-    return _mapList(
-      decoded,
-      ForgeMilestone.fromGhRest,
-      label: 'repos/{owner}/{repo}/milestones',
-    );
+    final all = <ForgeMilestone>[];
+    for (var page = 1; page <= _maxListPages; page++) {
+      final decoded = await api(
+        repoPath,
+        'repos/{owner}/{repo}/milestones',
+        fields: ['state=open', 'per_page=$perPage', 'page=$page'],
+      );
+      final batch = _mapList(
+        decoded,
+        ForgeMilestone.fromGhRest,
+        label: 'repos/{owner}/{repo}/milestones',
+      );
+      all.addAll(batch);
+      if (!allHistory || batch.length < perPage) break;
+    }
+    return all;
   }
 
   /// Creates an issue via `gh issue create`. Like [createPullRequest], `--body`

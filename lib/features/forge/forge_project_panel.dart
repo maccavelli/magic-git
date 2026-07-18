@@ -8,7 +8,9 @@ import '../../core/forge/forge_dashboard.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/pane_layout.dart';
 import '../../core/theme/app_theme.dart';
+import '../common/actions.dart';
 import '../common/async_views.dart';
+import '../common/dashboard_warning_banner.dart';
 import '../common/label_colors.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/show_more_row.dart';
@@ -76,19 +78,53 @@ class _ForgeProjectPanelState extends ConsumerState<ForgeProjectPanel> {
 
   _Selection _sel = const _NothingSelected();
 
+  /// Whether the inline new-issue form holds unsaved content (reported by
+  /// [IssueCreateForm.onDirtyChanged]). Guards row clicks and tab-away from
+  /// silently destroying a draft.
+  bool _draftDirty = false;
+
   String get repoPath => widget.repoPath;
 
   @override
   void didUpdateWidget(ForgeProjectPanel old) {
     super.didUpdateWidget(old);
     // The panel isn't keyed by repoPath, so this State survives a repo switch;
-    // and it stays mounted (though invisible) when the tab is left. Clear the
-    // selection on either, so a stale issue/milestone id from the old repo
-    // can't leak into the new one, and the detail subtree unmounts offstage.
-    if (old.repoPath != widget.repoPath ||
-        (old.isActive && !widget.isActive)) {
-      setState(() => _sel = const _NothingSelected());
+    // and it stays mounted (though invisible) when the tab is left.
+    if (old.repoPath != widget.repoPath) {
+      // A draft belongs to the repo it was typed for — never carry it (or a
+      // stale issue/milestone id) into the new one.
+      setState(() {
+        _sel = const _NothingSelected();
+        _draftDirty = false;
+      });
+    } else if (old.isActive && !widget.isActive) {
+      // Leaving the tab: clear the selection so the detail subtree unmounts
+      // offstage — EXCEPT a dirty new-issue draft, which stays mounted so
+      // tabbing away and back doesn't destroy typed work.
+      if (_sel is! _CreatingIssue || !_draftDirty) {
+        setState(() => _sel = const _NothingSelected());
+      }
     }
+  }
+
+  /// Switches the detail pane to [next]; when that would discard a dirty
+  /// new-issue draft, asks first (safe default: keep editing).
+  Future<void> _select(_Selection next) async {
+    if (_sel is _CreatingIssue && _draftDirty) {
+      final discard = await chooseAction<bool>(
+        context,
+        title: 'Discard draft issue?',
+        message: 'The new issue you are composing has unsaved content.',
+        primaryLabel: 'Keep Editing',
+        primaryValue: false,
+        secondary: const [('Discard Draft', true)],
+      );
+      if (discard != true || !mounted) return;
+    }
+    setState(() {
+      _sel = next;
+      _draftDirty = false;
+    });
   }
 
   @override
@@ -132,15 +168,18 @@ class _ForgeProjectPanelState extends ConsumerState<ForgeProjectPanel> {
     final milestones = ref.watch(projectMilestonesProvider(repoPath));
     final issuesFull = ref.watch(projectIssuesScopeProvider(repoPath));
     final milestonesFull = ref.watch(projectMilestonesScopeProvider(repoPath));
-    final labels = dashboard.value?.labels ?? const <ForgeLabel>[];
-    final palette = {for (final l in labels) l.name: l};
-    final releases = dashboard.value?.releases ?? const <ForgeRelease>[];
+    final data = dashboard.value;
+    final palette = {for (final l in data?.labels ?? const <ForgeLabel>[]) l.name: l};
 
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: 8),
       children: [
+        // Partial-data GraphQL warning, same as the create sheets show: the
+        // labels/releases below may be incomplete rather than genuinely absent.
+        if (data?.warning != null) DashboardWarningBanner(data!.warning!),
         ForgeSectionHeader(
           'Issues',
+          count: _countLabel(issues.value?.length, data?.issuesTotal),
           onRefresh: () => ref.invalidate(projectIssuesProvider(repoPath)),
           onAdd: () => setState(() => _sel = const _CreatingIssue()),
           addTooltip: 'New issue',
@@ -159,9 +198,19 @@ class _ForgeProjectPanelState extends ConsumerState<ForgeProjectPanel> {
         ),
         if (issuesFull && issues.isLoading)
           const ShowMoreRow(label: 'Loading issues…', busy: true),
+        // The full fetch is still bounded (20 pages / a gh --limit) — say so
+        // when the forge's own total shows we stopped short.
+        if (issuesFull &&
+            !issues.isLoading &&
+            issues.hasValue &&
+            (data?.issuesTotal ?? 0) > issues.value!.length)
+          SectionEmpty(
+            'Showing ${issues.value!.length} of ${data!.issuesTotal} issues',
+          ),
         const SizedBox(height: 16),
         ForgeSectionHeader(
           'Milestones',
+          count: _countLabel(milestones.value?.length, data?.milestonesTotal),
           onRefresh: () => ref.invalidate(projectMilestonesProvider(repoPath)),
         ),
         asyncListSection(
@@ -180,20 +229,63 @@ class _ForgeProjectPanelState extends ConsumerState<ForgeProjectPanel> {
         if (milestonesFull && milestones.isLoading)
           const ShowMoreRow(label: 'Loading milestones…', busy: true),
         const SizedBox(height: 16),
-        ForgeSectionHeader('Labels', onRefresh: () => _refreshDashboard(forge)),
+        ForgeSectionHeader(
+          'Labels',
+          count: _countLabel(data?.labels.length, data?.labelsTotal),
+          onRefresh: () => _refreshDashboard(forge),
+        ),
         // A plain Wrap bounded by this (resizable) master pane: chips flow to
         // the next row at the divider and re-lay-out as the divider is dragged.
-        _LabelsWrap(labels: labels),
+        _dashboardSection(dashboard, (d) => _LabelsWrap(labels: d.labels)),
         const SizedBox(height: 16),
         ForgeSectionHeader(
           'Releases',
+          count: _countLabel(data?.releases.length, data?.releasesTotal),
           onRefresh: () => _refreshDashboard(forge),
         ),
-        if (releases.isEmpty)
-          const SectionEmpty('No releases')
-        else
-          ...releases.map((r) => _ReleaseRow(release: r)),
+        _dashboardSection(
+          dashboard,
+          (d) => d.releases.isEmpty
+              ? const SectionEmpty('No releases')
+              : Column(
+                  children: [
+                    for (final r in d.releases) _ReleaseRow(release: r),
+                  ],
+                ),
+        ),
       ],
+    );
+  }
+
+  /// "30 of 974" when the forge reports a larger total, plain "30" when the
+  /// fetch is (as far as known) complete, null before anything has loaded.
+  static String? _countLabel(int? fetched, int? total) {
+    if (fetched == null) return null;
+    if (total != null && total > fetched) return '$fetched of $total';
+    return '$fetched';
+  }
+
+  /// A dashboard-backed section (Labels, Releases) with real loading/error
+  /// states instead of collapsing them to "empty": spinner on first load, red
+  /// error inline — above the last-good content when a reload failed — and
+  /// [body] on data. Mirrors [asyncListSection]'s error-with-value handling.
+  Widget _dashboardSection(
+    AsyncValue<ForgeProjectDashboard> dashboard,
+    Widget Function(ForgeProjectDashboard) body,
+  ) {
+    if (dashboard.hasError && dashboard.hasValue) {
+      return Column(
+        children: [
+          SectionError(dashboard.error!),
+          body(dashboard.requireValue),
+        ],
+      );
+    }
+    return dashboard.when(
+      skipLoadingOnReload: true,
+      loading: () => const SectionLoading(),
+      error: (err, _) => SectionError(err),
+      data: body,
     );
   }
 
@@ -208,9 +300,7 @@ class _ForgeProjectPanelState extends ConsumerState<ForgeProjectPanel> {
       selected: selected,
       // A row whose forge didn't report a parseable number can't drive a detail
       // fetch — leave it un-tappable rather than key the pane on a null id.
-      onTap: issue.id == null
-          ? null
-          : () => setState(() => _sel = _IssueSelected(issue.id!)),
+      onTap: issue.id == null ? null : () => _select(_IssueSelected(issue.id!)),
     );
   }
 
@@ -224,7 +314,7 @@ class _ForgeProjectPanelState extends ConsumerState<ForgeProjectPanel> {
       selected: selected,
       onTap: milestone.id == null
           ? null
-          : () => setState(() => _sel = _MilestoneSelected(milestone.id!)),
+          : () => _select(_MilestoneSelected(milestone.id!)),
     );
   }
 
@@ -235,13 +325,35 @@ class _ForgeProjectPanelState extends ConsumerState<ForgeProjectPanel> {
       case _NothingSelected():
         return const CenteredHint('Select an issue or milestone, or add one');
       case _CreatingIssue():
-        final data = dashboard.value;
-        return IssueCreateForm(
+        // Milestones come from the same provider as the left-pane list (not
+        // the GraphQL dashboard), so the picker always offers exactly what the
+        // list shows — including group-inherited milestones on GitLab.
+        final milestones =
+            ref.watch(projectMilestonesProvider(repoPath)).value ??
+            const <ForgeMilestone>[];
+        final form = IssueCreateForm(
           repoPath: repoPath,
-          labels: data?.labels ?? const [],
-          milestones: data?.milestones ?? const [],
-          onClose: () => setState(() => _sel = const _NothingSelected()),
+          labels: dashboard.value?.labels ?? const [],
+          milestones: milestones,
+          onClose: () => setState(() {
+            _sel = const _NothingSelected();
+            _draftDirty = false;
+          }),
+          // No setState: dirtiness changes nothing visual until a row click
+          // or tab-away consults it.
+          onDirtyChanged: (dirty) => _draftDirty = dirty,
         );
+        // The label picker degrades to absent when the dashboard failed
+        // outright — surface the failure instead of silently offering less.
+        if (dashboard.hasError && !dashboard.hasValue) {
+          return Column(
+            children: [
+              SectionError(dashboard.error!),
+              Expanded(child: form),
+            ],
+          );
+        }
+        return form;
       case _IssueSelected(:final id):
         return _issueDetail(id, dashboard);
       case _MilestoneSelected(:final id):

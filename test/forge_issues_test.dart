@@ -102,14 +102,17 @@ void main() {
     });
 
     test('ForgeMilestone.fromGlabRest / fromGhRest parse due + description', () {
+      // The global `id` is the key, not `iid`: include_ancestors mixes project
+      // and group milestones whose per-parent iids can collide.
       final gl = ForgeMilestone.fromGlabRest(const {
+        'id': 103,
         'iid': 3,
         'title': 'v1',
         'state': 'active',
         'due_date': '2026-08-01',
         'description': 'first milestone',
       });
-      expect(gl.id, 3);
+      expect(gl.id, 103);
       expect(gl.due, '2026-08-01');
       expect(gl.description, 'first milestone');
 
@@ -256,7 +259,7 @@ void main() {
   });
 
   group('issue detail', () {
-    test('glab: view <iid> -F json, parses the body', () async {
+    test('glab: view <iid> --output json, parses the body', () async {
       exec.results.add(
         _ok('{"iid":5,"title":"Fix","description":"body text"}'),
       );
@@ -267,7 +270,7 @@ void main() {
         'issue',
         'view',
         '5',
-        '-F',
+        '--output',
         'json',
       ]);
     });
@@ -291,7 +294,7 @@ void main() {
     test('glab: REST passthrough with state/per_page/page, -i headers',
         () async {
       exec.results.add(
-        _ok('$_glabHeaders[{"iid":3,"title":"v1","due_date":"2026-08-01"}]'),
+        _ok('$_glabHeaders[{"id":3,"title":"v1","due_date":"2026-08-01"}]'),
       );
       final ms = await glab.listMilestones(_repo, perPage: 30);
       expect(ms.single.title, 'v1');
@@ -304,6 +307,8 @@ void main() {
         '-f',
         'state=active',
         '-f',
+        'include_ancestors=true',
+        '-f',
         'per_page=30',
         '-f',
         'page=1',
@@ -311,7 +316,7 @@ void main() {
       ]);
     });
 
-    test('gh: REST passthrough; allHistory paginates at per_page=100', () async {
+    test('gh: REST passthrough, collapsed fetches one page only', () async {
       exec.results.add(_ok('[{"number":2,"title":"v2"}]'));
       await gh.listMilestones(_repo);
       expect(exec.calls.single, [
@@ -324,22 +329,29 @@ void main() {
         'state=open',
         '-f',
         'per_page=30',
+        '-f',
+        'page=1',
       ]);
+    });
 
-      exec.results.add(_ok('[]'));
-      await gh.listMilestones(_repo, allHistory: true);
-      expect(exec.calls[1], [
-        'gh',
-        'api',
-        'repos/{owner}/{repo}/milestones',
-        '--method',
-        'GET',
-        '--paginate',
-        '-f',
-        'state=open',
-        '-f',
-        'per_page=100',
+    // A hand page-walk, NOT `gh api --paginate`: gh's --paginate emits one
+    // JSON array per page back-to-back — invalid JSON as a single decode —
+    // so past 100 milestones the "Show all" fetch would throw. glab's
+    // --paginate merges pages; gh's does not.
+    test('gh: allHistory walks pages until a short page ends it', () async {
+      exec.results.addAll([
+        _ok('[{"number":1,"title":"a"},{"number":2,"title":"b"}]'), // full page
+        _ok('[{"number":3,"title":"c"}]'), // short page → stop
       ]);
+      final ms = await gh.listMilestones(_repo, perPage: 2, allHistory: true);
+      expect(ms.map((m) => m.id), [1, 2, 3]);
+      expect(exec.calls.length, 2);
+      expect(exec.calls[1].last, 'page=2', reason: 'second call is page 2');
+      expect(
+        exec.calls.every((c) => !c.contains('--paginate')),
+        isTrue,
+        reason: 'gh --paginate concatenates arrays into invalid JSON',
+      );
     });
   });
 }

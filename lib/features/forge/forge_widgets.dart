@@ -45,6 +45,10 @@ class ForgeSectionHeader extends StatelessWidget {
   final String refreshTooltip;
   final EdgeInsets padding;
 
+  /// Optional grey count caption after the title (`"30 of 974"`), so a section
+  /// whose fetch is capped says so instead of silently truncating.
+  final String? count;
+
   const ForgeSectionHeader(
     this.title, {
     super.key,
@@ -53,20 +57,30 @@ class ForgeSectionHeader extends StatelessWidget {
     this.addTooltip = 'New',
     this.refreshTooltip = 'Refresh',
     this.padding = const EdgeInsets.fromLTRB(16, 8, 8, 4),
+    this.count,
   });
 
   @override
   Widget build(BuildContext context) {
+    final typography = MacosTheme.of(context).typography;
     return Padding(
       padding: padding,
       child: Row(
         children: [
           Text(
             title,
-            style: MacosTheme.of(
-              context,
-            ).typography.caption1.copyWith(fontWeight: FontWeight.bold),
+            style: typography.caption1.copyWith(fontWeight: FontWeight.bold),
           ),
+          if (count != null)
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Text(
+                count!,
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              ),
+            ),
           const Spacer(),
           if (onAdd != null)
             ToolIconButton(

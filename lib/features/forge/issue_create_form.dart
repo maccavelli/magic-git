@@ -12,8 +12,9 @@ import 'forge_create_sheet_widgets.dart';
 /// The Project tab's inline "New Issue" form — the create counterpart to the
 /// issue/milestone detail views, hosted in the master-detail's right pane (not
 /// a modal sheet). Forge-neutral: on submit it dispatches to `gh`/`glab` by the
-/// repo's detected forge. [labels]/[milestones] come from the project dashboard
-/// the panel already fetched, so the pickers need no round-trip of their own.
+/// repo's detected forge. [labels] come from the project dashboard and
+/// [milestones] from the same list provider the left pane watches — the panel
+/// already fetched both, so the pickers need no round-trip of their own.
 class IssueCreateForm extends ConsumerStatefulWidget {
   final String repoPath;
   final List<ForgeLabel> labels;
@@ -23,12 +24,17 @@ class IssueCreateForm extends ConsumerStatefulWidget {
   /// Cancel and after a successful create.
   final VoidCallback onClose;
 
+  /// Reports whether the form holds unsaved content, on every edit. The panel
+  /// uses it to confirm before a row click would discard a live draft.
+  final ValueChanged<bool>? onDirtyChanged;
+
   const IssueCreateForm({
     super.key,
     required this.repoPath,
     required this.labels,
     required this.milestones,
     required this.onClose,
+    this.onDirtyChanged,
   });
 
   @override
@@ -56,9 +62,19 @@ class _IssueCreateFormState extends ConsumerState<IssueCreateForm> {
 
   bool get _canSubmit => _title.text.trim().isNotEmpty && !_submitting;
 
+  bool get _dirty =>
+      _title.text.trim().isNotEmpty ||
+      _description.text.trim().isNotEmpty ||
+      _assignees.text.trim().isNotEmpty ||
+      _labels.isNotEmpty ||
+      _milestoneId != null;
+
   // Rebuild hook for every field edit: the Create button's enabled state tracks
-  // the title text.
-  void _formChanged() => setState(() {});
+  // the title text, and the panel's draft guard tracks dirtiness.
+  void _formChanged() {
+    setState(() {});
+    widget.onDirtyChanged?.call(_dirty);
+  }
 
   Future<void> _submit() async {
     // Entry guard: the disabled-button state is a rebuild behind, so a rapid
@@ -147,11 +163,12 @@ class _IssueCreateFormState extends ConsumerState<IssueCreateForm> {
                   LabelPickerField(
                     labels: widget.labels,
                     selected: _labels,
-                    onToggle: (name) => setState(() {
+                    onToggle: (name) {
                       _labels.contains(name)
                           ? _labels.remove(name)
                           : _labels.add(name);
-                    }),
+                      _formChanged();
+                    },
                   ),
                 if (widget.milestones.isNotEmpty)
                   ForgeMilestonePicker(
@@ -163,7 +180,10 @@ class _IssueCreateFormState extends ConsumerState<IssueCreateForm> {
                     value: widget.milestones.any((m) => m.id == _milestoneId)
                         ? _milestoneId
                         : null,
-                    onChanged: (v) => setState(() => _milestoneId = v),
+                    onChanged: (v) {
+                      _milestoneId = v;
+                      _formChanged();
+                    },
                   ),
               ],
             ),
