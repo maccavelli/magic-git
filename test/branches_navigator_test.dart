@@ -89,11 +89,14 @@ Future<void> _pump(WidgetTester tester, {List<GitRef>? refs}) async {
 }
 
 void main() {
-  testWidgets('renders as a master–detail split with an empty detail prompt',
+  testWidgets('renders as a master–detail split with the review dashboard',
       (tester) async {
     await _pump(tester);
     expect(find.byType(ResizableMasterDetail), findsOneWidget);
-    expect(find.text('Select a branch or tag'), findsOneWidget);
+    // The empty state is the review dashboard: a title + stat chips.
+    expect(find.text('Branches'), findsOneWidget);
+    expect(find.text('Local'), findsOneWidget);
+    expect(find.textContaining('Select a branch or tag'), findsOneWidget);
   });
 
   testWidgets('selecting a branch fills the detail pane with its actions', (
@@ -145,12 +148,13 @@ void main() {
   ) async {
     await _pump(tester, refs: _staleRefs());
 
-    // The stale branch is hidden; a summary row stands in.
+    // The stale branch is hidden; a summary toggle row stands in. (The
+    // dashboard also mentions "stale", so target the toggle by its exact text.)
     expect(find.text('ancient'), findsNothing);
     expect(find.text('fresh'), findsOneWidget);
-    expect(find.textContaining('stale'), findsOneWidget);
+    expect(find.text('1 stale (no commit in 3 months)'), findsOneWidget);
 
-    await tester.tap(find.textContaining('stale'));
+    await tester.tap(find.text('1 stale (no commit in 3 months)'));
     await tester.pumpAndSettle();
 
     expect(find.text('ancient'), findsOneWidget);

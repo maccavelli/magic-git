@@ -2893,6 +2893,23 @@ final logProvider = FutureProvider.autoDispose.family<List<GitCommit>, String>((
   return ref.watch(gitServiceProvider).log(repoPath);
 });
 
+/// The most recent commits reachable from a specific ref — the Branches tab's
+/// single-branch linear view. Keyed by (repoPath, revision); capped small
+/// (the detail pane shows a preview, not full history). Swallows errors to an
+/// empty list so selecting a branch never breaks the pane (and, in tests, never
+/// leaves a retry timer against the fake executor).
+final branchCommitsProvider = FutureProvider.autoDispose
+    .family<List<GitCommit>, (String, String)>((ref, key) async {
+      final (repoPath, revision) = key;
+      try {
+        return await ref
+            .watch(gitServiceProvider)
+            .log(repoPath, revision: revision, maxCount: 15);
+      } catch (_) {
+        return const <GitCommit>[];
+      }
+    });
+
 /// HEAD's reflog — the Recovery sheet's entry list.
 final reflogProvider = FutureProvider.autoDispose
     .family<List<ReflogEntry>, String>((ref, repoPath) {

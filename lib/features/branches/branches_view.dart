@@ -68,6 +68,11 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   String? _selectedRef;
   List<GitRef> _locals = const [];
 
+  /// Every currently-visible selectable ref in display order (local + remote +
+  /// tag) — what ↑/↓ walk. [_locals] stays the local-only subset the merge/
+  /// delete gating and Enter-to-checkout operate on.
+  List<GitRef> _navigable = const [];
+
   /// Whether to nest local branches into a folder tree by their `/` prefix.
   /// Off by default — a flat list is calmer under ~15 branches — with a
   /// toolbar toggle. Grouping applies to local branches only (`feature/*`,
@@ -189,19 +194,19 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     ensureRowVisible(_rowKeyFor(refEntry.name));
   }
 
-  void _moveLocalSelection(int dir) {
-    if (_locals.isEmpty) return;
+  void _moveSelection(int dir) {
+    if (_navigable.isEmpty) return;
     var current = -1;
     if (_selectedRef != null) {
-      for (var i = 0; i < _locals.length; i++) {
-        if (_locals[i].name == _selectedRef) {
+      for (var i = 0; i < _navigable.length; i++) {
+        if (_navigable[i].name == _selectedRef) {
           current = i;
           break;
         }
       }
     }
-    final next = stepSelection(current, dir, _locals.length);
-    _select(_locals[next]);
+    final next = stepSelection(current, dir, _navigable.length);
+    _select(_navigable[next]);
   }
 
   KeyEventResult _onBranchKey(FocusNode node, KeyEvent event) {
@@ -217,10 +222,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     }
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowDown:
-        _moveLocalSelection(1);
+        _moveSelection(1);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowUp:
-        _moveLocalSelection(-1);
+        _moveSelection(-1);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.enter:
       case LogicalKeyboardKey.numpadEnter:
@@ -406,6 +411,22 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       ...activeLocals,
       if (_showStale || filter.isNotEmpty) ...staleLocals,
     ];
+    _navigable = [..._locals, ...visibleRemotes, ...visibleTags];
+
+    // The empty-state review dashboard's data + one-click cleanup target.
+    final mergedDeletable = [
+      for (final b in locals)
+        if (!b.isHead && _merged.contains(b.shortName)) b.shortName,
+    ];
+    final summary = _ReviewSummary(
+      local: totalLocals,
+      active: activeLocals.length,
+      stale: staleLocals.length,
+      pinned: pinnedLocals.length,
+      remote: totalRemotes,
+      tags: allTags.length,
+      mergedDeletable: mergedDeletable,
+    );
 
     // A flat descriptor list, not built Widgets — ListView.builder only ever
     // constructs the handful currently on-screen, so this stays cheap even for
@@ -465,7 +486,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       detailFloor: 280,
       master: master,
       detail: _detailPane(context, git, _refByName(refs, _selectedRef),
-          remoteTags: remoteTags, tagRemote: tagRemote),
+          remoteTags: remoteTags, tagRemote: tagRemote, summary: summary),
     );
   }
 
@@ -1255,8 +1276,9 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     GitRef? sel, {
     required Map<String, String>? remoteTags,
     required String? tagRemote,
+    required _ReviewSummary summary,
   }) {
-    if (sel == null) return _detailEmpty(context);
+    if (sel == null) return _dashboard(context, git, summary);
     if (sel.isTag) {
       return _tagDetail(context, git, sel, _tagStatus(sel, remoteTags), tagRemote);
     }
@@ -1264,39 +1286,138 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     return _localDetail(context, git, sel);
   }
 
-  Widget _detailEmpty(BuildContext context) {
+  /// The empty-state review dashboard: a at-a-glance summary of the repo's
+  /// branches with one-click cleanup — the "what needs attention" landing view
+  /// (Tower's Branches Review / GitHub's branches overview), shown whenever
+  /// nothing is selected.
+  Widget _dashboard(BuildContext context, GitService git, _ReviewSummary s) {
     final typography = MacosTheme.of(context).typography;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const MacosIcon(
-              CupertinoIcons.arrow_branch,
-              size: 34,
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Branches',
+            style: typography.title2.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'Select a branch or tag for its details and actions — or right-'
+            'click any row.',
+            style: typography.caption1.copyWith(
               color: MacosColors.systemGrayColor,
             ),
-            const SizedBox(height: 12),
-            Text(
-              'Select a branch or tag',
-              style: typography.body.copyWith(
-                color: MacosColors.systemGrayColor,
-              ),
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _statChip('Local', s.local, MacosColors.systemBlueColor),
+              _statChip('Active', s.active, MacosColors.systemGreenColor),
+              _statChip('Stale', s.stale, MacosColors.systemOrangeColor),
+              _statChip('Pinned', s.pinned, MacosColors.systemYellowColor),
+              _statChip('Remote', s.remote, MacosColors.systemGrayColor),
+              _statChip('Tags', s.tags, MacosColors.systemTealColor),
+            ],
+          ),
+          if (s.mergedDeletable.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            _calloutBox(
+              context,
+              MacosColors.systemGrayColor,
+              CupertinoIcons.checkmark_seal,
+              '${s.mergedDeletable.length} branch'
+              '${s.mergedDeletable.length == 1 ? '' : 'es'} already merged into '
+              'the current branch — safe to clean up.',
             ),
-            const SizedBox(height: 4),
+            const SizedBox(height: 10),
+            _detailButton(
+              'Delete ${s.mergedDeletable.length} merged…',
+              CupertinoIcons.trash,
+              busy ? null : () => _deleteMergedBranches(git, s.mergedDeletable),
+              tone: InlineActionTone.destructive,
+            ),
+          ],
+          if (s.stale > 0) ...[
+            const SizedBox(height: 18),
             Text(
-              'Its details and actions appear here. Right-click any row for '
-              'the same actions.',
-              textAlign: TextAlign.center,
+              '${s.stale} stale branch${s.stale == 1 ? '' : 'es'} '
+              '(no commit in 3 months) — collapsed under the Local section.',
               style: typography.caption1.copyWith(
                 color: MacosColors.systemGrayColor,
               ),
             ),
           ],
-        ),
+        ],
       ),
     );
+  }
+
+  Widget _statChip(String label, int count, Color color) {
+    return Builder(
+      builder: (context) {
+        final typography = MacosTheme.of(context).typography;
+        return Container(
+          width: 96,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: color.withValues(alpha: 0.25)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$count',
+                style: typography.title2.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
+              ),
+              Text(
+                label,
+                style: typography.caption2.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// Bulk cleanup: delete every local branch already merged into HEAD (plain
+  /// `-d`, so unmerged work is never at risk). Branches git refuses (e.g. held
+  /// by a worktree) are skipped, not aborted.
+  Future<void> _deleteMergedBranches(
+    GitService git,
+    List<String> names,
+  ) async {
+    if (busy || names.isEmpty) return;
+    final listing = names.length <= 10 ? '\n\n${names.join(', ')}' : '';
+    final ok = await confirmAction(
+      context,
+      title: 'Delete merged branches',
+      message:
+          'Delete ${names.length} branch${names.length == 1 ? '' : 'es'} '
+          'already merged into the current branch?$listing',
+      confirmLabel: 'Delete',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    await runGuarded(() async {
+      for (final n in names) {
+        try {
+          await git.deleteBranch(repoPath, n);
+        } catch (_) {
+          // Skip a branch git won't delete (checked out elsewhere, etc.).
+        }
+      }
+    });
   }
 
   Widget _detailScaffold({
@@ -1306,6 +1427,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     required List<Widget> info,
     required List<Widget> actions,
     Widget? callout,
+    List<Widget> below = const [],
   }) {
     return Builder(
       builder: (context) {
@@ -1336,11 +1458,87 @@ class _BranchesViewState extends ConsumerState<BranchesView>
               if (callout != null) ...[const SizedBox(height: 14), callout],
               const SizedBox(height: 16),
               Wrap(spacing: 8, runSpacing: 8, children: actions),
+              ...below,
             ],
           ),
         );
       },
     );
+  }
+
+  /// The single-branch linear view: a preview of the most recent commits
+  /// reachable from [revision] — GitKraken's missing "just this branch" list.
+  /// Renders nothing until (and unless) [branchCommitsProvider] resolves.
+  Widget _branchCommits(BuildContext context, String revision) {
+    final commits =
+        ref.watch(branchCommitsProvider((repoPath, revision))).value ??
+        const [];
+    if (commits.isEmpty) return const SizedBox.shrink();
+    final typography = MacosTheme.of(context).typography;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 20),
+        Text(
+          'RECENT COMMITS',
+          style: typography.caption2.copyWith(
+            color: MacosColors.systemGrayColor,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 0.5,
+          ),
+        ),
+        const SizedBox(height: 6),
+        for (final c in commits)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  margin: const EdgeInsets.only(top: 5, right: 9),
+                  decoration: BoxDecoration(
+                    color: c.isMerge
+                        ? MacosColors.systemGrayColor
+                        : MacosColors.systemBlueColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    c.subject,
+                    style: typography.caption1,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  c.shortHash,
+                  style: typography.caption2.copyWith(
+                    color: MacosColors.systemGrayColor,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _relativeIso(c.date),
+                  style: typography.caption2.copyWith(
+                    color: MacosColors.systemGrayColor,
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
+  static String _relativeIso(String iso) {
+    final then = DateTime.tryParse(iso);
+    if (then == null) return '';
+    return _relativeTime(then.millisecondsSinceEpoch ~/ 1000);
   }
 
   Widget _infoLine(BuildContext context, String label, String value,
@@ -1507,6 +1705,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       info: [Builder(builder: (c) => Column(children: info))],
       actions: actions,
       callout: callout,
+      below: [_branchCommits(context, b.shortName)],
     );
   }
 
@@ -1541,6 +1740,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           tone: InlineActionTone.destructive,
         ),
       ],
+      below: [_branchCommits(context, b.shortName)],
     );
   }
 
@@ -2095,6 +2295,30 @@ class _DivergenceBar extends StatelessWidget {
 class _FolderNode {
   final Map<String, _FolderNode> dirs = {};
   final List<GitRef> leaves = [];
+}
+
+/// The counts + cleanup target the empty-state review dashboard renders.
+class _ReviewSummary {
+  final int local;
+  final int active;
+  final int stale;
+  final int pinned;
+  final int remote;
+  final int tags;
+
+  /// Local branches merged into HEAD and not currently checked out — the
+  /// "Delete N merged" bulk-cleanup set.
+  final List<String> mergedDeletable;
+
+  const _ReviewSummary({
+    required this.local,
+    required this.active,
+    required this.stale,
+    required this.pinned,
+    required this.remote,
+    required this.tags,
+    required this.mergedDeletable,
+  });
 }
 
 /// A row descriptor for the navigator's `ListView.builder` — cheap data, not a
