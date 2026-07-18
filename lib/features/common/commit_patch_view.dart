@@ -381,7 +381,7 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
         ? Text.rich(
             diffLineSpan(
               text,
-              DiffLineHighlight(diffLineKind(text), runs, const []),
+              DiffLineHighlight(diffLineKind(text), runs),
               kDiffMono,
               defaultColor,
               codeTheme,

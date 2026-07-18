@@ -1,7 +1,5 @@
 import 'package:flutter/widgets.dart';
-import 'package:macos_ui/macos_ui.dart';
 
-import '../../core/git/intraline_diff.dart';
 import '../../core/git/unified_diff.dart';
 import '../viewer/code_view.dart' show CodeTheme;
 import '../viewer/file_type.dart';
@@ -19,25 +17,23 @@ class ScopedRun {
   const ScopedRun(this.start, this.end, this.scope);
 }
 
-/// Per-line render data for one diff-hunk body line: its [kind], the
+/// Per-line render data for one diff-hunk body line: its [kind] and the
 /// syntax-highlighted content [runs] (null when the file's language is
 /// unsupported/oversized — the content is then drawn in the kind's colour, as
-/// before), and the intra-line [intraline] emphasis ranges (in content
-/// coordinates) marking exactly what changed within a modified line.
+/// before).
 ///
 /// All fields are isolate-sendable (ints/strings/enums), so this is produced in
 /// the same parse pass that already moves off the UI isolate for huge diffs.
 class DiffLineHighlight {
   final DiffLineKind kind;
   final List<ScopedRun>? runs;
-  final List<IntralineRange> intraline;
-  const DiffLineHighlight(this.kind, this.runs, this.intraline);
+  const DiffLineHighlight(this.kind, this.runs);
 }
 
 /// Above this many hunk-body lines, syntax highlighting is skipped (the content
 /// still renders, coloured by kind). Mirrors the diff-parse isolate threshold's
 /// intent: a regenerated lockfile or minified bundle shouldn't pay the
-/// highlighter. Intra-line diffing is cheap and stays on regardless.
+/// highlighter.
 const int _highlightMaxLines = 6000;
 
 /// Computes per-body-line [DiffLineHighlight]s for [file], one per hunk body
@@ -47,8 +43,7 @@ const int _highlightMaxLines = 6000;
 /// Syntax highlighting reconstructs the pre- and post-images once and highlights
 /// each whole (so multi-line grammar state — open strings, block comments — is
 /// correct) then maps runs back to rows; it is gated by [enableHighlight] and
-/// language support. Intra-line emphasis pairs each run of removed lines with the
-/// run of added lines that follows it and diffs them content-to-content.
+/// language support.
 List<DiffLineHighlight> computeDiffLineHighlights(
   DiffFile file, {
   bool enableHighlight = true,
@@ -108,54 +103,11 @@ List<DiffLineHighlight> computeDiffLineHighlights(
     }
   }
 
-  // Intra-line emphasis: within each hunk, pair each removed-line run with the
-  // added-line run immediately following it and diff their contents.
-  final intraline = List<List<IntralineRange>>.filled(total, const [], growable: false);
-  var base = 0;
-  for (final hunk in file.hunks) {
-    final lines = hunk.lines;
-    final n = lines.length;
-    var i = 0;
-    while (i < n) {
-      if (diffLineKind(lines[i]) == DiffLineKind.remove) {
-        final removeStart = i;
-        while (i < n && diffLineKind(lines[i]) == DiffLineKind.remove) {
-          i++;
-        }
-        final removeEnd = i;
-        if (i < n && diffLineKind(lines[i]) == DiffLineKind.add) {
-          final addStart = i;
-          while (i < n && diffLineKind(lines[i]) == DiffLineKind.add) {
-            i++;
-          }
-          final addEnd = i;
-          final pairs = (removeEnd - removeStart) < (addEnd - addStart)
-              ? removeEnd - removeStart
-              : addEnd - addStart;
-          for (var p = 0; p < pairs; p++) {
-            final r = removeStart + p;
-            final a = addStart + p;
-            final d = computeIntralineDiff(
-              lines[r].substring(1),
-              lines[a].substring(1),
-            );
-            if (d.oldRanges.isNotEmpty) intraline[base + r] = d.oldRanges;
-            if (d.newRanges.isNotEmpty) intraline[base + a] = d.newRanges;
-          }
-        }
-      } else {
-        i++;
-      }
-    }
-    base += n;
-  }
-
   return [
     for (var b = 0; b < total; b++)
       DiffLineHighlight(
         kinds[b],
         _runsFor(side[b], imageIndex[b], contents[b], postDoc, preDoc),
-        intraline[b],
       ),
   ];
 }
@@ -302,21 +254,10 @@ bool _isDiffContentLine(String l) {
   }
 }
 
-/// A deeper add/remove wash marking the changed characters within a modified
-/// line, drawn behind the syntax colours. Null for unchanged/other kinds.
-Color? _emphasisBackground(DiffLineKind kind) => switch (kind) {
-  DiffLineKind.add => MacosColors.systemGreenColor.withValues(alpha: 0.30),
-  DiffLineKind.remove => MacosColors.systemRedColor.withValues(alpha: 0.30),
-  DiffLineKind.context ||
-  DiffLineKind.noNewline ||
-  DiffLineKind.other => null,
-};
-
 /// Builds the [TextSpan] for one diff body line: the leading marker in the
 /// kind's colour, then the content — syntax-coloured when [h] carries runs
 /// (unscoped text and the whole line, when there are no runs, fall back to the
-/// kind colour so an unsupported file looks exactly as before), with a deeper
-/// wash on the intra-line changed ranges.
+/// kind colour so an unsupported file looks exactly as before).
 ///
 /// Keeps the marker glyph in the span so a copied selection still round-trips
 /// through `git apply`, and returns a single multi-run `TextSpan` so it drops
@@ -338,8 +279,6 @@ TextSpan diffLineSpan(
   if (content.isEmpty) return TextSpan(style: base, children: [markerSpan]);
 
   final runs = h?.runs;
-  final intraline = h?.intraline ?? const <IntralineRange>[];
-  final emphasis = _emphasisBackground(kind);
   // Unscoped text keeps the kind's colour so the red/green sense is preserved
   // (an added line still reads green); recognised tokens tint over it. This is
   // also what keeps unified and split agreeing on what green means.
@@ -349,7 +288,7 @@ TextSpan diffLineSpan(
     style: base,
     children: [
       markerSpan,
-      ..._contentSpans(content, runs, base, contentColor, theme, intraline, emphasis),
+      ..._contentSpans(content, runs, base, contentColor, theme),
     ],
   );
 }
@@ -357,13 +296,12 @@ TextSpan diffLineSpan(
 /// Builds the [TextSpan] for one **split-view cell** — content only, no marker
 /// (side-by-side rows carry the kind in their column, not a leading `+`/`-`).
 /// Syntax-colours the content (unscoped text falls back to the kind colour when
-/// there are no runs, so an unsupported file looks unchanged) with a deeper wash
-/// on the intra-line changed ranges. [kind] is `remove` for the left column,
-/// `add` for the right, `context` for both sides of an unchanged row.
+/// there are no runs, so an unsupported file looks unchanged). [kind] is
+/// `remove` for the left column, `add` for the right, `context` for both sides
+/// of an unchanged row.
 TextSpan diffCellSpan(
   String content,
   List<ScopedRun>? runs,
-  List<IntralineRange> intraline,
   DiffLineKind kind,
   TextStyle base,
   Color defaultColor,
@@ -374,18 +312,9 @@ TextSpan diffCellSpan(
   // context) so the split view agrees with unified on what green means;
   // recognised tokens tint over it.
   final contentColor = kindColor;
-  final emphasis = _emphasisBackground(kind);
   return TextSpan(
     style: base,
-    children: _contentSpans(
-      content,
-      runs,
-      base,
-      contentColor,
-      theme,
-      intraline,
-      emphasis,
-    ),
+    children: _contentSpans(content, runs, base, contentColor, theme),
   );
 }
 
@@ -395,21 +324,15 @@ List<InlineSpan> _contentSpans(
   TextStyle base,
   Color contentColor,
   CodeTheme theme,
-  List<IntralineRange> intraline,
-  Color? emphasis,
 ) {
   final len = content.length;
-  // Segment boundaries: run edges and intra-line edges, clamped and deduped.
+  // Segment boundaries: run edges, clamped and deduped.
   final cuts = <int>{0, len};
   if (runs != null) {
     for (final r in runs) {
       cuts.add(r.start.clamp(0, len));
       cuts.add(r.end.clamp(0, len));
     }
-  }
-  for (final r in intraline) {
-    cuts.add(r.start.clamp(0, len));
-    cuts.add(r.end.clamp(0, len));
   }
   final points = cuts.toList()..sort();
 
@@ -431,9 +354,6 @@ List<InlineSpan> _contentSpans(
     if (scope != null) {
       final s = theme.styles[scope];
       if (s != null) style = style.merge(s);
-    }
-    if (emphasis != null && intraline.any((r) => r.start <= a && a < r.end)) {
-      style = style.copyWith(backgroundColor: emphasis);
     }
     spans.add(TextSpan(text: content.substring(a, b), style: style));
   }

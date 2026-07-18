@@ -66,7 +66,7 @@ class _HeaderItem {
   const _HeaderItem(this.hunk, this.index);
 }
 
-/// A single hunk body line, plus its precomputed syntax/intra-line render data
+/// A single hunk body line, plus its precomputed syntax render data
 /// ([render] is null when highlighting was skipped — the line still renders,
 /// coloured by kind) and its 1-based new-file line number ([newLine] is -1 for
 /// removed / no-newline lines, which have no post-image line to blame).
@@ -123,7 +123,7 @@ class _ParsedDiff {
 /// huge patch too), but is gated to the inline-sized diffs — a patch big enough
 /// to parse off-isolate is also big enough that re-registering the highlighter's
 /// grammars in an ephemeral isolate isn't worth it, so those render kind-coloured
-/// only. Intra-line diffing is cheap and always runs.
+/// only.
 _ParsedDiff _parseAndBuild(String diff) {
   final file = parseUnifiedDiff(diff);
   if (file == null) return const _ParsedDiff(null, []);
@@ -485,8 +485,8 @@ class _HunkDiffViewState extends State<HunkDiffView> {
     _Gutter? gutter,
   }) {
     final text = Text.rich(
-      // Marker in the kind colour + syntax-highlighted content with intra-line
-      // emphasis. Falls back to whole-line kind colour when no highlight data.
+      // Marker in the kind colour + syntax-highlighted content. Falls back to
+      // whole-line kind colour when no highlight data.
       diffLineSpan(line.text, line.render, kDiffMono, defaultColor, codeTheme),
       maxLines: 1,
       softWrap: false,

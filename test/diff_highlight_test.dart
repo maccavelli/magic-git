@@ -49,7 +49,7 @@ void main() {
   final file = parseUnifiedDiff(_patch)!;
 
   group('computeDiffLineHighlights', () {
-    test('classifies each body line and pairs the modified line', () {
+    test('classifies each body line', () {
       final h = computeDiffLineHighlights(file);
       // " class Foo {", "-  ...= 1;", "+  ...= 2;", " }"
       expect(h.length, 4);
@@ -59,17 +59,6 @@ void main() {
         DiffLineKind.add,
         DiffLineKind.context,
       ]);
-      // The remove/add pair is intra-line diffed: the changed digit is marked
-      // on both sides, and only that.
-      expect(h[1].intraline, isNotEmpty);
-      expect(h[2].intraline, isNotEmpty);
-      // "1" and "2" occupy the same offset in "  final int value = X;".
-      const content = '  final int value = 1;';
-      final r = h[1].intraline.first;
-      expect(content.substring(r.start, r.end), '1');
-      // Unchanged context lines carry no intra-line emphasis.
-      expect(h[0].intraline, isEmpty);
-      expect(h[3].intraline, isEmpty);
     });
 
     test('produces syntax runs for a recognised (.dart) language', () {
@@ -81,8 +70,6 @@ void main() {
     test('skips syntax runs when highlighting is disabled (huge-diff path)', () {
       final h = computeDiffLineHighlights(file, enableHighlight: false);
       expect(h.every((e) => e.runs == null), isTrue);
-      // …but intra-line emphasis still runs (it's cheap).
-      expect(h[1].intraline, isNotEmpty);
     });
   });
 
@@ -97,15 +84,29 @@ void main() {
       expect(spanText(span), raw);
     });
 
-    test('emphasises the intra-line changed range with a background', () {
-      const raw = '+  final int value = 2;';
-      final h = computeDiffLineHighlights(file)[2];
-      final span = diffLineSpan(raw, h, kDiffMono, defaultColor, theme);
-      // Exactly the changed "2" run carries a background wash.
-      final emphasised =
-          leaves(span).where((s) => s.style?.backgroundColor != null).toList();
-      expect(emphasised, isNotEmpty);
-      expect(emphasised.map((s) => s.text).join(), contains('2'));
+    test('never paints per-character backgrounds — the add/remove colour lives '
+        'in the glyphs and the full-row band, same as the History patch view', () {
+      final highlights = computeDiffLineHighlights(file);
+      final raws = ' class Foo {\n-  final int value = 1;\n'
+              '+  final int value = 2;\n }'
+          .split('\n');
+      for (var i = 0; i < raws.length; i++) {
+        final span = diffLineSpan(
+          raws[i],
+          highlights[i],
+          kDiffMono,
+          defaultColor,
+          theme,
+        );
+        for (final leaf in leaves(span)) {
+          expect(
+            leaf.style?.backgroundColor,
+            isNull,
+            reason: 'leaf "${leaf.text}" of "${raws[i]}" carries a background '
+                'wash — diff text must colour only its glyphs',
+          );
+        }
+      }
     });
 
     test('a line with no render data still shows marker + content', () {

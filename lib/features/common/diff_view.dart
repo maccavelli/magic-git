@@ -728,7 +728,7 @@ Widget _diffTextRow(
       ? Text.rich(
           diffLineSpan(
             line,
-            DiffLineHighlight(diffLineKind(line), runs, const []),
+            DiffLineHighlight(diffLineKind(line), runs),
             kDiffMono,
             defaultColor,
             codeTheme,

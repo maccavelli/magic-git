@@ -1,5 +1,7 @@
-// SplitDiffView now syntax-highlights each column (old = pre-image, new =
-// post-image) and washes the intra-line changed characters.
+// SplitDiffView syntax-highlights each column (old = pre-image, new =
+// post-image) with the same canonical formatting as every other diff surface:
+// colour lives in the glyphs and the row-level band only — no per-character
+// background washes.
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -52,15 +54,14 @@ Widget _builder(BuildContext context, ScrollController _) =>
     const SizedBox(width: 900, height: 400, child: SplitDiffView(diff: _patch));
 
 void main() {
-  testWidgets('washes the intra-line changed character', (tester) async {
+  testWidgets('never paints per-character backgrounds', (tester) async {
     await _pump(tester);
-    final emphasised = _allLeaves(
+    final washed = _allLeaves(
       tester,
     ).where((s) => s.style?.backgroundColor != null).toList();
-    expect(emphasised, isNotEmpty);
-    // The changed digits ("1" removed, "2" added) are what carry the wash.
-    final text = emphasised.map((s) => s.text).join();
-    expect(text.contains('1') || text.contains('2'), isTrue);
+    // Add/remove colour comes from the cell band and the glyph colours; a
+    // character-level wash on top made the text hard to read.
+    expect(washed, isEmpty);
   });
 
   testWidgets('applies more than one syntax colour', (tester) async {

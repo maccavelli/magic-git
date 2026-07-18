@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart';
-import '../../core/git/intraline_diff.dart';
 import '../../core/git/unified_diff.dart';
 import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
 import 'diff_highlight.dart';
@@ -8,25 +7,21 @@ import 'diff_view.dart';
 
 /// One side-by-side row: the old-side line (left) and/or the new-side line
 /// (right). A pure context line fills both; a removal fills only [left]; an
-/// addition only [right]. Each side carries its precomputed syntax runs and
-/// intra-line emphasis ([leftRuns]/[rightRuns] are null when highlighting was
-/// skipped — the cell still renders, coloured by kind).
+/// addition only [right]. Each side carries its precomputed syntax runs
+/// ([leftRuns]/[rightRuns] are null when highlighting was skipped — the cell
+/// still renders, coloured by kind).
 class _SplitRow {
   final String? left;
   final String? right;
   final bool isContext;
   final List<ScopedRun>? leftRuns;
   final List<ScopedRun>? rightRuns;
-  final List<IntralineRange> leftIntraline;
-  final List<IntralineRange> rightIntraline;
   const _SplitRow({
     this.left,
     this.right,
     this.isContext = false,
     this.leftRuns,
     this.rightRuns,
-    this.leftIntraline = const [],
-    this.rightIntraline = const [],
   });
 }
 
@@ -37,8 +32,8 @@ class _HeaderRow {
 }
 
 /// Parses [diff] and flattens it into the header/row items [SplitDiffView]
-/// renders, with per-side syntax highlighting + intra-line emphasis attached.
-/// Returns null when there's nothing hunk-parseable (binary / mode-only change).
+/// renders, with per-side syntax highlighting attached. Returns null when
+/// there's nothing hunk-parseable (binary / mode-only change).
 ///
 /// The old (left) column is highlighted from the reconstructed pre-image and the
 /// new (right) column from the post-image, each in one pass so grammar state is
@@ -239,7 +234,6 @@ class _SplitDiffViewState extends State<SplitDiffView> {
               codeTheme: codeTheme,
               isContext: row.isContext,
               runs: row.leftRuns,
-              intraline: row.leftIntraline,
             ),
           ),
           Container(
@@ -254,7 +248,6 @@ class _SplitDiffViewState extends State<SplitDiffView> {
               codeTheme: codeTheme,
               isContext: row.isContext,
               runs: row.rightRuns,
-              intraline: row.rightIntraline,
             ),
           ),
         ],
@@ -273,11 +266,10 @@ class _SplitDiffViewState extends State<SplitDiffView> {
     required CodeTheme codeTheme,
     required bool isContext,
     required List<ScopedRun>? runs,
-    required List<IntralineRange> intraline,
   }) {
     // The cell's *kind* for colouring: a gutter/context cell is neutral; a
     // filled add/remove cell keeps its column's kind (which is what carries the
-    // green/red, and the intra-line emphasis colour).
+    // green/red).
     final cellKind = (text == null || isContext) ? DiffLineKind.context : kind;
     final Color bg;
     if (text == null) {
@@ -299,7 +291,6 @@ class _SplitDiffViewState extends State<SplitDiffView> {
         diffCellSpan(
           text ?? '',
           runs,
-          intraline,
           cellKind,
           kDiffMono,
           defaultColor,
@@ -315,9 +306,8 @@ class _SplitDiffViewState extends State<SplitDiffView> {
 }
 
 /// Aligns a hunk's raw lines into split rows, appending them to [items].
-/// Consecutive removals and additions are zipped (removal i ↔ addition i), and
-/// a zipped pair is intra-line diffed so the changed characters get a deeper
-/// wash; leftovers become one-sided rows. Context lines flush any pending run,
+/// Consecutive removals and additions are zipped (removal i ↔ addition i);
+/// leftovers become one-sided rows. Context lines flush any pending run,
 /// then fill both columns. Each cell picks up its syntax runs from [preRuns]
 /// (left) / [postRuns] (right) at the running image index; returns the advanced
 /// (preIdx, postIdx) for the next hunk.
@@ -338,17 +328,12 @@ class _SplitDiffViewState extends State<SplitDiffView> {
     for (var k = 0; k < n; k++) {
       final r = k < removes.length ? removes[k] : null;
       final a = k < adds.length ? adds[k] : null;
-      final intra = (r != null && a != null)
-          ? computeIntralineDiff(r.$1, a.$1)
-          : IntralineDiff.none;
       items.add(
         _SplitRow(
           left: r?.$1,
           right: a?.$1,
           leftRuns: r == null ? null : preRuns[r.$2],
           rightRuns: a == null ? null : postRuns[a.$2],
-          leftIntraline: intra.oldRanges,
-          rightIntraline: intra.newRanges,
         ),
       );
     }
