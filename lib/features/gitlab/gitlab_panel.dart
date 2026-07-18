@@ -14,6 +14,7 @@ import '../common/branch_switch.dart';
 import '../common/buttons.dart';
 import '../common/context_menu.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/show_more_row.dart';
@@ -536,8 +537,8 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       ),
       ContextMenuItem(
         icon: CupertinoIcons.pencil,
-        label: 'Edit title…',
-        onTap: () => _editMrTitle(mr),
+        label: 'Edit…',
+        onTap: () => _editMr(mr),
       ),
       const ContextMenuDivider(),
       ContextMenuItem(
@@ -726,8 +727,8 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
           onTap: () => _setMrDraft(mr.iid, draft: !mr.draft),
         ),
         MacosPulldownMenuItem(
-          title: const Text('Edit title…'),
-          onTap: () => _editMrTitle(mr),
+          title: const Text('Edit…'),
+          onTap: () => _editMr(mr),
         ),
         MacosPulldownMenuItem(
           title: const Text('Close'),
@@ -956,26 +957,57 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     // A comment changes no list-visible field — nothing to invalidate.
   }
 
-  Future<void> _editMrTitle(MergeRequest mr) async {
+  /// Full title + description edit. Fetches the current fields first (the list
+  /// query omits the description), then opens the shared multi-field
+  /// [promptForm].
+  Future<void> _editMr(MergeRequest mr) async {
     if (_busyMrs.contains(mr.iid)) return;
     final repoPath = this.repoPath;
-    final title = await promptText(
-      context,
-      'Edit title of !${mr.iid}',
-      placeholder: 'Merge request title',
-      initial: mr.title,
-      confirmLabel: 'Save',
-    );
-    if (title == null || title == mr.title || !mounted) return;
-    setState(() => _busyMrs.add(mr.iid));
     final glab = ref.read(glabServiceProvider);
-    final success = await runAction(
-      context,
-      () => glab.editMergeRequest(repoPath, mr.iid, title: title),
-    );
-    if (!mounted) return;
-    setState(() => _busyMrs.remove(mr.iid));
-    if (success) ref.invalidate(mergeRequestsProvider(repoPath));
+    setState(() => _busyMrs.add(mr.iid));
+    try {
+      ({String title, String description})? current;
+      final fetched = await runAction(context, () async {
+        current = await glab.mergeRequestFields(repoPath, mr.iid);
+      });
+      if (!fetched || current == null || !mounted) return;
+      final result = await promptForm(
+        context,
+        'Edit merge request !${mr.iid}',
+        confirmLabel: 'Save',
+        fields: [
+          PromptField(
+            key: 'title',
+            label: 'Title',
+            initial: current!.title,
+            validate: (v) => v.isEmpty ? 'A title is required.' : null,
+          ),
+          PromptField(
+            key: 'description',
+            label: 'Description',
+            initial: current!.description,
+            placeholder: 'Describe the change…',
+            multiline: true,
+          ),
+        ],
+      );
+      if (result == null || !mounted) return;
+      final title = result['title']!;
+      final description = result['description']!;
+      if (title == current!.title && description == current!.description) return;
+      final success = await runAction(
+        context,
+        () => glab.editMergeRequest(
+          repoPath,
+          mr.iid,
+          title: title,
+          description: description,
+        ),
+      );
+      if (success && mounted) ref.invalidate(mergeRequestsProvider(repoPath));
+    } finally {
+      if (mounted) setState(() => _busyMrs.remove(mr.iid));
+    }
   }
 
   /// Checks out the MR's source branch (`glab mr checkout`) behind the dirty-tree

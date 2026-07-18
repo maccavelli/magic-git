@@ -920,6 +920,33 @@ class GhService {
     }
   }
 
+  /// Fetches a pull request's editable fields (title + body) for the edit
+  /// form. `gh pr view --json` is the machine contract; the list query omits
+  /// `body` to stay light, so this is the on-demand fetch behind "Edit…".
+  Future<({String title, String body})> pullRequestFields(
+    String repoPath,
+    int number,
+  ) async {
+    final decoded = await _runJson(repoPath, [
+      'gh',
+      'pr',
+      'view',
+      '$number',
+      '--json',
+      'title,body',
+    ], 'gh pr view');
+    if (decoded is Map<String, dynamic>) {
+      return (
+        title: (decoded['title'] as String?) ?? '',
+        body: (decoded['body'] as String?) ?? '',
+      );
+    }
+    throw const GhException(
+      'gh pr view: expected a JSON object',
+      SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+    );
+  }
+
   /// Checks out a PR's branch locally via `gh pr checkout`. Switches the
   /// working tree — callers should guard against a dirty tree and refresh
   /// status/refs/log afterwards.

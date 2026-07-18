@@ -517,6 +517,25 @@ void main() {
       ]);
     });
 
+    test('pullRequestFields fetches title + body for the edit form', () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout: '{"title":"A title","body":"A body"}',
+        stderr: '',
+      );
+      final fields = await gh.pullRequestFields('/repo', 5);
+      expect(exec.calls.single, [
+        'gh',
+        'pr',
+        'view',
+        '5',
+        '--json',
+        'title,body',
+      ]);
+      expect(fields.title, 'A title');
+      expect(fields.body, 'A body');
+    });
+
     test('checkoutPullRequest', () async {
       await gh.checkoutPullRequest('/repo', 9);
       expect(exec.calls.single, ['gh', 'pr', 'checkout', '9']);

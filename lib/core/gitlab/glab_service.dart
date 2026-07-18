@@ -1334,6 +1334,32 @@ query($path: ID!) {
     }
   }
 
+  /// Fetches a merge request's editable fields (title + description) for the
+  /// edit form (`glab mr view --output json` — the machine contract).
+  Future<({String title, String description})> mergeRequestFields(
+    String repoPath,
+    int iid,
+  ) async {
+    final decoded = await _runJson(repoPath, [
+      'glab',
+      'mr',
+      'view',
+      '$iid',
+      '--output',
+      'json',
+    ], 'glab mr view');
+    if (decoded is Map<String, dynamic>) {
+      return (
+        title: (decoded['title'] as String?) ?? '',
+        description: (decoded['description'] as String?) ?? '',
+      );
+    }
+    throw const GlabException(
+      'glab mr view: expected a JSON object',
+      SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+    );
+  }
+
   Future<dynamic> _runJson(
     String repoPath,
     List<String> args,

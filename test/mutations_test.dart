@@ -1731,6 +1731,26 @@ void main() {
       ]);
     });
 
+    test('mergeRequestFields fetches title + description for the edit form',
+        () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout: '{"title":"A title","description":"A body"}',
+        stderr: '',
+      );
+      final fields = await glab.mergeRequestFields('/repo', 12);
+      expect(exec.calls.single, [
+        'glab',
+        'mr',
+        'view',
+        '12',
+        '--output',
+        'json',
+      ]);
+      expect(fields.title, 'A title');
+      expect(fields.description, 'A body');
+    });
+
     test(
       'read endpoints pass an explicit --method GET (never implicit POST)',
       () async {

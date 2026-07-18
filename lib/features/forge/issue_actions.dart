@@ -10,6 +10,7 @@ import '../common/actions.dart';
 import '../common/branch_switch.dart';
 import '../common/buttons.dart';
 import '../common/context_menu.dart';
+import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
 import 'forge_widgets.dart';
 
@@ -24,22 +25,6 @@ import 'forge_widgets.dart';
 bool forgeIssueIsOpen(String state) {
   final s = state.toLowerCase();
   return s == 'open' || s == 'opened';
-}
-
-/// The GitLab-fallback branch name for an issue: `<iid>-<slug>` — the same
-/// shape GitLab's own "create branch from issue" produces. The title is
-/// slugified (lowercased, non-alphanumerics collapsed to `-`) and
-/// length-bounded; a title that slugifies to nothing falls back to just the
-/// iid.
-String issueBranchName(int iid, String title) {
-  var slug = title
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9]+'), '-')
-      .replaceAll(RegExp(r'^-+|-+$'), '');
-  if (slug.length > 40) {
-    slug = slug.substring(0, 40).replaceAll(RegExp(r'-+$'), '');
-  }
-  return slug.isEmpty ? '$iid' : '$iid-$slug';
 }
 
 /// Forge-dispatched issue mutations. Each runner owns its confirm/prompt
@@ -117,22 +102,52 @@ class ForgeIssueActions {
     // Comments aren't rendered in the detail body — nothing to invalidate.
   }
 
-  Future<void> editTitle(BuildContext context, ForgeIssue issue) async {
+  /// Full title + description edit. Fetches the authoritative fields first (a
+  /// row's ForgeIssue carries no body — the list query omits it), then opens
+  /// the shared multi-field [promptForm].
+  Future<void> edit(BuildContext context, ForgeIssue issue) async {
     final id = issue.id;
     if (id == null) return;
-    final title = await promptText(
+    ForgeIssue? current;
+    final fetched = await runAction(context, () async {
+      current = _isGithub
+          ? await ref.read(ghServiceProvider).issueDetail(repoPath, id)
+          : await ref.read(glabServiceProvider).issueDetail(repoPath, id);
+    });
+    if (!fetched || current == null || !context.mounted) return;
+    final result = await promptForm(
       context,
-      'Edit title of #$id',
-      placeholder: 'Issue title',
-      initial: issue.title,
+      'Edit issue #$id',
       confirmLabel: 'Save',
+      fields: [
+        PromptField(
+          key: 'title',
+          label: 'Title',
+          initial: current!.title,
+          validate: (v) => v.isEmpty ? 'A title is required.' : null,
+        ),
+        PromptField(
+          key: 'body',
+          label: 'Description',
+          initial: current!.body ?? '',
+          placeholder: 'Describe the issue…',
+          multiline: true,
+        ),
+      ],
     );
-    if (title == null || title == issue.title || !context.mounted) return;
+    if (result == null || !context.mounted) return;
+    final title = result['title']!;
+    final body = result['body']!;
+    if (title == current!.title && body == (current!.body ?? '')) return;
     final success = await runAction(
       context,
       () => _isGithub
-          ? ref.read(ghServiceProvider).editIssue(repoPath, id, title: title)
-          : ref.read(glabServiceProvider).editIssue(repoPath, id, title: title),
+          ? ref
+                .read(ghServiceProvider)
+                .editIssue(repoPath, id, title: title, body: body)
+          : ref
+                .read(glabServiceProvider)
+                .editIssue(repoPath, id, title: title, description: body),
     );
     if (success) _invalidate(id);
   }
@@ -147,43 +162,22 @@ class ForgeIssueActions {
     if (success) _invalidate(id);
   }
 
-  /// "Start work": GitHub uses `gh issue develop --checkout` (a real linked
-  /// branch); GitLab has no such command, so it falls back to a local branch
-  /// named [issueBranchName] off HEAD. Both switch the working tree, so both
-  /// run behind the dirty-tree guard ([guardedBranchSwitch]) and refresh the
-  /// working-tree views afterwards.
+  /// "Start work": GitHub only — `gh issue develop --checkout` creates a real
+  /// issue-linked branch and checks it out. GitLab has no issue→branch command
+  /// and a bare local branch carries no forge link, so the action is hidden on
+  /// GitLab entirely (see [issueContextMenu] / [IssueDetailActions]); this
+  /// guards defensively against being called there. Switches the working tree,
+  /// so it runs behind the dirty-tree guard and refreshes afterwards.
   Future<void> startWork(BuildContext context, ForgeIssue issue) async {
     final id = issue.id;
-    if (id == null) return;
-    if (_isGithub) {
-      final gh = ref.read(ghServiceProvider);
-      await guardedBranchSwitch(
-        context,
-        ref,
-        repoPath,
-        () => gh.developIssueBranch(repoPath, id),
-      );
-    } else {
-      final branch = issueBranchName(id, issue.title);
-      // Make the fallback explicit — it creates a NEW local branch with no
-      // forge-side link (unlike gh issue develop), so name it up front.
-      final ok = await confirmAction(
-        context,
-        title: 'Start work on #$id',
-        message:
-            'GitLab has no issue→branch command. Create local branch "$branch" '
-            'off the current HEAD and check it out?',
-        confirmLabel: 'Create & check out',
-      );
-      if (!ok || !context.mounted) return;
-      final git = ref.read(gitServiceProvider);
-      await guardedBranchSwitch(
-        context,
-        ref,
-        repoPath,
-        () => git.createBranch(repoPath, branch),
-      );
-    }
+    if (id == null || !_isGithub) return;
+    final gh = ref.read(ghServiceProvider);
+    await guardedBranchSwitch(
+      context,
+      ref,
+      repoPath,
+      () => gh.developIssueBranch(repoPath, id),
+    );
     if (!context.mounted) return;
     refreshAfterMutation(ref, repoPath);
   }
@@ -227,11 +221,14 @@ List<ContextMenuEntry> issueContextMenu({
       ),
     if (id != null) ...[
       const ContextMenuDivider(),
-      ContextMenuItem(
-        icon: CupertinoIcons.arrow_branch,
-        label: 'Start work → create branch',
-        onTap: () => actions.startWork(context, issue),
-      ),
+      // Start work is GitHub-only: `gh issue develop` makes a real linked
+      // branch; GitLab has no equivalent, so it's hidden there.
+      if (forge == Forge.github)
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_branch,
+          label: 'Start work → create branch',
+          onTap: () => actions.startWork(context, issue),
+        ),
       ContextMenuItem(
         icon: CupertinoIcons.text_bubble,
         label: 'Comment…',
@@ -245,8 +242,8 @@ List<ContextMenuEntry> issueContextMenu({
         ),
       ContextMenuItem(
         icon: CupertinoIcons.pencil,
-        label: 'Edit title…',
-        onTap: () => actions.editTitle(context, issue),
+        label: 'Edit…',
+        onTap: () => actions.edit(context, issue),
       ),
       const ContextMenuDivider(),
       if (isOpen)
@@ -344,12 +341,14 @@ class _IssueDetailActionsState extends ConsumerState<IssueDetailActions> {
       runSpacing: 8,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        AppPushButton(
-          controlSize: ControlSize.large,
-          secondary: true,
-          onPressed: () => _run((a) => a.startWork(context, issue)),
-          child: const Text('Start work'),
-        ),
+        // Start work is GitHub-only (see startWork) — hidden on GitLab.
+        if (widget.forge == Forge.github)
+          AppPushButton(
+            controlSize: ControlSize.large,
+            secondary: true,
+            onPressed: () => _run((a) => a.startWork(context, issue)),
+            child: const Text('Start work'),
+          ),
         AppPushButton(
           controlSize: ControlSize.large,
           secondary: true,
@@ -372,8 +371,8 @@ class _IssueDetailActionsState extends ConsumerState<IssueDetailActions> {
           title: 'More',
           items: [
             MacosPulldownMenuItem(
-              title: const Text('Edit title…'),
-              onTap: () => _run((a) => a.editTitle(context, issue)),
+              title: const Text('Edit…'),
+              onTap: () => _run((a) => a.edit(context, issue)),
             ),
             if (widget.forge == Forge.github)
               MacosPulldownMenuItem(

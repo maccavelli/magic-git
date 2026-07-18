@@ -14,6 +14,7 @@ import '../common/branch_switch.dart';
 import '../common/buttons.dart';
 import '../common/context_menu.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/show_more_row.dart';
@@ -501,8 +502,8 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       ),
       ContextMenuItem(
         icon: CupertinoIcons.pencil,
-        label: 'Edit title…',
-        onTap: () => _editPrTitle(pr),
+        label: 'Edit…',
+        onTap: () => _editPr(pr),
       ),
       const ContextMenuDivider(),
       ContextMenuItem(
@@ -698,8 +699,8 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
           onTap: () => _setPrDraft(pr.number, draft: !pr.draft),
         ),
         MacosPulldownMenuItem(
-          title: const Text('Edit title…'),
-          onTap: () => _editPrTitle(pr),
+          title: const Text('Edit…'),
+          onTap: () => _editPr(pr),
         ),
         MacosPulldownMenuItem(
           title: const Text('Close'),
@@ -941,26 +942,51 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     setState(() => _busyPrs.remove(number));
   }
 
-  Future<void> _editPrTitle(PullRequest pr) async {
+  /// Full title + description edit. Fetches the current fields first (the list
+  /// query omits the body), then opens the shared multi-field [promptForm].
+  Future<void> _editPr(PullRequest pr) async {
     if (_busyPrs.contains(pr.number)) return;
     final repoPath = this.repoPath;
-    final title = await promptText(
-      context,
-      'Edit title of #${pr.number}',
-      placeholder: 'Pull request title',
-      initial: pr.title,
-      confirmLabel: 'Save',
-    );
-    if (title == null || title == pr.title || !mounted) return;
-    setState(() => _busyPrs.add(pr.number));
     final gh = ref.read(ghServiceProvider);
-    final success = await runAction(
-      context,
-      () => gh.editPullRequest(repoPath, pr.number, title: title),
-    );
-    if (!mounted) return;
-    setState(() => _busyPrs.remove(pr.number));
-    if (success) ref.invalidate(pullRequestsProvider(repoPath));
+    setState(() => _busyPrs.add(pr.number));
+    try {
+      ({String title, String body})? current;
+      final fetched = await runAction(context, () async {
+        current = await gh.pullRequestFields(repoPath, pr.number);
+      });
+      if (!fetched || current == null || !mounted) return;
+      final result = await promptForm(
+        context,
+        'Edit pull request #${pr.number}',
+        confirmLabel: 'Save',
+        fields: [
+          PromptField(
+            key: 'title',
+            label: 'Title',
+            initial: current!.title,
+            validate: (v) => v.isEmpty ? 'A title is required.' : null,
+          ),
+          PromptField(
+            key: 'body',
+            label: 'Description',
+            initial: current!.body,
+            placeholder: 'Describe the change…',
+            multiline: true,
+          ),
+        ],
+      );
+      if (result == null || !mounted) return;
+      final title = result['title']!;
+      final body = result['body']!;
+      if (title == current!.title && body == current!.body) return;
+      final success = await runAction(
+        context,
+        () => gh.editPullRequest(repoPath, pr.number, title: title, body: body),
+      );
+      if (success && mounted) ref.invalidate(pullRequestsProvider(repoPath));
+    } finally {
+      if (mounted) setState(() => _busyPrs.remove(pr.number));
+    }
   }
 
   /// Checks out the PR's branch (`gh pr checkout`) behind the dirty-tree
