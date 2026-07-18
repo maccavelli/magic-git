@@ -189,6 +189,17 @@ void main() {
     expect(find.text('Select a job to view its log'), findsOneWidget);
   });
 
+  testWidgets('left-pane sections list in the canonical order', (tester) async {
+    await _pump(tester);
+    double y(String label) => tester.getTopLeft(find.text(label)).dy;
+    // Issues → Pull Requests → Labels → Milestones → Releases → Workflow Runs.
+    expect(y('Issues'), lessThan(y('Pull Requests')));
+    expect(y('Pull Requests'), lessThan(y('Labels')));
+    expect(y('Labels'), lessThan(y('Milestones')));
+    expect(y('Milestones'), lessThan(y('Releases')));
+    expect(y('Releases'), lessThan(y('Workflow Runs')));
+  });
+
   testWidgets('selecting a PR opens its detail with actions', (tester) async {
     await _pump(tester);
     await tester.tap(find.text('Add the parser'));

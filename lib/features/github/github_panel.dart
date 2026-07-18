@@ -270,57 +270,11 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         ),
         if (inboxMode)
           ..._inboxChildren(prs, runs, runByBranch)
-        else ...[
-          ForgeSectionHeader(
-            'Pull Requests',
-            count: forgeCountLabel(prs.value?.length, null),
-            collapsed: prsCollapsed,
-            onToggleCollapsed: () => toggle(ForgeSections.changeRequests),
-            onRefresh: () => ref.invalidate(pullRequestsProvider(repoPath)),
-            onAdd: _createPr,
-            addTooltip: 'New pull request',
-          ),
-          if (!prsCollapsed)
-            asyncListSection(
-              prs,
-              _filterQuery.trim().isEmpty
-                  ? 'No open pull requests'
-                  : 'No matching pull requests',
-              (pr) => _prRow(pr, _headRunFor(pr, runByBranch)),
-              where: prMatches,
-            ),
-          const SizedBox(height: 16),
-          ForgeSectionHeader(
-            'Workflow Runs',
-            count: forgeCountLabel(runs.value?.length, null),
-            collapsed: ciCollapsed,
-            onToggleCollapsed: () => toggle(ForgeSections.ci),
-            onRefresh: () => ref.invalidate(workflowRunsProvider(repoPath)),
-          ),
-          // Newest 10 by default; "Show more" re-fetches the same provider with
-          // the full (bounded) history — see GitLabPanel._leftPane for the
-          // skipLoadingOnReload / busy-row reasoning.
-          if (!ciCollapsed) ...[
-            asyncListSection(
-              runs,
-              _filterQuery.trim().isEmpty
-                  ? 'No recent workflow runs'
-                  : 'No matching workflow runs',
-              (r) => _runRow(r),
-              where: runMatches,
-              skipLoadingOnReload: true,
-              limit: fullHistory ? null : _collapsedRunCount,
-              overflow: (hidden) => ShowMoreRow(
-                label: 'Show all workflow runs',
-                onTap: () => ref
-                    .read(workflowRunsScopeProvider(repoPath).notifier)
-                    .expand(),
-              ),
-            ),
-            if (fullHistory && runs.isLoading)
-              const ShowMoreRow(label: 'Loading run history…', busy: true),
-          ],
-          const SizedBox(height: 16),
+        else
+          // Canonical section order (Issues → Pull Requests → Labels →
+          // Milestones → Releases → Workflow Runs) is composed by
+          // projectSectionChildren; the two forge-specific blocks are built
+          // here and slotted in.
           ...projectSectionChildren(
             ref: ref,
             repoPath: repoPath,
@@ -331,8 +285,59 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
             collapsed: collapsed,
             onToggleCollapsed: toggle,
             onCreateIssue: () => _select(const ForgeCreatingIssue()),
+            changeRequests: [
+              ForgeSectionHeader(
+                'Pull Requests',
+                count: forgeCountLabel(prs.value?.length, null),
+                collapsed: prsCollapsed,
+                onToggleCollapsed: () => toggle(ForgeSections.changeRequests),
+                onRefresh: () => ref.invalidate(pullRequestsProvider(repoPath)),
+                onAdd: _createPr,
+                addTooltip: 'New pull request',
+              ),
+              if (!prsCollapsed)
+                asyncListSection(
+                  prs,
+                  _filterQuery.trim().isEmpty
+                      ? 'No open pull requests'
+                      : 'No matching pull requests',
+                  (pr) => _prRow(pr, _headRunFor(pr, runByBranch)),
+                  where: prMatches,
+                ),
+            ],
+            ci: [
+              ForgeSectionHeader(
+                'Workflow Runs',
+                count: forgeCountLabel(runs.value?.length, null),
+                collapsed: ciCollapsed,
+                onToggleCollapsed: () => toggle(ForgeSections.ci),
+                onRefresh: () => ref.invalidate(workflowRunsProvider(repoPath)),
+              ),
+              // Newest 10 by default; "Show more" re-fetches the same provider
+              // with the full (bounded) history — see GitLabPanel._leftPane for
+              // the skipLoadingOnReload / busy-row reasoning.
+              if (!ciCollapsed) ...[
+                asyncListSection(
+                  runs,
+                  _filterQuery.trim().isEmpty
+                      ? 'No recent workflow runs'
+                      : 'No matching workflow runs',
+                  (r) => _runRow(r),
+                  where: runMatches,
+                  skipLoadingOnReload: true,
+                  limit: fullHistory ? null : _collapsedRunCount,
+                  overflow: (hidden) => ShowMoreRow(
+                    label: 'Show all workflow runs',
+                    onTap: () => ref
+                        .read(workflowRunsScopeProvider(repoPath).notifier)
+                        .expand(),
+                  ),
+                ),
+                if (fullHistory && runs.isLoading)
+                  const ShowMoreRow(label: 'Loading run history…', busy: true),
+              ],
+            ],
           ),
-        ],
       ],
     );
   }

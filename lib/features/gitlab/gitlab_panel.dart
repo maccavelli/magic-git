@@ -305,58 +305,11 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         ),
         if (inboxMode)
           ..._inboxChildren(mrs, pipelines, pipeByRef)
-        else ...[
-          ForgeSectionHeader(
-            'Merge Requests',
-            count: forgeCountLabel(mrs.value?.length, null),
-            collapsed: mrsCollapsed,
-            onToggleCollapsed: () => toggle(ForgeSections.changeRequests),
-            onRefresh: () => ref.invalidate(mergeRequestsProvider(repoPath)),
-            onAdd: _createMr,
-            addTooltip: 'New merge request',
-          ),
-          if (!mrsCollapsed)
-            asyncListSection(
-              mrs,
-              _filterQuery.trim().isEmpty
-                  ? 'No open merge requests'
-                  : 'No matching merge requests',
-              (mr) => _mrRow(mr, _headPipelineFor(mr, pipeByRef)),
-              where: mrMatches,
-            ),
-          const SizedBox(height: 16),
-          ForgeSectionHeader(
-            'Pipelines',
-            count: forgeCountLabel(pipelines.value?.length, null),
-            collapsed: ciCollapsed,
-            onToggleCollapsed: () => toggle(ForgeSections.ci),
-            onRefresh: () => ref.invalidate(pipelinesProvider(repoPath)),
-          ),
-          // Newest 10 by default; "Show more" flips the scope notifier, which
-          // re-fetches this same provider with the full (bounded) history —
-          // skipLoadingOnReload keeps the current rows up while that runs, and
-          // the busy row below is the only loading signal.
-          if (!ciCollapsed) ...[
-            asyncListSection(
-              pipelines,
-              _filterQuery.trim().isEmpty
-                  ? 'No recent pipelines'
-                  : 'No matching pipelines',
-              (p) => _pipelineRow(p),
-              where: pipelineMatches,
-              skipLoadingOnReload: true,
-              limit: fullHistory ? null : _collapsedPipelineCount,
-              overflow: (hidden) => ShowMoreRow(
-                label: 'Show all pipelines',
-                onTap: () => ref
-                    .read(pipelinesScopeProvider(repoPath).notifier)
-                    .expand(),
-              ),
-            ),
-            if (fullHistory && pipelines.isLoading)
-              const ShowMoreRow(label: 'Loading pipeline history…', busy: true),
-          ],
-          const SizedBox(height: 16),
+        else
+          // Canonical section order (Issues → Merge Requests → Labels →
+          // Milestones → Releases → Pipelines) is composed by
+          // projectSectionChildren; the two forge-specific blocks are built
+          // here and slotted in.
           ...projectSectionChildren(
             ref: ref,
             repoPath: repoPath,
@@ -367,8 +320,63 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
             collapsed: collapsed,
             onToggleCollapsed: toggle,
             onCreateIssue: () => _select(const ForgeCreatingIssue()),
+            changeRequests: [
+              ForgeSectionHeader(
+                'Merge Requests',
+                count: forgeCountLabel(mrs.value?.length, null),
+                collapsed: mrsCollapsed,
+                onToggleCollapsed: () => toggle(ForgeSections.changeRequests),
+                onRefresh: () => ref.invalidate(mergeRequestsProvider(repoPath)),
+                onAdd: _createMr,
+                addTooltip: 'New merge request',
+              ),
+              if (!mrsCollapsed)
+                asyncListSection(
+                  mrs,
+                  _filterQuery.trim().isEmpty
+                      ? 'No open merge requests'
+                      : 'No matching merge requests',
+                  (mr) => _mrRow(mr, _headPipelineFor(mr, pipeByRef)),
+                  where: mrMatches,
+                ),
+            ],
+            ci: [
+              ForgeSectionHeader(
+                'Pipelines',
+                count: forgeCountLabel(pipelines.value?.length, null),
+                collapsed: ciCollapsed,
+                onToggleCollapsed: () => toggle(ForgeSections.ci),
+                onRefresh: () => ref.invalidate(pipelinesProvider(repoPath)),
+              ),
+              // Newest 10 by default; "Show more" flips the scope notifier,
+              // which re-fetches this same provider with the full (bounded)
+              // history — skipLoadingOnReload keeps the current rows up while
+              // that runs, and the busy row below is the only loading signal.
+              if (!ciCollapsed) ...[
+                asyncListSection(
+                  pipelines,
+                  _filterQuery.trim().isEmpty
+                      ? 'No recent pipelines'
+                      : 'No matching pipelines',
+                  (p) => _pipelineRow(p),
+                  where: pipelineMatches,
+                  skipLoadingOnReload: true,
+                  limit: fullHistory ? null : _collapsedPipelineCount,
+                  overflow: (hidden) => ShowMoreRow(
+                    label: 'Show all pipelines',
+                    onTap: () => ref
+                        .read(pipelinesScopeProvider(repoPath).notifier)
+                        .expand(),
+                  ),
+                ),
+                if (fullHistory && pipelines.isLoading)
+                  const ShowMoreRow(
+                    label: 'Loading pipeline history…',
+                    busy: true,
+                  ),
+              ],
+            ],
           ),
-        ],
       ],
     );
   }

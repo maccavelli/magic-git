@@ -47,9 +47,14 @@ String? forgeCountLabel(int? fetched, int? total) {
   return '$fetched';
 }
 
-/// The issue/milestone/label/release list sections, as children for the
-/// panel's master ListView. The caller owns selection, filtering, and the
-/// collapse store; this renders against them.
+/// The full non-inbox left-pane list, as children for the panel's master
+/// ListView, in the canonical section order: **Issues → change requests →
+/// Labels → Milestones → Releases → CI**. Issues/Labels/Milestones/Releases
+/// are forge-neutral and built here; the forge-specific [changeRequests]
+/// (Pull Requests / Merge Requests) and [ci] (Workflow Runs / Pipelines)
+/// blocks are built by the caller and slotted into positions 2 and 6. The
+/// caller owns selection, filtering, and the collapse store; this renders
+/// against them.
 List<Widget> projectSectionChildren({
   required WidgetRef ref,
   required String repoPath,
@@ -60,6 +65,8 @@ List<Widget> projectSectionChildren({
   required Set<String> collapsed,
   required void Function(String) onToggleCollapsed,
   required VoidCallback onCreateIssue,
+  required List<Widget> changeRequests,
+  required List<Widget> ci,
 }) {
   const collapsedCount = 10;
   final dashboard = forge == Forge.github
@@ -90,6 +97,7 @@ List<Widget> projectSectionChildren({
     // Partial-data GraphQL warning, same as the create forms show: the
     // labels/releases below may be incomplete rather than genuinely absent.
     if (data?.warning != null) DashboardWarningBanner(data!.warning!),
+    // 1. Issues.
     ForgeSectionHeader(
       'Issues',
       count: forgeCountLabel(issues.value?.length, data?.issuesTotal),
@@ -126,6 +134,32 @@ List<Widget> projectSectionChildren({
         ),
     ],
     const SizedBox(height: 16),
+    // 2. Change requests (Pull Requests / Merge Requests) — forge-specific,
+    //    built by the caller.
+    ...changeRequests,
+    const SizedBox(height: 16),
+    // 3. Labels.
+    ForgeSectionHeader(
+      'Labels',
+      count: forgeCountLabel(data?.labels.length, data?.labelsTotal),
+      collapsed: labelsCollapsed,
+      onToggleCollapsed: () => onToggleCollapsed(ForgeSections.labels),
+      onRefresh: refreshDashboard,
+    ),
+    if (!labelsCollapsed)
+      // A plain Wrap bounded by this (resizable) master pane: chips flow to
+      // the next row at the divider and re-lay-out as the divider is dragged.
+      _dashboardSection(
+        dashboard,
+        (d) => _LabelsWrap(
+          labels: [
+            for (final l in d.labels)
+              if (forgeFilterMatch(filter, [l.name])) l,
+          ],
+        ),
+      ),
+    const SizedBox(height: 16),
+    // 4. Milestones.
     ForgeSectionHeader(
       'Milestones',
       count: forgeCountLabel(milestones.value?.length, data?.milestonesTotal),
@@ -152,26 +186,7 @@ List<Widget> projectSectionChildren({
         const ShowMoreRow(label: 'Loading milestones…', busy: true),
     ],
     const SizedBox(height: 16),
-    ForgeSectionHeader(
-      'Labels',
-      count: forgeCountLabel(data?.labels.length, data?.labelsTotal),
-      collapsed: labelsCollapsed,
-      onToggleCollapsed: () => onToggleCollapsed(ForgeSections.labels),
-      onRefresh: refreshDashboard,
-    ),
-    if (!labelsCollapsed)
-      // A plain Wrap bounded by this (resizable) master pane: chips flow to
-      // the next row at the divider and re-lay-out as the divider is dragged.
-      _dashboardSection(
-        dashboard,
-        (d) => _LabelsWrap(
-          labels: [
-            for (final l in d.labels)
-              if (forgeFilterMatch(filter, [l.name])) l,
-          ],
-        ),
-      ),
-    const SizedBox(height: 16),
+    // 5. Releases.
     ForgeSectionHeader(
       'Releases',
       count: forgeCountLabel(data?.releases.length, data?.releasesTotal),
@@ -189,6 +204,9 @@ List<Widget> projectSectionChildren({
             ? const SectionEmpty('No releases')
             : Column(children: [for (final r in visible) _releaseRow(r)]);
       }),
+    const SizedBox(height: 16),
+    // 6. CI (Workflow Runs / Pipelines) — forge-specific, built by the caller.
+    ...ci,
   ];
 }
 
