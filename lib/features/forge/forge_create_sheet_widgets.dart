@@ -160,12 +160,18 @@ class SheetSubmitRow extends StatelessWidget {
   final VoidCallback onSubmit;
   final String submitLabel;
 
+  /// What Cancel does. Defaults to popping the enclosing route (the create
+  /// sheets), but a pane-hosted form (the Project tab's inline issue create)
+  /// has no route to pop and passes its own dismiss callback instead.
+  final VoidCallback? onCancel;
+
   const SheetSubmitRow({
     super.key,
     required this.submitting,
     required this.canSubmit,
     required this.onSubmit,
     this.submitLabel = 'Create',
+    this.onCancel,
   });
 
   @override
@@ -177,9 +183,11 @@ class SheetSubmitRow extends StatelessWidget {
           controlSize: ControlSize.large,
           secondary: true,
           // Disabled while a submit is in flight: cancelling then would orphan
-          // a PR/MR that still gets created on the remote (and the sheet's
+          // a PR/MR/issue that still gets created on the remote (and the sheet's
           // Escape key is likewise suppressed while submitting).
-          onPressed: submitting ? null : () => Navigator.of(context).pop(),
+          onPressed: submitting
+              ? null
+              : (onCancel ?? () => Navigator.of(context).pop()),
           child: const Text('Cancel'),
         ),
         const SizedBox(width: 8),

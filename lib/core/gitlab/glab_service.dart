@@ -997,6 +997,126 @@ query($path: ID!) {
     }
   }
 
+  // ---- Issues & milestones -------------------------------------------------
+
+  /// Open issues for the current project via `glab issue list --output json`
+  /// (the machine contract, not human text). Same bounded page-walk as
+  /// [mergeRequests]: [allHistory] walks every page (to [_maxListPages]);
+  /// otherwise it returns just the newest [perPage] (one page) for the panel's
+  /// collapsed view.
+  Future<List<ForgeIssue>> listIssues(
+    String repoPath, {
+    int perPage = 30,
+    bool allHistory = false,
+  }) async {
+    final all = <ForgeIssue>[];
+    for (var page = 1; page <= _maxListPages; page++) {
+      final decoded = await _runJson(repoPath, [
+        'glab',
+        'issue',
+        'list',
+        '--output',
+        'json',
+        '--per-page',
+        '$perPage',
+        '--page',
+        '$page',
+      ], 'glab issue list');
+      final batch = _mapList(
+        decoded,
+        ForgeIssue.fromGlabCli,
+        label: 'glab issue list',
+      );
+      all.addAll(batch);
+      // Collapsed view stops after page 1; full history walks until a short
+      // page marks the end.
+      if (!allHistory || batch.length < perPage) break;
+    }
+    return all;
+  }
+
+  /// A single issue including its description body. Powers the detail pane (the
+  /// list queries omit the body): `glab issue view <iid> -F json`.
+  Future<ForgeIssue> issueDetail(String repoPath, int iid) async {
+    final decoded = await _runJson(repoPath, [
+      'glab',
+      'issue',
+      'view',
+      '$iid',
+      '-F',
+      'json',
+    ], 'glab issue view');
+    if (decoded is Map<String, dynamic>) return ForgeIssue.fromGlabCli(decoded);
+    throw const GlabException(
+      'glab issue view: expected a JSON object',
+      SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+    );
+  }
+
+  /// Open milestones for the current project via the REST passthrough
+  /// (`projects/:id/milestones?state=active`). Page-walked like [listIssues];
+  /// the REST payload already carries each milestone's description, so no
+  /// separate detail fetch is needed.
+  Future<List<ForgeMilestone>> listMilestones(
+    String repoPath, {
+    int perPage = 30,
+    bool allHistory = false,
+  }) async {
+    final all = <ForgeMilestone>[];
+    for (var page = 1; page <= _maxListPages; page++) {
+      final decoded = await api(
+        repoPath,
+        'projects/:id/milestones',
+        fields: ['state=active', 'per_page=$perPage', 'page=$page'],
+      );
+      final batch = _mapList(
+        decoded,
+        ForgeMilestone.fromGlabRest,
+        label: 'projects/:id/milestones',
+      );
+      all.addAll(batch);
+      if (!allHistory || batch.length < perPage) break;
+    }
+    return all;
+  }
+
+  /// Creates an issue via `glab issue create`. Mirrors [createMergeRequest]'s
+  /// argv convention (no `--end-of-options`: glab's pflag parser binds the
+  /// token after a value-taking flag as that flag's literal value). Like it,
+  /// `--description` is passed only when non-empty — glab creates the issue
+  /// non-interactively from `--title` alone over the (PTY-less) exec channel.
+  Future<void> createIssue(
+    String repoPath, {
+    required String title,
+    String description = '',
+    List<String> labels = const [],
+    List<String> assignees = const [],
+    String? milestone,
+  }) async {
+    final args = <String>[
+      'glab',
+      'issue',
+      'create',
+      '--title',
+      title,
+      if (description.isNotEmpty) ...['--description', description],
+      if (labels.isNotEmpty) ...['--label', labels.join(',')],
+      if (assignees.isNotEmpty) ...['--assignee', assignees.join(',')],
+      if (milestone != null && milestone.isNotEmpty) ...[
+        '--milestone',
+        milestone,
+      ],
+    ];
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: args,
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GlabException('glab issue create failed', result);
+    }
+  }
+
   /// Checks out an MR's source branch locally via `glab mr checkout <iid>`, so
   /// a reviewer can pull it down and test without the manual fetch/branch dance.
   /// Switches the working tree to the MR branch — callers should guard against a

@@ -33,12 +33,18 @@ class ForgeIssue {
   final String? author;
   final List<String> labels;
 
+  /// The issue description/body. Null on list rows (the list queries don't
+  /// carry it) — populated only by a single-issue detail fetch (see
+  /// [ForgeIssue.fromGlabCli] / [ForgeIssue.fromGhCli]).
+  final String? body;
+
   const ForgeIssue({
     required this.id,
     required this.title,
     required this.state,
     this.author,
     this.labels = const [],
+    this.body,
   });
 
   /// From a GitHub GraphQL `Issue` node.
@@ -66,12 +72,57 @@ class ForgeIssue {
     );
   }
 
+  /// From a `glab issue list` / `glab issue view -F json` object (GitLab REST
+  /// shape, distinct from the GraphQL dashboard node): `iid` is a number,
+  /// `labels` a bare array of name strings, `author` an object with
+  /// `username`. [body] comes from `description`, present on a single-issue
+  /// `view` and absent (→ null) on list rows.
+  factory ForgeIssue.fromGlabCli(Map<String, dynamic> n) {
+    final author = n['author'];
+    return ForgeIssue(
+      id: jsonIntOrNull(n['iid']),
+      title: n['title'] as String? ?? '',
+      state: (n['state'] as String? ?? 'opened').toLowerCase(),
+      author: author is Map ? author['username'] as String? : null,
+      labels: _cliLabelNames(n['labels']),
+      body: (n['description'] as String?)?.trimRight(),
+    );
+  }
+
+  /// From a `gh issue list` / `gh issue view --json` object (GitHub CLI shape):
+  /// `number`, `labels` an array of `{name}` objects, `author` an object with
+  /// `login`. [body] comes from the `body` field, requested only for the
+  /// single-issue detail view.
+  factory ForgeIssue.fromGhCli(Map<String, dynamic> n) {
+    final author = n['author'];
+    return ForgeIssue(
+      id: jsonIntOrNull(n['number']),
+      title: n['title'] as String? ?? '',
+      state: (n['state'] as String? ?? 'open').toLowerCase(),
+      author: author is Map ? author['login'] as String? : null,
+      labels: _cliLabelNames(n['labels']),
+      body: (n['body'] as String?)?.trimRight(),
+    );
+  }
+
   /// The names inside an issue's nested label connection — GitHub calls the
   /// name field `name`, GitLab `title`.
   static List<String> _labelNames(dynamic connection, String field) =>
       graphqlNodes(connection, (l) => l[field] as String? ?? '')
           .where((s) => s.isNotEmpty)
           .toList();
+
+  /// Label names from a REST/CLI `labels` array — GitLab issues send bare name
+  /// strings (`["bug","ui"]`), GitHub sends `{name}` objects. Handles both and
+  /// drops blanks.
+  static List<String> _cliLabelNames(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .map((e) => e is String ? e : (e is Map ? e['name'] as String? : null))
+        .whereType<String>()
+        .where((s) => s.isNotEmpty)
+        .toList();
+  }
 }
 
 /// A project/repository label. [color] is normalized to `#RRGGBB` (see
@@ -115,11 +166,17 @@ class ForgeMilestone {
   /// GitLab's `dueDate` is already date-only.
   final String? due;
 
+  /// The milestone description. Null on the GraphQL dashboard nodes (not
+  /// fetched there) — populated by the REST list factories
+  /// ([ForgeMilestone.fromGlabRest] / [ForgeMilestone.fromGhRest]).
+  final String? description;
+
   const ForgeMilestone({
     required this.id,
     required this.title,
     required this.state,
     this.due,
+    this.description,
   });
 
   /// From a GitHub GraphQL `Milestone` node.
@@ -137,6 +194,27 @@ class ForgeMilestone {
     title: n['title'] as String? ?? '',
     state: (n['state'] as String? ?? 'active').toLowerCase(),
     due: _dateOnly(n['dueDate'] as String?),
+  );
+
+  /// From a `glab api projects/:id/milestones` REST object: `iid` is a number,
+  /// `state` active/closed, `due_date` already date-only, plus `description`.
+  factory ForgeMilestone.fromGlabRest(Map<String, dynamic> n) => ForgeMilestone(
+    id: jsonIntOrNull(n['iid']),
+    title: n['title'] as String? ?? '',
+    state: (n['state'] as String? ?? 'active').toLowerCase(),
+    due: _dateOnly(n['due_date'] as String?),
+    description: (n['description'] as String?)?.trimRight(),
+  );
+
+  /// From a `gh api repos/{owner}/{repo}/milestones` REST object: `number`,
+  /// `state` open/closed, `due_on` a full ISO timestamp (→ date-only), plus
+  /// `description`.
+  factory ForgeMilestone.fromGhRest(Map<String, dynamic> n) => ForgeMilestone(
+    id: jsonIntOrNull(n['number']),
+    title: n['title'] as String? ?? '',
+    state: (n['state'] as String? ?? 'open').toLowerCase(),
+    due: _dateOnly(n['due_on'] as String?),
+    description: (n['description'] as String?)?.trimRight(),
   );
 }
 

@@ -553,6 +553,106 @@ class GhService {
     }
   }
 
+  // ---- Issues & milestones -------------------------------------------------
+
+  /// Open issues for the current repo via `gh issue list --json`. Like
+  /// [pullRequests], `gh` paginates internally, so a single [limit] is the
+  /// whole mechanism — [allHistory] (the panel's "Show more") raises it to
+  /// [fullHistoryLimit].
+  Future<List<ForgeIssue>> listIssues(
+    String repoPath, {
+    int limit = 30,
+    bool allHistory = false,
+  }) async {
+    if (allHistory) limit = fullHistoryLimit;
+    final decoded = await _runJson(repoPath, [
+      'gh',
+      'issue',
+      'list',
+      '--state',
+      'open',
+      '--json',
+      'number,title,state,author,labels',
+      '--limit',
+      '$limit',
+    ], 'gh issue list');
+    return _mapList(decoded, ForgeIssue.fromGhCli, label: 'gh issue list');
+  }
+
+  /// A single issue including its body, via `gh issue view <number> --json`.
+  /// Powers the detail pane (the list query omits `body` to stay light).
+  Future<ForgeIssue> issueDetail(String repoPath, int number) async {
+    final decoded = await _runJson(repoPath, [
+      'gh',
+      'issue',
+      'view',
+      '$number',
+      '--json',
+      'number,title,state,author,labels,body',
+    ], 'gh issue view');
+    if (decoded is Map<String, dynamic>) return ForgeIssue.fromGhCli(decoded);
+    throw const GhException(
+      'gh issue view: expected a JSON object',
+      SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+    );
+  }
+
+  /// Open milestones for the current repo via the REST passthrough. GitHub has
+  /// no `gh milestone` command, so this uses `gh api …/milestones`; the payload
+  /// already carries each milestone's description. [allHistory] follows every
+  /// page (`--paginate`); otherwise the newest [perPage].
+  Future<List<ForgeMilestone>> listMilestones(
+    String repoPath, {
+    int perPage = 30,
+    bool allHistory = false,
+  }) async {
+    final decoded = await api(
+      repoPath,
+      'repos/{owner}/{repo}/milestones',
+      fields: ['state=open', 'per_page=${allHistory ? 100 : perPage}'],
+      paginate: allHistory,
+    );
+    return _mapList(
+      decoded,
+      ForgeMilestone.fromGhRest,
+      label: 'repos/{owner}/{repo}/milestones',
+    );
+  }
+
+  /// Creates an issue via `gh issue create`. Like [createPullRequest], `--body`
+  /// is always passed (empty when none) so `gh` never drops into an interactive
+  /// editor, and no `--end-of-options` guard is added (cobra/pflag binds the
+  /// token after a value-taking flag as its literal value).
+  Future<void> createIssue(
+    String repoPath, {
+    required String title,
+    String body = '',
+    List<String> labels = const [],
+    List<String> assignees = const [],
+    String? milestone,
+  }) async {
+    final args = <String>[
+      'gh',
+      'issue',
+      'create',
+      '--title',
+      title,
+      '--body',
+      body,
+      for (final l in labels) ...['--label', l],
+      for (final a in assignees) ...['--assignee', a],
+      if (milestone != null && milestone.isNotEmpty) ...['--milestone', milestone],
+    ];
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: args,
+      lane: ExecLane.sync,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh issue create failed', result);
+    }
+  }
+
   /// Approves a pull request via `gh pr review --approve`. (GitHub rejects
   /// approving your own PR; that surfaces as a [GhException] the UI shows.)
   Future<void> approvePullRequest(String repoPath, int number) async {

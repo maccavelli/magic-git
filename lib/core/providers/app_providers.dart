@@ -2244,6 +2244,9 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   pipelinesProvider,
   jobsProvider,
   projectDashboardProvider,
+  projectIssuesProvider,
+  projectMilestonesProvider,
+  issueDetailProvider,
   forgeProvider,
   forgeRepoListProvider,
   pullRequestsProvider,
@@ -3853,4 +3856,77 @@ final githubProjectDashboardProvider = FutureProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       await _forgeAuthReady(ref);
       return gh.projectDashboard(repoPath);
+    });
+
+// ---- Project tab: forge-neutral issue/milestone lists ----------------------
+// The Project panel is a single forge-agnostic master-detail widget (unlike the
+// per-forge Forge panels), so these providers dispatch to gh/glab internally
+// off forgeProvider rather than existing as per-forge twins the panel selects.
+
+/// Whether the Project tab's issue list has been expanded to full history via
+/// its "Show more" row — reuses [CiHistoryScope] (the same expand-once bool the
+/// pipelines list uses). Watched by [projectIssuesProvider] rather than being a
+/// family-key member, so expanding re-fetches in place and keeps current rows.
+final projectIssuesScopeProvider = NotifierProvider.autoDispose
+    .family<CiHistoryScope, bool, String>(CiHistoryScope.new);
+
+/// Open issues for the connected project (forge-neutral): one newest page by
+/// default, the bounded full history once [projectIssuesScopeProvider] is set.
+final projectIssuesProvider = FutureProvider.autoDispose
+    .family<List<ForgeIssue>, String>((ref, repoPath) async {
+      final gh = ref.watch(ghServiceProvider);
+      final glab = ref.watch(glabServiceProvider);
+      final allHistory = ref.watch(projectIssuesScopeProvider(repoPath));
+      // forgeProvider already awaits _forgeAuthReady, so once it resolves the
+      // forge CLI login has landed — no separate auth gate needed here.
+      switch (await ref.watch(forgeProvider(repoPath).future)) {
+        case Forge.github:
+          return gh.listIssues(repoPath, allHistory: allHistory);
+        case Forge.gitlab:
+          return glab.listIssues(repoPath, allHistory: allHistory);
+        case Forge.none:
+        case Forge.unknown:
+          return const <ForgeIssue>[];
+      }
+    });
+
+/// "Show more" scope for the Project tab's milestone list (see
+/// [projectIssuesScopeProvider]).
+final projectMilestonesScopeProvider = NotifierProvider.autoDispose
+    .family<CiHistoryScope, bool, String>(CiHistoryScope.new);
+
+/// Open milestones for the connected project (forge-neutral); paginated like
+/// [projectIssuesProvider].
+final projectMilestonesProvider = FutureProvider.autoDispose
+    .family<List<ForgeMilestone>, String>((ref, repoPath) async {
+      final gh = ref.watch(ghServiceProvider);
+      final glab = ref.watch(glabServiceProvider);
+      final allHistory = ref.watch(projectMilestonesScopeProvider(repoPath));
+      switch (await ref.watch(forgeProvider(repoPath).future)) {
+        case Forge.github:
+          return gh.listMilestones(repoPath, allHistory: allHistory);
+        case Forge.gitlab:
+          return glab.listMilestones(repoPath, allHistory: allHistory);
+        case Forge.none:
+        case Forge.unknown:
+          return const <ForgeMilestone>[];
+      }
+    });
+
+/// A single issue with its description body, fetched lazily when the Project
+/// tab selects an issue row. Keyed by (repoPath, issue number/iid).
+final issueDetailProvider = FutureProvider.autoDispose
+    .family<ForgeIssue, (String, int)>((ref, key) async {
+      final (repoPath, id) = key;
+      final gh = ref.watch(ghServiceProvider);
+      final glab = ref.watch(glabServiceProvider);
+      switch (await ref.watch(forgeProvider(repoPath).future)) {
+        case Forge.github:
+          return gh.issueDetail(repoPath, id);
+        case Forge.gitlab:
+          return glab.issueDetail(repoPath, id);
+        case Forge.none:
+        case Forge.unknown:
+          throw StateError('No forge configured for this repository.');
+      }
     });
