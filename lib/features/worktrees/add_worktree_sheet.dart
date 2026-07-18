@@ -16,6 +16,7 @@ import '../common/field_styles.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
 import 'worktree_access.dart';
+import 'worktree_paths.dart';
 import 'worktree_tabs.dart';
 
 /// How the new worktree's HEAD is chosen.
@@ -199,7 +200,9 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     final path = _destination;
     if (path.isEmpty) return null;
     final repo = widget.repoPath;
-    if (path == repo || path.startsWith('$repo/')) {
+    // Symlink-insensitive (isInsideRepo canonicalizes both sides): a /tmp
+    // alias of the repo's real /private/tmp path must not slip past.
+    if (isInsideRepo(path, repo)) {
       return 'Choose a folder outside the repository — a worktree inside it '
           "would show up as untracked files in the repository's own status.";
     }

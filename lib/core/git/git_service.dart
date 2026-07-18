@@ -1417,36 +1417,9 @@ class GitService {
     if (globs.isEmpty) {
       return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
     }
-    final pathspecs = globs.map(ShellEscaper.escape).join(' ');
-    // [ShellEscaper.escape] returns a value that is ALREADY a complete shell
-    // token — it wraps the path in single quotes. Interpolating that into a
-    // double-quoted string ("$dest/…") would nest the quotes and make them part
-    // of the path: `cp` then wrote to a directory literally named `'` inside the
-    // source repo. So bind it to a shell variable via a bare assignment (where
-    // the quoting is exactly right) and dereference it as "$dest" from then on.
-    final destAssign = 'dest=${ShellEscaper.escape(to)}';
-    // -z + `read -d ''` so a filename with a space or newline survives.
-    //
-    // A pipeline's exit status is its LAST command's, and a `while` loop's is
-    // its last iteration's — so without care a failed `git ls-files`, or a
-    // `cp` that failed on any file but the final one, reports success. Hence:
-    // pipefail (guarded — `read -d ''` already assumes a bash-like sh, but a
-    // shell without the option must not die on the `set` itself) surfaces the
-    // ls-files side, and the loop records its own failures in `fail` and exits
-    // with it — one bad copy fails the whole step, after still attempting the
-    // rest.
-    final script =
-        '$destAssign; '
-        'set -o pipefail 2>/dev/null; fail=0; '
-        'git ls-files -z --others --ignored --exclude-standard -- $pathspecs | '
-        '{ while IFS= read -r -d "" f; do '
-        'if mkdir -p "\$dest/\$(dirname "\$f")" && cp -R "\$f" "\$dest/\$f"; '
-        'then printf \'copied %s\\n\' "\$f"; '
-        'else printf \'failed %s\\n\' "\$f" >&2; fail=1; fi; '
-        'done; exit "\$fail"; }';
     return _run(
       from,
-      ['sh', '-c', script],
+      ['sh', '-c', copyIgnoredFilesScript(to: to, globs: globs)],
       'Copy ignored files into the worktree',
       timeout: defaultCommitTimeout,
       // Isolated, like [runInWorktree] and for the same reason: it writes
@@ -1456,6 +1429,54 @@ class GitService {
       // This call site was missed when the isolated lane was introduced.
       lane: ExecLane.isolated,
     );
+  }
+
+  /// The copy pipeline for [copyIgnoredFiles], separated so the dash-compat
+  /// test can execute it under `/bin/dash` directly.
+  ///
+  /// It MUST stay POSIX-sh clean: the service runs it via `sh -c`, and on
+  /// Debian-family remotes `sh` is **dash**. The previous bash-only
+  /// `while read -r -d ''` loop errored instantly there — the loop body never
+  /// ran, `fail` stayed 0, and the step reported SUCCESS having copied
+  /// nothing, which is precisely the silent-missing-`.env` state this feature
+  /// exists to prevent. `xargs -0` provides the NUL-safe iteration instead
+  /// (universally available; on empty input BSD xargs runs nothing and GNU
+  /// runs once with no file operand, which the `$#` guard turns into a
+  /// clean exit — a glob matching nothing must not be an error).
+  ///
+  /// Failure contract, unchanged: each copied file is reported on stdout and
+  /// each failed one on stderr; a failed copy makes that invocation exit 1,
+  /// xargs keeps going (only 255 aborts it) and finishes with 123 — one bad
+  /// copy fails the whole step after still attempting the rest. The
+  /// `set -o pipefail` additionally surfaces a failed `git ls-files` where
+  /// the shell supports the option; it is probed in a **subshell** first
+  /// because `set` is a POSIX special builtin whose failure ABORTS a
+  /// non-interactive shell — a bare `set -o pipefail 2>/dev/null` killed
+  /// dash outright (exit 2, message swallowed by the redirect), which is
+  /// worse than the degraded no-pipefail mode.
+  ///
+  /// The destination is passed through xargs as a fixed argv element (never
+  /// interpolated into the per-file script), so [ShellEscaper.escape]'s
+  /// single-quoted token is unwrapped exactly once by the outer shell —
+  /// the nested-quoting bug that once created a directory literally named
+  /// `'` in the source repo cannot recur, and paths with spaces survive.
+  static String copyIgnoredFilesScript({
+    required String to,
+    required List<String> globs,
+  }) {
+    final pathspecs = globs.map(ShellEscaper.escape).join(' ');
+    // Per-file worker: $1 is the destination (fixed), $2 the file (appended
+    // by xargs -n1). Filenames arrive as argv, so their content is never
+    // re-parsed by a shell.
+    const worker =
+        '[ "\$#" -ge 2 ] || exit 0; dest="\$1"; f="\$2"; '
+        'if mkdir -p "\$dest/\$(dirname "\$f")" && cp -R "\$f" "\$dest/\$f"; '
+        'then printf \'copied %s\\n\' "\$f"; '
+        'else printf \'failed %s\\n\' "\$f" >&2; exit 1; fi';
+    return '(set -o pipefail) 2>/dev/null && set -o pipefail; '
+        'git ls-files -z --others --ignored --exclude-standard -- $pathspecs '
+        '| xargs -0 -n1 sh -c ${ShellEscaper.escape(worker)} sh '
+        '${ShellEscaper.escape(to)}';
   }
 
   /// Runs [command] inside a worktree — the post-create hook (`pnpm install`,

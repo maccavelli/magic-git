@@ -355,6 +355,19 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     }
   }
 
+  /// Closes every detached-repo window pinned to [repoPath], across all tabs.
+  /// Used when a worktree is removed or moved: its folder no longer exists,
+  /// and a window left pointing there would just run git against a deleted
+  /// path and surface raw errors.
+  Future<void> closeDetachedRepoWindows(String repoPath) async {
+    for (final w in List<WindowHandle>.of(state)) {
+      if (w.kind == WindowKind.detachedRepo && w.repoPath == repoPath) {
+        await close(w.id);
+        _forget(w.id);
+      }
+    }
+  }
+
   /// A tab is closing (its container is about to be disposed). A repo-bound
   /// window pinned to it goes away with it. A History follower currently showing
   /// this tab is NOT closed — it follows the active tab, and closing this one

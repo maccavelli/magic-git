@@ -24,6 +24,7 @@ import '../repository/repo_status_view.dart';
 import '../stash/stash_view.dart';
 import 'add_worktree_sheet.dart';
 import 'worktree_access.dart';
+import 'worktree_paths.dart';
 import 'worktree_tabs.dart';
 
 /// The **Worktrees** namespace — a dedicated home for `git worktree`.
@@ -146,6 +147,12 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
 
   Future<void> _remove(GitWorktree wt, {required bool alsoDeleteBranch}) async {
     final branch = wt.branch?.replaceFirst('refs/heads/', '');
+    // A detached worktree has no branch — the delete-branch variant is
+    // disabled for it, but plain removal is not, and its message must not
+    // interpolate a null into `The branch "null" is kept`.
+    final keptNote = branch == null
+        ? 'This worktree has a detached HEAD — no branch is affected.'
+        : 'The branch "$branch" is kept — you can check it out again later.';
     final ok = await confirmAction(
       context,
       title: alsoDeleteBranch
@@ -155,8 +162,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
           ? 'This deletes the folder\n${wt.path}\nand then deletes the branch '
                 '"$branch".\n\nCommits on the branch will only be reachable '
                 'through the reflog.'
-          : 'This deletes the folder\n${wt.path}\n\nThe branch "$branch" is '
-                'kept — you can check it out again later.',
+          : 'This deletes the folder\n${wt.path}\n\n$keptNote',
       confirmLabel: 'Remove',
       destructive: true,
     );
@@ -200,8 +206,14 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
         // it (`--ignore-other-worktrees` exists on checkout/switch, not branch).
         await git.deleteBranch(repoPath, branch, force: true);
       }
-      await ref.read(worktreeAccessProvider).release(wt.path);
+      // forget, not release: the folder is gone, so its saved-grant entry
+      // must go too or it lingers as a dead Connections-panel row.
+      await ref.read(worktreeAccessProvider).forget(wt.path);
       ref.read(worktreeTabsProvider.notifier).close(wt.path);
+      // The worktree acted as its own repoPath for its panels — drop its
+      // edit stamps and any detached window still pinned to the dead folder.
+      ref.read(worktreeEditsProvider.notifier).forgetRepo(wt.path);
+      await WindowManagerBridge.current?.closeDetachedRepoWindows(wt.path);
     });
   }
 
@@ -297,8 +309,9 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
 
     if (destination == wt.path) return;
     // A worktree inside the repository shows up as untracked noise in the
-    // repository's own status — the same rule the Add sheet enforces.
-    if (destination == repoPath || destination.startsWith('$repoPath/')) {
+    // repository's own status — the same rule the Add sheet enforces,
+    // symlink-insensitively (a /tmp alias of the repo must not slip past).
+    if (isInsideRepo(destination, repoPath)) {
       await showErrorDialog(
         context,
         'Move it outside the repository — a worktree inside it would show up '
@@ -327,9 +340,13 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       }
       // The tab (and its sandbox grant) pointed at the OLD path, which no longer
       // exists — reopen it at the new one rather than leaving a dead tab behind.
+      // forget, not release: the old path's saved-grant entry is dead too, as
+      // are its edit stamps and any detached window pinned to it.
       final wasOpen = ref.read(worktreeTabsProvider).open.contains(from);
-      await ref.read(worktreeAccessProvider).release(from);
+      await ref.read(worktreeAccessProvider).forget(from);
       ref.read(worktreeTabsProvider.notifier).close(from);
+      ref.read(worktreeEditsProvider.notifier).forgetRepo(from);
+      await WindowManagerBridge.current?.closeDetachedRepoWindows(from);
       if (wasOpen && mounted) {
         final ok = await ref.read(worktreeAccessProvider).ensure(context, to);
         if (ok) ref.read(worktreeTabsProvider.notifier).open(to);

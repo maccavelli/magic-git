@@ -495,6 +495,43 @@ void main() {
       );
       expect(File('$wtRoot/w/.env').existsSync(), isTrue);
     });
+
+    test('the copy pipeline is dash-clean (Debian remotes run sh as dash)',
+        () async {
+      // The regression this pins: the loop was once written with bash's
+      // `read -r -d ''`, which dash rejects — the loop body never ran and the
+      // step reported SUCCESS having copied nothing. Debian-family remotes
+      // run `sh -c` as dash, so the exact script the service sends must work
+      // there verbatim.
+      if (!File('/bin/dash').existsSync()) {
+        markTestSkipped('no /bin/dash on this machine');
+        return;
+      }
+      await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
+
+      final run = await Process.run(
+        '/bin/dash',
+        ['-c', GitService.copyIgnoredFilesScript(to: '$wtRoot/w', globs: ['.env*'])],
+        workingDirectory: repo,
+      );
+      expect(run.exitCode, 0, reason: 'stderr: ${run.stderr}');
+      expect(run.stdout, contains('copied .env'));
+      expect(File('$wtRoot/w/.env').readAsStringSync(), contains('postgres'));
+
+      // And a glob matching nothing is still not an error under dash.
+      final none = await Process.run(
+        '/bin/dash',
+        [
+          '-c',
+          GitService.copyIgnoredFilesScript(
+            to: '$wtRoot/w',
+            globs: ['.nothing-matches-this*'],
+          ),
+        ],
+        workingDirectory: repo,
+      );
+      expect(none.exitCode, 0, reason: 'stderr: ${none.stderr}');
+    });
   });
 
   group('branch occupancy via %(worktreepath)', () {

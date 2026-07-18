@@ -43,6 +43,7 @@ import 'viewer/viewer_host.dart';
 import 'viewer/viewer_providers.dart';
 import 'workspace/clone_sheet.dart';
 import 'workspace/create_repo_sheet.dart';
+import 'worktrees/worktree_access.dart';
 import 'worktrees/worktree_tabs.dart';
 import 'worktrees/worktrees_view.dart';
 
@@ -554,6 +555,13 @@ class _AppShellState extends ConsumerState<AppShell> {
         // they were opened — drop them all when the active repo changes (or
         // disconnects) rather than leaving them pointed at a gone repo.
         ref.read(openFileViewersProvider.notifier).closeAll();
+        // Same for worktree tabs: they name checkouts of the PREVIOUS repo.
+        // Without this the Worktrees panel briefly renders the old repo's
+        // workspace against the new repo (its build-time dead-tab sweep only
+        // fires after the new worktree list loads — and never if it errors).
+        // The sandbox grants they held go with them.
+        ref.read(worktreeTabsProvider.notifier).reset();
+        unawaited(ref.read(worktreeAccessProvider).releaseAll());
       }
       if (next != null && next != previous) {
         ref

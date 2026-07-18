@@ -12,6 +12,7 @@ import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/hover_pop.dart';
+import '../common/label_chip.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import '../connection/local_repo_form.dart';
@@ -665,6 +666,12 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              // A grant record minted by the Worktrees panel, not a repo the
+              // user saved — openable as a repo, but say what it is.
+              if (repo.isLinkedWorktree) ...[
+                const LabelChip('worktree', color: MacosColors.systemBlueColor),
+                const SizedBox(width: 4),
+              ],
               if (isActive)
                 const MacosIcon(
                   CupertinoIcons.checkmark_alt,

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +9,7 @@ import '../../core/local/security_scoped_bookmark.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_local_repo.dart';
 import '../common/actions.dart';
+import 'worktree_paths.dart';
 
 /// Holds the macOS security-scoped grants for worktrees opened inside the
 /// Worktrees panel, and releases them when their tabs close.
@@ -38,7 +41,15 @@ class WorktreeAccess {
   Future<bool> ensure(BuildContext context, String worktreePath) async {
     // Remote host: no sandbox, nothing to grant.
     if (!_ref.read(connectionProvider).isLocal) return true;
-    if (_held.contains(worktreePath)) return true;
+    if (_held.contains(worktreePath)) {
+      // A held grant is normally good for the whole session, but the folder
+      // can vanish (or the grant break) underneath us — a sandbox denial
+      // reads as nonexistence too. Rather than let every git call in the
+      // tab fail with raw permission errors, drop it and run the acquire
+      // flow again.
+      if (Directory(worktreePath).existsSync()) return true;
+      _held.remove(worktreePath);
+    }
 
     // Already saved (this app created it, or it was opened before) — resolve the
     // bookmark silently.
@@ -67,7 +78,10 @@ class WorktreeAccess {
 
     final picked = await getDirectoryPath(initialDirectory: worktreePath);
     if (picked == null || !context.mounted) return false;
-    if (picked != worktreePath) {
+    // Canonicalized: the picker resolves symlinks (/tmp → /private/tmp), so a
+    // raw string compare would reject the CORRECT folder with "that is a
+    // different folder" and dead-end the open.
+    if (canonicalPath(picked) != canonicalPath(worktreePath)) {
       await showErrorDialog(
         context,
         'That is a different folder. Please choose:\n\n$worktreePath',
@@ -123,6 +137,28 @@ class WorktreeAccess {
   Future<void> release(String worktreePath) async {
     if (!_held.remove(worktreePath)) return;
     await ScopedAccess.instance.release(worktreePath);
+  }
+
+  /// Fully forgets a worktree that no longer exists at [worktreePath]
+  /// (removed, or moved away): releases the in-session grant AND deletes the
+  /// saved-grant entry, so the Connections panel doesn't accumulate dead
+  /// "Local Repositories" rows pointing at deleted folders. Closing a tab
+  /// only [release]s — that entry must survive for a later silent re-open.
+  ///
+  /// Only entries minted by this panel ([SavedLocalRepo.isLinkedWorktree])
+  /// are deleted; a repo the user saved themselves at the same path is
+  /// theirs to remove.
+  Future<void> forget(String worktreePath) async {
+    await release(worktreePath);
+    final store = _ref.read(localRepoStoreProvider);
+    var deleted = false;
+    for (final saved in await store.list()) {
+      if (saved.repoPath == worktreePath && saved.isLinkedWorktree) {
+        await store.delete(saved.id);
+        deleted = true;
+      }
+    }
+    if (deleted) _ref.invalidate(savedLocalReposProvider);
   }
 
   /// Drops every grant this panel holds — the repo changed, or we're going away.
