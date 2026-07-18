@@ -26,6 +26,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/ref_name_validation.dart';
 import '../common/resizable_master_detail.dart';
+import '../common/section_collapse.dart';
 import '../common/show_more_row.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
@@ -46,6 +47,16 @@ import 'pinned_branches.dart';
 /// that carries the selected ref's context and action buttons. Rows no longer
 /// each host a strip of icon buttons; the actions moved to the detail pane and
 /// the context menu, so the list scans cleanly at hundreds of branches.
+/// Stable names for the canonical collapse store (`collapsedSectionsProvider`
+/// in `../common/section_collapse.dart`), prefixed so they never collide with
+/// another tab's sections in that shared flat namespace.
+abstract final class _BranchSections {
+  static const pinned = 'branches.pinned';
+  static const local = 'branches.local';
+  static const remote = 'branches.remote';
+  static const tags = 'branches.tags';
+}
+
 class BranchesView extends ConsumerStatefulWidget {
   final String repoPath;
 
@@ -349,6 +360,17 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     final filter = _filterCtl.text.trim().toLowerCase();
     bool matches(GitRef r) =>
         filter.isEmpty || r.shortName.toLowerCase().contains(filter);
+
+    // Canonical per-section minimize/expand (shared with the Forge tab). A
+    // non-empty filter force-expands every section — a filter IS a request to
+    // see every match — so the stored collapse only bites when unfiltered.
+    final collapsedSections = ref.watch(collapsedSectionsProvider);
+    bool sectionCollapsed(String s) =>
+        filter.isEmpty && collapsedSections.contains(s);
+    final pinnedCollapsed = sectionCollapsed(_BranchSections.pinned);
+    final localCollapsed = sectionCollapsed(_BranchSections.local);
+    final remoteCollapsed = sectionCollapsed(_BranchSections.remote);
+    final tagsCollapsed = sectionCollapsed(_BranchSections.tags);
     final totalLocals = refs.where((r) => r.isLocalBranch).length;
     final totalRemotes = refs.where((r) => r.isRemote).length;
     final locals = refs.where((r) => r.isLocalBranch && matches(r)).toList();
@@ -405,13 +427,20 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     final hiddenRemotes = remotes.length - visibleRemotes.length;
 
     // ↑/↓ walk exactly the local branches on screen (pinned, then active, plus
-    // stale when expanded) in display order.
+    // stale when expanded) in display order — skipping any section the user has
+    // minimized, so navigation never lands on a hidden row.
     _locals = [
-      ...pinnedLocals,
-      ...activeLocals,
-      if (_showStale || filter.isNotEmpty) ...staleLocals,
+      if (!pinnedCollapsed) ...pinnedLocals,
+      if (!localCollapsed) ...[
+        ...activeLocals,
+        if (_showStale || filter.isNotEmpty) ...staleLocals,
+      ],
     ];
-    _navigable = [..._locals, ...visibleRemotes, ...visibleTags];
+    _navigable = [
+      ..._locals,
+      if (!remoteCollapsed) ...visibleRemotes,
+      if (!tagsCollapsed) ...visibleTags,
+    ];
 
     // The empty-state review dashboard's data + one-click cleanup target.
     final mergedDeletable = [
@@ -433,25 +462,37 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     // a repo with hundreds of branches/tags.
     final rows = <_Row>[
       if (pinnedLocals.isNotEmpty) ...[
-        _PinnedHeaderRow(pinnedLocals.length),
-        for (final b in pinnedLocals) _BranchRow(b, remote: false, depth: 0),
+        _PinnedHeaderRow(pinnedLocals.length, collapsed: pinnedCollapsed),
+        if (!pinnedCollapsed)
+          for (final b in pinnedLocals) _BranchRow(b, remote: false, depth: 0),
       ],
       _LocalHeaderRow(
         sectionTitle('Local Branches', locals.length, totalLocals),
+        collapsed: localCollapsed,
       ),
-      ..._localRows(activeLocals),
-      if (staleLocals.isNotEmpty && filter.isEmpty)
-        _StaleToggleRow(staleLocals.length),
-      if (staleLocals.isNotEmpty && (_showStale || filter.isNotEmpty))
-        ..._localRows(staleLocals),
+      if (!localCollapsed) ...[
+        ..._localRows(activeLocals),
+        if (staleLocals.isNotEmpty && filter.isEmpty)
+          _StaleToggleRow(staleLocals.length),
+        if (staleLocals.isNotEmpty && (_showStale || filter.isNotEmpty))
+          ..._localRows(staleLocals),
+      ],
       _RemotesHeaderRow(
         sectionTitle('Remote Branches', remotes.length, totalRemotes),
+        collapsed: remoteCollapsed,
       ),
-      for (final b in visibleRemotes) _BranchRow(b, remote: true, depth: 0),
-      if (hiddenRemotes > 0) _ShowMoreRemotesRow(hiddenRemotes),
-      _TagsHeaderRow(sectionTitle('Tags', tags.length, allTags.length)),
-      for (final t in visibleTags) _TagRefRow(t),
-      if (hiddenTags > 0) _ShowMoreTagsRow(hiddenTags),
+      if (!remoteCollapsed) ...[
+        for (final b in visibleRemotes) _BranchRow(b, remote: true, depth: 0),
+        if (hiddenRemotes > 0) _ShowMoreRemotesRow(hiddenRemotes),
+      ],
+      _TagsHeaderRow(
+        sectionTitle('Tags', tags.length, allTags.length),
+        collapsed: tagsCollapsed,
+      ),
+      if (!tagsCollapsed) ...[
+        for (final t in visibleTags) _TagRefRow(t),
+        if (hiddenTags > 0) _ShowMoreTagsRow(hiddenTags),
+      ],
     ];
 
     final master = Focus(
@@ -499,11 +540,14 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     required List<String> localOnly,
   }) =>
       switch (row) {
-        _PinnedHeaderRow(:final count) => _pinnedHeader(context, count),
-        _LocalHeaderRow(:final title) => _localHeader(context, git, title),
-        _RemotesHeaderRow(:final title) => _remotesHeader(context, git, title),
-        _TagsHeaderRow(:final title) =>
-          _tagsHeader(context, git, title, localOnly, tagRemote),
+        _PinnedHeaderRow(:final count, :final collapsed) =>
+          _pinnedHeader(context, count, collapsed),
+        _LocalHeaderRow(:final title, :final collapsed) =>
+          _localHeader(context, git, title, collapsed),
+        _RemotesHeaderRow(:final title, :final collapsed) =>
+          _remotesHeader(context, git, title, collapsed),
+        _TagsHeaderRow(:final title, :final collapsed) =>
+          _tagsHeader(context, git, title, localOnly, tagRemote, collapsed),
         _FolderRow(:final path, :final label, :final depth, :final count) =>
           _folderRow(context, path, label, depth, count),
         _BranchRow(:final branch, :final remote, :final depth) => remote
@@ -578,46 +622,58 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
   // ---- Section headers -----------------------------------------------------
 
-  Widget _pinnedHeader(BuildContext context, int count) {
-    return Padding(
+  void _toggleSection(String section) =>
+      ref.read(collapsedSectionsProvider.notifier).toggle(section);
+
+  Widget _pinnedHeader(BuildContext context, int count, bool collapsed) {
+    return CollapsibleSectionHeader(
+      'Pinned ($count)',
       padding: const EdgeInsets.fromLTRB(16, 12, 10, 4),
-      child: Row(
-        children: [
-          const MacosIcon(
-            CupertinoIcons.star_fill,
-            size: 12,
-            color: MacosColors.systemYellowColor,
-          ),
-          const SizedBox(width: 6),
-          _headerText(context, 'Pinned ($count)'),
-        ],
+      collapsed: collapsed,
+      onToggle: () => _toggleSection(_BranchSections.pinned),
+      leading: const MacosIcon(
+        CupertinoIcons.star_fill,
+        size: 12,
+        color: MacosColors.systemYellowColor,
       ),
     );
   }
 
-  Widget _localHeader(BuildContext context, GitService git, String title) {
-    return Padding(
+  Widget _localHeader(
+    BuildContext context,
+    GitService git,
+    String title,
+    bool collapsed,
+  ) {
+    return CollapsibleSectionHeader(
+      title,
       padding: const EdgeInsets.fromLTRB(16, 12, 10, 4),
-      child: Row(
-        children: [
-          Expanded(child: _headerText(context, title)),
-          ToolIconButton(
-            icon: CupertinoIcons.add,
-            tooltip: 'New branch…',
-            size: 15,
-            onPressed: busy ? null : () => _createBranchPrompt(git),
-          ),
-        ],
-      ),
+      collapsed: collapsed,
+      onToggle: () => _toggleSection(_BranchSections.local),
+      trailing: [
+        ToolIconButton(
+          icon: CupertinoIcons.add,
+          tooltip: 'New branch…',
+          size: 15,
+          onPressed: busy ? null : () => _createBranchPrompt(git),
+        ),
+      ],
     );
   }
 
   /// The Remote Branches section header — the fetch-and-prune affordance also
   /// lives in the toolbar; kept here too so it sits beside its own section.
-  Widget _remotesHeader(BuildContext context, GitService git, String title) {
-    return Padding(
+  Widget _remotesHeader(
+    BuildContext context,
+    GitService git,
+    String title,
+    bool collapsed,
+  ) {
+    return CollapsibleSectionHeader(
+      title,
       padding: const EdgeInsets.fromLTRB(16, 16, 10, 4),
-      child: _headerText(context, title),
+      collapsed: collapsed,
+      onToggle: () => _toggleSection(_BranchSections.remote),
     );
   }
 
@@ -629,39 +685,33 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     String title,
     List<String> localOnly,
     String? remote,
+    bool collapsed,
   ) {
-    return Padding(
+    return CollapsibleSectionHeader(
+      title,
       padding: const EdgeInsets.fromLTRB(16, 16, 10, 4),
-      child: Row(
-        children: [
-          Expanded(child: _headerText(context, title)),
-          if (localOnly.isNotEmpty && remote != null) ...[
-            InlineActionButton(
-              label: 'Push ${localOnly.length} to $remote',
-              icon: CupertinoIcons.arrow_up,
-              onPressed: busy
-                  ? null
-                  : () => _pushAllLocalOnly(git, localOnly, remote),
-            ),
-            const SizedBox(width: 6),
-          ],
-          ToolIconButton(
-            icon: CupertinoIcons.tag,
-            tooltip: 'New tag…',
-            size: 15,
-            onPressed: busy ? null : _openCreateTagSheet,
+      collapsed: collapsed,
+      onToggle: () => _toggleSection(_BranchSections.tags),
+      trailing: [
+        if (localOnly.isNotEmpty && remote != null) ...[
+          InlineActionButton(
+            label: 'Push ${localOnly.length} to $remote',
+            icon: CupertinoIcons.arrow_up,
+            onPressed: busy
+                ? null
+                : () => _pushAllLocalOnly(git, localOnly, remote),
           ),
+          const SizedBox(width: 6),
         ],
-      ),
+        ToolIconButton(
+          icon: CupertinoIcons.tag,
+          tooltip: 'New tag…',
+          size: 15,
+          onPressed: busy ? null : _openCreateTagSheet,
+        ),
+      ],
     );
   }
-
-  Widget _headerText(BuildContext context, String title) => Text(
-    title,
-    style: MacosTheme.of(
-      context,
-    ).typography.caption1.copyWith(fontWeight: FontWeight.bold),
-  );
 
   Widget _staleToggle(int count) => _staleToggleRow(count);
 
@@ -2329,22 +2379,26 @@ sealed class _Row {
 
 class _PinnedHeaderRow extends _Row {
   final int count;
-  const _PinnedHeaderRow(this.count);
+  final bool collapsed;
+  const _PinnedHeaderRow(this.count, {required this.collapsed});
 }
 
 class _LocalHeaderRow extends _Row {
   final String title;
-  const _LocalHeaderRow(this.title);
+  final bool collapsed;
+  const _LocalHeaderRow(this.title, {required this.collapsed});
 }
 
 class _RemotesHeaderRow extends _Row {
   final String title;
-  const _RemotesHeaderRow(this.title);
+  final bool collapsed;
+  const _RemotesHeaderRow(this.title, {required this.collapsed});
 }
 
 class _TagsHeaderRow extends _Row {
   final String title;
-  const _TagsHeaderRow(this.title);
+  final bool collapsed;
+  const _TagsHeaderRow(this.title, {required this.collapsed});
 }
 
 class _FolderRow extends _Row {

@@ -11,6 +11,7 @@ import '../../core/utils/display_error.dart';
 import '../common/buttons.dart';
 import '../common/field_styles.dart';
 import '../common/label_colors.dart';
+import '../common/section_collapse.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 
@@ -46,9 +47,10 @@ class StatusBadge extends StatelessWidget {
   }
 }
 
-/// A list-section header: bold caption title (optionally a disclosure toggle),
-/// a grey count caption, then (right-aligned) an optional add button and a
-/// refresh button.
+/// The Forge flavour of the canonical [CollapsibleSectionHeader]: title (with
+/// the shared disclosure toggle), optional grey count, then the forge trailing
+/// cluster — an optional add button and a refresh button. A thin adapter so
+/// every forge section header and the Branches headers share one widget.
 class ForgeSectionHeader extends StatelessWidget {
   final String title;
   final VoidCallback onRefresh;
@@ -82,64 +84,27 @@ class ForgeSectionHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final typography = MacosTheme.of(context).typography;
-    final titleRow = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (collapsed != null) ...[
-          MacosIcon(
-            collapsed!
-                ? CupertinoIcons.chevron_right
-                : CupertinoIcons.chevron_down,
-            size: 10,
-            color: MacosColors.systemGrayColor,
-          ),
-          const SizedBox(width: 4),
-        ],
-        Text(
-          title,
-          style: typography.caption1.copyWith(fontWeight: FontWeight.bold),
-        ),
-        if (count != null)
-          Padding(
-            padding: const EdgeInsets.only(left: 6),
-            child: Text(
-              count!,
-              style: typography.caption1.copyWith(
-                color: MacosColors.systemGrayColor,
-              ),
-            ),
-          ),
-      ],
-    );
-    return Padding(
+    return CollapsibleSectionHeader(
+      title,
+      count: count,
+      collapsed: collapsed,
+      onToggle: onToggleCollapsed,
       padding: padding,
-      child: Row(
-        children: [
-          if (onToggleCollapsed != null)
-            Tappable(
-              onTap: onToggleCollapsed,
-              behavior: HitTestBehavior.opaque,
-              child: titleRow,
-            )
-          else
-            titleRow,
-          const Spacer(),
-          if (onAdd != null)
-            ToolIconButton(
-              icon: CupertinoIcons.add,
-              tooltip: addTooltip,
-              size: 15,
-              onPressed: onAdd,
-            ),
+      trailing: [
+        if (onAdd != null)
           ToolIconButton(
-            icon: CupertinoIcons.refresh,
-            tooltip: refreshTooltip,
+            icon: CupertinoIcons.add,
+            tooltip: addTooltip,
             size: 15,
-            onPressed: onRefresh,
+            onPressed: onAdd,
           ),
-        ],
-      ),
+        ToolIconButton(
+          icon: CupertinoIcons.refresh,
+          tooltip: refreshTooltip,
+          size: 15,
+          onPressed: onRefresh,
+        ),
+      ],
     );
   }
 }

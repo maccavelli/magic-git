@@ -19,7 +19,8 @@ import 'issue_create_form.dart';
 /// Releases — shared verbatim by the GitHub and GitLab panels (the providers
 /// underneath are forge-neutral). Extracted from the former Project tab.
 
-/// Stable section names for the collapse store (`forge_prefs.dart`).
+/// Stable section names for the canonical collapse store
+/// (`collapsedSectionsProvider` in `../common/section_collapse.dart`).
 abstract final class ForgeSections {
   static const changeRequests = 'changeRequests';
   static const ci = 'ci';

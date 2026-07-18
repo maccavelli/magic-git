@@ -17,6 +17,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/resizable_master_detail.dart';
+import '../common/section_collapse.dart';
 import '../common/show_more_row.dart';
 import '../forge/forge_inbox.dart';
 import '../forge/forge_prefs.dart';
@@ -284,11 +285,11 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     Map<String, Pipeline> pipeByRef,
   ) {
     final fullHistory = ref.watch(pipelinesScopeProvider(repoPath));
-    final collapsed = ref.watch(forgeCollapsedSectionsProvider);
+    final collapsed = ref.watch(collapsedSectionsProvider);
     final mrsCollapsed = collapsed.contains(ForgeSections.changeRequests);
     final ciCollapsed = collapsed.contains(ForgeSections.ci);
     void toggle(String s) =>
-        ref.read(forgeCollapsedSectionsProvider.notifier).toggle(s);
+        ref.read(collapsedSectionsProvider.notifier).toggle(s);
     final inboxMode = ref.watch(forgeInboxModeProvider);
 
     final mrMatches = _mrMatches;

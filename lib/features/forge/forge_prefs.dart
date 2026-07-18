@@ -1,46 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Which Forge list sections the user has collapsed. Global (not per repo):
-/// collapsing "Releases" is a statement about the section's usefulness, not
-/// about one repository. Persisted as a string list; unknown names are
-/// carried, so removing a section doesn't scramble the rest.
-class ForgeCollapsedSections extends Notifier<Set<String>> {
-  static const _key = 'forgeCollapsedSections';
-
-  @override
-  Set<String> build() {
-    _load();
-    return const {};
-  }
-
-  Future<void> _load() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final stored = prefs.getStringList(_key);
-      if (stored != null && stored.isNotEmpty) state = stored.toSet();
-    } catch (_) {
-      // No stored state (or no prefs backend, e.g. a bare test harness):
-      // the in-memory default stands.
-    }
-  }
-
-  Future<void> toggle(String section) async {
-    final next = Set<String>.from(state);
-    next.contains(section) ? next.remove(section) : next.add(section);
-    state = next;
-    // Best-effort: a persistence failure must never break the toggle.
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setStringList(_key, next.toList()..sort());
-    } catch (_) {}
-  }
-}
-
-final forgeCollapsedSectionsProvider =
-    NotifierProvider<ForgeCollapsedSections, Set<String>>(
-      ForgeCollapsedSections.new,
-    );
+// The Forge list-section collapse store moved to the canonical, app-wide
+// `collapsedSectionsProvider` in `../common/section_collapse.dart` so the
+// Forge and Branches tabs share one minimize/expand mechanism.
 
 /// A branch dropped on the Forge nav item: the mounted forge panel for
 /// [repoPath] opens its inline create-MR/PR form seeded with [branch], then
