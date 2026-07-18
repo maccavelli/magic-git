@@ -12,6 +12,7 @@ import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/branch_switch.dart';
 import '../common/buttons.dart';
+import '../common/context_menu.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/show_more_row.dart';
@@ -78,10 +79,15 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   final Set<int> _retryingPipelines = {};
   final Set<int> _checkingOutMrs = {};
 
+  /// The row right-click menu (one controller for the whole panel; the entries
+  /// close over whichever row was clicked). Disposed with the State.
+  final ContextMenuOverlay _menu = ContextMenuOverlay();
+
   String get repoPath => widget.repoPath;
 
   @override
   void dispose() {
+    _menu.dispose();
     _filter.dispose();
     super.dispose();
   }
@@ -454,7 +460,64 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       trailing: forgeCombineTrailing(null, trailingExtras),
       selected: selected,
       onTap: () => _select(ForgeChangeRequestSel(mr.iid)),
+      onSecondaryTapUp: (d) =>
+          _menu.show(context, d.globalPosition, _mrMenu(mr), width: 240),
     );
+  }
+
+  /// The MR row's right-click menu. Phase 1: only actions the service layer
+  /// already supports — navigate (open/copy), local (checkout), and the same
+  /// approve/merge the detail pane offers. Merge greys out for a draft (GitLab
+  /// rejects merging a draft), matching [_mergeButton]. GitLab has no per-merge
+  /// rebase (that's a project setting), so squash is the only merge variant.
+  List<ContextMenuEntry> _mrMenu(MergeRequest mr) {
+    const draftTip =
+        "Draft merge requests can't be merged — mark it ready first.";
+    return [
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_up_right_square,
+        label: 'Open in browser',
+        enabled: mr.webUrl.isNotEmpty,
+        onTap: () => forgeOpenUrl(mr.webUrl),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.link,
+        label: 'Copy link',
+        enabled: mr.webUrl.isNotEmpty,
+        onTap: () => forgeCopy(mr.webUrl),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.number,
+        label: 'Copy !${mr.iid}',
+        onTap: () => forgeCopy('!${mr.iid}'),
+      ),
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_down_circle,
+        label: 'Check out branch',
+        onTap: () => _checkoutMr(mr),
+      ),
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.checkmark_seal,
+        label: 'Approve',
+        onTap: () => _approve(mr.iid),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_merge,
+        label: 'Merge',
+        enabled: !mr.draft,
+        disabledTooltip: draftTip,
+        onTap: () => _merge(mr.iid),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_merge,
+        label: 'Squash and merge',
+        enabled: !mr.draft,
+        disabledTooltip: draftTip,
+        onTap: () => _merge(mr.iid, squash: true),
+      ),
+    ];
   }
 
   Widget _pipelineRow(

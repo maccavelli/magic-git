@@ -1,6 +1,7 @@
 import 'dart:async' show unawaited;
 
 import 'package:flutter/cupertino.dart' hide OverlayVisibilityMode;
+import 'package:flutter/services.dart' show Clipboard, ClipboardData;
 import 'package:macos_ui/macos_ui.dart';
 import 'package:url_launcher/url_launcher.dart' show launchUrl;
 
@@ -243,6 +244,11 @@ class ForgeListRow extends StatelessWidget {
 
   final bool selected;
   final VoidCallback? onTap;
+
+  /// Opens this item's right-click context menu (PR/MR/issue actions). The
+  /// row's inner [Tappable] already carries the hand-cursor + hit-test policy;
+  /// this just forwards the secondary-tap through it.
+  final GestureTapUpCallback? onSecondaryTapUp;
   final EdgeInsets? padding;
 
   const ForgeListRow({
@@ -257,6 +263,7 @@ class ForgeListRow extends StatelessWidget {
     this.trailing,
     this.selected = false,
     this.onTap,
+    this.onSecondaryTapUp,
     this.padding,
   });
 
@@ -269,6 +276,7 @@ class ForgeListRow extends StatelessWidget {
     final hasTrailing = trailing != null || trailingCaption != null;
     return Tappable(
       onTap: onTap,
+      onSecondaryTapUp: onSecondaryTapUp,
       child: Container(
         color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
         // Right inset 8 when a trailing icon must line up flush with the
@@ -440,6 +448,21 @@ class InFlightPushButton extends StatelessWidget {
     );
   }
 }
+
+/// Opens a forge item's web page in the default browser (fire-and-forget:
+/// NSWorkspace either opens it or it doesn't, no recovery worth a dialog).
+/// No-op when [url] is null/empty or unparseable. Shared by the context menus
+/// and the [OpenInBrowserButton].
+void forgeOpenUrl(String? url) {
+  if (url == null || url.isEmpty) return;
+  final uri = Uri.tryParse(url);
+  if (uri != null) unawaited(launchUrl(uri));
+}
+
+/// Copies [text] to the clipboard (fire-and-forget) — a forge item's URL or
+/// its `#123`/`!45` reference, from the right-click menu.
+void forgeCopy(String text) =>
+    unawaited(Clipboard.setData(ClipboardData(text: text)));
 
 /// The header icon that opens a forge item's web page in the default browser.
 /// Hidden (not disabled) when no URL could be determined.

@@ -12,6 +12,7 @@ import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/branch_switch.dart';
 import '../common/buttons.dart';
+import '../common/context_menu.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/show_more_row.dart';
@@ -70,10 +71,15 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   final Set<int> _rerunningRuns = {};
   final Set<int> _checkingOutPrs = {};
 
+  /// The row right-click menu (one controller for the whole panel; the entries
+  /// close over whichever row was clicked). Disposed with the State.
+  final ContextMenuOverlay _menu = ContextMenuOverlay();
+
   String get repoPath => widget.repoPath;
 
   @override
   void dispose() {
+    _menu.dispose();
     _filter.dispose();
     super.dispose();
   }
@@ -416,7 +422,70 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       trailing: forgeCombineTrailing(null, trailingExtras),
       selected: selected,
       onTap: () => _select(ForgeChangeRequestSel(pr.number)),
+      onSecondaryTapUp: (d) =>
+          _menu.show(context, d.globalPosition, _prMenu(pr), width: 240),
     );
+  }
+
+  /// The PR row's right-click menu. Phase 1: only actions the service layer
+  /// already supports — navigate (open/copy), local (checkout), and the same
+  /// approve/merge the detail pane offers. Merge variants grey out for a draft
+  /// (GitHub rejects merging a draft), matching [_mergeButton].
+  List<ContextMenuEntry> _prMenu(PullRequest pr) {
+    const draftTip =
+        "Draft pull requests can't be merged — mark it ready first.";
+    return [
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_up_right_square,
+        label: 'Open in browser',
+        enabled: pr.url.isNotEmpty,
+        onTap: () => forgeOpenUrl(pr.url),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.link,
+        label: 'Copy link',
+        enabled: pr.url.isNotEmpty,
+        onTap: () => forgeCopy(pr.url),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.number,
+        label: 'Copy #${pr.number}',
+        onTap: () => forgeCopy('#${pr.number}'),
+      ),
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_down_circle,
+        label: 'Check out branch',
+        onTap: () => _checkoutPr(pr),
+      ),
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.checkmark_seal,
+        label: 'Approve',
+        onTap: () => _approve(pr.number),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_merge,
+        label: 'Merge',
+        enabled: !pr.draft,
+        disabledTooltip: draftTip,
+        onTap: () => _merge(pr.number),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_merge,
+        label: 'Squash and merge',
+        enabled: !pr.draft,
+        disabledTooltip: draftTip,
+        onTap: () => _merge(pr.number, method: 'squash'),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_merge,
+        label: 'Rebase and merge',
+        enabled: !pr.draft,
+        disabledTooltip: draftTip,
+        onTap: () => _merge(pr.number, method: 'rebase'),
+      ),
+    ];
   }
 
   Widget _runRow(WorkflowRun run, {List<Widget> trailingExtras = const []}) {
