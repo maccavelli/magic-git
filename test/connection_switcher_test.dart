@@ -1,6 +1,7 @@
 // The Connections panel's "Local Repositories" section: a header + a tile
-// per saved local repo, and the "Add local repository" toolbar button
-// opening the picker sheet.
+// per saved local repo, and the "Add existing repository" toolbar button
+// opening the unified add-existing sheet (Local by default, with a Location
+// dropdown listing every saved SSH connection).
 
 import 'dart:async';
 
@@ -128,16 +129,39 @@ void main() {
     );
   });
 
-  testWidgets('Add local repository opens the picker sheet', (tester) async {
-    await _pump(tester);
+  testWidgets('Add existing repository opens the unified add sheet, defaulting '
+      'to a local folder pick', (tester) async {
+    await _pump(
+      tester,
+      saved: const [
+        SavedConnection(
+          id: 'c1',
+          label: 'Prod',
+          host: 'h',
+          port: 22,
+          username: 'u',
+          repoPath: '/srv/alpha',
+          repoPaths: ['/srv/alpha'],
+        ),
+      ],
+    );
     // Assert on the sheet's unique folder-picker row rather than its title,
     // which is a separate concern from the toolbar tooltip we tap.
     expect(find.text('Choose…'), findsNothing);
 
-    await tester.tap(_byMacosTooltip('Add local repository'));
+    await tester.tap(_byMacosTooltip('Add existing repository'));
     await tester.pumpAndSettle();
 
+    // The sheet opens in Local mode: its local folder-picker button is present
+    // and the Location dropdown shows the default selection.
+    expect(find.text('Add Existing Repository'), findsOneWidget);
     expect(find.text('Choose…'), findsOneWidget);
+    expect(find.text('Local (this Mac)'), findsOneWidget);
+
+    // Opening the Location dropdown lists Local plus every saved SSH connection.
+    await tester.tap(find.text('Local (this Mac)'));
+    await tester.pumpAndSettle();
+    expect(find.text('Prod'), findsWidgets);
   });
 
   testWidgets('Clone repository opens the clone sheet (landing mode while '

@@ -10,7 +10,6 @@ import '../../core/storage/saved_local_repo.dart';
 import '../common/actions.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
-import '../common/field_styles.dart';
 import '../common/hover_pop.dart';
 import '../common/label_chip.dart';
 import '../common/sized_sheet.dart';
@@ -217,7 +216,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                   const SizedBox(width: 4),
                   ToolIconButton(
                     icon: CupertinoIcons.folder_badge_plus,
-                    tooltip: 'Add local repository',
+                    tooltip: 'Add existing repository',
                     size: 16,
                     onPressed: () => _newLocalRepo(context),
                   ),
@@ -426,7 +425,6 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
         if (expanded) ...[
           for (final repo in repos)
             _repoTile(context, ref, conn, repo, connection, repos.length),
-          _addRepoRow(context, ref, conn),
         ],
         const SizedBox(height: 6),
       ],
@@ -514,37 +512,6 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _addRepoRow(
-    BuildContext context,
-    WidgetRef ref,
-    SavedConnection conn,
-  ) {
-    final typography = MacosTheme.of(context).typography;
-    return Tappable(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => _addRepo(context, ref, conn),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(40, 4, 10, 6),
-        child: Row(
-          children: [
-            const MacosIcon(
-              CupertinoIcons.add_circled,
-              size: 13,
-              color: MacosColors.systemGrayColor,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'Add repository',
-              style: typography.caption1.copyWith(
-                color: MacosColors.systemGrayColor,
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -953,41 +920,6 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     }
   }
 
-  Future<void> _addRepo(
-    BuildContext context,
-    WidgetRef ref,
-    SavedConnection conn,
-  ) async {
-    final result = await showMacosSheet<(String, String, bool)>(
-      context: context,
-      builder: (_) => const EscapeDismissible(child: AddRepositorySheet()),
-    );
-    if (result == null || !context.mounted) return;
-    final (path, label, fsmonitor) = result;
-    if (path.isEmpty) return;
-    final updated = conn
-        .copyWith(repoPaths: {...conn.allRepoPaths, path}.toList())
-        .withRepoLabel(path, label)
-        .withFsmonitor(path, fsmonitor);
-    final saved = await runAction(context, () async {
-      await ref.read(connectionStoreProvider).updateMetadata(updated);
-      ref.invalidate(savedConnectionsProvider);
-    });
-    // Apply fsmonitor live if it was enabled at add-time and we're connected to
-    // this host. Best-effort — the saved preference applies on the next
-    // connect. Re-read the connection now (not before the await) — it may
-    // have changed while the metadata write was in flight.
-    if (saved && fsmonitor && ref.read(connectionProvider).connectionId == conn.id) {
-      try {
-        await ref.read(gitServiceProvider).setFsmonitor(path, enabled: true);
-      } catch (e) {
-        ref
-            .read(outputLogProvider.notifier)
-            .logError('fsmonitor setup ($path)', e.toString());
-      }
-    }
-  }
-
   void _newConnection(BuildContext context, WidgetRef ref) {
     final tabs = TabsController.current;
     if (tabs == null) {
@@ -1006,7 +938,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     Navigator.of(context).pop();
     showMacosSheet<void>(
       context: context,
-      builder: (_) => const EscapeDismissible(child: NewLocalRepoSheet()),
+      builder: (_) => const EscapeDismissible(child: AddExistingRepoSheet()),
     );
   }
 
@@ -1226,132 +1158,5 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
             .logError('fsmonitor setup (${repo.repoPath})', e.toString());
       }
     }
-  }
-}
-
-/// Small sheet to enter a new repository path.
-class AddRepositorySheet extends StatefulWidget {
-  const AddRepositorySheet({super.key});
-
-  @override
-  State<AddRepositorySheet> createState() => _AddRepositorySheetState();
-}
-
-class _AddRepositorySheetState extends State<AddRepositorySheet> {
-  final _path = TextEditingController();
-  final _label = TextEditingController();
-  bool _fsmonitor = false;
-
-  @override
-  void dispose() {
-    _path.dispose();
-    _label.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final typography = MacosTheme.of(context).typography;
-    return SizedSheet(
-      width: kSheetWidth,
-      child: SizedBox(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Add repository', style: typography.title2),
-              const SheetDescription(
-                'Registers another repository that already exists on the '
-                'connected host, so you can switch to it from the '
-                'Connections list.',
-              ),
-              const SizedBox(height: 12),
-              Text(
-                'Absolute path on the connected host',
-                style: typography.caption1,
-              ),
-              const SizedBox(height: 4),
-              MacosTextField(
-                controller: _path,
-                placeholder: '/srv/git/another-project',
-                placeholderStyle: kAppPlaceholderStyle,
-                decoration: kAppTextFieldDecoration,
-                focusedDecoration: kAppTextFieldFocusedDecoration,
-                onChanged: (_) => setState(() {}),
-              ),
-              const FieldHint(
-                'The repository\'s root folder on the host (the one '
-                'containing .git).',
-              ),
-              const SizedBox(height: 12),
-              Text('Label (optional)', style: typography.caption1),
-              const SizedBox(height: 4),
-              MacosTextField(
-                controller: _label,
-                placeholder: 'Friendly name',
-                placeholderStyle: kAppPlaceholderStyle,
-                decoration: kAppTextFieldDecoration,
-                focusedDecoration: kAppTextFieldFocusedDecoration,
-              ),
-              const FieldHint(
-                'Shown in the Connections list; falls back to the folder '
-                'name when empty.',
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  ToolIconButton(
-                    icon: _fsmonitor
-                        ? CupertinoIcons.bolt_fill
-                        : CupertinoIcons.bolt,
-                    tooltip: _fsmonitor
-                        ? 'Git fsmonitor on (click to disable)'
-                        : 'Git fsmonitor off (click to enable)',
-                    size: 15,
-                    color: _fsmonitor
-                        ? MacosColors.systemBlueColor
-                        : MacosColors.systemGrayColor,
-                    onPressed: () => setState(() => _fsmonitor = !_fsmonitor),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Enable git fsmonitor (faster status on large repos)',
-                      style: typography.caption1,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  AppPushButton(
-                    controlSize: ControlSize.large,
-                    secondary: true,
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 8),
-                  AppPushButton(
-                    controlSize: ControlSize.large,
-                    onPressed: _path.text.trim().isEmpty
-                        ? null
-                        : () => Navigator.of(context).pop((
-                            _path.text.trim(),
-                            _label.text.trim(),
-                            _fsmonitor,
-                          )),
-                    child: const Text('Add'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }

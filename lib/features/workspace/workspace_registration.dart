@@ -12,7 +12,7 @@ import '../../core/storage/saved_local_repo.dart';
 
 /// Opens [dest] as the active local session and (optionally) saves it to
 /// Local Repositories with a security-scoped bookmark — the same sequence as
-/// `NewLocalRepoSheet._open`, minus the validation that `connectLocal` itself
+/// `AddExistingRepoSheet._openLocal`, minus the validation that `connectLocal`
 /// performs. Best-effort on the save: the repo stays open for the session
 /// even when persisting fails.
 Future<void> registerAndActivateLocal(

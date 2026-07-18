@@ -169,7 +169,7 @@ void main() {
       // toolbar (each action's own sheet is covered by the switcher tests).
       expect(find.text('Connections'), findsOneWidget);
       expect(_byMacosTooltip('Add connection'), findsOneWidget);
-      expect(_byMacosTooltip('Add local repository'), findsOneWidget);
+      expect(_byMacosTooltip('Add existing repository'), findsOneWidget);
       expect(_byMacosTooltip('Clone repository'), findsOneWidget);
       expect(_byMacosTooltip('Create repository'), findsOneWidget);
     },

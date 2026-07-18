@@ -338,30 +338,10 @@ void main() {
     expect((await _storedConnections()).single.repoPath, '/srv/alpha');
   });
 
-  testWidgets('the Add-repository card stores a friendly label', (tester) async {
-    await _pump(tester, saved: const [_conn]);
-    await tester.tap(find.text('Prod'));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Add repository'));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.widgetWithText(MacosTextField, '/srv/git/another-project'),
-      '/srv/delta',
-    );
-    await tester.enterText(
-      find.widgetWithText(MacosTextField, 'Friendly name'),
-      'Delta',
-    );
-    await tester.pump();
-    await tester.tap(find.text('Add'));
-    await tester.pumpAndSettle();
-
-    final stored = (await _storedConnections()).single;
-    expect(stored.allRepoPaths, contains('/srv/delta'));
-    expect(stored.repoLabels, {'/srv/delta': 'Delta'});
-  });
+  // Registering an existing repo onto a saved connection moved out of the
+  // per-connection "Add repository" row (removed) into the unified
+  // AddExistingRepoSheet, whose remote branch dials the host and finalizes over
+  // SSH — exercised at the provisioning layer, not as a plain widget test.
 
   testWidgets('the local repo pencil renames the label (folder read-only)', (
     tester,

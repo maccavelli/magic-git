@@ -46,8 +46,8 @@ class WorkspaceBanner extends StatelessWidget {
   }
 }
 
-/// Icon-toggle + caption row (fsmonitor / create-parents / save toggles),
-/// matching the Add Repository sheet's affordance.
+/// Icon-toggle + caption row (fsmonitor / create-parents / save toggles) — the
+/// shared toggle affordance used across the clone/create workspace sheets.
 class WorkspaceToggleRow extends StatelessWidget {
   final bool on;
   final VoidCallback onTap;
