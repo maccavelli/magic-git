@@ -1993,6 +1993,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     required SavedConnection conn,
     required String repoPath,
     bool enableFsmonitor = false,
+    String label = '',
   }) async {
     if (token != _attempt || !ref.mounted) return false;
 
@@ -2046,6 +2047,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     var updated = conn.copyWith(
       repoPaths: SavedConnection.dedupePaths([...conn.allRepoPaths, repoPath]),
     );
+    if (label.isNotEmpty) updated = updated.withRepoLabel(repoPath, label);
     if (enableFsmonitor) updated = updated.withFsmonitor(repoPath, true);
     try {
       await ref.read(connectionStoreProvider).updateMetadata(updated);

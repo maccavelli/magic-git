@@ -159,6 +159,66 @@ void main() {
       expect(off.fsmonitorPaths, isEmpty);
     });
 
+    test('repoLabels round-trip and drive repoDisplayName', () {
+      const conn = SavedConnection(
+        id: 'x',
+        label: '',
+        host: 'h',
+        port: 22,
+        username: 'u',
+        repoPath: '/srv/git/app',
+        repoPaths: ['/srv/git/app', '/srv/git/tools'],
+        repoLabels: {'/srv/git/app': 'The App'},
+      );
+      final restored = SavedConnection.fromJson(conn.toJson());
+      expect(restored.repoLabels, {'/srv/git/app': 'The App'});
+      expect(restored.repoLabelFor('/srv/git/app'), 'The App');
+      // Labeled repo shows its label; unlabeled falls back to the basename.
+      expect(restored.repoDisplayName('/srv/git/app'), 'The App');
+      expect(restored.repoDisplayName('/srv/git/tools'), 'tools');
+    });
+
+    test('withRepoLabel sets and clears without persisting empties', () {
+      const conn = SavedConnection(
+        id: 'x',
+        label: '',
+        host: 'h',
+        port: 22,
+        username: 'u',
+        repoPath: '/a',
+        repoPaths: ['/a', '/b'],
+      );
+      final named = conn.withRepoLabel('/b', 'Beta');
+      expect(named.repoLabelFor('/b'), 'Beta');
+      expect(named.repoDisplayName('/b'), 'Beta');
+      // Clearing drops the key entirely (an empty label is never stored).
+      final cleared = named.withRepoLabel('/b', '');
+      expect(cleared.repoLabels.containsKey('/b'), isFalse);
+      expect(cleared.repoDisplayName('/b'), 'b');
+      // A blank label passed directly is likewise never persisted.
+      expect(conn.withRepoLabel('/a', '').repoLabels, isEmpty);
+    });
+
+    test('repoLabels omitted from JSON when empty, absent on old profiles', () {
+      const bare = SavedConnection(
+        id: 'x',
+        label: '',
+        host: 'h',
+        port: 22,
+        username: 'u',
+        repoPath: '/a',
+      );
+      expect(bare.toJson().containsKey('repoLabels'), isFalse);
+      // A profile written before labels existed round-trips to an empty map.
+      final old = SavedConnection.fromJson({
+        'host': 'h',
+        'username': 'u',
+        'repoPath': '/a',
+      });
+      expect(old.repoLabels, isEmpty);
+      expect(old.repoDisplayName('/a'), 'a');
+    });
+
     test('fromJson defaults fsmonitor off and migrates the legacy flag', () {
       final fresh = SavedConnection.fromJson({'host': 'h', 'username': 'u'});
       expect(fresh.fsmonitorPaths, isEmpty);

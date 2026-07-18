@@ -14,6 +14,13 @@ class SavedConnection {
   /// the connections management panel.
   final List<String> fsmonitorPaths;
 
+  /// Friendly display names for individual repos, keyed by repo path. Per-repo
+  /// and optional (the parallel-map analogue of [fsmonitorPaths]): a path
+  /// absent here — or mapped to an empty string — falls back to its directory
+  /// basename, so existing profiles round-trip with no migration. Set from the
+  /// Add/Edit repository cards, mirroring [SavedLocalRepo.label].
+  final Map<String, String> repoLabels;
+
   /// When this profile was last successfully connected — drives the landing
   /// page's "Recent Connections" ordering. Null for never-connected profiles.
   final DateTime? lastConnectedAt;
@@ -27,6 +34,7 @@ class SavedConnection {
     required this.repoPath,
     this.repoPaths = const [],
     this.fsmonitorPaths = const [],
+    this.repoLabels = const {},
     this.lastConnectedAt,
   });
 
@@ -51,6 +59,35 @@ class SavedConnection {
         : fsmonitorPaths.where((p) => p != path).toList(),
   );
 
+  /// The stored friendly label for [path], or an empty string if none — the
+  /// per-repo analogue of the profile's own [label].
+  String repoLabelFor(String path) => repoLabels[path] ?? '';
+
+  /// A copy with [path]'s friendly label set (or cleared, when [label] is
+  /// empty — an absent key means "fall back to the basename", so an empty
+  /// label is never persisted). Mirrors [withFsmonitor].
+  SavedConnection withRepoLabel(String path, String label) {
+    final next = Map<String, String>.from(repoLabels);
+    if (label.isEmpty) {
+      next.remove(path);
+    } else {
+      next[path] = label;
+    }
+    return copyWith(repoLabels: next);
+  }
+
+  /// How [path] should appear in the UI: its friendly label when set, else the
+  /// directory basename. The remote analogue of [SavedLocalRepo.displayName].
+  String repoDisplayName(String path) {
+    final label = repoLabels[path];
+    return (label != null && label.isNotEmpty) ? label : _basename(path);
+  }
+
+  static String _basename(String path) {
+    final parts = path.split('/').where((s) => s.isNotEmpty).toList();
+    return parts.isEmpty ? path : parts.last;
+  }
+
   SavedConnection copyWith({
     String? label,
     String? host,
@@ -59,6 +96,7 @@ class SavedConnection {
     String? repoPath,
     List<String>? repoPaths,
     List<String>? fsmonitorPaths,
+    Map<String, String>? repoLabels,
     DateTime? lastConnectedAt,
   }) => SavedConnection(
     id: id,
@@ -69,6 +107,7 @@ class SavedConnection {
     repoPath: repoPath ?? this.repoPath,
     repoPaths: repoPaths ?? this.repoPaths,
     fsmonitorPaths: fsmonitorPaths ?? this.fsmonitorPaths,
+    repoLabels: repoLabels ?? this.repoLabels,
     lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,
   );
 
@@ -81,6 +120,7 @@ class SavedConnection {
     'repoPath': repoPath,
     'repoPaths': repoPaths,
     'fsmonitorPaths': fsmonitorPaths,
+    if (repoLabels.isNotEmpty) 'repoLabels': repoLabels,
     if (lastConnectedAt != null)
       'lastConnectedAt': lastConnectedAt!.toIso8601String(),
   };
@@ -97,6 +137,7 @@ class SavedConnection {
             (json['repoPaths'] as List?)?.whereType<String>().toList() ??
             const [],
         fsmonitorPaths: _readFsmonitorPaths(json),
+        repoLabels: _readRepoLabels(json),
         lastConnectedAt: DateTime.tryParse(
           json['lastConnectedAt'] as String? ?? '',
         ),
@@ -114,6 +155,21 @@ class SavedConnection {
       return repo.isEmpty ? const [] : [repo];
     }
     return const [];
+  }
+
+  // Reads the per-repo label map, coercing keys/values to String and dropping
+  // empty labels (an absent key already means "use the basename"). Absent on
+  // older profiles → an empty map, so nothing needs migrating.
+  static Map<String, String> _readRepoLabels(Map<String, dynamic> json) {
+    final raw = json['repoLabels'];
+    if (raw is! Map) return const {};
+    final out = <String, String>{};
+    raw.forEach((k, v) {
+      final key = k.toString();
+      final value = v?.toString() ?? '';
+      if (key.isNotEmpty && value.isNotEmpty) out[key] = value;
+    });
+    return out;
   }
 
   /// A human label falling back to `user@host` when none was given.

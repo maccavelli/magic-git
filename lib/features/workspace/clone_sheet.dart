@@ -73,6 +73,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
   // SSH destination options.
   bool _createParents = false;
   bool _fsmonitor = false;
+  final _remoteLabel = TextEditingController();
 
   // Local destination options.
   String? _pickedParent;
@@ -203,6 +204,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
     _name.dispose();
     _parent.dispose();
     _localLabel.dispose();
+    _remoteLabel.dispose();
     super.dispose();
   }
 
@@ -397,6 +399,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           ref,
           dest: dest,
           fsmonitor: _fsmonitor,
+          label: _remoteLabel.text.trim(),
         );
       case WorkspaceTarget.sshProvision:
         final conn = await _connectionById(_destConnectionId);
@@ -407,6 +410,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
             conn: conn,
             repoPath: dest,
             enableFsmonitor: _fsmonitor,
+            label: _remoteLabel.text.trim(),
           );
         }
     }
@@ -929,6 +933,20 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           'Turns on git\'s filesystem monitor in the cloned repository — '
           'speeds up status on big working trees.',
         ),
+        const SizedBox(height: 10),
+        Text('Label (optional)', style: typography.caption1),
+        const SizedBox(height: 4),
+        MacosTextField(
+          controller: _remoteLabel,
+          placeholder: 'Friendly name',
+          placeholderStyle: kAppPlaceholderStyle,
+          decoration: kAppTextFieldDecoration,
+          focusedDecoration: kAppTextFieldFocusedDecoration,
+        ),
+        const WizardHint(
+          'Display name in the Connections list — defaults to the folder '
+          'name.',
+        ),
       ],
     );
   }
@@ -965,6 +983,8 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
         WizardReviewRow('Destination', destText),
         WizardReviewRow('Source', sourceText),
         WizardReviewRow('Folder', '${_name.text.trim()} in $parentText'),
+        if (!_isLocalTarget && _remoteLabel.text.trim().isNotEmpty)
+          WizardReviewRow('Label', _remoteLabel.text.trim()),
         if (options.isNotEmpty) WizardReviewRow('Options', options.join('\n')),
       ],
     );

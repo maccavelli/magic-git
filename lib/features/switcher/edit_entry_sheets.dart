@@ -262,6 +262,145 @@ class _EditConnectionSheetState extends State<EditConnectionSheet> {
   }
 }
 
+/// Card for editing one repository entry of a saved SSH connection — its
+/// friendly label, its path on the host, and its fsmonitor preference. Unlike a
+/// local repo (whose folder is pinned by a security-scoped grant), a remote
+/// entry is just a path string, so the path itself is editable here: repointing
+/// it at a moved/renamed directory carries the label and fsmonitor across.
+/// Pops `(label, path, fsmonitor)`; the caller persists and applies fsmonitor.
+class EditRemoteRepoSheet extends StatefulWidget {
+  final SavedConnection conn;
+  final String repo;
+
+  const EditRemoteRepoSheet({
+    super.key,
+    required this.conn,
+    required this.repo,
+  });
+
+  @override
+  State<EditRemoteRepoSheet> createState() => _EditRemoteRepoSheetState();
+}
+
+class _EditRemoteRepoSheetState extends State<EditRemoteRepoSheet> {
+  late final _label = TextEditingController(
+    text: widget.conn.repoLabelFor(widget.repo),
+  );
+  late final _path = TextEditingController(text: widget.repo);
+  late bool _fsmonitor = widget.conn.fsmonitorEnabledFor(widget.repo);
+
+  @override
+  void dispose() {
+    _label.dispose();
+    _path.dispose();
+    super.dispose();
+  }
+
+  // A repo entry must point at an absolute path on the host, same rule the
+  // old path-only prompt enforced.
+  bool get _canSave => _path.text.trim().startsWith('/');
+
+  void _save() {
+    if (!_canSave) return;
+    Navigator.of(context).pop<(String, String, bool)>((
+      _label.text.trim(),
+      _path.text.trim(),
+      _fsmonitor,
+    ));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final typography = MacosTheme.of(context).typography;
+    return SizedSheet(
+      width: kSheetWidth,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Edit repository', style: typography.title2),
+            const SheetDescription(
+              'Changes apply to the saved connection. Repointing the path aims '
+              'this entry at a different directory on the host — nothing is '
+              'moved or renamed there, and an active session keeps running '
+              'until the next connect.',
+            ),
+            const SizedBox(height: 12),
+            LabeledTextField(
+              label: 'Label',
+              controller: _label,
+              placeholder: widget.conn.repoDisplayName(widget.repo),
+              onChanged: () => setState(() {}),
+              padding: EdgeInsets.zero,
+            ),
+            const FieldHint(
+              'Shown in the Connections list; falls back to the folder name '
+              'when empty.',
+            ),
+            const SizedBox(height: 12),
+            LabeledTextField(
+              label: 'Path on the host',
+              controller: _path,
+              placeholder: '/srv/git/my-project',
+              onChanged: () => setState(() {}),
+              padding: EdgeInsets.zero,
+            ),
+            const FieldHint(
+              'Absolute path to the repository\'s root folder on the host '
+              '(the one containing .git).',
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                ToolIconButton(
+                  icon: _fsmonitor
+                      ? CupertinoIcons.bolt_fill
+                      : CupertinoIcons.bolt,
+                  tooltip: _fsmonitor
+                      ? 'Git fsmonitor on (click to disable)'
+                      : 'Git fsmonitor off (click to enable)',
+                  size: 15,
+                  color: _fsmonitor
+                      ? MacosColors.systemBlueColor
+                      : MacosColors.systemGrayColor,
+                  onPressed: () => setState(() => _fsmonitor = !_fsmonitor),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Enable git fsmonitor (faster status on large repos)',
+                    style: typography.caption1,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                AppPushButton(
+                  controlSize: ControlSize.large,
+                  secondary: true,
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                const SizedBox(width: 8),
+                AppPushButton(
+                  controlSize: ControlSize.large,
+                  onPressed: _canSave ? _save : null,
+                  child: const Text('Save'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Card for editing a saved local repository. The label (and fsmonitor) are
 /// the editable fields; the folder itself is fixed by its security-scoped
 /// access grant, so pointing at a different folder means removing and

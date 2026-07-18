@@ -162,6 +162,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
         repoPath: repoPath,
         repoPaths: repoPaths,
         fsmonitorPaths: match?.fsmonitorPaths ?? const [],
+        repoLabels: match?.repoLabels ?? const {},
         lastConnectedAt: match?.lastConnectedAt,
       );
       // Saving is best-effort: the Keychain is unavailable on an unsigned build

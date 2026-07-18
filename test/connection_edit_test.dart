@@ -1,7 +1,9 @@
 // The Connections panel's edit flows: the pencil on a connection row opens a
 // card with every profile field editable (blank secrets meaning "keep"), the
-// pencil on a remote repo row edits that entry's path (fsmonitor preference
-// travelling with it), and the pencil on a local repo tile renames its label.
+// pencil on a remote repo row edits that entry's label, path, and fsmonitor
+// (all travelling together across a repoint), and the pencil on a local repo
+// tile renames its label. Also covers the friendly-name label surfacing on
+// remote repo tiles and the Add-repository card.
 
 import 'dart:convert';
 import 'dart:io';
@@ -31,6 +33,19 @@ const _conn = SavedConnection(
   repoPath: '/srv/alpha',
   repoPaths: ['/srv/alpha', '/srv/beta'],
   fsmonitorPaths: ['/srv/beta'],
+);
+
+// Same host, but beta carries a friendly label (and fsmonitor).
+const _connLabeled = SavedConnection(
+  id: 'c1',
+  label: 'Prod',
+  host: 'build01.example.com',
+  port: 22,
+  username: 'deploy',
+  repoPath: '/srv/alpha',
+  repoPaths: ['/srv/alpha', '/srv/beta'],
+  fsmonitorPaths: ['/srv/beta'],
+  repoLabels: {'/srv/beta': 'Beta Service'},
 );
 
 const _localRepo = SavedLocalRepo(
@@ -223,19 +238,26 @@ void main() {
   });
 
   testWidgets('the repo-row pencil repoints the entry, migrating its '
-      'fsmonitor preference', (tester) async {
-    await _pump(tester, saved: const [_conn]);
+      'label and fsmonitor preference', (tester) async {
+    await _pump(tester, saved: const [_connLabeled]);
 
     // Expand the host to reveal its repository rows.
     await tester.tap(find.text('Prod'));
     await tester.pumpAndSettle();
 
-    // Edit the second repo (beta — the one with fsmonitor on).
-    await tester.tap(_byMacosTooltip('Edit repository path').last);
+    // Edit the second repo (beta — labelled, fsmonitor on).
+    await tester.tap(_byMacosTooltip('Edit repository').last);
     await tester.pumpAndSettle();
-    expect(find.text('Edit repository path'), findsOneWidget);
+    expect(find.text('Edit repository'), findsWidgets);
+    // The label field arrives prefilled with beta's friendly name.
+    expect(find.widgetWithText(MacosTextField, 'Beta Service'), findsOneWidget);
 
-    await tester.enterText(find.byType(MacosTextField), '/srv/gamma');
+    // Repoint the path (targeting the field prefilled with the old path).
+    await tester.enterText(
+      find.widgetWithText(MacosTextField, '/srv/beta'),
+      '/srv/gamma',
+    );
+    await tester.pump();
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
@@ -247,26 +269,98 @@ void main() {
       ['/srv/gamma'],
       reason: 'the fsmonitor preference follows the renamed entry',
     );
+    expect(
+      stored.repoLabels,
+      {'/srv/gamma': 'Beta Service'},
+      reason: 'the friendly label follows the renamed entry',
+    );
   });
 
-  testWidgets('a relative path is rejected inline', (tester) async {
+  testWidgets('the repo-row pencil sets a friendly label without moving the '
+      'path', (tester) async {
     await _pump(tester, saved: const [_conn]);
     await tester.tap(find.text('Prod'));
     await tester.pumpAndSettle();
-    await tester.tap(_byMacosTooltip('Edit repository path').first);
+
+    // Edit the first repo (alpha — no label yet). Its label field is empty and
+    // shows the basename as its placeholder.
+    await tester.tap(_byMacosTooltip('Edit repository').first);
+    await tester.pumpAndSettle();
+    // The Label field is the one prefilled empty; enter a name into it.
+    await tester.enterText(
+      find.widgetWithText(MacosTextField, 'alpha'),
+      'The Alpha',
+    );
+    await tester.pump();
+    await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(MacosTextField), 'srv/alpha');
+    final stored = (await _storedConnections()).single;
+    expect(stored.repoLabels, {'/srv/alpha': 'The Alpha'});
+    expect(stored.allRepoPaths, ['/srv/alpha', '/srv/beta'],
+        reason: 'paths untouched');
+    expect(stored.fsmonitorPaths, ['/srv/beta'], reason: 'fsmonitor untouched');
+  });
+
+  testWidgets('a remote repo tile shows its friendly label over the basename', (
+    tester,
+  ) async {
+    await _pump(tester, saved: const [_connLabeled]);
+    await tester.tap(find.text('Prod'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Enter an absolute path'), findsOneWidget);
+    // Beta carries a label → shown; alpha has none → basename.
+    expect(find.text('Beta Service'), findsOneWidget);
+    expect(find.text('beta'), findsNothing);
+    expect(find.text('alpha'), findsOneWidget);
+  });
+
+  testWidgets('a non-absolute path leaves Save inert', (tester) async {
+    await _pump(tester, saved: const [_conn]);
+    await tester.tap(find.text('Prod'));
+    await tester.pumpAndSettle();
+    await tester.tap(_byMacosTooltip('Edit repository').first);
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(MacosTextField, '/srv/alpha'),
+      'srv/alpha',
+    );
+    await tester.pump();
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();
     expect(
-      find.text('Edit repository path'),
-      findsOneWidget,
-      reason: 'Save stays inert while the path is invalid',
+      find.text('Edit repository'),
+      findsWidgets,
+      reason: 'Save stays inert while the path is not absolute',
     );
+    // Nothing persisted.
+    expect((await _storedConnections()).single.repoPath, '/srv/alpha');
+  });
+
+  testWidgets('the Add-repository card stores a friendly label', (tester) async {
+    await _pump(tester, saved: const [_conn]);
+    await tester.tap(find.text('Prod'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Add repository'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.widgetWithText(MacosTextField, '/srv/git/another-project'),
+      '/srv/delta',
+    );
+    await tester.enterText(
+      find.widgetWithText(MacosTextField, 'Friendly name'),
+      'Delta',
+    );
+    await tester.pump();
+    await tester.tap(find.text('Add'));
+    await tester.pumpAndSettle();
+
+    final stored = (await _storedConnections()).single;
+    expect(stored.allRepoPaths, contains('/srv/delta'));
+    expect(stored.repoLabels, {'/srv/delta': 'Delta'});
   });
 
   testWidgets('the local repo pencil renames the label (folder read-only)', (

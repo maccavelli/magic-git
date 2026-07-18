@@ -57,6 +57,7 @@ Future<void> registerAndActivateSshActive(
   WidgetRef ref, {
   required String dest,
   required bool fsmonitor,
+  String label = '',
 }) async {
   final connectionId = ref.read(connectionProvider).connectionId;
   if (connectionId != null) {
@@ -76,6 +77,7 @@ Future<void> registerAndActivateSshActive(
       var updated = conn.copyWith(
         repoPaths: SavedConnection.dedupePaths([...conn.allRepoPaths, dest]),
       );
+      if (label.isNotEmpty) updated = updated.withRepoLabel(dest, label);
       if (fsmonitor) updated = updated.withFsmonitor(dest, true);
       try {
         await ref.read(connectionStoreProvider).updateMetadata(updated);

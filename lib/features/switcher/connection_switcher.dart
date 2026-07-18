@@ -13,7 +13,6 @@ import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/hover_pop.dart';
 import '../common/label_chip.dart';
-import '../common/prompt_text_sheet.dart';
 import '../common/sized_sheet.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
@@ -464,7 +463,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  _basename(repo),
+                  conn.repoDisplayName(repo),
                   style: typography.body,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -478,9 +477,9 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                 ),
               ToolIconButton(
                 icon: CupertinoIcons.pencil,
-                tooltip: 'Edit repository path',
+                tooltip: 'Edit repository',
                 size: 14,
-                onPressed: () => _editRepoPath(context, ref, conn, repo),
+                onPressed: () => _editRepo(context, ref, conn, repo),
               ),
               ToolIconButton(
                 icon: conn.fsmonitorEnabledFor(repo)
@@ -806,12 +805,13 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
       await ref
           .read(connectionStoreProvider)
           .updateMetadata(
-            // Also drop the removed repo from fsmonitorPaths — otherwise the
-            // persisted profile keeps a stale fsmonitor entry pointing at a
-            // path no longer in repoPaths.
+            // Also drop the removed repo's per-repo metadata (fsmonitor +
+            // label) — otherwise the persisted profile keeps stale entries
+            // pointing at a path no longer in repoPaths.
             conn
                 .copyWith(repoPath: newDefault, repoPaths: remaining)
-                .withFsmonitor(repo, false),
+                .withFsmonitor(repo, false)
+                .withRepoLabel(repo, ''),
           );
       ref.invalidate(savedConnectionsProvider);
     });
@@ -853,42 +853,71 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     });
   }
 
-  /// Repoints one repository entry of a connection at a different path on the
-  /// host (the repo moved or was renamed there). The entry's fsmonitor
-  /// preference travels with it; nothing is touched on the host itself, and
-  /// an active session on the old path keeps running until reconnect.
-  Future<void> _editRepoPath(
+  /// Opens the edit card for one repository entry of a connection — its
+  /// friendly label, its path on the host, and its fsmonitor preference are all
+  /// editable. Repointing the path (the repo moved or was renamed there)
+  /// carries the label and fsmonitor across to the new path; nothing is touched
+  /// on the host itself, and an active session on the old path keeps running
+  /// until reconnect. An fsmonitor change with no path change is applied live
+  /// (like the inline toggle); across a repoint it applies on the next connect.
+  Future<void> _editRepo(
     BuildContext context,
     WidgetRef ref,
     SavedConnection conn,
     String repo,
   ) async {
-    final newPath = await promptText(
-      context,
-      'Edit repository path',
-      placeholder: '/srv/git/my-project',
-      initial: repo,
-      description:
-          'Points this entry at a different path on ${conn.host} — nothing '
-          'is moved or renamed on the host itself.',
-      confirmLabel: 'Save',
-      validate: (v) => v.startsWith('/') ? null : 'Enter an absolute path',
+    final result = await showMacosSheet<(String, String, bool)?>(
+      context: context,
+      builder: (_) =>
+          EscapeDismissible(child: EditRemoteRepoSheet(conn: conn, repo: repo)),
     );
-    if (newPath == null || newPath == repo || !context.mounted) return;
-    final hadFsmonitor = conn.fsmonitorEnabledFor(repo);
-    var updated = conn
-        .copyWith(
-          repoPath: conn.repoPath == repo ? newPath : conn.repoPath,
-          repoPaths: [
-            for (final p in conn.allRepoPaths) p == repo ? newPath : p,
-          ],
-        )
-        .withFsmonitor(repo, false);
-    if (hadFsmonitor) updated = updated.withFsmonitor(newPath, true);
-    await runAction(context, () async {
+    if (result == null || !context.mounted) return;
+    final (label, newPath, fsmonitor) = result;
+    final pathChanged = newPath != repo;
+    final labelChanged = label != conn.repoLabelFor(repo);
+    final fsmonitorChanged = fsmonitor != conn.fsmonitorEnabledFor(repo);
+    if (!pathChanged && !labelChanged && !fsmonitorChanged) return;
+
+    var updated = conn;
+    if (pathChanged) {
+      // Repoint the entry and clear the old path's per-repo metadata — it no
+      // longer exists in repoPaths, so a stale label/fsmonitor entry pointing
+      // at it must not survive.
+      updated = updated
+          .copyWith(
+            repoPath: conn.repoPath == repo ? newPath : conn.repoPath,
+            repoPaths: [
+              for (final p in conn.allRepoPaths) p == repo ? newPath : p,
+            ],
+          )
+          .withFsmonitor(repo, false)
+          .withRepoLabel(repo, '');
+    }
+    // Apply the (possibly edited) label + fsmonitor onto the effective path.
+    final target = pathChanged ? newPath : repo;
+    updated = updated.withRepoLabel(target, label).withFsmonitor(target, fsmonitor);
+
+    final saved = await runAction(context, () async {
       await ref.read(connectionStoreProvider).updateMetadata(updated);
       ref.invalidate(savedConnectionsProvider);
     });
+    if (!saved) return;
+    // Apply an fsmonitor change live only when the path itself did not move —
+    // same contract as _toggleFsmonitor (each git command carries its own repo
+    // path). Across a repoint the new path may not be a live checkout yet, so
+    // the saved preference applies on the next connect instead. Re-read the
+    // connection now (not before the await): it may have switched mid-write.
+    if (fsmonitorChanged &&
+        !pathChanged &&
+        ref.read(connectionProvider).connectionId == conn.id) {
+      try {
+        await ref.read(gitServiceProvider).setFsmonitor(repo, enabled: fsmonitor);
+      } catch (e) {
+        ref
+            .read(outputLogProvider.notifier)
+            .logError('fsmonitor setup ($repo)', e.toString());
+      }
+    }
   }
 
   Future<void> _toggleFsmonitor(
@@ -929,15 +958,16 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     WidgetRef ref,
     SavedConnection conn,
   ) async {
-    final result = await showMacosSheet<(String, bool)>(
+    final result = await showMacosSheet<(String, String, bool)>(
       context: context,
       builder: (_) => const EscapeDismissible(child: AddRepositorySheet()),
     );
     if (result == null || !context.mounted) return;
-    final (path, fsmonitor) = result;
+    final (path, label, fsmonitor) = result;
     if (path.isEmpty) return;
     final updated = conn
         .copyWith(repoPaths: {...conn.allRepoPaths, path}.toList())
+        .withRepoLabel(path, label)
         .withFsmonitor(path, fsmonitor);
     final saved = await runAction(context, () async {
       await ref.read(connectionStoreProvider).updateMetadata(updated);
@@ -1209,11 +1239,13 @@ class AddRepositorySheet extends StatefulWidget {
 
 class _AddRepositorySheetState extends State<AddRepositorySheet> {
   final _path = TextEditingController();
+  final _label = TextEditingController();
   bool _fsmonitor = false;
 
   @override
   void dispose() {
     _path.dispose();
+    _label.dispose();
     super.dispose();
   }
 
@@ -1252,6 +1284,20 @@ class _AddRepositorySheetState extends State<AddRepositorySheet> {
               const FieldHint(
                 'The repository\'s root folder on the host (the one '
                 'containing .git).',
+              ),
+              const SizedBox(height: 12),
+              Text('Label (optional)', style: typography.caption1),
+              const SizedBox(height: 4),
+              MacosTextField(
+                controller: _label,
+                placeholder: 'Friendly name',
+                placeholderStyle: kAppPlaceholderStyle,
+                decoration: kAppTextFieldDecoration,
+                focusedDecoration: kAppTextFieldFocusedDecoration,
+              ),
+              const FieldHint(
+                'Shown in the Connections list; falls back to the folder '
+                'name when empty.',
               ),
               const SizedBox(height: 14),
               Row(
@@ -1293,9 +1339,11 @@ class _AddRepositorySheetState extends State<AddRepositorySheet> {
                     controlSize: ControlSize.large,
                     onPressed: _path.text.trim().isEmpty
                         ? null
-                        : () => Navigator.of(
-                            context,
-                          ).pop((_path.text.trim(), _fsmonitor)),
+                        : () => Navigator.of(context).pop((
+                            _path.text.trim(),
+                            _label.text.trim(),
+                            _fsmonitor,
+                          )),
                     child: const Text('Add'),
                   ),
                 ],

@@ -129,6 +129,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   // SSH destination options.
   bool _createParents = false;
   bool _fsmonitor = false;
+  final _remoteLabel = TextEditingController();
 
   // Local destination options.
   String? _pickedParent;
@@ -276,6 +277,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     _remoteUrl.dispose();
     _folder.dispose();
     _localLabel.dispose();
+    _remoteLabel.dispose();
     super.dispose();
   }
 
@@ -1003,6 +1005,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           ref,
           dest: dest,
           fsmonitor: _fsmonitor,
+          label: _remoteLabel.text.trim(),
         );
       case WorkspaceTarget.sshProvision:
         final conn = await _connectionById(_destConnectionId);
@@ -1013,6 +1016,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             conn: conn,
             repoPath: dest,
             enableFsmonitor: _fsmonitor,
+            label: _remoteLabel.text.trim(),
           );
         }
     }
@@ -1389,6 +1393,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           const WizardHint('Turns on git\'s filesystem monitor daemon in the new '
             'repository — speeds up status on big working trees.',
           ),
+          const SizedBox(height: 8),
+          MacosTextField(
+            controller: _remoteLabel,
+            placeholder: 'Label (optional)',
+            placeholderStyle: kAppPlaceholderStyle,
+            decoration: kAppTextFieldDecoration,
+            focusedDecoration: kAppTextFieldFocusedDecoration,
+          ),
+          const WizardHint('Display name in the Connections list — defaults to '
+            'the folder name.',
+          ),
         ],
       ],
     );
@@ -1746,6 +1761,8 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         ),
         _reviewRow(typography, 'Initial branch', _branch.text.trim()),
         _reviewRow(typography, 'Remote', remoteText),
+        if (!_isLocalTarget && _remoteLabel.text.trim().isNotEmpty)
+          _reviewRow(typography, 'Label', _remoteLabel.text.trim()),
         if (options.isNotEmpty)
           _reviewRow(typography, 'Options', options.join('\n')),
       ],
