@@ -123,8 +123,17 @@ class _IssueCreateFormState extends ConsumerState<IssueCreateForm> {
     if (!mounted) return;
     setState(() => _submitting = false);
     if (ok) {
-      // The new issue should show up in the left-pane list immediately.
+      // The new issue should show up in the left-pane list immediately, and
+      // the section header's "N of M" total lives on the dashboard — refresh
+      // both so the count doesn't read one short until an unrelated reload.
       ref.invalidate(projectIssuesProvider(widget.repoPath));
+      final forge = await ref.read(forgeProvider(widget.repoPath).future);
+      if (!mounted) return;
+      if (forge == Forge.github) {
+        ref.invalidate(githubProjectDashboardProvider(widget.repoPath));
+      } else if (forge == Forge.gitlab) {
+        ref.invalidate(projectDashboardProvider(widget.repoPath));
+      }
       widget.onClose();
     }
   }

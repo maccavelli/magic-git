@@ -84,6 +84,29 @@ void main() {
       expect(m.due, '2015-07-22');
     });
 
+    test('ForgeMilestone.fromGlabRest keeps the REST web_url (global id ≠ iid, '
+        'so the URL can only come from the payload)', () {
+      final m = ForgeMilestone.fromGlabRest({
+        'id': 90210, // global REST id — NOT the URL's iid
+        'iid': 7,
+        'title': 'Sprint 7',
+        'state': 'active',
+        'web_url': 'https://gitlab.example.com/grp/proj/-/milestones/7',
+      });
+      expect(m.id, 90210);
+      expect(m.webUrl, 'https://gitlab.example.com/grp/proj/-/milestones/7');
+    });
+
+    test('ForgeMilestone.fromGhRest keeps html_url as webUrl', () {
+      final m = ForgeMilestone.fromGhRest({
+        'number': 3,
+        'title': 'M3',
+        'state': 'open',
+        'html_url': 'https://github.com/o/r/milestone/3',
+      });
+      expect(m.webUrl, 'https://github.com/o/r/milestone/3');
+    });
+
     test('ForgeLabel.fromGlabGql maps title to name', () {
       final l = ForgeLabel.fromGlabGql({
         'title': '#field-fyi',

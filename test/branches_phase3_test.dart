@@ -22,13 +22,20 @@ const _refs = [
   GitRef(name: 'refs/heads/main', oid: 'aaa', isHead: true, subject: 's'),
   GitRef(name: 'refs/heads/feature', oid: 'bbb', isHead: false, subject: 's'),
   GitRef(name: 'refs/heads/other', oid: 'ccc', isHead: false, subject: 's'),
-  GitRef(name: 'refs/remotes/origin/topic', oid: 'ddd', isHead: false, subject: 's'),
+  GitRef(
+    name: 'refs/remotes/origin/topic',
+    oid: 'ddd',
+    isHead: false,
+    subject: 's',
+  ),
   GitRef(name: 'refs/tags/v1', oid: 'eee', isHead: false, subject: 's'),
 ];
 
 class _FakeGit extends GitService {
   _FakeGit() : super(SSHCommandExecutor(SSHClientManager()));
   final deleted = <String>[];
+  final checkouts = <String>[];
+  final trackingCheckouts = <(String, String)>[]; // (localName, remoteRef)
 
   @override
   Future<void> deleteBranch(
@@ -37,6 +44,20 @@ class _FakeGit extends GitService {
     bool force = false,
   }) async {
     deleted.add(name);
+  }
+
+  @override
+  Future<void> checkout(String repoPath, String ref) async {
+    checkouts.add(ref);
+  }
+
+  @override
+  Future<void> checkoutTrackingBranch(
+    String repoPath, {
+    required String localName,
+    required String remoteRef,
+  }) async {
+    trackingCheckouts.add((localName, remoteRef));
   }
 }
 
@@ -69,7 +90,8 @@ Future<_FakeGit> _pump(
       branchForgeProvider(_repo).overrideWith((ref) async => const {}),
       mergedBranchesProvider(_repo).overrideWith((ref) async => merged),
       statusProvider(_repo).overrideWith(
-        (ref) async => GitStatus(branch: const GitBranchInfo(), files: const []),
+        (ref) async =>
+            GitStatus(branch: const GitBranchInfo(), files: const []),
       ),
       for (final e in commits.entries)
         branchCommitsProvider(e.key).overrideWith((ref) async => e.value),
@@ -111,24 +133,33 @@ void main() {
     expect(find.text('Add a test'), findsOneWidget);
   });
 
-  testWidgets('the review dashboard deletes all merged branches in one action',
-      (tester) async {
-    final git = await _pump(tester, merged: const {'feature', 'other'});
+  testWidgets(
+    'the review dashboard deletes all merged branches in one action',
+    (tester) async {
+      final git = await _pump(tester, merged: const {'feature', 'other'});
 
-    // Nothing selected → the dashboard, with the merged-cleanup action.
-    expect(find.text('Branches'), findsOneWidget);
-    final deleteBtn = find.widgetWithText(InlineActionButton, 'Delete 2 merged…');
-    expect(deleteBtn, findsOneWidget);
+      // Nothing selected → the dashboard, with the merged-cleanup action.
+      expect(find.text('Branches'), findsOneWidget);
+      final deleteBtn = find.widgetWithText(
+        InlineActionButton,
+        'Delete 2 merged…',
+      );
+      expect(deleteBtn, findsOneWidget);
 
-    await tester.tap(deleteBtn);
-    await tester.pumpAndSettle();
-    // Confirm.
-    await tester.tap(find.text('Delete').last);
-    await tester.pumpAndSettle();
+      await tester.tap(deleteBtn);
+      await tester.pumpAndSettle();
+      // Confirm.
+      await tester.tap(find.text('Delete').last);
+      await tester.pumpAndSettle();
 
-    expect(git.deleted, containsAll(<String>['feature', 'other']));
-    expect(git.deleted, isNot(contains('main')), reason: 'HEAD is never merged-deletable');
-  });
+      expect(git.deleted, containsAll(<String>['feature', 'other']));
+      expect(
+        git.deleted,
+        isNot(contains('main')),
+        reason: 'HEAD is never merged-deletable',
+      );
+    },
+  );
 
   testWidgets('arrow keys walk across local, remote and tag sections', (
     tester,
@@ -149,5 +180,62 @@ void main() {
       find.widgetWithText(InlineActionButton, 'Check out tracking branch'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('a remote with no matching local branch creates an explicit '
+      'tracking branch (never a DWIM checkout)', (tester) async {
+    final git = await _pump(tester);
+
+    // origin/topic has no local `topic` — select it and check out.
+    await tester.tap(find.text('origin/topic'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.widgetWithText(InlineActionButton, 'Check out tracking branch'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(git.trackingCheckouts, [('topic', 'origin/topic')]);
+    expect(git.checkouts, isEmpty, reason: 'must not fall back to DWIM');
+  });
+
+  testWidgets('double-clicking a local branch checks it out; a single click '
+      'only selects', (tester) async {
+    final git = await _pump(tester);
+
+    // Single tap selects but does NOT check out. `.first`: once selected the
+    // detail header also renders the branch name.
+    await tester.tap(find.text('feature').first);
+    await tester.pumpAndSettle();
+    expect(git.checkouts, isEmpty, reason: 'one click only selects');
+
+    // A quick second tap on the same row checks it out.
+    await tester.tap(find.text('feature').first);
+    await tester.pumpAndSettle();
+    expect(git.checkouts, ['feature']);
+  });
+
+  testWidgets('a remote whose local branch already exists switches to it '
+      '(plain checkout, no re-create)', (tester) async {
+    const refs = [
+      GitRef(name: 'refs/heads/main', oid: 'aaa', isHead: true, subject: 's'),
+      GitRef(name: 'refs/heads/topic', oid: 'bbb', isHead: false, subject: 's'),
+      GitRef(
+        name: 'refs/remotes/origin/topic',
+        oid: 'ccc',
+        isHead: false,
+        subject: 's',
+      ),
+    ];
+    final git = await _pump(tester, refs: refs);
+
+    await tester.tap(find.text('origin/topic'));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.widgetWithText(InlineActionButton, 'Check out tracking branch'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(git.checkouts, ['topic']);
+    expect(git.trackingCheckouts, isEmpty);
   });
 }

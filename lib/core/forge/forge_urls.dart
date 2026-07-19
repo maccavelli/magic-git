@@ -36,6 +36,11 @@ String? forgeIssueWebUrl(String remoteUrl, Forge forge, int id) {
 }
 
 /// The milestone page for milestone [id] (GitHub `number` / GitLab `iid`).
+///
+/// Prefer [ForgeMilestone.webUrl] from the payload when available: callers
+/// that hold a REST-sourced milestone have a global `id`, NOT the iid this
+/// path needs, so this reconstruction is only safe for GitHub (where `id` is
+/// the `number` the path wants).
 String? forgeMilestoneWebUrl(String remoteUrl, Forge forge, int id) {
   final base = forgeProjectWebUrl(remoteUrl);
   if (base == null) return null;

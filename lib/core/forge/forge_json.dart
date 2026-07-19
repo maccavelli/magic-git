@@ -3,6 +3,32 @@
 /// were byte-identical twins in the two services before being pulled out.
 library;
 
+import 'dart:convert';
+import 'dart:isolate';
+
+/// Above this many bytes, [decodeJsonMaybeOffThread] parses on a background
+/// isolate. Matches `GitService`'s own threshold (32 KiB) so both layers make
+/// the same UI-jank tradeoff: the fixed isolate-spawn cost only pays off past
+/// a payload big enough to drop a frame on the main isolate.
+const int _forgeJsonIsolateThreshold = 32 * 1024;
+
+/// `jsonDecode([body])`, offloaded to a background isolate when [body] is large
+/// enough that decoding it on the UI isolate would risk a dropped frame.
+///
+/// Forge "Show all" paths deliberately pull large payloads (`gh run list
+/// --limit 2000`, full-history pipelines/issues), whose multi-MB JSON was
+/// decoded synchronously on the UI isolate — the exact off-isolate rule
+/// `GitService` already follows for its big parses (see its `Isolate.run`
+/// sites). Small everyday responses stay inline: the isolate hop would cost
+/// more than it saves. Throws the same [FormatException] `jsonDecode` does, so
+/// callers' non-JSON handling is unchanged.
+Future<dynamic> decodeJsonMaybeOffThread(String body) {
+  if (body.length > _forgeJsonIsolateThreshold) {
+    return Isolate.run(() => jsonDecode(body));
+  }
+  return Future.value(jsonDecode(body));
+}
+
 /// Maps a decoded JSON list through [from]. A `null` decode is an empty
 /// result; a non-list (a malformed response) invokes [onMalformed] — the
 /// caller throws its own typed exception ([GhException]/[GlabException]), so

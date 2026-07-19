@@ -14,6 +14,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/settings/pane_layout.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
@@ -83,6 +84,11 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   /// tag) — what ↑/↓ walk. [_locals] stays the local-only subset the merge/
   /// delete gating and Enter-to-checkout operate on.
   List<GitRef> _navigable = const [];
+
+  /// Every local branch short-name (unfiltered) — lets the remote-row checkout
+  /// decide between "switch to the existing local branch" and "create a new
+  /// tracking branch" without a name-collision guess.
+  Set<String> _localBranchNames = const {};
 
   /// Whether to nest local branches into a folder tree by their `/` prefix.
   /// Off by default — a flat list is calmer under ~15 branches — with a
@@ -303,6 +309,65 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     );
   }
 
+  // Manual double-tap tracking for the local rows (see [_localRowBody] for why
+  // not GestureDetector.onDoubleTap). A second tap on the SAME row within the
+  // window checks it out.
+  String? _lastTapRef;
+  DateTime? _lastTapAt;
+  static const Duration _doubleTapWindow = Duration(milliseconds: 400);
+
+  /// First tap selects (immediately); a quick second tap on the same local
+  /// branch also checks it out — gated exactly like the context menu's "Check
+  /// out" (HEAD is already current; a branch checked out in another worktree
+  /// can't be switched to here).
+  void _handleLocalTap(GitService git, GitRef branch) {
+    final now = DateTime.now();
+    final isDouble =
+        _lastTapRef == branch.name &&
+        _lastTapAt != null &&
+        now.difference(_lastTapAt!) < _doubleTapWindow;
+    _lastTapRef = branch.name;
+    _lastTapAt = now;
+    _select(branch);
+    if (isDouble &&
+        !branch.isHead &&
+        branch.elsewhereWorktreePath == null &&
+        !busy) {
+      _lastTapRef = null; // consume — a triple tap isn't a second checkout
+      _checkout(git, branch.shortName);
+    }
+  }
+
+  /// The local branch name a remote-tracking ref [remoteShortName] (e.g.
+  /// `origin/feat/x`) maps to — everything after the first `/` (the remote).
+  static String _remoteLocalName(String remoteShortName) =>
+      remoteShortName.contains('/')
+      ? remoteShortName.substring(remoteShortName.indexOf('/') + 1)
+      : remoteShortName;
+
+  /// "Check out tracking branch" on a remote row: switch to the local branch
+  /// if one of that name already exists, otherwise create a NEW branch
+  /// explicitly tracking this remote ref. The explicit create avoids git's
+  /// DWIM checkout, which detaches HEAD onto a same-named tag or errors on a
+  /// name carried by two remotes — see [GitService.checkoutTrackingBranch].
+  Future<void> _checkoutRemote(GitService git, GitRef remote) async {
+    final localName = _remoteLocalName(remote.shortName);
+    await runGuarded(
+      () => guardedBranchSwitch(
+        context,
+        ref,
+        repoPath,
+        () => _localBranchNames.contains(localName)
+            ? git.checkout(repoPath, localName)
+            : git.checkoutTrackingBranch(
+                repoPath,
+                localName: localName,
+                remoteRef: remote.shortName,
+              ),
+      ),
+    );
+  }
+
   void _copyName(String name) {
     Clipboard.setData(ClipboardData(text: name));
   }
@@ -368,6 +433,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     final tagsCollapsed = sectionCollapsed(_BranchSections.tags);
     final totalLocals = refs.where((r) => r.isLocalBranch).length;
     final totalRemotes = refs.where((r) => r.isRemote).length;
+    _localBranchNames = {
+      for (final r in refs)
+        if (r.isLocalBranch) r.shortName,
+    };
     final locals = refs.where((r) => r.isLocalBranch && matches(r)).toList();
     final remotes = refs.where((r) => r.isRemote && matches(r)).toList();
     final allTags = refs.where((r) => r.isTag).toList();
@@ -949,7 +1018,12 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       immediate: true,
       onDragSelect: () => _select(branch),
       child: GestureDetector(
-        onTap: () => _select(branch),
+        // Manual double-tap detection rather than GestureDetector.onDoubleTap:
+        // registering onDoubleTap makes the recognizer defer EVERY single tap
+        // by the ~300ms double-tap timeout (a visible select lag, and it
+        // breaks tap-to-select in tests). Here the first tap selects
+        // immediately and a quick second tap on the same row also checks out.
+        onTap: () => _handleLocalTap(git, branch),
         onSecondaryTapUp: (d) => _menu.show(
           context,
           d.globalPosition,
@@ -1110,35 +1184,41 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   Widget _remoteRow(BuildContext context, GitService git, GitRef branch) {
     final typography = MacosTheme.of(context).typography;
     final selected = _selectedRef == branch.name;
-    return Tappable(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => _select(branch),
-      onSecondaryTapUp: (d) => _menu.show(
-        context,
-        d.globalPosition,
-        _remoteMenu(git, branch),
-        width: 250,
-      ),
-      child: Container(
-        color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-        child: Row(
-          children: [
-            const MacosIcon(
-              CupertinoIcons.cloud,
-              size: 15,
-              color: MacosColors.systemGrayColor,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                branch.shortName,
-                style: typography.body,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+    // Keyed like [_localRow] so ↑/↓ into this section can scroll the selected
+    // row into view — [ensureRowVisible] no-ops without a resolvable key, so an
+    // unkeyed remote/tag row moved the selection off-screen invisibly.
+    return KeyedSubtree(
+      key: _rowKeyFor(branch.name),
+      child: Tappable(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _select(branch),
+        onSecondaryTapUp: (d) => _menu.show(
+          context,
+          d.globalPosition,
+          _remoteMenu(git, branch),
+          width: 250,
+        ),
+        child: Container(
+          color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+          child: Row(
+            children: [
+              const MacosIcon(
+                CupertinoIcons.cloud,
+                size: 15,
+                color: MacosColors.systemGrayColor,
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  branch.shortName,
+                  style: typography.body,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1153,49 +1233,54 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   ) {
     final typography = MacosTheme.of(context).typography;
     final selected = _selectedRef == tag.name;
-    return Tappable(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => _select(tag),
-      onSecondaryTapUp: (d) => _menu.show(
-        context,
-        d.globalPosition,
-        _tagMenu(git, tag, status, remote),
-        width: 250,
-      ),
-      child: Container(
-        color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-        child: Row(
-          children: [
-            const MacosIcon(
-              CupertinoIcons.tag,
-              size: 15,
-              color: MacosColors.systemTealColor,
-            ),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(
-                tag.shortName,
-                style: typography.body,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+    // Keyed so ↑/↓ into the Tags section scrolls the selected row into view —
+    // see [_remoteRow].
+    return KeyedSubtree(
+      key: _rowKeyFor(tag.name),
+      child: Tappable(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _select(tag),
+        onSecondaryTapUp: (d) => _menu.show(
+          context,
+          d.globalPosition,
+          _tagMenu(git, tag, status, remote),
+          width: 250,
+        ),
+        child: Container(
+          color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+          child: Row(
+            children: [
+              const MacosIcon(
+                CupertinoIcons.tag,
+                size: 15,
+                color: MacosColors.systemTealColor,
               ),
-            ),
-            if (status == _TagRemoteStatus.localOnly) ...[
-              const SizedBox(width: 6),
-              const LabelChip(
-                'local only',
-                color: MacosColors.systemOrangeColor,
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  tag.shortName,
+                  style: typography.body,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
+              if (status == _TagRemoteStatus.localOnly) ...[
+                const SizedBox(width: 6),
+                const LabelChip(
+                  'local only',
+                  color: MacosColors.systemOrangeColor,
+                ),
+              ],
+              if (status == _TagRemoteStatus.differs) ...[
+                const SizedBox(width: 6),
+                LabelChip(
+                  'differs from $remote',
+                  color: MacosColors.systemRedColor,
+                ),
+              ],
             ],
-            if (status == _TagRemoteStatus.differs) ...[
-              const SizedBox(width: 6),
-              LabelChip(
-                'differs from $remote',
-                color: MacosColors.systemRedColor,
-              ),
-            ],
-          ],
+          ),
         ),
       ),
     );
@@ -1291,14 +1376,11 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   }
 
   List<ContextMenuEntry> _remoteMenu(GitService git, GitRef b) {
-    final localName = b.shortName.contains('/')
-        ? b.shortName.substring(b.shortName.indexOf('/') + 1)
-        : b.shortName;
     return [
       ContextMenuItem(
         icon: CupertinoIcons.square_arrow_down,
         label: 'Check out tracking branch',
-        onTap: () => _checkout(git, localName),
+        onTap: () => _checkoutRemote(git, b),
       ),
       ContextMenuItem(
         icon: CupertinoIcons.doc_on_doc,
@@ -1803,9 +1885,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   }
 
   Widget _remoteDetail(BuildContext context, GitService git, GitRef b) {
-    final localName = b.shortName.contains('/')
-        ? b.shortName.substring(b.shortName.indexOf('/') + 1)
-        : b.shortName;
+    final localName = _remoteLocalName(b.shortName);
     return _detailScaffold(
       icon: CupertinoIcons.cloud,
       iconColor: MacosColors.systemGrayColor,
@@ -1824,7 +1904,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         _detailButton(
           'Check out tracking branch',
           CupertinoIcons.square_arrow_down,
-          busy ? null : () => _checkout(git, localName),
+          busy ? null : () => _checkoutRemote(git, b),
         ),
         _detailButton(
           'Delete on remote',
@@ -1985,6 +2065,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       title: 'Delete branch',
       message: 'Delete local branch "$name"?',
       confirmLabel: 'Delete',
+      destructive: true,
     );
     if (!ok || !mounted) return;
     await runGuarded(() async {
@@ -2380,7 +2461,9 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   Widget _error(BuildContext context, Object err) => Padding(
     padding: const EdgeInsets.all(16),
     child: Text(
-      '$err',
+      // displayError strips the raw `GitException: … (exit 128)` debug wrapper
+      // to the human-facing message, matching every Forge error surface.
+      displayError(err),
       style: MacosTheme.of(
         context,
       ).typography.body.copyWith(color: MacosColors.systemRedColor),

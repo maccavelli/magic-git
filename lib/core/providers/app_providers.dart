@@ -9,6 +9,7 @@ import 'package:riverpod/misc.dart' show ProviderOrFamily;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../exec/command_telemetry.dart';
 import '../exec/local_command_executor.dart';
+import '../exec/scoped_command_executor.dart';
 import '../forge/auth_probe_service.dart';
 import '../forge/auth_status.dart';
 import '../forge/forge.dart';
@@ -262,14 +263,32 @@ final gitServiceProvider = Provider<GitService>((ref) {
   return service;
 });
 
+/// The active executor wrapped so a scoped/dotfiles repo's `GIT_DIR`/
+/// `GIT_WORK_TREE` overlay is injected into every forge command, keyed by
+/// `repoPath`. Unlike [GitService], the forge services carry no scope registry
+/// of their own; this wrapper gives them the same scoping without threading the
+/// overlay through their many call sites — so `gh`/`glab` (and the git commands
+/// they shell out) resolve the right git dir on a scoped repo. The resolver
+/// reads the connection's `scopedGitDirs` via `ref.read` at command time (not
+/// `watch`), so this provider depends only on [activeExecutorProvider] and does
+/// not rebuild — nor form a cycle — on connection-state changes.
+final scopedForgeExecutorProvider = Provider<CommandExecutor>((ref) {
+  final inner = ref.watch(activeExecutorProvider);
+  return ScopedCommandExecutor(inner, (repoPath) {
+    final gitDir = ref.read(connectionProvider).scopedGitDirs[repoPath];
+    if (gitDir == null || gitDir.isEmpty) return null;
+    return {'GIT_DIR': gitDir, 'GIT_WORK_TREE': repoPath};
+  });
+});
+
 final glabServiceProvider = Provider<GlabService>((ref) {
-  return GlabService(ref.watch(activeExecutorProvider));
+  return GlabService(ref.watch(scopedForgeExecutorProvider));
 });
 
 /// GitHub counterpart to [glabServiceProvider]; same executor seam, so it works
 /// over both SSH and local backends unchanged.
 final ghServiceProvider = Provider<GhService>((ref) {
-  return GhService(ref.watch(activeExecutorProvider));
+  return GhService(ref.watch(scopedForgeExecutorProvider));
 });
 
 /// Plain host filesystem primitives (home dir, directory listing, path

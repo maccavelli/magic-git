@@ -242,8 +242,9 @@ void main() {
     expect(find.text('Target'), findsOneWidget);
   });
 
-  testWidgets('the merge pulldown offers squash, confirmed with its own verb',
-      (tester) async {
+  testWidgets('the merge pulldown offers squash, confirmed with its own verb', (
+    tester,
+  ) async {
     // The GitLab merge API always supported squash=true; the UI only ever
     // sent the default. The pulldown beside Merge closes that gap (no rebase
     // entry — on GitLab that's a project setting, not a per-merge choice).
@@ -308,7 +309,10 @@ void main() {
       // Open the confirm dialog.
       await tester.tap(find.text('Approve'));
       await tester.pumpAndSettle();
-      expect(find.text('Approve !7 on the remote GitLab project?'), findsOneWidget);
+      expect(
+        find.text('Approve !7 on the remote GitLab project?'),
+        findsOneWidget,
+      );
 
       // Confirm — the dialog's own button is the more-recently-added match.
       await tester.tap(find.text('Approve').last);
@@ -394,4 +398,24 @@ void main() {
       expect(find.textContaining('Pipeline #100'), findsNothing);
     },
   );
+
+  group('prettyPipelineRef', () {
+    test('decodes GitLab merge-request pipeline refs', () {
+      expect(prettyPipelineRef('refs/merge-requests/7/head'), 'MR !7');
+      expect(
+        prettyPipelineRef('refs/merge-requests/42/merge'),
+        'MR !42 (merged results)',
+      );
+    });
+
+    test('passes an ordinary branch ref through unchanged', () {
+      expect(prettyPipelineRef('main'), 'main');
+      expect(prettyPipelineRef('feat/x'), 'feat/x');
+      // A malformed lookalike is not decoded.
+      expect(
+        prettyPipelineRef('refs/merge-requests/x/head'),
+        'refs/merge-requests/x/head',
+      );
+    });
+  });
 }

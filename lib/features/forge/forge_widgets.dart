@@ -41,7 +41,11 @@ class StatusBadge extends StatelessWidget {
       ),
       child: Text(
         text,
-        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color),
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: color,
+        ),
       ),
     );
   }
@@ -246,8 +250,7 @@ class ForgeListRow extends StatelessWidget {
         color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
         // Right inset 8 when a trailing icon must line up flush with the
         // section header's icons; 16 (matching the left) otherwise.
-        padding:
-            padding ?? EdgeInsets.fromLTRB(16, 7, hasTrailing ? 8 : 16, 7),
+        padding: padding ?? EdgeInsets.fromLTRB(16, 7, hasTrailing ? 8 : 16, 7),
         child: Row(
           crossAxisAlignment: titleMaxLines > 1 || chips.isNotEmpty
               ? CrossAxisAlignment.start
@@ -512,10 +515,7 @@ class ForgeDetailScaffold extends StatelessWidget {
                   ...headerActions,
                 ],
               ),
-              if (lines.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                ...lines,
-              ],
+              if (lines.isNotEmpty) ...[const SizedBox(height: 10), ...lines],
             ],
           ),
         ),
@@ -557,6 +557,12 @@ class ForgeFilterField extends StatelessWidget {
       child: MacosTextField(
         controller: controller,
         placeholder: 'Filter',
+        // Without an explicit placeholder style the hint resolves against the
+        // system brightness and can render invisible on the field fill — the
+        // exact failure kAppPlaceholderStyle exists to prevent (and the search
+        // prefix matches the Branches filter's idiom).
+        placeholderStyle: kAppPlaceholderStyle,
+        prefix: const MacosIcon(CupertinoIcons.search, size: 14),
         clearButtonMode: OverlayVisibilityMode.editing,
         decoration: kAppTextFieldDecoration,
         focusedDecoration: kAppTextFieldFocusedDecoration,

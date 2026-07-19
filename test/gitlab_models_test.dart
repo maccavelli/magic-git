@@ -83,4 +83,36 @@ void main() {
     });
   });
 
+  group('CiStatus.needsAttention', () {
+    test('failed and every non-terminal state are attention-worthy', () {
+      // The states the old inline {failed, running, pending} check MISSED.
+      for (final s in [
+        CiStatus.failed,
+        CiStatus.running,
+        CiStatus.pending,
+        CiStatus.created,
+        CiStatus.waitingForResource,
+        CiStatus.preparing,
+        CiStatus.scheduled,
+        CiStatus.manual,
+      ]) {
+        expect(s.needsAttention, isTrue, reason: '$s should need attention');
+      }
+      expect(
+        CiStatus.fromWire('waiting_for_resource'),
+        CiStatus.waitingForResource,
+      );
+    });
+
+    test('terminal and unrecognized states stay out', () {
+      for (final s in [
+        CiStatus.success,
+        CiStatus.canceled,
+        CiStatus.skipped,
+        CiStatus.unknown,
+      ]) {
+        expect(s.needsAttention, isFalse, reason: '$s should stay out');
+      }
+    });
+  });
 }

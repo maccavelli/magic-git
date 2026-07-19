@@ -25,6 +25,15 @@ final List<String> _calls = [];
 class _FakeGit extends GitService {
   _FakeGit() : super(SSHCommandExecutor(SSHClientManager()));
 
+  /// Local branches that "exist" — the form probes this (via [revParse] on
+  /// `refs/heads/<name>`) to decide whether to push. Default: the head branch
+  /// exists locally, so the push happens as before.
+  Set<String> localRefs = {'refs/heads/feature'};
+
+  @override
+  Future<String?> revParse(String repoPath, String rev) async =>
+      localRefs.contains(rev) ? 'oid-for-$rev' : null;
+
   @override
   Future<String> diffRange(
     String repoPath,

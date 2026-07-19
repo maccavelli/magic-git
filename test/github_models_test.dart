@@ -137,4 +137,31 @@ void main() {
     });
   });
 
+  group('GhRunState.needsAttention', () {
+    test('failure aliases and live states are attention-worthy', () {
+      // The exact states the old inline `conclusion=='failure'` / {queued,
+      // in_progress} check MISSED.
+      expect(GhRunState.from('completed', 'timed_out').needsAttention, isTrue);
+      expect(
+        GhRunState.from('completed', 'startup_failure').needsAttention,
+        isTrue,
+      );
+      expect(GhRunState.from('requested', null).needsAttention, isTrue);
+      expect(GhRunState.from('waiting', null).needsAttention, isTrue);
+      expect(GhRunState.from('completed', 'failure').needsAttention, isTrue);
+      expect(GhRunState.from('in_progress', null).needsAttention, isTrue);
+      expect(
+        GhRunState.from('completed', 'action_required').needsAttention,
+        isTrue,
+      );
+    });
+
+    test('terminal-good and unrecognized states stay out', () {
+      expect(GhRunState.from('completed', 'success').needsAttention, isFalse);
+      expect(GhRunState.from('completed', 'cancelled').needsAttention, isFalse);
+      expect(GhRunState.from('completed', 'skipped').needsAttention, isFalse);
+      expect(GhRunState.from('completed', 'neutral').needsAttention, isFalse);
+      expect(GhRunState.from('mystery', null).needsAttention, isFalse);
+    });
+  });
 }

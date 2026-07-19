@@ -50,6 +50,15 @@ class _FakeGit extends GitService {
   final List<String> ranges = [];
   final List<(String?, String?, bool)> pushes = [];
 
+  /// Local branches that "exist" — the create form now probes this (via
+  /// [revParse] on `refs/heads/<name>`) to decide whether to push. Default:
+  /// the source branch exists locally, so the push happens as before.
+  Set<String> localRefs = {'refs/heads/feature'};
+
+  @override
+  Future<String?> revParse(String repoPath, String rev) async =>
+      localRefs.contains(rev) ? 'oid-for-$rev' : null;
+
   /// When set, [push] blocks on this until completed — lets a test hold a
   /// submit "in flight" to observe the busy/disabled UI.
   Completer<void>? pushGate;
@@ -96,8 +105,10 @@ Future<(_FakeGit, _FakeGlab)> _pump(WidgetTester tester) async {
       gitServiceProvider.overrideWithValue(git),
       glabServiceProvider.overrideWithValue(glab),
       statusProvider(_repo).overrideWith(
-        (ref) async =>
-            GitStatus(branch: const GitBranchInfo(head: 'feature'), files: const []),
+        (ref) async => GitStatus(
+          branch: const GitBranchInfo(head: 'feature'),
+          files: const [],
+        ),
       ),
       // Otherwise this hits the real (unconfigured) GlabService and leaves a
       // retry backoff Timer pending past the test's teardown.
@@ -187,18 +198,15 @@ void main() {
       await tester.enterText(targetField, 'dev');
       await tester.pump(const Duration(milliseconds: 100));
 
-      expect(
-        git.ranges,
-        ['main...feature'],
-        reason: 'no fetch yet — still inside the debounce window',
-      );
+      expect(git.ranges, [
+        'main...feature',
+      ], reason: 'no fetch yet — still inside the debounce window');
 
       await tester.pumpAndSettle();
-      expect(
-        git.ranges,
-        ['main...feature', 'dev...feature'],
-        reason: 'exactly one fetch, for the final value only',
-      );
+      expect(git.ranges, [
+        'main...feature',
+        'dev...feature',
+      ], reason: 'exactly one fetch, for the final value only');
     },
   );
   testWidgets('Create pushes the source branch (with upstream) BEFORE the MR '
@@ -213,10 +221,28 @@ void main() {
       'My change',
     );
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(AppPushButton, 'Create merge request'));
+    await tester.tap(
+      find.widgetWithText(AppPushButton, 'Create merge request'),
+    );
     await tester.pumpAndSettle();
 
     expect(git.pushes, [('origin', 'feature', true)]);
+    expect(glab.created, ['feature->main:My change']);
+  });
+
+  testWidgets('a source branch that exists only on the remote skips the push '
+      'and still creates the MR', (tester) async {
+    final (git, glab) = await _pump(tester);
+    git.localRefs = {}; // 'feature' is remote-only — nothing local to push
+
+    await tester.enterText(find.byType(MacosTextField).at(2), 'My change');
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.widgetWithText(AppPushButton, 'Create merge request'),
+    );
+    await tester.pumpAndSettle();
+
+    expect(git.pushes, isEmpty, reason: 'no local branch → nothing to push');
     expect(glab.created, ['feature->main:My change']);
   });
 
@@ -228,7 +254,9 @@ void main() {
 
     await tester.enterText(find.byType(MacosTextField).at(2), 'My change');
     await tester.pumpAndSettle();
-    await tester.tap(find.widgetWithText(AppPushButton, 'Create merge request'));
+    await tester.tap(
+      find.widgetWithText(AppPushButton, 'Create merge request'),
+    );
     await tester.pump(); // enters _submitting; push is now awaiting the gate
 
     final cancel = tester.widget<AppPushButton>(

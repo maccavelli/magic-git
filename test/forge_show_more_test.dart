@@ -35,7 +35,13 @@ final _remoteRefs = [
 
 List<Pipeline> _pipelines(int count) => [
   for (var i = 0; i < count; i++)
-    Pipeline(id: i, status: 'success', ref: 'ref$i', sha: 'aaaaaaaa', webUrl: ''),
+    Pipeline(
+      id: i,
+      status: 'success',
+      ref: 'ref$i',
+      sha: 'aaaaaaaa',
+      webUrl: '',
+    ),
 ];
 
 List<WorkflowRun> _runs(int count) => [
@@ -99,37 +105,39 @@ void main() {
     'place, keeping current rows up behind a busy row',
     (tester) async {
       final fullFetch = Completer<List<Pipeline>>();
-      final container = ProviderContainer(overrides: [
-        refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
-        // Sibling of the refs override: the views now read CONFIGURED
-        // remotes (remotesProvider), not remote-tracking refs.
-        remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
-        mergeRequestsProvider(_repo).overrideWith((ref) async => const []),
-        // Mirrors the real provider's shape: watches the scope notifier so
-        // the Show-more tap re-fetches this same instance.
-        pipelinesProvider(_repo).overrideWith((ref) {
-          final full = ref.watch(pipelinesScopeProvider(_repo));
-          return full ? fullFetch.future : Future.value(_pipelines(30));
-        }),
-        ..._projectOverrides(github: false),
-      ]);
+      final container = ProviderContainer(
+        overrides: [
+          refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+          mergeRequestsProvider(_repo).overrideWith((ref) async => const []),
+          // Mirrors the real provider's shape: watches the scope notifier so
+          // the Show-more tap re-fetches this same instance.
+          pipelinesProvider(_repo).overrideWith((ref) {
+            final full = ref.watch(pipelinesScopeProvider(_repo));
+            return full ? fullFetch.future : Future.value(_pipelines(30));
+          }),
+          ..._projectOverrides(github: false),
+        ],
+      );
       await _pumpPanel(tester, const GitLabPanel(repoPath: _repo), container);
 
       // 30 fetched, 10 shown.
-      expect(find.text('ref0  ·  aaaaaaaa'), findsOneWidget);
-      expect(find.text('ref9  ·  aaaaaaaa'), findsOneWidget);
-      expect(find.text('ref10  ·  aaaaaaaa'), findsNothing);
+      expect(find.text('ref0'), findsOneWidget);
+      expect(find.text('ref9'), findsOneWidget);
+      expect(find.text('ref10'), findsNothing);
       expect(find.text('Show all pipelines'), findsOneWidget);
 
       // Expanding: the current rows must stay while the deep fetch runs.
       await tester.tap(find.text('Show all pipelines'));
       await tester.pump();
-      expect(find.text('ref0  ·  aaaaaaaa'), findsOneWidget);
+      expect(find.text('ref0'), findsOneWidget);
       expect(find.text('Loading pipeline history…'), findsOneWidget);
 
       fullFetch.complete(_pipelines(45));
       await tester.pumpAndSettle();
-      expect(find.text('ref44  ·  aaaaaaaa'), findsOneWidget);
+      expect(find.text('ref44'), findsOneWidget);
       expect(find.text('Show all pipelines'), findsNothing);
       expect(find.text('Loading pipeline history…'), findsNothing);
     },
@@ -138,18 +146,20 @@ void main() {
   testWidgets(
     'GitHub workflow runs collapse to 10 with the same Show more expansion',
     (tester) async {
-      final container = ProviderContainer(overrides: [
-        refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
-        // Sibling of the refs override: the views now read CONFIGURED
-        // remotes (remotesProvider), not remote-tracking refs.
-        remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
-        pullRequestsProvider(_repo).overrideWith((ref) async => const []),
-        workflowRunsProvider(_repo).overrideWith((ref) async {
-          final full = ref.watch(workflowRunsScopeProvider(_repo));
-          return _runs(full ? 45 : 30);
-        }),
-        ..._projectOverrides(github: true),
-      ]);
+      final container = ProviderContainer(
+        overrides: [
+          refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+          // Sibling of the refs override: the views now read CONFIGURED
+          // remotes (remotesProvider), not remote-tracking refs.
+          remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+          pullRequestsProvider(_repo).overrideWith((ref) async => const []),
+          workflowRunsProvider(_repo).overrideWith((ref) async {
+            final full = ref.watch(workflowRunsScopeProvider(_repo));
+            return _runs(full ? 45 : 30);
+          }),
+          ..._projectOverrides(github: true),
+        ],
+      );
       await _pumpPanel(tester, const GitHubPanel(repoPath: _repo), container);
 
       expect(find.text('wf9'), findsOneWidget);
@@ -164,10 +174,11 @@ void main() {
     },
   );
 
-  testWidgets(
-    'a short CI list renders whole with no Show more row',
-    (tester) async {
-      final container = ProviderContainer(overrides: [
+  testWidgets('a short CI list renders whole with no Show more row', (
+    tester,
+  ) async {
+    final container = ProviderContainer(
+      overrides: [
         refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
         // Sibling of the refs override: the views now read CONFIGURED
         // remotes (remotesProvider), not remote-tracking refs.
@@ -175,11 +186,11 @@ void main() {
         mergeRequestsProvider(_repo).overrideWith((ref) async => const []),
         pipelinesProvider(_repo).overrideWith((ref) async => _pipelines(3)),
         ..._projectOverrides(github: false),
-      ]);
-      await _pumpPanel(tester, const GitLabPanel(repoPath: _repo), container);
+      ],
+    );
+    await _pumpPanel(tester, const GitLabPanel(repoPath: _repo), container);
 
-      expect(find.text('ref2  ·  aaaaaaaa'), findsOneWidget);
-      expect(find.text('Show all pipelines'), findsNothing);
-    },
-  );
+    expect(find.text('ref2'), findsOneWidget);
+    expect(find.text('Show all pipelines'), findsNothing);
+  });
 }

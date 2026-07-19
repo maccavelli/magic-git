@@ -43,11 +43,16 @@ class ForgeIssueActions {
 
   bool get _isGithub => forge == Forge.github;
 
+  /// Refreshes the issue list, the selected issue's detail, and the dashboard
+  /// (whose "N of M" count moves on close/reopen).
+  ///
+  /// Every caller gates this on `context.mounted`: it runs AFTER an awaited
+  /// network mutation, and the captured [ref] is the panel's `WidgetRef` —
+  /// invalidating through it once the panel is torn down (disconnect / window
+  /// close mid-mutation) throws.
   void _invalidate(int id) {
     ref.invalidate(projectIssuesProvider(repoPath));
     ref.invalidate(issueDetailProvider((repoPath, id)));
-    // Issue counts live on the dashboard — refresh it so the section header's
-    // "N of M" stays honest after a close/reopen.
     if (_isGithub) {
       ref.invalidate(githubProjectDashboardProvider(repoPath));
     } else {
@@ -70,7 +75,7 @@ class ForgeIssueActions {
           ? ref.read(ghServiceProvider).closeIssue(repoPath, id)
           : ref.read(glabServiceProvider).closeIssue(repoPath, id),
     );
-    if (success) _invalidate(id);
+    if (success && context.mounted) _invalidate(id);
   }
 
   Future<void> reopen(BuildContext context, int id) async {
@@ -80,7 +85,7 @@ class ForgeIssueActions {
           ? ref.read(ghServiceProvider).reopenIssue(repoPath, id)
           : ref.read(glabServiceProvider).reopenIssue(repoPath, id),
     );
-    if (success) _invalidate(id);
+    if (success && context.mounted) _invalidate(id);
   }
 
   Future<void> comment(BuildContext context, int id) async {
@@ -149,7 +154,7 @@ class ForgeIssueActions {
                 .read(glabServiceProvider)
                 .editIssue(repoPath, id, title: title, description: body),
     );
-    if (success) _invalidate(id);
+    if (success && context.mounted) _invalidate(id);
   }
 
   /// GitHub only (`gh issue edit --add-assignee @me`); the GitLab menu omits
@@ -159,7 +164,7 @@ class ForgeIssueActions {
       context,
       () => ref.read(ghServiceProvider).assignIssueToMe(repoPath, id),
     );
-    if (success) _invalidate(id);
+    if (success && context.mounted) _invalidate(id);
   }
 
   /// "Start work": GitHub only — `gh issue develop --checkout` creates a real

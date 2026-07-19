@@ -297,8 +297,12 @@ class GlabService {
         }
         notes.add('project $full carried no clone URLs');
       } on GlabException catch (e) {
-        notes.add(_firstLine(e.result.stderr,
-            fallback: '${e.message} (exit ${e.result.exitCode})'));
+        notes.add(
+          _firstLine(
+            e.result.stderr,
+            fallback: '${e.message} (exit ${e.result.exitCode})',
+          ),
+        );
       } catch (e) {
         notes.add('$e');
       }
@@ -308,13 +312,16 @@ class GlabService {
       // beats none (the user can rewrite it to SSH).
       return (
         url: fromCreate,
-        detail: 'from glab repo create output (ssh lookup unavailable: '
+        detail:
+            'from glab repo create output (ssh lookup unavailable: '
             '${notes.join('; ')})',
       );
     }
     return (
       url: null,
-      detail: notes.isEmpty ? 'no URL source produced output' : notes.join('; '),
+      detail: notes.isEmpty
+          ? 'no URL source produced output'
+          : notes.join('; '),
     );
   }
 
@@ -334,15 +341,22 @@ class GlabService {
   static List<String> cloneArgv({
     required String pathWithNamespace,
     required String dirName,
-  }) => ['glab', 'repo', 'clone', pathWithNamespace, dirName, '--', '--progress'];
+  }) => [
+    'glab',
+    'repo',
+    'clone',
+    pathWithNamespace,
+    dirName,
+    '--',
+    '--progress',
+  ];
 
   /// Host selector for non-default instances; null for gitlab.com. Exports
   /// both `GITLAB_HOST` (current glab) and `GITLAB_URI` (older releases) —
   /// both ride the formatter's validated export prelude, and the stale one is
   /// ignored by whichever glab is installed.
-  static Map<String, String>? hostEnv(String host) => host == 'gitlab.com'
-      ? null
-      : {'GITLAB_HOST': host, 'GITLAB_URI': host};
+  static Map<String, String>? hostEnv(String host) =>
+      host == 'gitlab.com' ? null : {'GITLAB_HOST': host, 'GITLAB_URI': host};
 
   /// Calls a REST v4 endpoint, e.g. `projects/:id/merge_requests`.
   ///
@@ -439,7 +453,11 @@ class GlabService {
         '--page',
         '$page',
       ], 'glab mr list');
-      final batch = _mapList(decoded, MergeRequest.fromJson, label: 'glab mr list');
+      final batch = _mapList(
+        decoded,
+        MergeRequest.fromJson,
+        label: 'glab mr list',
+      );
       all.addAll(batch);
       if (batch.length < perPage) break; // last (short) page reached
     }
@@ -566,7 +584,10 @@ query($path: ID!) {
     lastGraphqlWarning = null;
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: [...graphqlArgs(query, variables: variables), '-i'],
+      gitArgs: [
+        ...graphqlArgs(query, variables: variables),
+        '-i',
+      ],
       // Every GraphQL call this app issues is a query (the dashboard read).
       lane: ExecLane.read,
       compress: true,
@@ -588,7 +609,7 @@ query($path: ID!) {
     if (body.isEmpty) return const {};
     final dynamic decoded;
     try {
-      decoded = jsonDecode(body);
+      decoded = await decodeJsonMaybeOffThread(body);
     } on FormatException catch (e) {
       throw GlabException(
         '$label returned non-JSON output: ${e.message}',
@@ -1280,7 +1301,13 @@ query($path: ID!) {
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: ['glab', 'mr', 'update', '$iid', if (draft) '--draft' else '--ready'],
+      gitArgs: [
+        'glab',
+        'mr',
+        'update',
+        '$iid',
+        if (draft) '--draft' else '--ready',
+      ],
       lane: ExecLane.sync,
     );
     if (!result.isSuccess) {
@@ -1411,7 +1438,7 @@ query($path: ID!) {
       return null;
     }
     try {
-      return jsonDecode(body);
+      return await decodeJsonMaybeOffThread(body);
     } on FormatException catch (e) {
       throw GlabException(
         '$label returned non-JSON output: ${e.message}',

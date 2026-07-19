@@ -150,17 +150,25 @@ class _CreatePrFormState extends ConsumerState<CreatePrForm> {
       }
     }
     final ok = await runAction(context, () async {
-      // `gh pr create --head` assumes the branch already exists on the
-      // remote. So push it first (`-u` sets upstream); an already-pushed
-      // branch is a no-op ("Everything up-to-date"), and a non-fast-forward
-      // push surfaces its own error rather than a confusing "No commits
-      // between…" from the API. The MR form mirrors this.
-      await git.push(
-        widget.repoPath,
-        remote: 'origin',
-        branch: head,
-        setUpstream: true,
-      );
+      // `gh pr create --head` assumes the branch already exists on the remote.
+      // Push it first (`-u` sets upstream) WHEN it exists locally — publishing
+      // any local commits; an already-pushed branch is a no-op ("Everything
+      // up-to-date") and a non-fast-forward push surfaces its own error rather
+      // than a confusing "No commits between…" from the API. When the branch
+      // exists ONLY on the remote (opening a PR for a branch you never checked
+      // out), there's nothing local to push — skip straight to create instead
+      // of dying on `src refspec <head> does not match any`. The MR form
+      // mirrors this.
+      final localExists =
+          await git.revParse(widget.repoPath, 'refs/heads/$head') != null;
+      if (localExists) {
+        await git.push(
+          widget.repoPath,
+          remote: 'origin',
+          branch: head,
+          setUpstream: true,
+        );
+      }
       await gh.createPullRequest(
         widget.repoPath,
         head: head,

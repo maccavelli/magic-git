@@ -160,14 +160,21 @@ class _CreateMrFormState extends ConsumerState<CreateMrForm> {
       // The GitLab API creates an MR from a branch that already exists on the
       // remote — `glab mr create` only pushes with an opt-in `--push` flag
       // this form never passes, so an unpushed branch used to die with a raw
-      // API error. Push first (`-u` sets upstream); an already-pushed branch
-      // is a no-op ("Everything up-to-date"). Mirrors the PR form.
-      await git.push(
-        widget.repoPath,
-        remote: 'origin',
-        branch: source,
-        setUpstream: true,
-      );
+      // API error. Push first (`-u` sets upstream) WHEN the branch exists
+      // locally; a branch that exists ONLY on the remote (opening an MR for
+      // one you never checked out) has nothing local to push, so skip straight
+      // to create rather than dying on `src refspec <source> does not match
+      // any`. Mirrors the PR form.
+      final localExists =
+          await git.revParse(widget.repoPath, 'refs/heads/$source') != null;
+      if (localExists) {
+        await git.push(
+          widget.repoPath,
+          remote: 'origin',
+          branch: source,
+          setUpstream: true,
+        );
+      }
       await glab.createMergeRequest(
         widget.repoPath,
         sourceBranch: source,
@@ -214,7 +221,9 @@ class _CreateMrFormState extends ConsumerState<CreateMrForm> {
     }
     // Reuses the one-round-trip GraphQL dashboard the Issues section already
     // fetched for this repo.
-    final dashboard = ref.watch(projectDashboardProvider(widget.repoPath)).value;
+    final dashboard = ref
+        .watch(projectDashboardProvider(widget.repoPath))
+        .value;
     final labels = dashboard?.labels ?? const [];
     final milestones = dashboard?.milestones ?? const [];
     // Set (non-fatal) when the dashboard's GraphQL query returned partial

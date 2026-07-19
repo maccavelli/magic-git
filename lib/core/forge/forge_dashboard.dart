@@ -108,9 +108,10 @@ class ForgeIssue {
   /// The names inside an issue's nested label connection — GitHub calls the
   /// name field `name`, GitLab `title`.
   static List<String> _labelNames(dynamic connection, String field) =>
-      graphqlNodes(connection, (l) => l[field] as String? ?? '')
-          .where((s) => s.isNotEmpty)
-          .toList();
+      graphqlNodes(
+        connection,
+        (l) => l[field] as String? ?? '',
+      ).where((s) => s.isNotEmpty).toList();
 
   /// Label names from a REST/CLI `labels` array — GitLab issues send bare name
   /// strings (`["bug","ui"]`), GitHub sends `{name}` objects. Handles both and
@@ -174,12 +175,22 @@ class ForgeMilestone {
   /// ([ForgeMilestone.fromGlabRest] / [ForgeMilestone.fromGhRest]).
   final String? description;
 
+  /// The forge's own canonical web URL for this milestone, straight from the
+  /// payload — the ONLY safe way to link a GitLab milestone: its page path
+  /// uses the project **iid**, not [id]'s global REST value, so reconstructing
+  /// from [id] lands on the wrong milestone (or a 404), and a group-inherited
+  /// milestone has no valid URL under this project at all. Null on the GraphQL
+  /// dashboard nodes that don't carry it; the REST list factories (which feed
+  /// the detail pane) always populate it.
+  final String? webUrl;
+
   const ForgeMilestone({
     required this.id,
     required this.title,
     required this.state,
     this.due,
     this.description,
+    this.webUrl,
   });
 
   /// From a GitHub GraphQL `Milestone` node.
@@ -188,6 +199,7 @@ class ForgeMilestone {
     title: n['title'] as String? ?? '',
     state: (n['state'] as String? ?? 'open').toLowerCase(),
     due: _dateOnly(n['dueOn'] as String?),
+    webUrl: n['url'] as String?,
   );
 
   /// From a GitLab GraphQL `Milestone` node. `iid` arrives as a **String** —
@@ -211,6 +223,9 @@ class ForgeMilestone {
     state: (n['state'] as String? ?? 'active').toLowerCase(),
     due: _dateOnly(n['due_date'] as String?),
     description: (n['description'] as String?)?.trimRight(),
+    // `web_url` is the milestone's real page, iid-based and correct even for
+    // group-inherited milestones — see [webUrl].
+    webUrl: n['web_url'] as String?,
   );
 
   /// From a `gh api repos/{owner}/{repo}/milestones` REST object: `number`,
@@ -222,6 +237,7 @@ class ForgeMilestone {
     state: (n['state'] as String? ?? 'open').toLowerCase(),
     due: _dateOnly(n['due_on'] as String?),
     description: (n['description'] as String?)?.trimRight(),
+    webUrl: n['html_url'] as String?,
   );
 }
 

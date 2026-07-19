@@ -35,6 +35,19 @@ import 'status_color.dart';
 /// jobs and live logs, issue/milestone details, and the inline create forms).
 /// Driven through `glab` (JSON contract) plus the forge-neutral project
 /// providers.
+/// A pipeline `ref` prettified for display. GitLab's "pipelines for merge
+/// requests" setting runs pipelines against synthetic refs
+/// (`refs/merge-requests/<iid>/head` — detached — or `/merge` — merged
+/// results) that otherwise render as raw paths; decode them to `MR !<iid>`.
+/// Branch refs pass through unchanged.
+String prettyPipelineRef(String ref) {
+  final m = RegExp(r'^refs/merge-requests/(\d+)/(head|merge)$').firstMatch(ref);
+  if (m == null) return ref;
+  return m.group(2) == 'merge'
+      ? 'MR !${m.group(1)} (merged results)'
+      : 'MR !${m.group(1)}';
+}
+
 class GitLabPanel extends ConsumerStatefulWidget {
   final String repoPath;
 
@@ -58,6 +71,15 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   /// history — CI history is effectively unbounded, and the newest few are
   /// what the panel is for.
   static const int _collapsedPipelineCount = 10;
+
+  /// Open MRs rendered before a "Show all" row expands the section. Bounds the
+  /// eager row layout on a very active project (hundreds of open MRs) — the
+  /// section is a plain Column, so every rendered row lays out whether or not
+  /// it's in view. Generous enough that the cap is invisible on a normal repo.
+  static const int _collapsedMrCount = 50;
+
+  /// Set once the user taps "Show all" on the MRs section (per panel mount).
+  bool _showAllMrs = false;
 
   ForgeSel _sel = const ForgeNothingSel();
 
@@ -330,7 +352,8 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
                 count: forgeCountLabel(mrs.value?.length, null),
                 collapsed: mrsCollapsed,
                 onToggleCollapsed: () => toggle(ForgeSections.changeRequests),
-                onRefresh: () => ref.invalidate(mergeRequestsProvider(repoPath)),
+                onRefresh: () =>
+                    ref.invalidate(mergeRequestsProvider(repoPath)),
                 onAdd: _createMr,
                 addTooltip: 'New merge request',
               ),
@@ -342,6 +365,15 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
                       : 'No matching merge requests',
                   (mr) => _mrRow(mr, _headPipelineFor(mr, pipeByRef)),
                   where: mrMatches,
+                  // Keep the current rows up while a refresh re-fetches, like
+                  // the CI and Issues sections — don't blank the list to a
+                  // spinner mid-read.
+                  skipLoadingOnReload: true,
+                  limit: _showAllMrs ? null : _collapsedMrCount,
+                  overflow: (hidden) => ShowMoreRow(
+                    label: 'Show $hidden more',
+                    onTap: () => setState(() => _showAllMrs = true),
+                  ),
                 ),
             ],
             ci: [
@@ -399,10 +431,10 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       for (final l in dashboard.value?.labels ?? const <ForgeLabel>[])
         l.name: l,
     };
-    // Machine status values from the glab JSON contract: a succeeded (or
-    // canceled/skipped) pipeline isn't work, so it stays out of the Inbox.
-    bool needsAttention(Pipeline p) =>
-        const {'failed', 'running', 'pending'}.contains(p.status);
+    // Drive off the typed status so this can't miss the non-terminal states
+    // the raw `{failed, running, pending}` set dropped (created, preparing,
+    // scheduled, waiting_for_resource, manual) — see [CiStatus.needsAttention].
+    bool needsAttention(Pipeline p) => p.ciStatus.needsAttention;
 
     final entries = <ForgeInboxEntry>[
       for (final mr in mrs.value ?? const <MergeRequest>[])
@@ -467,12 +499,23 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       _ => false,
     };
     return ForgeListRow(
+      // Keep the !iid visible even on a draft — a draft still has a number you
+      // need to cite; DRAFT rides alongside it rather than replacing it.
       leading: mr.draft
-          ? const StatusBadge('DRAFT', MacosColors.systemGrayColor)
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                StatusBadge('!${mr.iid}', MacosColors.systemBlueColor),
+                const SizedBox(width: 4),
+                const StatusBadge('DRAFT', MacosColors.systemGrayColor),
+              ],
+            )
           : StatusBadge('!${mr.iid}', MacosColors.systemBlueColor),
       title: mr.title,
       titleMaxLines: 2,
-      caption: '${mr.sourceBranch} → ${mr.targetBranch}',
+      caption: mr.authorUsername != null && mr.authorUsername!.isNotEmpty
+          ? '@${mr.authorUsername}  ·  ${mr.sourceBranch} → ${mr.targetBranch}'
+          : '${mr.sourceBranch} → ${mr.targetBranch}',
       captionDotColor: headPipeline == null
           ? null
           : ciStatusColor(headPipeline.ciStatus),
@@ -514,7 +557,8 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       ),
       const ContextMenuDivider(),
       ContextMenuItem(
-        icon: CupertinoIcons.arrow_down_circle,
+        // square_arrow_down: the same checkout glyph the Branches tab uses.
+        icon: CupertinoIcons.square_arrow_down,
         label: 'Check out branch',
         onTap: () => _checkoutMr(mr),
       ),
@@ -586,7 +630,12 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         : null;
     return ForgeListRow(
       leading: CiDot(ciStatusColor(pipeline.ciStatus)),
-      title: '${pipeline.ref}  ·  ${pipeline.shortSha}',
+      // Title + caption, structurally matching the GitHub run row (workflow /
+      // branch · sha) so the two panels — and the shared Inbox — read as one
+      // product. GitLab has no workflow name, so the ref leads and the sha is
+      // the caption.
+      title: prettyPipelineRef(pipeline.ref),
+      caption: pipeline.shortSha,
       selected: selected,
       onTap: () => _select(ForgeCiRunSel(pipeline.id)),
       trailing: forgeCombineTrailing(retry, trailingExtras),
@@ -995,7 +1044,9 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       if (result == null || !mounted) return;
       final title = result['title']!;
       final description = result['description']!;
-      if (title == current!.title && description == current!.description) return;
+      if (title == current!.title && description == current!.description) {
+        return;
+      }
       final success = await runAction(
         context,
         () => glab.editMergeRequest(

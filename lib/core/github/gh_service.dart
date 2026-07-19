@@ -244,8 +244,14 @@ class GhService {
         }
         notes.add('gh repo view carried neither url nor sshUrl');
       } on GhException catch (e) {
-        notes.add(_firstLine(e.result.stderr, fallback: 'gh repo view failed '
-            '(exit ${e.result.exitCode})'));
+        notes.add(
+          _firstLine(
+            e.result.stderr,
+            fallback:
+                'gh repo view failed '
+                '(exit ${e.result.exitCode})',
+          ),
+        );
       } catch (e) {
         notes.add('$e');
       }
@@ -255,13 +261,16 @@ class GhService {
       // beats none (git auth still works; the user can rewrite it to SSH).
       return (
         url: fromCreate,
-        detail: 'from gh repo create output (ssh lookup unavailable: '
+        detail:
+            'from gh repo create output (ssh lookup unavailable: '
             '${notes.join('; ')})',
       );
     }
     return (
       url: null,
-      detail: notes.isEmpty ? 'no URL source produced output' : notes.join('; '),
+      detail: notes.isEmpty
+          ? 'no URL source produced output'
+          : notes.join('; '),
     );
   }
 
@@ -397,21 +406,35 @@ class GhService {
   }
 
   /// Jobs of a workflow run, via the REST passthrough (returns an object with a
-  /// `jobs` array). `per_page=100` covers any realistic run in one call.
+  /// `jobs` array).
+  ///
+  /// Page-walked, bounded by [_maxListPages] — mirrors [GlabService.jobs]. A
+  /// single `per_page=100` page silently truncated a matrix run wider than 100
+  /// jobs (OS × version × shard exceeds it readily): jobs 101+ were invisible,
+  /// a failure past #100 couldn't be selected, and — worse — [runJobsStream]'s
+  /// `every(completed)` on that partial page could end the poll while the run
+  /// was still going. Walk until a short (< perPage) page marks the end. The
+  /// response's `total_count` bounds each page's `jobs` array, so a short page
+  /// is an honest terminator.
   Future<List<GhJob>> runJobs(String repoPath, int runId) async {
-    final decoded = await api(
-      repoPath,
-      'repos/{owner}/{repo}/actions/runs/$runId/jobs',
-      fields: ['per_page=100'],
-    );
-    if (decoded is Map<String, dynamic>) {
-      return _mapList(
+    const perPage = 100;
+    final all = <GhJob>[];
+    for (var page = 1; page <= _maxListPages; page++) {
+      final decoded = await api(
+        repoPath,
+        'repos/{owner}/{repo}/actions/runs/$runId/jobs',
+        fields: ['per_page=$perPage', 'page=$page'],
+      );
+      if (decoded is! Map<String, dynamic>) break;
+      final batch = _mapList(
         decoded['jobs'],
         GhJob.fromJson,
         label: 'actions/runs/$runId/jobs',
       );
+      all.addAll(batch);
+      if (batch.length < perPage) break; // last (short) page reached
     }
-    return const [];
+    return all;
   }
 
   /// Polls [runJobs] until every job has completed, emitting the full jobs list
@@ -550,7 +573,10 @@ class GhService {
       for (final r in reviewers) ...['--reviewer', r],
       for (final a in assignees) ...['--assignee', a],
       for (final l in labels) ...['--label', l],
-      if (milestone != null && milestone.isNotEmpty) ...['--milestone', milestone],
+      if (milestone != null && milestone.isNotEmpty) ...[
+        '--milestone',
+        milestone,
+      ],
     ];
     final result = await _executor.execute(
       repoPath: repoPath,
@@ -658,7 +684,10 @@ class GhService {
       body,
       for (final l in labels) ...['--label', l],
       for (final a in assignees) ...['--assignee', a],
-      if (milestone != null && milestone.isNotEmpty) ...['--milestone', milestone],
+      if (milestone != null && milestone.isNotEmpty) ...[
+        '--milestone',
+        milestone,
+      ],
     ];
     final result = await _executor.execute(
       repoPath: repoPath,
@@ -1030,7 +1059,7 @@ query($owner: String!, $name: String!) {
     Map<String, dynamic>? decoded;
     if (body.isNotEmpty) {
       try {
-        final d = jsonDecode(body);
+        final d = await decodeJsonMaybeOffThread(body);
         if (d is Map<String, dynamic>) decoded = d;
       } on FormatException {
         // Fall through to the failure handling below.
@@ -1049,7 +1078,10 @@ query($owner: String!, $name: String!) {
       throw GhException('$label failed', result);
     }
     final err = decoded == null ? null : graphqlErrorMessage(decoded);
-    throw GhException(err == null ? '$label returned no data' : '$label: $err', result);
+    throw GhException(
+      err == null ? '$label returned no data' : '$label: $err',
+      result,
+    );
   }
 
   /// Fetches issues, labels, milestones, and releases in one GraphQL round-trip.
@@ -1086,8 +1118,7 @@ query($owner: String!, $name: String!) {
       // empty project hid bad slugs and missing access behind "No open
       // issues".
       throw GhException(
-        warning ??
-            'GitHub reports no repository at ${slug.owner}/${slug.name}',
+        warning ?? 'GitHub reports no repository at ${slug.owner}/${slug.name}',
         const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
       );
     }
@@ -1131,9 +1162,12 @@ query($owner: String!, $name: String!) {
     final body = result.stdout.trim();
     if (body.isEmpty) return null;
     try {
-      return jsonDecode(body);
+      return await decodeJsonMaybeOffThread(body);
     } on FormatException catch (e) {
-      throw GhException('$label returned non-JSON output: ${e.message}', result);
+      throw GhException(
+        '$label returned non-JSON output: ${e.message}',
+        result,
+      );
     }
   }
 

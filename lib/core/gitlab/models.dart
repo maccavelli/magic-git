@@ -32,6 +32,26 @@ enum CiStatus {
     'manual' => manual,
     _ => unknown,
   };
+
+  /// Whether a pipeline in this status belongs in the Inbox — it failed, is
+  /// still moving toward a result, or is blocked on a manual action. The single
+  /// source of truth for that judgement, so the Inbox filter can't drift from
+  /// the status model: the old inline `{failed, running, pending}` check missed
+  /// every other non-terminal state the wire actually emits (`created`,
+  /// `waiting_for_resource`, `preparing`, `scheduled`, `manual`) — a pipeline
+  /// stuck waiting for a runner never surfaced. Terminal and unrecognized
+  /// states stay out.
+  bool get needsAttention => switch (this) {
+    failed ||
+    running ||
+    pending ||
+    created ||
+    waitingForResource ||
+    preparing ||
+    scheduled ||
+    manual => true,
+    success || canceled || skipped || unknown => false,
+  };
 }
 
 /// A GitLab merge request, from `glab mr list --output json`.

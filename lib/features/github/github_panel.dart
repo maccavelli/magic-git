@@ -55,6 +55,13 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   /// mirrors `GitLabPanel`'s collapsed pipeline count.
   static const int _collapsedRunCount = 10;
 
+  /// Open PRs rendered before a "Show all" row expands the section — bounds the
+  /// eager row layout on a very active repo; mirrors `GitLabPanel`'s MR cap.
+  static const int _collapsedPrCount = 50;
+
+  /// Set once the user taps "Show all" on the PRs section (per panel mount).
+  bool _showAllPrs = false;
+
   ForgeSel _sel = const ForgeNothingSel();
 
   /// Whether an inline create form holds unsaved content (reported via
@@ -307,6 +314,14 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
                       : 'No matching pull requests',
                   (pr) => _prRow(pr, _headRunFor(pr, runByBranch)),
                   where: prMatches,
+                  // Keep current rows up during a refresh, like the CI and
+                  // Issues sections — don't blank the list to a spinner.
+                  skipLoadingOnReload: true,
+                  limit: _showAllPrs ? null : _collapsedPrCount,
+                  overflow: (hidden) => ShowMoreRow(
+                    label: 'Show $hidden more',
+                    onTap: () => setState(() => _showAllPrs = true),
+                  ),
                 ),
             ],
             ci: [
@@ -362,9 +377,10 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     };
     // Machine status/conclusion values from the gh JSON contract: a
     // succeeded (or canceled/skipped) run isn't work, so it stays out.
-    bool needsAttention(WorkflowRun r) =>
-        r.conclusion == 'failure' ||
-        const {'queued', 'in_progress'}.contains(r.status);
+    // Drive off the typed run state so this can't miss the failure aliases
+    // (startup_failure/timed_out) or the live states (requested/waiting) the
+    // raw strings hid — see [GhRunState.needsAttention].
+    bool needsAttention(WorkflowRun r) => r.runState.needsAttention;
 
     final entries = <ForgeInboxEntry>[
       for (final pr in prs.value ?? const <PullRequest>[])
@@ -429,12 +445,23 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       _ => false,
     };
     return ForgeListRow(
+      // Keep the #number visible even on a draft — DRAFT rides alongside it
+      // rather than replacing the number you need to cite.
       leading: pr.draft
-          ? const StatusBadge('DRAFT', MacosColors.systemGrayColor)
+          ? Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                StatusBadge('#${pr.number}', MacosColors.systemBlueColor),
+                const SizedBox(width: 4),
+                const StatusBadge('DRAFT', MacosColors.systemGrayColor),
+              ],
+            )
           : StatusBadge('#${pr.number}', MacosColors.systemBlueColor),
       title: pr.title,
       titleMaxLines: 2,
-      caption: '${pr.headRefName} → ${pr.baseRefName}',
+      caption: pr.authorLogin != null && pr.authorLogin!.isNotEmpty
+          ? '@${pr.authorLogin}  ·  ${pr.headRefName} → ${pr.baseRefName}'
+          : '${pr.headRefName} → ${pr.baseRefName}',
       captionDotColor: headRun == null
           ? null
           : ghRunStateColor(headRun.runState),
@@ -474,7 +501,8 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       ),
       const ContextMenuDivider(),
       ContextMenuItem(
-        icon: CupertinoIcons.arrow_down_circle,
+        // square_arrow_down: the same checkout glyph the Branches tab uses.
+        icon: CupertinoIcons.square_arrow_down,
         label: 'Check out branch',
         onTap: () => _checkoutPr(pr),
       ),
@@ -624,9 +652,11 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         ghRunStateColor(run?.runState ?? GhRunState.unknown),
         size: 11,
       ),
+      // Lead with the run id in both states so it's always citable (the GitLab
+      // pipeline detail leads with its id too — panel parity).
       title: run == null
           ? 'Run #$runId'
-          : '${run.workflowName}  ·  ${run.headBranch}',
+          : 'Run #$runId  ·  ${run.workflowName}',
       headerActions: [
         if (run != null && run.isRerunnable)
           InFlightIconButton(

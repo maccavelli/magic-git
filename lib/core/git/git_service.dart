@@ -3019,6 +3019,41 @@ class GitService {
     );
   }
 
+  /// Creates a local branch [localName] tracking [remoteRef] (e.g.
+  /// `origin/feature`) and checks it out — the EXPLICIT spelling of what a
+  /// bare `git checkout <localName>` only achieves by DWIM guesswork.
+  ///
+  /// DWIM silently does the wrong thing exactly when [localName] already
+  /// resolves as another ref: a tag of the same name makes `git checkout`
+  /// detach HEAD onto the tag instead of creating the tracking branch, and
+  /// two remotes carrying the branch make it ambiguous (a hard error). Naming
+  /// the upstream outright (`switch -c … --track <remote>/<branch>`) removes
+  /// the guesswork. Callers use this only when no local branch of the name
+  /// exists yet; when one does, a plain [checkout] switches to it.
+  Future<void> checkoutTrackingBranch(
+    String repoPath, {
+    required String localName,
+    required String remoteRef,
+  }) async {
+    await _runCaptured(
+      repoPath,
+      // `--create <name>` consumes [localName] as its value verbatim (like the
+      // `-b` in [createBranch]) — so no `--end-of-options` is needed or valid
+      // here, and a leading-dash [localName] is already rejected by git's ref
+      // format. [remoteRef] is `--track`'s positional start-point (always
+      // `<remote>/<branch>`, never flag-shaped).
+      ['git', 'switch', '--create', localName, '--track', remoteRef],
+      'git switch --track',
+      record: (c) => c.preHead.isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.checkout,
+              description: 'Checkout tracking branch $localName',
+            ),
+    );
+  }
+
   /// Creates a branch, optionally checking it out.
   ///
   /// The checkout form deliberately has no `--end-of-options` before [name]:

@@ -466,8 +466,17 @@ Widget _milestoneDetail(
     leading: const MacosIcon(CupertinoIcons.flag, size: 16),
     title: found.title,
     headerActions: [
-      if (remoteUrl != null)
-        OpenInBrowserButton(forgeMilestoneWebUrl(remoteUrl, forge, id)),
+      // Prefer the milestone's own web URL from the payload. Only fall back to
+      // reconstructing from [id] on GitHub, where `id` IS the `number` the URL
+      // path wants; on GitLab `id` is the global REST id (not the iid the path
+      // needs), so a reconstruction would open the wrong milestone — see
+      // [ForgeMilestone.webUrl].
+      OpenInBrowserButton(
+        found.webUrl ??
+            (forge == Forge.github && remoteUrl != null
+                ? forgeMilestoneWebUrl(remoteUrl, forge, id)
+                : null),
+      ),
     ],
     lines: [
       DetailLine('State', found.state),

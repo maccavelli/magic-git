@@ -52,6 +52,18 @@ enum GhRunState {
         return GhRunState.unknown;
     }
   }
+
+  /// Whether a run in this state belongs in the Inbox — it's failed, still
+  /// moving, or waiting on a human. The single source of truth for that
+  /// judgement, so the Inbox filter can't drift from the state model: reading
+  /// the raw `conclusion`/`status` strings inline (as it once did) silently
+  /// missed `startup_failure`/`timed_out` (both → [failure] here) and the
+  /// `requested`/`waiting` live states (→ [pending]). Terminal-good and
+  /// unrecognized states stay out.
+  bool get needsAttention => switch (this) {
+    failure || running || pending || actionRequired => true,
+    success || canceled || skipped || neutral || unknown => false,
+  };
 }
 
 /// A GitHub pull request, from `gh pr list/view --json …`.
