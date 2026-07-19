@@ -15,6 +15,7 @@ import '../common/label_chip.dart';
 import '../common/sized_sheet.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
+import '../connection/connection_form.dart';
 import '../connection/local_repo_form.dart';
 import '../tabs/tabs_controller.dart';
 import '../workspace/clone_sheet.dart';
@@ -211,7 +212,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                     icon: CupertinoIcons.add,
                     tooltip: 'Add connection',
                     size: 16,
-                    onPressed: () => _newConnection(context, ref),
+                    onPressed: () => _newConnection(context),
                   ),
                   const SizedBox(width: 4),
                   ToolIconButton(
@@ -322,7 +323,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
           const SizedBox(height: 12),
           AppPushButton(
             controlSize: ControlSize.large,
-            onPressed: () => _newConnection(context, ref),
+            onPressed: () => _newConnection(context),
             child: const Text('New connection'),
           ),
         ],
@@ -920,18 +921,16 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     }
   }
 
-  void _newConnection(BuildContext context, WidgetRef ref) {
-    final tabs = TabsController.current;
-    if (tabs == null) {
-      final notifier = ref.read(connectionProvider.notifier);
-      Navigator.of(context).pop();
-      notifier.disconnect(); // reveals the connection form in place
-      return;
-    }
-    // Open a fresh landing tab (the connection form) without disturbing the
-    // sessions already open in other tabs.
+  /// Opens the SSH connection form as a sheet. Like the sibling add/clone
+  /// sheets, connecting targets *this* window's session — the form's Connect
+  /// supersedes whatever is open here (connect() owns that teardown); merely
+  /// browsing the form and cancelling disturbs nothing.
+  void _newConnection(BuildContext context) {
     Navigator.of(context).pop();
-    tabs.newTab();
+    showMacosSheet<void>(
+      context: context,
+      builder: (_) => const EscapeDismissible(child: ConnectionForm()),
+    );
   }
 
   void _newLocalRepo(BuildContext context) {

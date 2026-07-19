@@ -12,6 +12,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/switcher/connection_switcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -164,6 +165,35 @@ void main() {
     await tester.tap(find.text('Local (this Mac)'));
     await tester.pumpAndSettle();
     expect(find.text('Prod'), findsWidgets);
+  });
+
+  testWidgets('Add connection opens the SSH connection form sheet', (
+    tester,
+  ) async {
+    await _pump(tester);
+    expect(find.text('Add SSH Remote'), findsNothing);
+
+    await tester.tap(_byMacosTooltip('Add connection'));
+    await tester.pumpAndSettle();
+
+    // The full SSH form is up, with Connect disabled until the required
+    // fields (host, username, repo path, an auth method) are filled in.
+    expect(find.text('Add SSH Remote'), findsOneWidget);
+    // AppPushButton subclasses PushButton, so byType(PushButton) won't match
+    // it — find by the subclass.
+    final connect = tester.widget<AppPushButton>(
+      find.widgetWithText(AppPushButton, 'Connect'),
+    );
+    expect(connect.onPressed, isNull);
+  });
+
+  testWidgets('the empty state\'s New-connection button opens the same form', (
+    tester,
+  ) async {
+    await _pump(tester);
+    await tester.tap(find.text('New connection'));
+    await tester.pumpAndSettle();
+    expect(find.text('Add SSH Remote'), findsOneWidget);
   });
 
   testWidgets('Clone repository opens the clone sheet (landing mode while '

@@ -11,9 +11,11 @@ import '../switcher/connection_switcher.dart';
 import 'local_repo_form.dart';
 
 /// The landing (unconnected) page: a layered branding card with just two
-/// actions — **Add SSH Remote** (opens the full form in a modal sheet) and
-/// **Recent Workspaces** (a pull-down of the last few profiles for a one-tap
-/// reconnect). Reflects connect progress/errors for the recent-connect path.
+/// actions — **Connections Manager** (the single entry point to every
+/// workspace action: open a configured workspace, add SSH remotes and local
+/// repositories, clone/create) and **Recent Repositories** (a pull-down of
+/// the last few repos for a one-tap reopen). Reflects connect
+/// progress/errors for the recent-connect path.
 class ConnectionLanding extends ConsumerWidget {
   const ConnectionLanding({super.key});
 

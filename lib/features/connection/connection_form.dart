@@ -12,11 +12,18 @@ import '../common/buttons.dart';
 import '../common/field_styles.dart';
 import '../common/inline_action_button.dart';
 import '../common/labeled_text_field.dart';
-import '../common/sheet_chrome.dart';
+import '../common/sized_sheet.dart';
+import '../common/tool_icon_button.dart';
 
 /// Connection form: collects SSH details + a remote repo path and drives
 /// [ConnectionController.connect]. Profiles can be saved — metadata to
 /// shared_preferences, the password to the macOS Keychain.
+///
+/// Sheet-hosted (via the Connections Manager's "Add connection" action, like
+/// its sibling add/clone/create sheets). Connecting supersedes the current
+/// session in this window — [ConnectionController.connect] owns that
+/// teardown — and a successful connect dismisses the sheet, revealing the
+/// workspace it just opened.
 class ConnectionForm extends ConsumerStatefulWidget {
   const ConnectionForm({super.key});
 
@@ -38,6 +45,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
   final _githubToken = TextEditingController();
 
   bool _save = true;
+
   /// Scoped work-tree (dotfiles) repo: [_repoPath] is the work tree and
   /// [_gitDir] the external git-dir. Registers GIT_DIR/GIT_WORK_TREE and runs
   /// the watcher bounded — see `bounded_watch.dart`.
@@ -146,7 +154,9 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
     // The scope map passed to connect(), and persisted when saving. Starts with
     // just this repo's scope; the save branch merges in the profile's other
     // repos' scopes so a re-save never drops them.
-    var scopedGitDirs = <String, String>{if (gitDir.isNotEmpty) repoPath: gitDir};
+    var scopedGitDirs = <String, String>{
+      if (gitDir.isNotEmpty) repoPath: gitDir,
+    };
     String? connectionId;
     String? connectionLabel;
 
@@ -169,7 +179,9 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
       ]);
       // Merge into the profile's existing scopes: set this repo's git-dir when
       // the toggle is on, else clear any stale scope for it.
-      scopedGitDirs = Map<String, String>.from(match?.scopedGitDirs ?? const {});
+      scopedGitDirs = Map<String, String>.from(
+        match?.scopedGitDirs ?? const {},
+      );
       if (gitDir.isNotEmpty) {
         scopedGitDirs[repoPath] = gitDir;
       } else {
@@ -238,6 +250,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
       connectionLabel = conn.displayName;
     }
 
+    final nav = Navigator.of(context);
     await ref
         .read(connectionProvider.notifier)
         .connect(
@@ -250,6 +263,13 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
           repoPaths: repoPaths,
           scopedGitDirs: scopedGitDirs,
         );
+    if (!mounted) return;
+    // Success: the workspace is live behind this sheet — dismiss it. Stay open
+    // on failure (the error renders under the button) and when the profile
+    // save failed (the warning must stay readable; the user closes manually).
+    if (ref.read(connectionProvider).isConnected && _saveWarning == null) {
+      nav.pop();
+    }
   }
 
   @override
@@ -259,178 +279,213 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
     );
     final typography = MacosTheme.of(context).typography;
 
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Add SSH Remote', style: typography.title2),
-              const SheetDescription(
-                'Connects to a Git repository on a remote host over SSH — '
-                'the repository stays on the host and every git command '
-                'runs there. Sign in with a password or a private key.',
-              ),
-              const SizedBox(height: 16),
-              _field(
-                'Host',
-                _host,
-                placeholder: 'gitlab.example.com',
-                hint: 'Host name or IP address of the SSH server.',
-              ),
-              _field('Port', _port, hint: '22 unless the host uses a custom SSH port.'),
-              _field('Username', _username, hint: 'The account to sign in as on the host.'),
-              _field(
-                'Password',
-                _password,
-                obscure: true,
-                hint: 'For password sign-in — leave blank when using a key.',
-              ),
-              _field(
-                'Private key (PEM)',
-                _privateKey,
-                placeholder: 'Load a key file or paste PEM (optional)',
-                maxLines: 5,
-                hint: 'Key-based sign-in; kept in secure storage when the '
-                    'connection is saved. Prefer loading from disk over paste.',
-              ),
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: InlineActionButton(
-                    label: 'Load private key…',
-                    icon: CupertinoIcons.folder,
-                    onPressed: _submitting ? null : _loadPrivateKeyFile,
+    return SizedSheet(
+      width: kSheetWidth,
+      // Scroll when the content exceeds the sheet's max height (SizedSheet
+      // caps it near the window height) — this is the app's tallest form.
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Add SSH Remote',
+                    style: typography.title2,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-              ),
-              _field(
-                'Key passphrase',
-                _passphrase,
-                obscure: true,
-                hint: 'Only needed when the private key is encrypted.',
-              ),
-              if (_passphrase.text.isNotEmpty &&
-                  _privateKey.text.trim().isEmpty) ...[
-                Text(
-                  'Passphrase requires a private key',
-                  style: typography.caption1.copyWith(
-                    color: MacosColors.systemOrangeColor,
-                  ),
-                ),
-                const SizedBox(height: 12),
-              ],
-              _field(
-                'Repository path',
-                _repoPath,
-                placeholder: '/srv/git/my-project',
-                hint: 'Absolute path of the repository to open after '
-                    'connecting.',
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  MacosSwitch(
-                    value: _scoped,
-                    onChanged: (v) => setState(() => _scoped = v),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('Scoped work-tree repo (dotfiles)', style: typography.body),
-                ],
-              ),
-              const FieldHint(
-                'For a bare / separate-git-dir repo whose work tree is the path '
-                'above — e.g. a ~/.home.git dotfiles repo with \$HOME as its '
-                'work tree. Targets the external git-dir and watches only '
-                'tracked files, never the whole tree.',
-              ),
-              if (_scoped) ...[
-                const SizedBox(height: 8),
-                _field(
-                  'Git directory',
-                  _gitDir,
-                  placeholder: '/home/you/.home.git',
-                  hint: 'Absolute path of the external git-dir (GIT_DIR). The '
-                      'repository path above is used as the work tree '
-                      '(GIT_WORK_TREE).',
+                ToolIconButton(
+                  icon: CupertinoIcons.xmark,
+                  tooltip: 'Close',
+                  size: 16,
+                  onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
-              _field(
-                'GitLab token',
-                _gitlabToken,
-                placeholder: 'glpat-… (optional)',
-                obscure: true,
-                hint: 'Optional personal access token — signs glab in on '
-                    'the host so merge requests and pipelines work.',
-              ),
-              _field(
-                'GitHub token',
-                _githubToken,
-                placeholder: 'ghp_… / github_pat_… (optional)',
-                obscure: true,
-                hint: 'Optional personal access token — signs gh in on the '
-                    'host so pull requests and Actions work.',
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  MacosSwitch(
-                    value: _save,
-                    onChanged: (v) => setState(() => _save = v),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('Save connection', style: typography.body),
-                  if (_save) ...[
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: MacosTextField(
-                        controller: _label,
-                        placeholder: 'Label (optional)',
-                        placeholderStyle: kAppPlaceholderStyle,
-                        decoration: kAppTextFieldDecoration,
-                        focusedDecoration: kAppTextFieldFocusedDecoration,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              const FieldHint(
-                'Stores this connection — secrets in secure storage — so it '
-                'appears in the Connections list for one-click reconnects.',
-              ),
-              const SizedBox(height: 20),
-              if (phase == ConnectionPhase.connecting)
-                const Center(child: ProgressCircle())
-              else
-                AppPushButton(
-                  controlSize: ControlSize.large,
-                  onPressed: (_canSubmit && !_submitting) ? _submit : null,
-                  child: const Text('Connect'),
+            ),
+            const SheetDescription(
+              'Connects to a Git repository on a remote host over SSH — '
+              'the repository stays on the host and every git command '
+              'runs there. Sign in with a password or a private key.',
+            ),
+            const SizedBox(height: 16),
+            _field(
+              'Host',
+              _host,
+              placeholder: 'gitlab.example.com',
+              hint: 'Host name or IP address of the SSH server.',
+            ),
+            _field(
+              'Port',
+              _port,
+              hint: '22 unless the host uses a custom SSH port.',
+            ),
+            _field(
+              'Username',
+              _username,
+              hint: 'The account to sign in as on the host.',
+            ),
+            _field(
+              'Password',
+              _password,
+              obscure: true,
+              hint: 'For password sign-in — leave blank when using a key.',
+            ),
+            _field(
+              'Private key (PEM)',
+              _privateKey,
+              placeholder: 'Load a key file or paste PEM (optional)',
+              maxLines: 5,
+              hint:
+                  'Key-based sign-in; kept in secure storage when the '
+                  'connection is saved. Prefer loading from disk over paste.',
+            ),
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: InlineActionButton(
+                  label: 'Load private key…',
+                  icon: CupertinoIcons.folder,
+                  onPressed: _submitting ? null : _loadPrivateKeyFile,
                 ),
-              if (_saveWarning != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  _saveWarning!,
-                  style: typography.body.copyWith(
-                    color: MacosColors.systemOrangeColor,
-                  ),
+              ),
+            ),
+            _field(
+              'Key passphrase',
+              _passphrase,
+              obscure: true,
+              hint: 'Only needed when the private key is encrypted.',
+            ),
+            if (_passphrase.text.isNotEmpty &&
+                _privateKey.text.trim().isEmpty) ...[
+              Text(
+                'Passphrase requires a private key',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemOrangeColor,
                 ),
-              ],
-              if (phase == ConnectionPhase.error && error != null) ...[
-                const SizedBox(height: 16),
-                Text(
-                  error,
-                  style: typography.body.copyWith(
-                    color: MacosColors.systemRedColor,
-                  ),
-                ),
-              ],
+              ),
+              const SizedBox(height: 12),
             ],
-          ),
+            _field(
+              'Repository path',
+              _repoPath,
+              placeholder: '/srv/git/my-project',
+              hint:
+                  'Absolute path of the repository to open after '
+                  'connecting.',
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                MacosSwitch(
+                  value: _scoped,
+                  onChanged: (v) => setState(() => _scoped = v),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Scoped work-tree repo (dotfiles)',
+                    style: typography.body,
+                  ),
+                ),
+              ],
+            ),
+            const FieldHint(
+              'For a bare / separate-git-dir repo whose work tree is the path '
+              'above — e.g. a ~/.home.git dotfiles repo with \$HOME as its '
+              'work tree. Targets the external git-dir and watches only '
+              'tracked files, never the whole tree.',
+            ),
+            if (_scoped) ...[
+              const SizedBox(height: 8),
+              _field(
+                'Git directory',
+                _gitDir,
+                placeholder: '/home/you/.home.git',
+                hint:
+                    'Absolute path of the external git-dir (GIT_DIR). The '
+                    'repository path above is used as the work tree '
+                    '(GIT_WORK_TREE).',
+              ),
+            ],
+            _field(
+              'GitLab token',
+              _gitlabToken,
+              placeholder: 'glpat-… (optional)',
+              obscure: true,
+              hint:
+                  'Optional personal access token — signs glab in on '
+                  'the host so merge requests and pipelines work.',
+            ),
+            _field(
+              'GitHub token',
+              _githubToken,
+              placeholder: 'ghp_… / github_pat_… (optional)',
+              obscure: true,
+              hint:
+                  'Optional personal access token — signs gh in on the '
+                  'host so pull requests and Actions work.',
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                MacosSwitch(
+                  value: _save,
+                  onChanged: (v) => setState(() => _save = v),
+                ),
+                const SizedBox(width: 8),
+                Text('Save connection', style: typography.body),
+                if (_save) ...[
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: MacosTextField(
+                      controller: _label,
+                      placeholder: 'Label (optional)',
+                      placeholderStyle: kAppPlaceholderStyle,
+                      decoration: kAppTextFieldDecoration,
+                      focusedDecoration: kAppTextFieldFocusedDecoration,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            const FieldHint(
+              'Stores this connection — secrets in secure storage — so it '
+              'appears in the Connections list for one-click reconnects.',
+            ),
+            const SizedBox(height: 20),
+            if (phase == ConnectionPhase.connecting)
+              const Center(child: ProgressCircle())
+            else
+              AppPushButton(
+                controlSize: ControlSize.large,
+                onPressed: (_canSubmit && !_submitting) ? _submit : null,
+                child: const Text('Connect'),
+              ),
+            if (_saveWarning != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _saveWarning!,
+                style: typography.body.copyWith(
+                  color: MacosColors.systemOrangeColor,
+                ),
+              ),
+            ],
+            if (phase == ConnectionPhase.error && error != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                error,
+                style: typography.body.copyWith(
+                  color: MacosColors.systemRedColor,
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );
