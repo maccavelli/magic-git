@@ -161,9 +161,7 @@ class LocalEnvironmentGuard {
   Future<void> ensure() {
     final executor = _ref.read(localExecutorProvider);
     if (executor.isConfigured) return Future<void>.value();
-    return _inFlight ??= _probe(
-      executor,
-    ).whenComplete(() => _inFlight = null);
+    return _inFlight ??= _probe(executor).whenComplete(() => _inFlight = null);
   }
 
   Future<void> _probe(LocalCommandExecutor executor) async {
@@ -355,7 +353,9 @@ final savedLocalReposProvider = FutureProvider<List<SavedLocalRepo>>((
 /// connections" with zero indication anything went wrong. Log it here before
 /// rethrowing so the failure is at least discoverable in the output log, even
 /// though the UI still falls back to an empty list.
-final savedConnectionsProvider = FutureProvider<List<SavedConnection>>((ref) async {
+final savedConnectionsProvider = FutureProvider<List<SavedConnection>>((
+  ref,
+) async {
   try {
     return await ref.watch(connectionStoreProvider).list();
   } catch (e) {
@@ -983,8 +983,10 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// `gh`/`glab` auth (a stored credential or an ambient token — the CLI's own
   /// default) untouched. See [CommandFormatter].
   List<String> _forgeTokenVarsToNeutralize() => [
-    if ((_lastGitlabToken ?? '').isNotEmpty) ...CommandFormatter.gitlabTokenVars,
-    if ((_lastGithubToken ?? '').isNotEmpty) ...CommandFormatter.githubTokenVars,
+    if ((_lastGitlabToken ?? '').isNotEmpty)
+      ...CommandFormatter.gitlabTokenVars,
+    if ((_lastGithubToken ?? '').isNotEmpty)
+      ...CommandFormatter.githubTokenVars,
   ];
 
   Future<void> _resolveEnvironment(String repoPath, {int? attempt}) async {
@@ -1201,16 +1203,45 @@ class ConnectionController extends Notifier<ConnectionState> {
 
       final scopedGitDir = scopedGitDirs[repoPath];
       if (scopedGitDir != null && scopedGitDir.isNotEmpty) {
-        // Scoped (dotfiles) repo: register GIT_DIR/GIT_WORK_TREE so every command
-        // targets the external git-dir, and SKIP validateRepoPath — it runs
-        // `rev-parse --is-inside-work-tree` through the executor directly (not
-        // scope-aware, see GitService._scopeEnvFor's doc), so it would fail for a
-        // bare/separate-git-dir repo. The scope registration is the validation.
+        // Scoped (dotfiles) repo: validate the SAVED git-dir by probing the
+        // exact GIT_DIR/GIT_WORK_TREE overlay the registration will inject
+        // (validateRepoPath is skipped — it isn't scope-aware and would reject
+        // this shape). A bad persisted value — e.g. the work tree mapped to
+        // ITSELF, which an older add sheet accepted unvalidated — used to be
+        // registered blindly, sending every command to "not a git repository"
+        // on every reopen. Probe first; on failure, re-detect from the work
+        // tree (native discovery / the `.git` redirect) and heal both this
+        // session and the saved connection, so a poisoned entry fixes itself
+        // instead of bricking the repo forever.
+        var effectiveGitDir = scopedGitDir;
+        try {
+          await ref
+              .read(gitServiceProvider)
+              .scopedRepoLayout(repoPath, gitDir: effectiveGitDir);
+        } on Object {
+          final layout = await ref
+              .read(gitServiceProvider)
+              .detectRepoLayout(repoPath);
+          if (attempt != _attempt || !ref.mounted) return;
+          if (layout == null) rethrow; // genuinely broken — surface it
+          effectiveGitDir = layout.gitCommonDir;
+          scopedGitDirs = Map.of(scopedGitDirs)..[repoPath] = effectiveGitDir;
+          ref
+              .read(outputLogProvider.notifier)
+              .logInfo(
+                'healed scoped git-dir for $repoPath: '
+                '$scopedGitDir → $effectiveGitDir',
+              );
+          unawaited(
+            _healSavedScopedGitDir(connectionId, repoPath, effectiveGitDir),
+          );
+        }
+        if (attempt != _attempt || !ref.mounted) return;
         ref
             .read(gitServiceProvider)
             .registerRepoScope(
               repoPath,
-              gitDir: scopedGitDir,
+              gitDir: effectiveGitDir,
               workTree: repoPath,
             );
       } else {
@@ -1568,12 +1599,18 @@ class ConnectionController extends Notifier<ConnectionState> {
       if (attempt != _attempt || !ref.mounted) return;
 
       if (gitDir != null && gitDir.isNotEmpty) {
-        // Scoped (dotfiles) repo: register GIT_DIR/GIT_WORK_TREE so every command
-        // targets the external git-dir, and SKIP both validators. validateRepoPath
-        // and validateLocalRepoRoot run through the executor directly (not
-        // scope-aware) and validateLocalRepoRoot explicitly REJECTS a
-        // separate-git-dir repo — the very shape this is. The scope registration
-        // is the validation; a genuinely broken git-dir surfaces on the first read.
+        // Scoped (dotfiles) repo: validate the git-dir BEFORE registering, by
+        // probing the exact GIT_DIR/GIT_WORK_TREE overlay the registration
+        // will inject (validateRepoPath/validateLocalRepoRoot are skipped —
+        // validateLocalRepoRoot explicitly REJECTS a separate-git-dir repo,
+        // the very shape this is). A wrong value — e.g. the work tree itself
+        // typed into the git-dir field — would otherwise poison every command
+        // this session runs AND get persisted, breaking the repo on every
+        // future reopen with "not a git repository".
+        await ref
+            .read(gitServiceProvider)
+            .scopedRepoLayout(repoPath, gitDir: gitDir);
+        if (attempt != _attempt || !ref.mounted) return;
         ref
             .read(gitServiceProvider)
             .registerRepoScope(repoPath, gitDir: gitDir, workTree: repoPath);
@@ -1609,7 +1646,9 @@ class ConnectionController extends Notifier<ConnectionState> {
       if (fsmonitorEnabled == true) {
         if (attempt != _attempt || !ref.mounted) return;
         try {
-          await ref.read(gitServiceProvider).setFsmonitor(repoPath, enabled: true);
+          await ref
+              .read(gitServiceProvider)
+              .setFsmonitor(repoPath, enabled: true);
         } catch (e) {
           if (attempt != _attempt || !ref.mounted) return;
           ref
@@ -1763,9 +1802,10 @@ class ConnectionController extends Notifier<ConnectionState> {
       }
       state = state.copyWith(reconnectAttempt: i + 1, reconnecting: true);
 
-      final delay = _reconnectDelays[i < _reconnectDelays.length
-          ? i
-          : _reconnectDelays.length - 1];
+      final delay =
+          _reconnectDelays[i < _reconnectDelays.length
+              ? i
+              : _reconnectDelays.length - 1];
       await Future<void>.delayed(delay);
       if (!ref.mounted || _attempt != gen) return;
       if (state.phase != ConnectionPhase.lost) return;
@@ -1834,7 +1874,9 @@ class ConnectionController extends Notifier<ConnectionState> {
     required String? id,
     required String? repoPath,
   }) async {
-    if (id == null || id.isEmpty || repoPath == null || repoPath.isEmpty) return;
+    if (id == null || id.isEmpty || repoPath == null || repoPath.isEmpty) {
+      return;
+    }
     try {
       await ref
           .read(recentReposStoreProvider)
@@ -1924,6 +1966,30 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// success) or [abortProvisioning] (on cancel/close). Returns null when the
   /// attempt was superseded or failed (a failure lands `phase: error` exactly
   /// like [connect]).
+  /// Persists a corrected scoped git-dir for [repoPath] into the saved
+  /// connection [connectionId] — the durable half of connect()'s scope heal.
+  /// Best-effort: the session already runs on the corrected value either way;
+  /// a store failure just means the heal re-runs on the next connect.
+  Future<void> _healSavedScopedGitDir(
+    String? connectionId,
+    String repoPath,
+    String gitDir,
+  ) async {
+    if (connectionId == null) return;
+    try {
+      final conns = await ref.read(savedConnectionsProvider.future);
+      final conn = conns.where((c) => c.id == connectionId).firstOrNull;
+      if (conn == null) return;
+      await ref
+          .read(connectionStoreProvider)
+          .updateMetadata(conn.withScopedGitDir(repoPath, gitDir));
+      if (!ref.mounted) return;
+      ref.invalidate(savedConnectionsProvider);
+    } catch (_) {
+      // Store unreadable/unwritable — the in-session heal already applied.
+    }
+  }
+
   Future<int?> beginProvisioning(SavedConnection conn) async {
     final store = ref.read(connectionStoreProvider);
     String? secret, token, ghToken, key, passphrase;
@@ -2067,10 +2133,17 @@ class ConnectionController extends Notifier<ConnectionState> {
 
     final scoped = gitDir.isNotEmpty;
     if (scoped) {
-      // Scoped (dotfiles) repo: register GIT_DIR/GIT_WORK_TREE so every command
-      // targets the external git-dir, and SKIP validateRepoPath — it isn't
-      // scope-aware and would reject a bare/separate-git-dir repo. The scope
-      // registration is the validation. Mirrors connect()'s scoped branch.
+      // Scoped (dotfiles) repo: validate the git-dir BEFORE registering or
+      // persisting anything, by probing the exact GIT_DIR/GIT_WORK_TREE
+      // overlay the registration will inject. A wrong value — e.g. the work
+      // tree itself typed into the field — would otherwise poison every
+      // command for this repo AND be persisted into the saved connection,
+      // breaking the repo on every future connect with "not a git
+      // repository". Throws to the sheet, which shows it inline.
+      await ref
+          .read(gitServiceProvider)
+          .scopedRepoLayout(repoPath, gitDir: gitDir);
+      if (token != _attempt || !ref.mounted) return false;
       ref
           .read(gitServiceProvider)
           .registerRepoScope(repoPath, gitDir: gitDir, workTree: repoPath);
@@ -2081,7 +2154,9 @@ class ConnectionController extends Notifier<ConnectionState> {
 
     if (enableFsmonitor) {
       try {
-        await ref.read(gitServiceProvider).setFsmonitor(repoPath, enabled: true);
+        await ref
+            .read(gitServiceProvider)
+            .setFsmonitor(repoPath, enabled: true);
       } catch (e) {
         if (token != _attempt || !ref.mounted) return false;
         ref
@@ -2694,20 +2769,21 @@ final autoFetchProvider = Provider.autoDispose<void>((ref) {
 /// keeping status refreshes off this expensive path. Change/untracked coloring
 /// lives in [repoStatusOverlayProvider] instead. Large trees are assembled in a
 /// background isolate.
-final repoStructureProvider = FutureProvider.autoDispose.family<RepoNode, String>(
-  (ref, repoPath) async {
-    // Re-run only when the tree's shape (not its contents) changes.
-    await ref.watch(statusProvider(repoPath).selectAsync(structureSignature));
-    final tree = await ref.watch(gitServiceProvider).listWorkingTree(repoPath);
-    final files = tree.files;
-    final ignored = tree.ignored;
-    RepoNode build() => buildRepoTree(files: files, ignored: ignored);
-    if (files.length + ignored.length > 3000) {
-      return Isolate.run(build);
-    }
-    return build();
-  },
-);
+final repoStructureProvider = FutureProvider.autoDispose
+    .family<RepoNode, String>((ref, repoPath) async {
+      // Re-run only when the tree's shape (not its contents) changes.
+      await ref.watch(statusProvider(repoPath).selectAsync(structureSignature));
+      final tree = await ref
+          .watch(gitServiceProvider)
+          .listWorkingTree(repoPath);
+      final files = tree.files;
+      final ignored = tree.ignored;
+      RepoNode build() => buildRepoTree(files: files, ignored: ignored);
+      if (files.length + ignored.length > 3000) {
+        return Isolate.run(build);
+      }
+      return build();
+    });
 
 /// The change/dirty overlay for the file-view pane, derived from
 /// [statusProvider]. Cheap (pure CPU over the status list, no SSH), so it can
@@ -2826,7 +2902,9 @@ final repoWatchProvider = StreamProvider.autoDispose
       final local = ref.watch(localWatchServiceProvider);
       final remote = ref.watch(remoteWatchServiceProvider);
 
-      Stream<RepoWatchEvent> armed(BoundedWatchSpec? bounded) => switch (backend) {
+      Stream<RepoWatchEvent> armed(
+        BoundedWatchSpec? bounded,
+      ) => switch (backend) {
         // Keep the connection-scoped services alive while the watcher runs.
         // Exhaustive switch (no default) so a new backend can't silently fall
         // through to the SSH watcher.
@@ -2840,13 +2918,15 @@ final repoWatchProvider = StreamProvider.autoDispose
         // Build the bounded spec from the repo's tracked files, then arm — as a
         // single stream so the async fetch doesn't block provider construction.
         raw = Stream.fromFuture(
-          git.listTrackedFiles(repoPath).then(
-            (tracked) => computeBoundedWatchSpec(
-              gitDir: scopedGitDir,
-              workTree: repoPath,
-              trackedFiles: tracked,
-            ),
-          ),
+          git
+              .listTrackedFiles(repoPath)
+              .then(
+                (tracked) => computeBoundedWatchSpec(
+                  gitDir: scopedGitDir,
+                  workTree: repoPath,
+                  trackedFiles: tracked,
+                ),
+              ),
         ).asyncExpand((spec) => armed(spec));
       } else {
         raw = armed(null);
@@ -2943,10 +3023,11 @@ final mergedBranchesProvider = FutureProvider.autoDispose
 /// configured, and gates that tested refs falsely reported "No remote
 /// detected" for exactly the repos the create/clone flows had just wired.
 /// Rides the same combined snapshot round trip as status/refs/pendingOp.
-final remotesProvider = FutureProvider.autoDispose
-    .family<List<String>, String>((ref, repoPath) {
-      return ref.watch(gitServiceProvider).remotes(repoPath);
-    });
+final remotesProvider = FutureProvider.autoDispose.family<List<String>, String>(
+  (ref, repoPath) {
+    return ref.watch(gitServiceProvider).remotes(repoPath);
+  },
+);
 
 /// The tags on the repo's remote, as `{shortName: oid}` — what powers the
 /// "local only" / "differs from origin" badges on the tags list. Null means
@@ -3008,6 +3089,14 @@ final logProvider = FutureProvider.autoDispose.family<List<GitCommit>, String>((
 final branchCommitsProvider = FutureProvider.autoDispose
     .family<List<GitCommit>, (String, String)>((ref, key) async {
       final (repoPath, revision) = key;
+      // Depend on refs so the preview re-fetches whenever this repo's tips
+      // move — a commit/merge/rebase/reset on the selected branch (in-app or
+      // from the watcher) invalidates refsProvider, and this rides that. The
+      // provider is in neither refresh family and keyed by branch *name*
+      // (stable across a tip move), so without this the RECENT COMMITS list
+      // would show pre-mutation history until the branch was reselected, and
+      // ⌘R wouldn't fix it. Mirrors mergedBranchesProvider's self-refresh.
+      ref.watch(refsProvider(repoPath));
       try {
         return await ref
             .watch(gitServiceProvider)
@@ -3087,7 +3176,9 @@ typedef LogQuery = ({
 /// repeat keeps the list well-formed; the row that shifted out of the window is
 /// picked up by the refresh that any such commit triggers anyway.
 final logSearchProvider = AsyncNotifierProvider.autoDispose
-    .family<LogSearchNotifier, List<GitCommit>, LogQuery>(LogSearchNotifier.new);
+    .family<LogSearchNotifier, List<GitCommit>, LogQuery>(
+      LogSearchNotifier.new,
+    );
 
 class LogSearchNotifier extends AsyncNotifier<List<GitCommit>> {
   LogSearchNotifier(this.query);
@@ -3344,13 +3435,13 @@ void _dependOnWorktreeState(
   );
 
   // (2) Bytes changed under an unchanged record.
-  ref.listen(
-    worktreeEditsProvider.select((s) => s.stampFor(repoPath, path)),
-    (previous, next) {
-      if (previous == null || previous == next) return;
-      staleNow();
-    },
-  );
+  ref.listen(worktreeEditsProvider.select((s) => s.stampFor(repoPath, path)), (
+    previous,
+    next,
+  ) {
+    if (previous == null || previous == next) return;
+    staleNow();
+  });
 }
 
 /// Everything about [path] that a worktree cache for it depends on: the commit
@@ -3466,7 +3557,12 @@ int _estimateCommitListBytes(List<GitCommit> commits) => commits.fold(
 int _estimateBlameBytes(List<BlameLine> lines) => lines.fold(
   0,
   (n, l) =>
-      n + l.hash.length + l.author.length + l.summary.length + l.content.length + 48,
+      n +
+      l.hash.length +
+      l.author.length +
+      l.summary.length +
+      l.content.length +
+      48,
 );
 
 /// Commits that touched a single file, newest first, following renames — the
@@ -3533,13 +3629,15 @@ final fileDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, bool, bool, int)>((ref, key) {
       _fileDiffLru.touch(key, ref.keepAlive());
       final (repoPath, path, staged, ignoreWhitespace, context) = key;
-      final future = ref.watch(gitServiceProvider).diffFile(
-        repoPath,
-        path: path,
-        staged: staged,
-        ignoreWhitespace: ignoreWhitespace,
-        context: context,
-      );
+      final future = ref
+          .watch(gitServiceProvider)
+          .diffFile(
+            repoPath,
+            path: path,
+            staged: staged,
+            ignoreWhitespace: ignoreWhitespace,
+            context: context,
+          );
       // A worktree/index diff changes whenever the repo does — every landed
       // status refresh invalidates this so a cached diff can't go stale.
       _dependOnWorktreeState(ref, repoPath, path: path, content: future);
@@ -3653,7 +3751,9 @@ final untrackedDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       _untrackedDiffLru.touch(key, ref.keepAlive());
       final (repoPath, path) = key;
-      final future = ref.watch(gitServiceProvider).diffUntracked(repoPath, path);
+      final future = ref
+          .watch(gitServiceProvider)
+          .diffUntracked(repoPath, path);
       // An untracked file's contents are pure worktree state — follow the
       // landed status so the rendered "diff" tracks on-disk edits.
       _dependOnWorktreeState(ref, repoPath, path: path, content: future);
@@ -3852,10 +3952,9 @@ final forgeRepoListProvider = FutureProvider.autoDispose
         // sure the executor's PATH can actually see the Mac's gh/glab.
         await ref.read(localEnvironmentProvider).ensure();
       } else {
-        await ref.read(connectionProvider.notifier).ensureForgeHostLogin(
-          forge,
-          host,
-        );
+        await ref
+            .read(connectionProvider.notifier)
+            .ensureForgeHostLogin(forge, host);
       }
       return switch (forge) {
         Forge.github => GhService(executor).listRepos(host: host),

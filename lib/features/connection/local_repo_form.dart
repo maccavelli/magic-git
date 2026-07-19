@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -189,7 +191,13 @@ bool isScopedRepoLayout(RepoLayout layout) =>
 /// validation is whatever the connect/finalize call surfaces, reusing the same
 /// error-display convention as [ConnectionForm].
 class AddExistingRepoSheet extends ConsumerStatefulWidget {
-  const AddExistingRepoSheet({super.key});
+  /// Pre-seeds the picked folder, as if the user had already chosen it — used
+  /// by tests (the native picker can't run under `flutter test`) and callers
+  /// that already know the target folder. Does NOT trigger auto-detection;
+  /// only an actual pick (or the scoped toggle) probes.
+  final String? initialPickedPath;
+
+  const AddExistingRepoSheet({super.key, this.initialPickedPath});
 
   @override
   ConsumerState<AddExistingRepoSheet> createState() =>
@@ -203,7 +211,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
   /// Location: null = this Mac (local), else a saved SSH connection's id.
   String? _connectionId;
 
-  String? _pickedPath;
+  late String? _pickedPath = widget.initialPickedPath;
   bool _save = true;
   bool _fsmonitor = false;
 
@@ -274,6 +282,12 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
       _connectionId = id;
       _pickedPath = null;
       _saveWarning = null;
+      // Scope state is per-host: a git-dir detected (or typed) for one
+      // location is meaningless on another, and a manual override there
+      // shouldn't suppress auto-detection here.
+      _scoped = false;
+      _scopedManual = false;
+      _gitDir.clear();
     });
     if (!_isLocal) await _ensureProvisioned();
   }
@@ -360,28 +374,12 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
     bool external = false;
     var gitDir = '';
     try {
-      final GitService git;
-      if (_isLocal) {
-        // Local add can run before any connect — make sure the shared local
-        // executor has its augmented PATH so a bare `git` resolves.
-        await ref.read(localEnvironmentProvider).ensure();
-        git = GitService(ref.read(localExecutorProvider));
-      } else {
-        // The chosen connection is provisioned (browse dialed it); its
-        // GitService holds no scope for this not-yet-scoped path, so the probe
-        // is scope-free — exactly the native discovery we want.
-        git = ref.read(gitServiceProvider);
+      final git = await _probeService();
+      final layout = await git.detectRepoLayout(path);
+      if (layout != null) {
+        external = isScopedRepoLayout(layout);
+        if (external) gitDir = layout.gitCommonDir;
       }
-      RepoLayout layout;
-      try {
-        layout = await git.repoLayout(path);
-      } on Object {
-        final target = await git.gitfileRedirectTarget(path);
-        if (target == null) rethrow;
-        layout = await git.scopedRepoLayout(path, gitDir: target);
-      }
-      external = isScopedRepoLayout(layout);
-      if (external) gitDir = layout.gitCommonDir;
     } catch (_) {
       // Not a discoverable repo (redirect-less bare, empty folder, probe
       // failure) — the manual toggle stays available.
@@ -395,6 +393,40 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
       if (external) _fsmonitor = false;
       _gitDir.text = gitDir;
     });
+  }
+
+  /// The GitService the detection probes run through: a fresh local-executor
+  /// service for a local pick (which can run before any connect — the shared
+  /// executor's augmented PATH is ensured first so a bare `git` resolves), or
+  /// the live service for a provisioned remote browse.
+  Future<GitService> _probeService() async {
+    if (_isLocal) {
+      await ref.read(localEnvironmentProvider).ensure();
+      return GitService(ref.read(localExecutorProvider));
+    }
+    return ref.read(gitServiceProvider);
+  }
+
+  /// Fill-only companion to [_autoDetectScope] for the manual path: the user
+  /// just switched the scoped toggle on themselves — from that moment
+  /// [_scopedManual] stops auto-detect from ever flipping the toggle, but an
+  /// empty git-dir field is still worth probing for them. Never changes the
+  /// toggle; fills the field only if it is still empty (and the sheet still
+  /// scoped) when the probe lands, so anything the user typed meanwhile wins.
+  Future<void> _prefillGitDir() async {
+    final path = _pickedPath;
+    if (path == null || _gitDir.text.trim().isNotEmpty) return;
+    final String gitDir;
+    try {
+      final git = await _probeService();
+      final layout = await git.detectRepoLayout(path);
+      if (layout == null || !isScopedRepoLayout(layout)) return;
+      gitDir = layout.gitCommonDir;
+    } catch (_) {
+      return;
+    }
+    if (!mounted || !_scoped || _gitDir.text.trim().isNotEmpty) return;
+    setState(() => _gitDir.text = gitDir);
   }
 
   void _submit() {
@@ -783,14 +815,20 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
       children: [
         MacosSwitch(
           value: _scoped,
-          onChanged: (v) => setState(() {
-            _scoped = v;
-            _scopedManual =
-                true; // the user has taken control; stop auto-detect
-            // fsmonitor is never valid on a scoped repo — see
-            // [_fsmonitorSection], which is also disabled while scoped.
-            if (v) _fsmonitor = false;
-          }),
+          onChanged: (v) {
+            setState(() {
+              _scoped = v;
+              // The user has taken control; stop auto-detect from flipping
+              // the toggle back.
+              _scopedManual = true;
+              // fsmonitor is never valid on a scoped repo — see
+              // [_fsmonitorSection], which is also disabled while scoped.
+              if (v) _fsmonitor = false;
+            });
+            // Toggled on with a folder already picked: probe it for the
+            // git-dir so the user isn't left typing a path detection can find.
+            if (v) unawaited(_prefillGitDir());
+          },
         ),
         const SizedBox(width: 8),
         Expanded(

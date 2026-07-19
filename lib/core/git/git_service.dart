@@ -1334,6 +1334,29 @@ class GitService {
   /// registration will. Used by the add sheet's auto-detection to validate a
   /// candidate git-dir before anything is registered or persisted — a garbage
   /// candidate throws instead of silently mis-registering.
+  /// [repoLayout] with the gitfile-redirect fallback: native discovery first,
+  /// then — when that fails — the `.git` redirect target validated through
+  /// [scopedRepoLayout]. This resolves every layout the app supports,
+  /// including the one native discovery can't (a bare git-dir behind a
+  /// hand-written redirect), and is resilient to a poisoned scope registry:
+  /// a stale registered scope for [repoPath] can fail the native probe, but
+  /// the fallback carries its own explicit overlay and still resolves the
+  /// truth. Returns null when neither path resolves (not a repo, or a
+  /// redirect-less bare git-dir).
+  Future<RepoLayout?> detectRepoLayout(String repoPath) async {
+    try {
+      return await repoLayout(repoPath);
+    } on Object {
+      try {
+        final target = await gitfileRedirectTarget(repoPath);
+        if (target == null) return null;
+        return await scopedRepoLayout(repoPath, gitDir: target);
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
   Future<RepoLayout> scopedRepoLayout(
     String repoPath, {
     required String gitDir,

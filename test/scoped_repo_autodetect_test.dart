@@ -218,6 +218,71 @@ void main() {
     );
 
     test(
+      'detectRepoLayout resolves every supported shape through one call',
+      () async {
+        // Native shape (--separate-git-dir writes core.worktree).
+        final sep = Directory('$root/sep')..createSync();
+        final sepTree = sep.resolveSymbolicLinksSync();
+        await run([
+          'init',
+          '--separate-git-dir=$root/sep.git',
+          sepTree,
+        ], cwd: root);
+        expect(
+          isScopedRepoLayout((await git.detectRepoLayout(sepTree))!),
+          isTrue,
+        );
+
+        // Fallback shape (bare + hand-written redirect).
+        final work = Directory('$root/home')..createSync();
+        final workTree = work.resolveSymbolicLinksSync();
+        await run(['init', '--bare', '$workTree/.home.git'], cwd: root);
+        File('$workTree/.git').writeAsStringSync('gitdir: ./.home.git\n');
+        final layout = await git.detectRepoLayout(workTree);
+        expect(layout, isNotNull);
+        expect(isScopedRepoLayout(layout!), isTrue);
+
+        // Not a repo at all.
+        final empty = Directory('$root/none')..createSync();
+        expect(
+          await git.detectRepoLayout(empty.resolveSymbolicLinksSync()),
+          isNull,
+        );
+      },
+    );
+
+    test(
+      'detectRepoLayout survives a poisoned scope registry (work tree mapped '
+      'to itself)',
+      () async {
+        // The real-world poison: an earlier add accepted the WORK TREE as the
+        // git-dir and persisted it; on connect that scope is registered, and
+        // every funneled command — including the native-discovery probe —
+        // inherits GIT_DIR=<worktree>, which is fatal. The redirect fallback
+        // must still resolve the truth.
+        final work = Directory('$root/home')..createSync();
+        final workTree = work.resolveSymbolicLinksSync();
+        await run(['init', '--bare', '$workTree/.home.git'], cwd: root);
+        final bare = Directory(
+          '$workTree/.home.git',
+        ).resolveSymbolicLinksSync();
+        File('$workTree/.git').writeAsStringSync('gitdir: $bare\n');
+
+        git.registerRepoScope(workTree, gitDir: workTree, workTree: workTree);
+        // The premise: the poisoned env breaks the native probe.
+        await expectLater(
+          git.repoLayout(workTree),
+          throwsA(isA<GitException>()),
+        );
+
+        final layout = await git.detectRepoLayout(workTree);
+        expect(layout, isNotNull);
+        expect(layout!.gitCommonDir, bare);
+        expect(isScopedRepoLayout(layout), isTrue);
+      },
+    );
+
+    test(
       'a garbage redirect target fails the probe instead of mis-detecting',
       () async {
         final work = Directory('$root/home')..createSync();

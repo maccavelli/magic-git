@@ -309,12 +309,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
   void _togglePin(String branch) {
     unawaited(
-      setPinnedBranch(
-        ref,
-        repoPath,
-        branch,
-        pinned: !_pinned.contains(branch),
-      ),
+      setPinnedBranch(ref, repoPath, branch, pinned: !_pinned.contains(branch)),
     );
   }
 
@@ -526,8 +521,14 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       paneId: PaneId.branchesList,
       detailFloor: 280,
       master: master,
-      detail: _detailPane(context, git, _refByName(refs, _selectedRef),
-          remoteTags: remoteTags, tagRemote: tagRemote, summary: summary),
+      detail: _detailPane(
+        context,
+        git,
+        _refByName(refs, _selectedRef),
+        remoteTags: remoteTags,
+        tagRemote: tagRemote,
+        summary: summary,
+      ),
     );
   }
 
@@ -538,34 +539,55 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     required Map<String, String>? remoteTags,
     required String? tagRemote,
     required List<String> localOnly,
-  }) =>
-      switch (row) {
-        _PinnedHeaderRow(:final count, :final collapsed) =>
-          _pinnedHeader(context, count, collapsed),
-        _LocalHeaderRow(:final title, :final collapsed) =>
-          _localHeader(context, git, title, collapsed),
-        _RemotesHeaderRow(:final title, :final collapsed) =>
-          _remotesHeader(context, git, title, collapsed),
-        _TagsHeaderRow(:final title, :final collapsed) =>
-          _tagsHeader(context, git, title, localOnly, tagRemote, collapsed),
-        _FolderRow(:final path, :final label, :final depth, :final count) =>
-          _folderRow(context, path, label, depth, count),
-        _BranchRow(:final branch, :final remote, :final depth) => remote
-            ? _remoteRow(context, git, branch)
-            : _localRow(context, git, branch, depth),
-        _TagRefRow(:final tag) =>
-          _tagRow(context, git, tag, _tagStatus(tag, remoteTags), tagRemote),
-        _StaleToggleRow(:final count) => _staleToggle(count),
-        _ShowMoreTagsRow(:final hidden) => ShowMoreRow(
-          label: 'Show $hidden more ${hidden == 1 ? "tag" : "tags"}',
-          onTap: () => setState(() => _showAllTags = true),
-        ),
-        _ShowMoreRemotesRow(:final hidden) => ShowMoreRow(
-          label:
-              'Show $hidden more remote ${hidden == 1 ? "branch" : "branches"}',
-          onTap: () => setState(() => _showAllRemotes = true),
-        ),
-      };
+  }) => switch (row) {
+    _PinnedHeaderRow(:final count, :final collapsed) => _pinnedHeader(
+      context,
+      count,
+      collapsed,
+    ),
+    _LocalHeaderRow(:final title, :final collapsed) => _localHeader(
+      context,
+      git,
+      title,
+      collapsed,
+    ),
+    _RemotesHeaderRow(:final title, :final collapsed) => _remotesHeader(
+      context,
+      git,
+      title,
+      collapsed,
+    ),
+    _TagsHeaderRow(:final title, :final collapsed) => _tagsHeader(
+      context,
+      git,
+      title,
+      localOnly,
+      tagRemote,
+      collapsed,
+    ),
+    _FolderRow(:final path, :final label, :final depth, :final count) =>
+      _folderRow(context, path, label, depth, count),
+    _BranchRow(:final branch, :final remote, :final depth) =>
+      remote
+          ? _remoteRow(context, git, branch)
+          : _localRow(context, git, branch, depth),
+    _TagRefRow(:final tag) => _tagRow(
+      context,
+      git,
+      tag,
+      _tagStatus(tag, remoteTags),
+      tagRemote,
+    ),
+    _StaleToggleRow(:final count) => _staleToggle(count),
+    _ShowMoreTagsRow(:final hidden) => ShowMoreRow(
+      label: 'Show $hidden more ${hidden == 1 ? "tag" : "tags"}',
+      onTap: () => setState(() => _showAllTags = true),
+    ),
+    _ShowMoreRemotesRow(:final hidden) => ShowMoreRow(
+      label: 'Show $hidden more remote ${hidden == 1 ? "branch" : "branches"}',
+      onTap: () => setState(() => _showAllRemotes = true),
+    ),
+  };
 
   bool _isStale(GitRef b) {
     if (b.isHead) return false;
@@ -790,7 +812,9 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         child = only.value;
       }
       final count = _leafCount(child);
-      out.add(_FolderRow(path: path, label: '$label/', depth: depth, count: count));
+      out.add(
+        _FolderRow(path: path, label: '$label/', depth: depth, count: count),
+      );
       if (!_collapsedFolders.contains(path)) {
         _emitFolder(child, path, depth + 1, out);
       }
@@ -906,8 +930,9 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     );
   }
 
-  static final Color _accentTint =
-      MacosColors.systemBlueColor.withValues(alpha: 0.12);
+  static final Color _accentTint = MacosColors.systemBlueColor.withValues(
+    alpha: 0.12,
+  );
 
   Widget _localRowBody(
     BuildContext context,
@@ -920,65 +945,65 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     final selected = _selectedRef == branch.name;
     final elsewhere = branch.elsewhereWorktreePath;
     return DragItemDraggable(
-        item: DragRef(branch),
-        immediate: true,
-        onDragSelect: () => _select(branch),
-        child: GestureDetector(
-          onTap: () => _select(branch),
-          onSecondaryTapUp: (d) => _menu.show(
-            context,
-            d.globalPosition,
-            _localMenu(git, branch),
-            width: 250,
-          ),
-          child: Container(
-            color: branch.isHead
-                ? MacosColors.systemGreenColor.withValues(alpha: 0.12)
-                : selected
-                ? AppTheme.rowSelectionTint
-                : const Color(0x00000000),
-            padding: EdgeInsets.fromLTRB(16.0 + depth * 14, 7, 12, 7),
-            child: Row(
-              children: [
-                MacosIcon(
-                  CupertinoIcons.arrow_branch,
-                  size: 15,
-                  color: branch.isHead
-                      ? MacosColors.systemGreenColor
-                      : MacosColors.systemBlueColor,
+      item: DragRef(branch),
+      immediate: true,
+      onDragSelect: () => _select(branch),
+      child: GestureDetector(
+        onTap: () => _select(branch),
+        onSecondaryTapUp: (d) => _menu.show(
+          context,
+          d.globalPosition,
+          _localMenu(git, branch),
+          width: 250,
+        ),
+        child: Container(
+          color: branch.isHead
+              ? MacosColors.systemGreenColor.withValues(alpha: 0.12)
+              : selected
+              ? AppTheme.rowSelectionTint
+              : const Color(0x00000000),
+          padding: EdgeInsets.fromLTRB(16.0 + depth * 14, 7, 12, 7),
+          child: Row(
+            children: [
+              MacosIcon(
+                CupertinoIcons.arrow_branch,
+                size: 15,
+                color: branch.isHead
+                    ? MacosColors.systemGreenColor
+                    : MacosColors.systemBlueColor,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  style: typography.body.copyWith(
+                    fontWeight: branch.isHead
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                const SizedBox(width: 8),
-                Flexible(
-                  child: Text(
-                    label,
-                    style: typography.body.copyWith(
-                      fontWeight: branch.isHead
-                          ? FontWeight.bold
-                          : FontWeight.normal,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+              ),
+              if (elsewhere != null) ...[
+                const SizedBox(width: 6),
+                MacosTooltip(
+                  message: checkedOutElsewhereMessage(elsewhere),
+                  child: LabelChip(
+                    elsewhere.split('/').last,
+                    color: MacosColors.systemPurpleColor,
+                    icon: kWorktreeIcon,
                   ),
                 ),
-                if (elsewhere != null) ...[
-                  const SizedBox(width: 6),
-                  MacosTooltip(
-                    message: checkedOutElsewhereMessage(elsewhere),
-                    child: LabelChip(
-                      elsewhere.split('/').last,
-                      color: MacosColors.systemPurpleColor,
-                      icon: kWorktreeIcon,
-                    ),
-                  ),
-                ],
-                const Spacer(),
-                ..._forgeBadges(branch),
-                _divergenceCluster(context, branch),
               ],
-            ),
+              const Spacer(),
+              ..._forgeBadges(branch),
+              _divergenceCluster(context, branch),
+            ],
           ),
         ),
-      );
+      ),
+    );
   }
 
   /// The trailing forge/merged signal for a local row: a grey "merged" chip
@@ -1158,7 +1183,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
             ),
             if (status == _TagRemoteStatus.localOnly) ...[
               const SizedBox(width: 6),
-              const LabelChip('local only', color: MacosColors.systemOrangeColor),
+              const LabelChip(
+                'local only',
+                color: MacosColors.systemOrangeColor,
+              ),
             ],
             if (status == _TagRemoteStatus.differs) ...[
               const SizedBox(width: 6),
@@ -1330,7 +1358,13 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   }) {
     if (sel == null) return _dashboard(context, git, summary);
     if (sel.isTag) {
-      return _tagDetail(context, git, sel, _tagStatus(sel, remoteTags), tagRemote);
+      return _tagDetail(
+        context,
+        git,
+        sel,
+        _tagStatus(sel, remoteTags),
+        tagRemote,
+      );
     }
     if (sel.isRemote) return _remoteDetail(context, git, sel);
     return _localDetail(context, git, sel);
@@ -1443,10 +1477,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   /// Bulk cleanup: delete every local branch already merged into HEAD (plain
   /// `-d`, so unmerged work is never at risk). Branches git refuses (e.g. held
   /// by a worktree) are skipped, not aborted.
-  Future<void> _deleteMergedBranches(
-    GitService git,
-    List<String> names,
-  ) async {
+  Future<void> _deleteMergedBranches(GitService git, List<String> names) async {
     if (busy || names.isEmpty) return;
     final listing = names.length <= 10 ? '\n\n${names.join(', ')}' : '';
     final ok = await confirmAction(
@@ -1591,8 +1622,12 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     return _relativeTime(then.millisecondsSinceEpoch ~/ 1000);
   }
 
-  Widget _infoLine(BuildContext context, String label, String value,
-      {Color? valueColor}) {
+  Widget _infoLine(
+    BuildContext context,
+    String label,
+    String value, {
+    Color? valueColor,
+  }) {
     final typography = MacosTheme.of(context).typography;
     return Padding(
       padding: const EdgeInsets.only(bottom: 5),
@@ -1646,14 +1681,22 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           context,
           bf.isMr ? 'Merge request' : 'Pull request',
           '${bf.requestLabel}${bf.requestDraft ? ' (draft)' : ''}'
-              '${(bf.requestTitle ?? '').isEmpty ? '' : ' — ${bf.requestTitle}'}',
+          '${(bf.requestTitle ?? '').isEmpty ? '' : ' — ${bf.requestTitle}'}',
         ),
       if (bf?.ci != null)
-        _infoLine(context, 'CI', _ciLabel(bf!.ci!),
-            valueColor: _forgeCiColor(bf.ci!)),
+        _infoLine(
+          context,
+          'CI',
+          _ciLabel(bf!.ci!),
+          valueColor: _forgeCiColor(bf.ci!),
+        ),
       if (elsewhere != null)
-        _infoLine(context, 'Worktree', elsewhere,
-            valueColor: MacosColors.systemPurpleColor),
+        _infoLine(
+          context,
+          'Worktree',
+          elsewhere,
+          valueColor: MacosColors.systemPurpleColor,
+        ),
     ];
     // "Next action" hint. An open request wins; then merged/gone cleanup; then
     // the forge-free divergence hint.
@@ -1809,7 +1852,11 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         Builder(
           builder: (c) => Column(
             children: [
-              _infoLine(c, 'Tip commit', tag.subject.isEmpty ? '—' : tag.subject),
+              _infoLine(
+                c,
+                'Tip commit',
+                tag.subject.isEmpty ? '—' : tag.subject,
+              ),
               if (tag.creatorDate != null)
                 _infoLine(c, 'Created', _relativeTime(tag.creatorDate)),
               _infoLine(
@@ -1857,13 +1904,12 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     IconData icon,
     VoidCallback? onPressed, {
     InlineActionTone tone = InlineActionTone.normal,
-  }) =>
-      InlineActionButton(
-        label: label,
-        icon: icon,
-        onPressed: onPressed,
-        tone: tone,
-      );
+  }) => InlineActionButton(
+    label: label,
+    icon: icon,
+    onPressed: onPressed,
+    tone: tone,
+  );
 
   Widget _calloutBox(
     BuildContext context,
@@ -1948,20 +1994,43 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         if (!mounted) rethrow;
         if (e.branchHeldByWorktree) {
           final worktree = _worktreePathFor(name);
+          if (worktree == null) {
+            // We can't locate the worktree to offer removing it — tell the
+            // user to do it themselves rather than showing an action button
+            // that would silently no-op.
+            if (mounted) {
+              await showErrorDialog(
+                context,
+                'This branch is checked out in another worktree. Remove that '
+                'worktree first, then delete the branch.',
+              );
+            }
+            return;
+          }
+          // Warn upfront when deleting will ALSO cost unmerged commits, so the
+          // whole decision is made once with full information rather than the
+          // branch-force question ambushing the user after the worktree is
+          // already gone. `_merged` may be stale/absent — the post-removal
+          // not-fully-merged escalation below is the backstop.
+          final unmerged = !_merged.contains(name);
           final removeToo = await confirmAction(
             context,
             title: 'Branch is checked out in a worktree',
-            message: worktree == null
-                ? 'This branch is checked out in another worktree. Remove that '
-                      'worktree before deleting the branch.'
-                : 'This branch is checked out in the worktree at\n$worktree\n\n'
-                      'Git cannot delete a branch that is checked out. Remove '
-                      'the worktree as well?',
+            message:
+                'This branch is checked out in the worktree at\n$worktree\n\n'
+                'Git cannot delete a branch that is checked out. Remove the '
+                'worktree as well?'
+                '${unmerged ? '\n\nNote: "$name" has commits not merged into '
+                          'the current branch, so deleting it may discard those '
+                          'commits too.' : ''}',
             confirmLabel: 'Remove Worktree and Delete',
             destructive: true,
           );
-          if (!removeToo || worktree == null || !mounted) return;
-          await git.removeWorktree(repoPath, worktree, force: true);
+          if (!removeToo || !mounted) return;
+          // Non-force removal FIRST: a worktree with uncommitted changes then
+          // prompts specifically (see [_removeWorktreeSafely]) instead of the
+          // old unconditional `force: true` discarding that work silently.
+          if (!await _removeWorktreeSafely(git, worktree) || !mounted) return;
           try {
             await git.deleteBranch(repoPath, name);
           } on GitException catch (e2) {
@@ -1974,6 +2043,44 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         await _confirmForceDelete(git, name);
       }
     });
+  }
+
+  /// Removes [worktree], escalating to `--force` ONLY behind a specifically
+  /// worded confirm when git refuses because the worktree has uncommitted
+  /// changes (or is locked). Returns whether it was removed; false means the
+  /// user declined the destructive escalation and their work is intact.
+  ///
+  /// The plain `git worktree remove` honors git's dirty guard — the whole
+  /// point: the old caller passed `force: true` unconditionally, so a dirty
+  /// worktree's uncommitted edits were discarded with no warning (and, if the
+  /// user then cancelled the branch force-delete, for nothing).
+  Future<bool> _removeWorktreeSafely(GitService git, String worktree) async {
+    try {
+      await git.removeWorktree(repoPath, worktree);
+      return true;
+    } on GitException catch (e) {
+      if (!mounted || (!e.worktreeDirty && !e.worktreeLocked)) rethrow;
+      final discard = await confirmAction(
+        context,
+        title: e.worktreeLocked
+            ? 'Worktree is locked'
+            : 'Worktree has uncommitted changes',
+        message: e.worktreeLocked
+            ? 'The worktree at\n$worktree\nis locked. Remove it anyway?'
+            : 'The worktree at\n$worktree\nhas uncommitted changes that will '
+                  'be permanently lost. Remove it and discard them?',
+        confirmLabel: e.worktreeLocked ? 'Remove' : 'Discard and Remove',
+        destructive: true,
+      );
+      if (!discard || !mounted) return false;
+      await git.removeWorktree(
+        repoPath,
+        worktree,
+        force: true,
+        locked: e.worktreeLocked,
+      );
+      return true;
+    }
   }
 
   /// The not-fully-merged escalation — one confirm, one force retry, shared
@@ -2065,8 +2172,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     final op = await chooseAction<_DropOp>(
       context,
       title: 'Combine with ${current.shortName}',
-      message:
-          'Bring "${source.shortName}" and the current branch together.',
+      message: 'Bring "${source.shortName}" and the current branch together.',
       primaryLabel: 'Merge "${source.shortName}" into "${current.shortName}"',
       primaryValue: _DropOp.merge,
       secondary: [
@@ -2146,7 +2252,9 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       if (choice == null || choice == _TagDeleteScope.cancel || !mounted) {
         return;
       }
-      final deletedLocally = await runGuarded(() => git.deleteTag(repoPath, name));
+      final deletedLocally = await runGuarded(
+        () => git.deleteTag(repoPath, name),
+      );
       if (deletedLocally && choice == _TagDeleteScope.both && mounted) {
         await runLogged('git push --delete', (log) async {
           log.logResult(

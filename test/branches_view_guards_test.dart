@@ -51,6 +51,10 @@ class _SpyGit extends GitService {
   final List<String> created = [];
   final List<(String, bool)> branchDeletes = []; // (name, force)
   final List<String> removedWorktrees = [];
+  final List<bool> removeWorktreeForce = []; // force flag per recorded removal
+  /// When set, a NON-force [removeWorktree] throws this (git's dirty/locked
+  /// refusal); the `--force` retry still succeeds.
+  GitException? worktreeRemoveNonForceFailure;
   final List<String> tagDeletes = [];
   final List<String> remoteTagDeletes = [];
 
@@ -114,7 +118,11 @@ class _SpyGit extends GitService {
     bool force = false,
     bool locked = false,
   }) async {
+    if (!force && worktreeRemoveNonForceFailure != null) {
+      throw worktreeRemoveNonForceFailure!;
+    }
     removedWorktrees.add(path);
+    removeWorktreeForce.add(force);
   }
 
   @override
@@ -157,6 +165,56 @@ const _notFullyMerged = GitException(
   ),
 );
 
+const _worktreeDirty = GitException(
+  'git worktree remove failed',
+  SSHCommandResult(
+    exitCode: 1,
+    stdout: '',
+    stderr:
+        "fatal: '/wt/held' contains modified or untracked files, use --force "
+        'to delete it',
+  ),
+);
+
+const _heldRefs = [
+  GitRef(name: 'refs/heads/main', oid: 'aaa', isHead: true, subject: 's'),
+  GitRef(
+    name: 'refs/heads/held',
+    oid: 'bbb',
+    isHead: false,
+    subject: 's',
+    worktreePath: '/wt/held',
+  ),
+];
+
+/// Selects the held row and fires the panel's ⌘⌫ delete binding — the held
+/// row hides the inline delete button, so the shortcut is the only entry
+/// point. Shared by the worktree-delete tests.
+Future<void> _invokeDeleteHeld(WidgetTester tester) async {
+  // `.first`: the row's worktree badge chip also renders "held".
+  await tester.tap(find.text('held').first);
+  await tester.pumpAndSettle();
+  VoidCallback? deleteBinding;
+  for (final element in find.byType(PanelShortcuts).evaluate()) {
+    final bindings = (element.widget as PanelShortcuts).bindings;
+    for (final entry in bindings.entries) {
+      final a = entry.key;
+      if (a is SingleActivator &&
+          a.trigger == LogicalKeyboardKey.backspace &&
+          a.meta) {
+        deleteBinding = entry.value;
+      }
+    }
+  }
+  expect(deleteBinding, isNotNull);
+  deleteBinding!();
+  await tester.pump();
+  await tester.pump(const Duration(seconds: 1));
+  await tester.tap(find.text('Delete').last); // confirm the plain delete
+  await tester.pump();
+  await tester.pump(const Duration(seconds: 1));
+}
+
 Future<_SpyGit> _pump(
   WidgetTester tester, {
   List<GitRef> refs = _refs,
@@ -174,12 +232,17 @@ Future<_SpyGit> _pump(
       remotesProvider(_repoB).overrideWith((ref) async => const ['origin']),
       remoteTagsProvider(_repo).overrideWith((ref) async => remoteTags),
       branchForgeProvider(_repo).overrideWith((ref) async => const {}),
-      mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
+      mergedBranchesProvider(
+        _repo,
+      ).overrideWith((ref) async => const <String>{}),
       remoteTagsProvider(_repoB).overrideWith((ref) async => remoteTags),
       branchForgeProvider(_repoB).overrideWith((ref) async => const {}),
-      mergedBranchesProvider(_repoB).overrideWith((ref) async => const <String>{}),
+      mergedBranchesProvider(
+        _repoB,
+      ).overrideWith((ref) async => const <String>{}),
       statusProvider(_repo).overrideWith(
-        (ref) async => GitStatus(branch: const GitBranchInfo(), files: const []),
+        (ref) async =>
+            GitStatus(branch: const GitBranchInfo(), files: const []),
       ),
     ],
   );
@@ -226,8 +289,11 @@ void main() {
     await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
 
-    expect(git.checkouts, isEmpty,
-        reason: 'creating a branch must not check out the selection');
+    expect(
+      git.checkouts,
+      isEmpty,
+      reason: 'creating a branch must not check out the selection',
+    );
     expect(git.created, ['my-new-branch']);
   });
 
@@ -243,8 +309,9 @@ void main() {
     expect(git.checkouts, isEmpty);
   });
 
-  testWidgets('detail actions are disabled while an operation is in flight',
-      (tester) async {
+  testWidgets('detail actions are disabled while an operation is in flight', (
+    tester,
+  ) async {
     final git = await _pump(tester);
     git.checkoutGate = Completer<void>();
 
@@ -262,13 +329,19 @@ void main() {
     // Start a gated checkout — the panel is now busy.
     await tester.tap(find.text('Check out'));
     await tester.pump();
-    expect(mergeBtn().onPressed, isNull,
-        reason: 'every action goes inert while an op is in flight');
+    expect(
+      mergeBtn().onPressed,
+      isNull,
+      reason: 'every action goes inert while an op is in flight',
+    );
 
     git.checkoutGate!.complete();
     await tester.pumpAndSettle();
-    expect(mergeBtn().onPressed, isNotNull,
-        reason: 're-enabled once the operation completes');
+    expect(
+      mergeBtn().onPressed,
+      isNotNull,
+      reason: 're-enabled once the operation completes',
+    );
   });
 
   testWidgets('a failed local tag delete stops the remote half of "Delete '
@@ -297,55 +370,21 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(git.tagDeletes, ['v1']);
-    expect(git.remoteTagDeletes, isEmpty,
-        reason: 'the remote delete must be gated on local success');
+    expect(
+      git.remoteTagDeletes,
+      isEmpty,
+      reason: 'the remote delete must be gated on local success',
+    );
   });
 
   testWidgets('deleting a worktree-held AND unmerged branch requires the '
       'unmerged confirmation after the worktree removal', (tester) async {
-    const heldRefs = [
-      GitRef(name: 'refs/heads/main', oid: 'aaa', isHead: true, subject: 's'),
-      GitRef(
-        name: 'refs/heads/held',
-        oid: 'bbb',
-        isHead: false,
-        subject: 's',
-        worktreePath: '/wt/held',
-      ),
-    ];
-    final git = await _pump(tester, refs: heldRefs);
+    final git = await _pump(tester, refs: _heldRefs);
     git.deleteBranchFailures.addAll([_heldByWorktree, _notFullyMerged, null]);
 
-    // The held branch's row hides the plain delete button, so drive the
-    // ⌘⌫ path: select the row, then invoke the panel's delete binding
-    // directly (SingleActivator has no ==, so match by fields — same
-    // technique as keyboard_shortcuts_test).
-    // `.first`: the row's worktree badge chip also renders "held".
-    await tester.tap(find.text('held').first);
-    await tester.pumpAndSettle();
-    VoidCallback? deleteBinding;
-    for (final element in find.byType(PanelShortcuts).evaluate()) {
-      final bindings = (element.widget as PanelShortcuts).bindings;
-      for (final entry in bindings.entries) {
-        final a = entry.key;
-        if (a is SingleActivator &&
-            a.trigger == LogicalKeyboardKey.backspace &&
-            a.meta) {
-          deleteBinding = entry.value;
-        }
-      }
-    }
-    expect(deleteBinding, isNotNull);
-    deleteBinding!();
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
+    await _invokeDeleteHeld(tester);
 
-    // Confirm the plain delete…
-    await tester.tap(find.text('Delete').last);
-    await tester.pump();
-    await tester.pump(const Duration(seconds: 1));
-
-    // …it fails as held-by-worktree; confirm removing the worktree too.
+    // It fails as held-by-worktree; confirm removing the worktree too.
     expect(find.text('Branch is checked out in a worktree'), findsOneWidget);
     await tester.tap(find.text('Remove Worktree and Delete'));
     await tester.pump();
@@ -364,31 +403,84 @@ void main() {
       ('held', false),
       ('held', true),
     ]);
+    // The worktree removal was NON-force (clean worktree) — no silent discard.
+    expect(git.removeWorktreeForce, [false]);
   });
 
-  testWidgets('the current branch offers Set upstream via its right-click menu',
-      (tester) async {
-    final git = await _pump(tester);
+  testWidgets('a dirty worktree prompts before discarding, and declining '
+      'leaves the worktree and branch intact', (tester) async {
+    final git = await _pump(tester, refs: _heldRefs);
+    git.deleteBranchFailures.add(_heldByWorktree);
+    git.worktreeRemoveNonForceFailure = _worktreeDirty;
 
-    await _rightClick(tester, find.text('main'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Set upstream…'));
-    await tester.pumpAndSettle();
+    await _invokeDeleteHeld(tester);
 
-    // The prompt pre-fills origin/<branch>; confirm as-is.
-    await tester.tap(find.text('Set Upstream'));
-    await tester.pumpAndSettle();
+    // Held-by-worktree → confirm removing the worktree too.
+    expect(find.text('Branch is checked out in a worktree'), findsOneWidget);
+    await tester.tap(find.text('Remove Worktree and Delete'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
 
-    expect(git.upstreamsSet, [('main', 'origin/main')]);
+    // The non-force removal is refused (dirty) → a SPECIFIC discard confirm,
+    // not a silent force. Decline it.
+    expect(find.text('Worktree has uncommitted changes'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    // Nothing was force-removed and no force delete ran: work is intact.
+    expect(git.removedWorktrees, isEmpty);
+    expect(git.branchDeletes, [('held', false)]);
   });
 
-  testWidgets('the Remote Branches header fetch-and-prune button runs fetch',
-      (tester) async {
+  testWidgets('a dirty worktree, once the discard is confirmed, force-removes '
+      'then deletes the branch', (tester) async {
+    final git = await _pump(tester, refs: _heldRefs);
+    git.deleteBranchFailures.addAll([_heldByWorktree, null]);
+    git.worktreeRemoveNonForceFailure = _worktreeDirty;
+
+    await _invokeDeleteHeld(tester);
+    await tester.tap(find.text('Remove Worktree and Delete'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    // Confirm the discard this time.
+    expect(find.text('Worktree has uncommitted changes'), findsOneWidget);
+    await tester.tap(find.text('Discard and Remove'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    // Force removal happened, then the branch delete succeeded (merged).
+    expect(git.removedWorktrees, ['/wt/held']);
+    expect(git.removeWorktreeForce, [true]);
+    expect(git.branchDeletes, [('held', false), ('held', false)]);
+  });
+
+  testWidgets(
+    'the current branch offers Set upstream via its right-click menu',
+    (tester) async {
+      final git = await _pump(tester);
+
+      await _rightClick(tester, find.text('main'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Set upstream…'));
+      await tester.pumpAndSettle();
+
+      // The prompt pre-fills origin/<branch>; confirm as-is.
+      await tester.tap(find.text('Set Upstream'));
+      await tester.pumpAndSettle();
+
+      expect(git.upstreamsSet, [('main', 'origin/main')]);
+    },
+  );
+
+  testWidgets('the Remote Branches header fetch-and-prune button runs fetch', (
+    tester,
+  ) async {
     final git = await _pump(tester);
     await tester.tap(
       find.byWidgetPredicate(
-        (w) =>
-            w is MacosIcon && w.icon == CupertinoIcons.arrow_2_circlepath,
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.arrow_2_circlepath,
       ),
     );
     await tester.pumpAndSettle();
@@ -406,10 +498,14 @@ void main() {
         remotesProvider(_repoB).overrideWith((ref) async => const ['origin']),
         remoteTagsProvider(_repo).overrideWith((ref) async => null),
         branchForgeProvider(_repo).overrideWith((ref) async => const {}),
-        mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
+        mergedBranchesProvider(
+          _repo,
+        ).overrideWith((ref) async => const <String>{}),
         remoteTagsProvider(_repoB).overrideWith((ref) async => null),
         branchForgeProvider(_repoB).overrideWith((ref) async => const {}),
-        mergedBranchesProvider(_repoB).overrideWith((ref) async => const <String>{}),
+        mergedBranchesProvider(
+          _repoB,
+        ).overrideWith((ref) async => const <String>{}),
       ],
     );
     addTearDown(container.dispose);
@@ -431,7 +527,10 @@ void main() {
     // Same State, new repoPath — exactly what the unkeyed panel does.
     await tester.pumpWidget(shell(_repoB));
     await tester.pumpAndSettle();
-    expect(_selectedRows(), findsNothing,
-        reason: 'a selection must never survive into another repo');
+    expect(
+      _selectedRows(),
+      findsNothing,
+      reason: 'a selection must never survive into another repo',
+    );
   });
 }
