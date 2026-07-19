@@ -2061,10 +2061,22 @@ class ConnectionController extends Notifier<ConnectionState> {
     required String repoPath,
     bool enableFsmonitor = false,
     String label = '',
+    String gitDir = '',
   }) async {
     if (token != _attempt || !ref.mounted) return false;
 
-    await ref.read(gitServiceProvider).validateRepoPath(repoPath);
+    final scoped = gitDir.isNotEmpty;
+    if (scoped) {
+      // Scoped (dotfiles) repo: register GIT_DIR/GIT_WORK_TREE so every command
+      // targets the external git-dir, and SKIP validateRepoPath — it isn't
+      // scope-aware and would reject a bare/separate-git-dir repo. The scope
+      // registration is the validation. Mirrors connect()'s scoped branch.
+      ref
+          .read(gitServiceProvider)
+          .registerRepoScope(repoPath, gitDir: gitDir, workTree: repoPath);
+    } else {
+      await ref.read(gitServiceProvider).validateRepoPath(repoPath);
+    }
     if (token != _attempt || !ref.mounted) return false;
 
     if (enableFsmonitor) {
@@ -2116,6 +2128,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     );
     if (label.isNotEmpty) updated = updated.withRepoLabel(repoPath, label);
     if (enableFsmonitor) updated = updated.withFsmonitor(repoPath, true);
+    if (scoped) updated = updated.withScopedGitDir(repoPath, gitDir);
     try {
       await ref.read(connectionStoreProvider).updateMetadata(updated);
       if (token != _attempt || !ref.mounted) return false;
@@ -2145,6 +2158,9 @@ class ConnectionController extends Notifier<ConnectionState> {
       host: conn.host,
       warning: warning,
       connectedAt: DateTime.now(),
+      // The connection's full scoped map (empty for an ordinary repo) so a later
+      // GitService rebuild re-registers every scope from ConnectionState.
+      scopedGitDirs: updated.scopedGitDirs,
     );
     _watchForDrop(token);
     return true;

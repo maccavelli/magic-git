@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../../core/git/git_service.dart';
 import '../../core/local/linked_worktree_probe.dart';
 import '../../core/local/scoped_access.dart';
 import '../../core/local/security_scoped_bookmark.dart';
@@ -159,6 +160,21 @@ Future<LocalOpenGrants?> resolveSavedLocalRepo(
   );
 }
 
+/// Whether [layout] is a scoped/dotfiles repo shape: the git-dir lives *outside*
+/// the work tree — a bare repo, a `--separate-git-dir`, or a `~/.home.git`-style
+/// gitfile redirect — as opposed to an ordinary `<toplevel>/.git` subdirectory.
+///
+/// This is git's own resolved view (from `git rev-parse`, which follows the
+/// `.git` gitfile and honors `core.worktree`), so no env injection is needed to
+/// obtain it. Linked worktrees and submodules also carry an out-of-tree common
+/// dir but are NOT dotfiles repos — excluded explicitly. Drives the add sheet's
+/// auto-detection; the paths compared are both absolute and symlink-resolved
+/// (`--path-format=absolute`), so the string compare is reliable.
+bool isScopedRepoLayout(RepoLayout layout) =>
+    !layout.isLinkedWorktree &&
+    !layout.isSubmodule &&
+    layout.gitCommonDir != '${layout.toplevel}/.git';
+
 /// Single pane of glass for adding a repository that **already exists** — on
 /// this Mac's own filesystem, or on any of your saved SSH connections.
 ///
@@ -192,9 +208,15 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
   bool _fsmonitor = false;
   /// Scoped work-tree (dotfiles) repo: the picked folder is the work tree and
   /// [_gitDir] the external git-dir (e.g. a `~/.home.git` nested inside `$HOME`).
-  /// Local-only — the remote branch mirrors the old per-connection add, which
-  /// had no scoping (a scoped remote repo is configured on the connection form).
+  /// Available for both a local pick and a remote one — the primary target is a
+  /// dotfiles repo on a saved SSH host. Normally set by [_autoDetectScope]; the
+  /// user can still flip it (which sets [_scopedManual] and stops auto-detect
+  /// from touching it) for the pure-bare case git can't discover from the tree.
   bool _scoped = false;
+
+  /// True once the user has operated the scoped toggle themselves — from then
+  /// on [_autoDetectScope] leaves the toggle and git-dir alone.
+  bool _scopedManual = false;
   bool _picking = false;
   bool _submitting = false;
   String? _saveWarning;
@@ -281,8 +303,9 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
     setState(() => _picking = true);
     try {
       final path = await getDirectoryPath(confirmButtonText: 'Choose');
-      if (!mounted) return;
-      if (path != null) setState(() => _pickedPath = path);
+      if (!mounted || path == null) return;
+      setState(() => _pickedPath = path);
+      await _autoDetectScope(path);
     } catch (_) {
       // No native picker implementation available (e.g. running under
       // `flutter test`, or a transient platform failure) — leave the
@@ -305,10 +328,55 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
           child: RemoteDirectoryBrowserSheet(initialPath: _pickedPath),
         ),
       );
-      if (picked != null && mounted) setState(() => _pickedPath = picked);
+      if (picked == null || !mounted) return;
+      setState(() => _pickedPath = picked);
+      await _autoDetectScope(picked);
     } finally {
       if (mounted) setState(() => _picking = false);
     }
+  }
+
+  /// Reads [path]'s actual git layout — git's own discovery, which follows a
+  /// `.git` gitfile redirect and honors `core.worktree` with no env injection —
+  /// and turns the scoped toggle on (pre-filling the git-dir) when the git-dir
+  /// lives outside the work tree: a bare repo, `--separate-git-dir`, or a
+  /// dotfiles redirect like `~/.home.git`. Runs while the picker is busy so the
+  /// Open button never lights up mid-detection.
+  ///
+  /// Best-effort and silent: a folder git can't resolve (the pure-bare pattern,
+  /// or not a repo at all) throws and simply leaves the toggle to the user. A
+  /// user who has already touched the toggle ([_scopedManual]) is never
+  /// overridden.
+  Future<void> _autoDetectScope(String path) async {
+    if (_scopedManual) return;
+    bool external = false;
+    var gitDir = '';
+    try {
+      final GitService git;
+      if (_isLocal) {
+        // Local add can run before any connect — make sure the shared local
+        // executor has its augmented PATH so a bare `git` resolves.
+        await ref.read(localEnvironmentProvider).ensure();
+        git = GitService(ref.read(localExecutorProvider));
+      } else {
+        // The chosen connection is provisioned (browse dialed it); its
+        // GitService holds no scope for this not-yet-scoped path, so the probe
+        // is scope-free — exactly the native discovery we want.
+        git = ref.read(gitServiceProvider);
+      }
+      final layout = await git.repoLayout(path);
+      external = isScopedRepoLayout(layout);
+      if (external) gitDir = layout.gitCommonDir;
+    } catch (_) {
+      // Not a discoverable repo (pure-bare, empty folder, probe failure) — the
+      // manual toggle stays available.
+      external = false;
+    }
+    if (!mounted || _scopedManual) return;
+    setState(() {
+      _scoped = external;
+      _gitDir.text = gitDir;
+    });
   }
 
   void _submit() {
@@ -343,6 +411,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
             repoPath: path,
             enableFsmonitor: _fsmonitor,
             label: _label.text.trim(),
+            gitDir: _scoped ? _gitDir.text.trim() : '',
           );
       if (!mounted) return;
       if (!ok) return; // superseded by a concurrent connect/disconnect
@@ -449,11 +518,12 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
     }
   }
 
-  /// Whether Open can fire. Local needs a folder (and a git-dir when scoped);
-  /// remote additionally needs its connection dialed and ready.
+  /// Whether Open can fire. Both modes need a folder (and a git-dir when
+  /// scoped); remote additionally needs its connection dialed and ready.
   bool get _canSubmit {
     if (_pickedPath == null || _submitting) return false;
-    if (_isLocal) return !_scoped || _gitDir.text.trim().isNotEmpty;
+    if (_scoped && _gitDir.text.trim().isEmpty) return false;
+    if (_isLocal) return true;
     return !_provisioning && _provisionToken != null;
   }
 
@@ -665,44 +735,13 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
       'up status on big working trees.',
     ),
     const SizedBox(height: 12),
-    Row(
-      children: [
-        MacosSwitch(
-          value: _scoped,
-          onChanged: (v) => setState(() => _scoped = v),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            'Scoped work-tree repo (dotfiles)',
-            style: typography.body,
-          ),
-        ),
-      ],
-    ),
-    const FieldHint(
-      'For a bare / separate-git-dir repo whose work tree is the folder '
-      'above — e.g. a ~/.home.git dotfiles repo with \$HOME as its work tree. '
-      'Targets the external git-dir and watches only tracked files, never the '
-      'whole tree.',
-    ),
-    if (_scoped) ...[
-      const SizedBox(height: 8),
-      MacosTextField(
-        controller: _gitDir,
-        placeholder: 'Git directory — e.g. /Users/you/.home.git',
-        placeholderStyle: kAppPlaceholderStyle,
-        decoration: kAppTextFieldDecoration,
-        focusedDecoration: kAppTextFieldFocusedDecoration,
-        // Re-evaluate the Open button as the git-dir is typed.
-        onChanged: (_) => setState(() {}),
-      ),
-    ],
+    ..._scopedSection(typography),
   ];
 
   /// Remote-pick options: a label field (the repo is always registered into the
-  /// chosen connection) and fsmonitor. No save toggle (registration is inherent
-  /// to finalize) and no scoped toggle (that lives on the connection form).
+  /// chosen connection), fsmonitor, and the scoped work-tree toggle — the same
+  /// dotfiles support as local (its primary target is a ~/.home.git on a host).
+  /// No save toggle: registration is inherent to finalize.
   List<Widget> _remoteOptions(MacosTypography typography) => [
     Text('Label (optional)', style: typography.caption1),
     const SizedBox(height: 4),
@@ -723,6 +762,58 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
       'Turns on git\'s filesystem monitor daemon in this repository — speeds '
       'up status on big working trees.',
     ),
+    const SizedBox(height: 12),
+    ..._scopedSection(typography),
+  ];
+
+  /// The scoped work-tree (dotfiles) toggle and its git-dir field, shared by
+  /// both the local and remote option blocks.
+  List<Widget> _scopedSection(MacosTypography typography) => [
+    Row(
+      children: [
+        MacosSwitch(
+          value: _scoped,
+          onChanged: (v) => setState(() {
+            _scoped = v;
+            _scopedManual = true; // the user has taken control; stop auto-detect
+          }),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            'Scoped work-tree repo (dotfiles)',
+            style: typography.body,
+          ),
+        ),
+        // Auto-detect set this from the folder's real git layout; the toggle and
+        // git-dir stay editable so the user can correct or override.
+        if (_scoped && !_scopedManual)
+          Text(
+            'auto-detected',
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemGrayColor,
+            ),
+          ),
+      ],
+    ),
+    const FieldHint(
+      'For a bare / separate-git-dir repo whose work tree is the folder '
+      'above — e.g. a ~/.home.git dotfiles repo with \$HOME as its work tree. '
+      'Detected automatically from the folder; targets the external git-dir and '
+      'watches only tracked files, never the whole tree.',
+    ),
+    if (_scoped) ...[
+      const SizedBox(height: 8),
+      MacosTextField(
+        controller: _gitDir,
+        placeholder: 'Git directory — e.g. /Users/you/.home.git',
+        placeholderStyle: kAppPlaceholderStyle,
+        decoration: kAppTextFieldDecoration,
+        focusedDecoration: kAppTextFieldFocusedDecoration,
+        // Re-evaluate the Open button as the git-dir is typed.
+        onChanged: (_) => setState(() {}),
+      ),
+    ],
   ];
 
   Widget _fsmonitorRow(MacosTypography typography) => Row(

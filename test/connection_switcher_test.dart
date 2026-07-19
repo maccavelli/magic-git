@@ -157,6 +157,8 @@ void main() {
     expect(find.text('Add Existing Repository'), findsOneWidget);
     expect(find.text('Choose…'), findsOneWidget);
     expect(find.text('Local (this Mac)'), findsOneWidget);
+    // The scoped work-tree (dotfiles) toggle is on the card.
+    expect(find.text('Scoped work-tree repo (dotfiles)'), findsOneWidget);
 
     // Opening the Location dropdown lists Local plus every saved SSH connection.
     await tester.tap(find.text('Local (this Mac)'));
