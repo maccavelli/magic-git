@@ -118,4 +118,102 @@ void main() {
       reason: 'scope should no longer be injected after unregister',
     );
   });
+
+  // The direct `_executor.execute` sites used to bypass the scope registry
+  // entirely — every read below failed with "not a git repository" on a
+  // scoped repo even though funneled commands (commit, branch…) worked.
+  // Each test here proves one representative site now carries the scope.
+  group('direct-execute sites carry the scope', () {
+    setUp(() {
+      git.registerRepoScope(workTree, gitDir: bareDir, workTree: workTree);
+    });
+
+    test('validateRepoPath accepts the scoped repo', () async {
+      await git.validateRepoPath(workTree); // must not throw
+    });
+
+    test('the status snapshot sees a work-tree edit', () async {
+      File('$workTree/.testrc').writeAsStringSync('export EDITOR=emacs\n');
+      final status = await git.status(workTree);
+      expect(
+        status.files.any((f) => f.path == '.testrc'),
+        isTrue,
+        reason: 'snapshot should list the modified tracked file: '
+            '${status.files.map((f) => f.path)}',
+      );
+    });
+
+    test('log returns the seeded history', () async {
+      final commits = await git.log(workTree);
+      expect(commits, hasLength(1));
+      expect(commits.single.subject, 'seed dotfiles');
+    });
+
+    test('diffFile shows a work-tree modification', () async {
+      File('$workTree/.testrc').writeAsStringSync('export EDITOR=emacs\n');
+      final diff = await git.diffFile(
+        workTree,
+        path: '.testrc',
+        staged: false,
+      );
+      expect(diff, contains('+export EDITOR=emacs'));
+    });
+
+    test('revParse and reflog resolve', () async {
+      expect(await git.revParse(workTree, 'HEAD'), isNotNull);
+      expect(await git.reflog(workTree), isNotEmpty);
+    });
+
+    test('stash list/show read a seeded stash', () async {
+      File('$workTree/.testrc').writeAsStringSync('export EDITOR=nano\n');
+      await seed(['stash', 'push', '-m', 'wip']);
+      final stashes = await git.stashList(workTree);
+      expect(stashes, hasLength(1));
+      final patch = await git.stashShow(workTree, stashes.single.oid);
+      expect(patch, contains('+export EDITOR=nano'));
+    });
+
+    test('checkIgnore consults the scoped repo\'s ignore rules', () async {
+      File('$workTree/.gitignore').writeAsStringSync('ignored.txt\n');
+      final ignored = await git.checkIgnore(
+        workTree,
+        ['ignored.txt', 'kept.txt'],
+      );
+      expect(ignored, {'ignored.txt'});
+    });
+  });
+
+  test('setFsmonitorMany pins each repo\'s scope to its own subshell',
+      () async {
+    git.registerRepoScope(workTree, gitDir: bareDir, workTree: workTree);
+    // A second, ordinary repo in the same sweep. The scoped repo goes FIRST —
+    // the leak geometry: _run funnels the combined script under the first
+    // repo's path, whose GIT_DIR overlay (env beats cwd discovery) used to
+    // send EVERY repo's `git config` write into the scoped repo's git-dir.
+    final root = tempDir.resolveSymbolicLinksSync();
+    final plainDir = Directory('$root/plain')..createSync();
+    final plain = plainDir.resolveSymbolicLinksSync();
+    final init = await Process.run('git', ['init', plain]);
+    expect(init.exitCode, 0, reason: init.stderr.toString());
+
+    final result = await git.setFsmonitorMany(
+      [workTree, plain],
+      enabled: true,
+    );
+    expect(result.stderr, isNot(contains('fsmonitor setup failed')));
+
+    // Each repo's write landed in its OWN config: the bare git-dir for the
+    // scoped repo, `.git/config` for the plain one (which stayed empty under
+    // the leak).
+    final scoped = await Process.run(
+      'git',
+      ['--git-dir', bareDir, 'config', '--get', 'core.untrackedCache'],
+    );
+    expect((scoped.stdout as String).trim(), 'true');
+    final plainVal = await Process.run(
+      'git',
+      ['-C', plain, 'config', '--get', 'core.untrackedCache'],
+    );
+    expect((plainVal.stdout as String).trim(), 'true');
+  });
 }

@@ -248,7 +248,8 @@ class RepoLayout {
   /// A submodule's git dir lives under the superproject's `.git/modules/…`.
   /// Unlike a linked worktree, its git dir and common dir are the *same*, so
   /// this is the only thing distinguishing the two cases.
-  bool get isSubmodule => !isLinkedWorktree && gitDir.contains('/.git/modules/');
+  bool get isSubmodule =>
+      !isLinkedWorktree && gitDir.contains('/.git/modules/');
 
   /// The main repository's working-tree root — the parent of [gitCommonDir].
   ///
@@ -476,8 +477,7 @@ class GitStash {
 /// bug warrants. What this *does* guard is display: it keeps any such stray
 /// separator byte that survives into a field's value from leaking further
 /// into the UI as a raw, invisible control character.
-String _stripSeps(String s) =>
-    s.contains('\u001e') || s.contains('\u001f')
+String _stripSeps(String s) => s.contains('\u001e') || s.contains('\u001f')
     ? s.replaceAll('\u001e', '').replaceAll('\u001f', '')
     : s;
 
@@ -944,11 +944,15 @@ class GitService {
   /// target the bare repo explicitly instead — the exact env form of the
   /// canonical `git --git-dir=… --work-tree=… …` alias. See [registerRepoScope].
   ///
-  /// Prototype note: the two command funnels ([_run]/[_runVoid] and
-  /// [_runCaptured]) consult this. The handful of direct `_executor.execute`
-  /// sites (snapshot fetch, [validateRepoPath], `uploadBytes`) do not yet —
-  /// productionizing bare-repo support means routing those through the same
-  /// lookup (or giving each a `extraEnv: _scopeEnvFor(repoPath)`).
+  /// The two command funnels ([_run]/[_runVoid] and [_runCaptured]) consult
+  /// this, and every direct `_executor.execute` site that runs git injects
+  /// `extraEnv: _scopeEnvFor(repoPath)` itself. The deliberate exceptions —
+  /// commands with no git discovery to scope — are the plain-`cat` reads
+  /// ([readFile], [conflictFile]), the `base64` read ([readFileBase64]), and
+  /// [validateLocalRepoRoot], whose whole job is classifying a folder by
+  /// git's *native* discovery before any scope exists. Multi-repo sweeps
+  /// ([setFsmonitorMany]) pin scope per subshell instead, so one repo's env
+  /// can't bleed into another's.
   final Map<String, Map<String, String>> _repoScopeEnv = {};
 
   // Field/record separators for log output: ASCII Unit/Record Separators, which
@@ -1036,10 +1040,7 @@ class GitService {
     required String gitDir,
     String? workTree,
   }) {
-    _repoScopeEnv[repoPath] = {
-      'GIT_DIR': gitDir,
-      'GIT_WORK_TREE': ?workTree,
-    };
+    _repoScopeEnv[repoPath] = {'GIT_DIR': gitDir, 'GIT_WORK_TREE': ?workTree};
   }
 
   /// Removes any scope registered for [repoPath] (on disconnect / repo close),
@@ -1073,8 +1074,7 @@ class GitService {
   /// ordinary repo with a `.git` in its work tree). Null rather than an empty
   /// map so the executors' `...?extraEnv` spread is a true no-op for unscoped
   /// repos, leaving their behavior byte-for-byte unchanged.
-  Map<String, String>? _scopeEnvFor(String repoPath) =>
-      _repoScopeEnv[repoPath];
+  Map<String, String>? _scopeEnvFor(String repoPath) => _repoScopeEnv[repoPath];
 
   /// Verifies [repoPath] is a git working tree on the remote host. Called at
   /// connect time so the session fails fast instead of surfacing errors on the
@@ -1082,6 +1082,7 @@ class GitService {
   Future<void> validateRepoPath(String repoPath) async {
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: ['git', 'rev-parse', '--is-inside-work-tree'],
       timeout: const Duration(seconds: 20),
       retries: _readRetries,
@@ -1455,11 +1456,13 @@ class GitService {
     String repoPath, [
     List<String> paths = const [],
   ]) async {
-    await _runVoid(
-      repoPath,
-      ['git', 'worktree', 'repair', '--end-of-options', ...paths],
-      'Repair worktrees',
-    );
+    await _runVoid(repoPath, [
+      'git',
+      'worktree',
+      'repair',
+      '--end-of-options',
+      ...paths,
+    ], 'Repair worktrees');
   }
 
   /// Copies gitignored files matching [globs] from [from] into a freshly-created
@@ -1567,16 +1570,14 @@ class GitService {
   /// exclusive lane it acted as a barrier and every background refresh in the
   /// app (auto-fetch, watch-triggered status) stalled until the install
   /// finished.
-  Future<SSHCommandResult> runInWorktree(
-    String worktreePath,
-    String command,
-  ) => _run(
-    worktreePath,
-    ['sh', '-c', command],
-    'Post-create command',
-    timeout: defaultHookTimeout,
-    lane: ExecLane.isolated,
-  );
+  Future<SSHCommandResult> runInWorktree(String worktreePath, String command) =>
+      _run(
+        worktreePath,
+        ['sh', '-c', command],
+        'Post-create command',
+        timeout: defaultHookTimeout,
+        lane: ExecLane.isolated,
+      );
 
   static const List<String> _refsFormat = [
     '%(HEAD)',
@@ -1707,6 +1708,7 @@ class GitService {
 
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: ['sh', '-c', script],
       retries: _readRetries,
       lane: ExecLane.read,
@@ -1748,6 +1750,7 @@ class GitService {
   ) async {
     final status = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         '--no-optional-locks',
@@ -1763,6 +1766,7 @@ class GitService {
     );
     final refs = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         '-c',
@@ -1779,12 +1783,14 @@ class GitService {
     );
     final remotes = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: ['git', 'remote'],
       retries: _readRetries,
       lane: ExecLane.read,
     );
     final pending = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: ['sh', '-c', _pendingOpScript],
       retries: _readRetries,
       lane: ExecLane.read,
@@ -1874,6 +1880,7 @@ class GitService {
   Future<RepoFootprint> repoFootprint(String repoPath) async {
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: ['git', 'count-objects', '-v', '-H'],
       lane: ExecLane.read,
       retries: _readRetries,
@@ -1936,15 +1943,38 @@ class GitService {
     required bool enabled,
   }) {
     final inner = _fsmonitorScript(enabled: enabled);
-    final dirs = repoPaths.map(ShellEscaper.escape).join(' ');
     // Subshell per repo so each `cd` is isolated; `|| printf … >&2` keeps the
     // sweep going and surfaces the failed path. Trailing `true` pins exit 0.
-    final script =
-        'for d in $dirs; do '
-        '(cd "\$d" && $inner) '
-        "|| printf 'fsmonitor setup failed: %s\\n' \"\$d\" >&2; "
-        'done; true';
+    //
+    // Each subshell also pins its own scope env: a scoped repo exports its
+    // GIT_DIR/GIT_WORK_TREE, an unscoped one clears any inherited overlay.
+    // Without this, the funnel repo's auto-injected scope (the _run below is
+    // keyed on repoPaths.first) would override every `cd` — GIT_DIR beats
+    // cwd discovery — and the whole sweep's `git config` writes would land
+    // in that one repo's git-dir.
+    final parts = [
+      for (final p in repoPaths)
+        '(cd ${ShellEscaper.escape(p)} && ${_subshellScopeEnv(p)} && $inner) '
+            "|| printf 'fsmonitor setup failed: %s\\n' "
+            '${ShellEscaper.escape(p)} >&2',
+    ];
+    final script = '${parts.join('; ')}; true';
     return _run(repoPaths.first, ['sh', '-c', script], 'git config fsmonitor');
+  }
+
+  /// The shell fragment that pins [repoPath]'s scope inside one subshell of a
+  /// multi-repo sweep: exports the repo's own GIT_DIR/GIT_WORK_TREE when
+  /// scoped, or unsets both so no overlay inherited from the enclosing
+  /// command's env can leak into an unscoped repo's git.
+  String _subshellScopeEnv(String repoPath) {
+    final env = _scopeEnvFor(repoPath);
+    // Always clear first: a scoped repo without its own GIT_WORK_TREE must
+    // not inherit the funnel repo's either.
+    if (env == null) return 'unset GIT_DIR GIT_WORK_TREE';
+    final exports = [
+      for (final e in env.entries) '${e.key}=${ShellEscaper.escape(e.value)}',
+    ].join(' ');
+    return 'unset GIT_DIR GIT_WORK_TREE && export $exports';
   }
 
   /// Commit history for [revision] (default HEAD), most recent first, with
@@ -2031,6 +2061,7 @@ class GitService {
 
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         // Re-encodes commit subjects to UTF-8 for output regardless of the
@@ -2120,6 +2151,7 @@ class GitService {
     final format = ['%H', '%h', '%an', '%ae', '%aI', '%P', '%s'].join(fieldSep);
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         '-c',
@@ -2177,6 +2209,7 @@ class GitService {
     if (paths.isEmpty) return const {};
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       // `-z`: NUL-delimited in both directions. A path may contain any byte a
       // filesystem allows — spaces, quotes, even newlines — except NUL, so it
       // is the only framing a filename cannot forge.
@@ -2217,11 +2250,8 @@ class GitService {
 
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: [
-        'git',
-        'rev-parse',
-        '--disambiguate=$prefix',
-      ],
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: ['git', 'rev-parse', '--disambiguate=$prefix'],
       retries: _readRetries,
       lane: ExecLane.read,
     );
@@ -2246,6 +2276,7 @@ class GitService {
     final format = ['%H', '%h', '%gd', '%gs', '%s'].join(fieldSep);
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         '-c',
@@ -2290,6 +2321,7 @@ class GitService {
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         'diff',
@@ -2321,6 +2353,7 @@ class GitService {
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         'diff',
@@ -2346,6 +2379,7 @@ class GitService {
   Future<String> diffUntracked(String repoPath, String path) async {
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         'diff',
@@ -2398,6 +2432,7 @@ class GitService {
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         // See the `for-each-ref` call in [_fetchSnapshot] for why only
@@ -2432,6 +2467,7 @@ class GitService {
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         // See the `for-each-ref` call in [_fetchSnapshot] for why only
@@ -2499,13 +2535,8 @@ class GitService {
   Future<String> showBlob(String repoPath, String rev, String path) async {
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: [
-        'git',
-        'show',
-        '--no-color',
-        '--end-of-options',
-        '$rev:$path',
-      ],
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: ['git', 'show', '--no-color', '--end-of-options', '$rev:$path'],
       retries: _readRetries,
       lane: ExecLane.read,
       compress: true,
@@ -2539,6 +2570,7 @@ class GitService {
     final bytes = await batch.showBlobsBatch(
       repoPath,
       keys,
+      extraEnv: _scopeEnvFor(repoPath),
       showOne: showBlob,
     );
     return {
@@ -2702,6 +2734,7 @@ class GitService {
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         'apply',
@@ -2844,6 +2877,7 @@ class GitService {
         'rm -f "\$tmp"';
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: ['sh', '-c', script],
       timeout: commitTimeout,
     );
@@ -2989,46 +3023,37 @@ class GitService {
   /// the branch checked out — so this is safe for the current branch and for
   /// one held elsewhere alike. Not journaled: nothing is destroyed, and
   /// renaming back IS the undo.
-  Future<void> renameBranch(
-    String repoPath,
-    String oldName,
-    String newName,
-  ) => _runVoid(repoPath, [
-    'git',
-    'branch',
-    '-m',
-    '--end-of-options',
-    oldName,
-    newName,
-  ], 'git branch -m');
+  Future<void> renameBranch(String repoPath, String oldName, String newName) =>
+      _runVoid(repoPath, [
+        'git',
+        'branch',
+        '-m',
+        '--end-of-options',
+        oldName,
+        newName,
+      ], 'git branch -m');
 
   /// Points [branch]'s upstream at [upstream] (e.g. `origin/main`) —
   /// `git branch --set-upstream-to`. Pure config (`branch.<name>.remote` /
   /// `.merge`): nothing is destroyed, so not journaled — setting it back IS
   /// the undo. The `=` form keeps a leading-dash [upstream] out of option
   /// position; `--end-of-options` guards the branch positional.
-  Future<void> setUpstream(
-    String repoPath,
-    String branch,
-    String upstream,
-  ) => _runVoid(repoPath, [
-    'git',
-    'branch',
-    '--set-upstream-to=$upstream',
-    '--end-of-options',
-    branch,
-  ], 'git branch --set-upstream-to');
-
-  /// Removes [branch]'s upstream config (`git branch --unset-upstream`) —
-  /// the counterpart of [setUpstream], same not-journaled reasoning.
-  Future<void> unsetUpstream(String repoPath, String branch) =>
+  Future<void> setUpstream(String repoPath, String branch, String upstream) =>
       _runVoid(repoPath, [
         'git',
         'branch',
-        '--unset-upstream',
+        '--set-upstream-to=$upstream',
         '--end-of-options',
         branch,
-      ], 'git branch --unset-upstream');
+      ], 'git branch --set-upstream-to');
+
+  /// Removes [branch]'s upstream config (`git branch --unset-upstream`) —
+  /// the counterpart of [setUpstream], same not-journaled reasoning.
+  Future<void> unsetUpstream(String repoPath, String branch) => _runVoid(
+    repoPath,
+    ['git', 'branch', '--unset-upstream', '--end-of-options', branch],
+    'git branch --unset-upstream',
+  );
 
   /// Deletes [branch] on [remote] (`git push --delete`) — the remote sibling
   /// of [deleteBranch]. Deliberately NOT journaled: the commits may exist
@@ -3042,15 +3067,7 @@ class GitService {
     final auth = await _forgeAuthArgs(repoPath, remote: remote);
     return _run(
       repoPath,
-      [
-        'git',
-        ...auth,
-        'push',
-        '--delete',
-        '--end-of-options',
-        remote,
-        branch,
-      ],
+      ['git', ...auth, 'push', '--delete', '--end-of-options', remote, branch],
       'git push --delete',
       timeout: networkTimeout,
       // Sync lane, like every push: updates the remote and the local tracking
@@ -3114,11 +3131,13 @@ class GitService {
   /// rationale: `git clean` still refuses to touch anything tracked, so this
   /// can only ever delete the untracked files the caller named.
   Future<void> removeUntrackedFilesMany(String repoPath, List<String> paths) =>
-      _removeCaptured(
-        repoPath,
-        ['git', 'clean', '-f', '--', ...paths.map(_literal)],
-        paths,
-      );
+      _removeCaptured(repoPath, [
+        'git',
+        'clean',
+        '-f',
+        '--',
+        ...paths.map(_literal),
+      ], paths);
 
   /// Untracked (and ignored) content is invisible to `stash create`, so
   /// deletions snapshot the doomed [paths] with flavor B — a temp-index
@@ -3505,11 +3524,12 @@ class GitService {
       '--',
       ...paths.map(_literal),
     ], 'git checkout --ours/--theirs');
-    await _runVoid(
-      repoPath,
-      ['git', 'add', '--', ...paths.map(_literal)],
-      'git add',
-    );
+    await _runVoid(repoPath, [
+      'git',
+      'add',
+      '--',
+      ...paths.map(_literal),
+    ], 'git add');
   }
 
   /// Aborts an in-progress merge (`git merge --abort`).
@@ -3697,6 +3717,7 @@ class GitService {
     try {
       final result = await _executor.execute(
         repoPath: repoPath,
+        extraEnv: _scopeEnvFor(repoPath),
         gitArgs: ['git', 'remote', 'get-url', remote],
         timeout: const Duration(seconds: 15),
         lane: ExecLane.read,
@@ -3726,6 +3747,7 @@ class GitService {
     try {
       final result = await _executor.execute(
         repoPath: repoPath,
+        extraEnv: _scopeEnvFor(repoPath),
         gitArgs: [
           'sh',
           '-c',
@@ -4011,14 +4033,7 @@ class GitService {
       final auth = await _forgeAuthArgs(repoPath, remote: remote);
       result = await _run(
         repoPath,
-        [
-          'git',
-          ...auth,
-          'ls-remote',
-          '--tags',
-          '--end-of-options',
-          remote,
-        ],
+        ['git', ...auth, 'ls-remote', '--tags', '--end-of-options', remote],
         'git ls-remote',
         timeout: networkTimeout,
         lane: ExecLane.sync,
@@ -4049,7 +4064,15 @@ class GitService {
   Future<String?> revParse(String repoPath, String rev) async {
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: ['git', 'rev-parse', '--verify', '--quiet', '--end-of-options', rev],
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: [
+        'git',
+        'rev-parse',
+        '--verify',
+        '--quiet',
+        '--end-of-options',
+        rev,
+      ],
       retries: _readRetries,
       lane: ExecLane.read,
     );
@@ -4208,18 +4231,14 @@ class GitService {
     String repoPath,
     String oid, {
     bool restoreIndex = false,
-  }) => _run(
-    repoPath,
-    [
-      'git',
-      'stash',
-      'apply',
-      if (restoreIndex) '--index',
-      '--end-of-options',
-      oid,
-    ],
-    'git stash apply',
-  );
+  }) => _run(repoPath, [
+    'git',
+    'stash',
+    'apply',
+    if (restoreIndex) '--index',
+    '--end-of-options',
+    oid,
+  ], 'git stash apply');
 
   Future<SSHCommandResult> stashDrop(
     String repoPath,
@@ -4351,6 +4370,7 @@ class GitService {
   Future<String> stashShow(String repoPath, String oid) async {
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         'stash',
@@ -4376,6 +4396,7 @@ class GitService {
   Future<List<GitStash>> stashList(String repoPath) async {
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         'stash',
@@ -4403,7 +4424,9 @@ class GitService {
       // Rejoin any separator-driven over-split of the trailing message, then
       // strip residual separator bytes from the display fields (as parseRefs
       // and parseGitLog do).
-      final desc = _stripSeps(f.length > 4 ? f.sublist(3).join(fieldSep) : f[3]);
+      final desc = _stripSeps(
+        f.length > 4 ? f.sublist(3).join(fieldSep) : f[3],
+      );
       // %gs is like "WIP on main: <subject>" or "On main: <message>".
       final branchMatch = RegExp(r'(?:WIP on|On) ([^:]+):').firstMatch(desc);
       stashes.add(
@@ -4489,8 +4512,9 @@ class GitService {
   /// the [_runCaptured] prologue this runs inside). The `$$`-suffixed temp
   /// index can't collide: mutations are serialized on the exclusive lane.
   String _snapshotCaptureB(String refName, List<String> paths) {
-    final pathArgs =
-        paths.map((p) => ShellEscaper.escape(_literal(p))).join(' ');
+    final pathArgs = paths
+        .map((p) => ShellEscaper.escape(_literal(p)))
+        .join(' ');
     return 'idx="\$(git rev-parse --git-dir)/magicgit-snapidx.\$\$"; '
         'rm -f "\$idx"; '
         'GIT_INDEX_FILE="\$idx" git add -f -- $pathArgs 2>/dev/null && '
@@ -4520,6 +4544,7 @@ class GitService {
   Future<List<SnapshotRef>> snapshotRefs(String repoPath) async {
     final result = await _executor.execute(
       repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
       gitArgs: [
         'git',
         'for-each-ref',
@@ -4618,8 +4643,7 @@ class GitService {
     // command list that never `exit`s the outer shell).
     String? mutationScript,
   }) async {
-    final mut =
-        mutationScript ?? mutation.map(ShellEscaper.escape).join(' ');
+    final mut = mutationScript ?? mutation.map(ShellEscaper.escape).join(' ');
     final assigns = StringBuffer();
     final printfArgs = StringBuffer();
     var fmt = '$_undoSep%s$_undoSep%s$_undoSep';
@@ -4709,7 +4733,12 @@ class GitService {
   Future<void> undoExecute(UndoRecord record, {bool force = false}) async {
     final result = await _executor.execute(
       repoPath: record.repoPath,
-      gitArgs: ['sh', '-c', _undoScript(record, force: force)],
+      extraEnv: _scopeEnvFor(record.repoPath),
+      gitArgs: [
+        'sh',
+        '-c',
+        _undoScript(record, force: force),
+      ],
     );
     if (result.exitCode == 42) throw UndoStaleException(record);
     if (result.exitCode == 43) throw UndoDirtyException(record);
@@ -4850,8 +4879,7 @@ class GitService {
         final tipGuard =
             '[ "\$(git rev-parse -q --verify ${esc('refs/heads/${r.refName}')})" '
             '= ${esc(r.deletedOid)} ] || exit 42; ';
-        final deleteBranch =
-            'git branch -D --end-of-options ${esc(r.refName)}';
+        final deleteBranch = 'git branch -D --end-of-options ${esc(r.refName)}';
         if (r.postRef != r.refName) {
           // Creation didn't check the branch out — just delete it.
           return '$tipGuard$deleteBranch';
@@ -4874,7 +4902,9 @@ class GitService {
         for (final entry in r.stashEntries.reversed) {
           final space = entry.indexOf(' ');
           final oid = space < 0 ? entry : entry.substring(0, space);
-          final subject = space < 0 ? 'Restored stash' : entry.substring(space + 1);
+          final subject = space < 0
+              ? 'Restored stash'
+              : entry.substring(space + 1);
           stores.add('$prefix stash store -m ${esc(subject)} ${esc(oid)}');
         }
         return stores.join(' && ');

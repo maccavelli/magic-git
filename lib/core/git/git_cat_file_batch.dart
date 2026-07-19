@@ -4,8 +4,7 @@ import 'dart:typed_data';
 
 import '../exec/command_drain.dart';
 import '../ssh/shell_escaper.dart';
-import '../ssh/ssh_command_executor.dart'
-    show CommandExecutor, ExecLane;
+import '../ssh/ssh_command_executor.dart' show CommandExecutor, ExecLane;
 
 /// One object from `git cat-file --batch` / `--batch-check` output.
 class CatFileObject {
@@ -61,8 +60,7 @@ List<CatFileObject> parseCatFileBatch(
     i = lineEnd + 1;
 
     if (header.endsWith(' missing')) {
-      final fromHeader =
-          header.substring(0, header.length - ' missing'.length);
+      final fromHeader = header.substring(0, header.length - ' missing'.length);
       out.add(
         CatFileObject(
           request: requestFor(reqIndex, fromHeader: fromHeader),
@@ -156,6 +154,9 @@ class GitCatFileBatch {
     String repoPath,
     List<BlobKey> keys, {
     bool requireAll = false,
+    // The caller's scope overlay for [repoPath] (GIT_DIR/GIT_WORK_TREE for a
+    // scoped work-tree repo) — this class has no scope registry of its own.
+    Map<String, String>? extraEnv,
     Future<String> Function(String repoPath, String rev, String path)? showOne,
   }) async {
     if (keys.isEmpty) return {};
@@ -165,13 +166,12 @@ class GitCatFileBatch {
       return {k: Uint8List.fromList(utf8.encode(text))};
     }
 
-    final specs = [
-      for (final k in keys) '${k.rev}:${k.path}',
-    ];
+    final specs = [for (final k in keys) '${k.rev}:${k.path}'];
     try {
       final script = catFileBatchScript(specs);
       final result = await _executor.execute(
         repoPath: repoPath,
+        extraEnv: extraEnv,
         gitArgs: ['sh', '-c', script],
         lane: ExecLane.read,
         compress: true,
@@ -217,4 +217,3 @@ class GitCatFileBatch {
     }
   }
 }
-
