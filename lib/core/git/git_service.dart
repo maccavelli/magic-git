@@ -1289,6 +1289,93 @@ class GitService {
     );
   }
 
+  /// The gitfile-redirect target of `<repoPath>/.git`, when `.git` is a *file*
+  /// containing `gitdir: <path>` — the dotfiles redirect into e.g.
+  /// `~/.home.git`. Returns the target (resolved against [repoPath] when
+  /// relative), or null when `.git` is a directory, absent, or not a parseable
+  /// gitfile. Reads over the executor seam (plain `cat`), so it works on both
+  /// backends with no scope registered — this exists precisely to *find* the
+  /// scope before one exists.
+  Future<String?> gitfileRedirectTarget(String repoPath) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      // `cat` fails cleanly when `.git` is a directory or missing — the exit
+      // code is the classifier, no stderr parsing needed.
+      gitArgs: ['cat', '--', '.git'],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    if (!result.isSuccess) return null;
+    final line = const LineSplitter()
+        .convert(result.stdout)
+        .map((l) => l.trim())
+        .firstWhere((l) => l.startsWith('gitdir:'), orElse: () => '');
+    var target = line.isEmpty ? '' : line.substring('gitdir:'.length).trim();
+    while (target.startsWith('./')) {
+      target = target.substring(2);
+    }
+    if (target.isEmpty) return null;
+    // A relative target is relative to the gitfile's directory. No `..`
+    // collapsing needed: this value is only ever handed to git (as GIT_DIR),
+    // which normalizes internally, and [scopedRepoLayout]'s
+    // `--path-format=absolute` output is what callers persist.
+    return target.startsWith('/') ? target : '$repoPath/$target';
+  }
+
+  /// [repoLayout] under an explicit scope overlay — the same
+  /// `GIT_DIR`/`GIT_WORK_TREE` environment [registerRepoScope] would inject —
+  /// WITHOUT touching the scope registry.
+  ///
+  /// This is the probe for the one layout native discovery cannot resolve at
+  /// all: a **bare** git-dir behind a `.git` gitfile redirect (`git init
+  /// --bare ~/.home.git` + `gitdir: ~/.home.git`). Bare means no work tree, so
+  /// unscoped `rev-parse --show-toplevel` dies with "must be run in a work
+  /// tree"; the overlay supplies the work tree exactly as the eventual scope
+  /// registration will. Used by the add sheet's auto-detection to validate a
+  /// candidate git-dir before anything is registered or persisted — a garbage
+  /// candidate throws instead of silently mis-registering.
+  Future<RepoLayout> scopedRepoLayout(
+    String repoPath, {
+    required String gitDir,
+  }) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: {'GIT_DIR': gitDir, 'GIT_WORK_TREE': repoPath},
+      gitArgs: [
+        'git',
+        'rev-parse',
+        '--path-format=absolute',
+        '--show-toplevel',
+        '--git-dir',
+        '--git-common-dir',
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    if (!result.isSuccess) {
+      throw GitException(
+        'Could not resolve the scoped repository layout',
+        result,
+      );
+    }
+    final lines = const LineSplitter()
+        .convert(result.stdout)
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toList();
+    if (lines.length < 3) {
+      throw GitException(
+        'Could not resolve the scoped repository layout',
+        result,
+      );
+    }
+    return RepoLayout(
+      toplevel: lines[0],
+      gitDir: lines[1],
+      gitCommonDir: lines[2],
+    );
+  }
+
   /// All worktrees of this repository, main worktree first.
   ///
   /// Requires git 2.36 for `-z`, which is not optional: git does not quote

@@ -206,6 +206,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
   String? _pickedPath;
   bool _save = true;
   bool _fsmonitor = false;
+
   /// Scoped work-tree (dotfiles) repo: the picked folder is the work tree and
   /// [_gitDir] the external git-dir (e.g. a `~/.home.git` nested inside `$HOME`).
   /// Available for both a local pick and a remote one — the primary target is a
@@ -343,10 +344,17 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
   /// dotfiles redirect like `~/.home.git`. Runs while the picker is busy so the
   /// Open button never lights up mid-detection.
   ///
-  /// Best-effort and silent: a folder git can't resolve (the pure-bare pattern,
-  /// or not a repo at all) throws and simply leaves the toggle to the user. A
-  /// user who has already touched the toggle ([_scopedManual]) is never
-  /// overridden.
+  /// When native discovery fails, one shape still identifies itself: a `.git`
+  /// gitfile redirect to a **bare** git-dir (`git init --bare ~/.home.git` +
+  /// `gitdir: ~/.home.git`) — bare has no work tree, so `--show-toplevel`
+  /// dies unscoped, but the redirect file names the git-dir. That candidate is
+  /// validated with [GitService.scopedRepoLayout], the same env overlay the
+  /// eventual scope registration injects, before anything is pre-filled.
+  ///
+  /// Best-effort and silent: a folder neither path can resolve (a bare git-dir
+  /// with no redirect at all, or not a repo) simply leaves the toggle to the
+  /// user. A user who has already touched the toggle ([_scopedManual]) is
+  /// never overridden.
   Future<void> _autoDetectScope(String path) async {
     if (_scopedManual) return;
     bool external = false;
@@ -364,17 +372,27 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
         // is scope-free — exactly the native discovery we want.
         git = ref.read(gitServiceProvider);
       }
-      final layout = await git.repoLayout(path);
+      RepoLayout layout;
+      try {
+        layout = await git.repoLayout(path);
+      } on Object {
+        final target = await git.gitfileRedirectTarget(path);
+        if (target == null) rethrow;
+        layout = await git.scopedRepoLayout(path, gitDir: target);
+      }
       external = isScopedRepoLayout(layout);
       if (external) gitDir = layout.gitCommonDir;
     } catch (_) {
-      // Not a discoverable repo (pure-bare, empty folder, probe failure) — the
-      // manual toggle stays available.
+      // Not a discoverable repo (redirect-less bare, empty folder, probe
+      // failure) — the manual toggle stays available.
       external = false;
     }
     if (!mounted || _scopedManual) return;
     setState(() {
       _scoped = external;
+      // The fsmonitor daemon is never valid on a scoped repo — see
+      // [_fsmonitorSection].
+      if (external) _fsmonitor = false;
       _gitDir.text = gitDir;
     });
   }
@@ -729,11 +747,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
       'reopening — the label is its display name there.',
     ),
     const SizedBox(height: 12),
-    _fsmonitorRow(typography),
-    const FieldHint(
-      'Turns on git\'s filesystem monitor daemon in this repository — speeds '
-      'up status on big working trees.',
-    ),
+    ..._fsmonitorSection(typography),
     const SizedBox(height: 12),
     ..._scopedSection(typography),
   ];
@@ -757,11 +771,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
       'empty.',
     ),
     const SizedBox(height: 12),
-    _fsmonitorRow(typography),
-    const FieldHint(
-      'Turns on git\'s filesystem monitor daemon in this repository — speeds '
-      'up status on big working trees.',
-    ),
+    ..._fsmonitorSection(typography),
     const SizedBox(height: 12),
     ..._scopedSection(typography),
   ];
@@ -775,7 +785,11 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
           value: _scoped,
           onChanged: (v) => setState(() {
             _scoped = v;
-            _scopedManual = true; // the user has taken control; stop auto-detect
+            _scopedManual =
+                true; // the user has taken control; stop auto-detect
+            // fsmonitor is never valid on a scoped repo — see
+            // [_fsmonitorSection], which is also disabled while scoped.
+            if (v) _fsmonitor = false;
           }),
         ),
         const SizedBox(width: 8),
@@ -816,19 +830,36 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
     ],
   ];
 
-  Widget _fsmonitorRow(MacosTypography typography) => Row(
-    children: [
-      MacosSwitch(
-        value: _fsmonitor,
-        onChanged: (v) => setState(() => _fsmonitor = v),
-      ),
-      const SizedBox(width: 8),
-      Expanded(
-        child: Text(
-          'Enable filesystem monitor (faster status on large repos)',
-          style: typography.body,
+  /// The fsmonitor toggle + hint, shared by both option blocks. Disabled (and
+  /// forced off) while the scoped toggle is on: the daemon would index the
+  /// entire work tree — for a dotfiles repo that is all of `$HOME`, the exact
+  /// cost the bounded tracked-file watch exists to avoid — and git refuses to
+  /// run it against a bare git-dir anyway.
+  List<Widget> _fsmonitorSection(MacosTypography typography) => [
+    Row(
+      children: [
+        MacosSwitch(
+          value: _fsmonitor,
+          onChanged: _scoped ? null : (v) => setState(() => _fsmonitor = v),
         ),
-      ),
-    ],
-  );
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            'Enable filesystem monitor (faster status on large repos)',
+            style: typography.body.copyWith(
+              color: _scoped ? MacosColors.systemGrayColor : null,
+            ),
+          ),
+        ),
+      ],
+    ),
+    FieldHint(
+      _scoped
+          ? 'Not available for a scoped work-tree repo — the monitor would '
+                'index the entire work tree (e.g. all of your home folder). '
+                'Scoped repos watch only tracked files instead.'
+          : 'Turns on git\'s filesystem monitor daemon in this repository — '
+                'speeds up status on big working trees.',
+    ),
+  ];
 }

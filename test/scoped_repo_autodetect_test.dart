@@ -9,10 +9,17 @@
 // [isScopedRepoLayout] recognizes the external git-dir. Ordinary repos and
 // linked worktrees must NOT be mistaken for it.
 //
-// (The pure-bare pattern — a bare git-dir with no `.git` in the work tree — is
-// intentionally NOT covered here: git can't discover it from the tree, so
-// auto-detect falls back to the manual toggle. That geometry is proven in
-// git_dir_scope_integration_test.dart.)
+// A `.git` redirect to a **bare** git-dir (`git init --bare ~/.home.git` +
+// a hand-written gitfile — no `core.worktree`) is the shape native discovery
+// CANNOT resolve: bare means no work tree, so `--show-toplevel` dies. The
+// fallback pair [GitService.gitfileRedirectTarget] +
+// [GitService.scopedRepoLayout] covers it — the redirect names the candidate
+// git-dir and the env-overlay probe validates it, exactly the environment the
+// eventual scope registration injects.
+//
+// (A bare git-dir with NO `.git` redirect at all remains undetectable from
+// the tree — auto-detect falls back to the manual toggle. That geometry is
+// proven in git_dir_scope_integration_test.dart.)
 @Tags(['integration'])
 library;
 
@@ -118,10 +125,11 @@ void main() {
         final external = '$root/home.git';
         // A `.git` FILE in the work tree redirects to the out-of-tree git-dir —
         // the shape git resolves natively (like ~/.home.git).
-        await run(
-          ['init', '--separate-git-dir=$external', workTree],
-          cwd: root,
-        );
+        await run([
+          'init',
+          '--separate-git-dir=$external',
+          workTree,
+        ], cwd: root);
         final gitDir = Directory(external).resolveSymbolicLinksSync();
 
         // Unscoped repoLayout: no GIT_DIR registered — pure native discovery.
@@ -142,6 +150,88 @@ void main() {
       expect(isScopedRepoLayout(layout), isFalse);
     });
 
+    test(
+      'a bare git-dir behind a .git gitfile redirect: native discovery fails, '
+      'the redirect fallback resolves it as scoped',
+      () async {
+        // The user-reported geometry: the picked folder holds a hand-written
+        // `.git` redirect file plus the bare `.home.git` it points at.
+        final work = Directory('$root/home')..createSync();
+        final workTree = work.resolveSymbolicLinksSync();
+        await run(['init', '--bare', '$workTree/.home.git'], cwd: root);
+        final bare = Directory(
+          '$workTree/.home.git',
+        ).resolveSymbolicLinksSync();
+        File('$workTree/.git').writeAsStringSync('gitdir: $bare\n');
+
+        // The premise: `git init --bare` sets core.bare=true and writes no
+        // core.worktree, so native discovery has no work tree to report.
+        await expectLater(
+          git.repoLayout(workTree),
+          throwsA(isA<GitException>()),
+        );
+
+        // The fallback: the gitfile names the candidate git-dir…
+        expect(await git.gitfileRedirectTarget(workTree), bare);
+        // …and the env-overlay probe validates it as the scoped layout.
+        final layout = await git.scopedRepoLayout(workTree, gitDir: bare);
+        expect(layout.toplevel, workTree);
+        expect(layout.gitCommonDir, bare);
+        expect(isScopedRepoLayout(layout), isTrue);
+      },
+    );
+
+    test(
+      'a relative gitfile redirect resolves against the work tree',
+      () async {
+        final work = Directory('$root/home')..createSync();
+        final workTree = work.resolveSymbolicLinksSync();
+        await run(['init', '--bare', '$workTree/.home.git'], cwd: root);
+        final bare = Directory(
+          '$workTree/.home.git',
+        ).resolveSymbolicLinksSync();
+        File('$workTree/.git').writeAsStringSync('gitdir: ./.home.git\n');
+
+        final target = await git.gitfileRedirectTarget(workTree);
+        expect(target, '$workTree/.home.git');
+        final layout = await git.scopedRepoLayout(workTree, gitDir: target!);
+        expect(layout.gitCommonDir, bare);
+        expect(isScopedRepoLayout(layout), isTrue);
+      },
+    );
+
+    test(
+      'gitfileRedirectTarget is null for an ordinary repo and a non-repo',
+      () async {
+        final dir = Directory('$root/plain')..createSync();
+        final repo = dir.resolveSymbolicLinksSync();
+        await run(['init', repo], cwd: root);
+        // `.git` is a directory — not a redirect.
+        expect(await git.gitfileRedirectTarget(repo), isNull);
+
+        final empty = Directory('$root/empty')..createSync();
+        expect(
+          await git.gitfileRedirectTarget(empty.resolveSymbolicLinksSync()),
+          isNull,
+        );
+      },
+    );
+
+    test(
+      'a garbage redirect target fails the probe instead of mis-detecting',
+      () async {
+        final work = Directory('$root/home')..createSync();
+        final workTree = work.resolveSymbolicLinksSync();
+        File('$workTree/.git').writeAsStringSync('gitdir: $root/nowhere.git\n');
+
+        expect(await git.gitfileRedirectTarget(workTree), '$root/nowhere.git');
+        await expectLater(
+          git.scopedRepoLayout(workTree, gitDir: '$root/nowhere.git'),
+          throwsA(isA<GitException>()),
+        );
+      },
+    );
+
     test('a linked worktree is not detected as scoped', () async {
       final mainDir = Directory('$root/main')..createSync();
       final main = mainDir.resolveSymbolicLinksSync();
@@ -149,9 +239,13 @@ void main() {
       File('$main/f').writeAsStringSync('x\n');
       await run(['add', 'f'], cwd: main);
       await run([
-        '-c', 'user.email=t@example.com',
-        '-c', 'user.name=Test',
-        'commit', '-m', 'seed',
+        '-c',
+        'user.email=t@example.com',
+        '-c',
+        'user.name=Test',
+        'commit',
+        '-m',
+        'seed',
       ], cwd: main);
       final wt = '$root/wt';
       await run(['worktree', 'add', wt], cwd: main);
