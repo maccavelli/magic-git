@@ -57,7 +57,7 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
     final sessionKey = '$repoPath/$path';
     if (state.containsKey(sessionKey)) {
       // Already editing, just bring it to front or re-open
-      unawaited(openFiles([state[sessionKey]!.tempFile.absolute.path]));
+      unawaited(ref.read(fileActionsProvider).openFiles([state[sessionKey]!.tempFile.absolute.path]));
       return;
     }
 
@@ -100,7 +100,7 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
     state = {...state, sessionKey: session};
 
     // 5. Open in editor
-    unawaited(openFiles([tempFile.absolute.path]));
+    unawaited(ref.read(fileActionsProvider).openFiles([tempFile.absolute.path]));
   }
 
   Future<void> _syncFile(String repoPath, String path, File tempFile) async {

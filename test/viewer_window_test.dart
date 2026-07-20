@@ -244,7 +244,7 @@ void main() {
   });
 
   testWidgets(
-    'the fallback notice offers "Open in Default App" only on a local repo',
+    'the fallback notice offers "Open in Default App" on a local repo',
     (tester) async {
       // Local: the button is offered.
       final local = await _pumpHost(
@@ -261,7 +261,7 @@ void main() {
     },
   );
 
-  testWidgets('an SSH (remote) repo hides the "Open in Default App" button', (
+  testWidgets('an SSH (remote) repo shows the "Open in Default App" button', (
     tester,
   ) async {
     final remote = await _pumpHost(
@@ -274,7 +274,7 @@ void main() {
     remote.read(openFileViewersProvider.notifier).open(_repo, 'blob.bin');
     await tester.pumpAndSettle();
     expect(find.text('Binary file'), findsOneWidget);
-    expect(find.text('Open in Default App'), findsNothing);
+    expect(find.text('Open in Default App'), findsOneWidget);
   });
 
   testWidgets(

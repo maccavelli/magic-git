@@ -496,7 +496,7 @@ void main() {
   });
 
   testWidgets(
-    'right-click offers "View File", which opens a viewer window — available '
+    'right-click offers "View file", which opens a viewer window — available '
     'even for an untracked file (unlike Blame / File history)',
     (tester) async {
       final container = ProviderContainer(
@@ -536,13 +536,13 @@ void main() {
       await tester.pumpAndSettle();
 
       // todo.txt is untracked — Blame/File history are disabled for it, but
-      // View File is offered and enabled.
+      // View file is offered and enabled.
       await tester.tap(find.text('todo.txt'), buttons: kSecondaryMouseButton);
       await tester.pumpAndSettle();
-      expect(find.text('View File'), findsOneWidget);
+      expect(find.text('View file'), findsOneWidget);
       expect(container.read(openFileViewersProvider), isEmpty);
 
-      await tester.tap(find.text('View File'));
+      await tester.tap(find.text('View file'));
       await tester.pumpAndSettle();
 
       final open = container.read(openFileViewersProvider);
@@ -571,7 +571,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(find.text('View File'), findsOneWidget); // menu is open
+      expect(find.text('View file'), findsOneWidget); // menu is open
       expect(
         _tileColor(tester, 'lib/main.dart'),
         MacosColors.systemBlueColor.withValues(alpha: 0.15),
@@ -626,7 +626,7 @@ void main() {
           child: MacosApp(
             debugShowCheckedModeBanner: false,
             // A trailing spacer reserves room for the menu to open rightward,
-            // same as the "View File" test above.
+            // same as the "View file" test above.
             home: Row(
               children: [
                 Expanded(

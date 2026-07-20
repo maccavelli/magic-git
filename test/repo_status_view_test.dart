@@ -1238,7 +1238,7 @@ void main() {
 
     testWidgets(
       'an unstaged file offers Stage/Discard Changes/Blame plus the common '
-      'copy-path items, but not Reveal/Open (not a local connection)',
+      'copy-path items, but not Reveal (not a local connection)',
       (tester) async {
         await _pump(
           tester,
@@ -1266,7 +1266,7 @@ void main() {
         expect(find.text('Copy Relative Path'), findsOneWidget);
         expect(find.text('Copy Path'), findsOneWidget);
         expect(find.text('Reveal in Finder'), findsNothing);
-        expect(find.text('Open File'), findsNothing);
+        expect(find.text('Open file'), findsOneWidget);
       },
     );
 
@@ -1507,7 +1507,7 @@ void main() {
     );
 
     testWidgets(
-      'Reveal in Finder and Open File only appear for a local connection, '
+      'Reveal in Finder only appears for a local connection, '
       'and Reveal is hidden once 2+ files are selected',
       (tester) async {
         await _pump(
@@ -1532,7 +1532,7 @@ void main() {
 
         await rightClick(tester, find.text('lib/a.dart'));
         expect(find.text('Reveal in Finder'), findsOneWidget);
-        expect(find.text('Open File'), findsOneWidget);
+        expect(find.text('Open file'), findsOneWidget);
 
         // Dismiss, then select both and right-click within the selection.
         await tester.tapAt(const Offset(5, 5));
