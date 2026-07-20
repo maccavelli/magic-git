@@ -1049,6 +1049,19 @@ class GitService {
     _repoScopeEnv.remove(repoPath);
   }
 
+  /// Drops every registered scope. [GitService] is an app-lifetime singleton
+  /// keyed only by backend (not per connection), so its scope registry would
+  /// otherwise outlive the connection that populated it — a scope registered
+  /// for `/home/user` on host A stays live and gets injected into host B's
+  /// commands (even ordinary ones, incl. `validateRepoPath`) after a reconnect
+  /// to a different host at the same path. The connect flow calls this before
+  /// re-registering this connection's own scopes, and disconnect calls it so
+  /// nothing leaks across sessions. [ConnectionState.scopedGitDirs] remains the
+  /// durable source of truth the connect flow re-registers from.
+  void clearAllRepoScopes() {
+    _repoScopeEnv.clear();
+  }
+
   /// Whether [repoPath] currently has a git-dir/work-tree scope registered.
   bool isRepoScoped(String repoPath) => _repoScopeEnv.containsKey(repoPath);
 
@@ -1785,18 +1798,27 @@ class GitService {
 
   Future<RepoSnapshot> _fetchSnapshot(String repoPath) async {
     final format = _refsFormat.join(fieldSep);
+    // `-uall`: list untracked files individually instead of collapsing a
+    // wholly-untracked directory to one `dir/` record. Every per-file
+    // affordance in the UI assumes real file paths — a collapsed `dir/`
+    // row rendered a silently blank diff pane (`git diff --no-index
+    // /dev/null dir/` exits 1 with empty stdout, indistinguishable from
+    // success — verified against git 2.55), hid the true untracked count,
+    // and blinded [structureSignature] to files added inside the
+    // directory. The enumeration cost is not new for an ordinary repo: the
+    // file-tree pane already runs a full `ls-files --others` for the same set
+    // on every shape change.
+    //
+    // BUT a scoped (dotfiles) repo has its work tree at `$HOME`, where `-uall`
+    // forces git to walk the entire home directory every refresh AND overrides
+    // the `status.showUntrackedFiles=no` these repos set precisely to suppress
+    // that (surfacing hundreds of phantom untracked records). For a scoped repo
+    // we drop the forced flag and let the host's own config decide — the
+    // dotfiles norm (`=no`) then costs nothing and shows nothing, and a user
+    // who wants untracked can opt in via config.
+    final untracked = isRepoScoped(repoPath) ? '' : '-uall ';
     final script =
-        // `-uall`: list untracked files individually instead of collapsing a
-        // wholly-untracked directory to one `dir/` record. Every per-file
-        // affordance in the UI assumes real file paths — a collapsed `dir/`
-        // row rendered a silently blank diff pane (`git diff --no-index
-        // /dev/null dir/` exits 1 with empty stdout, indistinguishable from
-        // success — verified against git 2.55), hid the true untracked count,
-        // and blinded [structureSignature] to files added inside the
-        // directory. The enumeration cost is not new: the file-tree pane
-        // already runs a full `ls-files --others` for the same set on every
-        // shape change.
-        'git --no-optional-locks status --porcelain=v2 -uall --branch -z; s1=\$?; '
+        'git --no-optional-locks status --porcelain=v2 $untracked--branch -z; s1=\$?; '
         "printf '$_snapshotSep%d$_snapshotSep' \"\$s1\"; "
         // `-c i18n.logOutputEncoding=UTF-8`: re-encodes `%(contents:subject)`
         // to UTF-8 for output regardless of the remote's stored commit
@@ -1866,7 +1888,9 @@ class GitService {
         '--no-optional-locks',
         'status',
         '--porcelain=v2',
-        '-uall',
+        // See [_fetchSnapshot]: forced `-uall` would walk all of `$HOME` and
+        // override `status.showUntrackedFiles=no` on a scoped/dotfiles repo.
+        if (!isRepoScoped(repoPath)) '-uall',
         '--branch',
         '-z',
       ],

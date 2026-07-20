@@ -549,11 +549,29 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
         final execContainer = _execContainerFor(container, request.repoPath);
         if (execContainer == null) throw _relayDown();
         try {
+          // Re-inject the scoped/dotfiles GIT_DIR/GIT_WORK_TREE overlay here.
+          // The child window runs a fresh GitService with an empty scope
+          // registry and relays a scope-less `extraEnv`, but the main-window
+          // session that OWNS the repo holds the authoritative scope in its
+          // ConnectionState — without this a History/diff pop-out on a scoped
+          // repo runs unscoped and every read fails ("not a git repository").
+          // Merged UNDER the request's own extraEnv so a deliberate caller env
+          // still wins (the key sets are disjoint in practice).
+          final scopedGitDir =
+              execContainer.read(connectionProvider).scopedGitDirs[request
+                  .repoPath];
+          final extraEnv = (scopedGitDir != null && scopedGitDir.isNotEmpty)
+              ? {
+                  'GIT_DIR': scopedGitDir,
+                  'GIT_WORK_TREE': request.repoPath,
+                  ...?request.extraEnv,
+                }
+              : request.extraEnv;
           // Read per call so a backend switch mid-session is honored.
           final result = await execContainer.read(activeExecutorProvider).execute(
             repoPath: request.repoPath,
             gitArgs: request.gitArgs,
-            extraEnv: request.extraEnv,
+            extraEnv: extraEnv,
             stdin: request.stdin,
             timeout: request.timeout,
             retries: request.retries,

@@ -143,6 +143,29 @@ void main() {
       );
     });
 
+    test('status respects showUntrackedFiles=no on a scoped repo (no forced '
+        '-uall)', () async {
+      // The dotfiles geometry sets `status.showUntrackedFiles=no` precisely so
+      // git does not walk (and list) the entire work tree ($HOME) of untracked
+      // files. The snapshot used to force `-uall`, overriding that config and
+      // resurfacing every untracked path as a phantom record. With the fix a
+      // scoped repo drops the forced flag and honors the config.
+      await seed(['config', 'status.showUntrackedFiles', 'no']);
+      File('$workTree/phantom.txt').writeAsStringSync('not tracked\n');
+      File('$workTree/.testrc').writeAsStringSync('export EDITOR=emacs\n');
+
+      final status = await git.status(workTree);
+      final paths = status.files.map((f) => f.path).toList();
+      expect(
+        paths,
+        isNot(contains('phantom.txt')),
+        reason: 'forced -uall overrode showUntrackedFiles=no: $paths',
+      );
+      // The tracked edit must still surface — the flag change must not blind
+      // status to real changes.
+      expect(paths, contains('.testrc'));
+    });
+
     test('log returns the seeded history', () async {
       final commits = await git.log(workTree);
       expect(commits, hasLength(1));

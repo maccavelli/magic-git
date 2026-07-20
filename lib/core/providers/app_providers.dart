@@ -769,6 +769,12 @@ class ConnectionController extends Notifier<ConnectionState> {
   String? _lastConnectionLabel;
   List<String>? _lastRepoPaths;
   List<String> _lastFsmonitorPaths = const [];
+  // Scoped (dotfiles) git-dirs for the last SSH connection, snapshotted so a
+  // drop-triggered `reconnect()` re-registers GIT_DIR/GIT_WORK_TREE instead of
+  // redialing with an empty map — which silently un-scopes the repo (recursive
+  // `$HOME` watch, "not a git repository" on a bare repo). Mirrors
+  // `_lastFsmonitorPaths`.
+  Map<String, String> _lastScopedGitDirs = const {};
 
   /// Per-session memo of forge CLI logins keyed by (forge, host), so browsing
   /// a forge's repos authenticates its host at most once. Deliberately *not*
@@ -1134,6 +1140,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     _lastConnectionLabel = connectionLabel;
     _lastRepoPaths = repoPaths;
     _lastFsmonitorPaths = fsmonitorPaths;
+    _lastScopedGitDirs = scopedGitDirs; // updated to the healed map once resolved
     _hostLogins.clear(); // new connection identity — re-auth forge hosts lazily
     // A new gate for this attempt's background logins. Captured locally so
     // this attempt only ever completes its *own* gate, never a successor's.
@@ -1220,6 +1227,12 @@ class ConnectionController extends Notifier<ConnectionState> {
       if (attempt != _attempt || !ref.mounted) return;
       final envMs = timings.elapsedMilliseconds;
 
+      // Drop any scopes left in the singleton GitService's registry by a prior
+      // connection before this attempt registers or validates anything — a
+      // stale cross-host scope for the same path would otherwise poison even
+      // the non-scoped `validateRepoPath` below (it injects `_scopeEnvFor`).
+      ref.read(gitServiceProvider).clearAllRepoScopes();
+
       final scopedGitDir = scopedGitDirs[repoPath];
       if (scopedGitDir != null && scopedGitDir.isNotEmpty) {
         // Scoped (dotfiles) repo: validate the SAVED git-dir by probing the
@@ -1267,6 +1280,17 @@ class ConnectionController extends Notifier<ConnectionState> {
         await ref.read(gitServiceProvider).validateRepoPath(repoPath);
       }
       if (attempt != _attempt || !ref.mounted) return;
+
+      // Register EVERY scope this connection carries (not just the active repo),
+      // matching the gitServiceProvider rehydrate loop, so a background provider
+      // or a later repo-switch to another scoped repo on this connection finds
+      // its scope already live. Idempotent for the active repo just registered.
+      // Snapshot the (now healed) map for `reconnect()`.
+      _lastScopedGitDirs = scopedGitDirs;
+      final git = ref.read(gitServiceProvider);
+      scopedGitDirs.forEach(
+        (rp, gd) => git.registerRepoScope(rp, gitDir: gd, workTree: rp),
+      );
 
       // The session is usable NOW: publish `connected` and let the UI switch.
       // Everything else a session wants — fsmonitor tuning, forge CLI logins,
@@ -1552,6 +1576,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     // `reconnect()` to act on later.
     _lastProfile = null;
     _lastRepoPath = null;
+    _lastScopedGitDirs = const {}; // no SSH profile to reconnect; drop the map
     // A local session carries no forge token (connectLocal has no token
     // params), so it must not inherit a prior SSH session's neutralization
     // decision — clear them, so _forgeTokenVarsToNeutralize() leaves this
@@ -1617,6 +1642,11 @@ class ConnectionController extends Notifier<ConnectionState> {
       await _resolveEnvironment(repoPath, attempt: attempt);
       if (attempt != _attempt || !ref.mounted) return;
 
+      // Drop scopes a prior session registered on the singleton GitService, so
+      // a stale entry for this path (e.g. after opening a different local repo
+      // at the same path) can't poison this attempt's validation or commands.
+      ref.read(gitServiceProvider).clearAllRepoScopes();
+
       if (gitDir != null && gitDir.isNotEmpty) {
         // Scoped (dotfiles) repo: validate the git-dir BEFORE registering, by
         // probing the exact GIT_DIR/GIT_WORK_TREE overlay the registration
@@ -1626,13 +1656,38 @@ class ConnectionController extends Notifier<ConnectionState> {
         // typed into the git-dir field — would otherwise poison every command
         // this session runs AND get persisted, breaking the repo on every
         // future reopen with "not a git repository".
-        await ref
-            .read(gitServiceProvider)
-            .scopedRepoLayout(repoPath, gitDir: gitDir);
+        var effectiveGitDir = gitDir;
+        try {
+          await ref
+              .read(gitServiceProvider)
+              .scopedRepoLayout(repoPath, gitDir: effectiveGitDir);
+        } on Object {
+          // Parity with SSH connect()'s self-heal: a poisoned persisted git-dir
+          // (an older add sheet saved the work tree mapped to itself) re-detects
+          // from the work tree instead of bricking the repo. Heal both the live
+          // session and the saved local repo so it fixes itself.
+          final layout = await ref
+              .read(gitServiceProvider)
+              .detectRepoLayout(repoPath);
+          if (attempt != _attempt || !ref.mounted) return;
+          if (layout == null) rethrow; // genuinely broken — surface it
+          effectiveGitDir = layout.gitCommonDir;
+          ref
+              .read(outputLogProvider.notifier)
+              .logInfo(
+                'healed scoped git-dir for $repoPath: '
+                '$gitDir → $effectiveGitDir',
+              );
+          unawaited(_healSavedLocalGitDir(id, effectiveGitDir));
+        }
         if (attempt != _attempt || !ref.mounted) return;
         ref
             .read(gitServiceProvider)
-            .registerRepoScope(repoPath, gitDir: gitDir, workTree: repoPath);
+            .registerRepoScope(
+              repoPath,
+              gitDir: effectiveGitDir,
+              workTree: repoPath,
+            );
       } else {
         // Doubles as "is this actually a git repo" validation — a folder that
         // isn't fails here with a clear GitException rather than silently
@@ -1878,6 +1933,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       connectionLabel: _lastConnectionLabel,
       repoPaths: _lastRepoPaths,
       fsmonitorPaths: _lastFsmonitorPaths,
+      scopedGitDirs: _lastScopedGitDirs,
       reconnecting: true,
     );
   }
@@ -1910,6 +1966,17 @@ class ConnectionController extends Notifier<ConnectionState> {
         ? state.repoPaths
         : [...state.repoPaths, path];
     _invalidateRepoState();
+    // Ensure the switched-to repo's scope is live in the singleton registry.
+    // The connect flow registers every scope this connection carries, but a
+    // repo added mid-session (or a registry cleared by a rebuild that predates
+    // the current ConnectionState) could be missing it — without which this
+    // scoped repo's commands run unscoped ("not a git repository"). Idempotent.
+    final scopedGitDir = state.scopedGitDirs[path];
+    if (scopedGitDir != null && scopedGitDir.isNotEmpty) {
+      ref
+          .read(gitServiceProvider)
+          .registerRepoScope(path, gitDir: scopedGitDir, workTree: path);
+    }
     // The output view otherwise keeps showing the previous repo's command
     // history alongside the newly selected one, which reads as if it came
     // from the repo just switched to.
@@ -2009,6 +2076,20 @@ class ConnectionController extends Notifier<ConnectionState> {
     }
   }
 
+  /// Persists a corrected scoped git-dir into the saved *local* repo [id] — the
+  /// local-backend twin of [_healSavedScopedGitDir]. Best-effort, same contract.
+  Future<void> _healSavedLocalGitDir(String? id, String gitDir) async {
+    if (id == null || id.isEmpty) return;
+    try {
+      final store = ref.read(localRepoStoreProvider);
+      final repo = (await store.list()).where((r) => r.id == id).firstOrNull;
+      if (repo == null) return;
+      await store.save(repo.copyWith(gitDir: gitDir));
+    } catch (_) {
+      // Store unreadable/unwritable — the in-session heal already applied.
+    }
+  }
+
   Future<int?> beginProvisioning(SavedConnection conn) async {
     final store = ref.read(connectionStoreProvider);
     String? secret, token, ghToken, key, passphrase;
@@ -2060,6 +2141,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     _lastConnectionLabel = conn.displayName;
     _lastRepoPaths = conn.allRepoPaths;
     _lastFsmonitorPaths = conn.fsmonitorPaths;
+    _lastScopedGitDirs = conn.scopedGitDirs;
     _hostLogins.clear();
     // Provisioning logs its forge hosts in lazily during the browse
     // (ensureForgeHostLogin) and repo-scoped at finalize — both awaited
@@ -2149,6 +2231,10 @@ class ConnectionController extends Notifier<ConnectionState> {
     String gitDir = '',
   }) async {
     if (token != _attempt || !ref.mounted) return false;
+
+    // Clear any scope a prior session left on the singleton registry before
+    // validating/registering this repo (same reason as connect/connectLocal).
+    ref.read(gitServiceProvider).clearAllRepoScopes();
 
     final scoped = gitDir.isNotEmpty;
     if (scoped) {
@@ -2241,6 +2327,9 @@ class ConnectionController extends Notifier<ConnectionState> {
     _lastRepoPath = repoPath;
     _lastRepoPaths = updated.allRepoPaths;
     _lastFsmonitorPaths = updated.fsmonitorPaths;
+    // Snapshot the scoped map so a later drop-triggered reconnect re-registers
+    // this repo's scope instead of redialing unscoped.
+    _lastScopedGitDirs = updated.scopedGitDirs;
 
     _invalidateRepoState(); // NB: does not clear the output log
     state = ConnectionState(
@@ -2270,6 +2359,10 @@ class ConnectionController extends Notifier<ConnectionState> {
   Future<void> disconnect() async {
     ++_attempt; // supersede any in-flight connect
     _lastProfile = null; // an explicit disconnect is not reconnectable
+    _lastScopedGitDirs = const {};
+    // GitService is an app-lifetime singleton; drop this connection's scopes so
+    // they can't leak into a later connect to a different host at the same path.
+    ref.read(gitServiceProvider).clearAllRepoScopes();
     // The sidebar's connection switcher stays reachable even while a host-key
     // prompt covers the content area, so a disconnect can race a still-open
     // prompt — reject it (the safe default) rather than leaving its Completer

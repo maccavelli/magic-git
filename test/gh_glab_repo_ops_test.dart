@@ -103,8 +103,11 @@ void main() {
     });
 
     test('glab: token via stdin only, never argv or env', () async {
+      exec.results.add(_ok('')); // auth login
+      exec.results.add(_ok('{"username":"saxsmith"}')); // glab api user
+      exec.results.add(_ok('')); // glab config set user
       await glab.loginWithTokenHost(host: 'gitlab.corp', token: 'glpat-x');
-      final argv = exec.calls.single;
+      final argv = exec.calls.first;
       expect(argv, [
         'glab',
         'auth',
@@ -114,8 +117,43 @@ void main() {
         '--stdin',
       ]);
       expect(argv.join(' '), isNot(contains('glpat-x')));
-      expect(exec.stdins.single, 'glpat-x');
-      expect(exec.envs.single, isNull);
+      expect(exec.stdins.first, 'glpat-x');
+      expect(exec.envs.first, isNull);
+    });
+
+    test('glab: records the credential username after login (empty `user` '
+        'otherwise breaks HTTPS git)', () async {
+      exec.results.add(_ok('')); // auth login
+      exec.results.add(_ok('{"username":"saxsmith","id":255}')); // glab api user
+      exec.results.add(_ok('')); // glab config set user
+      await glab.loginWithTokenHost(host: 'gitlab.corp', token: 'glpat-x');
+      // The token that authenticates the API also names the identity to record.
+      expect(exec.calls[1], ['glab', 'api', 'user']);
+      expect(exec.envs[1], {'GITLAB_HOST': 'gitlab.corp', 'GITLAB_URI': 'gitlab.corp'});
+      // `--host` long form: glab's `-h` is help, not host.
+      expect(exec.calls[2], [
+        'glab',
+        'config',
+        'set',
+        'user',
+        'saxsmith',
+        '--host',
+        'gitlab.corp',
+      ]);
+    });
+
+    test('glab: a failed username probe is non-fatal (login still succeeds)',
+        () async {
+      exec.results.add(_ok('')); // auth login
+      exec.results.add(const SSHCommandResult(
+        exitCode: 1,
+        stdout: '',
+        stderr: 'network',
+      )); // glab api user fails
+      // Must not throw, and must not attempt `glab config set` with no username.
+      await glab.loginWithTokenHost(host: 'gitlab.corp', token: 'glpat-x');
+      expect(exec.calls, hasLength(2));
+      expect(exec.calls[1], ['glab', 'api', 'user']);
     });
 
     test('both refuse a blank token without touching the network', () async {

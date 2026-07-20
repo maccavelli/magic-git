@@ -119,6 +119,53 @@ class GlabService {
     if (!result.isSuccess) {
       throw GlabException('glab auth login failed', result);
     }
+    await _recordCredentialUsername(cwd: cwd, host: host);
+  }
+
+  /// Ensures glab has recorded the authenticated **username** for [host].
+  ///
+  /// `glab auth login --stdin` stores the token but (as of glab 1.107) leaves
+  /// the host's `user` field empty. That field is load-bearing for HTTPS git:
+  /// git's forge credential helper is `!glab auth git-credential`, and glab's
+  /// newer `authtype`-capability credential path returns an **empty username**
+  /// when `user` is unset — which GitLab rejects for HTTP Basic auth with
+  /// "HTTP Basic: Access denied … token … improperly scoped", even though the
+  /// token itself is perfectly valid (it authenticates the API fine). The
+  /// symptom is fetch/push over an HTTPS remote failing while every glab API
+  /// call succeeds. Setting `user` makes glab emit `username=<user>` and the
+  /// Basic auth succeeds.
+  ///
+  /// Best-effort and non-fatal: the login already succeeded, and a transient
+  /// failure here must not fail the connect. The value is fetched from the
+  /// token itself (`glab api user`) rather than assumed, so it is always the
+  /// identity the token actually authenticates as.
+  Future<void> _recordCredentialUsername({
+    required String cwd,
+    required String host,
+  }) async {
+    try {
+      final who = await _executor.execute(
+        repoPath: cwd,
+        gitArgs: ['glab', 'api', 'user'],
+        extraEnv: hostEnv(host),
+        timeout: const Duration(seconds: 20),
+        lane: ExecLane.read,
+      );
+      if (!who.isSuccess) return;
+      final decoded = jsonDecode(who.stdout);
+      final username = decoded is Map ? decoded['username'] as String? : null;
+      if (username == null || username.isEmpty) return;
+      // `--host` (long form): glab's `-h` is help, not host.
+      await _executor.execute(
+        repoPath: cwd,
+        gitArgs: ['glab', 'config', 'set', 'user', username, '--host', host],
+        timeout: const Duration(seconds: 15),
+        lane: ExecLane.sync,
+      );
+    } catch (_) {
+      // Non-fatal: login succeeded; HTTPS git may need `glab config set user`
+      // set manually if this best-effort follow-up could not run.
+    }
   }
 
   /// The authenticated user's projects on [host], most recent activity first —

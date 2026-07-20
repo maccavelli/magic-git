@@ -293,6 +293,7 @@ class _RecentConnectionsButtonState
               label: repo.label.isEmpty ? null : repo.label,
               id: repo.id,
               mainRepoPath: grants.mainRepoPath,
+              gitDir: repo.isScoped ? repo.gitDir : null,
             );
     }
   }

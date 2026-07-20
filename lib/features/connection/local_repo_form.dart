@@ -302,10 +302,21 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
     final conn = await _connectionById(_connectionId);
     if (conn == null || !mounted) return false;
     setState(() => _provisioning = true);
-    final token = await ref
-        .read(connectionProvider.notifier)
-        .beginProvisioning(conn);
-    if (!mounted) return false;
+    // Capture the notifier BEFORE the (seconds-long) dial so the guard below can
+    // still tear the session down if the widget is disposed mid-dial — `ref` is
+    // unusable after dispose, but the controller outlives the sheet.
+    final notifier = ref.read(connectionProvider.notifier);
+    final token = await notifier.beginProvisioning(conn);
+    if (!mounted || _connectionId != conn.id) {
+      // The sheet closed, or the Location switched to a different host, while
+      // this host was still dialing. Don't adopt the session: adopting it under
+      // a now-different `_connectionId` would finalize this host's repo into the
+      // OTHER connection, and leaving it un-adopted strands a live client at
+      // phase:connecting (a buttonless "Connecting…" tab). Abort it instead.
+      if (token != null) await notifier.abortProvisioning(token);
+      if (mounted) setState(() => _provisioning = false);
+      return false;
+    }
     setState(() {
       _provisioning = false;
       _provisionToken = token;
@@ -632,7 +643,14 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
               const SizedBox(height: 4),
               MacosPopupButton<String?>(
                 value: _connectionId,
-                onChanged: _submitting ? null : _onLocationChanged,
+                // Disabled while a host is still dialing: switching mid-dial
+                // otherwise adopts the in-flight session under the newly
+                // selected connection. The post-await guard in
+                // [_ensureProvisioned] is the backstop; this removes the race
+                // at the UI level so it can't be triggered at all.
+                onChanged: (_submitting || _provisioning)
+                    ? null
+                    : _onLocationChanged,
                 items: [
                   const MacosPopupMenuItem<String?>(
                     value: null,

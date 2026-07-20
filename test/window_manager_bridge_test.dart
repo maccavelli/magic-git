@@ -42,6 +42,7 @@ class _StubConnection extends ConnectionController {
 class _FakeExecutor extends SSHCommandExecutor {
   _FakeExecutor() : super(SSHClientManager());
   final List<List<String>> calls = [];
+  final List<Map<String, String>?> envs = [];
   Object? throwNext;
   String? throwOnlyIfContains;
 
@@ -57,6 +58,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     bool compress = false,
   }) async {
     calls.add(gitArgs);
+    envs.add(extraEnv);
     final error = throwNext;
     final marker = throwOnlyIfContains;
     if (error != null &&
@@ -219,6 +221,63 @@ void main() {
       () => decodeExecuteResponse((other as Map).cast<Object?, Object?>()),
       throwsA(isA<ProxyExecuteException>()),
     );
+  });
+
+  test('re-injects the scoped GIT_DIR/GIT_WORK_TREE overlay for a pop-out',
+      () async {
+    // A child window relays a scope-less extraEnv (its GitService has an empty
+    // scope registry). The main-window session that owns the repo holds the
+    // authoritative scope; the hub must inject it, or every pop-out read on a
+    // scoped/dotfiles repo runs unscoped and fails "not a git repository".
+    container = makeContainer(
+      const ConnectionState(
+        phase: ConnectionPhase.connected,
+        repoPath: '/home/user',
+        connectionLabel: 'Bastion',
+        host: 'bastion',
+        scopedGitDirs: {'/home/user': '/home/user/.home.git'},
+      ),
+    );
+    await openHistory();
+    final request = encodeExecuteRequest(
+      const ExecuteRequest(
+        repoPath: '/home/user',
+        gitArgs: ['git', 'status'],
+        timeout: Duration(seconds: 30),
+        lane: ExecLane.read,
+        retries: 0,
+        compress: false,
+      ),
+    );
+
+    await deliverHubCall('execute', request);
+    // Pinpoint the relayed call (a background snapshot may also execute).
+    final idx = executor.calls.indexWhere((c) => c.join(' ') == 'git status');
+    expect(idx, isNonNegative, reason: 'relayed execute never reached executor');
+    expect(executor.envs[idx], {
+      'GIT_DIR': '/home/user/.home.git',
+      'GIT_WORK_TREE': '/home/user',
+    });
+  });
+
+  test('leaves extraEnv untouched for an ordinary (unscoped) pop-out repo',
+      () async {
+    container = makeContainer(_connected);
+    await openHistory();
+    final request = encodeExecuteRequest(
+      const ExecuteRequest(
+        repoPath: '/srv/repo',
+        gitArgs: ['git', 'status'],
+        timeout: Duration(seconds: 30),
+        lane: ExecLane.read,
+        retries: 0,
+        compress: false,
+      ),
+    );
+    await deliverHubCall('execute', request);
+    final idx = executor.calls.indexWhere((c) => c.join(' ') == 'git status');
+    expect(idx, isNonNegative);
+    expect(executor.envs[idx], isNull);
   });
 
   test('ping answers from the hub alone, whatever the session is doing',

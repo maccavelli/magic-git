@@ -774,12 +774,15 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
           .read(connectionStoreProvider)
           .updateMetadata(
             // Also drop the removed repo's per-repo metadata (fsmonitor +
-            // label) — otherwise the persisted profile keeps stale entries
-            // pointing at a path no longer in repoPaths.
+            // label + scoped git-dir) — otherwise the persisted profile keeps
+            // stale entries pointing at a path no longer in repoPaths, and a
+            // stale scoped git-dir would silently re-scope a plain repo later
+            // re-added at the same path.
             conn
                 .copyWith(repoPath: newDefault, repoPaths: remaining)
                 .withFsmonitor(repo, false)
-                .withRepoLabel(repo, ''),
+                .withRepoLabel(repo, '')
+                .withScopedGitDir(repo, ''),
           );
       ref.invalidate(savedConnectionsProvider);
     });
@@ -846,11 +849,17 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     final fsmonitorChanged = fsmonitor != conn.fsmonitorEnabledFor(repo);
     if (!pathChanged && !labelChanged && !fsmonitorChanged) return;
 
+    // Preserve the repo's scoped (dotfiles) git-dir across a repoint. The
+    // external git-dir (e.g. ~/.home.git) is independent of the work-tree path
+    // the user is editing, so it carries to the new path unchanged; '' when the
+    // repo is ordinary. Without this a repoint silently turns a scoped repo
+    // into an ordinary one (scope lost) and orphans the old scopedGitDirs entry.
+    final scopedGitDir = conn.scopedGitDirFor(repo);
     var updated = conn;
     if (pathChanged) {
       // Repoint the entry and clear the old path's per-repo metadata — it no
-      // longer exists in repoPaths, so a stale label/fsmonitor entry pointing
-      // at it must not survive.
+      // longer exists in repoPaths, so a stale label/fsmonitor/scope entry
+      // pointing at it must not survive.
       updated = updated
           .copyWith(
             repoPath: conn.repoPath == repo ? newPath : conn.repoPath,
@@ -859,11 +868,16 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
             ],
           )
           .withFsmonitor(repo, false)
-          .withRepoLabel(repo, '');
+          .withRepoLabel(repo, '')
+          .withScopedGitDir(repo, '');
     }
-    // Apply the (possibly edited) label + fsmonitor onto the effective path.
+    // Apply the (possibly edited) label + fsmonitor + carried scope onto the
+    // effective path.
     final target = pathChanged ? newPath : repo;
-    updated = updated.withRepoLabel(target, label).withFsmonitor(target, fsmonitor);
+    updated = updated
+        .withRepoLabel(target, label)
+        .withFsmonitor(target, fsmonitor)
+        .withScopedGitDir(target, scopedGitDir);
 
     final saved = await runAction(context, () async {
       await ref.read(connectionStoreProvider).updateMetadata(updated);
@@ -1000,6 +1014,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                   resolved,
                   label: repo.label.isEmpty ? null : repo.label,
                   id: repo.id,
+                  gitDir: repo.isScoped ? repo.gitDir : null,
                 );
           }
           return;
@@ -1034,6 +1049,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
             label: label,
             id: repo.id,
             mainRepoPath: grants.mainRepoPath,
+            gitDir: repo.isScoped ? repo.gitDir : null,
           );
       return;
     }
@@ -1050,6 +1066,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
               label: label,
               id: repo.id,
               mainRepoPath: grants.mainRepoPath,
+              gitDir: repo.isScoped ? repo.gitDir : null,
             );
       },
     );
