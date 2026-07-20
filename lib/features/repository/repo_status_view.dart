@@ -27,6 +27,7 @@ import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
+import '../viewer/remote_edit_service.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/staging_drop_banner.dart';
@@ -2426,14 +2427,22 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           ),
         );
       }
-      entries.add(
-        ContextMenuItem(
-          icon: CupertinoIcons.square_arrow_up,
-          label: many ? 'Open $n Files' : 'Open File',
-          onTap: () => openFiles(paths.map(_absolutePath).toList()),
-        ),
-      );
     }
+    entries.add(
+      ContextMenuItem(
+        icon: CupertinoIcons.square_arrow_up,
+        label: many ? 'Open $n Files' : 'Open file',
+        onTap: () {
+          if (ref.read(connectionProvider).isLocal) {
+            openFiles(paths.map(_absolutePath).toList());
+          } else {
+            for (final path in paths) {
+              ref.read(remoteEditServiceProvider.notifier).openRemoteFile(repoPath, path);
+            }
+          }
+        },
+      ),
+    );
     return entries;
   }
 

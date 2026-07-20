@@ -10,6 +10,7 @@ import '../../core/settings/app_settings.dart';
 import '../../core/settings/pane_layout.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/git_porcelain_parser.dart';
+import '../../core/utils/file_actions.dart';
 import '../common/actions.dart';
 import '../common/context_menu.dart';
 import '../common/escape_dismissible.dart';
@@ -18,6 +19,7 @@ import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../history/file_history_sheet.dart';
 import '../viewer/viewer_providers.dart';
+import '../viewer/remote_edit_service.dart';
 import 'blame_sheet.dart';
 
 /// Called when a file is chosen in the tree so the host panel can show its diff.
@@ -220,9 +222,20 @@ class _FileViewState extends ConsumerState<FileView> {
       // File history below.
       ContextMenuItem(
         icon: CupertinoIcons.doc_text_viewfinder,
-        label: 'View File',
+        label: 'View file',
         onTap: () =>
             ref.read(openFileViewersProvider.notifier).open(repoPath, node.path),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.square_arrow_up,
+        label: 'Open file',
+        onTap: () {
+          if (ref.read(connectionProvider).isLocal) {
+            openFiles(['$repoPath/${node.path}']);
+          } else {
+            ref.read(remoteEditServiceProvider.notifier).openRemoteFile(repoPath, node.path);
+          }
+        },
       ),
       const ContextMenuDivider(),
       if (mixed) ...[

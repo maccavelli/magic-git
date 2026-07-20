@@ -8,12 +8,14 @@ import '../../core/settings/keymap.dart';
 import '../../core/utils/file_actions.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import 'code_view.dart';
 import 'file_content.dart';
 import 'file_type.dart';
 import 'image_preview.dart';
 import 'preview_view.dart';
+import 'remote_edit_service.dart';
 import 'viewer_providers.dart';
 
 enum _ViewerMode { code, preview }
@@ -573,11 +575,16 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
   /// host, not here (same gating as the status list's Reveal/Open actions).
   Widget? _openExternallyButton() {
     final isLocal = ref.watch(connectionProvider.select((c) => c.isLocal));
-    if (!isLocal) return null;
     return AppPushButton(
       controlSize: ControlSize.large,
       secondary: true,
-      onPressed: () => openFiles(['${widget.repoPath}/${widget.path}']),
+      onPressed: () {
+        if (isLocal) {
+          openFiles(['${widget.repoPath}/${widget.path}']);
+        } else {
+          ref.read(remoteEditServiceProvider.notifier).openRemoteFile(widget.repoPath, widget.path);
+        }
+      },
       child: const Text('Open in Default App'),
     );
   }
