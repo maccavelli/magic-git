@@ -174,11 +174,11 @@ void main() {
       );
     });
 
-    test('rejects a path starting with "-" rather than misparsing it', () {
+    test('rejects a path starting with "-" rather than misparsing it', () async {
       // `git worktree add` accepts neither `--end-of-options` nor `--`, so a
       // leading dash would be read as a flag. Fail loudly instead.
-      expect(
-        () => git.addWorktree(repo, path: '-oops', newBranch: 'x'),
+      await expectLater(
+        git.addWorktree(repo, path: '-oops', newBranch: 'x'),
         throwsArgumentError,
       );
     });

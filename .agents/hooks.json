@@ -1,0 +1,17 @@
+{
+  "pre-add-test-gate": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/Users/saxsmith/gitrepos/magic-git/.agents/pre_add_test_hook.py",
+            "timeout": 60
+          }
+        ]
+      }
+    ]
+  }
+}
