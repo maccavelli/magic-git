@@ -1,0 +1,398 @@
+{
+  "title": "Magic Git User Guide",
+  "version": "1.0",
+  "categories": [
+    {
+      "id": "getting_started",
+      "title": "Getting Started",
+      "icon": "sparkles",
+      "topics": [
+        {
+          "id": "overview",
+          "title": "Welcome to Magic Git",
+          "summary": "Overview of Magic Git's native macOS interface, workspace multi-tab concept, and core capabilities.",
+          "keywords": ["welcome", "overview", "introduction", "getting started", "magic git", "workspace"],
+          "shortcuts": [
+            {"label": "Global Command Palette", "keys": "⌘K"},
+            {"label": "Refresh Repository State", "keys": "⌘R"},
+            {"label": "Preferences & Settings", "keys": "⌘,"}
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Magic Git is a native macOS Git desktop client designed for extreme performance, safety, and modern software engineering workflows. It provides a tabbed multi-repository workspace, SSH connection manager, interactive commit graph, and built-in Forge integrations."
+            },
+            {
+              "type": "heading",
+              "text": "Native macOS Architecture"
+            },
+            {
+              "type": "paragraph",
+              "text": "Magic Git combines Flutter for high-refresh-rate UI rendering with native Swift AppKit/SwiftUI controllers for system menu integration, security-scoped sandbox bookmarks, multi-window isolation, and native support documentation."
+            },
+            {
+              "type": "callout",
+              "style": "info",
+              "title": "App Sandbox Security",
+              "text": "Local repository access in Magic Git uses macOS security-scoped bookmarks, ensuring full compliance with Apple Sandbox privacy rules."
+            }
+          ]
+        },
+        {
+          "id": "quickstart",
+          "title": "Connecting to Repositories",
+          "summary": "Learn how to open local Git repositories and connect to remote hosts over SSH.",
+          "keywords": ["connect", "ssh", "local", "clone", "create", "remote", "bookmark"],
+          "shortcuts": [
+            {"label": "Open Connections Sheet", "keys": "⌘⇧C"},
+            {"label": "Clone Repository", "keys": "⌘⇧O"}
+          ],
+          "sections": [
+            {
+              "type": "heading",
+              "text": "Local Repositories"
+            },
+            {
+              "type": "paragraph",
+              "text": "To open a local repository, click Open Local Folder on the landing screen or use the Connections panel. Magic Git requests folder access via a standard macOS open panel and saves a security-scoped bookmark for subsequent app launches."
+            },
+            {
+              "type": "heading",
+              "text": "Remote SSH Repositories"
+            },
+            {
+              "type": "paragraph",
+              "text": "Magic Git supports direct remote SSH operations. Enter your SSH host, username, port, and key path. Private keys with passphrases and host key verification prompts are fully supported."
+            },
+            {
+              "type": "callout",
+              "style": "tip",
+              "title": "Automatic Reconnection",
+              "text": "If a remote SSH connection drops mid-session, Magic Git displays a background retry banner with a live reconnect timer without losing your local work state."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "tabs",
+      "title": "Main Application Tabs",
+      "icon": "sidebar.left",
+      "topics": [
+        {
+          "id": "tab_repository",
+          "title": "Repository (Status & Staging) Tab",
+          "summary": "Stage changes, view line diffs, discard modifications, and commit HEAD updates.",
+          "keywords": ["status", "staging", "commit", "amend", "discard", "diff", "split diff"],
+          "shortcuts": [
+            {"label": "Stage / Unstage Selected File", "keys": "Space"},
+            {"label": "Stage All Changes", "keys": "⌘⇧A"},
+            {"label": "Discard Unstaged Changes", "keys": "⌘⇧⌫"},
+            {"label": "Toggle Side-by-Side Diff", "keys": "⌥⌘S"},
+            {"label": "Confirm & Commit", "keys": "⌘↩"}
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "The Repository tab (⌘1) displays working tree modifications organized into Staged Changes and Unstaged Changes lists."
+            },
+            {
+              "type": "heading",
+              "text": "Staging & Discarding"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Press Space on any file row to toggle staging for that file.",
+                "Use ⌘⇧A to stage all tracked and untracked modifications.",
+                "Use ⌘⇧⌫ to discard unstaged changes on the selected file after confirmation.",
+                "Drag to select specific diff lines in the right pane for partial hunk staging."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Diff Inspection & Committing"
+            },
+            {
+              "type": "paragraph",
+              "text": "Toggle between inline diff view and side-by-side split view using ⌥⌘S. Enter your commit subject and description in the bottom pane. Toggle 'Amend last commit' or press ⌘↩ to rewrite HEAD."
+            },
+            {
+              "type": "callout",
+              "style": "tip",
+              "title": "Co-Authors",
+              "text": "You can add Git Co-authored-by trailers directly from the commit editor prior to committing."
+            }
+          ]
+        },
+        {
+          "id": "tab_history",
+          "title": "History & Commit Graph Tab",
+          "summary": "Explore commit history, topological graph lanes, filter commits, and perform branch mutations.",
+          "keywords": ["history", "graph", "commit graph", "all branches", "log", "revert", "cherry-pick", "pop out"],
+          "shortcuts": [
+            {"label": "Toggle All Branches Filter", "keys": "⌘⇧B"},
+            {"label": "Open History in New Window", "keys": "⌘⇧H"},
+            {"label": "Copy Commit SHA", "keys": "⌘C"},
+            {"label": "Filter History Log", "keys": "⌘F"}
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "The History tab (⌘2) renders an interactive topological commit graph with colored branch lanes, ref tags, and commit metadata."
+            },
+            {
+              "type": "heading",
+              "text": "All Branches Scope vs HEAD Scope"
+            },
+            {
+              "type": "paragraph",
+              "text": "Click the All Branches button (or press ⌘⇧B) to toggle between git log --all and git log HEAD. When All Branches is active, merged and cut feature branches across the repository history are rendered."
+            },
+            {
+              "type": "heading",
+              "text": "Commit Actions & Secondary Windows"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Right-click or select a commit to open actions: Checkout, Create Branch, Create Tag, Cherry-pick, and Revert.",
+                "Click 'Open History in New Window' or press ⌘⇧H to pop out a dedicated, floating history window that updates live."
+              ]
+            },
+            {
+              "type": "callout",
+              "style": "info",
+              "title": "Live Updates",
+              "text": "The History view listens to repository file system events and automatically refreshes when refs or branch tips move."
+            }
+          ]
+        },
+        {
+          "id": "tab_branches",
+          "title": "Branches & Merging Tab",
+          "summary": "Manage local and remote tracking branches, create new branches, merge, rebase, and sync remotes.",
+          "keywords": ["branches", "checkout", "create branch", "merge", "rebase", "fetch", "push", "pull"],
+          "shortcuts": [
+            {"label": "Create New Branch", "keys": "⌘B"},
+            {"label": "Merge Selected Branch", "keys": "⌘⇧M"},
+            {"label": "Delete Selected Branch", "keys": "⌘⌫"},
+            {"label": "Sync / Fetch Remotes", "keys": "⌘⇧Y"}
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "The Branches tab (⌘3) provides full control over local branches, remote tracking branches, and branch integration."
+            },
+            {
+              "type": "heading",
+              "text": "Branch Operations"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Press ⌘B to create a new branch from current HEAD.",
+                "Double-click a branch to check it out.",
+                "Select a branch and press ⌘⇧M to merge it into your active branch.",
+                "Use the context menu to Rebase active branch onto target branch or Delete (⌘⌫)."
+              ]
+            },
+            {
+              "type": "callout",
+              "style": "warning",
+              "title": "Unmerged Branch Deletion",
+              "text": "Deleting an unmerged branch prompts for confirmation to prevent accidental loss of unmerged commit history."
+            }
+          ]
+        },
+        {
+          "id": "tab_stashes",
+          "title": "Stashes Tab",
+          "summary": "Save uncommitted modifications to the stash stack, inspect diff previews, apply, pop, and drop stashes.",
+          "keywords": ["stash", "stashes", "apply", "pop", "drop", "save stash", "untracked"],
+          "shortcuts": [
+            {"label": "Stash Working Changes", "keys": "⌘S"},
+            {"label": "Apply Selected Stash", "keys": "⌥⌘A"}
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "The Stashes tab (⌘4) allows temporary shelving of working tree modifications without creating formal commits."
+            },
+            {
+              "type": "heading",
+              "text": "Creating & Inspecting Stashes"
+            },
+            {
+              "type": "paragraph",
+              "text": "Click 'Stash Changes' to specify a custom message and optionally include untracked files. Select any stash in the list to view its commit hash, branch context, and modified file diffs."
+            },
+            {
+              "type": "heading",
+              "text": "Applying & Popping"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Apply (⌥⌘A): Restores stashed changes to your working directory while leaving the stash in the stack.",
+                "Pop: Restores stashed changes and removes the stash entry from the stack.",
+                "Drop: Permanently deletes the selected stash entry."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "tab_forge",
+          "title": "Forge (GitHub & GitLab) Tab",
+          "summary": "Inspect Pull Requests, Merge Requests, CI/CD pipeline runs, issues, and live build trace logs.",
+          "keywords": ["forge", "github", "gitlab", "pr", "pull request", "mr", "merge request", "ci/cd", "pipeline", "job trace"],
+          "shortcuts": [
+            {"label": "Switch to Forge Panel", "keys": "⌘5"}
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "The Forge tab (⌘5) integrates directly with GitHub (`gh` CLI/API) and GitLab (`glab` CLI/API) hosts."
+            },
+            {
+              "type": "heading",
+              "text": "Pull / Merge Request Workflows"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Filter PRs/MRs by status (Open, Merged, Closed, Mine).",
+                "View full title, description, author, review approvals, and changed file diffs.",
+                "Click 'Checkout Branch' to locally check out a PR/MR's head branch with one click."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "CI/CD Pipeline Monitoring"
+            },
+            {
+              "type": "paragraph",
+              "text": "Inspect live GitHub Actions workflows or GitLab CI pipeline runs. Click any job to stream ANSI-formatted execution trace logs in real time."
+            }
+          ]
+        },
+        {
+          "id": "tab_worktrees",
+          "title": "Worktrees Tab",
+          "summary": "Create and manage multiple concurrent Git worktrees for parallel branch development.",
+          "keywords": ["worktree", "worktrees", "parallel", "checkout", "directory", "sandbox"],
+          "shortcuts": [
+            {"label": "Switch to Worktrees Panel", "keys": "⌘6"}
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "The Worktrees tab (⌘6) enables working on multiple branches simultaneously in separate filesystem folders."
+            },
+            {
+              "type": "heading",
+              "text": "Adding Worktrees"
+            },
+            {
+              "type": "paragraph",
+              "text": "Click 'Add Worktree' to check out a branch into a target directory. Magic Git automatically creates a security-scoped bookmark for the new worktree path."
+            },
+            {
+              "type": "callout",
+              "style": "tip",
+              "title": "Tab Integration",
+              "text": "Opening a worktree loads it as a tab in your multi-tab workspace, allowing seamless switching without changing branch state in your main directory."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "features",
+      "title": "Tier 1 Core Features",
+      "icon": "gearshape.2",
+      "topics": [
+        {
+          "id": "feature_ssh",
+          "title": "Remote SSH & Host Verification",
+          "summary": "Secure remote Git operations over SSH with key passphrases and host key verification.",
+          "keywords": ["ssh", "remote", "passphrase", "host key", "reconnect", "network"],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Magic Git includes a custom SSH command executor and transport manager supporting public-key authentication, encrypted private keys, and custom SSH ports."
+            },
+            {
+              "type": "heading",
+              "text": "Host Key Verification Prompts"
+            },
+            {
+              "type": "paragraph",
+              "text": "When connecting to a new remote host or if a server's fingerprint changes, Magic Git displays an SSH Host Key prompt showing the trusted vs presented fingerprints before establishing a connection."
+            }
+          ]
+        },
+        {
+          "id": "feature_palette",
+          "title": "Command Palette & Keymap",
+          "summary": "Search all actions, run panel commands, and customize global keyboard shortcuts.",
+          "keywords": ["palette", "command palette", "shortcuts", "keymap", "keybindings", "undo"],
+          "shortcuts": [
+            {"label": "Global Command Palette", "keys": "⌘K"},
+            {"label": "Keyboard Shortcuts Sheet", "keys": "⌘?"},
+            {"label": "Undo Last Action", "keys": "⌘Z"}
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Press ⌘K or ⌘P anywhere in the application to summon the Command Palette. Type to search commands, branch names, worktrees, or settings."
+            },
+            {
+              "type": "heading",
+              "text": "Global Undo Engine"
+            },
+            {
+              "type": "paragraph",
+              "text": "Magic Git maintains a global undo stack. Destructive actions (such as staging, discarding, branch switches, or stash drops) present an Undo Toast notification (`⌘Z` to reverse)."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "troubleshooting",
+      "title": "Diagnostics & Support",
+      "icon": "exclamationmark.triangle",
+      "topics": [
+        {
+          "id": "tool_health",
+          "title": "Tool Health & Environment",
+          "summary": "Check system availability and binary paths for git, ssh, gh, and glab.",
+          "keywords": ["tool health", "git path", "ssh path", "gh", "glab", "binary", "environment"],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Magic Git checks for system dependencies on startup. If a required binary is missing from PATH, a Tool Health Banner appears at the top of the window with installation guidance."
+            }
+          ]
+        },
+        {
+          "id": "output_log",
+          "title": "Output Log & Command Recovery",
+          "summary": "View real-time command execution output, stdout/stderr streams, and exit codes.",
+          "keywords": ["output log", "recovery", "command log", "stdout", "stderr", "diagnostics"],
+          "shortcuts": [
+            {"label": "Toggle Output Log View", "keys": "⌘⇧O"},
+            {"label": "Toggle Recovery View", "keys": "⌘⇧U"}
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Open the Output Log (⌘⇧O) or Recovery View (⌘⇧U) from the View menu to inspect raw Git/SSH command invocations, stdout output, stderr traces, and exit statuses."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -174,6 +174,7 @@ class MainFlutterWindow: NSWindow {
     // Defer so the app's main menu (loaded from MainMenu.xib) is in place.
     DispatchQueue.main.async { [weak self] in
       self?.installViewMenuItems()
+      self?.installHelpMenuItems()
       self?.installAboutPanelOverride()
     }
 
@@ -388,6 +389,38 @@ class MainFlutterWindow: NSWindow {
     // gating lives in one place — the bridge no-ops when disconnected.
     hwDebugLog("menu action fired, forwarding to Dart")
     menuChannel?.invokeMethod("openHistoryWindow", arguments: nil)
+  }
+
+  private func installHelpMenuItems() {
+    guard let mainMenu = NSApp.mainMenu else { return }
+
+    let helpMenu: NSMenu
+    if let existing = mainMenu.items.first(where: {
+      $0.title == "Help" || $0.submenu?.title == "Help"
+    })?.submenu {
+      helpMenu = existing
+    } else {
+      let helpItem = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
+      let created = NSMenu(title: "Help")
+      helpItem.submenu = created
+      mainMenu.addItem(helpItem)
+      helpMenu = created
+    }
+
+    if helpMenu.items.first(where: { $0.action == #selector(showGeneralHelp(_:)) }) == nil {
+      let item = NSMenuItem(
+        title: "Support & Help",
+        action: #selector(showGeneralHelp(_:)),
+        keyEquivalent: "?"
+      )
+      item.keyEquivalentModifierMask = [.command]
+      item.target = self
+      helpMenu.insertItem(item, at: 0)
+    }
+  }
+
+  @objc private func showGeneralHelp(_ sender: Any?) {
+    HelpWindowController.shared.showHelpWindow()
   }
 
   private func openWindow(_ args: [String: Any]) {
