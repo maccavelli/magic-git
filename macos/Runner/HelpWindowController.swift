@@ -5,8 +5,13 @@ public class HelpWindowController: NSWindowController {
     public static let shared = HelpWindowController()
 
     private init() {
-        let helpView = HelpView(book: HelpDataLoader.loadBook())
-        let hostingController = NSHostingController(rootView: helpView)
+        let book = HelpDataLoader.loadBook()
+        let hostingController: NSViewController
+        if #available(macOS 13.0, *) {
+            hostingController = NSHostingController(rootView: HelpView(book: book))
+        } else {
+            hostingController = NSHostingController(rootView: HelpViewLegacy(book: book))
+        }
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 920, height: 640),

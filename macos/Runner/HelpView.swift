@@ -1,5 +1,6 @@
 import SwiftUI
 
+@available(macOS 13.0, *)
 public struct HelpView: View {
     public let book: HelpBook
     @State private var selectedTopicID: String?
@@ -7,7 +8,6 @@ public struct HelpView: View {
 
     public init(book: HelpBook) {
         self.book = book
-        // Default select first topic if available
         _selectedTopicID = State(initialValue: book.categories.first?.topics.first?.id)
     }
 
@@ -71,13 +71,62 @@ public struct HelpView: View {
     }
 }
 
+// Fallback view for macOS 10.15 to 12.x
+public struct HelpViewLegacy: View {
+    public let book: HelpBook
+    @State private var selectedTopicID: String?
+
+    public init(book: HelpBook) {
+        self.book = book
+        _selectedTopicID = State(initialValue: book.categories.first?.topics.first?.id)
+    }
+
+    private var allTopics: [HelpTopic] {
+        book.categories.flatMap { $0.topics }
+    }
+
+    private var selectedTopic: HelpTopic? {
+        allTopics.first(where: { $0.id == selectedTopicID }) ?? book.categories.first?.topics.first
+    }
+
+    public var body: some View {
+        NavigationView {
+            List {
+                ForEach(book.categories) { category in
+                    Section(header: Text(category.title)) {
+                        ForEach(category.topics) { topic in
+                            Button(action: {
+                                selectedTopicID = topic.id
+                            }) {
+                                HStack {
+                                    Text(topic.title)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .listStyle(SidebarListStyle())
+            .frame(minWidth: 240, idealWidth: 280)
+
+            if let topic = selectedTopic {
+                HelpTopicDetailViewLegacy(topic: topic)
+            } else {
+                Text("Select a topic from the sidebar")
+                    .foregroundColor(.secondary)
+            }
+        }
+        .frame(minWidth: 780, minHeight: 500)
+    }
+}
+
+@available(macOS 13.0, *)
 struct HelpTopicDetailView: View {
     let topic: HelpTopic
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                // Header
                 VStack(alignment: .leading, spacing: 8) {
                     Text(topic.title)
                         .font(.largeTitle)
@@ -88,7 +137,6 @@ struct HelpTopicDetailView: View {
                         .foregroundColor(.secondary)
                 }
 
-                // Keyboard Shortcut Badges Header (if present)
                 if let shortcuts = topic.shortcuts, !shortcuts.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Keyboard Shortcuts")
@@ -123,7 +171,6 @@ struct HelpTopicDetailView: View {
 
                 Divider()
 
-                // Sections
                 ForEach(topic.sections) { section in
                     SectionView(section: section)
                 }
@@ -133,6 +180,62 @@ struct HelpTopicDetailView: View {
     }
 }
 
+struct HelpTopicDetailViewLegacy: View {
+    let topic: HelpTopic
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(topic.title)
+                        .font(.title)
+                        .fontWeight(.bold)
+
+                    Text(topic.summary)
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                }
+
+                if let shortcuts = topic.shortcuts, !shortcuts.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Keyboard Shortcuts")
+                            .font(.headline)
+                        
+                        VStack(spacing: 8) {
+                            ForEach(shortcuts) { shortcut in
+                                HStack {
+                                    Text(shortcut.label)
+                                        .font(.callout)
+                                    Spacer()
+                                    Text(shortcut.keys)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .fontWeight(.semibold)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3)
+                                        .background(Color(NSColor.controlBackgroundColor))
+                                        .cornerRadius(5)
+                                }
+                                .padding(8)
+                                .background(Color.secondary.opacity(0.06))
+                                .cornerRadius(8)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+
+                Divider()
+
+                ForEach(topic.sections) { section in
+                    SectionViewLegacy(section: section)
+                }
+            }
+            .padding(24)
+        }
+    }
+}
+
+@available(macOS 13.0, *)
 struct SectionView: View {
     let section: HelpSection
 
@@ -161,7 +264,7 @@ struct SectionView: View {
                             HStack(alignment: .top, spacing: 8) {
                                 Text("•")
                                     .fontWeight(.bold)
-                                    .foregroundColor(.accentColor)
+                                    .foregroundColor(.blue)
                                 Text(item)
                                     .font(.body)
                             }
@@ -194,6 +297,63 @@ struct SectionView: View {
     }
 }
 
+struct SectionViewLegacy: View {
+    let section: HelpSection
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            switch section.type {
+            case .heading:
+                if let text = section.text {
+                    Text(text)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .padding(.top, 8)
+                }
+
+            case .paragraph:
+                if let text = section.text {
+                    Text(text)
+                        .font(.body)
+                }
+
+            case .items:
+                if let items = section.items {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(items, id: \.self) { item in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text("•")
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.blue)
+                                Text(item)
+                                    .font(.body)
+                            }
+                        }
+                    }
+                }
+
+            case .callout:
+                CalloutBoxViewLegacy(
+                    title: section.title ?? "Note",
+                    text: section.text ?? "",
+                    style: section.style ?? .info
+                )
+
+            case .code:
+                if let code = section.code {
+                    Text(code)
+                        .font(.system(.body, design: .monospaced))
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(NSColor.textBackgroundColor))
+                        .cornerRadius(6)
+                }
+            }
+        }
+    }
+}
+
+@available(macOS 11.0, *)
 struct CalloutBoxView: View {
     let title: String
     let text: String
@@ -244,5 +404,38 @@ struct CalloutBoxView: View {
             alignment: .leading
         )
         .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+struct CalloutBoxViewLegacy: View {
+    let title: String
+    let text: String
+    let style: HelpSection.CalloutStyle
+
+    private var accentColor: Color {
+        switch style {
+        case .info: return .blue
+        case .tip: return .green
+        case .warning: return .orange
+        case .caution: return .red
+        }
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.headline)
+                    .foregroundColor(accentColor)
+
+                Text(text)
+                    .font(.body)
+                    .foregroundColor(.primary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(accentColor.opacity(0.08))
+        .cornerRadius(8)
     }
 }
