@@ -244,4 +244,18 @@ void main() {
       const Duration(seconds: 600),
     );
   });
+
+  test('setHistoryAllBranches updates state and persists setting', () async {
+    SharedPreferences.setMockInitialValues({'historyAllBranches': true});
+    final c = ProviderContainer();
+    addTearDown(c.dispose);
+
+    expect(c.read(appSettingsProvider).historyAllBranches, isTrue);
+
+    await c.read(appSettingsProvider.notifier).setHistoryAllBranches(false);
+    expect(c.read(appSettingsProvider).historyAllBranches, isFalse);
+
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getBool('historyAllBranches'), isFalse);
+  });
 }

@@ -89,7 +89,10 @@ Future<_DragFakeGit> _pump(WidgetTester tester) async {
     ],
   );
   final container = ProviderContainer(
-    overrides: [gitServiceProvider.overrideWithValue(git)],
+    overrides: [
+      gitServiceProvider.overrideWithValue(git),
+      repoWatchProvider.overrideWith((ref, repoPath) => const Stream.empty()),
+    ],
   );
   addTearDown(container.dispose);
   await tester.pumpWidget(

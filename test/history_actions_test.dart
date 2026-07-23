@@ -146,6 +146,7 @@ Future<void> _pump(
   final container = ProviderContainer(
     overrides: [
       gitServiceProvider.overrideWithValue(git ?? _FakeGit(commits)),
+      repoWatchProvider.overrideWith((ref, repoPath) => const Stream.empty()),
       if (tagSheetProviders) ...[
         remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
         remoteTagsProvider(_repo).overrideWith((ref) async => null),
@@ -210,8 +211,19 @@ void main() {
     expect(extents, contains(kGraphRowHeight));
   });
 
-  testWidgets('HEAD commit offers Amend', (tester) async {
+  testWidgets('HEAD commit offers Amend when not filtering by all-branches', (
+    tester,
+  ) async {
     await _pump(tester, [head, older]);
+    // Turn off all-branches filter so history is strictly `git log HEAD`.
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) =>
+            w is MacosIcon && w.icon == CupertinoIcons.square_stack_3d_up_fill,
+      ),
+    );
+    await tester.pumpAndSettle();
+
     await tester.tap(find.text('head commit'));
     await tester.pumpAndSettle();
 
@@ -243,18 +255,9 @@ void main() {
     tester,
   ) async {
     await _pump(tester, [head, older]);
-    // Turn on the all-branches filter. The displayed top row is still the head
-    // commit, but under a filter the shown list isn't `git log HEAD`, so its
-    // first row need not be the real HEAD — Amend (which rewrites the actual
-    // HEAD) must not be offered.
-    await tester.tap(
-      find.byWidgetPredicate(
-        (w) =>
-            w is MacosIcon && w.icon == CupertinoIcons.square_stack_3d_up,
-      ),
-    );
-    await tester.pumpAndSettle();
-
+    // Under all-branches (default true), the shown list isn't `git log HEAD`,
+    // so its first row need not be the real HEAD — Amend (which rewrites the
+    // actual HEAD) must not be offered.
     await tester.tap(find.text('head commit'));
     await tester.pumpAndSettle();
     await tester.tap(_actionsMenu);
@@ -660,7 +663,7 @@ void main() {
       'until': null,
       'pathQuery': 'src/',
       'sha': null,
-      'all': false,
+      'all': true,
       'noMerges': true,
     });
     expect(find.textContaining('matching'), findsOneWidget);

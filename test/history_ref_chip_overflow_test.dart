@@ -106,7 +106,10 @@ Future<void> pump(WidgetTester tester, List<GitRef> refs) async {
   addTearDown(tester.view.reset);
 
   final container = ProviderContainer(
-    overrides: [gitServiceProvider.overrideWithValue(_FakeGit(refs))],
+    overrides: [
+      gitServiceProvider.overrideWithValue(_FakeGit(refs)),
+      repoWatchProvider.overrideWith((ref, repoPath) => const Stream.empty()),
+    ],
   );
   addTearDown(container.dispose);
 

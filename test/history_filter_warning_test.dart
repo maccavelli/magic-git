@@ -45,7 +45,10 @@ void main() {
   Future<void> pump(WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
     final container = ProviderContainer(
-      overrides: [gitServiceProvider.overrideWithValue(_StubGit())],
+      overrides: [
+        gitServiceProvider.overrideWithValue(_StubGit()),
+        repoWatchProvider.overrideWith((ref, repoPath) => const Stream.empty()),
+      ],
     );
     addTearDown(container.dispose);
     await tester.pumpWidget(

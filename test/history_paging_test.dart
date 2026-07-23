@@ -118,13 +118,16 @@ const LogQuery _defaultQuery = (
   path: null,
   sha: null,
   noMerges: false,
-  all: false,
+  all: true,
 );
 
 Future<ProviderContainer> _pump(WidgetTester tester, _PagingGit git) async {
   SharedPreferences.setMockInitialValues({});
   final container = ProviderContainer(
-    overrides: [gitServiceProvider.overrideWithValue(git)],
+    overrides: [
+      gitServiceProvider.overrideWithValue(git),
+      repoWatchProvider.overrideWith((ref, repoPath) => const Stream.empty()),
+    ],
   );
   addTearDown(container.dispose);
   await tester.pumpWidget(

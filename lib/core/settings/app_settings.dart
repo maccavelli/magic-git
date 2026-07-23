@@ -85,6 +85,11 @@ class AppSettings {
   /// whole sheet exists to prevent.
   final bool tagPushAfterCreate;
 
+  /// Whether the History panel defaults to showing all branches (`--all`).
+  /// true (default) displays all branch tips and cut/merged branches; false
+  /// narrows history to the active branch (HEAD).
+  final bool historyAllBranches;
+
   /// User-chosen widths for the resizable master panes, keyed by [PaneId].
   /// Absent = the pane's [PaneSpec.defaultWidth] (see [paneWidth]). Values
   /// are clamped to the pane's spec bounds on both write and load.
@@ -101,6 +106,7 @@ class AppSettings {
     this.binaryOverrides = const {},
     this.historyZoom = 1.0,
     this.historyDiffWrap = false,
+    this.historyAllBranches = true,
     this.worktreeCopyGlobs = '.env*',
     this.worktreeCopyEnabled = true,
     this.worktreePostCreate = '',
@@ -129,6 +135,7 @@ class AppSettings {
     Map<String, String>? binaryOverrides,
     double? historyZoom,
     bool? historyDiffWrap,
+    bool? historyAllBranches,
     String? worktreeCopyGlobs,
     bool? worktreeCopyEnabled,
     String? worktreePostCreate,
@@ -147,6 +154,7 @@ class AppSettings {
     binaryOverrides: binaryOverrides ?? this.binaryOverrides,
     historyZoom: historyZoom ?? this.historyZoom,
     historyDiffWrap: historyDiffWrap ?? this.historyDiffWrap,
+    historyAllBranches: historyAllBranches ?? this.historyAllBranches,
     worktreeCopyGlobs: worktreeCopyGlobs ?? this.worktreeCopyGlobs,
     worktreeCopyEnabled: worktreeCopyEnabled ?? this.worktreeCopyEnabled,
     worktreePostCreate: worktreePostCreate ?? this.worktreePostCreate,
@@ -172,6 +180,7 @@ class AppSettings {
       other.autoFetchMinutes == autoFetchMinutes &&
       other.historyZoom == historyZoom &&
       other.historyDiffWrap == historyDiffWrap &&
+      other.historyAllBranches == historyAllBranches &&
       other.worktreeCopyGlobs == worktreeCopyGlobs &&
       other.worktreeCopyEnabled == worktreeCopyEnabled &&
       other.worktreePostCreate == worktreePostCreate &&
@@ -192,6 +201,7 @@ class AppSettings {
     autoFetchMinutes,
     historyZoom,
     historyDiffWrap,
+    historyAllBranches,
     worktreeCopyGlobs,
     worktreeCopyEnabled,
     worktreePostCreate,
@@ -231,6 +241,7 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   static const _binPrefix = 'binPath_';
   static const _historyZoomKey = 'historyZoom';
   static const _historyDiffWrapKey = 'historyDiffWrap';
+  static const _historyAllBranchesKey = 'historyAllBranches';
   static const _wtCopyGlobsKey = 'worktreeCopyGlobs';
   static const _wtCopyEnabledKey = 'worktreeCopyEnabled';
   static const _wtPostCreateKey = 'worktreePostCreate';
@@ -336,6 +347,7 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
           ?.clamp(minHistoryZoom, maxHistoryZoom)
           .toDouble(),
       historyDiffWrap: prefs.getBool(_historyDiffWrapKey),
+      historyAllBranches: prefs.getBool(_historyAllBranchesKey),
       worktreeCopyGlobs: prefs.getString(_wtCopyGlobsKey),
       worktreeCopyEnabled: prefs.getBool(_wtCopyEnabledKey),
       worktreePostCreate: prefs.getString(_wtPostCreateKey),
@@ -498,6 +510,14 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     _userEdited = true;
     state = state.copyWith(historyDiffWrap: wrap);
     await _persist((prefs) => prefs.setBool(_historyDiffWrapKey, wrap));
+  }
+
+  /// Toggles and persists whether History defaults to showing all branches (`--all`).
+  Future<void> setHistoryAllBranches(bool all) async {
+    if (all == state.historyAllBranches) return;
+    _userEdited = true;
+    state = state.copyWith(historyAllBranches: all);
+    await _persist((prefs) => prefs.setBool(_historyAllBranchesKey, all));
   }
 
   /// Persists the Add Worktree sheet's defaults, so the same `.env*` globs and

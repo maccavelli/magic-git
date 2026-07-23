@@ -130,7 +130,10 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     super.initState();
     HardwareKeyboard.instance.addHandler(_onHardwareKey);
     WidgetsBinding.instance.addObserver(this);
+    _allBranches = ref.read(appSettingsProvider).historyAllBranches;
   }
+
+  static const _ownMutationSuppressWindow = Duration(seconds: 3);
 
   bool _onHardwareKey(KeyEvent event) {
     // Only the active view needs to track ⌘ (it gates this list's scroll
@@ -1159,6 +1162,21 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   Widget build(BuildContext context) {
     final filtering = _filtering;
     final query = _query;
+    // Event-driven refresh: each coalesced remote-change tick re-fetches history
+    // and refs when git's own state moves (.git/refs, HEAD, index).
+    ref.listen(repoWatchProvider(widget.repoPath), (previous, next) {
+      final event = next.value;
+      if (event == null) return;
+      if (ref
+          .read(ownMutationTrackerProvider)
+          .isRecent(widget.repoPath, event.at, _ownMutationSuppressWindow)) {
+        return;
+      }
+      if (event.touchesGitState) {
+        refreshAfterMutation(ref, widget.repoPath);
+      }
+    });
+
     // Warm the patch cache as fresh history lands — the newest commits are the
     // ones overwhelmingly likely to be inspected.
     ref.listen(logSearchProvider(query), (previous, next) {
@@ -1406,7 +1424,13 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                     : 'Show all branches',
                 size: 16,
                 color: _allBranches ? MacosColors.systemBlueColor : null,
-                onPressed: () => setState(() => _allBranches = !_allBranches),
+                onPressed: () {
+                  final next = !_allBranches;
+                  setState(() => _allBranches = next);
+                  ref
+                      .read(appSettingsProvider.notifier)
+                      .setHistoryAllBranches(next);
+                },
               ),
               const SizedBox(width: 6),
               ToolIconButton(

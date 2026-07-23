@@ -516,6 +516,9 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           gitServiceProvider.overrideWithValue(_FakeGit(commits: commits)),
+          repoWatchProvider.overrideWith(
+            (ref, repoPath) => const Stream.empty(),
+          ),
         ],
       );
       addTearDown(container.dispose);

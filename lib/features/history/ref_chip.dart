@@ -101,21 +101,28 @@ class RefChipStrip extends StatelessWidget {
   final bool enableDrag;
 
   /// Beyond this, chips collapse into a `+N`. Two full-name chips leave room
-  /// for the subject in the 420px commit pane; a third crowded out labels into
-  /// icon-only ellipses (the complaint that motivated the redesign).
+  /// for the subject in the 420px commit pane; a third would overflow the row.
   static const int maxVisible = 2;
+
+  final int? _maxVisibleOverride;
+  int get effectiveMaxVisible => _maxVisibleOverride ?? maxVisible;
 
   /// Soft cap on a single chip's width so one long name cannot dominate the row.
   static const double maxChipWidth = 132;
 
-  const RefChipStrip({super.key, required this.refs, this.enableDrag = false});
+  const RefChipStrip({
+    super.key,
+    required this.refs,
+    this.enableDrag = false,
+    int? maxVisible,
+  }) : _maxVisibleOverride = maxVisible;
 
   @override
   Widget build(BuildContext context) {
     final visible = filterHistoryRefDecorations(refs);
     if (visible.isEmpty) return const SizedBox.shrink();
 
-    final shown = visible.take(maxVisible).toList();
+    final shown = visible.take(effectiveMaxVisible).toList();
     final hidden = visible.sublist(shown.length);
 
     // Intrinsic row: each chip caps its own width ([maxChipWidth]) and long

@@ -111,6 +111,9 @@ void main() {
           gitServiceProvider.overrideWithValue(
             _FilterAwareFakeGit(full: full, filtered: filtered),
           ),
+          repoWatchProvider.overrideWith(
+            (ref, repoPath) => const Stream.empty(),
+          ),
         ],
       );
       addTearDown(container.dispose);
