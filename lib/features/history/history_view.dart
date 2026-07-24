@@ -594,6 +594,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       _stableRefs = const [];
       _densitySource = null;
       _density = null;
+      // Stale cumulative pinch ratio from a previous repo would corrupt the
+      // first frame of a new pinch here.
+      _lastPinchScale = 1.0;
       // The depth resets itself: a different repo is a different [LogQuery],
       // hence a different notifier, which starts again at page one.
     }
@@ -1201,22 +1204,30 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       // landed (not during loading) and when the selection actually references
       // hashes absent from the new list.
       final landed = next.value;
-      if (landed != null && _selectedHashes.isNotEmpty) {
+      if (landed != null) {
         final live = {for (final c in landed) c.hash};
-        final pruned = _selectedHashes.intersection(live);
-        if (pruned.length != _selectedHashes.length) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
-            setState(() {
-              _selectedHashes = pruned;
-              if (_selectionAnchor != null && !pruned.contains(_selectionAnchor)) {
-                _selectionAnchor = pruned.isNotEmpty ? pruned.first : null;
-              }
-              if (_selectionCursor != null && !pruned.contains(_selectionCursor)) {
-                _selectionCursor = pruned.isNotEmpty ? pruned.last : null;
-              }
+        // Prune GlobalKey map: keys for commits no longer displayed are useless
+        // and, over a long session with many page-loads, accumulate without
+        // bound. Retain only keys whose hashes are still in the visible list.
+        if (_commitRowKeys.length > live.length * 2) {
+          _commitRowKeys.removeWhere((hash, _) => !live.contains(hash));
+        }
+        if (_selectedHashes.isNotEmpty) {
+          final pruned = _selectedHashes.intersection(live);
+          if (pruned.length != _selectedHashes.length) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              setState(() {
+                _selectedHashes = pruned;
+                if (_selectionAnchor != null && !pruned.contains(_selectionAnchor)) {
+                  _selectionAnchor = pruned.isNotEmpty ? pruned.first : null;
+                }
+                if (_selectionCursor != null && !pruned.contains(_selectionCursor)) {
+                  _selectionCursor = pruned.isNotEmpty ? pruned.last : null;
+                }
+              });
             });
-          });
+          }
         }
       }
     });

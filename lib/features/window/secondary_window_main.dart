@@ -210,9 +210,14 @@ Future<void> _bootSecondaryWindow() async {
             },
           );
         }),
-        // Defensive: nothing in the rendered views' graph watches this, but the
-        // real implementation would call executeStream through the proxy and
-        // throw. Watcher ticks arrive as pushed `repoTick` events instead.
+        // INVARIANT: the pop-out receives file-system change notifications via
+        // pushed `repoTick` events from the main window (see _onHubCall), NOT
+        // from its own watcher. The real repoWatchProvider depends on
+        // connectionProvider → backend → LocalWatchService/RemoteWatchService,
+        // none of which exist in this isolate. Any view code added to the
+        // pop-out that accidentally watches repoWatchProvider will see an empty
+        // stream (harmless) rather than a cascading provider-resolution crash.
+        // If you need FS-change reactivity here, use the hub's repoTick push.
         repoWatchProvider.overrideWith(
           (ref, repoPath) => const Stream<RepoWatchEvent>.empty(),
         ),

@@ -597,15 +597,11 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
         }
       case 'requestState':
         if (container == null) throw _relayDown();
-        final resolved =
-            handle ??
-            WindowHandle(
-              id: id,
-              kind: WindowKind.history,
-              repoPath: container.read(connectionProvider).repoPath,
-            );
+        // `handle` is guaranteed non-null here: `container` is derived from
+        // `handle` (see line 541 — it's null when handle is null), and the
+        // guard above threw when container is null.
         return _snapshotFor(
-          resolved,
+          handle!,
           container.read(connectionProvider),
         ).encode();
       case 'undoRecord':
