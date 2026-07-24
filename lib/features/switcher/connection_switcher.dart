@@ -316,17 +316,46 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
   Widget _empty(BuildContext context, WidgetRef ref) {
     final typography = MacosTheme.of(context).typography;
     return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('No saved connections', style: typography.body),
-          const SizedBox(height: 12),
-          AppPushButton(
-            controlSize: ControlSize.large,
-            onPressed: () => _newConnection(context),
-            child: const Text('New connection'),
-          ),
-        ],
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 240),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'No saved connections',
+              style: typography.body,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            AppPushButton(
+              controlSize: ControlSize.large,
+              onPressed: () => _newLocalRepo(context),
+              child: const Text('Add local repository'),
+            ),
+            const SizedBox(height: 8),
+            AppPushButton(
+              controlSize: ControlSize.large,
+              secondary: true,
+              onPressed: () => _newConnection(context),
+              child: const Text('New SSH connection'),
+            ),
+            const SizedBox(height: 8),
+            AppPushButton(
+              controlSize: ControlSize.large,
+              secondary: true,
+              onPressed: () => _cloneRepository(context, ref),
+              child: const Text('Clone repository'),
+            ),
+            const SizedBox(height: 8),
+            AppPushButton(
+              controlSize: ControlSize.large,
+              secondary: true,
+              onPressed: () => _createRepository(context, ref),
+              child: const Text('Create repository'),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -504,12 +533,10 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                 icon: CupertinoIcons.trash,
                 tooltip: repoCount > 1
                     ? 'Remove repository'
-                    : 'A connection needs at least one repository',
+                    : 'Delete connection',
                 size: 13,
                 color: MacosColors.systemRedColor,
-                onPressed: repoCount > 1
-                    ? () => _deleteRepo(context, ref, conn, repo)
-                    : null,
+                onPressed: () => _deleteRepo(context, ref, conn, repo),
               ),
             ],
           ),
@@ -756,7 +783,10 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     // case disconnecting here would tear down that unrelated, newly-active
     // session instead of the one actually being deleted.
     final isStillActive = ref.read(connectionProvider).connectionId == conn.id;
-    if (isStillActive) await notifier.disconnect();
+    if (isStillActive) {
+      await notifier.disconnect();
+      if (context.mounted) Navigator.of(context).pop();
+    }
   }
 
   Future<void> _deleteRepo(
@@ -766,7 +796,10 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     String repo,
   ) async {
     final remaining = conn.allRepoPaths.where((p) => p != repo).toList();
-    if (remaining.isEmpty) return;
+    if (remaining.isEmpty) {
+      await _deleteConnection(context, ref, conn);
+      return;
+    }
     final newDefault = conn.repoPath == repo ? remaining.first : conn.repoPath;
     final notifier = ref.read(connectionProvider.notifier);
     final saved = await runAction(context, () async {
@@ -1107,7 +1140,10 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     final isStillActive =
         ref.read(connectionProvider).isLocal &&
         ref.read(connectionProvider).connectionId == repo.id;
-    if (isStillActive) await notifier.disconnect();
+    if (isStillActive) {
+      await notifier.disconnect();
+      if (context.mounted) Navigator.of(context).pop();
+    }
   }
 
   Future<void> _toggleLocalFsmonitor(

@@ -5,7 +5,7 @@
 
 import 'dart:async';
 
-import 'package:flutter/widgets.dart' hide ConnectionState;
+import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -23,9 +23,11 @@ Finder _byMacosTooltip(String message) =>
 
 /// Records whether `disconnect()` — the Logout button's action — was invoked.
 class _FakeConnectionController extends ConnectionController {
+  _FakeConnectionController([this.initialState = const ConnectionState()]);
+  final ConnectionState initialState;
   bool disconnectCalled = false;
   @override
-  ConnectionState build() => const ConnectionState();
+  ConnectionState build() => initialState;
   @override
   Future<void> disconnect() async => disconnectCalled = true;
 }
@@ -75,11 +77,15 @@ Future<void> _pump(
 }
 
 void main() {
-  testWidgets('shows the empty state with no saved connections at all', (
+  testWidgets('shows the empty state with all start options', (
     tester,
   ) async {
     await _pump(tester);
     expect(find.text('No saved connections'), findsOneWidget);
+    expect(find.text('Add local repository'), findsOneWidget);
+    expect(find.text('New SSH connection'), findsOneWidget);
+    expect(find.text('Clone repository'), findsOneWidget);
+    expect(find.text('Create repository'), findsOneWidget);
     expect(find.text('Local Repositories'), findsNothing);
   });
 
@@ -191,7 +197,7 @@ void main() {
     tester,
   ) async {
     await _pump(tester);
-    await tester.tap(find.text('New connection'));
+    await tester.tap(find.text('New SSH connection'));
     await tester.pumpAndSettle();
     expect(find.text('Add SSH Remote'), findsOneWidget);
   });
@@ -352,4 +358,51 @@ void main() {
     await tester.pump();
     expect(fake.disconnectCalled, isTrue);
   });
+
+  testWidgets(
+    'deleting active sole local repo disconnects and pops sheet',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final fake = _FakeConnectionController(
+        const ConnectionState(
+          phase: ConnectionPhase.connected,
+          backend: ConnectionBackend.local,
+          connectionId: 'l1',
+          repoPath: '/path',
+        ),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            savedLocalReposProvider.overrideWith(
+              (ref) async => const [
+                SavedLocalRepo(id: 'l1', label: 'Sole Repo', repoPath: '/path'),
+              ],
+            ),
+            savedConnectionsProvider.overrideWith((ref) async => const []),
+            connectionProvider.overrideWith(() => fake),
+          ],
+          child: const MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: ConnectionsPanel(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Sole Repo'), findsOneWidget);
+      // Find trash button for local repo tile
+      final trash = _byMacosTooltip('Remove repository');
+      expect(trash, findsOneWidget);
+      await tester.tap(trash);
+      await tester.pumpAndSettle();
+
+      // Confirm dialog appears
+      expect(find.text('Remove local repository'), findsOneWidget);
+      await tester.tap(find.text('Remove'));
+      await tester.pumpAndSettle();
+
+      expect(fake.disconnectCalled, isTrue);
+    },
+  );
 }
