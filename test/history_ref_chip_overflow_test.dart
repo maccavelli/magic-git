@@ -92,6 +92,7 @@ class _FakeGit extends GitService {
     bool all = false,
     bool follow = false,
     bool noMerges = false,
+    bool fullHistory = false,
   }) async => skip > 0 ? const [] : const [_commit];
 
   @override

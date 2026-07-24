@@ -91,7 +91,7 @@ class HistoryMinimap extends StatelessWidget {
     // `repaint:`.
     return LayoutBuilder(
       builder: (context, constraints) => ListenableBuilder(
-        listenable: Listenable.merge([controller, metricsTick]),
+        listenable: metricsTick,
         builder: (context, _) {
           // hasContentDimensions: a freshly-attached position throws on
           // maxScrollExtent until its first layout pass has run.

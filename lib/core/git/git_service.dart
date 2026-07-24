@@ -494,6 +494,7 @@ List<GitCommit> parseGitLog(String raw) {
     // rest of the log rather than aborting the whole history render; this is a
     // fire-and-forget top-level parse with no warnings channel to surface it.
     if (f.length < 7) continue;
+    final subject = f.length == 7 ? f[6] : f.sublist(6).join(GitService.fieldSep);
     commits.add(
       GitCommit(
         hash: f[0],
@@ -502,7 +503,7 @@ List<GitCommit> parseGitLog(String raw) {
         authorEmail: f[3],
         date: f[4],
         parents: f[5].isEmpty ? const [] : f[5].split(' '),
-        subject: _stripSeps(f[6]),
+        subject: _stripSeps(subject),
       ),
     );
   }
@@ -545,6 +546,7 @@ List<FileHistoryEntry> parseFileHistory(String raw) {
     if (fieldsLine != null) {
       final f = fieldsLine.split(GitService.fieldSep);
       if (f.length < 7) continue; // truncated/malformed — same posture as log
+      final subject = f.length == 7 ? f[6] : f.sublist(6).join(GitService.fieldSep);
       entries.add(
         FileHistoryEntry(
           commit: GitCommit(
@@ -554,7 +556,7 @@ List<FileHistoryEntry> parseFileHistory(String raw) {
             authorEmail: f[3],
             date: f[4],
             parents: f[5].isEmpty ? const [] : f[5].split(' '),
-            subject: _stripSeps(f[6]),
+            subject: _stripSeps(subject),
           ),
         ),
       );
@@ -638,6 +640,7 @@ List<ReflogEntry> parseReflog(String raw) {
     // first colon; an unexpected shape becomes all-detail with no action.
     final gs = _stripSeps(f[3]);
     final colon = gs.indexOf(': ');
+    final subject = f.length == 5 ? f[4] : f.sublist(4).join(GitService.fieldSep);
     entries.add(
       ReflogEntry(
         hash: f[0],
@@ -645,7 +648,7 @@ List<ReflogEntry> parseReflog(String raw) {
         selector: _stripSeps(f[2]),
         action: colon < 0 ? '' : gs.substring(0, colon),
         detail: colon < 0 ? gs : gs.substring(colon + 2),
-        subject: _stripSeps(f[4]),
+        subject: _stripSeps(subject),
       ),
     );
   }
@@ -2165,6 +2168,7 @@ class GitService {
     bool all = false,
     bool follow = false,
     bool noMerges = false,
+    bool fullHistory = false,
   }) async {
     final format = ['%H', '%h', '%an', '%ae', '%aI', '%P', '%s'].join(fieldSep);
 
@@ -2232,6 +2236,7 @@ class GitService {
         if (follow && !all && pathspecs.length == 1) '--follow',
         if (noWalk) '--no-walk',
         if (all && !noWalk) '--all',
+        if (fullHistory && !follow && !noWalk) '--full-history',
         // Everything after this is a revision/pathspec, never an option — so a
         // branch literally named `-p` (or any leading-dash ref) can't be parsed
         // as a git flag.

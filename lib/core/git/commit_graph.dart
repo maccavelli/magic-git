@@ -24,11 +24,15 @@ class GraphEdge {
   /// Lane index used to pick a stable color for the line.
   final int colorLane;
 
+  /// Whether this edge represents a non-mainline merge parent line (parent 2+).
+  final bool isMergeEdge;
+
   const GraphEdge({
     required this.fromColumn,
     required this.toColumn,
     required this.kind,
     required this.colorLane,
+    this.isMergeEdge = false,
   });
 }
 
@@ -57,23 +61,37 @@ class CommitGraph {
 
   /// Lays out commits (newest-first, as `git log` emits them) into lanes.
   ///
-  /// Standard active-lane algorithm: each lane "expects" the hash of the next
-  /// commit that should appear in it (a child's parent). A commit lands in the
-  /// leftmost lane expecting it (or a new lane if it is a branch tip); its first
-  /// parent inherits that lane, additional parents (merges) branch into new or
-  /// existing lanes, and lanes that expected the commit collapse into its node.
-  static CommitGraph build(List<GitCommit> commits) {
+  /// Pins the primary branch (HEAD or primary ancestor chain) to Lane 0 so the
+  /// main timeline forms a straight, stable vertical spine on the left. Side
+  /// branches branch out into higher lanes and curve back in when merged.
+  static CommitGraph build(
+    List<GitCommit> commits, {
+    String? headSha,
+    String? mainBranchSha,
+  }) {
+    if (commits.isEmpty) return empty;
+
+    // Build lookup for commits in this list.
+    final commitByHash = <String, GitCommit>{};
+    final allHashes = <String>{};
+    for (final c in commits) {
+      commitByHash[c.hash] = c;
+      allHashes.add(c.hash);
+    }
+
+    // Determine the primary branch spine (following first parents).
+    final primaryChain = <String>{};
+    String? currentSha = headSha ?? mainBranchSha ?? commits.first.hash;
+    while (currentSha != null && commitByHash.containsKey(currentSha)) {
+      primaryChain.add(currentSha);
+      final c = commitByHash[currentSha]!;
+      currentSha = c.parents.isNotEmpty ? c.parents.first : null;
+    }
+
     final lanes = <String?>[]; // lanes[i] = hash the lane is waiting for
     final rows = <GraphRow>[];
     var laneCount = 0;
 
-    // hash -> ascending-sorted lane indices currently expecting it (usually
-    // one, but a commit with more than one child means more than one lane can
-    // wait for the same hash at once) and the set of currently-null lane
-    // indices — both maintained in lockstep with `lanes` below so a commit's
-    // matching lanes, a parent's existing lane, and the next free lane are
-    // all found without an O(laneCount) scan, unlike a full rescan of `lanes`
-    // for every commit and every parent.
     final waiting = <String, List<int>>{};
     final freeLanes = SplayTreeSet<int>();
 
@@ -107,10 +125,34 @@ class CommitGraph {
       return lanes.length - 1;
     }
 
+    int firstFreeNonZero() {
+      for (final l in freeLanes) {
+        if (l > 0) return l;
+      }
+      if (lanes.isEmpty) {
+        lanes.add(null); // lane 0
+      }
+      lanes.add(null);
+      return lanes.length - 1;
+    }
+
     for (final commit in commits) {
       final matching = List<int>.of(waiting[commit.hash] ?? const []);
+      final isPrimary = primaryChain.contains(commit.hash);
 
-      final nodeColumn = matching.isEmpty ? firstFree() : matching.first;
+      int nodeColumn;
+      if (matching.contains(0)) {
+        nodeColumn = 0;
+      } else if (matching.isNotEmpty) {
+        nodeColumn = matching.first;
+      } else if (isPrimary && (freeLanes.contains(0) || lanes.isEmpty || lanes[0] == null)) {
+        nodeColumn = 0;
+        if (lanes.isEmpty) lanes.add(null);
+      } else if (!isPrimary && primaryChain.isNotEmpty && (lanes.isEmpty || lanes[0] == null)) {
+        nodeColumn = firstFreeNonZero();
+      } else {
+        nodeColumn = firstFree();
+      }
 
       // Snapshot the lanes as they enter this row (the top edge).
       final top = List<String?>.of(lanes);
@@ -120,25 +162,49 @@ class CommitGraph {
         setLane(i, null);
       }
 
-      // Route parents. A parent already expected by an active lane reuses that
-      // lane (so the commit merges into it immediately); otherwise the first
-      // parent inherits the node's lane and extra parents branch into fresh
-      // lanes. A node lane left unclaimed by any parent simply ends.
-      final parentLanes = <int>[];
-      if (commit.parents.isEmpty) {
+      // Deduplicate parent hashes.
+      final parents = <String>[];
+      for (final p in commit.parents) {
+        if (!parents.contains(p)) parents.add(p);
+      }
+
+      // Route parents.
+      final parentLanes = <(int, bool)>[]; // (laneIndex, isMergeEdge)
+      if (parents.isEmpty) {
         setLane(nodeColumn, null); // root commit — lane ends here
       } else {
-        for (var p = 0; p < commit.parents.length; p++) {
-          final parentHash = commit.parents[p];
-          final existing = waiting[parentHash];
-          var lane = (existing != null && existing.isNotEmpty)
-              ? existing.first
-              : -1;
-          if (lane < 0) {
-            lane = p == 0 ? nodeColumn : firstFree();
-            setLane(lane, parentHash);
+        for (var p = 0; p < parents.length; p++) {
+          final parentHash = parents[p];
+          final isMerge = p > 0;
+
+          if (!allHashes.contains(parentHash)) {
+            parentLanes.add((nodeColumn, isMerge));
+            continue;
           }
-          parentLanes.add(lane);
+
+          final existing = waiting[parentHash];
+          var lane = -1;
+
+          if (p == 0 && (isPrimary || nodeColumn == 0)) {
+            if (existing != null && existing.contains(0)) {
+              lane = 0;
+            } else if (lanes.isEmpty || lanes[0] == null || freeLanes.contains(0) || nodeColumn == 0) {
+              lane = 0;
+              if (lanes.isEmpty) lanes.add(null);
+              setLane(0, parentHash);
+            }
+          }
+
+          if (lane < 0) {
+            lane = (existing != null && existing.isNotEmpty)
+                ? existing.first
+                : -1;
+            if (lane < 0) {
+              lane = p == 0 ? nodeColumn : firstFree();
+              setLane(lane, parentHash);
+            }
+          }
+          parentLanes.add((lane, isMerge));
         }
       }
 
@@ -157,6 +223,8 @@ class CommitGraph {
             ),
           );
         } else {
+          // If expected is not in the remaining commits set and no lane matches,
+          // it's an un-fetched parent beyond the loaded boundary.
           edges.add(
             GraphEdge(
               fromColumn: i,
@@ -167,13 +235,14 @@ class CommitGraph {
           );
         }
       }
-      for (final lane in parentLanes) {
+      for (final (lane, isMerge) in parentLanes) {
         edges.add(
           GraphEdge(
             fromColumn: nodeColumn,
             toColumn: lane,
             kind: GraphEdgeKind.fromNode,
             colorLane: lane,
+            isMergeEdge: isMerge,
           ),
         );
       }
@@ -185,3 +254,4 @@ class CommitGraph {
     return CommitGraph(rows: rows, laneCount: laneCount);
   }
 }
+

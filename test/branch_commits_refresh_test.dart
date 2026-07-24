@@ -38,6 +38,7 @@ class _CountingGit extends GitService {
     bool all = false,
     bool follow = false,
     bool noMerges = false,
+    bool fullHistory = false,
   }) async {
     logRevisions.add(revision);
     return const <GitCommit>[];

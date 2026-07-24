@@ -67,6 +67,7 @@ class _CountingGit extends GitService {
     bool all = false,
     bool follow = false,
     bool noMerges = false,
+    bool fullHistory = false,
   }) async {
     logCalls++;
     return const [

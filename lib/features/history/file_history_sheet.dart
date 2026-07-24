@@ -109,7 +109,9 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
         ),
       );
     }
-    final selected = _selected ?? commits.first.hash;
+    final selected = (_selected != null && commits.any((c) => c.hash == _selected))
+        ? _selected!
+        : commits.first.hash;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

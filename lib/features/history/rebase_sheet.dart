@@ -176,6 +176,7 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
     final steps = [for (final r in _rows) RebaseStep(r.action, r.commit.hash)];
     final label = 'git rebase -i $onto';
     final log = ref.read(outputLogProvider.notifier);
+    var success = false;
     try {
       log.logResult(
         label,
@@ -183,11 +184,13 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
             .read(gitServiceProvider)
             .rebaseInteractive(widget.repoPath, widget.onto, steps),
       );
+      success = true;
     } on GitException catch (e) {
       // A conflict leaves the rebase in progress; close so the user can resolve
       // it via the Repository panel's rebase banner, but surface the message.
       log.logResult(label, e.result);
       if (mounted) await showErrorDialog(context, displayError(e));
+      success = true;
     } catch (e) {
       log.logError(label, e.toString());
       if (mounted) await showErrorDialog(context, displayError(e));
@@ -200,8 +203,12 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
       // watcher's echo of those writes re-ran the whole refresh a second
       // time moments later (the exact drift its doc comment warns about).
       if (mounted) {
-        refreshAfterMutation(ref, widget.repoPath);
-        Navigator.of(context).pop();
+        if (success) {
+          refreshAfterMutation(ref, widget.repoPath);
+          Navigator.of(context).pop();
+        } else {
+          setState(() => _busy = false);
+        }
       }
     }
   }

@@ -381,9 +381,11 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     final extend = HardwareKeyboard.instance.isShiftPressed;
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowDown:
+      case LogicalKeyboardKey.keyJ:
         _moveCommitSelection(1, extend: extend);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowUp:
+      case LogicalKeyboardKey.keyK:
         _moveCommitSelection(-1, extend: extend);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.escape:
@@ -452,6 +454,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   // rebuilds until the provider is invalidated), so merely selecting a commit
   // no longer re-lays-out the whole graph or re-groups every ref.
   List<GitCommit>? _lastCommits;
+  String? _lastHeadSha;
   CommitGraph? _graph;
   List<GitRef>? _lastRefs;
   Map<String, List<GitRef>>? _decorations;
@@ -484,23 +487,34 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   /// are laid out on a background isolate; until that lands we keep serving the
   /// previous graph (or [CommitGraph.empty] on first load) so the frame never
   /// blocks on layout — the view repaints via `setState` when it arrives.
-  CommitGraph _graphFor(List<GitCommit> commits) {
-    if (identical(commits, _lastCommits) && _graph != null) return _graph!;
+  CommitGraph _graphFor(List<GitCommit> commits, {String? headSha}) {
+    if (identical(commits, _lastCommits) &&
+        headSha == _lastHeadSha &&
+        _graph != null) {
+      return _graph!;
+    }
+    _lastCommits = commits;
+    _lastHeadSha = headSha;
     if (commits.length < _graphIsolateThreshold) {
-      _lastCommits = commits;
       _pendingGraphCommits = null;
-      return _graph = CommitGraph.build(commits);
+      return _graph = CommitGraph.build(commits, headSha: headSha);
     }
     if (!identical(commits, _pendingGraphCommits)) {
       _pendingGraphCommits = commits;
       final id = ++_graphBuildId;
-      unawaited(_buildGraphAsync(commits, id));
+      unawaited(_buildGraphAsync(commits, id, headSha: headSha));
     }
     return _graph ?? CommitGraph.empty;
   }
 
-  Future<void> _buildGraphAsync(List<GitCommit> commits, int id) async {
-    final graph = await Isolate.run(() => CommitGraph.build(commits));
+  Future<void> _buildGraphAsync(
+    List<GitCommit> commits,
+    int id, {
+    String? headSha,
+  }) async {
+    final graph = await Isolate.run(
+      () => CommitGraph.build(commits, headSha: headSha),
+    );
     // Superseded by a newer list (or a repo switch) while we were building.
     if (!mounted || id != _graphBuildId) return;
     setState(() {
@@ -1181,6 +1195,30 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     // ones overwhelmingly likely to be inspected.
     ref.listen(logSearchProvider(query), (previous, next) {
       _prefetchCommitPatches(next.value);
+      // Prune stale selections: after a refresh or filter change, hashes that
+      // are no longer in the displayed list should be dropped so the diff pane
+      // doesn't keep fetching a ghost commit. Only prune when new data has
+      // landed (not during loading) and when the selection actually references
+      // hashes absent from the new list.
+      final landed = next.value;
+      if (landed != null && _selectedHashes.isNotEmpty) {
+        final live = {for (final c in landed) c.hash};
+        final pruned = _selectedHashes.intersection(live);
+        if (pruned.length != _selectedHashes.length) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            setState(() {
+              _selectedHashes = pruned;
+              if (_selectionAnchor != null && !pruned.contains(_selectionAnchor)) {
+                _selectionAnchor = pruned.isNotEmpty ? pruned.first : null;
+              }
+              if (_selectionCursor != null && !pruned.contains(_selectionCursor)) {
+                _selectionCursor = pruned.isNotEmpty ? pruned.last : null;
+              }
+            });
+          });
+        }
+      }
     });
     final logAsync = ref.watch(logSearchProvider(query));
     // Ref decorations are best-effort: if for-each-ref never lands, show a bare
@@ -1200,9 +1238,15 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     // some out"), and tracked on the notifier because the count alone stops
     // being conclusive once a page is stitched on: a boundary dedupe can shorten
     // the list without meaning the history ended.
+    // Reads the notifier directly rather than watching it — the `exhausted`
+    // field is mutable state on the Notifier that does NOT trigger a rebuild
+    // when it flips. However, the flag only transitions alongside a state
+    // change (the `_walk` sets it before returning data, and `loadMore` sets
+    // it before updating `state`), so the rebuild that carries the new data
+    // always picks up the new flag value too.
     final exhausted =
         commits != null &&
-        ref.watch(logSearchProvider(query).notifier).exhausted;
+        ref.read(logSearchProvider(query).notifier).exhausted;
 
     final keymap = ref.watch(keymapProvider);
     final selectedHash = _soleSelectedHash;
@@ -1297,7 +1341,18 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         ),
       );
     }
-    final graph = _graphFor(commits);
+    // Extract the HEAD commit SHA from the refs list so the graph builder
+    // can pin the primary branch spine to Lane 0. Without this, the spine
+    // defaults to commits.first (only correct for unfiltered single-branch
+    // views) and merge edges / lane assignments can be wrong.
+    String? headSha;
+    for (final r in _stableRefs) {
+      if (r.isHead) {
+        headSha = r.oid;
+        break;
+      }
+    }
+    final graph = _graphFor(commits, headSha: headSha);
     final log = ref.read(logSearchProvider(_query).notifier);
     return NotificationListener<ScrollMetricsNotification>(
       onNotification: (_) {

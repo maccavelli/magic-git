@@ -109,6 +109,7 @@ class _FakeGit extends GitService {
     bool all = false,
     bool follow = false,
     bool noMerges = false,
+    bool fullHistory = false,
   }) async => const [headCommit];
 
   @override
@@ -151,6 +152,7 @@ class _HeadMoveGit extends _FakeGit {
     bool all = false,
     bool follow = false,
     bool noMerges = false,
+    bool fullHistory = false,
   }) async {
     logCalls++;
     return const [_FakeGit.headCommit];

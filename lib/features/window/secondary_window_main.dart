@@ -77,9 +77,10 @@ void _native(String method, [Object? arguments]) {
 /// `!=`, which would re-arm the exact ping-pong the record exists to stop).
 /// All pane ids are signed — not just the panes this window renders — so a
 /// future pane can't be forgotten here.
-(double, bool, String) secondarySettingsSyncSignature(AppSettings s) => (
+(double, bool, bool, String) secondarySettingsSyncSignature(AppSettings s) => (
   s.historyZoom,
   s.historyDiffWrap,
+  s.historyAllBranches,
   PaneId.values.map((id) => '${id.name}:${s.paneWidth(id)}').join(','),
 );
 

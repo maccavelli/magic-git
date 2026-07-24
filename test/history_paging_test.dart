@@ -68,6 +68,7 @@ class _PagingGit extends GitService {
     bool all = false,
     bool follow = false,
     bool noMerges = false,
+    bool fullHistory = false,
   }) async {
     walks.add((skip: skip, count: maxCount));
     greps.add(grep);

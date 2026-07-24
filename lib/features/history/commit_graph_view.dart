@@ -54,7 +54,11 @@ class CommitRowPainter extends CustomPainter {
       ..strokeCap = StrokeCap.round;
 
     for (final edge in row.edges) {
-      stroke.color = laneColor(edge.colorLane);
+      final baseColor = laneColor(edge.colorLane);
+      stroke.color = edge.isMergeEdge
+          ? baseColor.withValues(alpha: 0.85)
+          : baseColor;
+      stroke.strokeWidth = edge.isMergeEdge ? 1.4 * scale : 1.8 * scale;
       final (Offset a, Offset b) = switch (edge.kind) {
         GraphEdgeKind.pass => (
           Offset(_laneX(edge.fromColumn, laneWidth), topY),

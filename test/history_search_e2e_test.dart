@@ -25,6 +25,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -72,6 +73,9 @@ void main() {
     path: path,
     sha: sha,
     noMerges: false,
+    // Must match the historyAllBranches value seeded in SharedPreferences
+    // above, otherwise the widget computes a different LogQuery key than the
+    // one the test warmed and gets a loading spinner instead of data.
     all: false,
   );
 
@@ -86,7 +90,11 @@ void main() {
       const MethodChannel('appkit_ui_element_colors'),
       (call) async => <String, double>{'hueComponent': 0.6},
     );
-    SharedPreferences.setMockInitialValues({});
+    // Seed SharedPreferences with a known historyAllBranches value so the
+    // HistoryView's _query computes the same LogQuery key the tests warm.
+    SharedPreferences.setMockInitialValues({
+      'historyAllBranches': false,
+    });
 
     tempDir = Directory.systemTemp.createTempSync('history_e2e_');
     repo = '${tempDir.resolveSymbolicLinksSync()}/repo';
@@ -111,6 +119,14 @@ void main() {
       overrides: [
         gitServiceProvider.overrideWithValue(
           GitService(LocalCommandExecutor()),
+        ),
+        // The HistoryView listens to repoWatchProvider to refresh on file-
+        // system changes. Without an override, it cascades into
+        // connectionProvider which tries to resolve a real connection.
+        // An empty stream (matching the secondary window's approach) keeps
+        // the widget happy without spawning real file watchers.
+        repoWatchProvider.overrideWith(
+          (ref, repoPath) => const Stream<RepoWatchEvent>.empty(),
         ),
       ],
     );

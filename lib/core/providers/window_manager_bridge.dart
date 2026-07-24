@@ -272,6 +272,12 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
               activeTabId() == pendingTab) {
             _pendingSubs.remove(w.id)?.close();
             _repinHistory(w.id, pendingTab, pendingContainer, next);
+          } else if (next.phase == ConnectionPhase.disconnected ||
+                     next.phase == ConnectionPhase.error) {
+            // The tab failed to connect — stop waiting and leave the window
+            // where it is (its current repo is still valid). If the repo's
+            // tab is gone, the next onActiveTabChanged will close it.
+            _pendingSubs.remove(w.id)?.close();
           }
         });
       } else if (sessionContainerFor(w.tabId) == null) {
@@ -312,6 +318,10 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
           _snapshotFor(updated, conn).encode(),
         )
         .catchError((_) {});
+    _invokeControl('setWindowTitle', {
+      'windowId': windowId,
+      'title': _titleFor(updated, conn),
+    }).catchError((_) {});
   }
 
   /// Subscribes a freshly-opened window to its pinned tab's connection + file

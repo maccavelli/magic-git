@@ -56,6 +56,7 @@ class _FakeGit extends GitService {
     bool all = false,
     bool follow = false,
     bool noMerges = false,
+    bool fullHistory = false,
   }) async {
     lastLogArgs = {
       'grep': grep,

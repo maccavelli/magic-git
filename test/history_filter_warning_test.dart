@@ -35,6 +35,7 @@ class _StubGit extends GitService {
     bool all = false,
     bool follow = false,
     bool noMerges = false,
+    bool fullHistory = false,
   }) async => const [];
 
   @override

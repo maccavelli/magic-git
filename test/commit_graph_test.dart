@@ -138,5 +138,137 @@ void main() {
       final iso = await Isolate.run(() => CommitGraph.build(commits));
       expectSameGraph(iso, sync);
     });
+
+    test('headSha parameter pins the primary branch chain to Lane 0', () {
+      // Feature branch tip F appears first in log, but headSha specifies main branch tip M.
+      // F -> [B], M -> [B], B -> []
+      final commits = [
+        c('F', ['B']),
+        c('M', ['B']),
+        c('B', []),
+      ];
+
+      final g = CommitGraph.build(commits, headSha: 'M');
+      final fRow = g.rows.firstWhere((r) => r.commit.hash == 'F');
+      final mRow = g.rows.firstWhere((r) => r.commit.hash == 'M');
+      final bRow = g.rows.firstWhere((r) => r.commit.hash == 'B');
+
+      expect(mRow.column, 0, reason: 'M is on primary chain (HEAD), stays in Lane 0');
+      expect(bRow.column, 0, reason: 'B is on primary chain (HEAD), stays in Lane 0');
+      expect(fRow.column, 1, reason: 'F is on side branch, assigned to Lane 1');
+    });
+
+    test('merge commit marks non-primary parent edges with isMergeEdge = true', () {
+      // M merges P1 (mainline) and P2 (side branch).
+      final g = CommitGraph.build([
+        c('M', ['P1', 'P2']),
+        c('P1', ['B']),
+        c('P2', ['B']),
+        c('B', []),
+      ]);
+
+      final m = g.rows[0];
+      final mergeEdges = m.edges.where((e) => e.kind == GraphEdgeKind.fromNode).toList();
+      expect(mergeEdges.length, 2);
+
+      final mainEdge = mergeEdges.firstWhere((e) => e.toColumn == 0);
+      final sideEdge = mergeEdges.firstWhere((e) => e.toColumn == 1);
+
+      expect(mainEdge.isMergeEdge, isFalse, reason: 'First parent P1 is mainline edge');
+      expect(sideEdge.isMergeEdge, isTrue, reason: 'Second parent P2 is merge edge');
+    });
+
+    test('deduplicates duplicate parent hashes safely', () {
+      final g = CommitGraph.build([
+        c('M', ['P1', 'P1']), // Duplicate parent
+        c('P1', []),
+      ]);
+
+      expect(g.rows.length, 2);
+      final m = g.rows[0];
+      final fromEdges = m.edges.where((e) => e.kind == GraphEdgeKind.fromNode).toList();
+      expect(fromEdges.length, 1, reason: 'Duplicate parent P1 is deduplicated');
+    });
+
+    test('filtered list with missing parents does not leak lanes (F4)', () {
+      // A filtered log with gaps: commits C, B, A are present but their parents
+      // (X, Y) are NOT in the list. Before the fix, each missing parent would
+      // reserve a lane that never collapses, causing O(N) lane growth.
+      final commits = [
+        c('C', ['X']), // X not in list
+        c('B', ['Y']), // Y not in list
+        c('A', []),
+      ];
+      final g = CommitGraph.build(commits);
+
+      // Without the fix, laneCount would grow with each missing parent.
+      // With the fix, missing parents don't reserve lanes, so we stay compact.
+      expect(
+        g.laneCount,
+        lessThanOrEqualTo(2),
+        reason: 'Missing parents must not leak lanes',
+      );
+
+      // Each commit with a missing parent should still have a fromNode edge
+      // (to show the user the commit has a parent), routed to the node's own
+      // column rather than a new lane.
+      final cRow = g.rows[0];
+      final fromEdges = cRow.edges.where((e) => e.kind == GraphEdgeKind.fromNode).toList();
+      expect(fromEdges.length, 1, reason: 'C still shows it has a parent');
+      expect(
+        fromEdges.first.toColumn,
+        cRow.column,
+        reason: 'Missing parent routes to own column, not a new lane',
+      );
+    });
+
+    test('large filtered log stays compact, not O(N) lanes', () {
+      // Simulate a real filtered log: 100 commits, each with a parent NOT in
+      // the list (as happens with `git log --grep=...`).
+      final commits = <GitCommit>[];
+      for (var i = 0; i < 100; i++) {
+        commits.add(c('c$i', ['missing_$i'])); // parent not in list
+      }
+      final g = CommitGraph.build(commits);
+
+      // Before the fix, this would produce ~100 lanes.
+      // After the fix, it should stay very compact (1-2 lanes).
+      expect(
+        g.laneCount,
+        lessThanOrEqualTo(2),
+        reason: 'Filtered log with 100 disconnected commits must not '
+            'explode to 100 lanes',
+      );
+    });
+
+    test('filtered log with some parents present handles mixed case', () {
+      // E -> D -> C -> [missing], B -> [missing], A -> []
+      // D and C are contiguous, but C's parent is missing.
+      final commits = [
+        c('E', ['D']),
+        c('D', ['C']),
+        c('C', ['missing']),
+        c('B', ['also_missing']),
+        c('A', []),
+      ];
+      final g = CommitGraph.build(commits);
+
+      // E-D-C form a chain in lane 0. B and A are disconnected.
+      // Missing parents should not leak lanes.
+      expect(
+        g.laneCount,
+        lessThanOrEqualTo(3),
+        reason: 'Mixed present/missing parents stay compact',
+      );
+
+      // E-D chain should be in the same lane
+      final eRow = g.rows[0];
+      final dRow = g.rows[1];
+      final cRow = g.rows[2];
+      expect(eRow.column, dRow.column,
+          reason: 'E and D are in the same lane');
+      expect(dRow.column, cRow.column,
+          reason: 'D and C are in the same lane');
+    });
   });
 }
