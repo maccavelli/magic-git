@@ -146,6 +146,19 @@ List<_HostBlock> _hostBlocks(String output) {
     if (hostLike.hasMatch(line)) host = line;
   }
   flush();
+
+  // Fallback: when no bare hostname line was found (e.g. glab output starts
+  // with "✓ Logged in to <host>" before the host line), extract hosts from
+  // "Logged in to <host>" lines anywhere in the output.
+  if (blocks.isEmpty) {
+    for (final raw in output.split('\n')) {
+      final m = RegExp(r'Logged in to (\S+)').firstMatch(raw);
+      if (m != null) {
+        blocks.add(_HostBlock(m.group(1)!, raw));
+      }
+    }
+  }
+
   return blocks;
 }
 

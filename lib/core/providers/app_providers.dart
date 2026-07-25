@@ -172,6 +172,9 @@ class LocalEnvironmentGuard {
         executor,
       ).resolve('/', overrides: overrides);
       executor.configureEnvironment(path: env.path, binaries: env.found);
+      executor.setForgeTokenNeutralization(
+        _ref.read(connectionProvider.notifier)._forgeTokenVarsToNeutralize(),
+      );
     } catch (_) {
       // Best-effort: leave bare-name invocation on the inherited PATH.
     }
@@ -2037,6 +2040,12 @@ class ConnectionController extends Notifier<ConnectionState> {
     final guarded = login.catchError((Object e) {
       _hostLogins.remove(key); // a failed login is retryable
       throw e;
+    });
+    // Invalidate the cached auth probe after a successful login so the next
+    // watch re-checks against the now-authenticated CLI instead of serving
+    // the stale unauthenticated result from before the login.
+    guarded.then((_) {
+      if (ref.mounted) ref.invalidate(forgeAuthProvider((forge, false)));
     });
     return _hostLogins[key] = guarded;
   }

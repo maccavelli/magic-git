@@ -207,6 +207,7 @@ class CloneJobController extends Notifier<CloneJobState> {
         GlabService.cloneArgv(pathWithNamespace: slug, dirName: request.name),
       ForgeCloneSource() => throw StateError('not a forge source'),
       UrlCloneSource(:final url) => [
+        ...forgeGitAuthConfigArgs(forgeFromRemoteUrl(url)),
         'git',
         'clone',
         '--progress',

@@ -1075,6 +1075,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           final h = _host.text.trim();
           if (h.isEmpty || h == 'github.com' || h == 'gitlab.com') {
             _host.text = _defaultHost;
+            _hostEdited = false;
           }
         }
       }),

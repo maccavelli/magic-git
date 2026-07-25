@@ -170,6 +170,32 @@ gitbox
       expect(a.present, isFalse);
       expect(a.level, ToolAuthLevel.bad);
     });
+
+    test('Logged in to line before bare hostname (alternate glab output)', () {
+      const out = '''
+✓ Logged in to gitlab.lkqdev.com as saxsmith
+  ✓ Git operations for gitlab.lkqdev.com configured to use https protocol.
+  ✓ Token found: **************************
+''';
+      final a = parseGlabAuthStatus(out, present: true);
+      expect(a.authenticated, isTrue);
+      expect(a.host, 'gitlab.lkqdev.com');
+      expect(a.account, 'saxsmith');
+      expect(a.level, ToolAuthLevel.ok);
+    });
+
+    test('no bare hostname line at all — falls back to Logged in to', () {
+      const out = '''
+✓ Logged in to gitlab.internal as dev
+  ✓ Token found: **************************
+  ✓ Git operations configured to use https protocol.
+''';
+      final a = parseGlabAuthStatus(out, present: true);
+      expect(a.authenticated, isTrue);
+      expect(a.host, 'gitlab.internal');
+      expect(a.account, 'dev');
+      expect(a.level, ToolAuthLevel.ok);
+    });
   });
 
   group('ToolAuth.unknown', () {
