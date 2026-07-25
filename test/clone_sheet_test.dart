@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -269,6 +270,53 @@ void main() {
     expect(find.byType(CloneRepositorySheet), findsOneWidget);
     expect(find.textContaining('not found'), findsOneWidget);
     expect(stub.repoPathsSet, isEmpty, reason: 'no activation on failure');
+  });
+
+  testWidgets(
+    'landing mode: switching to GitLab tab auto-populates host from '
+    'forge auth when _hostEdited is false', (tester) async {
+    final stub = _StubConnection(const ConnectionState());
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          connectionProvider.overrideWith(() => stub),
+          activeExecutorProvider.overrideWithValue(_FakeExecutor()),
+          savedConnectionsProvider.overrideWith((ref) async => [_conn]),
+          forgeRepoListProvider.overrideWith((ref, key) async => []),
+          // Return a self-hosted GitLab host to simulate the signed-in CLI
+          // probe result — the host field should auto-populate after switching
+          // to the GitLab tab.
+          forgeAuthHostProvider.overrideWith((ref, key) async {
+            final (forge, _) = key;
+            return forge == Forge.gitlab ? 'gitlab.lkqdev.com' : null;
+          }),
+        ],
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: CloneRepositorySheet.landing(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await _next(tester); // Destination → Source
+
+    // Switch from the default GitHub tab to GitLab.
+    await tester.tap(find.text('GitLab'));
+    await tester.pumpAndSettle();
+
+    // The host field should now show the forge-auth host (not the stock
+    // 'gitlab.com') because the _hostEdited flag was reset after the
+    // programmatic tab-switch host change.
+    final hostField = find.byWidgetPredicate(
+      (w) =>
+          w is MacosTextField &&
+          w.controller != null &&
+          w.controller!.text == 'gitlab.lkqdev.com',
+    );
+    expect(hostField, findsOneWidget,
+        reason: 'host field should auto-populate to the forge auth host '
+            'after switching to GitLab tab');
   });
 
   testWidgets('landing mode offers This Mac plus saved connections', (

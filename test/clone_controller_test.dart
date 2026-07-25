@@ -321,4 +321,82 @@ void main() {
     expect(exec.calls, isEmpty);
     expect(exec.streamCalls, isEmpty);
   });
+
+  group('URL clone credential helpers', () {
+    test('GitHub HTTPS URL injects gh credential helper', () async {
+      exec.results.add(_ok('absent'));
+      const req = CloneRequest(
+        source: UrlCloneSource('https://github.com/owner/repo.git'),
+        parentDir: '/srv',
+        name: 'repo',
+      );
+      final fut = job.run(req);
+      await pumpEventQueue();
+      expect(exec.streamCalls.single.take(4), [
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!gh auth git-credential',
+      ]);
+      exec.results.add(_ok('https://github.com/owner/repo.git\n')); // verify
+      await exec.handle.finish(0);
+      await fut;
+    });
+
+    test('GitLab HTTPS URL injects glab credential helper', () async {
+      exec.results.add(_ok('absent'));
+      const req = CloneRequest(
+        source: UrlCloneSource('https://gitlab.com/group/project.git'),
+        parentDir: '/srv',
+        name: 'project',
+      );
+      final fut = job.run(req);
+      await pumpEventQueue();
+      expect(exec.streamCalls.single.take(4), [
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!glab auth git-credential',
+      ]);
+      exec.results.add(_ok('https://gitlab.com/group/project.git\n')); // verify
+      await exec.handle.finish(0);
+      await fut;
+    });
+
+    test('self-hosted GitLab URL injects glab credential helper', () async {
+      exec.results.add(_ok('absent'));
+      const req = CloneRequest(
+        source: UrlCloneSource('https://gitlab.lkqdev.com/group/project.git'),
+        parentDir: '/srv',
+        name: 'project',
+      );
+      final fut = job.run(req);
+      await pumpEventQueue();
+      expect(exec.streamCalls.single.take(4), [
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!glab auth git-credential',
+      ]);
+      exec.results.add(_ok('https://gitlab.lkqdev.com/group/project.git\n'));
+      await exec.handle.finish(0);
+      await fut;
+    });
+
+    test('unknown host URL does not inject forge credential helper', () async {
+      exec.results.add(_ok('absent'));
+      const req = CloneRequest(
+        source: UrlCloneSource('https://bitbucket.org/team/repo.git'),
+        parentDir: '/srv',
+        name: 'repo',
+      );
+      final fut = job.run(req);
+      await pumpEventQueue();
+      // First arg should be 'git', not '-c' (no credential helpers).
+      expect(exec.streamCalls.single.first, 'git');
+      exec.results.add(_ok('https://bitbucket.org/team/repo.git\n')); // verify
+      await exec.handle.finish(0);
+      await fut;
+    });
+  });
 }

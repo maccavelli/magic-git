@@ -8,7 +8,8 @@ import 'package:remote_magic_git/core/git/watch_lifecycle.dart';
 void main() {
   group('watchLifecycle', () {
     /// Returns a lifecycle with very fast timings so tests run at fake speed.
-    Stream<RepoWatchEvent> _fastLifecycle({
+    // ignore: no_leading_underscores_for_local_identifiers
+    Stream<RepoWatchEvent> fastLifecycle({
       required Future<WatchArm> Function(WatchHooks) arm,
       int maxRestarts = 3,
     }) =>
@@ -25,7 +26,7 @@ void main() {
     test('successful arm emits an immediate eventDriven tick', () {
       fakeAsync((async) {
         final events = <RepoWatchEvent>[];
-        _fastLifecycle(
+        fastLifecycle(
           arm: (_) async => WatchArmed(() async {}),
         ).listen(events.add);
         async.elapse(Duration.zero);
@@ -40,7 +41,7 @@ void main() {
       fakeAsync((async) {
         final events = <RepoWatchEvent>[];
         WatchHooks? captured;
-        _fastLifecycle(
+        fastLifecycle(
           arm: (hooks) async {
             captured = hooks;
             return WatchArmed(() async {});
@@ -62,7 +63,7 @@ void main() {
     test('WatchUnavailable degrades to polling immediately', () {
       fakeAsync((async) {
         final events = <RepoWatchEvent>[];
-        _fastLifecycle(
+        fastLifecycle(
           arm: (_) async => const WatchUnavailable(),
         ).listen(events.add);
         async.elapse(Duration.zero);
@@ -75,7 +76,7 @@ void main() {
     test('WatchAborted emits nothing — caller already cleaned up', () {
       fakeAsync((async) {
         final events = <RepoWatchEvent>[];
-        _fastLifecycle(
+        fastLifecycle(
           arm: (_) async => const WatchAborted(),
         ).listen(events.add);
         async.elapse(Duration.zero);
@@ -89,7 +90,7 @@ void main() {
         final events = <RepoWatchEvent>[];
         final arms = <int>[];
         WatchHooks? captured;
-        _fastLifecycle(
+        fastLifecycle(
           arm: (hooks) async {
             captured = hooks;
             arms.add(arms.length);
@@ -112,7 +113,7 @@ void main() {
       fakeAsync((async) {
         final events = <RepoWatchEvent>[];
         WatchHooks? captured;
-        _fastLifecycle(
+        fastLifecycle(
           maxRestarts: 0,
           arm: (hooks) async {
             captured = hooks;
@@ -134,7 +135,7 @@ void main() {
         final events = <RepoWatchEvent>[];
         WatchHooks? captured;
         int armCount = 0;
-        _fastLifecycle(
+        fastLifecycle(
           maxRestarts: 1,
           arm: (hooks) async {
             captured = hooks;
@@ -170,7 +171,7 @@ void main() {
       fakeAsync((async) {
         final events = <RepoWatchEvent>[];
         WatchHooks? captured;
-        _fastLifecycle(
+        fastLifecycle(
           arm: (hooks) async {
             captured = hooks;
             return WatchArmed(() async {});
@@ -195,7 +196,7 @@ void main() {
         final events = <RepoWatchEvent>[];
         var teardownCalled = false;
         late final StreamSubscription<RepoWatchEvent> sub;
-        sub = _fastLifecycle(
+        sub = fastLifecycle(
           arm: (_) async => WatchArmed(() async {
             teardownCalled = true;
           }),

@@ -133,7 +133,7 @@ void main() {
       addTearDown(container.dispose);
       final log = container.read(outputLogProvider.notifier);
 
-      log.logResult('git status', SSHCommandResult(
+      log.logResult('git status', const SSHCommandResult(
         exitCode: 0,
         stdout: 'clean\n',
         stderr: '',
@@ -154,7 +154,7 @@ void main() {
       addTearDown(container.dispose);
       final log = container.read(outputLogProvider.notifier);
 
-      log.logResult('git push', SSHCommandResult(
+      log.logResult('git push', const SSHCommandResult(
         exitCode: 128,
         stdout: '',
         stderr: 'fatal: not a git repository\n',
@@ -213,7 +213,7 @@ void main() {
       addTearDown(container.dispose);
       final log = container.read(outputLogProvider.notifier);
 
-      log.logResult('git log', SSHCommandResult(
+      log.logResult('git log', const SSHCommandResult(
         exitCode: 0,
         stdout: 'commit aaa\ncommit bbb\n',
         stderr: '',

@@ -28,8 +28,8 @@ void main() {
       expect(json['preIndexTree'], '');
       expect(json['worktreeTree'], '');
       expect(json['snapshotOid'], '');
-      expect(json['paths'], []);
-      expect(json['stashEntries'], []);
+      expect(json['paths'], <String>[]);
+      expect(json['stashEntries'], <String>[]);
       expect(json['at'], isA<String>());
     });
 
@@ -108,8 +108,8 @@ void main() {
       expect(restored!.repoPath, '');
       expect(restored.description, '');
       expect(restored.refName, '');
-      expect(restored.paths, []);
-      expect(restored.stashEntries, []);
+      expect(restored.paths, <String>[]);
+      expect(restored.stashEntries, <String>[]);
       expect(restored.at, isA<DateTime>());
     });
 
@@ -156,7 +156,7 @@ void main() {
 
   group('UndoCapture', () {
     test('toRecord builds an UndoRecord from captured state', () {
-      final capture = UndoCapture(
+      const capture = UndoCapture(
         preHead: 'aaa',
         preRef: 'main',
         postHead: 'bbb',
@@ -183,7 +183,7 @@ void main() {
     });
 
     test('toRecord passes through optional fields even when null/empty', () {
-      final capture = const UndoCapture(
+      const capture = UndoCapture(
         preHead: '',
         preRef: '',
         postHead: '',
