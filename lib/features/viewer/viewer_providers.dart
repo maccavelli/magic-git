@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:ui' show Size;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:meta/meta.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/ssh/ssh_command_executor.dart';
@@ -28,7 +29,8 @@ class ViewerReadException implements Exception {
   String toString() => message;
 }
 
-ViewerReadException _mapReadError(Object e) {
+@visibleForTesting
+ViewerReadException mapReadError(Object e) {
   if (e is ViewerReadException) return e;
   if (e is SSHOutputExceeded) {
     return const ViewerReadException(
@@ -118,7 +120,7 @@ final fileContentProvider = FutureProvider.autoDispose
         }
         return content;
       } catch (e) {
-        throw _mapReadError(e);
+        throw mapReadError(e);
       }
     });
 
@@ -169,7 +171,7 @@ final fileBytesProvider = FutureProvider.autoDispose
         // A huge image trips the executor's output cap (base64 inflates bytes
         // ~1.37×, so the ceiling bites sooner) — surface it as `tooLarge` so the
         // viewer shows the size notice + open-externally, not a raw error.
-        throw _mapReadError(e);
+        throw mapReadError(e);
       }
     });
 
