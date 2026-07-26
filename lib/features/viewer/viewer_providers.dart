@@ -6,7 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:meta/meta.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
-import '../../core/ssh/ssh_command_executor.dart';
+import '../../core/ssh/ssh_command_executor.dart' show SSHCommandSuperseded, SSHCommandTimeout, SSHOutputExceeded;
 import 'file_content.dart';
 import 'text_decoding.dart';
 
