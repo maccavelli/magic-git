@@ -1,0 +1,29 @@
+{
+  "_fixture": "gh pr view N --json … blocked PR (conflicts + review required)",
+  "_cli": "gh 2.x GraphQL-backed JSON field names",
+  "number": 99,
+  "title": "WIP: risky change",
+  "state": "OPEN",
+  "isDraft": false,
+  "headRefName": "feat/risky",
+  "baseRefName": "main",
+  "author": { "login": "dave" },
+  "url": "https://github.com/acme/widgets/pull/99",
+  "body": "Still sorting conflicts.",
+  "labels": [
+    { "name": "blocked", "color": "d73a4a" }
+  ],
+  "assignees": [],
+  "reviewDecision": "CHANGES_REQUESTED",
+  "milestone": null,
+  "headRefOid": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  "baseRefOid": "cafebabecafebabecafebabecafebabecafebabe",
+  "mergeable": "CONFLICTING",
+  "mergeStateStatus": "DIRTY",
+  "autoMergeRequest": null,
+  "additions": 10,
+  "deletions": 2,
+  "changedFiles": 1,
+  "maintainerCanModify": true,
+  "isCrossRepository": false
+}

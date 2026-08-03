@@ -1,0 +1,11 @@
+{
+  "_fixture": "gh api repos/{owner}/{repo} merge-related fields",
+  "_cli": "gh api REST repository object (subset)",
+  "allow_merge_commit": true,
+  "allow_squash_merge": true,
+  "allow_rebase_merge": false,
+  "allow_auto_merge": true,
+  "delete_branch_on_merge": true,
+  "name": "widgets",
+  "full_name": "acme/widgets"
+}

@@ -1,0 +1,31 @@
+{
+  "_fixture": "gh pr view N --json … ready-to-merge PR",
+  "_cli": "gh 2.x GraphQL-backed JSON field names",
+  "number": 42,
+  "title": "Add parser support",
+  "state": "OPEN",
+  "isDraft": false,
+  "headRefName": "feat/parser",
+  "baseRefName": "main",
+  "author": { "login": "alice" },
+  "url": "https://github.com/acme/widgets/pull/42",
+  "body": "Implements the new parser.\n\nCloses #11.",
+  "labels": [
+    { "name": "enhancement", "color": "a2eeef" }
+  ],
+  "assignees": [
+    { "login": "bob" }
+  ],
+  "reviewDecision": "APPROVED",
+  "milestone": { "title": "v1.2", "number": 3 },
+  "headRefOid": "aabbccddeeff00112233445566778899aabbccdd",
+  "baseRefOid": "11223344556677889900aabbccddeeff00112233",
+  "mergeable": "MERGEABLE",
+  "mergeStateStatus": "CLEAN",
+  "autoMergeRequest": null,
+  "additions": 120,
+  "deletions": 14,
+  "changedFiles": 5,
+  "maintainerCanModify": true,
+  "isCrossRepository": false
+}

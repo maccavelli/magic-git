@@ -1,0 +1,23 @@
+{
+  "_fixture": "glab mr view IID --output json conflicted MR",
+  "_cli": "glab 1.x / GitLab REST; falls back when detailed_merge_status missing",
+  "id": 9002,
+  "iid": 88,
+  "title": "Conflicting refactor",
+  "state": "opened",
+  "draft": false,
+  "author": { "username": "carol", "id": 3 },
+  "source_branch": "refactor/big",
+  "target_branch": "main",
+  "web_url": "https://gitlab.com/acme/widgets/-/merge_requests/88",
+  "labels": [],
+  "assignees": [],
+  "detailed_merge_status": "conflict",
+  "merge_status": "cannot_be_merged",
+  "has_conflicts": true,
+  "sha": "fedcba9876543210fedcba9876543210fedcba98",
+  "merge_when_pipeline_succeeds": false,
+  "squash": false,
+  "description": "Needs a rebase onto main.",
+  "user": { "can_merge": true }
+}

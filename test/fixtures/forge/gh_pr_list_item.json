@@ -1,0 +1,22 @@
+{
+  "_fixture": "gh pr list --json … single open PR item",
+  "_cli": "gh 2.x GraphQL-backed JSON field names",
+  "number": 42,
+  "title": "Add parser support",
+  "state": "OPEN",
+  "isDraft": false,
+  "headRefName": "feat/parser",
+  "baseRefName": "main",
+  "author": { "login": "alice" },
+  "url": "https://github.com/acme/widgets/pull/42",
+  "labels": [
+    { "name": "enhancement", "color": "a2eeef" },
+    { "name": "needs-review", "color": "fbca04" }
+  ],
+  "assignees": [
+    { "login": "bob" },
+    { "login": "carol" }
+  ],
+  "reviewDecision": "REVIEW_REQUIRED",
+  "milestone": { "title": "v1.2", "number": 3 }
+}

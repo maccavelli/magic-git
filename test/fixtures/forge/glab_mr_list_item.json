@@ -1,0 +1,24 @@
+{
+  "_fixture": "glab mr list --output json single open MR item (REST shape)",
+  "_cli": "glab 1.x / GitLab REST merge_request list payload",
+  "id": 9001,
+  "iid": 17,
+  "title": "Fix auth timeout",
+  "state": "opened",
+  "draft": false,
+  "work_in_progress": false,
+  "author": { "username": "alice", "id": 1 },
+  "source_branch": "fix/auth-timeout",
+  "target_branch": "main",
+  "web_url": "https://gitlab.com/acme/widgets/-/merge_requests/17",
+  "labels": ["bug", "priority::2"],
+  "assignees": [
+    { "username": "bob", "id": 2 }
+  ],
+  "assignee": { "username": "bob", "id": 2 },
+  "detailed_merge_status": "not_approved",
+  "has_conflicts": false,
+  "sha": "abcdef0123456789abcdef0123456789abcdef01",
+  "merge_when_pipeline_succeeds": false,
+  "description": "List payload may include description; treat as optional."
+}

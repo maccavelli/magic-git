@@ -1,0 +1,12 @@
+{
+  "_fixture": "glab api projects/:id merge-related project fields",
+  "_cli": "glab api REST project object (subset)",
+  "id": 12345,
+  "path_with_namespace": "acme/widgets",
+  "merge_method": "merge",
+  "squash_option": "allowed",
+  "remove_source_branch_after_merge": true,
+  "only_allow_merge_if_pipeline_succeeds": true,
+  "only_allow_merge_if_all_discussions_are_resolved": false,
+  "auto_merge_enabled": true
+}

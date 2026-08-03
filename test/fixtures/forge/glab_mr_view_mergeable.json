@@ -1,0 +1,33 @@
+{
+  "_fixture": "glab mr view IID --output json ready-to-merge MR",
+  "_cli": "glab 1.x / GitLab REST merge_request single resource",
+  "id": 9001,
+  "iid": 17,
+  "title": "Fix auth timeout",
+  "state": "opened",
+  "draft": false,
+  "work_in_progress": false,
+  "author": { "username": "alice", "id": 1 },
+  "source_branch": "fix/auth-timeout",
+  "target_branch": "main",
+  "web_url": "https://gitlab.com/acme/widgets/-/merge_requests/17",
+  "labels": ["bug"],
+  "assignees": [
+    { "username": "bob", "id": 2 }
+  ],
+  "detailed_merge_status": "mergeable",
+  "merge_status": "can_be_merged",
+  "has_conflicts": false,
+  "sha": "abcdef0123456789abcdef0123456789abcdef01",
+  "merge_when_pipeline_succeeds": false,
+  "squash": false,
+  "squash_on_merge": false,
+  "should_remove_source_branch": true,
+  "description": "Caps the HTTP client timeout at 30s.\n\nRelated to #44.",
+  "user": { "can_merge": true },
+  "head_pipeline": {
+    "id": 555,
+    "status": "success",
+    "sha": "abcdef0123456789abcdef0123456789abcdef01"
+  }
+}
