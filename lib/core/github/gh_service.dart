@@ -427,6 +427,25 @@ class GhService {
     );
   }
 
+  /// Updates a PR branch with the base branch tip via
+  /// `PUT repos/{owner}/{repo}/pulls/{number}/update-branch`.
+  /// Optional [expectedHeadSha] is sent as `expected_head_sha` when known.
+  Future<void> updatePullRequestBranch(
+    String repoPath,
+    int number, {
+    String? expectedHeadSha,
+  }) async {
+    await api(
+      repoPath,
+      'repos/{owner}/{repo}/pulls/$number/update-branch',
+      method: 'PUT',
+      fields: [
+        if (expectedHeadSha != null && expectedHeadSha.isNotEmpty)
+          'expected_head_sha=$expectedHeadSha',
+      ],
+    );
+  }
+
   /// Recent GitHub Actions workflow runs, via `gh run list --json`. [limit]
   /// matches the GitLab side's pipeline page size — see
   /// `GlabService.pipelines`. [allHistory] (the Forge panel's "Show more")

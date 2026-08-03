@@ -889,6 +889,51 @@ void main() {
       expect(fields, isEmpty);
     });
 
+    test('enableMergeRequestAutoMerge sets MWPS true via REST', () async {
+      final executor = MockExecutor(
+        onExecute: (_) => _ok(stdout: _withHeaders('{}')),
+      );
+      final service = GlabService(executor);
+      await service.enableMergeRequestAutoMerge(
+        _repo,
+        3,
+        sha: 'deadbeef',
+        squash: true,
+      );
+      final args = executor.calls.first.gitArgs;
+      expect(args, contains('projects/:id/merge_requests/3/merge'));
+      expect(args, containsAll(['-f', 'merge_when_pipeline_succeeds=true']));
+      expect(args, containsAll(['-f', 'sha=deadbeef']));
+      expect(args, isNot(contains('mr')));
+      expect(args, isNot(contains('glab mr merge')));
+    });
+
+    test('cancelMergeRequestAutoMerge posts cancel endpoint', () async {
+      final executor = MockExecutor(
+        onExecute: (_) => _ok(stdout: _withHeaders('{}')),
+      );
+      final service = GlabService(executor);
+      await service.cancelMergeRequestAutoMerge(_repo, 3);
+      expect(
+        executor.calls.first.gitArgs,
+        contains(
+          'projects/:id/merge_requests/3/cancel_merge_when_pipeline_succeeds',
+        ),
+      );
+    });
+
+    test('rebaseMergeRequest posts rebase endpoint', () async {
+      final executor = MockExecutor(
+        onExecute: (_) => _ok(stdout: _withHeaders('{}')),
+      );
+      final service = GlabService(executor);
+      await service.rebaseMergeRequest(_repo, 3);
+      expect(
+        executor.calls.first.gitArgs,
+        contains('projects/:id/merge_requests/3/rebase'),
+      );
+    });
+
     test('repoMergePolicy parses project merge fields', () async {
       final executor = MockExecutor(
         onExecute: (_) => _ok(

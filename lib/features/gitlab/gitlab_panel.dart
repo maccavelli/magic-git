@@ -796,9 +796,32 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
           secondary: true,
           onPressed: () => _approve(mr.iid),
         ),
-        if (_mergingMrs.contains(mr.iid))
+        if (plan.needsBranchUpdate)
+          InFlightPushButton(
+            busy: _busyMrs.contains(mr.iid),
+            label: 'Rebase onto target',
+            secondary: true,
+            onPressed: () => _rebaseMr(effective),
+          ),
+        if (plan.canEnableAutoMerge)
+          InFlightPushButton(
+            busy: _mergingMrs.contains(mr.iid),
+            label: 'Enable auto-merge',
+            secondary: true,
+            onPressed: () => _enableAutoMerge(effective, plan),
+          ),
+        if (plan.autoMergeAlreadyEnabled)
+          InFlightPushButton(
+            busy: _mergingMrs.contains(mr.iid),
+            label: 'Cancel auto-merge',
+            secondary: true,
+            onPressed: () => _cancelAutoMerge(mr.iid),
+          ),
+        if (_mergingMrs.contains(mr.iid) &&
+            !plan.canEnableAutoMerge &&
+            !plan.autoMergeAlreadyEnabled)
           const ProgressCircle()
-        else
+        else if (plan.canMergeNow)
           _mergeButton(effective, plan),
         _mrMorePulldown(effective),
       ],
@@ -968,6 +991,88 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     if (!mounted) return;
     setState(() => _approvingMrs.remove(iid));
     if (success) {
+      ref.invalidate(mergeRequestsProvider(repoPath));
+    }
+  }
+
+  Future<void> _enableAutoMerge(MergeRequest mr, MergePlan plan) async {
+    if (_mergingMrs.contains(mr.iid)) return;
+    final repoPath = this.repoPath;
+    final ok = await confirmAction(
+      context,
+      title: 'Enable auto-merge',
+      message:
+          'Enable auto-merge for !${mr.iid}? It will merge when the pipeline '
+          'succeeds (not immediately).',
+      confirmLabel: 'Enable auto-merge',
+    );
+    if (!ok || !mounted) return;
+    setState(() => _mergingMrs.add(mr.iid));
+    final glab = ref.read(glabServiceProvider);
+    final success = await runAction(
+      context,
+      () => glab.enableMergeRequestAutoMerge(
+        repoPath,
+        mr.iid,
+        sha: plan.pinHeadSha ? plan.headSha : null,
+        squash: plan.defaultMethod == MergeMethod.squash,
+        removeSourceBranch: plan.defaultDeleteSource,
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _mergingMrs.remove(mr.iid));
+    if (success) {
+      ref.invalidate(mergeRequestsProvider(repoPath));
+      ref.invalidate(mergeRequestDetailProvider((repoPath, mr.iid)));
+    }
+  }
+
+  Future<void> _cancelAutoMerge(int iid) async {
+    if (_mergingMrs.contains(iid)) return;
+    final repoPath = this.repoPath;
+    final ok = await confirmAction(
+      context,
+      title: 'Cancel auto-merge',
+      message: 'Cancel auto-merge for !$iid?',
+      confirmLabel: 'Cancel auto-merge',
+    );
+    if (!ok || !mounted) return;
+    setState(() => _mergingMrs.add(iid));
+    final glab = ref.read(glabServiceProvider);
+    final success = await runAction(
+      context,
+      () => glab.cancelMergeRequestAutoMerge(repoPath, iid),
+    );
+    if (!mounted) return;
+    setState(() => _mergingMrs.remove(iid));
+    if (success) {
+      ref.invalidate(mergeRequestsProvider(repoPath));
+      ref.invalidate(mergeRequestDetailProvider((repoPath, iid)));
+    }
+  }
+
+  Future<void> _rebaseMr(MergeRequest mr) async {
+    if (_busyMrs.contains(mr.iid)) return;
+    final repoPath = this.repoPath;
+    final ok = await confirmAction(
+      context,
+      title: 'Rebase onto target',
+      message:
+          'Rebase !${mr.iid} onto ${mr.targetBranch}? This rewrites the '
+          'source branch history on the remote.',
+      confirmLabel: 'Rebase',
+    );
+    if (!ok || !mounted) return;
+    setState(() => _busyMrs.add(mr.iid));
+    final glab = ref.read(glabServiceProvider);
+    final success = await runAction(
+      context,
+      () => glab.rebaseMergeRequest(repoPath, mr.iid),
+    );
+    if (!mounted) return;
+    setState(() => _busyMrs.remove(mr.iid));
+    if (success) {
+      ref.invalidate(mergeRequestDetailProvider((repoPath, mr.iid)));
       ref.invalidate(mergeRequestsProvider(repoPath));
     }
   }

@@ -1323,6 +1323,51 @@ query($path: ID!) {
     );
   }
 
+  /// Explicitly enables merge-when-pipeline-succeeds / auto-merge for [iid].
+  ///
+  /// Uses REST `PUT …/merge` with `merge_when_pipeline_succeeds=true` — never
+  /// the `glab mr merge` subcommand, whose `--auto-merge` defaults to true and
+  /// would make silent auto-merge a regression risk.
+  Future<void> enableMergeRequestAutoMerge(
+    String repoPath,
+    int iid, {
+    String? sha,
+    bool squash = false,
+    bool removeSourceBranch = false,
+  }) async {
+    await api(
+      repoPath,
+      'projects/:id/merge_requests/$iid/merge',
+      method: 'PUT',
+      fields: [
+        'merge_when_pipeline_succeeds=true',
+        if (squash) 'squash=true',
+        if (removeSourceBranch) 'should_remove_source_branch=true',
+        if (sha != null && sha.isNotEmpty) 'sha=$sha',
+      ],
+    );
+  }
+
+  /// Cancels merge-when-pipeline-succeeds via REST
+  /// `PUT …/merge_requests/:iid/cancel_merge_when_pipeline_succeeds`.
+  Future<void> cancelMergeRequestAutoMerge(String repoPath, int iid) async {
+    await api(
+      repoPath,
+      'projects/:id/merge_requests/$iid/cancel_merge_when_pipeline_succeeds',
+      method: 'POST',
+    );
+  }
+
+  /// Rebases the MR onto its target via REST
+  /// `POST projects/:id/merge_requests/:iid/rebase`.
+  Future<void> rebaseMergeRequest(String repoPath, int iid) async {
+    await api(
+      repoPath,
+      'projects/:id/merge_requests/$iid/rebase',
+      method: 'POST',
+    );
+  }
+
   /// Closes an open merge request (reversible — see [reopenMergeRequest]).
   /// REST `PUT .../merge_requests/:iid` with `state_event=close` — a
   /// text-free, side-effect-free boolean field, so the `-f key=value`

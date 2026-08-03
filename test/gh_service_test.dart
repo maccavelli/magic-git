@@ -717,6 +717,30 @@ void main() {
       expect(args, containsAll(['-t', 'Title', '-b', 'Body text']));
     });
 
+    test('mergePullRequest --auto and --disable-auto flags', () async {
+      final executor = MockExecutor(onExecute: (_) => _ok());
+      final service = GhService(executor);
+      await service.mergePullRequest(_repo, 1, auto: true);
+      expect(executor.calls.last.gitArgs, contains('--auto'));
+      await service.mergePullRequest(_repo, 1, disableAuto: true);
+      expect(executor.calls.last.gitArgs, contains('--disable-auto'));
+      await service.mergePullRequest(_repo, 1, admin: true);
+      expect(executor.calls.last.gitArgs, contains('--admin'));
+    });
+
+    test('updatePullRequestBranch hits update-branch endpoint', () async {
+      final executor = MockExecutor(onExecute: (_) => _ok(stdout: '{}'));
+      final service = GhService(executor);
+      await service.updatePullRequestBranch(
+        _repo,
+        7,
+        expectedHeadSha: 'abc',
+      );
+      final args = executor.calls.first.gitArgs;
+      expect(args, contains('repos/{owner}/{repo}/pulls/7/update-branch'));
+      expect(args, containsAll(['-f', 'expected_head_sha=abc']));
+    });
+
     test('repoMergePolicy parses allow_* fields', () async {
       final executor = MockExecutor(
         onExecute: (_) => _ok(

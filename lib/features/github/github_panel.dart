@@ -749,9 +749,32 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
           secondary: true,
           onPressed: () => _approve(pr.number),
         ),
-        if (_mergingPrs.contains(pr.number))
+        if (plan.needsBranchUpdate)
+          InFlightPushButton(
+            busy: _busyPrs.contains(pr.number),
+            label: 'Update branch',
+            secondary: true,
+            onPressed: () => _updatePrBranch(effective),
+          ),
+        if (plan.canEnableAutoMerge)
+          InFlightPushButton(
+            busy: _mergingPrs.contains(pr.number),
+            label: 'Enable auto-merge',
+            secondary: true,
+            onPressed: () => _enableAutoMerge(effective, plan),
+          ),
+        if (plan.autoMergeAlreadyEnabled)
+          InFlightPushButton(
+            busy: _mergingPrs.contains(pr.number),
+            label: 'Cancel auto-merge',
+            secondary: true,
+            onPressed: () => _cancelAutoMerge(pr.number),
+          ),
+        if (_mergingPrs.contains(pr.number) &&
+            !plan.canEnableAutoMerge &&
+            !plan.autoMergeAlreadyEnabled)
           const ProgressCircle()
-        else
+        else if (plan.canMergeNow)
           _mergeButton(effective, plan),
         _prMorePulldown(effective),
       ],
@@ -762,6 +785,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   /// the row's right-click menu below the primary trio, so the detail pane is a
   /// full action surface without a wall of buttons.
   Widget _prMorePulldown(PullRequest pr) {
+    final plan = mergePlanForGitHub(pr: pr);
     return MacosPulldownButton(
       title: 'More',
       items: [
@@ -773,6 +797,11 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
           title: const Text('Request changes…'),
           onTap: () => _requestChangesPr(pr.number),
         ),
+        if (plan.supportsAdminBypass)
+          MacosPulldownMenuItem(
+            title: const Text('Admin merge…'),
+            onTap: () => _adminMerge(pr),
+          ),
         MacosPulldownMenuItem(
           title: Text(pr.draft ? 'Mark ready for review' : 'Convert to draft'),
           onTap: () => _setPrDraft(pr.number, draft: !pr.draft),
@@ -914,6 +943,124 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     if (!mounted) return;
     setState(() => _approvingPrs.remove(number));
     if (success) {
+      ref.invalidate(pullRequestsProvider(repoPath));
+    }
+  }
+
+  Future<void> _adminMerge(PullRequest pr) async {
+    if (_mergingPrs.contains(pr.number)) return;
+    final repoPath = this.repoPath;
+    final ok = await confirmAction(
+      context,
+      title: 'Admin merge',
+      message:
+          'Bypass branch protection and merge #${pr.number}? This requires '
+          'admin privileges and can land unreviewed work.',
+      confirmLabel: 'Admin merge',
+    );
+    if (!ok || !mounted) return;
+    setState(() => _mergingPrs.add(pr.number));
+    final gh = ref.read(ghServiceProvider);
+    final success = await runAction(
+      context,
+      () => gh.mergePullRequest(
+        repoPath,
+        pr.number,
+        admin: true,
+        matchHeadCommit: pr.headOid,
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _mergingPrs.remove(pr.number));
+    if (success) {
+      setState(() => _sel = const ForgeNothingSel());
+      ref.invalidate(pullRequestsProvider(repoPath));
+      ref.invalidate(pullRequestDetailProvider((repoPath, pr.number)));
+    }
+  }
+
+  Future<void> _enableAutoMerge(PullRequest pr, MergePlan plan) async {
+    if (_mergingPrs.contains(pr.number)) return;
+    final repoPath = this.repoPath;
+    final ok = await confirmAction(
+      context,
+      title: 'Enable auto-merge',
+      message:
+          'Enable auto-merge for #${pr.number}? It will merge when '
+          'requirements are met (not immediately).',
+      confirmLabel: 'Enable auto-merge',
+    );
+    if (!ok || !mounted) return;
+    setState(() => _mergingPrs.add(pr.number));
+    final gh = ref.read(ghServiceProvider);
+    final success = await runAction(
+      context,
+      () => gh.mergePullRequest(
+        repoPath,
+        pr.number,
+        method: mergeMethodFlag(plan.defaultMethod),
+        auto: true,
+        matchHeadCommit: plan.pinHeadSha ? plan.headSha : null,
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _mergingPrs.remove(pr.number));
+    if (success) {
+      ref.invalidate(pullRequestsProvider(repoPath));
+      ref.invalidate(pullRequestDetailProvider((repoPath, pr.number)));
+    }
+  }
+
+  Future<void> _cancelAutoMerge(int number) async {
+    if (_mergingPrs.contains(number)) return;
+    final repoPath = this.repoPath;
+    final ok = await confirmAction(
+      context,
+      title: 'Cancel auto-merge',
+      message: 'Cancel auto-merge for #$number?',
+      confirmLabel: 'Cancel auto-merge',
+    );
+    if (!ok || !mounted) return;
+    setState(() => _mergingPrs.add(number));
+    final gh = ref.read(ghServiceProvider);
+    final success = await runAction(
+      context,
+      () => gh.mergePullRequest(repoPath, number, disableAuto: true),
+    );
+    if (!mounted) return;
+    setState(() => _mergingPrs.remove(number));
+    if (success) {
+      ref.invalidate(pullRequestsProvider(repoPath));
+      ref.invalidate(pullRequestDetailProvider((repoPath, number)));
+    }
+  }
+
+  Future<void> _updatePrBranch(PullRequest pr) async {
+    if (_busyPrs.contains(pr.number)) return;
+    final repoPath = this.repoPath;
+    final ok = await confirmAction(
+      context,
+      title: 'Update branch',
+      message:
+          'Update #${pr.number}\'s head branch with the latest from '
+          '${pr.baseRefName}?',
+      confirmLabel: 'Update branch',
+    );
+    if (!ok || !mounted) return;
+    setState(() => _busyPrs.add(pr.number));
+    final gh = ref.read(ghServiceProvider);
+    final success = await runAction(
+      context,
+      () => gh.updatePullRequestBranch(
+        repoPath,
+        pr.number,
+        expectedHeadSha: pr.headOid,
+      ),
+    );
+    if (!mounted) return;
+    setState(() => _busyPrs.remove(pr.number));
+    if (success) {
+      ref.invalidate(pullRequestDetailProvider((repoPath, pr.number)));
       ref.invalidate(pullRequestsProvider(repoPath));
     }
   }
