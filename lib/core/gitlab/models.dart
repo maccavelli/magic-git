@@ -54,7 +54,11 @@ enum CiStatus {
   };
 }
 
-/// A GitLab merge request, from `glab mr list --output json`.
+/// A GitLab merge request, from `glab mr list/view --output json` (REST shape).
+///
+/// List responses are already fairly fat; we parse extra keys when present.
+/// Detail-tier fields filled by [GlabService.mergeRequestDetail] when list
+/// omits them (or they are stale).
 class MergeRequest {
   final int iid;
   final String title;
@@ -65,6 +69,22 @@ class MergeRequest {
   final String webUrl;
   final bool draft;
 
+  // ---- List enrichment -----------------------------------------------------
+  final List<String> labels;
+  final List<String> assigneeUsernames;
+  /// Prefer over deprecated [mergeStatus]. May be stale on list; null if absent.
+  final String? detailedMergeStatus;
+  /// Legacy `merge_status` fallback when `detailed_merge_status` is missing.
+  final String? mergeStatus;
+  final bool hasConflicts;
+  /// Head SHA — often present on list; required for SHA-pinned merge.
+  final String? sha;
+  final bool mergeWhenPipelineSucceeds;
+  final String? description;
+  final bool? squash;
+  final bool? shouldRemoveSourceBranch;
+  final bool? userCanMerge;
+
   const MergeRequest({
     required this.iid,
     required this.title,
@@ -74,10 +94,24 @@ class MergeRequest {
     required this.targetBranch,
     required this.webUrl,
     required this.draft,
+    this.labels = const [],
+    this.assigneeUsernames = const [],
+    this.detailedMergeStatus,
+    this.mergeStatus,
+    this.hasConflicts = false,
+    this.sha,
+    this.mergeWhenPipelineSucceeds = false,
+    this.description,
+    this.squash,
+    this.shouldRemoveSourceBranch,
+    this.userCanMerge,
   });
+
+  String get shortSha => shortShaOf(sha);
 
   factory MergeRequest.fromJson(Map<String, dynamic> json) {
     final author = json['author'];
+    final user = json['user'];
     return MergeRequest(
       iid: (json['iid'] as num?)?.toInt() ?? 0,
       title: json['title'] as String? ?? '',
@@ -92,7 +126,58 @@ class MergeRequest {
           (json['draft'] as bool?) ??
           (json['work_in_progress'] as bool?) ??
           false,
+      labels: _parseLabels(json['labels']),
+      assigneeUsernames: _parseAssignees(json),
+      detailedMergeStatus: _emptyToNull(
+        json['detailed_merge_status'] as String?,
+      ),
+      mergeStatus: _emptyToNull(json['merge_status'] as String?),
+      hasConflicts: (json['has_conflicts'] as bool?) ?? false,
+      sha: json['sha'] as String?,
+      mergeWhenPipelineSucceeds:
+          (json['merge_when_pipeline_succeeds'] as bool?) ?? false,
+      description: json['description'] as String?,
+      squash: json['squash'] as bool? ?? json['squash_on_merge'] as bool?,
+      shouldRemoveSourceBranch:
+          json['should_remove_source_branch'] as bool?,
+      userCanMerge: user is Map ? user['can_merge'] as bool? : null,
     );
+  }
+
+  static String? _emptyToNull(String? s) =>
+      (s == null || s.isEmpty) ? null : s;
+
+  /// GitLab list/view may send bare name strings or `{name}` / `{title}` objects.
+  static List<String> _parseLabels(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw
+        .map((e) {
+          if (e is String) return e;
+          if (e is Map) {
+            return (e['name'] as String?) ?? (e['title'] as String?) ?? '';
+          }
+          return '';
+        })
+        .where((s) => s.isNotEmpty)
+        .toList();
+  }
+
+  static List<String> _parseAssignees(Map<String, dynamic> json) {
+    final assignees = json['assignees'];
+    if (assignees is List) {
+      final names = assignees
+          .map((e) => e is Map ? e['username'] as String? : null)
+          .whereType<String>()
+          .where((s) => s.isNotEmpty)
+          .toList();
+      if (names.isNotEmpty) return names;
+    }
+    final single = json['assignee'];
+    if (single is Map) {
+      final u = single['username'] as String?;
+      if (u != null && u.isNotEmpty) return [u];
+    }
+    return const [];
   }
 }
 

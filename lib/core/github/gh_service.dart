@@ -375,11 +375,41 @@ class GhService {
       '--state',
       'open',
       '--json',
-      'number,title,state,isDraft,headRefName,baseRefName,author,url',
+      'number,title,state,isDraft,headRefName,baseRefName,author,url,'
+          'labels,assignees,reviewDecision,milestone',
       '--limit',
       '$limit',
     ], 'gh pr list');
     return _mapList(decoded, PullRequest.fromJson, label: 'gh pr list');
+  }
+
+  /// JSON fields requested for [pullRequestDetail] / edit form. Includes list
+  /// identity plus mergeability, head SHA, body, and auto-merge state.
+  static const String _prDetailJsonFields =
+      'number,title,state,isDraft,headRefName,baseRefName,author,url,'
+      'labels,assignees,reviewDecision,milestone,body,headRefOid,baseRefOid,'
+      'mergeable,mergeStateStatus,autoMergeRequest,additions,deletions,'
+      'changedFiles,maintainerCanModify,isCrossRepository';
+
+  /// A single open/closed PR including mergeability and head SHA, via
+  /// `gh pr view <number> --json …`. Powers the detail pane and merge plan;
+  /// list queries stay light and omit expensive fields.
+  Future<PullRequest> pullRequestDetail(String repoPath, int number) async {
+    final decoded = await _runJson(repoPath, [
+      'gh',
+      'pr',
+      'view',
+      '$number',
+      '--json',
+      _prDetailJsonFields,
+    ], 'gh pr view');
+    if (decoded is Map<String, dynamic>) {
+      return PullRequest.fromJson(decoded);
+    }
+    throw const GhException(
+      'gh pr view: expected a JSON object',
+      SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+    );
   }
 
   /// Recent GitHub Actions workflow runs, via `gh run list --json`. [limit]
@@ -952,28 +982,14 @@ class GhService {
   /// Fetches a pull request's editable fields (title + body) for the edit
   /// form. `gh pr view --json` is the machine contract; the list query omits
   /// `body` to stay light, so this is the on-demand fetch behind "Edit…".
+  /// Editable title + body for the edit form. Implemented via
+  /// [pullRequestDetail] so selection and edit share one fetch shape.
   Future<({String title, String body})> pullRequestFields(
     String repoPath,
     int number,
   ) async {
-    final decoded = await _runJson(repoPath, [
-      'gh',
-      'pr',
-      'view',
-      '$number',
-      '--json',
-      'title,body',
-    ], 'gh pr view');
-    if (decoded is Map<String, dynamic>) {
-      return (
-        title: (decoded['title'] as String?) ?? '',
-        body: (decoded['body'] as String?) ?? '',
-      );
-    }
-    throw const GhException(
-      'gh pr view: expected a JSON object',
-      SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
-    );
+    final d = await pullRequestDetail(repoPath, number);
+    return (title: d.title, body: d.body ?? '');
   }
 
   /// Checks out a PR's branch locally via `gh pr checkout`. Switches the

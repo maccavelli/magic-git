@@ -1,5 +1,16 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/github/models.dart';
+
+Map<String, dynamic> _fixture(String name) {
+  final f = File('test/fixtures/forge/$name');
+  final map = jsonDecode(f.readAsStringSync()) as Map<String, dynamic>;
+  map.remove('_fixture');
+  map.remove('_cli');
+  return map;
+}
 
 void main() {
   group('PullRequest.fromJson', () {
@@ -41,6 +52,43 @@ void main() {
       expect(pr.authorLogin, isNull);
       expect(pr.draft, isFalse);
       expect(pr.merged, isFalse);
+      expect(pr.labels, isEmpty);
+      expect(pr.mergeable, GhMergeable.unknown);
+    });
+
+    test('parses list enrichment from fixture', () {
+      final pr = PullRequest.fromJson(_fixture('gh_pr_list_item.json'));
+      expect(pr.number, 42);
+      expect(pr.labels, ['enhancement', 'needs-review']);
+      expect(pr.assigneeLogins, ['bob', 'carol']);
+      expect(pr.reviewDecision, 'REVIEW_REQUIRED');
+      expect(pr.milestoneTitle, 'v1.2');
+    });
+
+    test('parses detail mergeability and head SHA from fixture', () {
+      final pr = PullRequest.fromJson(_fixture('gh_pr_view_mergeable.json'));
+      expect(pr.headOid, startsWith('aabbccdd'));
+      expect(pr.shortHeadOid.length, 8);
+      expect(pr.mergeable, GhMergeable.mergeable);
+      expect(pr.mergeStateStatus, 'CLEAN');
+      expect(pr.reviewDecision, 'APPROVED');
+      expect(pr.body, contains('parser'));
+      expect(pr.additions, 120);
+      expect(pr.autoMergeEnabled, isFalse);
+    });
+
+    test('parses blocked detail fixture', () {
+      final pr = PullRequest.fromJson(_fixture('gh_pr_view_blocked.json'));
+      expect(pr.mergeable, GhMergeable.conflicting);
+      expect(pr.mergeStateStatus, 'DIRTY');
+      expect(pr.reviewDecision, 'CHANGES_REQUESTED');
+    });
+
+    test('normalizes mergeable wire values', () {
+      expect(GhMergeable.fromWire('MERGEABLE'), GhMergeable.mergeable);
+      expect(GhMergeable.fromWire('CONFLICTING'), GhMergeable.conflicting);
+      expect(GhMergeable.fromWire('UNKNOWN'), GhMergeable.unknown);
+      expect(GhMergeable.fromWire(null), GhMergeable.unknown);
     });
   });
 

@@ -1408,12 +1408,9 @@ query($path: ID!) {
     }
   }
 
-  /// Fetches a merge request's editable fields (title + description) for the
-  /// edit form (`glab mr view --output json` — the machine contract).
-  Future<({String title, String description})> mergeRequestFields(
-    String repoPath,
-    int iid,
-  ) async {
+  /// A single MR including mergeability and head SHA, via
+  /// `glab mr view <iid> --output json`. Powers the detail pane and merge plan.
+  Future<MergeRequest> mergeRequestDetail(String repoPath, int iid) async {
     final decoded = await _runJson(repoPath, [
       'glab',
       'mr',
@@ -1423,15 +1420,27 @@ query($path: ID!) {
       'json',
     ], 'glab mr view');
     if (decoded is Map<String, dynamic>) {
-      return (
-        title: (decoded['title'] as String?) ?? '',
-        description: (decoded['description'] as String?) ?? '',
-      );
+      return MergeRequest.fromJson(decoded);
+    }
+    // Fallback: REST GET when view returns unexpected shape.
+    final rest = await api(repoPath, 'projects/:id/merge_requests/$iid');
+    if (rest is Map<String, dynamic>) {
+      return MergeRequest.fromJson(rest);
     }
     throw const GlabException(
       'glab mr view: expected a JSON object',
       SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
     );
+  }
+
+  /// Editable title + description for the edit form. Implemented via
+  /// [mergeRequestDetail] so selection and edit share one fetch.
+  Future<({String title, String description})> mergeRequestFields(
+    String repoPath,
+    int iid,
+  ) async {
+    final d = await mergeRequestDetail(repoPath, iid);
+    return (title: d.title, description: d.description ?? '');
   }
 
   Future<dynamic> _runJson(

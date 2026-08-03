@@ -356,6 +356,39 @@ void main() {
       expect(prs.length, 2);
       expect(prs[0].number, 1);
       expect(prs[1].draft, isTrue);
+      final jsonField = executor.calls.first.gitArgs
+          .skipWhile((a) => a != '--json')
+          .skip(1)
+          .first;
+      expect(jsonField, contains('labels'));
+      expect(jsonField, contains('assignees'));
+      expect(jsonField, contains('reviewDecision'));
+      expect(jsonField, contains('milestone'));
+    });
+
+    test('pullRequestDetail returns head SHA and mergeable', () async {
+      final executor = MockExecutor(
+        onExecute: (_) => _ok(
+          stdout: '''{
+            "number": 42,
+            "title": "PR",
+            "state": "OPEN",
+            "headRefName": "feat",
+            "baseRefName": "main",
+            "url": "https://example/pr/42",
+            "headRefOid": "aabbccddeeff00112233445566778899aabbccdd",
+            "mergeable": "MERGEABLE",
+            "mergeStateStatus": "CLEAN",
+            "body": "hello"
+          }''',
+        ),
+      );
+      final service = GhService(executor);
+      final pr = await service.pullRequestDetail(_repo, 42);
+      expect(pr.number, 42);
+      expect(pr.headOid, startsWith('aabbccdd'));
+      expect(pr.mergeable.name, 'mergeable');
+      expect(executor.calls.first.gitArgs, containsAll(['pr', 'view', '42']));
     });
   });
 

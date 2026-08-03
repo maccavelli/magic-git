@@ -2528,6 +2528,8 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   projectIssuesProvider,
   projectMilestonesProvider,
   issueDetailProvider,
+  pullRequestDetailProvider,
+  mergeRequestDetailProvider,
   forgeProvider,
   forgeRepoListProvider,
   pullRequestsProvider,
@@ -4306,4 +4308,23 @@ final issueDetailProvider = FutureProvider.autoDispose
         case Forge.unknown:
           throw StateError('No forge configured for this repository.');
       }
+    });
+
+/// Single PR detail (mergeability, head SHA, body). Keyed by (repoPath, number).
+final pullRequestDetailProvider = FutureProvider.autoDispose
+    .family<PullRequest, (String, int)>((ref, key) async {
+      final (repoPath, number) = key;
+      final gh = ref.watch(ghServiceProvider);
+      await _forgeAuthReady(ref);
+      return gh.pullRequestDetail(repoPath, number);
+    });
+
+/// Single MR detail (detailed_merge_status, sha, description). Keyed by
+/// (repoPath, iid).
+final mergeRequestDetailProvider = FutureProvider.autoDispose
+    .family<MergeRequest, (String, int)>((ref, key) async {
+      final (repoPath, iid) = key;
+      final glab = ref.watch(glabServiceProvider);
+      await _forgeAuthReady(ref);
+      return glab.mergeRequestDetail(repoPath, iid);
     });

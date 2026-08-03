@@ -980,9 +980,35 @@ void main() {
       );
     });
 
+    test('mergeRequestDetail returns sha and detailed_merge_status', () async {
+      final executor = MockExecutor(
+        onExecute: (_) => _ok(
+          stdout: '''{
+            "iid": 17,
+            "title": "MR",
+            "state": "opened",
+            "source_branch": "feat",
+            "target_branch": "main",
+            "web_url": "https://example/mr/17",
+            "sha": "abcdef0123456789abcdef0123456789abcdef01",
+            "detailed_merge_status": "mergeable",
+            "description": "hello"
+          }''',
+        ),
+      );
+      final service = GlabService(executor);
+      final mr = await service.mergeRequestDetail(_repo, 17);
+      expect(mr.iid, 17);
+      expect(mr.sha, startsWith('abcdef01'));
+      expect(mr.detailedMergeStatus, 'mergeable');
+      expect(executor.calls.first.gitArgs, containsAll(['mr', 'view', '17']));
+    });
+
     test('mergeRequestFields returns title and description', () async {
       final executor = MockExecutor(
-        onExecute: (_) => _ok(stdout: '{"title": "MR Title", "description": "MR Desc"}'),
+        onExecute: (_) => _ok(
+          stdout: '{"title": "MR Title", "description": "MR Desc", "iid": 1}',
+        ),
       );
       final service = GlabService(executor);
       final fields = await service.mergeRequestFields(_repo, 1);

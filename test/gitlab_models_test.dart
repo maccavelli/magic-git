@@ -1,5 +1,16 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/gitlab/models.dart';
+
+Map<String, dynamic> _fixture(String name) {
+  final f = File('test/fixtures/forge/$name');
+  final map = jsonDecode(f.readAsStringSync()) as Map<String, dynamic>;
+  map.remove('_fixture');
+  map.remove('_cli');
+  return map;
+}
 
 void main() {
   group('MergeRequest.fromJson', () {
@@ -36,6 +47,34 @@ void main() {
       expect(mr.iid, 0);
       expect(mr.authorUsername, isNull);
       expect(mr.draft, isFalse);
+      expect(mr.labels, isEmpty);
+      expect(mr.hasConflicts, isFalse);
+    });
+
+    test('parses list enrichment from fixture', () {
+      final mr = MergeRequest.fromJson(_fixture('glab_mr_list_item.json'));
+      expect(mr.iid, 17);
+      expect(mr.labels, ['bug', 'priority::2']);
+      expect(mr.assigneeUsernames, ['bob']);
+      expect(mr.detailedMergeStatus, 'not_approved');
+      expect(mr.sha, startsWith('abcdef01'));
+      expect(mr.hasConflicts, isFalse);
+    });
+
+    test('parses detail mergeable fixture', () {
+      final mr = MergeRequest.fromJson(_fixture('glab_mr_view_mergeable.json'));
+      expect(mr.detailedMergeStatus, 'mergeable');
+      expect(mr.sha, isNotNull);
+      expect(mr.shortSha.length, 8);
+      expect(mr.description, contains('timeout'));
+      expect(mr.userCanMerge, isTrue);
+      expect(mr.shouldRemoveSourceBranch, isTrue);
+    });
+
+    test('parses conflict detail fixture', () {
+      final mr = MergeRequest.fromJson(_fixture('glab_mr_view_conflict.json'));
+      expect(mr.detailedMergeStatus, 'conflict');
+      expect(mr.hasConflicts, isTrue);
     });
   });
 

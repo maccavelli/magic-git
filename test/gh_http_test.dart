@@ -517,21 +517,20 @@ void main() {
       ]);
     });
 
-    test('pullRequestFields fetches title + body for the edit form', () async {
+    test('pullRequestFields fetches title + body via pullRequestDetail', () async {
       exec.next = const SSHCommandResult(
         exitCode: 0,
-        stdout: '{"title":"A title","body":"A body"}',
+        stdout: '{"title":"A title","body":"A body","number":5,"state":"OPEN"}',
         stderr: '',
       );
       final fields = await gh.pullRequestFields('/repo', 5);
-      expect(exec.calls.single, [
-        'gh',
-        'pr',
-        'view',
-        '5',
-        '--json',
-        'title,body',
-      ]);
+      expect(exec.calls.single[0], 'gh');
+      expect(exec.calls.single[1], 'pr');
+      expect(exec.calls.single[2], 'view');
+      expect(exec.calls.single[3], '5');
+      expect(exec.calls.single[4], '--json');
+      expect(exec.calls.single[5], contains('body'));
+      expect(exec.calls.single[5], contains('headRefOid'));
       expect(fields.title, 'A title');
       expect(fields.body, 'A body');
     });
