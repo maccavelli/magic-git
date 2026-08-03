@@ -3,6 +3,7 @@ import '../forge/forge.dart';
 import '../forge/forge_dashboard.dart';
 import '../forge/forge_json.dart';
 import '../forge/forge_repo_summary.dart';
+import '../forge/merge_plan.dart';
 import '../ssh/ssh_command_executor.dart';
 import 'models.dart';
 
@@ -408,6 +409,20 @@ class GhService {
     }
     throw const GhException(
       'gh pr view: expected a JSON object',
+      SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+    );
+  }
+
+  /// Repo-level merge method / auto-merge policy via
+  /// `gh api repos/{owner}/{repo}`. Cached by the provider; failures should
+  /// be treated as "unknown policy" by callers.
+  Future<GhRepoMergePolicy> repoMergePolicy(String repoPath) async {
+    final decoded = await api(repoPath, 'repos/{owner}/{repo}');
+    if (decoded is Map<String, dynamic>) {
+      return GhRepoMergePolicy.fromJson(decoded);
+    }
+    throw const GhException(
+      'gh api repos/{owner}/{repo}: expected a JSON object',
       SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
     );
   }

@@ -2530,6 +2530,7 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   issueDetailProvider,
   pullRequestDetailProvider,
   mergeRequestDetailProvider,
+  repoMergePolicyProvider,
   forgeProvider,
   forgeRepoListProvider,
   pullRequestsProvider,
@@ -4327,4 +4328,20 @@ final mergeRequestDetailProvider = FutureProvider.autoDispose
       final glab = ref.watch(glabServiceProvider);
       await _forgeAuthReady(ref);
       return glab.mergeRequestDetail(repoPath, iid);
+    });
+
+/// Repo/project merge method policy (allowed strategies, default delete-source).
+/// Failures surface as AsyncError — callers treat null/error as open method set.
+final repoMergePolicyProvider = FutureProvider.autoDispose
+    .family<Object, String>((ref, repoPath) async {
+      await _forgeAuthReady(ref);
+      switch (await ref.watch(forgeProvider(repoPath).future)) {
+        case Forge.github:
+          return ref.watch(ghServiceProvider).repoMergePolicy(repoPath);
+        case Forge.gitlab:
+          return ref.watch(glabServiceProvider).repoMergePolicy(repoPath);
+        case Forge.none:
+        case Forge.unknown:
+          throw StateError('No forge configured for this repository.');
+      }
     });

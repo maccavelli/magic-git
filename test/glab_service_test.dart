@@ -889,6 +889,24 @@ void main() {
       expect(fields, isEmpty);
     });
 
+    test('repoMergePolicy parses project merge fields', () async {
+      final executor = MockExecutor(
+        onExecute: (_) => _ok(
+          stdout: _withHeaders('''{
+            "merge_method": "ff",
+            "squash_option": "always",
+            "remove_source_branch_after_merge": true,
+            "auto_merge_enabled": true
+          }'''),
+        ),
+      );
+      final service = GlabService(executor);
+      final p = await service.repoMergePolicy(_repo);
+      expect(p.mergeMethod, 'ff');
+      expect(p.squashAlways, isTrue);
+      expect(p.removeSourceBranchAfterMerge, isTrue);
+    });
+
     test('closeMergeRequest calls api PUT with state_event=close', () async {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{}')),

@@ -25,6 +25,7 @@ import '../forge/forge_prefs.dart';
 import '../forge/forge_selection.dart';
 import '../forge/forge_widgets.dart';
 import '../forge/issue_actions.dart';
+import '../forge/merge_options_sheet.dart';
 import '../forge/merge_readiness.dart';
 import '../forge/project_sections.dart';
 import 'create_mr_form.dart';
@@ -732,7 +733,11 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     );
     final detail = detailAsync.asData?.value;
     final effective = detail ?? mr;
-    final plan = mergePlanForGitLab(mr: effective);
+    final policy = ref.watch(repoMergePolicyProvider(repoPath)).asData?.value;
+    final plan = mergePlanForGitLab(
+      mr: effective,
+      policy: policy is GlRepoMergePolicy ? policy : null,
+    );
     final loading = detailAsync.isLoading && detail == null;
 
     final lines = <Widget>[
@@ -994,7 +999,12 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     }
     if (!mounted) return;
 
-    final plan = mergePlanForGitLab(mr: detailMr);
+    GlRepoMergePolicy? policy;
+    final policyVal =
+        ref.read(repoMergePolicyProvider(repoPath)).asData?.value;
+    if (policyVal is GlRepoMergePolicy) policy = policyVal;
+
+    final plan = mergePlanForGitLab(mr: detailMr, policy: policy);
     if (!plan.canMergeNow) {
       await showErrorDialog(
         context,
@@ -1005,22 +1015,22 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       return;
     }
 
-    final verb = squash ? 'Squash-merge' : 'Merge';
+    final initialMethod =
+        squash ? MergeMethod.squash : MergeMethod.mergeCommit;
+    final chosenMethod = plan.allowedMethods.contains(initialMethod)
+        ? initialMethod
+        : plan.defaultMethod;
     final shaNote = plan.pinHeadSha && plan.headSha != null
         ? ' (${plan.headSha!.substring(0, plan.headSha!.length.clamp(0, 7))})'
         : '';
-    // The delete-source-branch choice IS the confirm: the primary keeps the
-    // source branch, the secondary merges and removes it (the web UI's "delete
-    // source branch" checkbox). Null → cancelled.
-    final removeSource = await chooseAction<bool>(
+    final options = await showMergeOptionsSheet(
       context,
+      plan: plan,
       title: 'Merge merge request',
-      message: '$verb !$iid$shaNote into its target branch?',
-      primaryLabel: verb,
-      primaryValue: false,
-      secondary: [('$verb & delete source branch', true)],
+      summary: 'Merge !$iid$shaNote into its target branch.',
+      initialMethod: chosenMethod,
     );
-    if (removeSource == null || !mounted) return;
+    if (options == null || !mounted) return;
     // Guard added after the choice so its spinner means "merging", not "dialog
     // open" — see _approve.
     setState(() => _mergingMrs.add(iid));
@@ -1030,9 +1040,11 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       () => glab.mergeMergeRequest(
         repoPath,
         iid,
-        squash: squash,
-        removeSourceBranch: removeSource,
+        squash: options.method == MergeMethod.squash,
+        removeSourceBranch: options.deleteSource,
         sha: plan.pinHeadSha ? plan.headSha : null,
+        squashMessage: options.subject,
+        mergeCommitMessage: options.body ?? options.subject,
       ),
     );
     if (!mounted) return;
@@ -1042,7 +1054,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       setState(() => _sel = const ForgeNothingSel());
       ref.invalidate(mergeRequestsProvider(repoPath));
       ref.invalidate(mergeRequestDetailProvider((repoPath, iid)));
-      if (removeSource) {
+      if (options.deleteSource) {
         ref.invalidate(refsProvider(repoPath));
         ref.invalidate(mergedBranchesProvider(repoPath));
       }

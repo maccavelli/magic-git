@@ -4,6 +4,7 @@ import '../forge/forge.dart';
 import '../forge/forge_dashboard.dart';
 import '../forge/forge_json.dart';
 import '../forge/forge_repo_summary.dart';
+import '../forge/merge_plan.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../utils/bounded_tail.dart';
 import 'models.dart';
@@ -1414,6 +1415,18 @@ query($path: ID!) {
     if (!result.isSuccess) {
       throw GlabException('glab mr update failed', result);
     }
+  }
+
+  /// Project-level merge method / squash policy via `glab api projects/:id`.
+  Future<GlRepoMergePolicy> repoMergePolicy(String repoPath) async {
+    final decoded = await api(repoPath, 'projects/:id');
+    if (decoded is Map<String, dynamic>) {
+      return GlRepoMergePolicy.fromJson(decoded);
+    }
+    throw const GlabException(
+      'glab api projects/:id: expected a JSON object',
+      SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+    );
   }
 
   /// A single MR including mergeability and head SHA, via

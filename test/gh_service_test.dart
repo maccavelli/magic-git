@@ -703,6 +703,40 @@ void main() {
       expect(executor.calls.first.gitArgs, isNot(contains('--match-head-commit')));
     });
 
+    test('mergePullRequest passes -t/-b subject and body', () async {
+      final executor = MockExecutor(onExecute: (_) => _ok());
+      final service = GhService(executor);
+      await service.mergePullRequest(
+        _repo,
+        1,
+        method: 'squash',
+        subject: 'Title',
+        body: 'Body text',
+      );
+      final args = executor.calls.first.gitArgs;
+      expect(args, containsAll(['-t', 'Title', '-b', 'Body text']));
+    });
+
+    test('repoMergePolicy parses allow_* fields', () async {
+      final executor = MockExecutor(
+        onExecute: (_) => _ok(
+          stdout: '''{
+            "allow_merge_commit": false,
+            "allow_squash_merge": true,
+            "allow_rebase_merge": false,
+            "allow_auto_merge": true,
+            "delete_branch_on_merge": true
+          }''',
+        ),
+      );
+      final service = GhService(executor);
+      final p = await service.repoMergePolicy(_repo);
+      expect(p.allowMergeCommit, isFalse);
+      expect(p.allowSquashMerge, isTrue);
+      expect(p.allowAutoMerge, isTrue);
+      expect(p.deleteBranchOnMerge, isTrue);
+    });
+
     test('closePullRequest calls gh pr close', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
       final service = GhService(executor);

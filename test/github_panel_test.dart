@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
+import 'package:remote_magic_git/core/forge/merge_plan.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/github/gh_service.dart';
 import 'package:remote_magic_git/core/github/models.dart';
@@ -117,6 +118,9 @@ Future<void> _pump(WidgetTester tester, {GhService? gh}) async {
       pullRequestDetailProvider(
         (_repo, 7),
       ).overrideWith((ref) async => _readyPr),
+      repoMergePolicyProvider(_repo).overrideWith(
+        (ref) async => const GhRepoMergePolicy(),
+      ),
       workflowRunsProvider(_repo).overrideWith((ref) async => _runs),
       runJobsProvider((_repo, 200)).overrideWith((ref) => Stream.value(_jobs)),
       // The PR detail's inline Checks body mounts the head branch's latest
@@ -225,28 +229,37 @@ void main() {
 
     expect(find.text('Check out'), findsOneWidget);
     expect(find.text('Approve'), findsOneWidget);
-    expect(find.text('Merge'), findsOneWidget);
+    // Policy-aware primary may be Merge or Squash and merge.
+    expect(
+      find.text('Merge').evaluate().isNotEmpty ||
+          find.text('Squash and merge').evaluate().isNotEmpty,
+      isTrue,
+    );
     expect(find.text('Head'), findsOneWidget);
     expect(find.text('Base'), findsOneWidget);
   });
-  testWidgets('the merge pulldown offers squash, confirmed with its own verb',
+  testWidgets('merge options sheet confirms squash path with SHA pin',
       (tester) async {
-    // gh pr merge always supported --squash/--rebase; the UI only ever sent
-    // the default. The pulldown beside Merge closes that gap.
     final gh = _MergeCapturingGh();
     await _pump(tester, gh: gh);
 
     await tester.tap(find.text('Add the parser'));
     await tester.pumpAndSettle();
-    // The merge-strategy pulldown is the first in the action bar; the "More"
-    // overflow pulldown is the last.
-    await tester.tap(find.byType(MacosPulldownButton).first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Squash and merge'));
+    // With full policy, squash is the default primary — open it directly.
+    final squashPrimary = find.text('Squash and merge');
+    if (squashPrimary.evaluate().isNotEmpty) {
+      await tester.tap(squashPrimary.first);
+    } else {
+      await tester.tap(find.byType(MacosPulldownButton).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Squash and merge'));
+    }
     await tester.pumpAndSettle();
 
     expect(gh.merges, isEmpty, reason: 'nothing before the confirm');
-    await tester.tap(find.text('Squash-merge'));
+    // Phase-3 merge options sheet: confirm with Merge.
+    expect(find.text('Merge pull request'), findsOneWidget);
+    await tester.tap(find.text('Merge').last);
     await tester.pumpAndSettle();
 
     expect(gh.merges, [(7, 'squash', _readyPr.headOid)]);

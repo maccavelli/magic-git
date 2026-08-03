@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
+import 'package:remote_magic_git/core/forge/merge_plan.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/gitlab/glab_service.dart';
 import 'package:remote_magic_git/core/gitlab/models.dart';
@@ -144,6 +145,9 @@ Future<void> _pump(WidgetTester tester, {GlabService? glab}) async {
       mergeRequestDetailProvider(
         (_repo, 7),
       ).overrideWith((ref) async => _readyMr),
+      repoMergePolicyProvider(_repo).overrideWith(
+        (ref) async => const GlRepoMergePolicy(),
+      ),
       pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
       jobsProvider((_repo, 100)).overrideWith((ref) async => _jobs),
       // The MR detail's inline Checks body mounts the head pipeline's jobs
@@ -256,7 +260,7 @@ void main() {
     expect(find.text('Target'), findsOneWidget);
   });
 
-  testWidgets('the merge pulldown offers squash, confirmed with its own verb', (
+  testWidgets('the merge pulldown offers squash, confirmed via options sheet', (
     tester,
   ) async {
     // The GitLab merge API always supported squash=true; the UI only ever
@@ -275,7 +279,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(glab.merges, isEmpty, reason: 'nothing before the confirm');
-    await tester.tap(find.text('Squash-merge'));
+    expect(find.text('Merge merge request'), findsOneWidget);
+    await tester.tap(find.text('Merge').last);
     await tester.pumpAndSettle();
 
     expect(glab.merges, [(7, true, _readyMr.sha)]);
@@ -297,6 +302,9 @@ void main() {
           mergeRequestDetailProvider(
             (_repo, 7),
           ).overrideWith((ref) async => _readyMr),
+          repoMergePolicyProvider(_repo).overrideWith(
+            (ref) async => const GlRepoMergePolicy(),
+          ),
           pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
           jobsProvider((_repo, 101)).overrideWith((ref) async => _jobs),
           glabServiceProvider.overrideWithValue(glab),

@@ -25,6 +25,7 @@ import '../forge/forge_prefs.dart';
 import '../forge/forge_selection.dart';
 import '../forge/forge_widgets.dart';
 import '../forge/issue_actions.dart';
+import '../forge/merge_options_sheet.dart';
 import '../forge/merge_readiness.dart';
 import '../forge/project_sections.dart';
 import 'create_pr_form.dart';
@@ -682,7 +683,11 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     );
     final detail = detailAsync.asData?.value;
     final effective = detail ?? pr;
-    final plan = mergePlanForGitHub(pr: effective);
+    final policy = ref.watch(repoMergePolicyProvider(repoPath)).asData?.value;
+    final plan = mergePlanForGitHub(
+      pr: effective,
+      policy: policy is GhRepoMergePolicy ? policy : null,
+    );
     final loading = detailAsync.isLoading && detail == null;
 
     final lines = <Widget>[
@@ -943,7 +948,12 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     }
     if (!mounted) return;
 
-    final plan = mergePlanForGitHub(pr: detailPr);
+    GhRepoMergePolicy? policy;
+    final policyAsync = ref.read(repoMergePolicyProvider(repoPath));
+    final policyVal = policyAsync.asData?.value;
+    if (policyVal is GhRepoMergePolicy) policy = policyVal;
+
+    final plan = mergePlanForGitHub(pr: detailPr, policy: policy);
     if (!plan.canMergeNow) {
       await showErrorDialog(
         context,
@@ -954,26 +964,25 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       return;
     }
 
-    final verb = switch (method) {
-      'squash' => 'Squash-merge',
-      'rebase' => 'Rebase-merge',
-      _ => 'Merge',
+    final initialMethod = switch (method) {
+      'squash' => MergeMethod.squash,
+      'rebase' => MergeMethod.rebase,
+      _ => MergeMethod.mergeCommit,
     };
+    final chosenMethod = plan.allowedMethods.contains(initialMethod)
+        ? initialMethod
+        : plan.defaultMethod;
     final shaNote = plan.pinHeadSha && plan.headSha != null
         ? ' (${plan.headSha!.substring(0, plan.headSha!.length.clamp(0, 7))})'
         : '';
-    // The delete-branch choice IS the confirm: the primary keeps the head
-    // branch, the secondary merges and deletes it (the web UI's "delete
-    // branch after merge" checkbox). Null → cancelled.
-    final deleteBranch = await chooseAction<bool>(
+    final options = await showMergeOptionsSheet(
       context,
+      plan: plan,
       title: 'Merge pull request',
-      message: '$verb #$number$shaNote into its base branch?',
-      primaryLabel: verb,
-      primaryValue: false,
-      secondary: [('$verb & delete branch', true)],
+      summary: 'Merge #$number$shaNote into its base branch.',
+      initialMethod: chosenMethod,
     );
-    if (deleteBranch == null || !mounted) return;
+    if (options == null || !mounted) return;
     setState(() => _mergingPrs.add(number));
     final gh = ref.read(ghServiceProvider);
     final success = await runAction(
@@ -981,9 +990,11 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       () => gh.mergePullRequest(
         repoPath,
         number,
-        method: method,
-        deleteBranch: deleteBranch,
+        method: mergeMethodFlag(options.method),
+        deleteBranch: options.deleteSource,
         matchHeadCommit: plan.pinHeadSha ? plan.headSha : null,
+        subject: options.subject,
+        body: options.body,
       ),
     );
     if (!mounted) return;
@@ -992,7 +1003,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       setState(() => _sel = const ForgeNothingSel());
       ref.invalidate(pullRequestsProvider(repoPath));
       ref.invalidate(pullRequestDetailProvider((repoPath, number)));
-      if (deleteBranch) {
+      if (options.deleteSource) {
         ref.invalidate(refsProvider(repoPath));
         ref.invalidate(mergedBranchesProvider(repoPath));
       }

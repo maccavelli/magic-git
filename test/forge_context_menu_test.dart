@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
+import 'package:remote_magic_git/core/forge/merge_plan.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/github/gh_service.dart';
 import 'package:remote_magic_git/core/github/models.dart';
@@ -203,6 +204,9 @@ Future<void> _pumpGithub(WidgetTester tester, {GhService? gh}) async {
       pullRequestDetailProvider(
         (_repo, 7),
       ).overrideWith((ref) async => _readyPr),
+      repoMergePolicyProvider(_repo).overrideWith(
+        (ref) async => const GhRepoMergePolicy(),
+      ),
       workflowRunsProvider(
         _repo,
       ).overrideWith((ref) async => const <WorkflowRun>[]),
@@ -242,6 +246,9 @@ Future<void> _pumpGitlab(WidgetTester tester, {GlabService? glab}) async {
       mergeRequestDetailProvider(
         (_repo, 7),
       ).overrideWith((ref) async => _readyMr),
+      repoMergePolicyProvider(_repo).overrideWith(
+        (ref) async => const GlRepoMergePolicy(),
+      ),
       pipelinesProvider(_repo).overrideWith((ref) async => const <Pipeline>[]),
       projectIssuesProvider(_repo).overrideWith((ref) async => const []),
       projectMilestonesProvider(_repo).overrideWith((ref) async => const []),
@@ -299,8 +306,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gh.merges, isEmpty, reason: 'nothing before the confirm');
-    // The confirm button carries the method's verb.
-    await tester.tap(find.text('Squash-merge'));
+    // Phase-3 options sheet confirms with Merge; method preselected from menu.
+    expect(find.text('Merge pull request'), findsOneWidget);
+    await tester.tap(find.text('Merge').last);
     await tester.pumpAndSettle();
 
     expect(gh.merges, [(7, 'squash')]);
@@ -320,16 +328,16 @@ void main() {
     // GitLab exposes plain merge + squash (no per-merge rebase).
     expect(find.text('Rebase and merge'), findsNothing);
 
-    await tester.tap(find.text('Merge'));
+    await tester.tap(find.text('Merge').first);
     await tester.pumpAndSettle();
     expect(glab.merges, isEmpty, reason: 'nothing before the confirm');
-    await tester.tap(find.text('Merge')); // the confirm button
+    await tester.tap(find.text('Merge').last);
     await tester.pumpAndSettle();
 
     expect(glab.merges, [(7, false)]);
   });
 
-  testWidgets('the merge dialog offers delete-branch as the second choice', (
+  testWidgets('the merge options sheet can delete the source branch', (
     tester,
   ) async {
     final gh = _Phase2Gh();
@@ -337,10 +345,12 @@ void main() {
 
     await tester.tap(find.text('Add the parser'), buttons: kSecondaryButton);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Merge'));
+    await tester.tap(find.text('Merge').first);
     await tester.pumpAndSettle();
-    // The secondary choice merges and deletes the head branch.
-    await tester.tap(find.text('Merge & delete branch'));
+    // Toggle delete-source checkbox, then confirm.
+    await tester.tap(find.byType(MacosCheckbox));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Merge').last);
     await tester.pumpAndSettle();
 
     expect(gh.merges, [(7, 'merge', true)]);
