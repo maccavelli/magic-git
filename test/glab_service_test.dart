@@ -869,6 +869,26 @@ void main() {
       expect(call.gitArgs, containsAll(['-f', 'squash=true']));
     });
 
+    test('mergeMergeRequest sends sha= when provided', () async {
+      final executor = MockExecutor(
+        onExecute: (_) => _ok(stdout: _withHeaders('{}')),
+      );
+      final service = GlabService(executor);
+      await service.mergeMergeRequest(_repo, 1, sha: 'abcdef01');
+      expect(executor.calls.first.gitArgs, containsAll(['-f', 'sha=abcdef01']));
+    });
+
+    test('mergeMergeRequest omits sha when null', () async {
+      final executor = MockExecutor(
+        onExecute: (_) => _ok(stdout: _withHeaders('{}')),
+      );
+      final service = GlabService(executor);
+      await service.mergeMergeRequest(_repo, 1);
+      final fields = executor.calls.first.gitArgs
+          .where((a) => a.startsWith('sha='));
+      expect(fields, isEmpty);
+    });
+
     test('closeMergeRequest calls api PUT with state_event=close', () async {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{}')),

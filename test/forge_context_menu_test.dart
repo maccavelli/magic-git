@@ -33,9 +33,19 @@ class _MergeCapturingGh extends GhService {
     int number, {
     String method = 'merge',
     bool deleteBranch = false,
+    String? matchHeadCommit,
+    bool auto = false,
+    bool disableAuto = false,
+    bool admin = false,
+    String? subject,
+    String? body,
   }) async {
     merges.add((number, method));
   }
+
+  @override
+  Future<PullRequest> pullRequestDetail(String repoPath, int number) async =>
+      _readyPr;
 }
 
 class _MergeCapturingGlab extends GlabService {
@@ -48,9 +58,16 @@ class _MergeCapturingGlab extends GlabService {
     int iid, {
     bool squash = false,
     bool removeSourceBranch = false,
+    String? sha,
+    String? squashMessage,
+    String? mergeCommitMessage,
   }) async {
     merges.add((iid, squash));
   }
+
+  @override
+  Future<MergeRequest> mergeRequestDetail(String repoPath, int iid) async =>
+      _readyMr;
 }
 
 /// Captures the Phase-2 GitHub write actions.
@@ -67,9 +84,19 @@ class _Phase2Gh extends GhService {
     int number, {
     String method = 'merge',
     bool deleteBranch = false,
+    String? matchHeadCommit,
+    bool auto = false,
+    bool disableAuto = false,
+    bool admin = false,
+    String? subject,
+    String? body,
   }) async {
     merges.add((number, method, deleteBranch));
   }
+
+  @override
+  Future<PullRequest> pullRequestDetail(String repoPath, int number) async =>
+      _readyPr;
 
   @override
   Future<void> closePullRequest(String repoPath, int number) async {
@@ -132,32 +159,38 @@ final _remoteRefs = [
   ),
 ];
 
-final _prs = [
-  const PullRequest(
-    number: 7,
-    title: 'Add the parser',
-    state: 'open',
-    merged: false,
-    draft: false,
-    authorLogin: 'alice',
-    headRefName: 'feat',
-    baseRefName: 'main',
-    url: 'https://github.com/o/r/pull/7',
-  ),
-];
+const _readyPr = PullRequest(
+  number: 7,
+  title: 'Add the parser',
+  state: 'open',
+  merged: false,
+  draft: false,
+  authorLogin: 'alice',
+  headRefName: 'feat',
+  baseRefName: 'main',
+  url: 'https://github.com/o/r/pull/7',
+  headOid: 'aabbccddeeff00112233445566778899aabbccdd',
+  mergeable: GhMergeable.mergeable,
+  mergeStateStatus: 'CLEAN',
+  reviewDecision: 'APPROVED',
+);
 
-final _mrs = [
-  const MergeRequest(
-    iid: 7,
-    title: 'Add the parser',
-    state: 'opened',
-    authorUsername: 'alice',
-    sourceBranch: 'feat',
-    targetBranch: 'main',
-    webUrl: 'https://gitlab.com/o/r/-/merge_requests/7',
-    draft: false,
-  ),
-];
+final _prs = [_readyPr];
+
+const _readyMr = MergeRequest(
+  iid: 7,
+  title: 'Add the parser',
+  state: 'opened',
+  authorUsername: 'alice',
+  sourceBranch: 'feat',
+  targetBranch: 'main',
+  webUrl: 'https://gitlab.com/o/r/-/merge_requests/7',
+  draft: false,
+  sha: 'abcdef0123456789abcdef0123456789abcdef01',
+  detailedMergeStatus: 'mergeable',
+);
+
+final _mrs = [_readyMr];
 
 Future<void> _pumpGithub(WidgetTester tester, {GhService? gh}) async {
   final container = ProviderContainer(
@@ -167,6 +200,9 @@ Future<void> _pumpGithub(WidgetTester tester, {GhService? gh}) async {
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
+      pullRequestDetailProvider(
+        (_repo, 7),
+      ).overrideWith((ref) async => _readyPr),
       workflowRunsProvider(
         _repo,
       ).overrideWith((ref) async => const <WorkflowRun>[]),
@@ -203,6 +239,9 @@ Future<void> _pumpGitlab(WidgetTester tester, {GlabService? glab}) async {
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
+      mergeRequestDetailProvider(
+        (_repo, 7),
+      ).overrideWith((ref) async => _readyMr),
       pipelinesProvider(_repo).overrideWith((ref) async => const <Pipeline>[]),
       projectIssuesProvider(_repo).overrideWith((ref) async => const []),
       projectMilestonesProvider(_repo).overrideWith((ref) async => const []),

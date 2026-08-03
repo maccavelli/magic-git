@@ -19,7 +19,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class _MergeCapturingGh extends GhService {
   _MergeCapturingGh() : super(SSHCommandExecutor(SSHClientManager()));
-  final List<(int, String)> merges = [];
+  final List<(int, String, String?)> merges = [];
 
   @override
   Future<void> mergePullRequest(
@@ -27,26 +27,41 @@ class _MergeCapturingGh extends GhService {
     int number, {
     String method = 'merge',
     bool deleteBranch = false,
+    String? matchHeadCommit,
+    bool auto = false,
+    bool disableAuto = false,
+    bool admin = false,
+    String? subject,
+    String? body,
   }) async {
-    merges.add((number, method));
+    merges.add((number, method, matchHeadCommit));
+  }
+
+  @override
+  Future<PullRequest> pullRequestDetail(String repoPath, int number) async {
+    return _readyPr;
   }
 }
 
 const _repo = '/repo';
 
-final _prs = [
-  const PullRequest(
-    number: 7,
-    title: 'Add the parser',
-    state: 'open',
-    merged: false,
-    draft: false,
-    authorLogin: 'alice',
-    headRefName: 'feat',
-    baseRefName: 'main',
-    url: '',
-  ),
-];
+const _readyPr = PullRequest(
+  number: 7,
+  title: 'Add the parser',
+  state: 'open',
+  merged: false,
+  draft: false,
+  authorLogin: 'alice',
+  headRefName: 'feat',
+  baseRefName: 'main',
+  url: '',
+  headOid: 'aabbccddeeff00112233445566778899aabbccdd',
+  mergeable: GhMergeable.mergeable,
+  mergeStateStatus: 'CLEAN',
+  reviewDecision: 'APPROVED',
+);
+
+final _prs = [_readyPr];
 
 final _runs = [
   const WorkflowRun(
@@ -99,6 +114,9 @@ Future<void> _pump(WidgetTester tester, {GhService? gh}) async {
       // remotes (remotesProvider), not remote-tracking refs.
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
+      pullRequestDetailProvider(
+        (_repo, 7),
+      ).overrideWith((ref) async => _readyPr),
       workflowRunsProvider(_repo).overrideWith((ref) async => _runs),
       runJobsProvider((_repo, 200)).overrideWith((ref) => Stream.value(_jobs)),
       // The PR detail's inline Checks body mounts the head branch's latest
@@ -231,7 +249,7 @@ void main() {
     await tester.tap(find.text('Squash-merge'));
     await tester.pumpAndSettle();
 
-    expect(gh.merges, [(7, 'squash')]);
+    expect(gh.merges, [(7, 'squash', _readyPr.headOid)]);
   });
 
 }

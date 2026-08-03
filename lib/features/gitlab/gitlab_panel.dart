@@ -4,6 +4,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/forge/forge.dart';
 import '../../core/forge/forge_dashboard.dart';
+import '../../core/forge/merge_plan.dart';
 import '../../core/gitlab/models.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
@@ -24,6 +25,7 @@ import '../forge/forge_prefs.dart';
 import '../forge/forge_selection.dart';
 import '../forge/forge_widgets.dart';
 import '../forge/issue_actions.dart';
+import '../forge/merge_readiness.dart';
 import '../forge/project_sections.dart';
 import 'create_mr_form.dart';
 import 'pipeline_jobs_view.dart';
@@ -591,14 +593,14 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         label: 'Merge',
         enabled: !mr.draft,
         disabledTooltip: draftTip,
-        onTap: () => _merge(mr.iid),
+        onTap: () => _merge(mr.iid, listMr: mr),
       ),
       ContextMenuItem(
         icon: CupertinoIcons.arrow_merge,
         label: 'Squash and merge',
         enabled: !mr.draft,
         disabledTooltip: draftTip,
-        onTap: () => _merge(mr.iid, squash: true),
+        onTap: () => _merge(mr.iid, squash: true, listMr: mr),
       ),
       ContextMenuItem(
         icon: CupertinoIcons.xmark_circle,
@@ -725,20 +727,57 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
 
   Widget _mrDetail(MergeRequest mr, Map<String, Pipeline> pipeByRef) {
     final pipeline = _headPipelineFor(mr, pipeByRef);
+    final detailAsync = ref.watch(
+      mergeRequestDetailProvider((repoPath, mr.iid)),
+    );
+    final detail = detailAsync.asData?.value;
+    final effective = detail ?? mr;
+    final plan = mergePlanForGitLab(mr: effective);
+    final loading = detailAsync.isLoading && detail == null;
+
+    final lines = <Widget>[
+      DetailLine('Source', effective.sourceBranch),
+      DetailLine('Target', effective.targetBranch),
+      if (effective.authorUsername != null)
+        DetailLine('Author', '@${effective.authorUsername}'),
+      DetailLine('State', effective.state),
+      if (effective.detailedMergeStatus != null)
+        DetailLine('Merge status', effective.detailedMergeStatus!),
+      if (effective.sha != null) DetailLine('Head SHA', effective.shortSha),
+      if (effective.mergeWhenPipelineSucceeds)
+        const DetailLine('Auto-merge', 'enabled'),
+      if (effective.labels.isNotEmpty)
+        DetailLine('Labels', effective.labels.join(', ')),
+      if (effective.assigneeUsernames.isNotEmpty)
+        DetailLine(
+          'Assignees',
+          effective.assigneeUsernames.map((a) => '@$a').join(', '),
+        ),
+    ];
+
     return ForgeDetailScaffold(
-      leading: mr.draft
+      leading: effective.draft
           ? const StatusBadge('DRAFT', MacosColors.systemGrayColor)
-          : StatusBadge('!${mr.iid}', MacosColors.systemBlueColor),
-      title: mr.title,
-      headerActions: [OpenInBrowserButton(mr.webUrl)],
-      lines: [
-        DetailLine('Source', mr.sourceBranch),
-        DetailLine('Target', mr.targetBranch),
-        if (mr.authorUsername != null)
-          DetailLine('Author', '@${mr.authorUsername}'),
-        DetailLine('State', mr.state),
-      ],
-      body: _mrChecks(pipeline),
+          : StatusBadge('!${effective.iid}', MacosColors.systemBlueColor),
+      title: effective.title,
+      headerActions: [OpenInBrowserButton(effective.webUrl)],
+      lines: lines,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+            child: MergeReadinessStrip(
+              plan: plan,
+              detailLoading: loading,
+              onRetry: () => ref.invalidate(
+                mergeRequestDetailProvider((repoPath, mr.iid)),
+              ),
+            ),
+          ),
+          Expanded(child: _mrChecks(pipeline)),
+        ],
+      ),
       actions: [
         InFlightPushButton(
           busy: _checkingOutMrs.contains(mr.iid),
@@ -755,8 +794,8 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         if (_mergingMrs.contains(mr.iid))
           const ProgressCircle()
         else
-          _mergeButton(mr),
-        _mrMorePulldown(mr),
+          _mergeButton(effective, plan),
+        _mrMorePulldown(effective),
       ],
     );
   }
@@ -823,34 +862,55 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   /// squash merge the API always supported but the UI never exposed
   /// (mirroring the GitHub panel's merge pulldown; GitLab has no per-merge
   /// rebase — that's a project setting — so squash is the only entry).
-  Widget _mergeButton(MergeRequest mr) {
+  Widget _mergeButton(MergeRequest mr, MergePlan plan) {
+    final enabled = plan.canMergeNow;
+    final allowSquash = plan.allowedMethods.contains(MergeMethod.squash);
+    final primarySquash = plan.defaultMethod == MergeMethod.squash;
     final row = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         AppPushButton(
           controlSize: ControlSize.large,
-          onPressed: mr.draft ? null : () => _merge(mr.iid),
-          child: const Text('Merge'),
+          onPressed: enabled
+              ? () => _merge(
+                  mr.iid,
+                  squash: primarySquash,
+                  listMr: mr,
+                )
+              : null,
+          child: Text(primarySquash ? 'Squash and merge' : 'Merge'),
         ),
-        if (!mr.draft) ...[
+        if (enabled && allowSquash && !primarySquash) ...[
           const SizedBox(width: 4),
           MacosPulldownButton(
             icon: CupertinoIcons.chevron_down,
             items: [
               MacosPulldownMenuItem(
                 title: const Text('Squash and merge'),
-                onTap: () => _merge(mr.iid, squash: true),
+                onTap: () => _merge(mr.iid, squash: true, listMr: mr),
+              ),
+            ],
+          ),
+        ],
+        if (enabled && allowSquash && primarySquash) ...[
+          const SizedBox(width: 4),
+          MacosPulldownButton(
+            icon: CupertinoIcons.chevron_down,
+            items: [
+              MacosPulldownMenuItem(
+                title: const Text('Merge'),
+                onTap: () => _merge(mr.iid, squash: false, listMr: mr),
               ),
             ],
           ),
         ],
       ],
     );
-    if (!mr.draft) return row;
-    return MacosTooltip(
-      message: "Draft merge requests can't be merged — mark it ready first.",
-      child: row,
-    );
+    if (enabled) return row;
+    final tip = plan.blockedSummary.isNotEmpty
+        ? plan.blockedSummary
+        : "This merge request can't be merged right now.";
+    return MacosTooltip(message: tip, child: row);
   }
 
   // ---- Actions -------------------------------------------------------------
@@ -907,17 +967,55 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     }
   }
 
-  Future<void> _merge(int iid, {bool squash = false}) async {
+  Future<void> _merge(
+    int iid, {
+    bool squash = false,
+    MergeRequest? listMr,
+  }) async {
     if (_mergingMrs.contains(iid)) return; // already in flight
     final repoPath = this.repoPath; // see _approve
+
+    MergeRequest detailMr = listMr ??
+        const MergeRequest(
+          iid: 0,
+          title: '',
+          state: 'opened',
+          sourceBranch: '',
+          targetBranch: '',
+          webUrl: '',
+          draft: false,
+        );
+    try {
+      detailMr = await ref.read(
+        mergeRequestDetailProvider((repoPath, iid)).future,
+      );
+    } catch (_) {
+      if (listMr != null) detailMr = listMr;
+    }
+    if (!mounted) return;
+
+    final plan = mergePlanForGitLab(mr: detailMr);
+    if (!plan.canMergeNow) {
+      await showErrorDialog(
+        context,
+        plan.blockedSummary.isNotEmpty
+            ? plan.blockedSummary
+            : "This merge request can't be merged right now.",
+      );
+      return;
+    }
+
     final verb = squash ? 'Squash-merge' : 'Merge';
+    final shaNote = plan.pinHeadSha && plan.headSha != null
+        ? ' (${plan.headSha!.substring(0, plan.headSha!.length.clamp(0, 7))})'
+        : '';
     // The delete-source-branch choice IS the confirm: the primary keeps the
     // source branch, the secondary merges and removes it (the web UI's "delete
     // source branch" checkbox). Null → cancelled.
     final removeSource = await chooseAction<bool>(
       context,
       title: 'Merge merge request',
-      message: '$verb !$iid into its target branch?',
+      message: '$verb !$iid$shaNote into its target branch?',
       primaryLabel: verb,
       primaryValue: false,
       secondary: [('$verb & delete source branch', true)],
@@ -934,6 +1032,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         iid,
         squash: squash,
         removeSourceBranch: removeSource,
+        sha: plan.pinHeadSha ? plan.headSha : null,
       ),
     );
     if (!mounted) return;
@@ -942,6 +1041,11 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       // The MR is gone after a merge — clear the detail selection.
       setState(() => _sel = const ForgeNothingSel());
       ref.invalidate(mergeRequestsProvider(repoPath));
+      ref.invalidate(mergeRequestDetailProvider((repoPath, iid)));
+      if (removeSource) {
+        ref.invalidate(refsProvider(repoPath));
+        ref.invalidate(mergedBranchesProvider(repoPath));
+      }
     }
   }
 

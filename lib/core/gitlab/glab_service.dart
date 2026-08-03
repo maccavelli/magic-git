@@ -1302,6 +1302,9 @@ query($path: ID!) {
     int iid, {
     bool squash = false,
     bool removeSourceBranch = false,
+    String? sha,
+    String? squashMessage,
+    String? mergeCommitMessage,
   }) async {
     await api(
       repoPath,
@@ -1310,6 +1313,11 @@ query($path: ID!) {
       fields: [
         if (squash) 'squash=true',
         if (removeSourceBranch) 'should_remove_source_branch=true',
+        if (sha != null && sha.isNotEmpty) 'sha=$sha',
+        if (squashMessage != null && squashMessage.isNotEmpty)
+          'squash_commit_message=$squashMessage',
+        if (mergeCommitMessage != null && mergeCommitMessage.isNotEmpty)
+          'merge_commit_message=$mergeCommitMessage',
       ],
     );
   }

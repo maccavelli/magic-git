@@ -684,6 +684,25 @@ void main() {
       expect(executor.calls.first.gitArgs, contains('--delete-branch'));
     });
 
+    test('mergePullRequest pins match-head-commit when provided', () async {
+      final executor = MockExecutor(onExecute: (_) => _ok());
+      final service = GhService(executor);
+      await service.mergePullRequest(
+        _repo,
+        1,
+        matchHeadCommit: 'aabbccddeeff',
+      );
+      final args = executor.calls.first.gitArgs;
+      expect(args, containsAll(['--match-head-commit', 'aabbccddeeff']));
+    });
+
+    test('mergePullRequest omits match-head-commit when null', () async {
+      final executor = MockExecutor(onExecute: (_) => _ok());
+      final service = GhService(executor);
+      await service.mergePullRequest(_repo, 1);
+      expect(executor.calls.first.gitArgs, isNot(contains('--match-head-commit')));
+    });
+
     test('closePullRequest calls gh pr close', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
       final service = GhService(executor);

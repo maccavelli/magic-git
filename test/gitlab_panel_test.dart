@@ -36,10 +36,10 @@ class _GatedGlab extends GlabService {
   }
 }
 
-/// Records mergeMergeRequest calls as (iid, squash) pairs.
+/// Records mergeMergeRequest calls as (iid, squash, sha) triples.
 class _MergeCapturingGlab extends GlabService {
   _MergeCapturingGlab() : super(SSHCommandExecutor(SSHClientManager()));
-  final merges = <(int, bool)>[];
+  final merges = <(int, bool, String?)>[];
 
   @override
   Future<void> mergeMergeRequest(
@@ -47,25 +47,36 @@ class _MergeCapturingGlab extends GlabService {
     int iid, {
     bool squash = false,
     bool removeSourceBranch = false,
+    String? sha,
+    String? squashMessage,
+    String? mergeCommitMessage,
   }) async {
-    merges.add((iid, squash));
+    merges.add((iid, squash, sha));
+  }
+
+  @override
+  Future<MergeRequest> mergeRequestDetail(String repoPath, int iid) async {
+    return _readyMr;
   }
 }
 
 const _repo = '/repo';
 
-final _mrs = [
-  const MergeRequest(
-    iid: 7,
-    title: 'Add the parser',
-    state: 'opened',
-    authorUsername: 'alice',
-    sourceBranch: 'feat',
-    targetBranch: 'main',
-    webUrl: '',
-    draft: false,
-  ),
-];
+const _readyMr = MergeRequest(
+  iid: 7,
+  title: 'Add the parser',
+  state: 'opened',
+  authorUsername: 'alice',
+  sourceBranch: 'feat',
+  targetBranch: 'main',
+  webUrl: '',
+  draft: false,
+  sha: 'abcdef0123456789abcdef0123456789abcdef01',
+  detailedMergeStatus: 'mergeable',
+  hasConflicts: false,
+);
+
+final _mrs = [_readyMr];
 
 final _pipelines = [
   const Pipeline(
@@ -130,6 +141,9 @@ Future<void> _pump(WidgetTester tester, {GlabService? glab}) async {
       // remotes (remotesProvider), not remote-tracking refs.
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
+      mergeRequestDetailProvider(
+        (_repo, 7),
+      ).overrideWith((ref) async => _readyMr),
       pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
       jobsProvider((_repo, 100)).overrideWith((ref) async => _jobs),
       // The MR detail's inline Checks body mounts the head pipeline's jobs
@@ -264,7 +278,7 @@ void main() {
     await tester.tap(find.text('Squash-merge'));
     await tester.pumpAndSettle();
 
-    expect(glab.merges, [(7, true)]);
+    expect(glab.merges, [(7, true, _readyMr.sha)]);
   });
 
   testWidgets(
@@ -280,6 +294,9 @@ void main() {
           // remotes (remotesProvider), not remote-tracking refs.
           remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
           mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
+          mergeRequestDetailProvider(
+            (_repo, 7),
+          ).overrideWith((ref) async => _readyMr),
           pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
           jobsProvider((_repo, 101)).overrideWith((ref) async => _jobs),
           glabServiceProvider.overrideWithValue(glab),

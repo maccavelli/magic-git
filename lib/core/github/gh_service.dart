@@ -839,11 +839,27 @@ class GhService {
   /// non-interactively. [deleteBranch] adds `--delete-branch`, which removes
   /// the (now-merged) head branch on the remote and locally — the web UI's
   /// "delete branch after merge" checkbox.
+  ///
+  /// [matchHeadCommit] pins the merge to the reviewed tip
+  /// (`--match-head-commit`) so a push between view and merge cannot land
+  /// unreviewed commits. Prefer always passing the detail [PullRequest.headOid]
+  /// when known.
+  ///
+  /// [auto] enables GitHub auto-merge (`--auto`); [disableAuto] cancels it
+  /// (`--disable-auto`). [admin] is a privileged bypass (`--admin`) — use only
+  /// from an explicit secondary UI path. [subject]/[body] set squash/merge
+  /// commit title and body (`-t` / `-b`).
   Future<void> mergePullRequest(
     String repoPath,
     int number, {
     String method = 'merge',
     bool deleteBranch = false,
+    String? matchHeadCommit,
+    bool auto = false,
+    bool disableAuto = false,
+    bool admin = false,
+    String? subject,
+    String? body,
   }) async {
     final flag = switch (method) {
       'squash' => '--squash',
@@ -859,6 +875,15 @@ class GhService {
         '$number',
         flag,
         if (deleteBranch) '--delete-branch',
+        if (matchHeadCommit != null && matchHeadCommit.isNotEmpty) ...[
+          '--match-head-commit',
+          matchHeadCommit,
+        ],
+        if (auto) '--auto',
+        if (disableAuto) '--disable-auto',
+        if (admin) '--admin',
+        if (subject != null) ...['-t', subject],
+        if (body != null) ...['-b', body],
       ],
       lane: ExecLane.sync,
     );

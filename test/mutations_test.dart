@@ -1640,6 +1640,20 @@ void main() {
       ]);
     });
 
+    test('mergeMergeRequest sends sha when provided', () async {
+      await glab.mergeMergeRequest('/repo', 12, sha: 'deadbeef');
+      expect(exec.calls.single, [
+        'glab',
+        'api',
+        'projects/:id/merge_requests/12/merge',
+        '--method',
+        'PUT',
+        '-f',
+        'sha=deadbeef',
+        '-i',
+      ]);
+    });
+
     test('closeMergeRequest / reopenMergeRequest PUT a state_event', () async {
       await glab.closeMergeRequest('/repo', 12);
       expect(exec.calls.single, [

@@ -4,6 +4,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/forge/forge.dart';
 import '../../core/forge/forge_dashboard.dart';
+import '../../core/forge/merge_plan.dart';
 import '../../core/github/models.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
@@ -24,6 +25,7 @@ import '../forge/forge_prefs.dart';
 import '../forge/forge_selection.dart';
 import '../forge/forge_widgets.dart';
 import '../forge/issue_actions.dart';
+import '../forge/merge_readiness.dart';
 import '../forge/project_sections.dart';
 import 'create_pr_form.dart';
 import 'run_jobs_view.dart';
@@ -540,21 +542,21 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         label: 'Merge',
         enabled: !pr.draft,
         disabledTooltip: draftTip,
-        onTap: () => _merge(pr.number),
+        onTap: () => _merge(pr.number, listPr: pr),
       ),
       ContextMenuItem(
         icon: CupertinoIcons.arrow_merge,
         label: 'Squash and merge',
         enabled: !pr.draft,
         disabledTooltip: draftTip,
-        onTap: () => _merge(pr.number, method: 'squash'),
+        onTap: () => _merge(pr.number, method: 'squash', listPr: pr),
       ),
       ContextMenuItem(
         icon: CupertinoIcons.arrow_merge,
         label: 'Rebase and merge',
         enabled: !pr.draft,
         disabledTooltip: draftTip,
-        onTap: () => _merge(pr.number, method: 'rebase'),
+        onTap: () => _merge(pr.number, method: 'rebase', listPr: pr),
       ),
       ContextMenuItem(
         icon: CupertinoIcons.xmark_circle,
@@ -675,19 +677,60 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
 
   Widget _prDetail(PullRequest pr, Map<String, WorkflowRun> runByBranch) {
     final headRun = _headRunFor(pr, runByBranch);
+    final detailAsync = ref.watch(
+      pullRequestDetailProvider((repoPath, pr.number)),
+    );
+    final detail = detailAsync.asData?.value;
+    final effective = detail ?? pr;
+    final plan = mergePlanForGitHub(pr: effective);
+    final loading = detailAsync.isLoading && detail == null;
+
+    final lines = <Widget>[
+      DetailLine('Head', effective.headRefName),
+      DetailLine('Base', effective.baseRefName),
+      if (effective.authorLogin != null)
+        DetailLine('Author', '@${effective.authorLogin}'),
+      DetailLine('State', effective.merged ? 'merged' : effective.state),
+      if (effective.reviewDecision != null &&
+          effective.reviewDecision!.isNotEmpty)
+        DetailLine('Review', effective.reviewDecision!),
+      if (effective.mergeStateStatus != null)
+        DetailLine('Merge status', effective.mergeStateStatus!),
+      if (effective.headOid != null)
+        DetailLine('Head SHA', effective.shortHeadOid),
+      if (effective.autoMergeEnabled) const DetailLine('Auto-merge', 'enabled'),
+      if (effective.labels.isNotEmpty)
+        DetailLine('Labels', effective.labels.join(', ')),
+      if (effective.assigneeLogins.isNotEmpty)
+        DetailLine(
+          'Assignees',
+          effective.assigneeLogins.map((a) => '@$a').join(', '),
+        ),
+    ];
+
     return ForgeDetailScaffold(
-      leading: pr.draft
+      leading: effective.draft
           ? const StatusBadge('DRAFT', MacosColors.systemGrayColor)
-          : StatusBadge('#${pr.number}', MacosColors.systemBlueColor),
-      title: pr.title,
-      headerActions: [OpenInBrowserButton(pr.url)],
-      lines: [
-        DetailLine('Head', pr.headRefName),
-        DetailLine('Base', pr.baseRefName),
-        if (pr.authorLogin != null) DetailLine('Author', '@${pr.authorLogin}'),
-        DetailLine('State', pr.merged ? 'merged' : pr.state),
-      ],
-      body: _prChecks(headRun),
+          : StatusBadge('#${effective.number}', MacosColors.systemBlueColor),
+      title: effective.title,
+      headerActions: [OpenInBrowserButton(effective.url)],
+      lines: lines,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+            child: MergeReadinessStrip(
+              plan: plan,
+              detailLoading: loading,
+              onRetry: () => ref.invalidate(
+                pullRequestDetailProvider((repoPath, pr.number)),
+              ),
+            ),
+          ),
+          Expanded(child: _prChecks(headRun)),
+        ],
+      ),
       actions: [
         InFlightPushButton(
           busy: _checkingOutPrs.contains(pr.number),
@@ -704,8 +747,8 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         if (_mergingPrs.contains(pr.number))
           const ProgressCircle()
         else
-          _mergeButton(pr),
-        _prMorePulldown(pr),
+          _mergeButton(effective, plan),
+        _prMorePulldown(effective),
       ],
     );
   }
@@ -774,38 +817,58 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   /// draft — GitHub rejects merging a draft PR, so this catches it
   /// client-side. The pulldown beside it offers the squash/rebase methods
   /// `gh pr merge` always supported but the UI never exposed.
-  Widget _mergeButton(PullRequest pr) {
+  Widget _mergeButton(PullRequest pr, MergePlan plan) {
+    final enabled = plan.canMergeNow;
+    final methods = plan.allowedMethods;
+    final extras = methods
+        .where((m) => m != MergeMethod.mergeCommit)
+        .toList();
+    // Prefer plan default for the primary action label/method.
+    final primaryMethod = plan.defaultMethod;
+    final primaryLabel = switch (primaryMethod) {
+      MergeMethod.squash => 'Squash and merge',
+      MergeMethod.rebase => 'Rebase and merge',
+      MergeMethod.mergeCommit => 'Merge',
+    };
     final row = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         AppPushButton(
           controlSize: ControlSize.large,
-          onPressed: pr.draft ? null : () => _merge(pr.number),
-          child: const Text('Merge'),
+          onPressed: enabled
+              ? () => _merge(
+                  pr.number,
+                  method: mergeMethodFlag(primaryMethod),
+                  listPr: pr,
+                )
+              : null,
+          child: Text(primaryLabel == 'Merge' ? 'Merge' : primaryLabel),
         ),
-        if (!pr.draft) ...[
+        if (enabled && extras.isNotEmpty) ...[
           const SizedBox(width: 4),
           MacosPulldownButton(
             icon: CupertinoIcons.chevron_down,
             items: [
-              MacosPulldownMenuItem(
-                title: const Text('Squash and merge'),
-                onTap: () => _merge(pr.number, method: 'squash'),
-              ),
-              MacosPulldownMenuItem(
-                title: const Text('Rebase and merge'),
-                onTap: () => _merge(pr.number, method: 'rebase'),
-              ),
+              for (final m in methods)
+                if (m != primaryMethod)
+                  MacosPulldownMenuItem(
+                    title: Text(mergeMethodLabel(m)),
+                    onTap: () => _merge(
+                      pr.number,
+                      method: mergeMethodFlag(m),
+                      listPr: pr,
+                    ),
+                  ),
             ],
           ),
         ],
       ],
     );
-    if (!pr.draft) return row;
-    return MacosTooltip(
-      message: "Draft pull requests can't be merged — mark it ready first.",
-      child: row,
-    );
+    if (enabled) return row;
+    final tip = plan.blockedSummary.isNotEmpty
+        ? plan.blockedSummary
+        : "This pull request can't be merged right now.";
+    return MacosTooltip(message: tip, child: row);
   }
 
   // ---- Actions -------------------------------------------------------------
@@ -850,21 +913,62 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     }
   }
 
-  Future<void> _merge(int number, {String method = 'merge'}) async {
+  Future<void> _merge(
+    int number, {
+    String method = 'merge',
+    PullRequest? listPr,
+  }) async {
     if (_mergingPrs.contains(number)) return;
     final repoPath = this.repoPath;
+
+    // Warm detail before confirm so we can pin SHA and re-check the plan.
+    PullRequest detailPr = listPr ??
+        const PullRequest(
+          number: 0,
+          title: '',
+          state: 'open',
+          merged: false,
+          draft: false,
+          headRefName: '',
+          baseRefName: '',
+          url: '',
+        );
+    try {
+      detailPr = await ref.read(
+        pullRequestDetailProvider((repoPath, number)).future,
+      );
+    } catch (_) {
+      // Fall back to list-tier data when detail fails.
+      if (listPr != null) detailPr = listPr;
+    }
+    if (!mounted) return;
+
+    final plan = mergePlanForGitHub(pr: detailPr);
+    if (!plan.canMergeNow) {
+      await showErrorDialog(
+        context,
+        plan.blockedSummary.isNotEmpty
+            ? plan.blockedSummary
+            : "This pull request can't be merged right now.",
+      );
+      return;
+    }
+
     final verb = switch (method) {
       'squash' => 'Squash-merge',
       'rebase' => 'Rebase-merge',
       _ => 'Merge',
     };
+    final shaNote = plan.pinHeadSha && plan.headSha != null
+        ? ' (${plan.headSha!.substring(0, plan.headSha!.length.clamp(0, 7))})'
+        : '';
     // The delete-branch choice IS the confirm: the primary keeps the head
     // branch, the secondary merges and deletes it (the web UI's "delete
     // branch after merge" checkbox). Null → cancelled.
     final deleteBranch = await chooseAction<bool>(
       context,
       title: 'Merge pull request',
-      message: '$verb #$number into its base branch?',
+      message: '$verb #$number$shaNote into its base branch?',
       primaryLabel: verb,
       primaryValue: false,
       secondary: [('$verb & delete branch', true)],
@@ -879,6 +983,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         number,
         method: method,
         deleteBranch: deleteBranch,
+        matchHeadCommit: plan.pinHeadSha ? plan.headSha : null,
       ),
     );
     if (!mounted) return;
@@ -886,6 +991,11 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     if (success) {
       setState(() => _sel = const ForgeNothingSel());
       ref.invalidate(pullRequestsProvider(repoPath));
+      ref.invalidate(pullRequestDetailProvider((repoPath, number)));
+      if (deleteBranch) {
+        ref.invalidate(refsProvider(repoPath));
+        ref.invalidate(mergedBranchesProvider(repoPath));
+      }
     }
   }
 
