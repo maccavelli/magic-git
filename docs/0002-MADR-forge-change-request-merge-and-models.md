@@ -1,6 +1,6 @@
 # Expand forge change-request (PR/MR) models and merge UX
 
-- Status: proposed
+- Status: accepted (phases 1–2 shipped; 3–6 follow-ons landed in same initiative)
 - Date: 2026-08-02
 - Deciders: Mac Smith
 - Tags: forge, github, gitlab, merge, pull-request, merge-request, models, ui
@@ -216,8 +216,9 @@ queue management UI.
 policy-aware merge surface on top of existing `GhService` / `GlabService`
 mutation paths.
 
-Status remains **proposed** until implementation of plan phases 1–2 lands.
-The companion plan locks field lists, providers, tests, and phase exits:
+Status is **accepted**: phases 1–2 (models, MergePlan, SHA pin, readiness)
+shipped as the trust milestone; phases 3–6 (policy sheet, auto-merge,
+update/rebase, polish) landed in the same initiative. Companion plan:
 
 - `docs/0002-PLAN-forge-change-request-merge-and-models.md`
 

@@ -1,6 +1,6 @@
 # Implementation plan: forge change-request models and merge UX
 
-- Status: draft for review
+- Status: implemented
 - Date: 2026-08-02
 - MADR: `docs/0002-MADR-forge-change-request-merge-and-models.md` (Option C)
 - Owner: implementation agent + maintainer review
