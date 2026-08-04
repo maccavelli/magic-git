@@ -180,9 +180,18 @@ void main() {
         ),
       ),
     );
+    // AppSettings loads prefs async; rebuild onto the warmed LogQuery key.
+    await tester.pump();
     await tester.pump();
     expect(find.text('feat: first feature'), findsOneWidget);
     expect(find.text('docs: user guide'), findsOneWidget);
+  }
+
+  /// Real git via [LocalCommandExecutor] schedules command-lane watchdog
+  /// timers (60s/90s) in the fake-async zone. Advance past them before the
+  /// test returns so the binding does not assert pending timers on teardown.
+  Future<void> drainLaneWatchdogs(WidgetTester tester) async {
+    await tester.pump(const Duration(minutes: 2));
   }
 
   /// Types [text] into the filter field and rides out the 350ms debounce; the
@@ -203,6 +212,7 @@ void main() {
     expect(find.text('feat: first feature'), findsNothing);
     expect(find.text('docs: user guide'), findsNothing);
     expect(find.text('1 matching commit'), findsOneWidget);
+    await drainLaneWatchdogs(tester);
   });
 
   testWidgets('regex metacharacters in the term match literally', (
@@ -215,6 +225,7 @@ void main() {
 
     expect(find.text('fix [WIP] patch collapse'), findsOneWidget);
     expect(find.text('1 matching commit'), findsOneWidget);
+    await drainLaneWatchdogs(tester);
   });
 
   testWidgets('file: narrows by path at any depth', (tester) async {
@@ -225,6 +236,7 @@ void main() {
 
     expect(find.text('fix [WIP] patch collapse'), findsOneWidget);
     expect(find.text('feat: first feature'), findsNothing);
+    await drainLaneWatchdogs(tester);
   });
 
   testWidgets('a no-match filter shows the empty state, and clearing restores',
@@ -238,6 +250,7 @@ void main() {
     await filter(tester, '');
     expect(find.text('feat: first feature'), findsOneWidget);
     expect(find.text('docs: user guide'), findsOneWidget);
+    await drainLaneWatchdogs(tester);
   });
 
   testWidgets('sha: finds a commit by prefix', (tester) async {
@@ -259,6 +272,7 @@ void main() {
     expect(find.text('fix [WIP] patch collapse'), findsOneWidget);
     expect(find.text('docs: user guide'), findsNothing);
     expect(find.text('1 matching commit'), findsOneWidget);
+    await drainLaneWatchdogs(tester);
   });
 
   testWidgets('a BARE hash prefix finds its commit — no sha: key needed', (
@@ -280,6 +294,7 @@ void main() {
 
     expect(find.text('fix [WIP] patch collapse'), findsOneWidget);
     expect(find.text('1 matching commit'), findsOneWidget);
+    await drainLaneWatchdogs(tester);
   });
 
   testWidgets('a hex-shaped word still searches messages', (tester) async {
@@ -290,6 +305,7 @@ void main() {
 
     expect(find.text('perf: decade of cleanup'), findsOneWidget);
     expect(find.text('1 matching commit'), findsOneWidget);
+    await drainLaneWatchdogs(tester);
   });
 
   testWidgets('author: with a space after the colon narrows by author', (
@@ -313,5 +329,6 @@ void main() {
     expect(find.text('perf: decade of cleanup'), findsOneWidget);
     expect(find.text('feat: first feature'), findsNothing);
     expect(find.text('1 matching commit'), findsOneWidget);
+    await drainLaneWatchdogs(tester);
   });
 }

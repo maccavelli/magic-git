@@ -130,7 +130,6 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     super.initState();
     HardwareKeyboard.instance.addHandler(_onHardwareKey);
     WidgetsBinding.instance.addObserver(this);
-    _allBranches = ref.read(appSettingsProvider).historyAllBranches;
   }
 
   static const _ownMutationSuppressWindow = Duration(seconds: 3);
@@ -175,7 +174,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   String _until = '';
   String _path = '';
   bool _hideMerges = false;
-  bool _allBranches = false;
+  // All-branches scope lives on [appSettingsProvider.historyAllBranches] so a
+  // late prefs load cannot leave LogQuery desynced from the warmed provider
+  // key (initState-only capture froze the AppSettings default of `true`).
   bool _filtersExpanded = false;
   Timer? _searchDebounce;
 
@@ -219,7 +220,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       _effSha != null ||
       _hideMerges;
 
-  bool get _filtering => _hasQueryFilters || _allBranches;
+  bool get _filtering =>
+      _hasQueryFilters || ref.read(appSettingsProvider).historyAllBranches;
 
   /// The provider key for the currently displayed history. The paging depth is
   /// deliberately not part of it — it lives on [LogSearchNotifier], so scrolling
@@ -236,7 +238,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     path: _effPath,
     sha: _effSha,
     noMerges: _hideMerges,
-    all: _allBranches,
+    all: ref.read(appSettingsProvider).historyAllBranches,
   );
 
   GlobalKey _commitRowKeyFor(String hash) =>
@@ -1177,8 +1179,22 @@ class _HistoryViewState extends ConsumerState<HistoryView>
 
   @override
   Widget build(BuildContext context) {
-    final filtering = _filtering;
-    final query = _query;
+    // Watch so a late prefs load rebuilds onto the correct LogQuery key.
+    final allBranches = ref.watch(
+      appSettingsProvider.select((s) => s.historyAllBranches),
+    );
+    final filtering = _hasQueryFilters || allBranches;
+    final query = (
+      repoPath: widget.repoPath,
+      grep: _effGrep,
+      author: _effAuthor,
+      since: _effSince,
+      until: _effUntil,
+      path: _effPath,
+      sha: _effSha,
+      noMerges: _hideMerges,
+      all: allBranches,
+    );
     // Event-driven refresh: each coalesced remote-change tick re-fetches history
     // and refs when git's own state moves (.git/refs, HEAD, index).
     ref.listen(repoWatchProvider(widget.repoPath), (previous, next) {
@@ -1301,7 +1317,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         master: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _filterBar(context, filtering),
+            _filterBar(context, filtering, allBranches: allBranches),
             Container(height: 1, color: MacosColors.separatorColor),
             Expanded(
               child: _historyBody(
@@ -1345,7 +1361,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     if (commits.isEmpty) {
       return Center(
         child: Text(
-          filtering ? 'No matching commits' : 'No commits',
+          // All-branches is a view *scope*, not a typed filter — empty still
+          // means "no commits", not "no matches".
+          _hasQueryFilters ? 'No matching commits' : 'No commits',
           style: MacosTheme.of(
             context,
           ).typography.body.copyWith(color: MacosColors.systemGrayColor),
@@ -1424,7 +1442,11 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     return _multiSelectionPanel(context, ordered);
   }
 
-  Widget _filterBar(BuildContext context, bool filtering) {
+  Widget _filterBar(
+    BuildContext context,
+    bool filtering, {
+    required bool allBranches,
+  }) {
     // Advanced criteria stay visibly flagged on the toggle even while the
     // row is collapsed, so an active author/date/path filter can't be
     // forgotten behind a closed panel.
@@ -1482,20 +1504,18 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               ),
               const SizedBox(width: 6),
               ToolIconButton(
-                icon: _allBranches
+                icon: allBranches
                     ? CupertinoIcons.square_stack_3d_up_fill
                     : CupertinoIcons.square_stack_3d_up,
-                tooltip: _allBranches
+                tooltip: allBranches
                     ? 'Showing all branches'
                     : 'Show all branches',
                 size: 16,
-                color: _allBranches ? MacosColors.systemBlueColor : null,
+                color: allBranches ? MacosColors.systemBlueColor : null,
                 onPressed: () {
-                  final next = !_allBranches;
-                  setState(() => _allBranches = next);
                   ref
                       .read(appSettingsProvider.notifier)
-                      .setHistoryAllBranches(next);
+                      .setHistoryAllBranches(!allBranches);
                 },
               ),
               const SizedBox(width: 6),

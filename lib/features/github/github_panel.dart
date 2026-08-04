@@ -1151,8 +1151,9 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       ref.invalidate(pullRequestsProvider(repoPath));
       ref.invalidate(pullRequestDetailProvider((repoPath, number)));
       if (options.deleteSource) {
-        ref.invalidate(refsProvider(repoPath));
-        ref.invalidate(mergedBranchesProvider(repoPath));
+        // Shared post-mutation set (refs + related) — do not hand-roll
+        // individual ref invalidations (see repo_mutation_refresh_test).
+        refreshAfterMutation(ref, repoPath);
       }
     }
   }

@@ -1160,8 +1160,9 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       ref.invalidate(mergeRequestsProvider(repoPath));
       ref.invalidate(mergeRequestDetailProvider((repoPath, iid)));
       if (options.deleteSource) {
-        ref.invalidate(refsProvider(repoPath));
-        ref.invalidate(mergedBranchesProvider(repoPath));
+        // Shared post-mutation set (refs + related) — do not hand-roll
+        // individual ref invalidations (see repo_mutation_refresh_test).
+        refreshAfterMutation(ref, repoPath);
       }
     }
   }

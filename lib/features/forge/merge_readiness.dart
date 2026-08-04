@@ -2,7 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/forge/merge_plan.dart';
-import '../common/buttons.dart';
+import '../common/inline_action_button.dart';
 
 /// Compact readiness strip for PR/MR detail: ready / blocked reasons / checking.
 class MergeReadinessStrip extends StatelessWidget {
@@ -65,11 +65,10 @@ class MergeReadinessStrip extends StatelessWidget {
               text: r.message,
               trailing:
                   r.code == 'mergeability_unknown' && onRetry != null
-                  ? AppPushButton(
-                      controlSize: ControlSize.mini,
-                      secondary: true,
+                  ? InlineActionButton(
+                      label: 'Retry',
+                      icon: CupertinoIcons.arrow_clockwise,
                       onPressed: onRetry,
-                      child: const Text('Retry'),
                     )
                   : null,
             ),

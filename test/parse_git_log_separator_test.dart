@@ -9,11 +9,14 @@ void main() {
   group('parseGitLog — separator injection resilience', () {
     // The wire format: fields joined by \x1F, records joined by \x1E.
     // Fields: hash, shortHash, authorName, authorEmail, date, parents, subject
+    // Hashes must be at least 7 chars so shortHash = hash.substring(0, 7)
+    // is well-defined (full OIDs are 40 hex chars on the wire).
     String record(
       String hash,
       String subject, {
       String parents = '',
     }) {
+      assert(hash.length >= 7, 'test hash must be ≥7 chars');
       return [
         hash,
         hash.substring(0, 7),
@@ -26,18 +29,18 @@ void main() {
     }
 
     test('normal subjects parse correctly', () {
-      final raw = record('aaa', 'fix: normal commit');
+      final raw = record('aaaaaaaa', 'fix: normal commit');
       final commits = parseGitLog(raw);
       expect(commits.length, 1);
       expect(commits.first.subject, 'fix: normal commit');
-      expect(commits.first.hash, 'aaa');
+      expect(commits.first.hash, 'aaaaaaaa');
     });
 
     test('subject containing fieldSep (0x1F) is not truncated (M3)', () {
       // A subject that contains the unit separator byte — split() would
       // produce 8 fields, and f[6] would only capture the prefix.
       final subjectWithSep = 'part1${GitService.fieldSep}part2';
-      final raw = record('bbb', subjectWithSep);
+      final raw = record('bbbbbbbb', subjectWithSep);
       final commits = parseGitLog(raw);
       expect(commits.length, 1);
       // The subject must be fully recovered by rejoining from index 6 onward.
@@ -48,7 +51,7 @@ void main() {
     test('subject with multiple fieldSep bytes recovers full text', () {
       final sep = GitService.fieldSep;
       final subjectWithMultipleSeps = 'a${sep}b${sep}c${sep}d';
-      final raw = record('ccc', subjectWithMultipleSeps);
+      final raw = record('cccccccc', subjectWithMultipleSeps);
       final commits = parseGitLog(raw);
       expect(commits.length, 1);
       // _stripSeps strips the separator bytes, so we get 'abcd'.
@@ -59,25 +62,29 @@ void main() {
       // Two normal commits followed by one with a recordSep in its subject.
       // The injected recordSep will split the record stream, but the fragment
       // should be < 7 fields and thus skipped, while the other records remain.
-      final normalA = record('aaa', 'commit A');
-      final normalB = record('bbb', 'commit B');
+      final normalA = record('aaaaaaaa', 'commit A');
+      final normalB = record('bbbbbbbb', 'commit B');
       final raw = '$normalA${GitService.recordSep}$normalB';
       final commits = parseGitLog(raw);
       // Both commits should parse successfully.
       expect(commits.length, 2);
-      expect(commits[0].hash, 'aaa');
-      expect(commits[1].hash, 'bbb');
+      expect(commits[0].hash, 'aaaaaaaa');
+      expect(commits[1].hash, 'bbbbbbbb');
     });
 
     test('multiple records with parents parse correctly', () {
-      final merge = record('mmm', 'merge feature', parents: 'aaa bbb');
-      final a = record('aaa', 'feat A');
-      final b = record('bbb', 'feat B');
+      final merge = record(
+        'mmmmmmmm',
+        'merge feature',
+        parents: 'aaaaaaaa bbbbbbbb',
+      );
+      final a = record('aaaaaaaa', 'feat A');
+      final b = record('bbbbbbbb', 'feat B');
       final raw =
           '$merge${GitService.recordSep}$a${GitService.recordSep}$b';
       final commits = parseGitLog(raw);
       expect(commits.length, 3);
-      expect(commits[0].parents, ['aaa', 'bbb']);
+      expect(commits[0].parents, ['aaaaaaaa', 'bbbbbbbb']);
       expect(commits[1].parents, isEmpty);
       expect(commits[2].parents, isEmpty);
     });
@@ -89,13 +96,13 @@ void main() {
     });
 
     test('truncated records (< 7 fields) are silently skipped', () {
-      final good = record('aaa', 'good commit');
+      final good = record('aaaaaaaa', 'good commit');
       const truncated = 'hash${GitService.fieldSep}short'; // only 2 fields
       final raw =
           '$good${GitService.recordSep}$truncated';
       final commits = parseGitLog(raw);
       expect(commits.length, 1);
-      expect(commits.first.hash, 'aaa');
+      expect(commits.first.hash, 'aaaaaaaa');
     });
   });
 }

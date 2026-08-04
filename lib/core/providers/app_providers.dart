@@ -2049,26 +2049,33 @@ class ConnectionController extends Notifier<ConnectionState> {
     // → connectionProvider, and reading them from within this notifier trips
     // Riverpod's circular-dependency guard. Same reason [_activeExecutor]
     // exists (see its doc).
-    final login = switch (forge) {
-      Forge.github => GhService(
-        _activeExecutor,
-      ).loginWithTokenHost(host: host, token: token),
-      Forge.gitlab => GlabService(
-        _activeExecutor,
-      ).loginWithTokenHost(host: host, token: token),
-      _ => Future<void>.value(),
-    };
-    final guarded = login.catchError((Object e) {
-      _hostLogins.remove(key); // a failed login is retryable
-      throw e;
-    });
-    // Invalidate the cached auth probe after a successful login so the next
-    // watch re-checks against the now-authenticated CLI instead of serving
-    // the stale unauthenticated result from before the login.
-    guarded.then((_) {
-      if (ref.mounted) ref.invalidate(forgeAuthProvider((forge, false)));
-    });
-    return _hostLogins[key] = guarded;
+    // Async body so a failed login always evicts its memo entry before the
+    // error surfaces — `catchError` + rethrow left a completed-error Future
+    // that some callers still treated as memoized depending on timing.
+    final future = () async {
+      try {
+        switch (forge) {
+          case Forge.github:
+            await GhService(
+              _activeExecutor,
+            ).loginWithTokenHost(host: host, token: token);
+          case Forge.gitlab:
+            await GlabService(
+              _activeExecutor,
+            ).loginWithTokenHost(host: host, token: token);
+          case Forge.none:
+          case Forge.unknown:
+            return;
+        }
+        if (ref.mounted) {
+          ref.invalidate(forgeAuthProvider((forge, false)));
+        }
+      } catch (_) {
+        _hostLogins.remove(key);
+        rethrow;
+      }
+    }();
+    return _hostLogins[key] = future;
   }
 
   /// Opens a transport-only ("provisioning") SSH session to [conn]'s host with

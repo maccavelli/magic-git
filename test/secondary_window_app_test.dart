@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart' show MacosIcon;
 import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/settings/app_settings.dart';
 import 'package:remote_magic_git/core/settings/pane_layout.dart';
@@ -211,11 +212,21 @@ void main() {
           activeExecutorProvider.overrideWithValue(executor),
           if (gitService != null)
             gitServiceProvider.overrideWithValue(gitService),
+          // Empty watch stream — production would start fswatch/inotify and a
+          // restart Timer on failure, which stays pending in fake-async and
+          // trips the binding invariant at teardown.
+          repoWatchProvider.overrideWith(
+            (ref, repoPath) => const Stream<RepoWatchEvent>.empty(),
+          ),
         ],
         child: SecondaryWindowApp(descriptor: _descriptor, hub: _hub),
       ),
     );
     await tester.pumpAndSettle();
+    // Drain any residual lane/watch timers from real git/exec paths.
+    addTearDown(() async {
+      await tester.pump(const Duration(minutes: 2));
+    });
   }
 
   setUp(() {

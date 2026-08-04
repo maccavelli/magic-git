@@ -131,9 +131,12 @@ class CommitGraph {
       }
       if (lanes.isEmpty) {
         lanes.add(null); // lane 0
+        freeLanes.add(0);
       }
+      final i = lanes.length;
       lanes.add(null);
-      return lanes.length - 1;
+      freeLanes.add(i);
+      return i;
     }
 
     for (final commit in commits) {
@@ -145,10 +148,19 @@ class CommitGraph {
         nodeColumn = 0;
       } else if (matching.isNotEmpty) {
         nodeColumn = matching.first;
-      } else if (isPrimary && (freeLanes.contains(0) || lanes.isEmpty || lanes[0] == null)) {
+      } else if (isPrimary &&
+          (freeLanes.contains(0) || lanes.isEmpty || lanes[0] == null)) {
         nodeColumn = 0;
-        if (lanes.isEmpty) lanes.add(null);
-      } else if (!isPrimary && primaryChain.isNotEmpty && (lanes.isEmpty || lanes[0] == null)) {
+        if (lanes.isEmpty) {
+          lanes.add(null);
+          freeLanes.add(0);
+        }
+      } else if (!isPrimary &&
+          primaryChain.isNotEmpty &&
+          (lanes.isEmpty || lanes[0] == null || freeLanes.contains(0))) {
+        // Side branch (or filtered-log orphan): keep lane 0 for the primary
+        // spine. firstFreeNonZero reuses freed non-zero lanes so a filtered
+        // log with missing parents stays compact (F4).
         nodeColumn = firstFreeNonZero();
       } else {
         nodeColumn = firstFree();
@@ -178,7 +190,13 @@ class CommitGraph {
           final isMerge = p > 0;
 
           if (!allHashes.contains(parentHash)) {
+            // Parent is outside this list (filtered log / truncated page).
+            // Draw a stub edge to the node's own column without reserving a
+            // waiting lane — that is what previously leaked O(N) lanes.
             parentLanes.add((nodeColumn, isMerge));
+            if (p == 0) {
+              setLane(nodeColumn, null);
+            }
             continue;
           }
 
