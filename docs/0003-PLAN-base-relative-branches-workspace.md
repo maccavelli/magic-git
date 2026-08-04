@@ -1,11 +1,20 @@
 # Implementation plan: base-relative branches workspace
 
-- Status: proposed for review (codebase re-grounded 2026-08-04; reconciled
-  with MADR 0003 including §0.5 socratic amendments)
+- Status: **accepted for implementation sequencing** (codebase re-grounded
+  2026-08-04; Phase 0 advanced — identity/prefs/dashboard +
+  `BranchViewModel` pure snapshot (no multi-field build assignments) +
+  folder list shaping + characterization/unit tests; remaining Phase 0:
+  physical navigator/detail widget file split and optional 500-ref baseline;
+  trust gate remains Phases 1–3 before bulk)
 - Date: 2026-08-04
 - MADR: `docs/0003-MADR-base-relative-branches-workspace.md` (Option C)
 - Owner: implementation agent + maintainer review
 - Delivery model: incremental, analyzer-clean phases; maintainer creates commits
+- Sequencing rules in force:
+  1. This plan is the executable authority for delivery order.
+  2. Work starts at **Phase 0** (foundation only).
+  3. **No Phase 4 bulk delete** until Checkpoint C (trust after Phase 3).
+  4. Unit tests land **in parallel** with each seam (§5.0).
 - SDK: Dart `^3.12.2` / Flutter 3.44.x — match existing strict analyzer
   (`strict-casts` / `strict-inference` / `strict-raw-types`,
   `prefer_final_locals`, `prefer_const_constructors`, `unawaited_futures`,

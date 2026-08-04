@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 // flutter_riverpod's main export list doesn't include it.
 import 'package:riverpod/misc.dart' show ProviderOrFamily;
 import 'package:shared_preferences/shared_preferences.dart';
+import '../../features/branches/branch_workspace_prefs.dart';
 import '../exec/command_telemetry.dart';
 import '../exec/local_command_executor.dart';
 import '../exec/scoped_command_executor.dart';
@@ -42,6 +43,7 @@ import '../storage/connection_store.dart';
 import '../storage/known_hosts_store.dart';
 import '../storage/local_repo_store.dart';
 import '../storage/recent_repos_store.dart';
+import '../storage/repository_ui_identity.dart';
 import '../storage/saved_connection.dart';
 import '../storage/saved_local_repo.dart';
 import '../undo/undo_journal.dart';
@@ -659,6 +661,15 @@ class ConnectionState {
   /// while not connected. Drives the dashboard's session-uptime readout.
   final DateTime? connectedAt;
 
+  /// Monotonic connection generation for preference/cache identity.
+  ///
+  /// Mirrors the controller's private attempt counter so ad-hoc repository UI
+  /// identity can key on session epoch without reading private controller
+  /// state. Zero while disconnected / never connected; positive after a
+  /// connect attempt begins. Bumped whenever a connect/disconnect supersedes
+  /// prior work.
+  final int sessionEpoch;
+
   /// Scoped work-tree (dotfiles) repos on this connection: repo path → its
   /// external git-dir. The in-memory, backend-agnostic source of truth for
   /// [repoWatchProvider] (to run bounded) and anything else that must know a
@@ -680,6 +691,7 @@ class ConnectionState {
     this.reconnecting = false,
     this.hostKeyPrompt,
     this.connectedAt,
+    this.sessionEpoch = 0,
     this.scopedGitDirs = const {},
   });
 
@@ -708,6 +720,7 @@ class ConnectionState {
     HostKeyPrompt? hostKeyPrompt,
     bool clearHostKeyPrompt = false,
     DateTime? connectedAt,
+    int? sessionEpoch,
     Map<String, String>? scopedGitDirs,
   }) {
     return ConnectionState(
@@ -726,6 +739,7 @@ class ConnectionState {
           ? null
           : (hostKeyPrompt ?? this.hostKeyPrompt),
       connectedAt: connectedAt ?? this.connectedAt,
+      sessionEpoch: sessionEpoch ?? this.sessionEpoch,
       scopedGitDirs: scopedGitDirs ?? this.scopedGitDirs,
     );
   }
@@ -958,6 +972,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     // alongside the invalidations above so a stale connection's entries don't
     // linger in the LRUs' own bookkeeping.
     clearHashKeyedRepoCaches();
+    clearSessionBranchWorkspacePrefs();
     // Keyed purely by repoPath with no connection identity — without this, a
     // mutation marked just before disconnecting could suppress a genuinely
     // external change reported by a *different* connection that happens to
@@ -1185,7 +1200,8 @@ class ConnectionController extends Notifier<ConnectionState> {
       connectionId: connectionId,
       connectionLabel: connectionLabel ?? profile.host,
       host: profile.host,
-    );
+        sessionEpoch: _attempt,
+      );
     // Per-stage wall-clock, logged at connected so "why is connecting slow"
     // is answerable from inside the app (Output view) instead of by guesswork:
     // the SSH handshake, the environment probe (which spawns the login shell
@@ -1310,6 +1326,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         connectionLabel: connectionLabel ?? profile.host,
         host: profile.host,
         connectedAt: DateTime.now(),
+        sessionEpoch: _attempt,
         scopedGitDirs: scopedGitDirs,
       );
       ref
@@ -1384,6 +1401,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         connectionId: connectionId,
         connectionLabel: connectionLabel ?? profile.host,
         host: profile.host,
+        sessionEpoch: _attempt,
       );
     } finally {
       // Any path that never launched the background finish (failure, host-key
@@ -1636,7 +1654,8 @@ class ConnectionController extends Notifier<ConnectionState> {
       repoPath: repoPath,
       connectionId: id,
       connectionLabel: label,
-    );
+        sessionEpoch: _attempt,
+      );
     try {
       // Resolve the environment FIRST so the augmented PATH / absolute git path
       // is in place before any git runs. A Finder-launched app inherits a bare
@@ -1743,6 +1762,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         connectionId: id,
         connectionLabel: label,
         connectedAt: DateTime.now(),
+        sessionEpoch: _attempt,
         scopedGitDirs: (gitDir != null && gitDir.isNotEmpty)
             ? {repoPath: gitDir}
             : const {},
@@ -1768,6 +1788,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         repoPath: repoPath,
         connectionId: id,
         connectionLabel: label,
+        sessionEpoch: _attempt,
       );
     }
   }
@@ -2174,7 +2195,8 @@ class ConnectionController extends Notifier<ConnectionState> {
       connectionId: conn.id,
       connectionLabel: conn.displayName,
       host: conn.host,
-    );
+        sessionEpoch: _attempt,
+      );
     try {
       await ref
           .read(sshClientManagerProvider)
@@ -2215,6 +2237,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         connectionId: conn.id,
         connectionLabel: conn.displayName,
         host: conn.host,
+        sessionEpoch: _attempt,
       );
       return null;
     }
@@ -2350,6 +2373,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       host: conn.host,
       warning: warning,
       connectedAt: DateTime.now(),
+        sessionEpoch: _attempt,
       // The connection's full scoped map (empty for an ordinary repo) so a later
       // GitService rebuild re-registers every scope from ConnectionState.
       scopedGitDirs: updated.scopedGitDirs,
@@ -2502,6 +2526,7 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   logProvider,
   logSearchProvider,
   refsProvider,
+  repoLayoutProvider,
   // remotesProvider is cheap (bundled in the snapshot); remoteTagsProvider
   // costs an `ls-remote` round trip, which is exactly what an EXPLICIT ⌘R
   // asks for — and both must die on connect/disconnect, or a keepAlive'd
@@ -3139,6 +3164,55 @@ final mergedBranchesProvider = FutureProvider.autoDispose
         return const <String>{};
       }
     });
+
+/// Absolute layout for [repoPath] (linked worktree aware). Null when layout
+/// cannot be resolved — callers treat that as session-only identity.
+final repoLayoutProvider = FutureProvider.autoDispose
+    .family<RepoLayout?, String>((ref, repoPath) async {
+      return ref.watch(gitServiceProvider).detectRepoLayout(repoPath);
+    });
+
+/// Stable UI identity for workspace prefs, keyed by [repoPath] within the
+/// active connection session. Null when disconnected (no session epoch).
+final repositoryUiIdentityProvider = FutureProvider.autoDispose
+    .family<RepositoryUiIdentity?, String>((ref, repoPath) async {
+      final conn = ref.watch(connectionProvider);
+      if (conn.sessionEpoch <= 0) return null;
+
+      final layout = await ref.watch(repoLayoutProvider(repoPath).future);
+      final common = layout?.gitCommonDir;
+
+      final backend = conn.backend.name; // 'ssh' | 'local'
+      final id = conn.connectionId;
+
+      if (common == null || common.isEmpty) {
+        return RepositoryUiIdentity.sessionOnlyUnresolved(
+          backend: backend,
+          sessionEpoch: conn.sessionEpoch,
+          repoPathFallback: repoPath,
+        );
+      }
+
+      if (id != null && id.isNotEmpty) {
+        if (conn.backend == ConnectionBackend.local) {
+          return RepositoryUiIdentity.local(
+            localRepoId: id,
+            gitCommonDir: common,
+          );
+        }
+        return RepositoryUiIdentity.ssh(
+          connectionId: id,
+          gitCommonDir: common,
+        );
+      }
+
+      return RepositoryUiIdentity.adhoc(
+        backend: backend,
+        sessionEpoch: conn.sessionEpoch,
+        gitCommonDir: common,
+      );
+    });
+
 
 /// The repo's *configured* remotes (`git remote`), e.g. `['origin']` — the
 /// canonical "does this repo have a remote" signal. NOT derivable from

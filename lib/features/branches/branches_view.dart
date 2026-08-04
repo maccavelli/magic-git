@@ -36,6 +36,8 @@ import '../dnd/drag_item.dart';
 import '../forge/forge_widgets.dart' show CiDot;
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
+import 'branch_dashboard_stats.dart';
+import 'branch_view_model.dart';
 import 'create_tag_sheet.dart';
 import 'pinned_branches.dart';
 
@@ -78,17 +80,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   // a click selects any row (driving the detail pane); ↑/↓ walk the LOCAL
   // branches, Enter checks the selection out, ⌘⇧M / ⌘⌫ merge / delete it.
   String? _selectedRef;
-  List<GitRef> _locals = const [];
 
-  /// Every currently-visible selectable ref in display order (local + remote +
-  /// tag) — what ↑/↓ walk. [_locals] stays the local-only subset the merge/
-  /// delete gating and Enter-to-checkout operate on.
-  List<GitRef> _navigable = const [];
-
-  /// Every local branch short-name (unfiltered) — lets the remote-row checkout
-  /// decide between "switch to the existing local branch" and "create a new
-  /// tracking branch" without a name-collision guess.
-  Set<String> _localBranchNames = const {};
+  /// Latest pure navigator snapshot. Keyboard and actions read this instead of
+  /// re-scattering forge/merged/pinned/locals into mutable fields during build.
+  BranchViewModel _vm = BranchViewModel.empty;
 
   /// Whether to nest local branches into a folder tree by their `/` prefix.
   /// Off by default — a flat list is calmer under ~15 branches — with a
@@ -103,7 +98,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   /// Stale local branches (no commit in ~3 months) collapse behind a summary
   /// row, GitHub-style — a mature repo buries the branches you actually work
   /// on under long-dead ones otherwise. The current branch is never stale.
-  static const int _staleDays = 90;
+  /// Policy lives in [kBranchStaleDays] / [isBranchStale].
   bool _showStale = false;
 
   /// Tags shown before the "Show more" row expands the list. Tags accrete
@@ -130,16 +125,6 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   final Map<String, GlobalKey> _rowKeys = {};
   final _menu = ContextMenuOverlay();
 
-  /// Forge signal fused per branch (open PR/MR + latest CI) and the set of
-  /// branches already merged into HEAD — both refreshed from providers in
-  /// [_content], both empty until (and unless) their lazy data lands.
-  Map<String, BranchForge> _forge = const {};
-  Set<String> _merged = const {};
-
-  /// Pinned (favorite) branch short-names for this repo — hoisted into their
-  /// own top section, refreshed from [pinnedBranchesProvider] in [_content].
-  Set<String> _pinned = const {};
-
   String get repoPath => widget.repoPath;
 
   @override
@@ -156,7 +141,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         _showAllRemotes = false;
         _showStale = false;
         _selectedRef = null;
-        _locals = const [];
+        _vm = BranchViewModel.empty;
         _collapsedFolders.clear();
         _filterCtl.clear();
       });
@@ -192,7 +177,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   GitRef? get _selectedLocal {
     final name = _selectedRef;
     if (name == null) return null;
-    for (final b in _locals) {
+    for (final b in _vm.localsOnScreen) {
       if (b.name == name) return b;
     }
     return null;
@@ -212,18 +197,19 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   }
 
   void _moveSelection(int dir) {
-    if (_navigable.isEmpty) return;
+    final navigable = _vm.navigable;
+    if (navigable.isEmpty) return;
     var current = -1;
     if (_selectedRef != null) {
-      for (var i = 0; i < _navigable.length; i++) {
-        if (_navigable[i].name == _selectedRef) {
+      for (var i = 0; i < navigable.length; i++) {
+        if (navigable[i].name == _selectedRef) {
           current = i;
           break;
         }
       }
     }
-    final next = stepSelection(current, dir, _navigable.length);
-    _select(_navigable[next]);
+    final next = stepSelection(current, dir, navigable.length);
+    _select(navigable[next]);
   }
 
   KeyEventResult _onBranchKey(FocusNode node, KeyEvent event) {
@@ -275,7 +261,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   /// Where [branch] is checked out, from the refs we already have loaded — no
   /// extra git call, since `%(worktreepath)` rides the existing snapshot.
   String? _worktreePathFor(String branch) {
-    for (final r in _locals) {
+    for (final r in _vm.allLocalBranches) {
       if (r.shortName == branch) return r.worktreePath;
     }
     return null;
@@ -357,7 +343,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         context,
         ref,
         repoPath,
-        () => _localBranchNames.contains(localName)
+        () => _vm.localBranchNames.contains(localName)
             ? git.checkout(repoPath, localName)
             : git.checkoutTrackingBranch(
                 repoPath,
@@ -374,7 +360,12 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
   void _togglePin(String branch) {
     unawaited(
-      setPinnedBranch(ref, repoPath, branch, pinned: !_pinned.contains(branch)),
+      setPinnedBranch(
+        ref,
+        repoPath,
+        branch,
+        pinned: !_vm.pinned.contains(branch),
+      ),
     );
   }
 
@@ -412,150 +403,86 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   }
 
   Widget _content(BuildContext context, GitService git, List<GitRef> refs) {
-    // Lazy forge + merged signal — never blocks the list; `.value` is null
-    // until (and unless) the providers resolve, then badges pop in.
-    _forge = ref.watch(branchForgeProvider(repoPath)).value ?? const {};
-    _merged = ref.watch(mergedBranchesProvider(repoPath)).value ?? const {};
-    _pinned = ref.watch(pinnedBranchesProvider(repoPath)).value ?? const {};
-    final filter = _filterCtl.text.trim().toLowerCase();
-    bool matches(GitRef r) =>
-        filter.isEmpty || r.shortName.toLowerCase().contains(filter);
-
-    // Canonical per-section minimize/expand (shared with the Forge tab). A
-    // non-empty filter force-expands every section — a filter IS a request to
-    // see every match — so the stored collapse only bites when unfiltered.
+    // Lazy forge + merged + pins — never block the list; `.value` is null until
+    // (and unless) providers resolve, then badges/dashboard update.
+    final forge = ref.watch(branchForgeProvider(repoPath)).value ?? const {};
+    final merged =
+        ref.watch(mergedBranchesProvider(repoPath)).value ?? const <String>{};
+    final pinned =
+        ref.watch(pinnedBranchesProvider(repoPath)).value ?? const <String>{};
     final collapsedSections = ref.watch(collapsedSectionsProvider);
-    bool sectionCollapsed(String s) =>
-        filter.isEmpty && collapsedSections.contains(s);
-    final pinnedCollapsed = sectionCollapsed(_BranchSections.pinned);
-    final localCollapsed = sectionCollapsed(_BranchSections.local);
-    final remoteCollapsed = sectionCollapsed(_BranchSections.remote);
-    final tagsCollapsed = sectionCollapsed(_BranchSections.tags);
-    final totalLocals = refs.where((r) => r.isLocalBranch).length;
-    final totalRemotes = refs.where((r) => r.isRemote).length;
-    _localBranchNames = {
-      for (final r in refs)
-        if (r.isLocalBranch) r.shortName,
-    };
-    final locals = refs.where((r) => r.isLocalBranch && matches(r)).toList();
-    final remotes = refs.where((r) => r.isRemote && matches(r)).toList();
-    final allTags = refs.where((r) => r.isTag).toList();
-    final tags = allTags.where(matches).toList();
-    // Section headers carry "shown of total" while a filter narrows.
-    String sectionTitle(String base, int shown, int total) =>
-        filter.isEmpty ? '$base ($total)' : '$base ($shown of $total)';
-
-    // The remote's tag listing (null = unknown) and the remote the tag/branch
-    // actions target — the same origin-preferred choice remoteTagsProvider
-    // makes. While remotes is loading, fall back to 'origin' so the push
-    // buttons don't blink out; a CONFIRMED empty list hides them.
     final remoteTags = ref.watch(remoteTagsProvider(repoPath)).value;
     final remotesList = ref.watch(remotesProvider(repoPath)).value;
-    final String? tagRemote = remotesList == null
-        ? 'origin'
-        : remotesList.isEmpty
-        ? null
-        : defaultRemote(remotesList);
-    final localOnlyTags = remoteTags == null
-        ? const <String>[]
-        : [
-            for (final t in allTags)
-              if (!remoteTags.containsKey(t.shortName)) t.shortName,
-          ];
 
-    // Local branches: pinned ones hoist into their own top section; the rest
-    // split active vs stale (current branch always active), preserving the
-    // incoming order within each.
-    final pinnedLocals = <GitRef>[];
-    final activeLocals = <GitRef>[];
-    final staleLocals = <GitRef>[];
-    for (final b in locals) {
-      if (_pinned.contains(b.shortName)) {
-        pinnedLocals.add(b);
-      } else {
-        (_isStale(b) ? staleLocals : activeLocals).add(b);
-      }
-    }
-
-    tags.sort((a, b) {
-      final cmp = (b.creatorDate ?? -1).compareTo(a.creatorDate ?? -1);
-      return cmp != 0 ? cmp : a.shortName.compareTo(b.shortName);
-    });
-    final visibleTags = _showAllTags || filter.isNotEmpty
-        ? tags
-        : tags.take(_collapsedTagCount).toList();
-    final hiddenTags = tags.length - visibleTags.length;
-    final visibleRemotes = _showAllRemotes || filter.isNotEmpty
-        ? remotes
-        : remotes.take(_collapsedRemoteCount).toList();
-    final hiddenRemotes = remotes.length - visibleRemotes.length;
-
-    // ↑/↓ walk exactly the local branches on screen (pinned, then active, plus
-    // stale when expanded) in display order — skipping any section the user has
-    // minimized, so navigation never lands on a hidden row.
-    _locals = [
-      if (!pinnedCollapsed) ...pinnedLocals,
-      if (!localCollapsed) ...[
-        ...activeLocals,
-        if (_showStale || filter.isNotEmpty) ...staleLocals,
-      ],
-    ];
-    _navigable = [
-      ..._locals,
-      if (!remoteCollapsed) ...visibleRemotes,
-      if (!tagsCollapsed) ...visibleTags,
-    ];
-
-    // The empty-state review dashboard's data + one-click cleanup target.
-    final mergedDeletable = [
-      for (final b in locals)
-        if (!b.isHead && _merged.contains(b.shortName)) b.shortName,
-    ];
-    final summary = _ReviewSummary(
-      local: totalLocals,
-      active: activeLocals.length,
-      stale: staleLocals.length,
-      pinned: pinnedLocals.length,
-      remote: totalRemotes,
-      tags: allTags.length,
-      mergedDeletable: mergedDeletable,
+    final vm = BranchViewModel.fromRefs(
+      refs: refs,
+      forge: forge,
+      merged: merged,
+      pinned: pinned,
+      collapsedSections: collapsedSections,
+      filterLower: _filterCtl.text.trim().toLowerCase(),
+      showStale: _showStale,
+      showAllTags: _showAllTags,
+      showAllRemotes: _showAllRemotes,
+      grouped: _grouped,
+      collapsedFolderPrefixes: _collapsedFolders,
+      remoteTags: remoteTags,
+      remotesList: remotesList,
+      pinnedSectionKey: _BranchSections.pinned,
+      localSectionKey: _BranchSections.local,
+      remoteSectionKey: _BranchSections.remote,
+      tagsSectionKey: _BranchSections.tags,
+      collapsedTagCount: _collapsedTagCount,
+      collapsedRemoteCount: _collapsedRemoteCount,
     );
+    // Single snapshot for keyboard/actions — not multiple derived fields.
+    _vm = vm;
 
     // A flat descriptor list, not built Widgets — ListView.builder only ever
     // constructs the handful currently on-screen, so this stays cheap even for
     // a repo with hundreds of branches/tags.
     final rows = <_Row>[
-      if (pinnedLocals.isNotEmpty) ...[
-        _PinnedHeaderRow(pinnedLocals.length, collapsed: pinnedCollapsed),
-        if (!pinnedCollapsed)
-          for (final b in pinnedLocals) _BranchRow(b, remote: false, depth: 0),
+      if (vm.pinnedLocals.isNotEmpty) ...[
+        _PinnedHeaderRow(vm.pinnedLocals.length, collapsed: vm.pinnedCollapsed),
+        if (!vm.pinnedCollapsed)
+          for (final b in vm.pinnedLocals)
+            _BranchRow(b, remote: false, depth: 0),
       ],
       _LocalHeaderRow(
-        sectionTitle('Local Branches', locals.length, totalLocals),
-        collapsed: localCollapsed,
+        vm.sectionTitle(
+          'Local Branches',
+          vm.filteredLocals.length,
+          vm.totalLocals,
+        ),
+        collapsed: vm.localCollapsed,
       ),
-      if (!localCollapsed) ...[
-        ..._localRows(activeLocals),
-        if (staleLocals.isNotEmpty && filter.isEmpty)
-          _StaleToggleRow(staleLocals.length),
-        if (staleLocals.isNotEmpty && (_showStale || filter.isNotEmpty))
-          ..._localRows(staleLocals),
+      if (!vm.localCollapsed) ...[
+        ..._localRows(vm.activeLocals),
+        if (vm.staleLocals.isNotEmpty && vm.filterLower.isEmpty)
+          _StaleToggleRow(vm.staleLocals.length),
+        if (vm.staleLocals.isNotEmpty &&
+            (_showStale || vm.filterLower.isNotEmpty))
+          ..._localRows(vm.staleLocals),
       ],
       _RemotesHeaderRow(
-        sectionTitle('Remote Branches', remotes.length, totalRemotes),
-        collapsed: remoteCollapsed,
+        vm.sectionTitle(
+          'Remote Branches',
+          vm.filteredRemotes.length,
+          vm.totalRemotes,
+        ),
+        collapsed: vm.remoteCollapsed,
       ),
-      if (!remoteCollapsed) ...[
-        for (final b in visibleRemotes) _BranchRow(b, remote: true, depth: 0),
-        if (hiddenRemotes > 0) _ShowMoreRemotesRow(hiddenRemotes),
+      if (!vm.remoteCollapsed) ...[
+        for (final b in vm.visibleRemotes) _BranchRow(b, remote: true, depth: 0),
+        if (vm.hiddenRemotes > 0) _ShowMoreRemotesRow(vm.hiddenRemotes),
       ],
       _TagsHeaderRow(
-        sectionTitle('Tags', tags.length, allTags.length),
-        collapsed: tagsCollapsed,
+        vm.sectionTitle('Tags', vm.visibleTags.length + vm.hiddenTags, vm.allTags.length),
+        collapsed: vm.tagsCollapsed,
       ),
-      if (!tagsCollapsed) ...[
-        for (final t in visibleTags) _TagRefRow(t),
-        if (hiddenTags > 0) _ShowMoreTagsRow(hiddenTags),
+      if (!vm.tagsCollapsed) ...[
+        for (final t in vm.visibleTags) _TagRefRow(t),
+        if (vm.hiddenTags > 0) _ShowMoreTagsRow(vm.hiddenTags),
       ],
     ];
 
@@ -575,9 +502,9 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                   context,
                   git,
                   rows[i],
-                  remoteTags: remoteTags,
-                  tagRemote: tagRemote,
-                  localOnly: localOnlyTags,
+                  remoteTags: vm.remoteTags,
+                  tagRemote: vm.tagRemote,
+                  localOnly: vm.localOnlyTags,
                 ),
               ),
             ),
@@ -594,9 +521,9 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         context,
         git,
         _refByName(refs, _selectedRef),
-        remoteTags: remoteTags,
-        tagRemote: tagRemote,
-        summary: summary,
+        remoteTags: vm.remoteTags,
+        tagRemote: vm.tagRemote,
+        summary: vm.dashboard,
       ),
     );
   }
@@ -657,16 +584,6 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       onTap: () => setState(() => _showAllRemotes = true),
     ),
   };
-
-  bool _isStale(GitRef b) {
-    if (b.isHead) return false;
-    final c = b.creatorDate;
-    if (c == null) return false;
-    final age = DateTime.now().difference(
-      DateTime.fromMillisecondsSinceEpoch(c * 1000),
-    );
-    return age.inDays > _staleDays;
-  }
 
   // ---- The toolbar (compact filter + group toggle + fetch) -----------------
 
@@ -844,61 +761,28 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
   // ---- Local branch rows (flat or folder-grouped) --------------------------
 
-  /// Flattens a set of local branches into row descriptors, either flat or,
-  /// when [_grouped], nested into a `/`-prefix folder tree with single-child
-  /// chains inlined (`a/b/c` collapses to one folder row) and collapse honored.
+  /// Flattens a set of local branches into row descriptors, either flat or
+  /// folder-grouped (pure shaping in [buildLocalBranchListItems]).
   List<_Row> _localRows(List<GitRef> branches) {
-    if (!_grouped) {
-      return [for (final b in branches) _BranchRow(b, remote: false, depth: 0)];
-    }
-    final root = _FolderNode();
-    for (final b in branches) {
-      final parts = b.shortName.split('/');
-      var node = root;
-      for (var i = 0; i < parts.length - 1; i++) {
-        node = node.dirs.putIfAbsent(parts[i], _FolderNode.new);
-      }
-      node.leaves.add(b);
-    }
-    final out = <_Row>[];
-    _emitFolder(root, '', 0, out);
-    return out;
-  }
-
-  void _emitFolder(_FolderNode node, String prefix, int depth, List<_Row> out) {
-    // Directories first (sorted), then leaf branches (in incoming order).
-    final dirNames = node.dirs.keys.toList()..sort();
-    for (final name in dirNames) {
-      var child = node.dirs[name]!;
-      var label = name;
-      var path = '$prefix$name/';
-      // Inline a single-child chain: a folder with exactly one subdir and no
-      // leaves of its own is merged into its child (`a/b/` on one row).
-      while (child.leaves.isEmpty && child.dirs.length == 1) {
-        final only = child.dirs.entries.single;
-        label = '$label/${only.key}';
-        path = '$path${only.key}/';
-        child = only.value;
-      }
-      final count = _leafCount(child);
-      out.add(
-        _FolderRow(path: path, label: '$label/', depth: depth, count: count),
-      );
-      if (!_collapsedFolders.contains(path)) {
-        _emitFolder(child, path, depth + 1, out);
-      }
-    }
-    for (final b in node.leaves) {
-      out.add(_BranchRow(b, remote: false, depth: depth));
-    }
-  }
-
-  int _leafCount(_FolderNode node) {
-    var n = node.leaves.length;
-    for (final d in node.dirs.values) {
-      n += _leafCount(d);
-    }
-    return n;
+    final items = buildLocalBranchListItems(
+      branches: branches,
+      grouped: _grouped,
+      collapsedFolderPrefixes: _collapsedFolders,
+    );
+    return [
+      for (final item in items)
+        switch (item) {
+          LocalBranchFolderItem(
+            :final path,
+            :final label,
+            :final depth,
+            :final count,
+          ) =>
+            _FolderRow(path: path, label: label, depth: depth, count: count),
+          LocalBranchLeafItem(:final branch, :final depth) =>
+            _BranchRow(branch, remote: false, depth: depth),
+        },
+    ];
   }
 
   Widget _folderRow(
@@ -1084,8 +968,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   /// (already landed in HEAD), the open PR/MR number, and a CI dot — each
   /// present only when its data is in. All degrade silently to nothing.
   List<Widget> _forgeBadges(GitRef branch) {
-    final bf = _forge[branch.shortName];
-    final isMerged = !branch.isHead && _merged.contains(branch.shortName);
+    final bf = _vm.forge[branch.shortName];
+    final isMerged = !branch.isHead && _vm.merged.contains(branch.shortName);
     return [
       if (isMerged) ...[
         const LabelChip('merged', color: MacosColors.systemGrayColor),
@@ -1349,10 +1233,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         onTap: () => _renameBranch(git, b.shortName),
       ),
       ContextMenuItem(
-        icon: _pinned.contains(b.shortName)
+        icon: _vm.pinned.contains(b.shortName)
             ? CupertinoIcons.star_slash
             : CupertinoIcons.star,
-        label: _pinned.contains(b.shortName) ? 'Unpin' : 'Pin to top',
+        label: _vm.pinned.contains(b.shortName) ? 'Unpin' : 'Pin to top',
         onTap: () => _togglePin(b.shortName),
       ),
       ContextMenuItem(
@@ -1436,7 +1320,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     GitRef? sel, {
     required Map<String, String>? remoteTags,
     required String? tagRemote,
-    required _ReviewSummary summary,
+    required BranchDashboardStats summary,
   }) {
     if (sel == null) return _dashboard(context, git, summary);
     if (sel.isTag) {
@@ -1456,7 +1340,11 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   /// branches with one-click cleanup — the "what needs attention" landing view
   /// (Tower's Branches Review / GitHub's branches overview), shown whenever
   /// nothing is selected.
-  Widget _dashboard(BuildContext context, GitService git, _ReviewSummary s) {
+  Widget _dashboard(
+    BuildContext context,
+    GitService git,
+    BranchDashboardStats s,
+  ) {
     final typography = MacosTheme.of(context).typography;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
@@ -1686,7 +1574,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  _relativeIso(c.date),
+                  relativeIsoLabel(c.date),
                   style: typography.caption2.copyWith(
                     color: MacosColors.systemGrayColor,
                   ),
@@ -1698,11 +1586,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     );
   }
 
-  static String _relativeIso(String iso) {
-    final then = DateTime.tryParse(iso);
-    if (then == null) return '';
-    return _relativeTime(then.millisecondsSinceEpoch ~/ 1000);
-  }
+
 
   Widget _infoLine(
     BuildContext context,
@@ -1738,12 +1622,12 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
   Widget _localDetail(BuildContext context, GitService git, GitRef b) {
     final elsewhere = b.elsewhereWorktreePath;
-    final bf = _forge[b.shortName];
-    final isMerged = !b.isHead && _merged.contains(b.shortName);
+    final bf = _vm.forge[b.shortName];
+    final isMerged = !b.isHead && _vm.merged.contains(b.shortName);
     final info = <Widget>[
       _infoLine(context, 'Tip commit', b.subject.isEmpty ? '—' : b.subject),
       if (b.creatorDate != null)
-        _infoLine(context, 'Updated', _relativeTime(b.creatorDate)),
+        _infoLine(context, 'Updated', relativeEpochLabel(b.creatorDate)),
       _infoLine(
         context,
         'Upstream',
@@ -1857,8 +1741,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         busy ? null : () => _renameBranch(git, b.shortName),
       ),
       _detailButton(
-        _pinned.contains(b.shortName) ? 'Unpin' : 'Pin to top',
-        _pinned.contains(b.shortName)
+        _vm.pinned.contains(b.shortName) ? 'Unpin' : 'Pin to top',
+        _vm.pinned.contains(b.shortName)
             ? CupertinoIcons.star_slash
             : CupertinoIcons.star,
         () => _togglePin(b.shortName),
@@ -1938,7 +1822,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                 tag.subject.isEmpty ? '—' : tag.subject,
               ),
               if (tag.creatorDate != null)
-                _infoLine(c, 'Created', _relativeTime(tag.creatorDate)),
+                _infoLine(c, 'Created', relativeEpochLabel(tag.creatorDate)),
               _infoLine(
                 c,
                 'Remote',
@@ -2016,29 +1900,6 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     );
   }
 
-  static String _relativeTime(int? epochSeconds) {
-    if (epochSeconds == null) return '';
-    final then = DateTime.fromMillisecondsSinceEpoch(epochSeconds * 1000);
-    final d = DateTime.now().difference(then);
-    if (d.isNegative) return 'just now';
-    if (d.inDays >= 365) {
-      final y = (d.inDays / 365).floor();
-      return '$y year${y == 1 ? '' : 's'} ago';
-    }
-    if (d.inDays >= 30) {
-      final mo = (d.inDays / 30).floor();
-      return '$mo month${mo == 1 ? '' : 's'} ago';
-    }
-    if (d.inDays >= 1) return '${d.inDays} day${d.inDays == 1 ? '' : 's'} ago';
-    if (d.inHours >= 1) {
-      return '${d.inHours} hour${d.inHours == 1 ? '' : 's'} ago';
-    }
-    if (d.inMinutes >= 1) {
-      return '${d.inMinutes} minute${d.inMinutes == 1 ? '' : 's'} ago';
-    }
-    return 'just now';
-  }
-
   // ---- Actions (unchanged from the flat view: same GitService calls, same
   //      confirms and escalations — only the UI that triggers them moved) ----
 
@@ -2091,9 +1952,9 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           // Warn upfront when deleting will ALSO cost unmerged commits, so the
           // whole decision is made once with full information rather than the
           // branch-force question ambushing the user after the worktree is
-          // already gone. `_merged` may be stale/absent — the post-removal
+          // already gone. `_vm.merged` may be stale/absent — the post-removal
           // not-fully-merged escalation below is the backstop.
-          final unmerged = !_merged.contains(name);
+          final unmerged = !_vm.merged.contains(name);
           final removeToo = await confirmAction(
             context,
             title: 'Branch is checked out in a worktree',
@@ -2530,36 +2391,6 @@ class _DivergenceBar extends StatelessWidget {
       ),
     );
   }
-}
-
-/// A node in the `/`-prefix folder tree built for grouped local branches.
-class _FolderNode {
-  final Map<String, _FolderNode> dirs = {};
-  final List<GitRef> leaves = [];
-}
-
-/// The counts + cleanup target the empty-state review dashboard renders.
-class _ReviewSummary {
-  final int local;
-  final int active;
-  final int stale;
-  final int pinned;
-  final int remote;
-  final int tags;
-
-  /// Local branches merged into HEAD and not currently checked out — the
-  /// "Delete N merged" bulk-cleanup set.
-  final List<String> mergedDeletable;
-
-  const _ReviewSummary({
-    required this.local,
-    required this.active,
-    required this.stale,
-    required this.pinned,
-    required this.remote,
-    required this.tags,
-    required this.mergedDeletable,
-  });
 }
 
 /// A row descriptor for the navigator's `ListView.builder` — cheap data, not a

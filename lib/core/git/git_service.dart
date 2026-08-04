@@ -1270,18 +1270,37 @@ class GitService {
   /// Where this repo's git data lives — the one call that answers "is this a
   /// linked worktree, and if so where is the main repository".
   ///
-  /// `--path-format=absolute` is what makes the result usable: without it git
-  /// returns a *relative* `.git` for `--git-dir`/`--git-common-dir` in the main
-  /// worktree but absolute paths in a linked one, so the two could never be
-  /// compared. It also symlink-resolves, which matters on macOS (`/tmp` →
-  /// `/private/tmp`).
+  /// Prefers `--path-format=absolute` (usable absolute/symlink-resolved paths).
+  /// On Git that rejects that flag (pre-2.31, still within the app's 2.24
+  /// floor), falls back to plain `rev-parse` and canonicalizes relative
+  /// `--git-dir`/`--git-common-dir` against [repoPath] so main vs linked
+  /// worktrees remain comparable.
   Future<RepoLayout> repoLayout(String repoPath) async {
-    final result = await _run(
+    final modern = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: [
+        'git',
+        'rev-parse',
+        '--path-format=absolute',
+        '--show-toplevel',
+        '--git-dir',
+        '--git-common-dir',
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    if (modern.isSuccess) {
+      final layout = _parseRepoLayoutLines(modern.stdout, repoPath: repoPath);
+      if (layout != null) return layout;
+    }
+
+    // Git < 2.31 rejects `--path-format` (unknown option). Retry without it.
+    final legacy = await _run(
       repoPath,
       [
         'git',
         'rev-parse',
-        '--path-format=absolute',
         '--show-toplevel',
         '--git-dir',
         '--git-common-dir',
@@ -1290,18 +1309,55 @@ class GitService {
       retries: _readRetries,
       lane: ExecLane.read,
     );
+    final layout = _parseRepoLayoutLines(
+      legacy.stdout,
+      repoPath: repoPath,
+      canonicalizeRelative: true,
+    );
+    if (layout == null) {
+      throw GitException('Could not resolve the repository layout', legacy);
+    }
+    return layout;
+  }
+
+  /// Parses `rev-parse --show-toplevel --git-dir --git-common-dir` stdout.
+  ///
+  /// When [canonicalizeRelative] is true (legacy path without
+  /// `--path-format=absolute`), relative git-dir paths are resolved against
+  /// [repoPath] and symlink-canonicalized when possible.
+  RepoLayout? _parseRepoLayoutLines(
+    String stdout, {
+    required String repoPath,
+    bool canonicalizeRelative = false,
+  }) {
     final lines = const LineSplitter()
-        .convert(result.stdout)
+        .convert(stdout)
         .map((l) => l.trim())
         .where((l) => l.isNotEmpty)
         .toList();
-    if (lines.length < 3) {
-      throw GitException('Could not resolve the repository layout', result);
+    if (lines.length < 3) return null;
+
+    String abs(String path) {
+      final joined = path.startsWith('/') ? path : '$repoPath/$path';
+      if (!canonicalizeRelative && path.startsWith('/')) return path;
+      try {
+        return Directory(joined).resolveSymbolicLinksSync();
+      } catch (_) {
+        return joined;
+      }
+    }
+
+    if (!canonicalizeRelative) {
+      return RepoLayout(
+        toplevel: lines[0],
+        gitDir: lines[1],
+        gitCommonDir: lines[2],
+      );
     }
     return RepoLayout(
-      toplevel: lines[0],
-      gitDir: lines[1],
-      gitCommonDir: lines[2],
+      toplevel: abs(lines[0]),
+      gitDir: abs(lines[1]),
+      gitCommonDir: abs(lines[2]),
     );
   }
 
