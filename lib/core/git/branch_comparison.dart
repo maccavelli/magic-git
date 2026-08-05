@@ -468,3 +468,98 @@ BranchComparisonMetadata assembleComparisonMetadata({
     truncated: truncated,
   );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3 — merge-tree preview domain
+// ---------------------------------------------------------------------------
+
+/// Whether this host's Git can run modern `merge-tree --write-tree` (≥ 2.38).
+/// Loading/error for the version probe live in Riverpod `AsyncValue`, not here.
+enum MergePreviewCapability { supported, unsupported }
+
+/// Local prediction for merging [branchOid] into [baseOid] without a worktree.
+enum MergePreviewState { clean, conflicts, unrelated, unsupported }
+
+/// Immutable merge-tree result keyed by base/branch OIDs.
+class BranchMergePreview {
+  final MergePreviewState state;
+  final List<String> conflictPaths;
+  final String? treeOid;
+
+  const BranchMergePreview({
+    required this.state,
+    this.conflictPaths = const [],
+    this.treeOid,
+  });
+
+  static const BranchMergePreview unsupported = BranchMergePreview(
+    state: MergePreviewState.unsupported,
+  );
+
+  static BranchMergePreview unrelated() => const BranchMergePreview(
+    state: MergePreviewState.unrelated,
+  );
+
+  static BranchMergePreview clean({required String treeOid}) =>
+      BranchMergePreview(state: MergePreviewState.clean, treeOid: treeOid);
+
+  static BranchMergePreview conflicts({
+    required String treeOid,
+    required List<String> conflictPaths,
+  }) => BranchMergePreview(
+    state: MergePreviewState.conflicts,
+    treeOid: treeOid,
+    conflictPaths: conflictPaths,
+  );
+
+  bool get hasConflicts => state == MergePreviewState.conflicts;
+}
+
+/// Parses `git merge-tree --write-tree --name-only -z --no-messages` stdout.
+///
+/// Framing (Git ≥ 2.38): first NUL-terminated record is the result tree OID;
+/// remaining non-empty NUL records are conflict paths (present only when exit
+/// status is 1). Exit code is required: 0 = clean, 1 = conflicts.
+///
+/// Throws [FormatException] on malformed framing so callers surface an error
+/// rather than inventing a clean prediction.
+BranchMergePreview parseMergeTreeOutput({
+  required int exitCode,
+  required String stdout,
+}) {
+  if (exitCode != 0 && exitCode != 1) {
+    throw FormatException(
+      'merge-tree exit $exitCode is not a merge prediction',
+    );
+  }
+  final parts = stdout.split('\u0000');
+  // Drop trailing empty fields from a final NUL.
+  while (parts.isNotEmpty && parts.last.isEmpty) {
+    parts.removeLast();
+  }
+  if (parts.isEmpty) {
+    throw const FormatException('merge-tree produced empty stdout');
+  }
+  final treeOid = parts.first.trim();
+  if (!isFullGitOid(treeOid)) {
+    throw FormatException('merge-tree tree OID is not a full hash: $treeOid');
+  }
+  final paths = <String>[
+    for (final p in parts.skip(1))
+      if (p.isNotEmpty) p,
+  ];
+  if (exitCode == 0) {
+    if (paths.isNotEmpty) {
+      throw FormatException(
+        'merge-tree exit 0 but listed conflict paths: $paths',
+      );
+    }
+    return BranchMergePreview.clean(treeOid: treeOid);
+  }
+  // exit 1: conflicts. Paths may be empty for rare directory/file edge cases;
+  // still report conflicts so we never present unknown as clean.
+  return BranchMergePreview.conflicts(
+    treeOid: treeOid,
+    conflictPaths: paths,
+  );
+}

@@ -1,19 +1,22 @@
 # Implementation plan: base-relative branches workspace
 
 - Status: **implementation in progress** (codebase re-grounded 2026-08-04;
-  Phases 0–2 complete. Identity-keyed preferences, the extracted pure Browse
+  Phases 0–3 complete. Identity-keyed preferences, the extracted pure Browse
   model, and the 500-ref baseline are landed. Review has NUL-framed attributed
   refs with warnings, forge-aware deterministic base resolution with visible
   provenance and explicit unavailable/unborn states, grouped full-ref base
   choices, batched base-relative summaries, clickable Merged/Stale facets,
   Activity/Name sorting, and no legacy HEAD-relative bulk cleanup action or
   universal safety copy. Checkpoint B's HEAD-different-base, passive-cache
-  Browse, and zero-comparison-command tests pass. Phase 2 landed the lazy
-  comparison inspector: OID-keyed unique commits (`base..branch`, 50-row pages),
-  NUL-safe three-dot comparison metadata, branch-diff LRU registration, and
-  Overview/Changes/Commits tabs that fetch the patch only on Changes when
-  ancestry is connected. Phase 3 (merge preview / trust gate) is next; the
-  trust gate remains Phases 1–3 before bulk.)
+  Browse, and zero-comparison-command tests pass. Phase 2: lazy comparison
+  inspector (OID-keyed unique commits, three-dot metadata/patch, Overview/
+  Changes/Commits). Phase 3: Git ≥2.38 merge-tree capability probe, OID-keyed
+  local merge prediction with per-repo concurrency gate, Overview readiness
+  (local prediction separate from forge), conflict paths open Changes, and an
+  explicit Conflicts scan facet that never treats unscanned branches as clean.
+  **Trust gate (Phases 1–3) is implementation-complete** pending maintainer
+  Checkpoint C review. Phase 4 (Review multi-select / bulk delete) is next and
+  remains gated on that sign-off.)
 - Date: 2026-08-05
 - MADR: `docs/0003-MADR-base-relative-branches-workspace.md` (Option C)
 - Owner: implementation agent + maintainer review
@@ -1811,6 +1814,12 @@ Demonstrate with one repository where current `HEAD != base`:
   is one-shot and does not gate the branch list.
 
 ### Checkpoint C — trust milestone after Phase 3
+
+Status: **implementation complete 2026-08-05; awaiting maintainer review.**
+Automated coverage includes capability probe, clean/conflict/unrelated/
+malformed/exit>1 merge-tree paths, concurrency gate, OID rekey, conflict scan
+unknown≠clean, and `@Tags(['integration'])` temp-repo proofs that HEAD/index/
+worktree stay unchanged after preview.
 
 Demonstrate:
 

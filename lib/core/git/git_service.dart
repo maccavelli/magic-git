@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
@@ -3602,6 +3603,116 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       throw GitException('git diff --numstat failed', nu);
     }
     return (ns.stdout, nu.stdout);
+  }
+
+  /// Per-repo chain so only one [mergeTreePreview] runs at a time for a given
+  /// path (Phase 3 concurrency gate). Independent repos proceed in parallel.
+  /// Each entry's completer is completed when that invocation finishes; the
+  /// next waiter awaits it before starting.
+  static final Map<String, Completer<void>> _mergeTreeGates = {};
+
+  /// Local conflict prediction via modern `git merge-tree --write-tree`.
+  ///
+  /// Does **not** touch HEAD, refs, the index, or the worktree. Git may still
+  /// write unreachable tree objects into the object database (expected; object
+  /// count may grow). Requires Git ≥ 2.38 — callers must gate capability first.
+  ///
+  /// [baseOid] is the branch being merged *into*; [branchOid] is the tip being
+  /// merged. Unrelated histories are detected with `merge-base` and return
+  /// [MergePreviewState.unrelated] without invoking merge-tree.
+  Future<BranchMergePreview> mergeTreePreview(
+    String repoPath, {
+    required String baseOid,
+    required String branchOid,
+  }) async {
+    if (!isFullGitOid(baseOid)) {
+      throw ArgumentError.value(baseOid, 'baseOid', 'must be a full Git OID');
+    }
+    if (!isFullGitOid(branchOid)) {
+      throw ArgumentError.value(
+        branchOid,
+        'branchOid',
+        'must be a full Git OID',
+      );
+    }
+
+    final previous = _mergeTreeGates[repoPath];
+    final mine = Completer<void>();
+    _mergeTreeGates[repoPath] = mine;
+    if (previous != null) {
+      await previous.future;
+    }
+    try {
+      return await _mergeTreePreviewUnlocked(
+        repoPath,
+        baseOid: baseOid,
+        branchOid: branchOid,
+      );
+    } finally {
+      mine.complete();
+      if (identical(_mergeTreeGates[repoPath], mine)) {
+        _mergeTreeGates.remove(repoPath);
+      }
+    }
+  }
+
+  Future<BranchMergePreview> _mergeTreePreviewUnlocked(
+    String repoPath, {
+    required String baseOid,
+    required String branchOid,
+  }) async {
+    final mb = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: [
+        'git',
+        'merge-base',
+        '--end-of-options',
+        baseOid,
+        branchOid,
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    final mbOut = mb.stdout.trim();
+    if (mb.exitCode == 1 && mbOut.isEmpty) {
+      return BranchMergePreview.unrelated();
+    }
+    if (!mb.isSuccess || !isFullGitOid(mbOut)) {
+      throw GitException('git merge-base failed', mb);
+    }
+
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: [
+        'git',
+        'merge-tree',
+        '--write-tree',
+        '--name-only',
+        '-z',
+        '--no-messages',
+        '--end-of-options',
+        baseOid,
+        branchOid,
+      ],
+      retries: 0, // prediction must not auto-retry loops
+      lane: ExecLane.read,
+    );
+    if (result.exitCode != 0 && result.exitCode != 1) {
+      throw GitException('git merge-tree failed', result);
+    }
+    try {
+      return parseMergeTreeOutput(
+        exitCode: result.exitCode,
+        stdout: result.stdout,
+      );
+    } on FormatException catch (e) {
+      throw GitException(
+        'git merge-tree output malformed: $e',
+        result,
+      );
+    }
   }
 
   /// Creates a branch, optionally checking it out.

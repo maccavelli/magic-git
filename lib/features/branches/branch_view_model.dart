@@ -5,7 +5,7 @@ import 'branch_dashboard_stats.dart';
 
 enum BranchWorkspaceMode { browse, review }
 
-enum BranchReviewQuickFilter { all, merged, stale }
+enum BranchReviewQuickFilter { all, merged, stale, conflicts }
 
 enum BranchReviewSort { activity, name }
 
@@ -14,6 +14,9 @@ List<GitRef> shapePhase1ReviewBranches({
   required Map<String, BranchReviewSummary> summaries,
   required BranchReviewQuickFilter filter,
   required BranchReviewSort sort,
+  /// Full ref names known to conflict after an explicit scan. Unscanned
+  /// branches are never treated as clean (they simply fail this filter).
+  Set<String> conflictRefNames = const {},
 }) {
   final shaped = [
     for (final branch in branches)
@@ -22,6 +25,8 @@ List<GitRef> shapePhase1ReviewBranches({
         BranchReviewQuickFilter.merged =>
           summaries[branch.name]?.mergedIntoBase ?? false,
         BranchReviewQuickFilter.stale => isBranchStale(branch),
+        BranchReviewQuickFilter.conflicts =>
+          conflictRefNames.contains(branch.name),
       })
         branch,
   ];

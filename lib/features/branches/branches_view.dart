@@ -118,6 +118,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         _collapsedSectionsOverride = null;
         _filterCtl.clear();
       });
+      ref.read(conflictScanControllerProvider(oldWidget.repoPath).notifier).reset();
       if (_branchScroll.hasClients) _branchScroll.jumpTo(0);
     }
   }
@@ -224,6 +225,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
             )),
           )
         : null;
+
+    final conflictScan = ref.watch(conflictScanControllerProvider(repoPath));
     final AsyncValue<BranchReviewBatchResult>? review;
     if (mode == BranchWorkspaceMode.review) {
       final base = baseState?.value?.base;
@@ -286,6 +289,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         review: review,
         reviewFilter: _reviewFilter,
         reviewSort: _reviewSort,
+        conflictRefNames: conflictScan.conflictRefNames,
         filterController: _filterCtl,
         focusNode: _branchFocus,
         scrollController: _branchScroll,
@@ -370,6 +374,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
   void _setMode(BranchWorkspaceMode mode) {
     setState(() => _modeOverride = mode);
+    // Conflict scan is Review-only; drop results when leaving the mode.
+    ref.read(conflictScanControllerProvider(repoPath).notifier).reset();
     unawaited(
       _updateWorkspacePrefs((prefs) => prefs.copyWith(lastMode: mode.name)),
     );
@@ -377,6 +383,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
   void _setBase(String? refName) {
     if (refName == null) return;
+    ref.read(conflictScanControllerProvider(repoPath).notifier).reset();
     unawaited(
       _updateWorkspacePrefs(
         (prefs) => prefs.copyWith(selectedBaseRefName: refName),
@@ -385,6 +392,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   }
 
   void _resetBase() {
+    ref.read(conflictScanControllerProvider(repoPath).notifier).reset();
     unawaited(
       _updateWorkspacePrefs(
         (prefs) => prefs.copyWith(clearSelectedBaseRefName: true),

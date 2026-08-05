@@ -217,6 +217,8 @@ class BranchNavigator extends ConsumerStatefulWidget {
   final AsyncValue<BranchReviewBatchResult>? review;
   final BranchReviewQuickFilter reviewFilter;
   final BranchReviewSort reviewSort;
+  /// Full ref names known to conflict after an explicit Review scan.
+  final Set<String> conflictRefNames;
   final TextEditingController filterController;
   final FocusNode focusNode;
   final ScrollController scrollController;
@@ -279,6 +281,7 @@ class BranchNavigator extends ConsumerStatefulWidget {
     required this.review,
     required this.reviewFilter,
     required this.reviewSort,
+    this.conflictRefNames = const {},
     required this.filterController,
     required this.focusNode,
     required this.scrollController,
@@ -471,6 +474,7 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
         summaries: widget.review?.value?.summariesByRefName ?? const {},
         filter: widget.reviewFilter,
         sort: widget.reviewSort,
+        conflictRefNames: widget.conflictRefNames,
       );
       return <_Row>[
         _LocalHeaderRow(

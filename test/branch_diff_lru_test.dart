@@ -129,5 +129,7 @@ void main() {
     expect(body, contains('branchUniqueCommitsProvider'));
     expect(body, contains('branchComparisonMetadataProvider'));
     expect(body, contains('branchDiffProvider'));
+    expect(body, contains('mergePreviewCapabilityProvider'));
+    expect(body, contains('branchMergePreviewProvider'));
   });
 }

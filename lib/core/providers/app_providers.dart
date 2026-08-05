@@ -35,6 +35,7 @@ import '../local/scoped_access.dart';
 import '../output/output_log.dart';
 import '../settings/app_settings.dart';
 import '../settings/install_service.dart';
+import '../settings/tool_catalog.dart';
 import '../ssh/command_formatter.dart';
 import '../ssh/environment_probe.dart';
 import '../ssh/host_key_prompt.dart';
@@ -2565,6 +2566,8 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   branchUniqueCommitsProvider,
   branchComparisonMetadataProvider,
   branchDiffProvider,
+  mergePreviewCapabilityProvider,
+  branchMergePreviewProvider,
   mergeRequestsProvider,
   pipelinesProvider,
   jobsProvider,
@@ -2608,6 +2611,7 @@ void clearHashKeyedRepoCaches() {
   _commitFileDiffLru.clear();
   _commitRangeDiffLru.clear();
   _branchDiffLru.clear();
+  _mergePreviewLru.clear();
   _blobLru.clear();
   _conflictFileLru.clear();
   _untrackedDiffLru.clear();
@@ -3509,6 +3513,238 @@ final branchDiffProvider = FutureProvider.autoDispose
 
 /// Absolute layout for [repoPath] (linked worktree aware). Null when layout
 /// cannot be resolved — callers treat that as session-only identity.
+
+// ---------------------------------------------------------------------------
+// Phase 3 — merge-tree preview (capability + OID-keyed prediction)
+// ---------------------------------------------------------------------------
+
+/// Minimum Git for modern `merge-tree --write-tree` (not trivial-merge).
+const ToolVersion kMergeTreeMinGit = ToolVersion(2, 38);
+
+/// Pure mapping from a landed/on-demand Git version string to capability.
+/// Returns null when [versionString] is null/unparseable — callers treat that
+/// as a probe error (AsyncError), not as unsupported.
+MergePreviewCapability? mergePreviewCapabilityForVersion(String? versionString) {
+  if (versionString == null || versionString.isEmpty) return null;
+  final v = ToolVersion.parse(versionString);
+  if (v == null) return null;
+  return v >= kMergeTreeMinGit
+      ? MergePreviewCapability.supported
+      : MergePreviewCapability.unsupported;
+}
+
+/// Whether this connection's Git can run merge-tree write-tree mode.
+///
+/// Uses [binaryEnvironmentProvider]'s landed version when present; otherwise
+/// one on-demand Git-only [EnvironmentResolver.probeVersions] call. Does not
+/// probe gh/glab.
+final mergePreviewCapabilityProvider = FutureProvider.autoDispose
+    .family<
+      MergePreviewCapability,
+      ({String repoPath, int sessionEpoch})
+    >((ref, key) async {
+      final env = ref.watch(binaryEnvironmentProvider);
+      final landed = mergePreviewCapabilityForVersion(env.versionOf('git'));
+      if (landed != null) return landed;
+
+      final gitPath = env.pathOf('git');
+      if (gitPath == null || gitPath.isEmpty) {
+        throw StateError('Git binary not found on the host');
+      }
+      final versions = await EnvironmentResolver(
+        ref.watch(activeExecutorProvider),
+      ).probeVersions({'git': gitPath}, repoPath: key.repoPath);
+      final probed = mergePreviewCapabilityForVersion(versions['git']);
+      if (probed == null) {
+        throw StateError('Could not determine Git version for merge preview');
+      }
+      // Do not write versions back into binaryEnvironmentProvider here: that
+      // notifier is watched above, and set() would invalidate this Future mid-
+      // flight. Connect-time probe still owns the Settings version surface.
+      return probed;
+    });
+
+typedef BranchMergePreviewKey = ({
+  String repoPath,
+  String baseOid,
+  String branchOid,
+});
+
+/// Local merge prediction for merging [branchOid] into [baseOid].
+///
+/// Immutable OID key — tip/base movement rekeys rather than overwriting.
+/// Capability unsupported short-circuits without invoking merge-tree.
+/// Concurrency is gated inside [GitService.mergeTreePreview].
+final branchMergePreviewProvider = FutureProvider.autoDispose
+    .family<BranchMergePreview, BranchMergePreviewKey>((ref, key) async {
+      final lruKey = (key.repoPath, key.baseOid, key.branchOid);
+      _mergePreviewLru.touch(lruKey, ref.keepAlive());
+
+      final epoch = ref.watch(connectionProvider).sessionEpoch;
+      final cap = await ref.watch(
+        mergePreviewCapabilityProvider((
+          repoPath: key.repoPath,
+          sessionEpoch: epoch,
+        )).future,
+      );
+      if (cap == MergePreviewCapability.unsupported) {
+        const preview = BranchMergePreview.unsupported;
+        _mergePreviewLru.reportSize(lruKey, 64);
+        return preview;
+      }
+      if (!isFullGitOid(key.baseOid) || !isFullGitOid(key.branchOid)) {
+        throw ArgumentError('merge preview requires full Git OIDs');
+      }
+      try {
+        final preview = await ref
+            .watch(gitServiceProvider)
+            .mergeTreePreview(
+              key.repoPath,
+              baseOid: key.baseOid,
+              branchOid: key.branchOid,
+            );
+        _mergePreviewLru.reportSize(
+          lruKey,
+          64 + preview.conflictPaths.fold<int>(0, (n, p) => n + p.length + 8),
+        );
+        return preview;
+      } catch (e) {
+        _mergePreviewLru.evict(lruKey);
+        rethrow;
+      }
+    });
+
+/// Review-mode conflict scan: only branches that have been scanned and found
+/// conflicting. Unscanned branches are never treated as clean.
+class ConflictScanState {
+  final bool scanning;
+  final int scanned;
+  final int total;
+  final String? error;
+  /// full ref name → preview (only successful scans).
+  final Map<String, BranchMergePreview> byRefName;
+
+  const ConflictScanState({
+    this.scanning = false,
+    this.scanned = 0,
+    this.total = 0,
+    this.error,
+    this.byRefName = const {},
+  });
+
+  ConflictScanState copyWith({
+    bool? scanning,
+    int? scanned,
+    int? total,
+    String? error,
+    bool clearError = false,
+    Map<String, BranchMergePreview>? byRefName,
+  }) => ConflictScanState(
+    scanning: scanning ?? this.scanning,
+    scanned: scanned ?? this.scanned,
+    total: total ?? this.total,
+    error: clearError ? null : (error ?? this.error),
+    byRefName: byRefName ?? this.byRefName,
+  );
+
+  Set<String> get conflictRefNames => {
+    for (final e in byRefName.entries)
+      if (e.value.hasConflicts) e.key,
+  };
+}
+
+class ConflictScanController extends Notifier<ConflictScanState> {
+  ConflictScanController(this.repoPath);
+
+  final String repoPath;
+  int _generation = 0;
+
+  @override
+  ConflictScanState build() {
+    // Drop in-flight work when the family is disposed (disconnect / mode).
+    ref.onDispose(() {
+      _generation++;
+    });
+    return const ConflictScanState();
+  }
+
+  /// Cancel any in-flight scan without clearing cached results.
+  void cancel() {
+    _generation++;
+    if (state.scanning) {
+      state = state.copyWith(scanning: false);
+    }
+  }
+
+  /// Clear results (base/repo change). Bumps generation so in-flight scans drop.
+  void reset() {
+    _generation++;
+    state = const ConflictScanState();
+  }
+
+  /// Scan [branches] against [baseOid]. Reuses cached provider results.
+  /// Never invents clean for failures — failed OIDs are omitted from the map
+  /// (unknown), not recorded as clean.
+  Future<void> scan({
+    required String baseOid,
+    required List<({String refName, String oid})> branches,
+  }) async {
+    final gen = ++_generation;
+    if (!isFullGitOid(baseOid) || branches.isEmpty) {
+      state = const ConflictScanState();
+      return;
+    }
+    state = ConflictScanState(
+      scanning: true,
+      scanned: 0,
+      total: branches.length,
+      byRefName: Map<String, BranchMergePreview>.of(state.byRefName),
+    );
+    final results = Map<String, BranchMergePreview>.of(state.byRefName);
+    var scanned = 0;
+    for (final b in branches) {
+      if (gen != _generation) return;
+      if (!isFullGitOid(b.oid)) {
+        scanned++;
+        state = state.copyWith(scanned: scanned);
+        continue;
+      }
+      try {
+        final preview = await ref.read(
+          branchMergePreviewProvider((
+            repoPath: repoPath,
+            baseOid: baseOid,
+            branchOid: b.oid,
+          )).future,
+        );
+        if (gen != _generation) return;
+        results[b.refName] = preview;
+      } catch (_) {
+        // Leave unscanned/failed as unknown — never as clean.
+        results.remove(b.refName);
+      }
+      scanned++;
+      if (gen != _generation) return;
+      state = state.copyWith(
+        scanned: scanned,
+        byRefName: Map<String, BranchMergePreview>.of(results),
+      );
+    }
+    if (gen != _generation) return;
+    state = ConflictScanState(
+      scanning: false,
+      scanned: scanned,
+      total: branches.length,
+      byRefName: results,
+    );
+  }
+}
+
+final conflictScanControllerProvider = NotifierProvider.autoDispose
+    .family<ConflictScanController, ConflictScanState, String>(
+      ConflictScanController.new,
+    );
+
 final repoLayoutProvider = FutureProvider.autoDispose
     .family<RepoLayout?, String>((ref, repoPath) async {
       return ref.watch(gitServiceProvider).detectRepoLayout(repoPath);
@@ -4069,6 +4305,11 @@ final _branchDiffLru = KeepAliveLru<(String, String, String, int, bool)>(
   12,
   maxTotalBytes: 64 * _mib,
   maxEntryBytes: 16 * _mib,
+);
+final _mergePreviewLru = KeepAliveLru<(String, String, String)>(
+  48,
+  maxTotalBytes: 2 * _mib,
+  maxEntryBytes: 256 * 1024,
 );
 final _fileDiffLru = KeepAliveLru<(String, String, bool, bool, int)>(
   64,

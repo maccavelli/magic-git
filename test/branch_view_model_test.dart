@@ -60,6 +60,26 @@ void main() {
       ).map((branch) => branch.shortName),
       ['a-stale', 'z-recent'],
     );
+    expect(
+      shapePhase1ReviewBranches(
+        branches: branches,
+        summaries: summaries,
+        filter: BranchReviewQuickFilter.conflicts,
+        conflictRefNames: const {'refs/heads/z-recent'},
+        sort: BranchReviewSort.name,
+      ).map((branch) => branch.shortName),
+      ['z-recent'],
+    );
+    // Unscanned branches never appear under Conflicts (unknown ≠ clean).
+    expect(
+      shapePhase1ReviewBranches(
+        branches: branches,
+        summaries: summaries,
+        filter: BranchReviewQuickFilter.conflicts,
+        sort: BranchReviewSort.name,
+      ),
+      isEmpty,
+    );
   });
 
   final now = DateTime.utc(2026, 8, 4);

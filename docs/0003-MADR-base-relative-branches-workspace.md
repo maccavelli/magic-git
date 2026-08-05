@@ -1,9 +1,8 @@
 # Evolve the Branches tab into a base-relative branch workspace
 
 - Status: **accepted for implementation sequencing** (companion plan Phases
-  0–2 complete; Phase 3 merge-preview trust gate next; product confirmation
-  still requires plan exit criteria; bulk cleanup remains gated on trust
-  Phases 1–3)
+  0–3 complete — trust gate implementation landed; Checkpoint C maintainer
+  review next; bulk cleanup remains gated on trust Phases 1–3 sign-off)
 - Date: 2026-08-03
 - Deciders: Mac Smith
 - Tags: branches, git, github, gitlab, forge, worktrees, comparison, ui, ux, accessibility

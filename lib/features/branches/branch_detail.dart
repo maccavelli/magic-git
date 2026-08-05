@@ -1,6 +1,8 @@
 // Detail pane (right panel) for the Branches feature — extracted from
 // branches_view.dart as a pure Phase 0 move with no behavior changes.
 
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -166,7 +168,7 @@ class BranchDetail extends ConsumerWidget {
   // --------------------------------------------------------------------------
 
   Widget _detailPane(BuildContext context, WidgetRef ref, GitRef? sel) {
-    if (sel == null) return _dashboard(context, vm.dashboard);
+    if (sel == null) return _dashboard(context, ref, vm.dashboard);
     if (sel.isTag) {
       return _tagDetail(context, sel, tagStatus(sel, remoteTags), tagRemote);
     }
@@ -179,10 +181,17 @@ class BranchDetail extends ConsumerWidget {
   // --------------------------------------------------------------------------
 
   /// Empty-state dashboard: at-a-glance branch counts and, in Review mode,
-  /// clickable base-relative Merged/Stale filters. Shown when nothing is
-  /// selected. Bulk cleanup is intentionally absent until Phase 4.
-  Widget _dashboard(BuildContext context, BranchDashboardStats s) {
+  /// clickable base-relative Merged/Stale/Conflicts filters. Shown when
+  /// nothing is selected. Bulk cleanup is intentionally absent until Phase 4.
+  Widget _dashboard(
+    BuildContext context,
+    WidgetRef ref,
+    BranchDashboardStats s,
+  ) {
     final typography = MacosTheme.of(context).typography;
+    final scan = ref.watch(conflictScanControllerProvider(repoPath));
+    final scanCtl = ref.read(conflictScanControllerProvider(repoPath).notifier);
+    final base = baseState?.value?.base;
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
       child: Column(
@@ -242,7 +251,10 @@ class BranchDetail extends ConsumerWidget {
                         ? '!'
                         : '${r.value!.summariesByRefName.values.where((s) => s.mergedIntoBase).length}';
                     final canFilter =
-                        r != null && !r.isLoading && !r.hasError && r.value != null;
+                        r != null &&
+                        !r.isLoading &&
+                        !r.hasError &&
+                        r.value != null;
                     return _reviewStatChip(
                       'Merged',
                       mergedLabel,
@@ -258,8 +270,61 @@ class BranchDetail extends ConsumerWidget {
                     );
                   },
                 ),
+              if (mode == BranchWorkspaceMode.review)
+                _reviewStatChip(
+                  'Conflicts',
+                  scan.byRefName.isEmpty && !scan.scanning
+                      ? '—'
+                      : '${scan.conflictRefNames.length}',
+                  MacosColors.systemRedColor,
+                  selected: reviewFilter == BranchReviewQuickFilter.conflicts,
+                  onTap: scan.conflictRefNames.isEmpty
+                      ? null
+                      : () => onReviewFilterChanged(
+                          reviewFilter == BranchReviewQuickFilter.conflicts
+                              ? BranchReviewQuickFilter.all
+                              : BranchReviewQuickFilter.conflicts,
+                        ),
+                ),
             ],
           ),
+          if (mode == BranchWorkspaceMode.review) ...[
+            const SizedBox(height: 14),
+            if (scan.scanning)
+              Text(
+                'Scanning for conflicts… ${scan.scanned}/${scan.total}',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              )
+            else
+              InlineActionButton(
+                label: scan.byRefName.isEmpty
+                    ? 'Scan for conflicts'
+                    : 'Re-scan for conflicts',
+                icon: CupertinoIcons.exclamationmark_shield,
+                onPressed: base == null || !isFullGitOid(base.oid)
+                    ? null
+                    : () {
+                        final branches = [
+                          for (final b in vm.allLocalBranches)
+                            if (!b.isHead && isFullGitOid(b.commitOid))
+                              (refName: b.name, oid: b.commitOid),
+                        ];
+                        unawaited(
+                          scanCtl.scan(baseOid: base.oid, branches: branches),
+                        );
+                      },
+              ),
+            const SizedBox(height: 6),
+            Text(
+              'Conflict counts stay unknown until you scan — unscanned '
+              'branches are never shown as clean.',
+              style: typography.caption2.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ],
           if (s.stale > 0) ...[
             const SizedBox(height: 18),
             Text(
@@ -913,89 +978,337 @@ class _BranchComparisonInspectorState
         branchOid: branchOid,
       )),
     );
-    return metaAsync.when(
-      loading: () => Text(
-        'Loading comparison…',
-        style: typography.caption1.copyWith(color: MacosColors.systemGrayColor),
-      ),
-      error: (e, _) => Text(
-        displayError(e),
-        style: typography.caption1.copyWith(color: MacosColors.systemRedColor),
-      ),
-      data: (meta) {
-        if (meta.ancestry == ComparisonAncestry.unrelated) {
-          return Text(
-            'No common ancestor with ${base.displayName}.',
+    final bf = ref
+        .watch(branchForgeProvider(widget.repoPath))
+        .value?[widget.branch.shortName];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _readinessCard(baseOid, branchOid, base, bf),
+        const SizedBox(height: 14),
+        metaAsync.when(
+          loading: () => Text(
+            'Loading comparison…',
             style: typography.caption1.copyWith(
-              color: MacosColors.systemOrangeColor,
+              color: MacosColors.systemGrayColor,
             ),
-          );
-        }
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Incoming changes from merge base '
-              '(${base.displayName}...${widget.branch.shortName})',
-              style: typography.caption1.copyWith(
-                color: MacosColors.systemGrayColor,
-              ),
+          ),
+          error: (e, _) => Text(
+            displayError(e),
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemRedColor,
             ),
-            const SizedBox(height: 6),
-            Text(
-              '${meta.files.length} file${meta.files.length == 1 ? '' : 's'} · '
-              '+${meta.additions} / −${meta.deletions}'
-              '${meta.truncated ? ' · truncated' : ''}',
-              style: typography.body,
+          ),
+          data: (meta) {
+            if (meta.ancestry == ComparisonAncestry.unrelated) {
+              return Text(
+                'No common ancestor with ${base.displayName}.',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemOrangeColor,
+                ),
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Incoming changes from merge base '
+                  '(${base.displayName}...${widget.branch.shortName})',
+                  style: typography.caption1.copyWith(
+                    color: MacosColors.systemGrayColor,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '${meta.files.length} file'
+                  '${meta.files.length == 1 ? '' : 's'} · '
+                  '+${meta.additions} / −${meta.deletions}'
+                  '${meta.truncated ? ' · truncated' : ''}',
+                  style: typography.body,
+                ),
+                if (meta.mergeBaseOid != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    'Merge base ${meta.mergeBaseOid!.substring(0, 7)}',
+                    style: typography.caption2.copyWith(
+                      color: MacosColors.systemGrayColor,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+                if (meta.files.isEmpty) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    'No file changes vs base.',
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
+                    ),
+                  ),
+                ] else ...[
+                  const SizedBox(height: 8),
+                  for (final f in meta.files.take(40))
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Text(
+                        '${f.status.padRight(4)} '
+                        '${f.oldPath != null ? '${f.oldPath} → ${f.path}' : f.path}'
+                        '${f.binary ? ' (binary)' : ''}'
+                        '${f.additions != null ? '  +${f.additions}/−${f.deletions}' : ''}',
+                        style: typography.caption1.copyWith(
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  if (meta.files.length > 40 || meta.truncated)
+                    Text(
+                      meta.truncated
+                          ? 'File list truncated.'
+                          : '…and ${meta.files.length - 40} more',
+                      style: typography.caption2.copyWith(
+                        color: MacosColors.systemGrayColor,
+                      ),
+                    ),
+                ],
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  /// Local merge prediction and forge request/CI as separate readiness rows.
+  Widget _readinessCard(
+    String baseOid,
+    String branchOid,
+    BranchBase base,
+    BranchForge? bf,
+  ) {
+    final typography = MacosTheme.of(context).typography;
+    final epoch = ref.watch(connectionProvider).sessionEpoch;
+    final capAsync = ref.watch(
+      mergePreviewCapabilityProvider((
+        repoPath: widget.repoPath,
+        sessionEpoch: epoch,
+      )),
+    );
+    final previewAsync = capAsync.maybeWhen(
+      data: (cap) => cap == MergePreviewCapability.supported
+          ? ref.watch(
+              branchMergePreviewProvider((
+                repoPath: widget.repoPath,
+                baseOid: baseOid,
+                branchOid: branchOid,
+              )),
+            )
+          : null,
+      orElse: () => null,
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Readiness',
+          style: typography.headline.copyWith(fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Local merge into ${base.displayName}',
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemGrayColor,
+          ),
+        ),
+        const SizedBox(height: 4),
+        capAsync.when(
+          loading: () => Text(
+            'Checking Git capability…',
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemGrayColor,
             ),
-            if (meta.mergeBaseOid != null) ...[
-              const SizedBox(height: 4),
+          ),
+          error: (e, _) => Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text(
-                'Merge base ${meta.mergeBaseOid!.substring(0, 7)}',
-                style: typography.caption2.copyWith(
-                  color: MacosColors.systemGrayColor,
-                  fontFeatures: const [FontFeature.tabularFigures()],
+                displayError(e),
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemRedColor,
+                ),
+              ),
+              const SizedBox(height: 4),
+              InlineActionButton(
+                label: 'Retry',
+                icon: CupertinoIcons.arrow_clockwise,
+                onPressed: () => ref.invalidate(
+                  mergePreviewCapabilityProvider((
+                    repoPath: widget.repoPath,
+                    sessionEpoch: epoch,
+                  )),
                 ),
               ),
             ],
-            if (meta.files.isEmpty) ...[
-              const SizedBox(height: 8),
-              Text(
-                'No file changes vs base.',
+          ),
+          data: (cap) {
+            if (cap == MergePreviewCapability.unsupported) {
+              return Text(
+                'Requires Git 2.38+ for local merge prediction.',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemOrangeColor,
+                ),
+              );
+            }
+            final async = previewAsync;
+            if (async == null) {
+              return Text(
+                'Checking local merge…',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              );
+            }
+            return async.when(
+              loading: () => Text(
+                'Predicting merge…',
                 style: typography.caption1.copyWith(
                   color: MacosColors.systemGrayColor,
                 ),
               ),
-            ] else ...[
-              const SizedBox(height: 8),
-              for (final f in meta.files.take(40))
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Text(
-                    '${f.status.padRight(4)} ${f.oldPath != null ? '${f.oldPath} → ${f.path}' : f.path}'
-                    '${f.binary ? ' (binary)' : ''}'
-                    '${f.additions != null ? '  +${f.additions}/−${f.deletions}' : ''}',
+              error: (e, _) => Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    displayError(e),
                     style: typography.caption1.copyWith(
-                      fontFeatures: const [FontFeature.tabularFigures()],
+                      color: MacosColors.systemRedColor,
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  InlineActionButton(
+                    label: 'Retry',
+                    icon: CupertinoIcons.arrow_clockwise,
+                    onPressed: () => ref.invalidate(
+                      branchMergePreviewProvider((
+                        repoPath: widget.repoPath,
+                        baseOid: baseOid,
+                        branchOid: branchOid,
+                      )),
+                    ),
+                  ),
+                ],
+              ),
+              data: (preview) => _previewBody(preview, typography),
+            );
+          },
+        ),
+        const SizedBox(height: 12),
+        Text(
+          'Forge',
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemGrayColor,
+          ),
+        ),
+        const SizedBox(height: 4),
+        if (bf == null || !bf.hasRequest)
+          Text(
+            'No open request.',
+            style: typography.caption1,
+          )
+        else ...[
+          Text(
+            '${bf.isMr ? 'MR' : 'PR'} ${bf.requestLabel}'
+            '${bf.requestDraft ? ' (draft)' : ''}'
+            '${(bf.requestTitle ?? '').isEmpty ? '' : ' — ${bf.requestTitle}'}',
+            style: typography.caption1,
+          ),
+          if (bf.ci != null) ...[
+            const SizedBox(height: 2),
+            Text(
+              'CI ${_ciLabel(bf.ci!)}',
+              style: typography.caption1.copyWith(
+                color: _forgeCiColor(bf.ci!),
+              ),
+            ),
+          ],
+        ],
+      ],
+    );
+  }
+
+  Widget _previewBody(BranchMergePreview preview, MacosTypography typography) {
+    switch (preview.state) {
+      case MergePreviewState.clean:
+        return Text(
+          'Merges cleanly into the comparison base.',
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemGreenColor,
+          ),
+        );
+      case MergePreviewState.unrelated:
+        return Text(
+          'No common ancestor — local merge prediction unavailable.',
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemOrangeColor,
+          ),
+        );
+      case MergePreviewState.unsupported:
+        return Text(
+          'Requires Git 2.38+ for local merge prediction.',
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemOrangeColor,
+          ),
+        );
+      case MergePreviewState.conflicts:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              preview.conflictPaths.isEmpty
+                  ? 'Would conflict with the comparison base.'
+                  : 'Would conflict in ${preview.conflictPaths.length} '
+                      'path${preview.conflictPaths.length == 1 ? '' : 's'}.',
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemRedColor,
+              ),
+            ),
+            if (preview.conflictPaths.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              for (final path in preview.conflictPaths.take(20))
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 1),
+                  child: Tappable(
+                    onTap: () => setState(() => _tab = _CompareTab.changes),
+                    child: Text(
+                      path,
+                      style: typography.caption1.copyWith(
+                        color: MacosColors.systemBlueColor,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 ),
-              if (meta.files.length > 40 || meta.truncated)
+              if (preview.conflictPaths.length > 20)
                 Text(
-                  meta.truncated
-                      ? 'File list truncated.'
-                      : '…and ${meta.files.length - 40} more',
+                  '…and ${preview.conflictPaths.length - 20} more',
                   style: typography.caption2.copyWith(
                     color: MacosColors.systemGrayColor,
                   ),
                 ),
+              const SizedBox(height: 4),
+              Text(
+                'Tap a path to open Changes (three-dot patch).',
+                style: typography.caption2.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              ),
             ],
           ],
         );
-      },
-    );
+    }
   }
 
   Widget _changes(String baseOid, String branchOid, BranchBase base) {
