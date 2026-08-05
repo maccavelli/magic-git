@@ -8,7 +8,7 @@ import '../../core/settings/keymap.dart';
 import '../../core/utils/file_actions.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
-import '../common/tappable.dart';
+
 import '../common/tool_icon_button.dart';
 import 'code_view.dart';
 import 'file_content.dart';

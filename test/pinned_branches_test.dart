@@ -8,14 +8,32 @@ const _repo = '/repo/path';
 
 /// A minimal widget that materialises a [WidgetRef] by living in a
 /// [UncontrolledProviderScope] tree long enough to call [setPinnedBranch].
-class _RefHarness extends ConsumerWidget {
+class _RefHarness extends ConsumerStatefulWidget {
   final Future<void> Function(WidgetRef ref) onRef;
   const _RefHarness(this.onRef);
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    onRef(ref);
-    return const SizedBox.shrink();
+  ConsumerState<_RefHarness> createState() => _RefHarnessState();
+}
+
+class _RefHarnessState extends ConsumerState<_RefHarness> {
+  late final Future<void> _future;
+
+  @override
+  void initState() {
+    super.initState();
+    _future = widget.onRef(ref);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<void>(
+      future: _future,
+      builder: (_, snapshot) {
+        if (snapshot.hasError) throw snapshot.error!;
+        return const SizedBox.shrink();
+      },
+    );
   }
 }
 
@@ -46,8 +64,7 @@ void main() {
   });
 
   group('setPinnedBranch', () {
-    testWidgets('pins a branch and refreshes the provider',
-        (tester) async {
+    testWidgets('pins a branch and refreshes the provider', (tester) async {
       SharedPreferences.setMockInitialValues({});
       final container = ProviderContainer();
       addTearDown(container.dispose);
@@ -55,19 +72,22 @@ void main() {
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: container,
-          child: const _RefHarness(_doPin),
+          child: _RefHarness(
+            (ref) => setPinnedBranch(ref, _repo, 'main', pinned: true),
+          ),
         ),
       );
-      // Let the async call in _doPin complete.
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
 
-      final updated = await container.read(pinnedBranchesProvider(_repo).future);
+      final storage = await SharedPreferences.getInstance();
+      expect(storage.getStringList('pinnedBranches_$_repo'), ['main']);
+      final updated = await container.read(
+        pinnedBranchesProvider(_repo).future,
+      );
       expect(updated, {'main'});
     });
 
-    testWidgets('unpins a branch and refreshes the provider',
-        (tester) async {
+    testWidgets('unpins a branch and refreshes the provider', (tester) async {
       SharedPreferences.setMockInitialValues({
         'pinnedBranches_$_repo': ['main', 'develop'],
       });
@@ -77,18 +97,22 @@ void main() {
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: container,
-          child: const _RefHarness(_doUnpin),
+          child: _RefHarness(
+            (ref) => setPinnedBranch(ref, _repo, 'main', pinned: false),
+          ),
         ),
       );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
 
-      final updated = await container.read(pinnedBranchesProvider(_repo).future);
+      final updated = await container.read(
+        pinnedBranchesProvider(_repo).future,
+      );
       expect(updated, {'develop'});
     });
 
-    testWidgets('unpinning the last branch removes the prefs key',
-        (tester) async {
+    testWidgets('unpinning the last branch removes the prefs key', (
+      tester,
+    ) async {
       SharedPreferences.setMockInitialValues({
         'pinnedBranches_$_repo': ['main'],
       });
@@ -98,26 +122,15 @@ void main() {
       await tester.pumpWidget(
         UncontrolledProviderScope(
           container: container,
-          child: const _RefHarness(_doUnpinLast),
+          child: _RefHarness(
+            (ref) => setPinnedBranch(ref, _repo, 'main', pinned: false),
+          ),
         ),
       );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
 
       final prefs = await SharedPreferences.getInstance();
       expect(prefs.containsKey('pinnedBranches_$_repo'), isFalse);
     });
   });
-}
-
-Future<void> _doPin(WidgetRef ref) async {
-  await setPinnedBranch(ref, _repo, 'main', pinned: true);
-}
-
-Future<void> _doUnpin(WidgetRef ref) async {
-  await setPinnedBranch(ref, _repo, 'main', pinned: false);
-}
-
-Future<void> _doUnpinLast(WidgetRef ref) async {
-  await setPinnedBranch(ref, _repo, 'main', pinned: false);
 }

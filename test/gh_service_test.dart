@@ -23,14 +23,21 @@ void main() {
     });
 
     test('hostEnv returns env map for non-default host', () {
-      expect(GhService.hostEnv('git.example.com'), {'GH_HOST': 'git.example.com'});
+      expect(GhService.hostEnv('git.example.com'), {
+        'GH_HOST': 'git.example.com',
+      });
     });
 
     test('cloneArgv returns correct argv', () {
-      expect(
-        GhService.cloneArgv(slug: 'owner/repo', dirName: 'my-repo'),
-        ['gh', 'repo', 'clone', 'owner/repo', 'my-repo', '--', '--progress'],
-      );
+      expect(GhService.cloneArgv(slug: 'owner/repo', dirName: 'my-repo'), [
+        'gh',
+        'repo',
+        'clone',
+        'owner/repo',
+        'my-repo',
+        '--',
+        '--progress',
+      ]);
     });
 
     test('ownerRepoFromRemote returns owner and name', () {
@@ -78,16 +85,11 @@ void main() {
       final service = GhService(executor);
 
       await service.loginWithToken(_repo, 'valid_token');
-      expect(
-        executor.calls.any((c) => c.gitArgs.contains('login')),
-        isTrue,
-      );
+      expect(executor.calls.any((c) => c.gitArgs.contains('login')), isTrue);
     });
 
     test('throws when origin remote has no parseable host', () async {
-      final executor = MockExecutor(
-        onExecute: (_) => _ok(stdout: 'origin\t'),
-      );
+      final executor = MockExecutor(onExecute: (_) => _ok(stdout: 'origin\t'));
       final service = GhService(executor);
 
       expect(
@@ -141,10 +143,12 @@ void main() {
   group('listRepos', () {
     test('returns parsed list of ForgeRepoSummary', () async {
       final executor = MockExecutor(
-        onExecute: (_) => _ok(stdout: '''[
+        onExecute: (_) => _ok(
+          stdout: '''[
           {"nameWithOwner": "owner/repo1", "isPrivate": true, "url": "https://github.com/owner/repo1"},
           {"nameWithOwner": "owner/repo2", "isPrivate": false, "url": "https://github.com/owner/repo2"}
-        ]'''),
+        ]''',
+        ),
       );
       final service = GhService(executor);
       final repos = await service.listRepos(cwd: _repo, host: _host);
@@ -160,16 +164,11 @@ void main() {
       );
       final service = GhService(executor);
 
-      expect(
-        () => service.listRepos(cwd: _repo),
-        throwsA(isA<GhException>()),
-      );
+      expect(() => service.listRepos(cwd: _repo), throwsA(isA<GhException>()));
     });
 
     test('passes hostEnv for non-default host', () async {
-      final executor = MockExecutor(
-        onExecute: (_) => _ok(stdout: '[]'),
-      );
+      final executor = MockExecutor(onExecute: (_) => _ok(stdout: '[]'));
       final service = GhService(executor);
       await service.listRepos(cwd: _repo, host: 'git.example.com');
 
@@ -185,7 +184,10 @@ void main() {
       final executor = MockExecutor(onExecute: (_) => _ok(stdout: 'created'));
       final service = GhService(executor);
       final result = await service.createRepoInExisting(
-        repoPath: _repo, name: 'new-repo', private: true, host: _host,
+        repoPath: _repo,
+        name: 'new-repo',
+        private: true,
+        host: _host,
       );
       expect(result.isSuccess, isTrue);
     });
@@ -196,7 +198,10 @@ void main() {
 
       expect(
         () => service.createRepoInExisting(
-          repoPath: _repo, name: 'new-repo', private: false, host: _host,
+          repoPath: _repo,
+          name: 'new-repo',
+          private: false,
+          host: _host,
         ),
         throwsA(isA<GhException>()),
       );
@@ -218,7 +223,9 @@ void main() {
       );
       final service = GhService(executor);
       final result = await service.resolveOriginUrl(
-        repoPath: _repo, name: 'repo', host: _host,
+        repoPath: _repo,
+        name: 'repo',
+        host: _host,
         createOutput: 'https://github.com/owner/repo',
       );
       // forgeUrlFromCreateOutput appends .git
@@ -235,14 +242,19 @@ void main() {
           if (call.gitArgs.length > 2 &&
               call.gitArgs[1] == 'repo' &&
               call.gitArgs[2] == 'view') {
-            return _ok(stdout: '{"sshUrl": "git@github.com:owner/repo.git", "url": "https://github.com/owner/repo"}');
+            return _ok(
+              stdout:
+                  '{"sshUrl": "git@github.com:owner/repo.git", "url": "https://github.com/owner/repo"}',
+            );
           }
           return _ok();
         },
       );
       final service = GhService(executor);
       final result = await service.resolveOriginUrl(
-        repoPath: _repo, name: 'repo', host: _host,
+        repoPath: _repo,
+        name: 'repo',
+        host: _host,
         createOutput: 'https://github.com/owner/repo',
       );
       expect(result.url, 'git@github.com:owner/repo.git');
@@ -261,14 +273,19 @@ void main() {
               call.gitArgs[2] == 'view') {
             callCount++;
             if (callCount < 2) return _fail(stderr: 'not found');
-            return _ok(stdout: '{"url": "https://github.com/owner/repo", "sshUrl": "git@github.com:owner/repo.git"}');
+            return _ok(
+              stdout:
+                  '{"url": "https://github.com/owner/repo", "sshUrl": "git@github.com:owner/repo.git"}',
+            );
           }
           return _ok();
         },
       );
       final service = GhService(executor);
       final result = await service.resolveOriginUrl(
-        repoPath: _repo, name: 'repo', host: _host,
+        repoPath: _repo,
+        name: 'repo',
+        host: _host,
       );
       expect(result.url, 'https://github.com/owner/repo.git'); // .git appended
     });
@@ -287,7 +304,9 @@ void main() {
       );
       final service = GhService(executor);
       final result = await service.resolveOriginUrl(
-        repoPath: _repo, name: 'repo', host: _host,
+        repoPath: _repo,
+        name: 'repo',
+        host: _host,
       );
       expect(result.url, isNull);
     });
@@ -298,7 +317,9 @@ void main() {
   // ---------------------------------------------------------------------------
   group('api', () {
     test('GET uses read lane', () async {
-      final executor = MockExecutor(onExecute: (_) => _ok(stdout: '{"ok": true}'));
+      final executor = MockExecutor(
+        onExecute: (_) => _ok(stdout: '{"ok": true}'),
+      );
       final service = GhService(executor);
 
       await service.api(_repo, 'repos/owner/repo');
@@ -346,10 +367,12 @@ void main() {
 
     test('parses pull requests', () async {
       final executor = MockExecutor(
-        onExecute: (_) => _ok(stdout: '''[
+        onExecute: (_) => _ok(
+          stdout: '''[
           {"number": 1, "title": "PR 1", "state": "OPEN", "headRefName": "feature", "baseRefName": "main", "url": "https://github.com/o/r/pull/1"},
           {"number": 2, "title": "PR 2", "state": "OPEN", "headRefName": "fix", "baseRefName": "main", "url": "https://github.com/o/r/pull/2", "isDraft": true}
-        ]'''),
+        ]''',
+        ),
       );
       final service = GhService(executor);
       final prs = await service.pullRequests(_repo);
@@ -398,9 +421,11 @@ void main() {
   group('workflowRuns', () {
     test('returns runs', () async {
       final executor = MockExecutor(
-        onExecute: (_) => _ok(stdout: '''[
+        onExecute: (_) => _ok(
+          stdout: '''[
           {"databaseId": 10, "status": "completed", "conclusion": "success", "headBranch": "main", "workflowName": "CI", "url": "https://github.com/o/r/actions/10"}
-        ]'''),
+        ]''',
+        ),
       );
       final service = GhService(executor);
       final runs = await service.workflowRuns(_repo);
@@ -425,7 +450,10 @@ void main() {
   group('runJobs', () {
     test('returns jobs for a run', () async {
       final executor = MockExecutor(
-        onExecute: (_) => _ok(stdout: '{"jobs": [{"id": 1, "name": "build", "status": "completed", "conclusion": "success"}]}'),
+        onExecute: (_) => _ok(
+          stdout:
+              '{"jobs": [{"id": 1, "name": "build", "status": "completed", "conclusion": "success"}]}',
+        ),
       );
       final service = GhService(executor);
       final jobs = await service.runJobs(_repo, 42);
@@ -439,7 +467,10 @@ void main() {
         onExecute: (_) {
           callCount++;
           if (callCount > 1) return _ok(stdout: '{"jobs": []}');
-          return _ok(stdout: '{"jobs": [{"id": 1, "name": "build", "status": "completed"}]}');
+          return _ok(
+            stdout:
+                '{"jobs": [{"id": 1, "name": "build", "status": "completed"}]}',
+          );
         },
       );
       final service = GhService(executor);
@@ -456,18 +487,22 @@ void main() {
       final executor = MockExecutor(
         onExecute: (call) {
           // _runReportsFinished endpoint (no /jobs suffix)
-          if (call.gitArgs.any((a) => a == 'repos/{owner}/{repo}/actions/runs/42')) {
+          if (call.gitArgs.any(
+            (a) => a == 'repos/{owner}/{repo}/actions/runs/42',
+          )) {
             return _ok(stdout: '{"status": "completed"}');
           }
           // runJobs endpoint
-          return _ok(stdout: '{"jobs": [{"id": 1, "name": "build", "status": "completed", "conclusion": "success"}]}');
+          return _ok(
+            stdout:
+                '{"jobs": [{"id": 1, "name": "build", "status": "completed", "conclusion": "success"}]}',
+          );
         },
       );
       final service = GhService(executor);
-      final emitted = await service.runJobsStream(
-        _repo, 42,
-        pollInterval: Duration.zero,
-      ).toList();
+      final emitted = await service
+          .runJobsStream(_repo, 42, pollInterval: Duration.zero)
+          .toList();
       expect(emitted.length, greaterThanOrEqualTo(1));
       expect(emitted.last.every((j) => j.status == 'completed'), isTrue);
     });
@@ -487,13 +522,12 @@ void main() {
     });
 
     test('throws on failure', () async {
-      final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'job not complete'));
+      final executor = MockExecutor(
+        onExecute: (_) => _fail(stderr: 'job not complete'),
+      );
       final service = GhService(executor);
 
-      expect(
-        () => service.runJobLog(_repo, 10),
-        throwsA(isA<GhException>()),
-      );
+      expect(() => service.runJobLog(_repo, 10), throwsA(isA<GhException>()));
     });
   });
 
@@ -507,19 +541,25 @@ void main() {
       );
       final service = GhService(executor);
       final data = await service.graphql(_repo, 'query { x }');
-      expect(data, {'repository': {'id': '1'}});
+      expect(data, {
+        'repository': {'id': '1'},
+      });
     });
 
     test('sets warning when errors present alongside data', () async {
       final executor = MockExecutor(
-        onExecute: (_) => _ok(stdout: '''{
+        onExecute: (_) => _ok(
+          stdout: '''{
           "data": {"repository": {"id": "1"}},
           "errors": [{"message": "field x not accessible"}]
-        }'''),
+        }''',
+        ),
       );
       final service = GhService(executor);
       final data = await service.graphql(_repo, 'query { x }');
-      expect(data, {'repository': {'id': '1'}});
+      expect(data, {
+        'repository': {'id': '1'},
+      });
       expect(service.lastGraphqlWarning, contains('field x not accessible'));
     });
 
@@ -566,7 +606,10 @@ void main() {
           if (call.gitArgs.contains('remote')) {
             return _ok(stdout: 'origin\tgit@github.com:owner/repo.git');
           }
-          return _ok(stdout: '{"data": {"repository": {"issues": {"totalCount": 5, "nodes": [{"number": 1, "title": "Bug", "state": "OPEN"}]}, "labels": {"totalCount": 3, "nodes": [{"name": "bug", "color": "#f00"}]}, "milestones": {"totalCount": 1, "nodes": [{"number": 1, "title": "v1", "state": "OPEN"}]}, "releases": {"totalCount": 2, "nodes": [{"tagName": "v1.0", "name": "v1.0"}]}}}}');
+          return _ok(
+            stdout:
+                '{"data": {"repository": {"issues": {"totalCount": 5, "nodes": [{"number": 1, "title": "Bug", "state": "OPEN"}]}, "labels": {"totalCount": 3, "nodes": [{"name": "bug", "color": "#f00"}]}, "milestones": {"totalCount": 1, "nodes": [{"number": 1, "title": "v1", "state": "OPEN"}]}, "releases": {"totalCount": 2, "nodes": [{"tagName": "v1.0", "name": "v1.0"}]}}}}',
+          );
         },
       );
       final service = GhService(executor);
@@ -583,7 +626,10 @@ void main() {
           if (call.gitArgs.contains('remote')) {
             return _ok(stdout: 'origin\tgit@github.com:owner/repo.git');
           }
-          return _ok(stdout: '{"data": {"repository": null}, "errors": [{"message": "NOT_FOUND"}]}');
+          return _ok(
+            stdout:
+                '{"data": {"repository": null}, "errors": [{"message": "NOT_FOUND"}]}',
+          );
         },
       );
       final service = GhService(executor);
@@ -644,9 +690,8 @@ void main() {
       final service = GhService(executor);
 
       expect(
-        () => service.createPullRequest(
-          _repo, title: 't', head: 'h', base: 'b',
-        ),
+        () =>
+            service.createPullRequest(_repo, title: 't', head: 'h', base: 'b'),
         throwsA(isA<GhException>()),
       );
     });
@@ -656,7 +701,10 @@ void main() {
       final service = GhService(executor);
       await service.approvePullRequest(_repo, 1);
 
-      expect(executor.calls.first.gitArgs, containsAll(['pr', 'review', '1', '--approve']));
+      expect(
+        executor.calls.first.gitArgs,
+        containsAll(['pr', 'review', '1', '--approve']),
+      );
     });
 
     test('mergePullRequest uses default merge flag', () async {
@@ -687,11 +735,7 @@ void main() {
     test('mergePullRequest pins match-head-commit when provided', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
       final service = GhService(executor);
-      await service.mergePullRequest(
-        _repo,
-        1,
-        matchHeadCommit: 'aabbccddeeff',
-      );
+      await service.mergePullRequest(_repo, 1, matchHeadCommit: 'aabbccddeeff');
       final args = executor.calls.first.gitArgs;
       expect(args, containsAll(['--match-head-commit', 'aabbccddeeff']));
     });
@@ -700,7 +744,10 @@ void main() {
       final executor = MockExecutor(onExecute: (_) => _ok());
       final service = GhService(executor);
       await service.mergePullRequest(_repo, 1);
-      expect(executor.calls.first.gitArgs, isNot(contains('--match-head-commit')));
+      expect(
+        executor.calls.first.gitArgs,
+        isNot(contains('--match-head-commit')),
+      );
     });
 
     test('mergePullRequest passes -t/-b subject and body', () async {
@@ -731,11 +778,7 @@ void main() {
     test('updatePullRequestBranch hits update-branch endpoint', () async {
       final executor = MockExecutor(onExecute: (_) => _ok(stdout: '{}'));
       final service = GhService(executor);
-      await service.updatePullRequestBranch(
-        _repo,
-        7,
-        expectedHeadSha: 'abc',
-      );
+      await service.updatePullRequestBranch(_repo, 7, expectedHeadSha: 'abc');
       final args = executor.calls.first.gitArgs;
       expect(args, contains('repos/{owner}/{repo}/pulls/7/update-branch'));
       expect(args, containsAll(['-f', 'expected_head_sha=abc']));
@@ -745,6 +788,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(
           stdout: '''{
+            "default_branch": "trunk",
             "allow_merge_commit": false,
             "allow_squash_merge": true,
             "allow_rebase_merge": false,
@@ -755,6 +799,7 @@ void main() {
       );
       final service = GhService(executor);
       final p = await service.repoMergePolicy(_repo);
+      expect(p.defaultBranch, 'trunk');
       expect(p.allowMergeCommit, isFalse);
       expect(p.allowSquashMerge, isTrue);
       expect(p.allowAutoMerge, isTrue);
@@ -798,7 +843,10 @@ void main() {
       final service = GhService(executor);
       await service.commentOnPullRequest(_repo, 1, 'Nice work');
 
-      expect(executor.calls.first.gitArgs, containsAll(['--body', 'Nice work']));
+      expect(
+        executor.calls.first.gitArgs,
+        containsAll(['--body', 'Nice work']),
+      );
     });
 
     test('requestChangesOnPullRequest sends body', () async {
@@ -814,9 +862,17 @@ void main() {
     test('editPullRequest passes title and body', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
       final service = GhService(executor);
-      await service.editPullRequest(_repo, 1, title: 'New title', body: 'New body');
+      await service.editPullRequest(
+        _repo,
+        1,
+        title: 'New title',
+        body: 'New body',
+      );
 
-      expect(executor.calls.first.gitArgs, containsAll(['--title', 'New title']));
+      expect(
+        executor.calls.first.gitArgs,
+        containsAll(['--title', 'New title']),
+      );
       expect(executor.calls.first.gitArgs, containsAll(['--body', 'New body']));
     });
 
@@ -840,7 +896,8 @@ void main() {
 
     test('pullRequestFields returns title and body', () async {
       final executor = MockExecutor(
-        onExecute: (_) => _ok(stdout: '{"title": "PR Title", "body": "PR Body"}'),
+        onExecute: (_) =>
+            _ok(stdout: '{"title": "PR Title", "body": "PR Body"}'),
       );
       final service = GhService(executor);
       final fields = await service.pullRequestFields(_repo, 1);
@@ -867,10 +924,14 @@ void main() {
   // ---------------------------------------------------------------------------
   group('Issue mutations', () {
     test('listIssues returns parsed issues', () async {
-      final executor = MockExecutor(onExecute: (_) => _ok(stdout: '''[
+      final executor = MockExecutor(
+        onExecute: (_) => _ok(
+          stdout: '''[
         {"number": 1, "title": "Bug", "state": "OPEN"},
         {"number": 2, "title": "Feature", "state": "OPEN"}
-      ]'''));
+      ]''',
+        ),
+      );
       final service = GhService(executor);
       final issues = await service.listIssues(_repo);
       expect(issues.length, 2);
@@ -889,7 +950,10 @@ void main() {
 
     test('issueDetail returns parsed issue', () async {
       final executor = MockExecutor(
-        onExecute: (_) => _ok(stdout: '{"number": 5, "title": "Detail", "body": "body text", "state": "OPEN"}'),
+        onExecute: (_) => _ok(
+          stdout:
+              '{"number": 5, "title": "Detail", "body": "body text", "state": "OPEN"}',
+        ),
       );
       final service = GhService(executor);
       final issue = await service.issueDetail(_repo, 5);
@@ -904,17 +968,16 @@ void main() {
       );
       final service = GhService(executor);
 
-      expect(
-        () => service.issueDetail(_repo, 1),
-        throwsA(isA<GhException>()),
-      );
+      expect(() => service.issueDetail(_repo, 1), throwsA(isA<GhException>()));
     });
 
     test('listMilestones returns milestones', () async {
       final executor = MockExecutor(
-        onExecute: (_) => _ok(stdout: '''[
+        onExecute: (_) => _ok(
+          stdout: '''[
           {"number": 1, "title": "v1.0", "state": "open"}
-        ]'''),
+        ]''',
+        ),
       );
       final service = GhService(executor);
       final milestones = await service.listMilestones(_repo);
@@ -926,8 +989,12 @@ void main() {
       final executor = MockExecutor(onExecute: (_) => _ok());
       final service = GhService(executor);
       await service.createIssue(
-        _repo, title: 'Bug', body: 'details',
-        labels: ['bug'], assignees: ['user1'], milestone: 'v1',
+        _repo,
+        title: 'Bug',
+        body: 'details',
+        labels: ['bug'],
+        assignees: ['user1'],
+        milestone: 'v1',
       );
       final args = executor.calls.first.gitArgs;
       expect(args, containsAll(['--title', 'Bug']));
@@ -952,17 +1019,17 @@ void main() {
       final service = GhService(executor);
       await service.closeIssue(_repo, 1);
 
-      expect(executor.calls.first.gitArgs, containsAll(['issue', 'close', '1']));
+      expect(
+        executor.calls.first.gitArgs,
+        containsAll(['issue', 'close', '1']),
+      );
     });
 
     test('closeIssue throws on failure', () async {
       final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'error'));
       final service = GhService(executor);
 
-      expect(
-        () => service.closeIssue(_repo, 1),
-        throwsA(isA<GhException>()),
-      );
+      expect(() => service.closeIssue(_repo, 1), throwsA(isA<GhException>()));
     });
 
     test('reopenIssue calls gh issue reopen', () async {
@@ -970,7 +1037,10 @@ void main() {
       final service = GhService(executor);
       await service.reopenIssue(_repo, 1);
 
-      expect(executor.calls.first.gitArgs, containsAll(['issue', 'reopen', '1']));
+      expect(
+        executor.calls.first.gitArgs,
+        containsAll(['issue', 'reopen', '1']),
+      );
     });
 
     test('commentOnIssue sends body', () async {
@@ -978,7 +1048,10 @@ void main() {
       final service = GhService(executor);
       await service.commentOnIssue(_repo, 1, 'Comment body');
 
-      expect(executor.calls.first.gitArgs, containsAll(['issue', 'comment', '1', '--body', 'Comment body']));
+      expect(
+        executor.calls.first.gitArgs,
+        containsAll(['issue', 'comment', '1', '--body', 'Comment body']),
+      );
     });
 
     test('editIssue passes title and body', () async {
@@ -987,7 +1060,10 @@ void main() {
       await service.editIssue(_repo, 1, title: 'New title', body: 'New body');
 
       expect(executor.calls.first.gitArgs, containsAll(['issue', 'edit', '1']));
-      expect(executor.calls.first.gitArgs, containsAll(['--title', 'New title']));
+      expect(
+        executor.calls.first.gitArgs,
+        containsAll(['--title', 'New title']),
+      );
     });
 
     test('editIssue omits null fields', () async {
@@ -1003,7 +1079,10 @@ void main() {
       final service = GhService(executor);
       await service.assignIssueToMe(_repo, 1);
 
-      expect(executor.calls.first.gitArgs, containsAll(['--add-assignee', '@me']));
+      expect(
+        executor.calls.first.gitArgs,
+        containsAll(['--add-assignee', '@me']),
+      );
     });
 
     test('developIssueBranch uses exclusive lane', () async {
@@ -1019,7 +1098,10 @@ void main() {
       final service = GhService(executor);
       await service.rerunFailedJobs(_repo, 42);
 
-      expect(executor.calls.first.gitArgs, containsAll(['run', 'rerun', '42', '--failed']));
+      expect(
+        executor.calls.first.gitArgs,
+        containsAll(['run', 'rerun', '42', '--failed']),
+      );
     });
   });
 }

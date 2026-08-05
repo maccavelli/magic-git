@@ -10,12 +10,10 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
 const _sep = 'RMGSNAP';
-const _fieldSep = '';
 
-/// A refs line in _refsFormat order: HEAD, refname, oid, upstream, peeled,
-/// worktreepath, track, creatordate, symref, subject.
+/// A refs line in _refsFormat order: twelve fixed fields, subject, trailing NUL.
 String _refLine(String name, String subject) =>
-    ['*', name, 'aaa', '', '', '', '', '', '', subject].join(_fieldSep);
+    '${['*', name, 'aaa', '', '', '', '', '', '', '', '', '', subject].join('\u0000')}\u0000';
 
 String _combined({required String refsSection}) => [
   '', // status stdout (clean tree)
@@ -80,8 +78,7 @@ void main() {
       SSHCommandResult(
         exitCode: 0,
         stdout: _combined(
-          refsSection:
-              '${_refLine('refs/heads/main', 'evil $_sep subject')}\n',
+          refsSection: '${_refLine('refs/heads/main', 'evil $_sep subject')}\n',
         ),
         stderr: '',
       ),

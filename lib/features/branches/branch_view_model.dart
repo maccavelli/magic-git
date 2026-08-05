@@ -1,6 +1,39 @@
 import '../../core/forge/branch_forge_status.dart';
+import '../../core/git/branch_comparison.dart';
 import '../../core/git/git_service.dart';
 import 'branch_dashboard_stats.dart';
+
+enum BranchWorkspaceMode { browse, review }
+
+enum BranchReviewQuickFilter { all, merged, stale }
+
+enum BranchReviewSort { activity, name }
+
+List<GitRef> shapePhase1ReviewBranches({
+  required List<GitRef> branches,
+  required Map<String, BranchReviewSummary> summaries,
+  required BranchReviewQuickFilter filter,
+  required BranchReviewSort sort,
+}) {
+  final shaped = [
+    for (final branch in branches)
+      if (switch (filter) {
+        BranchReviewQuickFilter.all => true,
+        BranchReviewQuickFilter.merged =>
+          summaries[branch.name]?.mergedIntoBase ?? false,
+        BranchReviewQuickFilter.stale => isBranchStale(branch),
+      })
+        branch,
+  ];
+  shaped.sort(switch (sort) {
+    BranchReviewSort.name => (a, b) => a.shortName.compareTo(b.shortName),
+    BranchReviewSort.activity => (a, b) {
+      final byDate = (b.creatorDate ?? 0).compareTo(a.creatorDate ?? 0);
+      return byDate != 0 ? byDate : a.shortName.compareTo(b.shortName);
+    },
+  });
+  return shaped;
+}
 
 /// Immutable snapshot of Branches navigator/detail inputs derived from refs +
 /// provider data. Built once per paint; held as a single field so keyboard and
@@ -19,6 +52,10 @@ class BranchViewModel {
 
   /// All local branch refs (unfiltered) — worktree path lookups, etc.
   final List<GitRef> allLocalBranches;
+
+  /// All remote-tracking refs (unfiltered) — comparison-base choices must not
+  /// disappear when the navigator's free-text filter changes.
+  final List<GitRef> allRemoteBranches;
 
   final Map<String, BranchForge> forge;
   final Set<String> merged;
@@ -61,6 +98,7 @@ class BranchViewModel {
     required this.navigable,
     required this.localBranchNames,
     required this.allLocalBranches,
+    required this.allRemoteBranches,
     required this.forge,
     required this.merged,
     required this.pinned,
@@ -99,6 +137,7 @@ class BranchViewModel {
     navigable: [],
     localBranchNames: {},
     allLocalBranches: [],
+    allRemoteBranches: [],
     forge: {},
     merged: {},
     pinned: {},
@@ -170,9 +209,8 @@ class BranchViewModel {
     final totalLocals = refs.where((r) => r.isLocalBranch).length;
     final totalRemotes = refs.where((r) => r.isRemote).length;
     final allLocalBranches = refs.where((r) => r.isLocalBranch).toList();
-    final localBranchNames = {
-      for (final r in allLocalBranches) r.shortName,
-    };
+    final allRemoteBranches = refs.where((r) => r.isRemote).toList();
+    final localBranchNames = {for (final r in allLocalBranches) r.shortName};
 
     final filteredLocals = allLocalBranches
         .where((r) => branchNameMatchesFilter(r, filterLower))
@@ -250,6 +288,7 @@ class BranchViewModel {
       navigable: navigable,
       localBranchNames: localBranchNames,
       allLocalBranches: allLocalBranches,
+      allRemoteBranches: allRemoteBranches,
       forge: forge,
       merged: merged,
       pinned: pinned,
@@ -320,9 +359,7 @@ List<LocalBranchListItem> buildLocalBranchListItems({
   required Set<String> collapsedFolderPrefixes,
 }) {
   if (!grouped) {
-    return [
-      for (final b in branches) LocalBranchLeafItem(b, depth: 0),
-    ];
+    return [for (final b in branches) LocalBranchLeafItem(b, depth: 0)];
   }
   final root = _FolderNode();
   for (final b in branches) {

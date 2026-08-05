@@ -41,10 +41,12 @@ class MergePlan {
   final MergeMethod defaultMethod;
   final bool defaultDeleteSource;
   final String? headSha;
+
   /// When true, merge mutations must pin [headSha] (`--match-head-commit` / `sha=`).
   final bool pinHeadSha;
   final bool supportsAdminBypass;
   final bool autoMergeAlreadyEnabled;
+
   /// Behind base / need_rebase — UI may offer update-branch / rebase instead.
   final bool needsBranchUpdate;
 
@@ -71,6 +73,7 @@ class MergePlan {
 
 /// GitHub repo settings that constrain merge methods (from `gh api` repo object).
 class GhRepoMergePolicy {
+  final String? defaultBranch;
   final bool allowMergeCommit;
   final bool allowSquashMerge;
   final bool allowRebaseMerge;
@@ -78,6 +81,7 @@ class GhRepoMergePolicy {
   final bool deleteBranchOnMerge;
 
   const GhRepoMergePolicy({
+    this.defaultBranch,
     this.allowMergeCommit = true,
     this.allowSquashMerge = true,
     this.allowRebaseMerge = true,
@@ -87,25 +91,29 @@ class GhRepoMergePolicy {
 
   factory GhRepoMergePolicy.fromJson(Map<String, dynamic> json) =>
       GhRepoMergePolicy(
+        defaultBranch: json['default_branch'] as String?,
         allowMergeCommit: (json['allow_merge_commit'] as bool?) ?? true,
         allowSquashMerge: (json['allow_squash_merge'] as bool?) ?? true,
         allowRebaseMerge: (json['allow_rebase_merge'] as bool?) ?? true,
         allowAutoMerge: (json['allow_auto_merge'] as bool?) ?? false,
-        deleteBranchOnMerge:
-            (json['delete_branch_on_merge'] as bool?) ?? false,
+        deleteBranchOnMerge: (json['delete_branch_on_merge'] as bool?) ?? false,
       );
 }
 
 /// GitLab project merge settings (from `glab api projects/:id`).
 class GlRepoMergePolicy {
+  final String? defaultBranch;
+
   /// `merge` | `rebase_merge` | `ff`
   final String mergeMethod;
+
   /// `never` | `allowed` | `encouraged` | `always`
   final String squashOption;
   final bool removeSourceBranchAfterMerge;
   final bool autoMergeEnabled;
 
   const GlRepoMergePolicy({
+    this.defaultBranch,
     this.mergeMethod = 'merge',
     this.squashOption = 'allowed',
     this.removeSourceBranchAfterMerge = false,
@@ -114,6 +122,7 @@ class GlRepoMergePolicy {
 
   factory GlRepoMergePolicy.fromJson(Map<String, dynamic> json) =>
       GlRepoMergePolicy(
+        defaultBranch: json['default_branch'] as String?,
         mergeMethod: json['merge_method'] as String? ?? 'merge',
         squashOption: json['squash_option'] as String? ?? 'allowed',
         removeSourceBranchAfterMerge:
@@ -292,12 +301,7 @@ MergePlan mergePlanForGitHub({
   }
 
   // If only blocked on pending checks / unknown mergeability, allow auto-merge.
-  final hardBlockCodes = {
-    'draft',
-    'conflicts',
-    'review',
-    'behind',
-  };
+  final hardBlockCodes = {'draft', 'conflicts', 'review', 'behind'};
   final onlySoftBlocks =
       reasons.isNotEmpty &&
       reasons.every((r) => !hardBlockCodes.contains(r.code));
@@ -383,17 +387,11 @@ MergePlan mergePlanForGitLab({
       );
     case 'ci_must_pass':
       reasons.add(
-        const MergeBlockedReason(
-          'ci',
-          'Pipeline must succeed before merge.',
-        ),
+        const MergeBlockedReason('ci', 'Pipeline must succeed before merge.'),
       );
     case 'ci_still_running':
       reasons.add(
-        const MergeBlockedReason(
-          'ci_running',
-          'Pipeline is still running.',
-        ),
+        const MergeBlockedReason('ci_running', 'Pipeline is still running.'),
       );
       canAuto = !mr.draft && !mr.hasConflicts;
     case 'draft_status':

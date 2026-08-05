@@ -1,10 +1,8 @@
 import 'dart:convert';
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/storage/repository_ui_identity.dart';
-import 'pinned_branches.dart';
 
 /// Versioned Branches workspace organization prefs (pins, collapse, mode, …).
 ///
@@ -118,9 +116,7 @@ class BranchWorkspacePrefs {
     if (decoded is! Map) {
       return const BranchWorkspacePrefs();
     }
-    return BranchWorkspacePrefs.fromJson(
-      Map<String, Object?>.from(decoded),
-    );
+    return BranchWorkspacePrefs.fromJson(Map<String, Object?>.from(decoded));
   }
 
   /// Preference storage key for a durable identity.
@@ -153,6 +149,18 @@ final Map<String, BranchWorkspacePrefs> _sessionWorkspacePrefs = {};
 /// Clears ad-hoc prefs (call from connection invalidate / disconnect).
 void clearSessionBranchWorkspacePrefs() {
   _sessionWorkspacePrefs.clear();
+}
+
+/// Reads the legacy global collapse store for one-time workspace migration.
+Future<Set<String>> loadLegacyBranchCollapsedSections() async {
+  try {
+    final prefs = await SharedPreferences.getInstance();
+    return (prefs.getStringList('collapsedSections') ?? const <String>[])
+        .where((key) => key.startsWith('branches.'))
+        .toSet();
+  } catch (_) {
+    return const {};
+  }
 }
 
 /// Load prefs for [identity], migrating legacy pins/collapse when durable and
@@ -234,30 +242,4 @@ BranchWorkspacePrefs mergeLateLoadedPrefs({
         : incoming.selectedBaseRefName,
     showHidden: incoming.showHidden,
   );
-}
-
-/// Compatibility: keep [pinnedBranchesProvider] as the pin reader while the
-/// workspace prefs land. Writers should prefer [saveBranchWorkspacePrefs] once
-/// identity is available; until then [setPinnedBranch] remains valid.
-///
-/// Sync pins from workspace prefs into the legacy key so existing callers of
-/// [pinnedBranchesProvider] keep working during the transition.
-Future<void> syncLegacyPinsFromWorkspacePrefs({
-  required String repoPath,
-  required BranchWorkspacePrefs prefs,
-  required WidgetRef ref,
-}) async {
-  try {
-    final sp = await SharedPreferences.getInstance();
-    final key = 'pinnedBranches_$repoPath';
-    final list = prefs.pinnedBranchNames;
-    if (list.isEmpty) {
-      await sp.remove(key);
-    } else {
-      await sp.setStringList(key, list);
-    }
-  } catch (_) {
-    // Best-effort, same as setPinnedBranch.
-  }
-  ref.invalidate(pinnedBranchesProvider(repoPath));
 }

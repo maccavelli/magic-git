@@ -1,38 +1,91 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/forge/branch_forge_status.dart';
+import 'package:remote_magic_git/core/git/branch_comparison.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/features/branches/branch_view_model.dart';
 
 void main() {
+  test('Phase 1 Review merged/stale filters and Activity/Name sorts', () {
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final branches = [
+      GitRef(
+        name: 'refs/heads/z-recent',
+        oid: 'z',
+        isHead: false,
+        subject: '',
+        creatorDate: now,
+      ),
+      const GitRef(
+        name: 'refs/heads/a-stale',
+        oid: 'a',
+        isHead: false,
+        subject: '',
+        creatorDate: 1,
+      ),
+    ];
+    const summaries = {
+      'refs/heads/z-recent': BranchReviewSummary(
+        refName: 'refs/heads/z-recent',
+        shortName: 'z-recent',
+        branchOid: 'z',
+        baseOid: 'base',
+        aheadOfBase: 0,
+        behindBase: 1,
+      ),
+    };
+    expect(
+      shapePhase1ReviewBranches(
+        branches: branches,
+        summaries: summaries,
+        filter: BranchReviewQuickFilter.merged,
+        sort: BranchReviewSort.activity,
+      ).map((branch) => branch.shortName),
+      ['z-recent'],
+    );
+    expect(
+      shapePhase1ReviewBranches(
+        branches: branches,
+        summaries: summaries,
+        filter: BranchReviewQuickFilter.stale,
+        sort: BranchReviewSort.activity,
+      ).map((branch) => branch.shortName),
+      ['a-stale'],
+    );
+    expect(
+      shapePhase1ReviewBranches(
+        branches: branches,
+        summaries: summaries,
+        filter: BranchReviewQuickFilter.all,
+        sort: BranchReviewSort.name,
+      ).map((branch) => branch.shortName),
+      ['a-stale', 'z-recent'],
+    );
+  });
+
   final now = DateTime.utc(2026, 8, 4);
 
-  GitRef local(
-    String short, {
-    bool isHead = false,
-    int? creatorDate,
-  }) =>
-      GitRef(
-        name: 'refs/heads/$short',
-        oid: 'o-$short',
-        isHead: isHead,
-        subject: short,
-        creatorDate: creatorDate,
-      );
+  GitRef local(String short, {bool isHead = false, int? creatorDate}) => GitRef(
+    name: 'refs/heads/$short',
+    oid: 'o-$short',
+    isHead: isHead,
+    subject: short,
+    creatorDate: creatorDate,
+  );
 
   GitRef remote(String short) => GitRef(
-        name: 'refs/remotes/origin/$short',
-        oid: 'r-$short',
-        isHead: false,
-        subject: short,
-      );
+    name: 'refs/remotes/origin/$short',
+    oid: 'r-$short',
+    isHead: false,
+    subject: short,
+  );
 
   GitRef tag(String short, {int? creatorDate}) => GitRef(
-        name: 'refs/tags/$short',
-        oid: 't-$short',
-        isHead: false,
-        subject: short,
-        creatorDate: creatorDate,
-      );
+    name: 'refs/tags/$short',
+    oid: 't-$short',
+    isHead: false,
+    subject: short,
+    creatorDate: creatorDate,
+  );
 
   group('BranchViewModel.fromRefs', () {
     test('partitions pinned active stale and builds navigable', () {
@@ -46,19 +99,19 @@ void main() {
           'feature',
           creatorDate:
               now.subtract(const Duration(days: 2)).millisecondsSinceEpoch ~/
-                  1000,
+              1000,
         ),
         local(
           'old',
           creatorDate:
               now.subtract(const Duration(days: 120)).millisecondsSinceEpoch ~/
-                  1000,
+              1000,
         ),
         local(
           'pin-me',
           creatorDate:
               now.subtract(const Duration(days: 200)).millisecondsSinceEpoch ~/
-                  1000,
+              1000,
         ),
         remote('main'),
         tag('v1', creatorDate: 100),
@@ -97,12 +150,7 @@ void main() {
       expect(vm.navigable.any((r) => r.shortName == 'v1'), isTrue);
       expect(vm.dashboard.mergedDeletable, ['feature']);
       expect(vm.tagRemote, 'origin');
-      expect(vm.localBranchNames, {
-        'main',
-        'feature',
-        'old',
-        'pin-me',
-      });
+      expect(vm.localBranchNames, {'main', 'feature', 'old', 'pin-me'});
     });
 
     test('filter force-expands collapsed sections for matching rows', () {
@@ -110,18 +158,14 @@ void main() {
         local('main', isHead: true),
         local('feature'),
         remote('feature'),
+        remote('other'),
       ];
       final vm = BranchViewModel.fromRefs(
         refs: refs,
-        forge: {
-          'feature': const BranchForge(requestNumber: 1, isMr: false),
-        },
+        forge: {'feature': const BranchForge(requestNumber: 1, isMr: false)},
         merged: const {},
         pinned: const {},
-        collapsedSections: {
-          'branches.local',
-          'branches.remote',
-        },
+        collapsedSections: {'branches.local', 'branches.remote'},
         filterLower: 'feature',
         showStale: false,
         showAllTags: false,
@@ -136,6 +180,13 @@ void main() {
       // With filter, collapsed flags are false.
       expect(vm.localCollapsed, isFalse);
       expect(vm.remoteCollapsed, isFalse);
+      expect(vm.filteredRemotes.map((ref) => ref.shortName), [
+        'origin/feature',
+      ]);
+      expect(vm.allRemoteBranches.map((ref) => ref.shortName), [
+        'origin/feature',
+        'origin/other',
+      ]);
       expect(vm.filteredLocals.map((e) => e.shortName), ['feature']);
       expect(vm.forge['feature']?.requestNumber, 1);
     });
@@ -174,10 +225,7 @@ void main() {
 
     test('grouped mode inlines single-child folder chains', () {
       final items = buildLocalBranchListItems(
-        branches: [
-          local('a/b/c'),
-          local('a/b/d'),
-        ],
+        branches: [local('a/b/c'), local('a/b/d')],
         grouped: true,
         collapsedFolderPrefixes: const {},
       );
@@ -187,10 +235,7 @@ void main() {
       expect(folders.first.label, 'a/b/');
       expect(folders.first.path, 'a/b/');
       final leaves = items.whereType<LocalBranchLeafItem>().toList();
-      expect(leaves.map((e) => e.branch.shortName).toSet(), {
-        'a/b/c',
-        'a/b/d',
-      });
+      expect(leaves.map((e) => e.branch.shortName).toSet(), {'a/b/c', 'a/b/d'});
     });
 
     test('collapsed folder omits children', () {

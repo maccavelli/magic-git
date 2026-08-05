@@ -74,25 +74,74 @@ void main() {
     expect(stale.upstreamGone, isTrue);
   });
 
+  test(
+    'base-relative review is stable when current HEAD differs from base',
+    () async {
+      final baseOid = await raw(['rev-parse', 'refs/heads/main']);
+      await raw(['checkout', '-q', '-b', 'feature']);
+      await raw(['commit', '-q', '--allow-empty', '-m', 'feature-only']);
+      final featureOid = await raw(['rev-parse', 'refs/heads/feature']);
+
+      // Move HEAD to a third branch. Review must still compare the captured OIDs
+      // above, not silently substitute the current branch.
+      await raw(['checkout', '-q', '-b', 'other', 'refs/heads/main']);
+      await raw(['commit', '-q', '--allow-empty', '-m', 'other-only']);
+      expect(await raw(['symbolic-ref', '--short', 'HEAD']), 'other');
+
+      final result = await git.branchReviewSummaries(
+        repo,
+        baseOid: baseOid,
+        branches: [
+          (refName: 'refs/heads/feature', oid: featureOid),
+          (refName: 'refs/heads/main', oid: baseOid),
+        ],
+      );
+      final feature = result.summariesByRefName['refs/heads/feature']!;
+      final main = result.summariesByRefName['refs/heads/main']!;
+      expect((feature.aheadOfBase, feature.behindBase), (1, 0));
+      expect(feature.mergedIntoBase, isFalse);
+      expect((main.aheadOfBase, main.behindBase), (0, 0));
+      expect(main.mergedIntoBase, isTrue);
+
+      // mergedIntoBase must match git merge-base --is-ancestor for connected
+      // histories (ahead==0 ⇔ branch tip is an ancestor of the base tip).
+      Future<bool> isAncestor(String tip, String base) async {
+        final r = await Process.run('git', [
+          'merge-base',
+          '--is-ancestor',
+          tip,
+          base,
+        ], workingDirectory: repo);
+        return r.exitCode == 0;
+      }
+
+      expect(await isAncestor(featureOid, baseOid), isFalse);
+      expect(await isAncestor(baseOid, baseOid), isTrue);
+      expect(feature.mergedIntoBase, await isAncestor(featureOid, baseOid));
+      expect(main.mergedIntoBase, await isAncestor(baseOid, baseOid));
+    },
+  );
+
   test('renameBranch carries the upstream config across', () async {
     await git.renameBranch(repo, 'main', 'trunk');
 
-    final upstream = await raw([
-      'config',
-      '--get',
-      'branch.trunk.merge',
-    ]);
+    final upstream = await raw(['config', '--get', 'branch.trunk.merge']);
     expect(upstream, 'refs/heads/main', reason: 'tracking config followed');
-    expect(await raw(['symbolic-ref', '--short', 'HEAD']), 'trunk',
-        reason: 'HEAD followed the rename of the current branch');
+    expect(
+      await raw(['symbolic-ref', '--short', 'HEAD']),
+      'trunk',
+      reason: 'HEAD followed the rename of the current branch',
+    );
   });
 
   test('deleteRemoteBranch removes the branch on the remote', () async {
     await raw(['checkout', '-q', '-b', 'doomed']);
     await raw(['push', '-q', '-u', 'origin', 'doomed']);
     await raw(['checkout', '-q', 'main']);
-    expect(await raw(['branch', '--list', 'doomed'], cwd: origin),
-        contains('doomed'));
+    expect(
+      await raw(['branch', '--list', 'doomed'], cwd: origin),
+      contains('doomed'),
+    );
 
     await git.deleteRemoteBranch(repo, 'origin', 'doomed');
 
@@ -113,9 +162,15 @@ void main() {
     await raw(['init', '-q', '--bare', emptyOrigin], cwd: root);
     await raw(['clone', '-q', emptyOrigin, emptyClone], cwd: root);
 
-    expect(await git.remotes(emptyClone), ['origin'],
-        reason: 'git remote is the config-level truth');
-    expect(await git.refs(emptyClone), isEmpty,
-        reason: 'an empty clone has no refs of any kind');
+    expect(
+      await git.remotes(emptyClone),
+      ['origin'],
+      reason: 'git remote is the config-level truth',
+    );
+    expect(
+      await git.refs(emptyClone),
+      isEmpty,
+      reason: 'an empty clone has no refs of any kind',
+    );
   });
 }

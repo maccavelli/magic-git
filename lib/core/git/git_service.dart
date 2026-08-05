@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
+
 import '../forge/forge.dart';
 import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../undo/undo_types.dart';
 import '../utils/git_porcelain_parser.dart';
+import 'branch_comparison.dart';
 import 'git_cat_file_batch.dart';
 import 'log_search.dart';
 import 'repo_tree.dart';
@@ -177,6 +179,13 @@ class GitRef {
   /// echoed the atom back (pre-2.7) or the field is missing.
   final int? creatorDate;
 
+  /// Tip commit author metadata. Unlike [creatorDate] (committer/tagger
+  /// activity), these fields are attribution only and may be absent when the
+  /// remote Git does not support the corresponding format atom.
+  final int? authorDate;
+  final String? authorName;
+  final String? authorEmail;
+
   const GitRef({
     required this.name,
     required this.oid,
@@ -189,6 +198,9 @@ class GitRef {
     this.behind = 0,
     this.upstreamGone = false,
     this.creatorDate,
+    this.authorDate,
+    this.authorName,
+    this.authorEmail,
   });
 
   bool get isRemote => name.startsWith('refs/remotes/');
@@ -477,8 +489,12 @@ class GitStash {
 /// bug warrants. What this *does* guard is display: it keeps any such stray
 /// separator byte that survives into a field's value from leaking further
 /// into the UI as a raw, invisible control character.
-String _stripSeps(String s) => s.contains('\u001e') || s.contains('\u001f')
-    ? s.replaceAll('\u001e', '').replaceAll('\u001f', '')
+String _stripSeps(String s) =>
+    s.contains('\u0000') || s.contains('\u001e') || s.contains('\u001f')
+    ? s
+          .replaceAll('\u0000', '')
+          .replaceAll('\u001e', '')
+          .replaceAll('\u001f', '')
     : s;
 
 /// Parses `git log` output (field/record separated). Top-level so it can run in
@@ -494,7 +510,9 @@ List<GitCommit> parseGitLog(String raw) {
     // rest of the log rather than aborting the whole history render; this is a
     // fire-and-forget top-level parse with no warnings channel to surface it.
     if (f.length < 7) continue;
-    final subject = f.length == 7 ? f[6] : f.sublist(6).join(GitService.fieldSep);
+    final subject = f.length == 7
+        ? f[6]
+        : f.sublist(6).join(GitService.fieldSep);
     commits.add(
       GitCommit(
         hash: f[0],
@@ -546,7 +564,9 @@ List<FileHistoryEntry> parseFileHistory(String raw) {
     if (fieldsLine != null) {
       final f = fieldsLine.split(GitService.fieldSep);
       if (f.length < 7) continue; // truncated/malformed — same posture as log
-      final subject = f.length == 7 ? f[6] : f.sublist(6).join(GitService.fieldSep);
+      final subject = f.length == 7
+          ? f[6]
+          : f.sublist(6).join(GitService.fieldSep);
       entries.add(
         FileHistoryEntry(
           commit: GitCommit(
@@ -640,7 +660,9 @@ List<ReflogEntry> parseReflog(String raw) {
     // first colon; an unexpected shape becomes all-detail with no action.
     final gs = _stripSeps(f[3]);
     final colon = gs.indexOf(': ');
-    final subject = f.length == 5 ? f[4] : f.sublist(4).join(GitService.fieldSep);
+    final subject = f.length == 5
+        ? f[4]
+        : f.sublist(4).join(GitService.fieldSep);
     entries.add(
       ReflogEntry(
         hash: f[0],
@@ -787,6 +809,7 @@ class RepoSnapshot {
   final GitStatus status;
   final List<GitRef> refs;
   final PendingOp pendingOp;
+  final List<String> refParseWarnings;
 
   /// Names of the repo's *configured* remotes (`git remote`), e.g.
   /// `['origin']`. This — not [refs] — is the truth for "does this repo have
@@ -801,7 +824,16 @@ class RepoSnapshot {
     required this.refs,
     required this.pendingOp,
     this.remotes = const [],
+    this.refParseWarnings = const [],
   });
+}
+
+/// Valid refs plus non-fatal malformed-row diagnostics from the same snapshot.
+class RefsResult {
+  final List<GitRef> refs;
+  final List<String> parseWarnings;
+
+  const RefsResult(this.refs, this.parseWarnings);
 }
 
 /// One `git reflog` entry: where a ref (HEAD) pointed and why it moved.
@@ -870,13 +902,24 @@ class SnapshotRef {
 /// [GitRef.commitOid]-based grouping.
 final RegExp _oidShape = RegExp(r'^[0-9a-f]{40,64}$');
 
-List<GitRef> parseRefs(String raw, String fieldSep) {
+RefsResult parseRefsDetailed(String raw) {
   final refs = <GitRef>[];
+  final warnings = <String>[];
+  var recordNumber = 0;
   for (final line in raw.split('\n')) {
     if (line.trim().isEmpty) continue;
-    final f = line.split(fieldSep);
-    if (f.length < 5) continue;
-    String at(int i) => f.length > i ? f[i] : '';
+    recordNumber++;
+    final f = line.split('\u0000');
+    if (f.isNotEmpty && f.last.isEmpty) f.removeLast();
+    // Twelve fixed machine fields precede the unconstrained subject.
+    if (f.length < 13) {
+      warnings.add(
+        'Dropped malformed ref record $recordNumber: '
+        'expected at least 13 fields, found ${f.length}.',
+      );
+      continue;
+    }
+    String at(int i) => f[i];
     // Peeled commit for annotated tags. Shape-validated (see [_oidShape]) so
     // no non-OID text can ever land here.
     final peeled = at(4);
@@ -900,10 +943,15 @@ List<GitRef> parseRefs(String raw, String fieldSep) {
     // `refs/` prefix so an old git echoing the atom back doesn't drop every
     // ref.
     if (at(8).startsWith('refs/')) continue;
+    final authorDate = int.tryParse(at(9).trim());
+    final authorName = _supportedRefAtom(at(10), '%(authorname)');
+    final authorEmail = _normalizeAuthorEmail(
+      _supportedRefAtom(at(11), '%(authoremail)'),
+    );
     // The subject is the LAST format field (see [_refsFormat]): one that
     // contains the separator byte splits into extra trailing fields, which
     // rejoining reconstructs — the machine fields above can never shift.
-    final subject = f.length > 9 ? f.sublist(9).join(fieldSep) : '';
+    final subject = f.sublist(12).join('\u0000');
     refs.add(
       GitRef(
         isHead: f[0] == '*',
@@ -917,10 +965,51 @@ List<GitRef> parseRefs(String raw, String fieldSep) {
         behind: _trackCount(track, 'behind'),
         upstreamGone: track == '[gone]',
         creatorDate: created,
+        authorDate: authorDate,
+        authorName: authorName,
+        authorEmail: authorEmail,
       ),
     );
   }
-  return refs;
+  return RefsResult(refs, warnings);
+}
+
+/// Source-compatible facade. [fieldSep] remains optional for older callers;
+/// actual snapshots use NUL framing and [parseRefsDetailed].
+List<GitRef> parseRefs(String raw, [String? fieldSep]) {
+  if (raw.contains('\u0000') || fieldSep == null) {
+    return parseRefsDetailed(raw).refs;
+  }
+  // Compatibility for existing fixtures while they migrate to the fixed NUL
+  // format. Convert only the nine legacy fixed separators; the remainder is
+  // the old unconstrained subject and is preserved as one final field.
+  final converted = <String>[];
+  for (final line in raw.split('\n')) {
+    if (line.trim().isEmpty) continue;
+    final fields = line.split(fieldSep);
+    if (fields.length < 5) continue;
+    final legacy = List<String>.generate(
+      10,
+      (i) => fields.length > i ? fields[i] : '',
+    );
+    final subject = fields.length > 9 ? fields.sublist(9).join(fieldSep) : '';
+    converted.add([...legacy.take(9), '', '', '', subject, ''].join('\u0000'));
+  }
+  return parseRefsDetailed(converted.join('\n')).refs;
+}
+
+String? _supportedRefAtom(String value, String literalAtom) {
+  final trimmed = value.trim();
+  return trimmed.isEmpty || trimmed == literalAtom ? null : trimmed;
+}
+
+String? _normalizeAuthorEmail(String? value) {
+  if (value == null) return null;
+  final trimmed = value.trim();
+  if (trimmed.startsWith('<') && trimmed.endsWith('>') && trimmed.length >= 2) {
+    return trimmed.substring(1, trimmed.length - 1).trim();
+  }
+  return trimmed;
 }
 
 int _trackCount(String track, String key) {
@@ -1235,8 +1324,23 @@ class GitService {
 
   /// Local branches, remote-tracking refs, and tags. Bundled with [status] and
   /// [pendingOp] into one round trip — see [_snapshot].
-  Future<List<GitRef>> refs(String repoPath) async =>
-      (await _snapshot(repoPath)).refs;
+  Future<List<GitRef>> refs(String repoPath) async {
+    final snapshot = await _snapshot(repoPath);
+    _latestRefParseWarnings[repoPath] = snapshot.refParseWarnings;
+    return snapshot.refs;
+  }
+
+  /// Refs and non-fatal parse warnings from the same combined snapshot.
+  ///
+  /// This deliberately calls the virtual [refs] seam so test doubles and
+  /// specialized services that override it remain source-compatible. The real
+  /// implementation records warnings while resolving [refs]; an override has
+  /// no parser warnings and therefore returns an empty warning list.
+  Future<RefsResult> refsWithWarnings(String repoPath) async {
+    final refs = await this.refs(repoPath);
+    final warnings = _latestRefParseWarnings.remove(repoPath) ?? const [];
+    return RefsResult(refs, warnings);
+  }
 
   /// Which git operation, if any, is mid-flight — a merge, cherry-pick, revert,
   /// or (interactive) rebase — so the UI can show the right "in progress,
@@ -1272,13 +1376,37 @@ class GitService {
   ///
   /// Prefers `--path-format=absolute` (usable absolute/symlink-resolved paths).
   /// On Git that rejects that flag (pre-2.31, still within the app's 2.24
-  /// floor), falls back to plain `rev-parse` and canonicalizes relative
-  /// `--git-dir`/`--git-common-dir` against [repoPath] so main vs linked
-  /// worktrees remain comparable.
-  Future<RepoLayout> repoLayout(String repoPath) async {
+  /// floor), falls back to `--absolute-git-dir` and canonicalizes every path
+  /// on the command host with POSIX `cd -P`/`pwd -P`. The fallback must not use
+  /// this app process's filesystem: [repoPath] may name an SSH host path.
+  Future<RepoLayout> repoLayout(String repoPath) =>
+      _resolveRepoLayout(repoPath, extraEnv: _scopeEnvFor(repoPath));
+
+  static const _legacyRepoLayoutScript = r'''
+canon_dir() {
+  p=$1
+  case "$p" in
+    /*) ;;
+    *) p="./$p" ;;
+  esac
+  (CDPATH= cd -P "$p" && pwd -P)
+}
+top=$(git rev-parse --show-toplevel) || exit $?
+git_dir=$(git rev-parse --absolute-git-dir) || exit $?
+common_dir=$(git rev-parse --git-common-dir) || exit $?
+top=$(canon_dir "$top") || exit $?
+git_dir=$(canon_dir "$git_dir") || exit $?
+common_dir=$(canon_dir "$common_dir") || exit $?
+printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
+''';
+
+  Future<RepoLayout> _resolveRepoLayout(
+    String repoPath, {
+    required Map<String, String>? extraEnv,
+  }) async {
     final modern = await _executor.execute(
       repoPath: repoPath,
-      extraEnv: _scopeEnvFor(repoPath),
+      extraEnv: extraEnv,
       gitArgs: [
         'git',
         'rev-parse',
@@ -1291,45 +1419,31 @@ class GitService {
       lane: ExecLane.read,
     );
     if (modern.isSuccess) {
-      final layout = _parseRepoLayoutLines(modern.stdout, repoPath: repoPath);
+      final layout = _parseRepoLayoutLines(modern.stdout);
       if (layout != null) return layout;
     }
 
-    // Git < 2.31 rejects `--path-format` (unknown option). Retry without it.
-    final legacy = await _run(
-      repoPath,
-      [
-        'git',
-        'rev-parse',
-        '--show-toplevel',
-        '--git-dir',
-        '--git-common-dir',
-      ],
-      'Resolve repository layout',
+    // Git < 2.31 rejects `--path-format`. Resolve the fallback on the command
+    // host so an SSH path is never interpreted against the local Mac.
+    final legacy = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: extraEnv,
+      gitArgs: ['sh', '-c', _legacyRepoLayoutScript],
       retries: _readRetries,
       lane: ExecLane.read,
     );
-    final layout = _parseRepoLayoutLines(
-      legacy.stdout,
-      repoPath: repoPath,
-      canonicalizeRelative: true,
-    );
+    if (!legacy.isSuccess) {
+      throw GitException('Could not resolve the repository layout', legacy);
+    }
+    final layout = _parseRepoLayoutLines(legacy.stdout);
     if (layout == null) {
       throw GitException('Could not resolve the repository layout', legacy);
     }
     return layout;
   }
 
-  /// Parses `rev-parse --show-toplevel --git-dir --git-common-dir` stdout.
-  ///
-  /// When [canonicalizeRelative] is true (legacy path without
-  /// `--path-format=absolute`), relative git-dir paths are resolved against
-  /// [repoPath] and symlink-canonicalized when possible.
-  RepoLayout? _parseRepoLayoutLines(
-    String stdout, {
-    required String repoPath,
-    bool canonicalizeRelative = false,
-  }) {
+  /// Parses the three absolute, host-canonicalized repository layout paths.
+  RepoLayout? _parseRepoLayoutLines(String stdout) {
     final lines = const LineSplitter()
         .convert(stdout)
         .map((l) => l.trim())
@@ -1337,27 +1451,10 @@ class GitService {
         .toList();
     if (lines.length < 3) return null;
 
-    String abs(String path) {
-      final joined = path.startsWith('/') ? path : '$repoPath/$path';
-      if (!canonicalizeRelative && path.startsWith('/')) return path;
-      try {
-        return Directory(joined).resolveSymbolicLinksSync();
-      } catch (_) {
-        return joined;
-      }
-    }
-
-    if (!canonicalizeRelative) {
-      return RepoLayout(
-        toplevel: lines[0],
-        gitDir: lines[1],
-        gitCommonDir: lines[2],
-      );
-    }
     return RepoLayout(
-      toplevel: abs(lines[0]),
-      gitDir: abs(lines[1]),
-      gitCommonDir: abs(lines[2]),
+      toplevel: lines[0],
+      gitDir: lines[1],
+      gitCommonDir: lines[2],
     );
   }
 
@@ -1432,44 +1529,10 @@ class GitService {
   Future<RepoLayout> scopedRepoLayout(
     String repoPath, {
     required String gitDir,
-  }) async {
-    final result = await _executor.execute(
-      repoPath: repoPath,
-      extraEnv: {'GIT_DIR': gitDir, 'GIT_WORK_TREE': repoPath},
-      gitArgs: [
-        'git',
-        'rev-parse',
-        '--path-format=absolute',
-        '--show-toplevel',
-        '--git-dir',
-        '--git-common-dir',
-      ],
-      retries: _readRetries,
-      lane: ExecLane.read,
-    );
-    if (!result.isSuccess) {
-      throw GitException(
-        'Could not resolve the scoped repository layout',
-        result,
-      );
-    }
-    final lines = const LineSplitter()
-        .convert(result.stdout)
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty)
-        .toList();
-    if (lines.length < 3) {
-      throw GitException(
-        'Could not resolve the scoped repository layout',
-        result,
-      );
-    }
-    return RepoLayout(
-      toplevel: lines[0],
-      gitDir: lines[1],
-      gitCommonDir: lines[2],
-    );
-  }
+  }) => _resolveRepoLayout(
+    repoPath,
+    extraEnv: {'GIT_DIR': gitDir, 'GIT_WORK_TREE': repoPath},
+  );
 
   /// All worktrees of this repository, main worktree first.
   ///
@@ -1787,6 +1850,9 @@ class GitService {
     // branches (checking one out DWIMs the bogus local name "HEAD"; deleting
     // one would target a ref the remote doesn't have).
     '%(symref)',
+    '%(authordate:unix)',
+    '%(authorname)',
+    '%(authoremail)',
     // The subject is deliberately LAST: it is the one field whose content git
     // does not constrain, so a subject containing the separator byte can only
     // spill into extra trailing fields — which [parseRefs] rejoins — instead
@@ -1836,6 +1902,10 @@ class GitService {
   /// immediately calling this itself) share one round trip instead of two.
   final _snapshotInFlight = <String, Future<RepoSnapshot>>{};
 
+  /// Warning handoff from the virtual [refs] seam to [refsWithWarnings].
+  /// Entries are removed as soon as the warning-aware caller resumes.
+  final _latestRefParseWarnings = <String, List<String>>{};
+
   /// Fetches [status], [refs], and [pendingOp] together in a single round
   /// trip. These three are invalidated together on nearly every refresh
   /// trigger (watcher ticks, post-mutation refreshes across the app) — this
@@ -1856,7 +1926,9 @@ class GitService {
   }
 
   Future<RepoSnapshot> _fetchSnapshot(String repoPath) async {
-    final format = _refsFormat.join(fieldSep);
+    // Fixed NUL columns prevent commit-controlled author/subject bytes from
+    // shifting machine fields. The final NUL makes truncated rows detectable.
+    final format = '${_refsFormat.join('%00')}%00';
     // `-uall`: list untracked files individually instead of collapsing a
     // wholly-untracked directory to one `dir/` record. Every per-file
     // affordance in the UI assumes real file paths — a collapsed `dir/`
@@ -2036,7 +2108,7 @@ class GitService {
     final status = statusStdout.length > _isolateThreshold
         ? await Isolate.run(() => GitPorcelainParser.parseV2(statusStdout))
         : GitPorcelainParser.parseV2(statusStdout);
-    final refs = parseRefs(refsStdout, fieldSep);
+    final refsResult = parseRefsDetailed(refsStdout);
     // `git remote` inside a repo effectively cannot fail; a non-zero exit is
     // treated as "no remotes known" rather than failing the whole snapshot —
     // status and refs above are the load-bearing sections.
@@ -2056,9 +2128,10 @@ class GitService {
 
     return RepoSnapshot(
       status: status,
-      refs: refs,
+      refs: refsResult.refs,
       pendingOp: pendingOp,
       remotes: remotes,
+      refParseWarnings: refsResult.parseWarnings,
     );
   }
 
@@ -3139,21 +3212,14 @@ class GitService {
     );
   }
 
-  /// Creates a branch, optionally checking it out.
-  ///
-  /// The checkout form deliberately has no `--end-of-options` before [name]:
-  /// `-b` consumes its next token verbatim as the branch name, so the guard
-  /// itself would *become* the name (`fatal: a branch '--end-of-options'
-  /// cannot be created`) — and a leading-dash [name] is already safe, since
-  /// git rejects it as an invalid ref format rather than parsing it as a
-  /// flag. The plain `git branch` form takes [name] positionally and keeps
-  /// the guard.
   /// Local branches fully merged into the current HEAD (`git branch --merged`)
-  /// — one cheap read. These are the "already landed, safe to delete" branches
-  /// the grey merged badge marks. Returns short names (the current branch,
-  /// which is trivially merged into itself, is included — callers filter it by
-  /// [GitRef.isHead]). Throws like any read on failure; the provider swallows
-  /// it so a badge never breaks the list.
+  /// — one cheap read used only for a HEAD-relative informational badge.
+  /// This is **not** a base-relative or "safe to delete" signal; Review uses
+  /// [branchReviewSummaries] for comparison against an explicit base.
+  /// Returns short names (the current branch, which is trivially merged into
+  /// itself, is included — callers filter it by [GitRef.isHead]). Throws like
+  /// any read on failure; the provider swallows it so a badge never breaks the
+  /// list.
   Future<Set<String>> mergedBranchNames(String repoPath) async {
     final result = await _run(
       repoPath,
@@ -3167,6 +3233,197 @@ class GitService {
     };
   }
 
+  /// Symbolic target of `refs/remotes/<remote>/HEAD`, or null when the remote
+  /// has no advertised HEAD symref. The ref is one argv element, never shell
+  /// interpolation.
+  Future<String?> remoteHead(String repoPath, String remote) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: ['git', 'symbolic-ref', '--quiet', 'refs/remotes/$remote/HEAD'],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    final target = result.stdout.trim();
+    if (result.exitCode == 1 && target.isEmpty) return null;
+    if (!result.isSuccess ||
+        !target.startsWith('refs/remotes/$remote/') ||
+        target == 'refs/remotes/$remote/HEAD') {
+      throw GitException('Could not resolve remote HEAD', result);
+    }
+    return target;
+  }
+
+  static const int branchReviewBatchSize = 100;
+  static const Duration branchReviewBatchTimeout = Duration(seconds: 60);
+  static const String _branchReviewFieldSep = '\u001f';
+
+  /// Base-relative divergence for local branch tips. Ref names never enter the
+  /// host script; rows join back through captured ordinal + immutable OID.
+  Future<BranchReviewBatchResult> branchReviewSummaries(
+    String repoPath, {
+    required String baseOid,
+    required List<({String refName, String oid})> branches,
+  }) async {
+    if (!isFullGitOid(baseOid)) {
+      throw ArgumentError.value(baseOid, 'baseOid', 'must be a full Git OID');
+    }
+    for (final branch in branches) {
+      if (!isFullGitOid(branch.oid)) {
+        throw ArgumentError.value(
+          branch.oid,
+          'branches',
+          'branch OIDs must be full Git OIDs',
+        );
+      }
+    }
+
+    final summaries = <String, BranchReviewSummary>{};
+    final failures = <String, BranchReviewFailure>{};
+    for (
+      var start = 0;
+      start < branches.length;
+      start += branchReviewBatchSize
+    ) {
+      final end = (start + branchReviewBatchSize).clamp(0, branches.length);
+      final batch = branches.sublist(start, end);
+      final parsed = await _branchReviewBatch(repoPath, baseOid, batch);
+      summaries.addAll(parsed.summariesByRefName);
+      failures.addAll(parsed.failuresByRefName);
+    }
+    return BranchReviewBatchResult(
+      summariesByRefName: summaries,
+      failuresByRefName: failures,
+    );
+  }
+
+  Future<BranchReviewBatchResult> _branchReviewBatch(
+    String repoPath,
+    String baseOid,
+    List<({String refName, String oid})> branches,
+  ) async {
+    const script = r'''
+base=$1
+shift
+ordinal=0
+for oid in "$@"; do
+  counts=$(git rev-list --left-right --count "$base...$oid")
+  status=$?
+  behind=
+  ahead=
+  if [ "$status" -eq 0 ]; then
+    set -- $counts
+    behind=${1-}
+    ahead=${2-}
+  fi
+  printf '%s\037%s\037%s\037%s\037%s\000' \
+    "$ordinal" "$oid" "$status" "$behind" "$ahead"
+  ordinal=$((ordinal + 1))
+done
+''';
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: {...?_scopeEnvFor(repoPath), 'LC_ALL': 'C'},
+      gitArgs: [
+        'sh',
+        '-c',
+        script,
+        'branch-review',
+        baseOid,
+        ...branches.map((branch) => branch.oid),
+      ],
+      timeout: branchReviewBatchTimeout,
+      retries: 0,
+      lane: ExecLane.read,
+    );
+    if (!result.isSuccess) {
+      throw GitException('Branch review summary failed', result);
+    }
+    return _parseBranchReviewBatch(baseOid, branches, result.stdout);
+  }
+
+  BranchReviewBatchResult _parseBranchReviewBatch(
+    String baseOid,
+    List<({String refName, String oid})> branches,
+    String raw,
+  ) {
+    final summaries = <String, BranchReviewSummary>{};
+    final failures = <String, BranchReviewFailure>{};
+    final seen = <int>{};
+
+    void fail(int ordinal, String code) {
+      if (ordinal < 0 || ordinal >= branches.length) return;
+      final branch = branches[ordinal];
+      failures[branch.refName] = BranchReviewFailure(
+        refName: branch.refName,
+        branchOid: branch.oid,
+        reasonCode: code,
+      );
+      summaries.remove(branch.refName);
+    }
+
+    for (final record in raw.split('\u0000')) {
+      if (record.isEmpty) continue;
+      final fields = record.split(_branchReviewFieldSep);
+      final ordinal = fields.isEmpty ? null : int.tryParse(fields[0]);
+      if (ordinal == null || ordinal < 0 || ordinal >= branches.length) {
+        continue;
+      }
+      if (!seen.add(ordinal)) {
+        fail(ordinal, 'duplicateRecord');
+        continue;
+      }
+      if (fields.length != 5) {
+        fail(ordinal, 'malformedRecord');
+        continue;
+      }
+      final branch = branches[ordinal];
+      if (fields[1] != branch.oid) {
+        fail(ordinal, 'oidMismatch');
+        continue;
+      }
+      final status = int.tryParse(fields[2]);
+      if (status == null) {
+        fail(ordinal, 'malformedStatus');
+        continue;
+      }
+      if (status != 0) {
+        fail(ordinal, 'revListFailed');
+        continue;
+      }
+      final behind = int.tryParse(fields[3]);
+      final ahead = int.tryParse(fields[4]);
+      if (behind == null || behind < 0 || ahead == null || ahead < 0) {
+        fail(ordinal, 'malformedCounts');
+        continue;
+      }
+      summaries[branch.refName] = BranchReviewSummary(
+        refName: branch.refName,
+        shortName: branch.refName.replaceFirst('refs/heads/', ''),
+        branchOid: branch.oid,
+        baseOid: baseOid,
+        aheadOfBase: ahead,
+        behindBase: behind,
+      );
+    }
+    for (var ordinal = 0; ordinal < branches.length; ordinal++) {
+      if (!seen.contains(ordinal)) fail(ordinal, 'missingRecord');
+    }
+    return BranchReviewBatchResult(
+      summariesByRefName: summaries,
+      failuresByRefName: failures,
+    );
+  }
+
+  /// Creates a branch, optionally checking it out.
+  ///
+  /// The checkout form deliberately has no `--end-of-options` before [name]:
+  /// `-b` consumes its next token verbatim as the branch name, so the guard
+  /// itself would *become* the name (`fatal: a branch '--end-of-options'
+  /// cannot be created`) — and a leading-dash [name] is already safe, since
+  /// git rejects it as an invalid ref format rather than parsing it as a
+  /// flag. The plain `git branch` form takes [name] positionally and keeps
+  /// the guard.
   Future<void> createBranch(
     String repoPath,
     String name, {

@@ -2,17 +2,32 @@
 // carrying the worktree-awareness and (now) upstream-divergence logic every
 // branch surface renders from.
 //
-// Field order mirrors GitService._refsFormat: HEAD, refname, oid, upstream,
-// peeled, worktreepath, upstream:track, creatordate, symref, subject — the
-// subject deliberately last so separator bytes inside it can only spill into
-// trailing fields that the parser rejoins.
+// Field order mirrors GitService._refsFormat: twelve fixed NUL-delimited
+// machine/identity fields, then the unconstrained subject, then a trailing NUL.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
-const _sep = '';
+const _sep = '\u0000';
+const _formerSep = '\u001f';
 
 const _peeledHash = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+
+class _OverriddenRefsGit extends GitService {
+  _OverriddenRefsGit() : super(SSHCommandExecutor(SSHClientManager()));
+
+  var refsCalled = false;
+
+  @override
+  Future<List<GitRef>> refs(String repoPath) async {
+    refsCalled = true;
+    return const [
+      GitRef(name: 'refs/heads/main', oid: 'aaa', isHead: true, subject: ''),
+    ];
+  }
+}
 
 String _line({
   String head = ' ',
@@ -24,21 +39,22 @@ String _line({
   String track = '',
   String created = '',
   String symref = '',
+  String authorDate = '',
+  String authorName = '',
+  String authorEmail = '',
   String subject = 's',
-}) => [
-  head,
-  name,
-  oid,
-  upstream,
-  peeled,
-  worktree,
-  track,
-  created,
-  symref,
-  subject,
-].join(_sep);
+}) =>
+    '${[head, name, oid, upstream, peeled, worktree, track, created, symref, authorDate, authorName, authorEmail, subject].join(_sep)}$_sep';
 
 void main() {
+  test('refsWithWarnings preserves the virtual refs seam', () async {
+    final git = _OverriddenRefsGit();
+    final result = await git.refsWithWarnings('/repo');
+    expect(git.refsCalled, isTrue);
+    expect(result.refs.single.shortName, 'main');
+    expect(result.parseWarnings, isEmpty);
+  });
+
   group('upstream:track parsing', () {
     test('ahead and behind, alone or together', () {
       final refs = parseRefs(
@@ -72,24 +88,12 @@ void main() {
   });
 
   group('truncated lines (defense against malformed output)', () {
-    test('a five-field line still parses, with empty optional fields', () {
-      final refs = parseRefs(
-        ['*', 'refs/heads/main', 'aaa', 'origin/main', ''].join(_sep),
-        _sep,
+    test('a short record is skipped with an observable warning', () {
+      final result = parseRefsDetailed(
+        '${['*', 'refs/heads/main', 'aaa', 'origin/main', ''].join(_sep)}$_sep',
       );
-      expect(refs.single.isHead, isTrue);
-      expect(refs.single.subject, '');
-      expect(refs.single.worktreePath, isNull);
-      expect((refs.single.ahead, refs.single.behind), (0, 0));
-      expect(refs.single.creatorDate, isNull);
-    });
-
-    test('a four-field line is skipped, not mis-parsed', () {
-      final refs = parseRefs(
-        [' ', 'refs/heads/main', 'aaa', ''].join(_sep),
-        _sep,
-      );
-      expect(refs, isEmpty);
+      expect(result.refs, isEmpty);
+      expect(result.parseWarnings.single, contains('expected at least 13'));
     });
   });
 
@@ -106,11 +110,17 @@ void main() {
       );
       expect(refs[0].isCheckedOutElsewhere, isTrue);
       expect(refs[0].elsewhereWorktreePath, '/wt/held');
-      expect(refs[1].isCheckedOutElsewhere, isFalse,
-          reason: 'the current branch is checked out HERE');
+      expect(
+        refs[1].isCheckedOutElsewhere,
+        isFalse,
+        reason: 'the current branch is checked out HERE',
+      );
       expect(refs[2].isCheckedOutElsewhere, isFalse);
-      expect(refs[3].isCheckedOutElsewhere, isFalse,
-          reason: 'remotes are never "checked out elsewhere"');
+      expect(
+        refs[3].isCheckedOutElsewhere,
+        isFalse,
+        reason: 'remotes are never "checked out elsewhere"',
+      );
     });
 
     test('a pre-2.23 git echoing %(worktreepath) is filtered by shape', () {
@@ -138,6 +148,38 @@ void main() {
     });
   });
 
+  group('author metadata', () {
+    test('parses author date/name and normalizes angle-bracket email', () {
+      final ref = parseRefs(
+        _line(
+          authorDate: '1234',
+          authorName: 'A Unit${_formerSep}Separator',
+          authorEmail: '<Dev@Example.com>',
+          subject: 'subject${_formerSep}tail',
+        ),
+        _sep,
+      ).single;
+      expect(ref.authorDate, 1234);
+      expect(ref.authorName, 'A Unit${_formerSep}Separator');
+      expect(ref.authorEmail, 'Dev@Example.com');
+      expect(ref.subject, 'subjecttail');
+    });
+
+    test('unsupported literal atoms and invalid epochs become null', () {
+      final ref = parseRefs(
+        _line(
+          authorDate: '%(authordate:unix)',
+          authorName: '%(authorname)',
+          authorEmail: '%(authoremail)',
+        ),
+        _sep,
+      ).single;
+      expect(ref.authorDate, isNull);
+      expect(ref.authorName, isNull);
+      expect(ref.authorEmail, isNull);
+    });
+  });
+
   group('symref filtering', () {
     test('origin/HEAD (a symref) is dropped; its siblings are kept', () {
       final refs = parseRefs(
@@ -151,10 +193,10 @@ void main() {
         ].join('\n'),
         _sep,
       );
-      expect(
-        refs.map((r) => r.name),
-        ['refs/remotes/origin/main', 'refs/heads/main'],
-      );
+      expect(refs.map((r) => r.name), [
+        'refs/remotes/origin/main',
+        'refs/heads/main',
+      ]);
     });
 
     test('an old git echoing %(symref) does not drop every ref', () {
@@ -197,8 +239,11 @@ void main() {
         ),
         _sep,
       );
-      expect(refs.single.subject, 'evilbut rejoined',
-          reason: 'separator bytes are stripped for display');
+      expect(
+        refs.single.subject,
+        'evilbut rejoined',
+        reason: 'separator bytes are stripped for display',
+      );
       expect(refs.single.peeledOid, _peeledHash);
       expect(refs.single.creatorDate, 1234);
     });

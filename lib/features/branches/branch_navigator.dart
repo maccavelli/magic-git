@@ -1,0 +1,1559 @@
+// Phase 0 extraction: navigator (left panel) of the branches view — pure move,
+// no behavior changes.
+
+// hide OverlayVisibilityMode: MacosTextField takes macos_ui's own enum of
+// the same name (used by the filter bar's clear button).
+import 'package:flutter/cupertino.dart' hide OverlayVisibilityMode;
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:macos_ui/macos_ui.dart';
+
+import '../../core/forge/branch_forge_status.dart';
+import '../../core/git/branch_comparison.dart';
+import '../../core/git/git_service.dart';
+import '../../core/providers/app_providers.dart';
+import '../../core/settings/keymap.dart';
+import '../../core/theme/app_theme.dart';
+import '../common/context_menu.dart';
+import '../common/field_styles.dart';
+import '../common/inline_action_button.dart';
+import '../common/label_chip.dart';
+import '../common/list_keyboard_nav.dart';
+import '../common/panel_shortcuts.dart';
+import '../common/section_collapse.dart';
+import '../common/show_more_row.dart';
+import '../common/tappable.dart';
+import '../common/tool_icon_button.dart';
+import '../dnd/deselect.dart';
+import '../dnd/drag_item.dart';
+import '../forge/forge_widgets.dart' show CiDot;
+import '../worktrees/worktree_tabs.dart';
+import 'branch_detail.dart' show TagRemoteStatus, tagStatus;
+import 'branch_view_model.dart';
+
+// ---------------------------------------------------------------------------
+// Public top-level helpers (shared with the detail pane in branches_view.dart)
+// ---------------------------------------------------------------------------
+
+/// The local branch name a remote-tracking ref [remoteShortName] (e.g.
+/// `origin/feat/x`) maps to — everything after the first `/` (the remote).
+String remoteLocalName(String remoteShortName) => remoteShortName.contains('/')
+    ? remoteShortName.substring(remoteShortName.indexOf('/') + 1)
+    : remoteShortName;
+
+/// The three-way outcome of deleting a tag that also exists on the remote.
+enum TagDeleteScope { local, both, cancel }
+
+/// The choice offered when a branch is dropped onto the current branch's row.
+enum DropOp { merge, rebase, cancel }
+
+// ---------------------------------------------------------------------------
+// Private types
+// ---------------------------------------------------------------------------
+
+/// Stable names for the canonical collapse store (`collapsedSectionsProvider`
+/// in `../common/section_collapse.dart`), prefixed so they never collide with
+/// another tab's sections in that shared flat namespace.
+abstract final class _BranchSections {
+  static const pinned = 'branches.pinned';
+  static const local = 'branches.local';
+  static const remote = 'branches.remote';
+  static const tags = 'branches.tags';
+}
+
+/// A row descriptor for the navigator's `ListView.builder` — cheap data, not a
+/// built [Widget], so only the visible rows are ever constructed.
+sealed class _Row {
+  const _Row();
+}
+
+class _PinnedHeaderRow extends _Row {
+  final int count;
+  final bool collapsed;
+  const _PinnedHeaderRow(this.count, {required this.collapsed});
+}
+
+class _LocalHeaderRow extends _Row {
+  final String title;
+  final bool collapsed;
+  const _LocalHeaderRow(this.title, {required this.collapsed});
+}
+
+class _RemotesHeaderRow extends _Row {
+  final String title;
+  final bool collapsed;
+  const _RemotesHeaderRow(this.title, {required this.collapsed});
+}
+
+class _TagsHeaderRow extends _Row {
+  final String title;
+  final bool collapsed;
+  const _TagsHeaderRow(this.title, {required this.collapsed});
+}
+
+class _FolderRow extends _Row {
+  final String path;
+  final String label;
+  final int depth;
+  final int count;
+  const _FolderRow({
+    required this.path,
+    required this.label,
+    required this.depth,
+    required this.count,
+  });
+}
+
+class _BranchRow extends _Row {
+  final GitRef branch;
+  final bool remote;
+  final int depth;
+  const _BranchRow(this.branch, {required this.remote, required this.depth});
+}
+
+class _TagRefRow extends _Row {
+  final GitRef tag;
+  const _TagRefRow(this.tag);
+}
+
+class _StaleToggleRow extends _Row {
+  final int count;
+  const _StaleToggleRow(this.count);
+}
+
+class _ShowMoreTagsRow extends _Row {
+  final int hidden;
+  const _ShowMoreTagsRow(this.hidden);
+}
+
+class _ShowMoreRemotesRow extends _Row {
+  final int hidden;
+  const _ShowMoreRemotesRow(this.hidden);
+}
+
+/// The behind │ ahead divergence glyph: a small split bar whose left half fills
+/// with the behind count (red) and right half with the ahead count (green),
+/// each capped so a wildly-diverged branch doesn't blow out the row.
+class _DivergenceBar extends StatelessWidget {
+  final int ahead;
+  final int behind;
+  const _DivergenceBar({required this.ahead, required this.behind});
+
+  static const double _width = 54;
+  static const double _half = 27;
+
+  double _seg(int n) {
+    if (n == 0) return 0;
+    // 2px minimum so a single commit still reads; scale to the half by ~20.
+    return (2 + (_half - 3) * (n.clamp(0, 20) / 20)).toDouble();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: _width,
+      height: 12,
+      child: Row(
+        children: [
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: Container(
+                width: _seg(behind),
+                height: 8,
+                decoration: BoxDecoration(
+                  color: MacosColors.systemRedColor.withValues(alpha: 0.85),
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Container(width: 1, height: 12, color: MacosColors.separatorColor),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Container(
+                width: _seg(ahead),
+                height: 8,
+                decoration: BoxDecoration(
+                  color: MacosColors.systemGreenColor.withValues(alpha: 0.9),
+                  borderRadius: const BorderRadius.horizontal(
+                    right: Radius.circular(2),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// BranchNavigator widget
+// ---------------------------------------------------------------------------
+
+/// The left panel of the branches master–detail view: toolbar, section headers,
+/// local/remote/tag rows, context menus, and keyboard navigation. Pure UI —
+/// all actions delegate to the parent via callbacks.
+class BranchNavigator extends ConsumerStatefulWidget {
+  final String repoPath;
+  final BranchViewModel vm;
+  final String? selectedRef;
+  final bool busy;
+
+  /// Whether this panel is the currently-visible sidebar page. It stays
+  /// mounted when another page is shown, so its keyboard shortcuts must go
+  /// quiet rather than fire in the background.
+  final bool isActive;
+  final bool grouped;
+  final Set<String> collapsedFolders;
+  final bool showStale;
+  final BranchWorkspaceMode mode;
+  final AsyncValue<BranchBaseResolution>? baseState;
+  final AsyncValue<BranchReviewBatchResult>? review;
+  final BranchReviewQuickFilter reviewFilter;
+  final BranchReviewSort reviewSort;
+  final TextEditingController filterController;
+  final FocusNode focusNode;
+  final ScrollController scrollController;
+
+  // Callbacks
+  final void Function(GitRef?) onSelect;
+  final void Function(GitService, GitRef) onLocalTap;
+  final void Function(GitService) onCreateBranch;
+  final void Function() onOpenCreateTagSheet;
+  final void Function(GitService) onFetchPrune;
+  final void Function(String) onToggleSection;
+  final void Function(String) onToggleFolder;
+  final void Function() onToggleGrouped;
+  final void Function() onToggleShowStale;
+  final void Function() onShowAllTags;
+  final void Function() onShowAllRemotes;
+  final void Function(GitService, GitRef) onCheckout;
+  final void Function(GitService, GitRef) onCheckoutRemote;
+  final void Function(String) onSwitchToWorktree;
+  final void Function(String) onCheckoutInNewWorktree;
+  final void Function(GitService, GitRef, MergeMode) onMerge;
+  final void Function(GitService, GitRef) onSetUpstream;
+  final void Function(GitService, String) onUnsetUpstream;
+  final void Function(GitService, String) onRenameBranch;
+  final void Function(String) onTogglePin;
+  final void Function(String) onCopyName;
+  final void Function(GitService, String) onDeleteBranch;
+  final void Function(GitService, String) onDeleteRemoteBranch;
+  final void Function(GitService, GitRef, TagRemoteStatus, String?) onDeleteTag;
+  final void Function(GitService, String, String) onPushTag;
+  final void Function(GitService, List<String>, String) onPushAllLocalOnly;
+  final void Function(
+    GitService, {
+    required GitRef source,
+    required GitRef current,
+  })
+  onDropOnCurrent;
+
+  /// Called when the filter text changes so the coordinator can rebuild the
+  /// view model with the new filter.
+  final void Function(String) onFilterChanged;
+  final ValueChanged<BranchWorkspaceMode> onModeChanged;
+  final ValueChanged<String?> onBaseChanged;
+  /// Clears a persisted user base (e.g. when the saved ref is unavailable).
+  final VoidCallback onBaseReset;
+  final ValueChanged<BranchReviewSort> onReviewSortChanged;
+
+  const BranchNavigator({
+    super.key,
+    required this.repoPath,
+    required this.vm,
+    required this.selectedRef,
+    required this.busy,
+    this.isActive = true,
+    required this.grouped,
+    required this.collapsedFolders,
+    required this.showStale,
+    required this.mode,
+    required this.baseState,
+    required this.review,
+    required this.reviewFilter,
+    required this.reviewSort,
+    required this.filterController,
+    required this.focusNode,
+    required this.scrollController,
+    required this.onSelect,
+    required this.onLocalTap,
+    required this.onCreateBranch,
+    required this.onOpenCreateTagSheet,
+    required this.onFetchPrune,
+    required this.onToggleSection,
+    required this.onToggleFolder,
+    required this.onToggleGrouped,
+    required this.onToggleShowStale,
+    required this.onShowAllTags,
+    required this.onShowAllRemotes,
+    required this.onCheckout,
+    required this.onCheckoutRemote,
+    required this.onSwitchToWorktree,
+    required this.onCheckoutInNewWorktree,
+    required this.onMerge,
+    required this.onSetUpstream,
+    required this.onUnsetUpstream,
+    required this.onRenameBranch,
+    required this.onTogglePin,
+    required this.onCopyName,
+    required this.onDeleteBranch,
+    required this.onDeleteRemoteBranch,
+    required this.onDeleteTag,
+    required this.onPushTag,
+    required this.onPushAllLocalOnly,
+    required this.onDropOnCurrent,
+    required this.onFilterChanged,
+    required this.onModeChanged,
+    required this.onBaseChanged,
+    required this.onBaseReset,
+    required this.onReviewSortChanged,
+  });
+
+  @override
+  ConsumerState<BranchNavigator> createState() => _BranchNavigatorState();
+}
+
+class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
+  final _menu = ContextMenuOverlay();
+  final Map<String, GlobalKey> _rowKeys = {};
+  String? _selectionCursor;
+
+  // Manual double-tap tracking for the local rows (see [_localRowBody] for why
+  // not GestureDetector.onDoubleTap). A second tap on the SAME row within the
+  // window checks it out.
+  String? _lastTapRef;
+  DateTime? _lastTapAt;
+  static const Duration _doubleTapWindow = Duration(milliseconds: 400);
+
+  @override
+  void initState() {
+    super.initState();
+    _selectionCursor = widget.selectedRef;
+  }
+
+  @override
+  void dispose() {
+    _menu.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(BranchNavigator oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedRef != widget.selectedRef) {
+      _selectionCursor = widget.selectedRef;
+    }
+    if (oldWidget.repoPath != widget.repoPath) {
+      _rowKeys.clear();
+    }
+  }
+
+  // ---- Selection helpers --------------------------------------------------
+
+  GlobalKey _rowKeyFor(String refName) =>
+      _rowKeys.putIfAbsent(refName, GlobalKey.new);
+
+  /// The selection when it is a LOCAL branch — what the keyboard merge/delete
+  /// bindings and ↑/↓ operate on. Null when nothing (or a remote/tag) is picked.
+  GitRef? get _selectedLocal {
+    final name = _selectionCursor;
+    if (name == null) return null;
+    for (final b in widget.vm.localsOnScreen) {
+      if (b.name == name) return b;
+    }
+    return null;
+  }
+
+  // A non-current LOCAL branch is selected — merge/delete apply (merging or
+  // deleting the branch you're on is nonsensical / rejected by git).
+  bool get _canActOnSelection {
+    final sel = _selectedLocal;
+    return sel != null && !sel.isHead;
+  }
+
+  void _select(GitRef refEntry) {
+    _selectionCursor = refEntry.name;
+    widget.focusNode.requestFocus();
+    widget.onSelect(refEntry);
+    ensureRowVisible(_rowKeyFor(refEntry.name));
+  }
+
+  void _moveSelection(int dir) {
+    final navigable = widget.vm.navigable;
+    if (navigable.isEmpty) return;
+    var current = -1;
+    if (_selectionCursor != null) {
+      for (var i = 0; i < navigable.length; i++) {
+        if (navigable[i].name == _selectionCursor) {
+          current = i;
+          break;
+        }
+      }
+    }
+    final next = stepSelection(current, dir, navigable.length);
+    _select(navigable[next]);
+  }
+
+  KeyEventResult _onBranchKey(FocusNode node, KeyEvent event) {
+    if (event is KeyUpEvent || !widget.isActive || widget.busy) {
+      return KeyEventResult.ignored;
+    }
+    // Text interaction (the filter field) lives inside this Focus scope and key
+    // events bubble leaf-to-root — without this gate, arrows/Enter typed into
+    // the filter would drive the branch list. Same guard PanelShortcuts applies
+    // to the ⌘-bindings.
+    if (PanelShortcuts.textInteractionHasFocus()) {
+      return KeyEventResult.ignored;
+    }
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowDown:
+        _moveSelection(1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        _moveSelection(-1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.numpadEnter:
+        final sel = _selectedLocal;
+        if (sel != null && !sel.isHead && sel.elsewhereWorktreePath == null) {
+          widget.onCheckout(ref.read(gitServiceProvider), sel);
+        }
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.escape:
+        // Canonical deselect — see dnd/deselect.dart for the Esc layering
+        // (overlay closes first, then a live drag cancels, then this).
+        return escDeselect(
+          hasSelection: _selectionCursor != null,
+          clear: () {
+            _selectionCursor = null;
+            widget.onSelect(null);
+          },
+        );
+    }
+    return KeyEventResult.ignored;
+  }
+
+  /// First tap selects (immediately); a quick second tap on the same local
+  /// branch also checks it out — gated exactly like the context menu's "Check
+  /// out" (HEAD is already current; a branch checked out in another worktree
+  /// can't be switched to here).
+  void _handleLocalTap(GitService git, GitRef branch) {
+    final now = DateTime.now();
+    final isDouble =
+        _lastTapRef == branch.name &&
+        _lastTapAt != null &&
+        now.difference(_lastTapAt!) < _doubleTapWindow;
+    _lastTapRef = branch.name;
+    _lastTapAt = now;
+    _select(branch);
+    if (isDouble &&
+        !branch.isHead &&
+        branch.elsewhereWorktreePath == null &&
+        !widget.busy) {
+      _lastTapRef = null; // consume — a triple tap isn't a second checkout
+      widget.onLocalTap(git, branch);
+    }
+  }
+
+  // ---- Row list building --------------------------------------------------
+
+  List<_Row> _buildRows(BranchViewModel vm) {
+    if (widget.mode == BranchWorkspaceMode.review) {
+      final branches = shapePhase1ReviewBranches(
+        branches: vm.filteredLocals,
+        summaries: widget.review?.value?.summariesByRefName ?? const {},
+        filter: widget.reviewFilter,
+        sort: widget.reviewSort,
+      );
+      return <_Row>[
+        _LocalHeaderRow(
+          vm.sectionTitle('Local Branches', branches.length, vm.totalLocals),
+          collapsed: false,
+        ),
+        ..._localRows(branches),
+      ];
+    }
+    return <_Row>[
+      if (vm.pinnedLocals.isNotEmpty) ...[
+        _PinnedHeaderRow(vm.pinnedLocals.length, collapsed: vm.pinnedCollapsed),
+        if (!vm.pinnedCollapsed)
+          for (final b in vm.pinnedLocals)
+            _BranchRow(b, remote: false, depth: 0),
+      ],
+      _LocalHeaderRow(
+        vm.sectionTitle(
+          'Local Branches',
+          vm.filteredLocals.length,
+          vm.totalLocals,
+        ),
+        collapsed: vm.localCollapsed,
+      ),
+      if (!vm.localCollapsed) ...[
+        ..._localRows(vm.activeLocals),
+        if (vm.staleLocals.isNotEmpty && vm.filterLower.isEmpty)
+          _StaleToggleRow(vm.staleLocals.length),
+        if (vm.staleLocals.isNotEmpty &&
+            (widget.showStale || vm.filterLower.isNotEmpty))
+          ..._localRows(vm.staleLocals),
+      ],
+      _RemotesHeaderRow(
+        vm.sectionTitle(
+          'Remote Branches',
+          vm.filteredRemotes.length,
+          vm.totalRemotes,
+        ),
+        collapsed: vm.remoteCollapsed,
+      ),
+      if (!vm.remoteCollapsed) ...[
+        for (final b in vm.visibleRemotes)
+          _BranchRow(b, remote: true, depth: 0),
+        if (vm.hiddenRemotes > 0) _ShowMoreRemotesRow(vm.hiddenRemotes),
+      ],
+      _TagsHeaderRow(
+        vm.sectionTitle(
+          'Tags',
+          vm.visibleTags.length + vm.hiddenTags,
+          vm.allTags.length,
+        ),
+        collapsed: vm.tagsCollapsed,
+      ),
+      if (!vm.tagsCollapsed) ...[
+        for (final t in vm.visibleTags) _TagRefRow(t),
+        if (vm.hiddenTags > 0) _ShowMoreTagsRow(vm.hiddenTags),
+      ],
+    ];
+  }
+
+  // ---- Build --------------------------------------------------------------
+
+  @override
+  Widget build(BuildContext context) {
+    final git = ref.read(gitServiceProvider);
+    final keymap = ref.watch(keymapProvider);
+
+    // One handler map for both consumers: the keyboard shortcuts and the
+    // command palette's dispatched intents (see PanelShortcuts.handlers).
+    final handlers = <String, VoidCallback?>{
+      'branches.newBranch': () => widget.onCreateBranch(git),
+      'branches.createTag': widget.onOpenCreateTagSheet,
+      // Only bound with a non-current branch selected — otherwise they
+      // fall through, matching the rest of the app's precondition gates.
+      'branches.merge': _canActOnSelection
+          ? () => widget.onMerge(git, _selectedLocal!, MergeMode.normal)
+          : null,
+      'branches.delete': _canActOnSelection
+          ? () => widget.onDeleteBranch(git, _selectedLocal!.shortName)
+          : null,
+    };
+
+    final rows = _buildRows(widget.vm);
+
+    return PanelShortcuts(
+      bindings: widget.isActive
+          ? resolveShortcuts(keymap, handlers)
+          : const <ShortcutActivator, VoidCallback>{},
+      handlers: widget.isActive ? handlers : const {},
+      child: Focus(
+        focusNode: widget.focusNode,
+        onKeyEvent: _onBranchKey,
+        child: Column(
+          children: [
+            _toolbar(git),
+            Expanded(
+              child: DeselectOnEmptyClick(
+                onDeselect: () => widget.onSelect(null),
+                child: ListView.builder(
+                  controller: widget.scrollController,
+                  itemCount: rows.length,
+                  itemBuilder: (context, i) => _buildRow(
+                    context,
+                    git,
+                    rows[i],
+                    remoteTags: widget.vm.remoteTags,
+                    tagRemote: widget.vm.tagRemote,
+                    localOnly: widget.vm.localOnlyTags,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---- _buildRow ----------------------------------------------------------
+
+  Widget _buildRow(
+    BuildContext context,
+    GitService git,
+    _Row row, {
+    required Map<String, String>? remoteTags,
+    required String? tagRemote,
+    required List<String> localOnly,
+  }) => switch (row) {
+    _PinnedHeaderRow(:final count, :final collapsed) => _pinnedHeader(
+      context,
+      count,
+      collapsed,
+    ),
+    _LocalHeaderRow(:final title, :final collapsed) => _localHeader(
+      context,
+      git,
+      title,
+      collapsed,
+    ),
+    _RemotesHeaderRow(:final title, :final collapsed) => _remotesHeader(
+      context,
+      git,
+      title,
+      collapsed,
+    ),
+    _TagsHeaderRow(:final title, :final collapsed) => _tagsHeader(
+      context,
+      git,
+      title,
+      localOnly,
+      tagRemote,
+      collapsed,
+    ),
+    _FolderRow(:final path, :final label, :final depth, :final count) =>
+      _folderRow(context, path, label, depth, count),
+    _BranchRow(:final branch, :final remote, :final depth) =>
+      remote
+          ? _remoteRow(context, git, branch)
+          : _localRow(context, git, branch, depth),
+    _TagRefRow(:final tag) => _tagRow(
+      context,
+      git,
+      tag,
+      tagStatus(tag, remoteTags),
+      tagRemote,
+    ),
+    _StaleToggleRow(:final count) => _staleToggle(count),
+    _ShowMoreTagsRow(:final hidden) => ShowMoreRow(
+      label: 'Show $hidden more ${hidden == 1 ? "tag" : "tags"}',
+      onTap: widget.onShowAllTags,
+    ),
+    _ShowMoreRemotesRow(:final hidden) => ShowMoreRow(
+      label: 'Show $hidden more remote ${hidden == 1 ? "branch" : "branches"}',
+      onTap: widget.onShowAllRemotes,
+    ),
+  };
+
+  // ---- The toolbar (compact filter + group toggle + fetch) -----------------
+
+  Widget _toolbar(GitService git) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          CupertinoSlidingSegmentedControl<BranchWorkspaceMode>(
+            groupValue: widget.mode,
+            children: const {
+              BranchWorkspaceMode.browse: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: Text('Browse'),
+              ),
+              BranchWorkspaceMode.review: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12),
+                child: Text('Review'),
+              ),
+            },
+            onValueChanged: (mode) {
+              if (mode != null) widget.onModeChanged(mode);
+            },
+          ),
+          if (widget.mode == BranchWorkspaceMode.review) ...[
+            const SizedBox(height: 8),
+            _baseSelector(),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Text('Sort'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: MacosPopupButton<BranchReviewSort>(
+                    value: widget.reviewSort,
+                    items: const [
+                      MacosPopupMenuItem(
+                        value: BranchReviewSort.activity,
+                        child: Text('Activity'),
+                      ),
+                      MacosPopupMenuItem(
+                        value: BranchReviewSort.name,
+                        child: Text('Name'),
+                      ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) widget.onReviewSortChanged(value);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: MacosTextField(
+                  controller: widget.filterController,
+                  placeholder: widget.mode == BranchWorkspaceMode.review
+                      ? 'Filter local branches'
+                      : 'Filter branches and tags',
+                  placeholderStyle: kAppPlaceholderStyle,
+                  decoration: kAppTextFieldDecoration,
+                  focusedDecoration: kAppTextFieldFocusedDecoration,
+                  prefix: const MacosIcon(CupertinoIcons.search, size: 14),
+                  clearButtonMode: OverlayVisibilityMode.editing,
+                  onChanged: widget.onFilterChanged,
+                ),
+              ),
+              const SizedBox(width: 6),
+              ToolIconButton(
+                icon: widget.grouped
+                    ? CupertinoIcons.list_bullet_indent
+                    : CupertinoIcons.list_bullet,
+                tooltip: widget.grouped
+                    ? 'Grouped by folder (click for a flat list)'
+                    : 'Flat list (click to group by folder)',
+                size: 15,
+                color: widget.grouped ? MacosColors.systemBlueColor : null,
+                onPressed: widget.onToggleGrouped,
+              ),
+              const SizedBox(width: 2),
+              ToolIconButton(
+                icon: CupertinoIcons.arrow_2_circlepath,
+                tooltip: 'Fetch all remotes and prune deleted branches',
+                size: 15,
+                onPressed: widget.busy ? null : () => widget.onFetchPrune(git),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _baseSelector() {
+    final state = widget.baseState;
+    final resolution = state?.value;
+    final base = resolution?.base;
+    final locals = widget.vm.allLocalBranches;
+    final remotes = widget.vm.allRemoteBranches;
+    final tags = widget.vm.allTags;
+    final refs = [...locals, ...remotes, ...tags];
+    final selected = base?.refName;
+    final selectedRef = selected == null
+        ? null
+        : refs.where((refEntry) => refEntry.name == selected).firstOrNull;
+
+    List<MacosPopupMenuItem<String>> section(
+      String label,
+      String headerValue,
+      Iterable<GitRef> entries,
+    ) => [
+      MacosPopupMenuItem<String>(
+        value: headerValue,
+        enabled: false,
+        child: Text(label),
+      ),
+      for (final refEntry in entries)
+        if (refEntry.name != selected)
+          MacosPopupMenuItem<String>(
+            value: refEntry.name,
+            child: Text(refEntry.shortName),
+          ),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Compared with'),
+        const SizedBox(height: 4),
+        SizedBox(
+          width: double.infinity,
+          child: MacosPopupButton<String>(
+            value: selected != null && refs.any((r) => r.name == selected)
+                ? selected
+                : null,
+            hint: Text(
+              state?.hasError ?? false
+                  ? 'Base unavailable'
+                  : state?.isLoading ?? false
+                  ? 'Resolving base…'
+                  : base?.displayName ?? 'No base available',
+            ),
+            items: [
+              if (selectedRef != null) ...[
+                const MacosPopupMenuItem<String>(
+                  value: '__header_recommended',
+                  enabled: false,
+                  child: Text('Recommended'),
+                ),
+                MacosPopupMenuItem(
+                  value: selectedRef.name,
+                  child: Text(selectedRef.shortName),
+                ),
+              ],
+              ...section('Local', '__header_local', locals),
+              ...section('Remotes', '__header_remotes', remotes),
+              ...section('Tags', '__header_tags', tags),
+            ],
+            onChanged: (value) {
+              if (value?.startsWith('__header_') ?? true) return;
+              widget.onBaseChanged(value);
+            },
+          ),
+        ),
+        const SizedBox(height: 4),
+        if (state?.hasError ?? false)
+          const Text('Could not resolve a comparison base.')
+        else if (!(state?.isLoading ?? false) && base == null)
+          const Text('This repository has no commit to compare yet.')
+        else if (base != null)
+          Text(base.source.label),
+        if (resolution?.unavailableStoredRef case final unavailable?) ...[
+          Text(
+            'Saved base $unavailable is unavailable; using '
+            '${base?.displayName ?? 'no fallback'}.',
+          ),
+          const SizedBox(height: 4),
+          GestureDetector(
+            onTap: widget.onBaseReset,
+            child: Text(
+              'Reset saved base',
+              style: MacosTheme.of(context).typography.caption1.copyWith(
+                color: MacosColors.systemBlueColor,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  // ---- Section headers -----------------------------------------------------
+
+  Widget _pinnedHeader(BuildContext context, int count, bool collapsed) {
+    return CollapsibleSectionHeader(
+      'Pinned ($count)',
+      padding: const EdgeInsets.fromLTRB(16, 12, 10, 4),
+      collapsed: collapsed,
+      onToggle: () => widget.onToggleSection(_BranchSections.pinned),
+      leading: const MacosIcon(
+        CupertinoIcons.star_fill,
+        size: 12,
+        color: MacosColors.systemYellowColor,
+      ),
+    );
+  }
+
+  Widget _localHeader(
+    BuildContext context,
+    GitService git,
+    String title,
+    bool collapsed,
+  ) {
+    return CollapsibleSectionHeader(
+      title,
+      padding: const EdgeInsets.fromLTRB(16, 12, 10, 4),
+      collapsed: collapsed,
+      onToggle: () => widget.onToggleSection(_BranchSections.local),
+      trailing: [
+        ToolIconButton(
+          icon: CupertinoIcons.add,
+          tooltip: 'New branch…',
+          size: 15,
+          onPressed: widget.busy ? null : () => widget.onCreateBranch(git),
+        ),
+      ],
+    );
+  }
+
+  /// The Remote Branches section header — the fetch-and-prune affordance also
+  /// lives in the toolbar; kept here too so it sits beside its own section.
+  Widget _remotesHeader(
+    BuildContext context,
+    GitService git,
+    String title,
+    bool collapsed,
+  ) {
+    return CollapsibleSectionHeader(
+      title,
+      padding: const EdgeInsets.fromLTRB(16, 16, 10, 4),
+      collapsed: collapsed,
+      onToggle: () => widget.onToggleSection(_BranchSections.remote),
+    );
+  }
+
+  /// The Tags section header — New Tag…, plus the bulk push escape hatch when
+  /// the remote listing shows local-only tags.
+  Widget _tagsHeader(
+    BuildContext context,
+    GitService git,
+    String title,
+    List<String> localOnly,
+    String? remote,
+    bool collapsed,
+  ) {
+    return CollapsibleSectionHeader(
+      title,
+      padding: const EdgeInsets.fromLTRB(16, 16, 10, 4),
+      collapsed: collapsed,
+      onToggle: () => widget.onToggleSection(_BranchSections.tags),
+      trailing: [
+        if (localOnly.isNotEmpty && remote != null) ...[
+          InlineActionButton(
+            label: 'Push ${localOnly.length} to $remote',
+            icon: CupertinoIcons.arrow_up,
+            onPressed: widget.busy
+                ? null
+                : () => widget.onPushAllLocalOnly(git, localOnly, remote),
+          ),
+          const SizedBox(width: 6),
+        ],
+        ToolIconButton(
+          icon: CupertinoIcons.tag,
+          tooltip: 'New tag…',
+          size: 15,
+          onPressed: widget.busy ? null : widget.onOpenCreateTagSheet,
+        ),
+      ],
+    );
+  }
+
+  Widget _staleToggle(int count) => _staleToggleRow(count);
+
+  Widget _staleToggleRow(int count) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 4, 10, 4),
+      child: Tappable(
+        onTap: widget.onToggleShowStale,
+        behavior: HitTestBehavior.opaque,
+        child: Row(
+          children: [
+            MacosIcon(
+              widget.showStale
+                  ? CupertinoIcons.chevron_down
+                  : CupertinoIcons.chevron_right,
+              size: 11,
+              color: MacosColors.systemGrayColor,
+            ),
+            const SizedBox(width: 6),
+            const MacosIcon(
+              CupertinoIcons.clock,
+              size: 13,
+              color: MacosColors.systemGrayColor,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              widget.showStale
+                  ? 'Hide $count stale'
+                  : '$count stale (no commit in 3 months)',
+              style: MacosTheme.of(context).typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ---- Local branch rows (flat or folder-grouped) --------------------------
+
+  /// Flattens a set of local branches into row descriptors, either flat or
+  /// folder-grouped (pure shaping in [buildLocalBranchListItems]).
+  List<_Row> _localRows(List<GitRef> branches) {
+    final items = buildLocalBranchListItems(
+      branches: branches,
+      grouped: widget.grouped,
+      collapsedFolderPrefixes: widget.collapsedFolders,
+    );
+    return [
+      for (final item in items)
+        switch (item) {
+          LocalBranchFolderItem(
+            :final path,
+            :final label,
+            :final depth,
+            :final count,
+          ) =>
+            _FolderRow(path: path, label: label, depth: depth, count: count),
+          LocalBranchLeafItem(:final branch, :final depth) => _BranchRow(
+            branch,
+            remote: false,
+            depth: depth,
+          ),
+        },
+    ];
+  }
+
+  Widget _folderRow(
+    BuildContext context,
+    String path,
+    String label,
+    int depth,
+    int count,
+  ) {
+    final collapsed = widget.collapsedFolders.contains(path);
+    final typography = MacosTheme.of(context).typography;
+    return Tappable(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => widget.onToggleFolder(path),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(16.0 + depth * 14, 5, 10, 5),
+        child: Row(
+          children: [
+            MacosIcon(
+              collapsed
+                  ? CupertinoIcons.chevron_right
+                  : CupertinoIcons.chevron_down,
+              size: 11,
+              color: MacosColors.systemGrayColor,
+            ),
+            const SizedBox(width: 6),
+            MacosIcon(
+              collapsed ? CupertinoIcons.folder : CupertinoIcons.folder_open,
+              size: 14,
+              color: MacosColors.systemGrayColor,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                label,
+                style: typography.body.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            Text(
+              '$count',
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _localRow(
+    BuildContext context,
+    GitService git,
+    GitRef branch,
+    int depth,
+  ) {
+    // In grouped mode the branch shows only its leaf segment (the folder rows
+    // carry the prefix); flat mode shows the full short name.
+    final label = widget.grouped && branch.shortName.contains('/')
+        ? branch.shortName.substring(branch.shortName.lastIndexOf('/') + 1)
+        : branch.shortName;
+    return KeyedSubtree(
+      key: _rowKeyFor(branch.name),
+      // The current branch is a drop target: dropping another branch on it
+      // offers merge-into / rebase-onto (see [_dropOnCurrent]). Only HEAD
+      // accepts, so both operations act on the checked-out branch.
+      child: DragTarget<DragItem>(
+        onWillAcceptWithDetails: (d) =>
+            branch.isHead &&
+            d.data is DragRef &&
+            (d.data as DragRef).ref.name != branch.name,
+        onAcceptWithDetails: (d) => widget.onDropOnCurrent(
+          git,
+          source: (d.data as DragRef).ref,
+          current: branch,
+        ),
+        builder: (context, candidate, rejected) {
+          final hovering = candidate.isNotEmpty;
+          final row = _localRowBody(context, git, branch, depth, label);
+          if (!hovering) return row;
+          return DecoratedBox(
+            decoration: BoxDecoration(
+              color: _accentTint,
+              border: const Border(
+                left: BorderSide(color: MacosColors.systemBlueColor, width: 2),
+              ),
+            ),
+            child: row,
+          );
+        },
+      ),
+    );
+  }
+
+  static final Color _accentTint = MacosColors.systemBlueColor.withValues(
+    alpha: 0.12,
+  );
+
+  Widget _localRowBody(
+    BuildContext context,
+    GitService git,
+    GitRef branch,
+    int depth,
+    String label,
+  ) {
+    final typography = MacosTheme.of(context).typography;
+    final selected = widget.selectedRef == branch.name;
+    final elsewhere = branch.elsewhereWorktreePath;
+    return DragItemDraggable(
+      item: DragRef(branch),
+      immediate: true,
+      onDragSelect: () => _select(branch),
+      child: Tappable(
+        // Manual double-tap detection rather than GestureDetector.onDoubleTap:
+        // registering onDoubleTap makes the recognizer defer EVERY single tap
+        // by the ~300ms double-tap timeout (a visible select lag, and it
+        // breaks tap-to-select in tests). Here the first tap selects
+        // immediately and a quick second tap on the same row also checks out.
+        onTap: () => _handleLocalTap(git, branch),
+        onSecondaryTapUp: (d) => _menu.show(
+          context,
+          d.globalPosition,
+          _localMenu(git, branch),
+          width: 250,
+        ),
+        child: Container(
+          color: branch.isHead
+              ? MacosColors.systemGreenColor.withValues(alpha: 0.12)
+              : selected
+              ? AppTheme.rowSelectionTint
+              : const Color(0x00000000),
+          padding: EdgeInsets.fromLTRB(16.0 + depth * 14, 7, 12, 7),
+          child: Row(
+            children: [
+              MacosIcon(
+                CupertinoIcons.arrow_branch,
+                size: 15,
+                color: branch.isHead
+                    ? MacosColors.systemGreenColor
+                    : MacosColors.systemBlueColor,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  label,
+                  style: typography.body.copyWith(
+                    fontWeight: branch.isHead
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (elsewhere != null) ...[
+                const SizedBox(width: 6),
+                MacosTooltip(
+                  message: checkedOutElsewhereMessage(elsewhere),
+                  child: LabelChip(
+                    elsewhere.split('/').last,
+                    color: MacosColors.systemPurpleColor,
+                    icon: kWorktreeIcon,
+                  ),
+                ),
+              ],
+              const Spacer(),
+              ..._forgeBadges(branch),
+              _divergenceCluster(context, branch),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The trailing forge/merged signal for a local row: a grey "merged" chip
+  /// (base-relative in Review, HEAD-relative in Browse), the open PR/MR
+  /// number, and a CI dot — each present only when its data is in.
+  List<Widget> _forgeBadges(GitRef branch) {
+    final bf = widget.vm.forge[branch.shortName];
+    final reviewSummary = widget.review?.value?.summariesByRefName[branch.name];
+    final isReview = widget.mode == BranchWorkspaceMode.review;
+    final isMerged = isReview
+        ? reviewSummary?.mergedIntoBase ?? false
+        : !branch.isHead && widget.vm.merged.contains(branch.shortName);
+    final baseName = widget.baseState?.value?.base?.displayName;
+    final currentName = widget.vm.allLocalBranches
+        .where((r) => r.isHead)
+        .map((r) => r.shortName)
+        .firstOrNull;
+    final mergedTooltip = isReview
+        ? 'Merged into ${baseName ?? 'the comparison base'}'
+        : 'Merged into current ${currentName ?? 'branch'}';
+    return [
+      if (isMerged) ...[
+        MacosTooltip(
+          message: mergedTooltip,
+          child: const LabelChip('merged', color: MacosColors.systemGrayColor),
+        ),
+        const SizedBox(width: 6),
+      ],
+      if (bf != null && bf.hasRequest) ...[
+        MacosTooltip(
+          message: bf.requestDraft
+              ? 'Draft ${bf.isMr ? 'merge' : 'pull'} request ${bf.requestLabel}'
+              : 'Open ${bf.isMr ? 'merge' : 'pull'} request ${bf.requestLabel}',
+          child: LabelChip(
+            bf.requestLabel,
+            color: bf.requestDraft
+                ? MacosColors.systemGrayColor
+                : MacosColors.systemBlueColor,
+          ),
+        ),
+        const SizedBox(width: 6),
+      ],
+      if (bf?.ci != null) ...[
+        MacosTooltip(
+          message: 'CI: ${_ciLabel(bf!.ci!)}',
+          child: CiDot(_forgeCiColor(bf.ci!), size: 9),
+        ),
+        const SizedBox(width: 6),
+      ],
+    ];
+  }
+
+  static Color _forgeCiColor(ForgeCi c) => switch (c) {
+    ForgeCi.success => MacosColors.systemGreenColor,
+    ForgeCi.failure => MacosColors.systemRedColor,
+    ForgeCi.running => MacosColors.systemBlueColor,
+    ForgeCi.canceled || ForgeCi.skipped => MacosColors.systemGrayColor,
+    ForgeCi.unknown => MacosColors.systemOrangeColor,
+  };
+
+  static String _ciLabel(ForgeCi c) => switch (c) {
+    ForgeCi.success => 'passing',
+    ForgeCi.failure => 'failing',
+    ForgeCi.running => 'running',
+    ForgeCi.canceled => 'canceled',
+    ForgeCi.skipped => 'skipped',
+    ForgeCi.unknown => 'unknown',
+  };
+
+  /// The upstream-divergence signal: a compact split bar (behind │ ahead) plus
+  /// the ↑n ↓n counts, or the `gone` marker when the upstream was deleted.
+  Widget _divergenceCluster(BuildContext context, GitRef branch) {
+    final typography = MacosTheme.of(context).typography;
+    final reviewSummary = widget.review?.value?.summariesByRefName[branch.name];
+    if (widget.mode == BranchWorkspaceMode.review) {
+      if (reviewSummary == null) return const SizedBox.shrink();
+      final ahead = reviewSummary.aheadOfBase;
+      final behind = reviewSummary.behindBase;
+      if (ahead == 0 && behind == 0) return const SizedBox.shrink();
+      return MacosTooltip(
+        message:
+            '$ahead ahead, $behind behind '
+            '${widget.baseState?.value?.base?.displayName ?? 'base'}',
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _DivergenceBar(ahead: ahead, behind: behind),
+            const SizedBox(width: 6),
+            Text(
+              [if (ahead > 0) '↑$ahead', if (behind > 0) '↓$behind'].join(' '),
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemBlueColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    if (branch.upstreamGone) {
+      return MacosTooltip(
+        message:
+            'The upstream branch was deleted (merged or removed on the '
+            'remote) — this local branch is likely stale',
+        child: Text(
+          'gone',
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemOrangeColor,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      );
+    }
+    if (branch.ahead == 0 && branch.behind == 0) return const SizedBox.shrink();
+    return MacosTooltip(
+      message:
+          '${branch.ahead} commit${branch.ahead == 1 ? '' : 's'} ahead, '
+          '${branch.behind} behind ${branch.upstream}',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _DivergenceBar(ahead: branch.ahead, behind: branch.behind),
+          const SizedBox(width: 6),
+          Text(
+            [
+              if (branch.ahead > 0) '↑${branch.ahead}',
+              if (branch.behind > 0) '↓${branch.behind}',
+            ].join(' '),
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemBlueColor,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _remoteRow(BuildContext context, GitService git, GitRef branch) {
+    final typography = MacosTheme.of(context).typography;
+    final selected = widget.selectedRef == branch.name;
+    // Keyed like [_localRow] so ↑/↓ into this section can scroll the selected
+    // row into view — [ensureRowVisible] no-ops without a resolvable key, so an
+    // unkeyed remote/tag row moved the selection off-screen invisibly.
+    return KeyedSubtree(
+      key: _rowKeyFor(branch.name),
+      child: Tappable(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _select(branch),
+        onSecondaryTapUp: (d) => _menu.show(
+          context,
+          d.globalPosition,
+          _remoteMenu(git, branch),
+          width: 250,
+        ),
+        child: Container(
+          color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+          child: Row(
+            children: [
+              const MacosIcon(
+                CupertinoIcons.cloud,
+                size: 15,
+                color: MacosColors.systemGrayColor,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  branch.shortName,
+                  style: typography.body,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tagRow(
+    BuildContext context,
+    GitService git,
+    GitRef tag,
+    TagRemoteStatus status,
+    String? remote,
+  ) {
+    final typography = MacosTheme.of(context).typography;
+    final selected = widget.selectedRef == tag.name;
+    // Keyed so ↑/↓ into the Tags section scrolls the selected row into view —
+    // see [_remoteRow].
+    return KeyedSubtree(
+      key: _rowKeyFor(tag.name),
+      child: Tappable(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _select(tag),
+        onSecondaryTapUp: (d) => _menu.show(
+          context,
+          d.globalPosition,
+          _tagMenu(git, tag, status, remote),
+          width: 250,
+        ),
+        child: Container(
+          color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+          child: Row(
+            children: [
+              const MacosIcon(
+                CupertinoIcons.tag,
+                size: 15,
+                color: MacosColors.systemTealColor,
+              ),
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  tag.shortName,
+                  style: typography.body,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              if (status == TagRemoteStatus.localOnly) ...[
+                const SizedBox(width: 6),
+                const LabelChip(
+                  'local only',
+                  color: MacosColors.systemOrangeColor,
+                ),
+              ],
+              if (status == TagRemoteStatus.differs) ...[
+                const SizedBox(width: 6),
+                LabelChip(
+                  'differs from $remote',
+                  color: MacosColors.systemRedColor,
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---- Context menus (the full action superset per ref kind) ---------------
+
+  List<ContextMenuEntry> _localMenu(GitService git, GitRef b) {
+    final elsewhere = b.elsewhereWorktreePath;
+    final isPinned = widget.vm.pinned.contains(b.shortName);
+    return [
+      if (!b.isHead && elsewhere == null)
+        ContextMenuItem(
+          icon: CupertinoIcons.square_arrow_down,
+          label: 'Check out',
+          onTap: () => widget.onCheckout(git, b),
+        ),
+      if (elsewhere != null)
+        ContextMenuItem(
+          icon: CupertinoIcons.square_arrow_right,
+          label: 'Switch to its worktree',
+          onTap: () => widget.onSwitchToWorktree(elsewhere),
+        ),
+      ContextMenuItem(
+        icon: kWorktreeIcon,
+        label: 'Check out in a new worktree…',
+        onTap: () => widget.onCheckoutInNewWorktree(b.shortName),
+      ),
+      if (!b.isHead) ...[
+        const ContextMenuDivider(),
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_merge,
+          label: 'Merge into current',
+          onTap: () => widget.onMerge(git, b, MergeMode.normal),
+        ),
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_merge,
+          label: 'Merge (no fast-forward)',
+          onTap: () => widget.onMerge(git, b, MergeMode.noFf),
+        ),
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_merge,
+          label: 'Merge (fast-forward only)',
+          onTap: () => widget.onMerge(git, b, MergeMode.ffOnly),
+        ),
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_merge,
+          label: 'Squash merge',
+          onTap: () => widget.onMerge(git, b, MergeMode.squash),
+        ),
+      ],
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.arrow_up_arrow_down,
+        label: 'Set upstream…',
+        onTap: () => widget.onSetUpstream(git, b),
+      ),
+      if (b.upstream != null)
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_up_arrow_down,
+          label: 'Unset upstream',
+          onTap: () => widget.onUnsetUpstream(git, b.shortName),
+        ),
+      ContextMenuItem(
+        icon: CupertinoIcons.pencil,
+        label: 'Rename…',
+        onTap: () => widget.onRenameBranch(git, b.shortName),
+      ),
+      ContextMenuItem(
+        icon: isPinned ? CupertinoIcons.star_slash : CupertinoIcons.star,
+        label: isPinned ? 'Unpin' : 'Pin to top',
+        onTap: () => widget.onTogglePin(b.shortName),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.doc_on_doc,
+        label: 'Copy name',
+        onTap: () => widget.onCopyName(b.shortName),
+      ),
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.trash,
+        label: 'Delete branch',
+        iconColor: MacosColors.systemRedColor,
+        enabled: !b.isHead && elsewhere == null,
+        disabledTooltip: b.isHead
+            ? "Can't delete the branch you're on"
+            : 'Checked out in the worktree "${elsewhere?.split('/').last}" '
+                  '— remove that worktree first',
+        onTap: () => widget.onDeleteBranch(git, b.shortName),
+      ),
+    ];
+  }
+
+  List<ContextMenuEntry> _remoteMenu(GitService git, GitRef b) {
+    return [
+      ContextMenuItem(
+        icon: CupertinoIcons.square_arrow_down,
+        label: 'Check out tracking branch',
+        onTap: () => widget.onCheckoutRemote(git, b),
+      ),
+      ContextMenuItem(
+        icon: CupertinoIcons.doc_on_doc,
+        label: 'Copy name',
+        onTap: () => widget.onCopyName(b.shortName),
+      ),
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.trash,
+        label: 'Delete branch on the remote',
+        iconColor: MacosColors.systemRedColor,
+        onTap: () => widget.onDeleteRemoteBranch(git, b.shortName),
+      ),
+    ];
+  }
+
+  List<ContextMenuEntry> _tagMenu(
+    GitService git,
+    GitRef tag,
+    TagRemoteStatus status,
+    String? remote,
+  ) {
+    return [
+      if (remote != null)
+        ContextMenuItem(
+          icon: CupertinoIcons.cloud_upload,
+          label: status == TagRemoteStatus.inSync
+              ? 'Already on $remote'
+              : 'Push tag to $remote',
+          enabled: status != TagRemoteStatus.inSync,
+          onTap: () => widget.onPushTag(git, tag.shortName, remote),
+        ),
+      ContextMenuItem(
+        icon: CupertinoIcons.doc_on_doc,
+        label: 'Copy name',
+        onTap: () => widget.onCopyName(tag.shortName),
+      ),
+      const ContextMenuDivider(),
+      ContextMenuItem(
+        icon: CupertinoIcons.trash,
+        label: 'Delete tag',
+        iconColor: MacosColors.systemRedColor,
+        onTap: () => widget.onDeleteTag(git, tag, status, remote),
+      ),
+    ];
+  }
+}

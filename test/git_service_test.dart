@@ -8,15 +8,13 @@ const _repo = '/repo';
 
 /// Builds a [MockExecutor] whose [MockExecutor.onExecute] returns [result] for
 /// every call.
-MockExecutor _fixed(SSHCommandResult result) => MockExecutor(
-  onExecute: (_) => result,
-);
+MockExecutor _fixed(SSHCommandResult result) =>
+    MockExecutor(onExecute: (_) => result);
 
 /// Builds a [MockExecutor] whose [MockExecutor.onExecute] returns a zero-exit
 /// empty result for every call.
-MockExecutor _ok() => _fixed(
-  const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
-);
+MockExecutor _ok() =>
+    _fixed(const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''));
 
 void main() {
   group('constructor helpers', () {
@@ -24,11 +22,7 @@ void main() {
       final executor = MockExecutor();
       final service = GitService(executor);
       expect(service.isRepoScoped(_repo), isFalse);
-      service.registerRepoScope(
-        _repo,
-        gitDir: '/repo/.git',
-        workTree: '/repo',
-      );
+      service.registerRepoScope(_repo, gitDir: '/repo/.git', workTree: '/repo');
       expect(service.isRepoScoped(_repo), isTrue);
 
       service.unregisterRepoScope(_repo);
@@ -48,20 +42,24 @@ void main() {
 
   group('validateRepoPath', () {
     test('succeeds when inside a work tree', () async {
-      final executor = _fixed(const SSHCommandResult(
-        exitCode: 0, stdout: 'true\n', stderr: '',
-      ));
+      final executor = _fixed(
+        const SSHCommandResult(exitCode: 0, stdout: 'true\n', stderr: ''),
+      );
       final service = GitService(executor);
       await service.validateRepoPath(_repo);
-      expect(executor.lastArgs, [
-        'git', 'rev-parse', '--is-inside-work-tree',
-      ]);
+      expect(executor.lastArgs, ['git', 'rev-parse', '--is-inside-work-tree']);
     });
 
     test('throws GitException when git is not found (exit 127)', () async {
-      final service = GitService(_fixed(const SSHCommandResult(
-        exitCode: 127, stdout: '', stderr: 'git: not found',
-      )));
+      final service = GitService(
+        _fixed(
+          const SSHCommandResult(
+            exitCode: 127,
+            stdout: '',
+            stderr: 'git: not found',
+          ),
+        ),
+      );
       expect(
         () => service.validateRepoPath(_repo),
         throwsA(isA<GitException>()),
@@ -69,9 +67,15 @@ void main() {
     });
 
     test('throws GitException when outside a work tree', () async {
-      final service = GitService(_fixed(const SSHCommandResult(
-        exitCode: 128, stdout: 'false\n', stderr: 'fatal: not a git repository',
-      )));
+      final service = GitService(
+        _fixed(
+          const SSHCommandResult(
+            exitCode: 128,
+            stdout: 'false\n',
+            stderr: 'fatal: not a git repository',
+          ),
+        ),
+      );
       expect(
         () => service.validateRepoPath(_repo),
         throwsA(isA<GitException>()),
@@ -81,11 +85,13 @@ void main() {
 
   group('listTrackedFiles', () {
     test('splits NUL-delimited output into file list', () async {
-      final executor = _fixed(const SSHCommandResult(
-        exitCode: 0,
-        stdout: 'a.dart\u0000b.dart\u0000c.dart\u0000',
-        stderr: '',
-      ));
+      final executor = _fixed(
+        const SSHCommandResult(
+          exitCode: 0,
+          stdout: 'a.dart\u0000b.dart\u0000c.dart\u0000',
+          stderr: '',
+        ),
+      );
       final service = GitService(executor);
       final files = await service.listTrackedFiles(_repo);
       expect(files, ['a.dart', 'b.dart', 'c.dart']);
@@ -100,18 +106,18 @@ void main() {
 
   group('resolveShaPrefix', () {
     test('returns resolved hashes from rev-parse output', () async {
-      final executor = _fixed(const SSHCommandResult(
-        exitCode: 0,
-        stdout:
-            'abc123def456abc123def456abc123def456abc12\n'
-            'abc123def456abc123def456abc123def456abc78\n',
-        stderr: '',
-      ));
+      final executor = _fixed(
+        const SSHCommandResult(
+          exitCode: 0,
+          stdout:
+              'abc123def456abc123def456abc123def456abc12\n'
+              'abc123def456abc123def456abc123def456abc78\n',
+          stderr: '',
+        ),
+      );
       final service = GitService(executor);
       // Minimum prefix length is 4 hex chars (isResolvableShaPrefix).
-      final result = await service.resolveShaPrefix(
-        _repo, 'abc123',
-      );
+      final result = await service.resolveShaPrefix(_repo, 'abc123');
       expect(result, [
         'abc123def456abc123def456abc123def456abc12',
         'abc123def456abc123def456abc123def456abc78',
@@ -126,9 +132,9 @@ void main() {
     });
 
     test('non-zero exit returns empty', () async {
-      final service = GitService(_fixed(const SSHCommandResult(
-        exitCode: 1, stdout: '', stderr: '',
-      )));
+      final service = GitService(
+        _fixed(const SSHCommandResult(exitCode: 1, stdout: '', stderr: '')),
+      );
       expect(await service.resolveShaPrefix(_repo, 'abc'), isEmpty);
     });
   });
@@ -142,37 +148,55 @@ void main() {
     });
 
     test('none ignored (exit 1) returns empty set', () async {
-      final service = GitService(_fixed(const SSHCommandResult(
-        exitCode: 1, stdout: '', stderr: '',
-      )));
+      final service = GitService(
+        _fixed(const SSHCommandResult(exitCode: 1, stdout: '', stderr: '')),
+      );
       expect(await service.checkIgnore(_repo, ['a.txt']), isEmpty);
     });
 
     test('some ignored returns their paths', () async {
-      final service = GitService(_fixed(const SSHCommandResult(
-        exitCode: 0,
-        stdout: 'ignored.log\u0000build/\u0000',
-        stderr: '',
-      )));
-      final result = await service.checkIgnore(
-        _repo, ['a.txt', 'ignored.log', 'build/'],
+      final service = GitService(
+        _fixed(
+          const SSHCommandResult(
+            exitCode: 0,
+            stdout: 'ignored.log\u0000build/\u0000',
+            stderr: '',
+          ),
+        ),
       );
+      final result = await service.checkIgnore(_repo, [
+        'a.txt',
+        'ignored.log',
+        'build/',
+      ]);
       expect(result, {'ignored.log', 'build/'});
     });
 
     test('non-zero non-1 exit fails open (empty set)', () async {
-      final service = GitService(_fixed(const SSHCommandResult(
-        exitCode: 127, stdout: '', stderr: 'not found',
-      )));
+      final service = GitService(
+        _fixed(
+          const SSHCommandResult(
+            exitCode: 127,
+            stdout: '',
+            stderr: 'not found',
+          ),
+        ),
+      );
       expect(await service.checkIgnore(_repo, ['x']), isEmpty);
     });
   });
 
   group('diffFile', () {
     test('returns diff stdout', () async {
-      final service = GitService(_fixed(const SSHCommandResult(
-        exitCode: 0, stdout: '--- a/file\n+++ b/file\n', stderr: '',
-      )));
+      final service = GitService(
+        _fixed(
+          const SSHCommandResult(
+            exitCode: 0,
+            stdout: '--- a/file\n+++ b/file\n',
+            stderr: '',
+          ),
+        ),
+      );
       final diff = await service.diffFile(_repo, path: 'file', staged: false);
       expect(diff, contains('--- a/file'));
     });
@@ -188,7 +212,10 @@ void main() {
       final executor = _ok();
       final service = GitService(executor);
       await service.diffFile(
-        _repo, path: 'f', staged: false, ignoreWhitespace: true,
+        _repo,
+        path: 'f',
+        staged: false,
+        ignoreWhitespace: true,
       );
       expect(executor.lastArgs, contains('-w'));
     });
@@ -201,9 +228,15 @@ void main() {
     });
 
     test('throws GitException on failure', () async {
-      final service = GitService(_fixed(const SSHCommandResult(
-        exitCode: 1, stdout: '', stderr: 'fatal: bad path',
-      )));
+      final service = GitService(
+        _fixed(
+          const SSHCommandResult(
+            exitCode: 1,
+            stdout: '',
+            stderr: 'fatal: bad path',
+          ),
+        ),
+      );
       expect(
         () => service.diffFile(_repo, path: 'nosuch', staged: false),
         throwsA(isA<GitException>()),
@@ -213,9 +246,13 @@ void main() {
 
   group('diffRange', () {
     test('returns diff stdout', () async {
-      final executor = _fixed(const SSHCommandResult(
-        exitCode: 0, stdout: 'diff --git a/x b/x\n', stderr: '',
-      ));
+      final executor = _fixed(
+        const SSHCommandResult(
+          exitCode: 0,
+          stdout: 'diff --git a/x b/x\n',
+          stderr: '',
+        ),
+      );
       final service = GitService(executor);
       final diff = await service.diffRange(_repo, 'main...feature');
       expect(diff, contains('diff --git'));
@@ -223,9 +260,11 @@ void main() {
     });
 
     test('throws on non-zero', () async {
-      final service = GitService(_fixed(const SSHCommandResult(
-        exitCode: 1, stdout: '', stderr: 'bad range',
-      )));
+      final service = GitService(
+        _fixed(
+          const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'bad range'),
+        ),
+      );
       expect(
         () => service.diffRange(_repo, 'bad...range'),
         throwsA(isA<GitException>()),
@@ -235,9 +274,13 @@ void main() {
 
   group('readFile', () {
     test('calls cat and returns stdout', () async {
-      final executor = _fixed(const SSHCommandResult(
-        exitCode: 0, stdout: 'file contents', stderr: '',
-      ));
+      final executor = _fixed(
+        const SSHCommandResult(
+          exitCode: 0,
+          stdout: 'file contents',
+          stderr: '',
+        ),
+      );
       final service = GitService(executor);
       final content = await service.readFile(_repo, 'readme.md');
       expect(content, 'file contents');
@@ -245,9 +288,11 @@ void main() {
     });
 
     test('throws on non-zero', () async {
-      final service = GitService(_fixed(const SSHCommandResult(
-        exitCode: 1, stdout: '', stderr: 'not found',
-      )));
+      final service = GitService(
+        _fixed(
+          const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'not found'),
+        ),
+      );
       expect(
         () => service.readFile(_repo, 'missing'),
         throwsA(isA<GitException>()),
@@ -257,9 +302,9 @@ void main() {
 
   group('showBlob', () {
     test('calls git show rev:path', () async {
-      final executor = _fixed(const SSHCommandResult(
-        exitCode: 0, stdout: 'blob content', stderr: '',
-      ));
+      final executor = _fixed(
+        const SSHCommandResult(exitCode: 0, stdout: 'blob content', stderr: ''),
+      );
       final service = GitService(executor);
       final content = await service.showBlob(_repo, 'abc123', 'readme.md');
       expect(content, 'blob content');
@@ -320,7 +365,10 @@ void main() {
       );
       final service = GitService(executor);
       await service.applyPatch(
-        _repo, '--- a/x\n+++ b/x\n', cached: false, reverse: false,
+        _repo,
+        '--- a/x\n+++ b/x\n',
+        cached: false,
+        reverse: false,
       );
       expect(capturedStdin, contains('--- a/x'));
     });
@@ -337,11 +385,12 @@ void main() {
 
   group('reflog', () {
     test('parses reflog entries from stdout', () async {
-      final raw = _reflogRec('a', 'HEAD@{0}', 'commit: initial') +
+      final raw =
+          _reflogRec('a', 'HEAD@{0}', 'commit: initial') +
           _reflogRec('b', 'HEAD@{1}', 'checkout: moving from a to b');
-      final executor = _fixed(SSHCommandResult(
-        exitCode: 0, stdout: raw, stderr: '',
-      ));
+      final executor = _fixed(
+        SSHCommandResult(exitCode: 0, stdout: raw, stderr: ''),
+      );
       final service = GitService(executor);
       final entries = await service.reflog(_repo);
       expect(entries, hasLength(2));
@@ -350,31 +399,42 @@ void main() {
     });
 
     test('empty repo (exit 128) returns empty list', () async {
-      final service = GitService(_fixed(const SSHCommandResult(
-        exitCode: 128, stdout: '', stderr: 'does not have any commits yet',
-      )));
+      final service = GitService(
+        _fixed(
+          const SSHCommandResult(
+            exitCode: 128,
+            stdout: '',
+            stderr: 'does not have any commits yet',
+          ),
+        ),
+      );
       expect(await service.reflog(_repo), isEmpty);
     });
 
     test('real error still throws', () async {
-      final service = GitService(_fixed(const SSHCommandResult(
-        exitCode: 128, stdout: '', stderr: 'fatal: unknown option',
-      )));
-      expect(
-        () => service.reflog(_repo),
-        throwsA(isA<GitException>()),
+      final service = GitService(
+        _fixed(
+          const SSHCommandResult(
+            exitCode: 128,
+            stdout: '',
+            stderr: 'fatal: unknown option',
+          ),
+        ),
       );
+      expect(() => service.reflog(_repo), throwsA(isA<GitException>()));
     });
   });
 
   group('_run-based methods', () {
     test('repoLayout parses rev-parse output in correct order', () async {
       // git rev-parse --show-toplevel --git-dir --git-common-dir
-      final executor = _fixed(const SSHCommandResult(
-        exitCode: 0,
-        stdout: '/repo\n/repo/.git\n/repo/.git\n',
-        stderr: '',
-      ));
+      final executor = _fixed(
+        const SSHCommandResult(
+          exitCode: 0,
+          stdout: '/repo\n/repo/.git\n/repo/.git\n',
+          stderr: '',
+        ),
+      );
       final service = GitService(executor);
       final layout = await service.repoLayout(_repo);
       expect(layout.toplevel, '/repo');
@@ -383,30 +443,103 @@ void main() {
       expect(layout.isLinkedWorktree, isFalse);
     });
 
-    test('gitfileRedirectTarget reads .git file and extracts gitdir:', () async {
-      final executor = _fixed(const SSHCommandResult(
-        exitCode: 0,
-        stdout: 'gitdir: /home/x/.home.git\n',
-        stderr: '',
-      ));
-      final service = GitService(executor);
-      final target = await service.gitfileRedirectTarget(_repo);
-      expect(target, '/home/x/.home.git');
+    test(
+      'repoLayout Git 2.24 fallback canonicalizes on command host',
+      () async {
+        var call = 0;
+        final executor = MockExecutor(
+          onExecute: (request) {
+            call++;
+            if (call == 1) {
+              return const SSHCommandResult(
+                exitCode: 129,
+                stdout: '',
+                stderr: 'unknown option: --path-format',
+              );
+            }
+            expect(request.gitArgs.take(2), ['sh', '-c']);
+            expect(request.gitArgs[2], contains('cd -P'));
+            expect(request.gitArgs[2], contains('--absolute-git-dir'));
+            return const SSHCommandResult(
+              exitCode: 0,
+              stdout:
+                  '/remote/repo\n/remote/common/worktrees/w1\n/remote/common\n',
+              stderr: '',
+            );
+          },
+        );
+
+        final layout = await GitService(executor).repoLayout('/remote/repo');
+
+        expect(layout.toplevel, '/remote/repo');
+        expect(layout.gitDir, '/remote/common/worktrees/w1');
+        expect(layout.gitCommonDir, '/remote/common');
+        expect(layout.isLinkedWorktree, isTrue);
+        expect(executor.calls, hasLength(2));
+      },
+    );
+
+    test('scoped repo layout uses Git 2.24 fallback with scope env', () async {
+      var call = 0;
+      final executor = MockExecutor(
+        onExecute: (request) {
+          call++;
+          expect(request.extraEnv, {
+            'GIT_DIR': '/remote/meta.git',
+            'GIT_WORK_TREE': '/remote/repo',
+          });
+          return call == 1
+              ? const SSHCommandResult(
+                  exitCode: 129,
+                  stdout: '',
+                  stderr: 'unknown option: --path-format',
+                )
+              : const SSHCommandResult(
+                  exitCode: 0,
+                  stdout: '/remote/repo\n/remote/meta.git\n/remote/meta.git\n',
+                  stderr: '',
+                );
+        },
+      );
+
+      final layout = await GitService(
+        executor,
+      ).scopedRepoLayout('/remote/repo', gitDir: '/remote/meta.git');
+
+      expect(layout.gitCommonDir, '/remote/meta.git');
+      expect(executor.calls, hasLength(2));
     });
+
+    test(
+      'gitfileRedirectTarget reads .git file and extracts gitdir:',
+      () async {
+        final executor = _fixed(
+          const SSHCommandResult(
+            exitCode: 0,
+            stdout: 'gitdir: /home/x/.home.git\n',
+            stderr: '',
+          ),
+        );
+        final service = GitService(executor);
+        final target = await service.gitfileRedirectTarget(_repo);
+        expect(target, '/home/x/.home.git');
+      },
+    );
   });
 
   group('scope injection', () {
     test('scope env is passed to executor commands', () async {
-      final executor = _fixed(const SSHCommandResult(
-        exitCode: 0, stdout: 'true\n', stderr: '',
-      ));
-      final service = GitService(executor);
-      service.registerRepoScope(
-        _repo, gitDir: '/repo/.git', workTree: '/repo',
+      final executor = _fixed(
+        const SSHCommandResult(exitCode: 0, stdout: 'true\n', stderr: ''),
       );
+      final service = GitService(executor);
+      service.registerRepoScope(_repo, gitDir: '/repo/.git', workTree: '/repo');
 
       await service.validateRepoPath(_repo);
-      expect(executor.calls.first.extraEnv, {'GIT_DIR': '/repo/.git', 'GIT_WORK_TREE': '/repo'});
+      expect(executor.calls.first.extraEnv, {
+        'GIT_DIR': '/repo/.git',
+        'GIT_WORK_TREE': '/repo',
+      });
     });
   });
 }
@@ -414,10 +547,11 @@ void main() {
 String _reflogRec(String hashChar, String selector, String subject) {
   final hash = hashChar * 40; // 40-char hash
   return [
-    hash,
-    hash.substring(0, 7),
-    selector,
-    subject,
-    subject,
-  ].join(GitService.fieldSep) + GitService.recordSep;
+        hash,
+        hash.substring(0, 7),
+        selector,
+        subject,
+        subject,
+      ].join(GitService.fieldSep) +
+      GitService.recordSep;
 }

@@ -188,9 +188,7 @@ void main() {
     });
 
     test('conflict blocks', () {
-      final plan = mergePlanForGitLab(
-        mr: _mr(hasConflicts: true, sha: 'x'),
-      );
+      final plan = mergePlanForGitLab(mr: _mr(hasConflicts: true, sha: 'x'));
       expect(plan.canMergeNow, isFalse);
       expect(plan.blockedReasons.any((r) => r.code == 'conflicts'), isTrue);
     });
@@ -230,6 +228,7 @@ void main() {
   group('policy parsers', () {
     test('GhRepoMergePolicy.fromJson', () {
       final p = GhRepoMergePolicy.fromJson({
+        'default_branch': 'trunk',
         'allow_merge_commit': false,
         'allow_squash_merge': true,
         'allow_rebase_merge': true,
@@ -237,6 +236,7 @@ void main() {
         'delete_branch_on_merge': true,
       });
       expect(p.allowMergeCommit, isFalse);
+      expect(p.defaultBranch, 'trunk');
       expect(p.allowSquashMerge, isTrue);
       expect(p.allowAutoMerge, isTrue);
       expect(p.deleteBranchOnMerge, isTrue);
@@ -244,11 +244,13 @@ void main() {
 
     test('GlRepoMergePolicy.fromJson', () {
       final p = GlRepoMergePolicy.fromJson({
+        'default_branch': 'develop',
         'merge_method': 'ff',
         'squash_option': 'always',
         'remove_source_branch_after_merge': true,
       });
       expect(p.mergeMethod, 'ff');
+      expect(p.defaultBranch, 'develop');
       expect(p.squashAlways, isTrue);
       expect(p.removeSourceBranchAfterMerge, isTrue);
     });

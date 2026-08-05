@@ -1,11 +1,15 @@
 # Implementation plan: base-relative branches workspace
 
-- Status: **accepted for implementation sequencing** (codebase re-grounded
-  2026-08-04; Phase 0 advanced — identity/prefs/dashboard +
-  `BranchViewModel` pure snapshot (no multi-field build assignments) +
-  folder list shaping + characterization/unit tests; remaining Phase 0:
-  physical navigator/detail widget file split and optional 500-ref baseline;
-  trust gate remains Phases 1–3 before bulk)
+- Status: **implementation in progress** (codebase re-grounded 2026-08-04;
+  Phases 0 and 1 complete. Identity-keyed preferences, the extracted pure
+  Browse model, and the 500-ref baseline are landed in the worktree. Review now
+  has NUL-framed attributed refs with warnings, forge-aware deterministic base
+  resolution with visible provenance and explicit unavailable/unborn states,
+  grouped full-ref base choices, batched base-relative summaries, clickable
+  Merged/Stale facets, Activity/Name sorting, and no legacy HEAD-relative bulk
+  cleanup action or universal safety copy. Checkpoint B's HEAD-different-base,
+  passive-cache Browse, and zero-comparison-command tests pass. Phase 2 is next;
+  the trust gate remains Phases 1–3 before bulk.)
 - Date: 2026-08-04
 - MADR: `docs/0003-MADR-base-relative-branches-workspace.md` (Option C)
 - Owner: implementation agent + maintainer review
@@ -1789,6 +1793,11 @@ Maintainer reviews:
 - exact base selector terminology.
 
 ### Checkpoint B — after Phase 1
+
+Status: **passed in automated coverage on 2026-08-04**. The temp-repository
+integration fixture keeps `HEAD != base`; provider/widget tests pin passive
+forge-cache behavior and a zero-command 500-ref Browse path; base and review
+parser suites cover fallback, partial-result, and moved-tip behavior.
 
 Demonstrate with one repository where current `HEAD != base`:
 

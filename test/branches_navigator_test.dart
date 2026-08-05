@@ -23,7 +23,8 @@ class _NoopGit extends GitService {
 }
 
 int _daysAgo(int days) =>
-    DateTime.now().subtract(Duration(days: days)).millisecondsSinceEpoch ~/ 1000;
+    DateTime.now().subtract(Duration(days: days)).millisecondsSinceEpoch ~/
+    1000;
 
 List<GitRef> _refs() => [
   const GitRef(name: 'refs/heads/main', oid: 'a', isHead: true, subject: 's'),
@@ -39,7 +40,12 @@ List<GitRef> _refs() => [
     isHead: false,
     subject: 's',
   ),
-  const GitRef(name: 'refs/heads/fix/crash', oid: 'd', isHead: false, subject: 's'),
+  const GitRef(
+    name: 'refs/heads/fix/crash',
+    oid: 'd',
+    isHead: false,
+    subject: 's',
+  ),
 ];
 
 /// main + a fresh branch + one branch untouched for ~200 days (stale).
@@ -72,7 +78,9 @@ Future<void> _pump(WidgetTester tester, {List<GitRef>? refs}) async {
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       remoteTagsProvider(_repo).overrideWith((ref) async => null),
       branchForgeProvider(_repo).overrideWith((ref) async => const {}),
-      mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
+      mergedBranchesProvider(
+        _repo,
+      ).overrideWith((ref) async => const <String>{}),
     ],
   );
   addTearDown(container.dispose);
@@ -89,8 +97,9 @@ Future<void> _pump(WidgetTester tester, {List<GitRef>? refs}) async {
 }
 
 void main() {
-  testWidgets('renders as a master–detail split with the review dashboard',
-      (tester) async {
+  testWidgets('renders as a master–detail split with the review dashboard', (
+    tester,
+  ) async {
     await _pump(tester);
     expect(find.byType(ResizableMasterDetail), findsOneWidget);
     // The empty state is the review dashboard: a title + stat chips.
@@ -111,7 +120,10 @@ void main() {
     await tester.pumpAndSettle();
 
     // The detail pane now offers this branch's actions.
-    expect(find.widgetWithText(InlineActionButton, 'Check out'), findsOneWidget);
+    expect(
+      find.widgetWithText(InlineActionButton, 'Check out'),
+      findsOneWidget,
+    );
     expect(
       find.widgetWithText(InlineActionButton, 'Merge into current'),
       findsOneWidget,
@@ -141,6 +153,17 @@ void main() {
     expect(find.text('fix/'), findsOneWidget);
     expect(find.text('login'), findsOneWidget);
     expect(find.text('feature/login'), findsNothing);
+
+    // The extracted navigator must receive folder-prefix state, not the
+    // unrelated global section-collapse keys.
+    await tester.tap(find.text('feature/'));
+    await tester.pumpAndSettle();
+    expect(find.text('login'), findsNothing);
+    expect(find.text('signup'), findsNothing);
+
+    await tester.tap(find.text('feature/'));
+    await tester.pumpAndSettle();
+    expect(find.text('login'), findsOneWidget);
   });
 
   testWidgets('stale branches collapse behind a summary row that expands', (

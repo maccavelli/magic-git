@@ -16,7 +16,9 @@ import '../forge/auth_status.dart';
 import '../forge/forge.dart';
 import '../forge/forge_dashboard.dart';
 import '../forge/forge_repo_summary.dart';
+import '../forge/merge_plan.dart';
 import '../git/bounded_watch.dart';
+import '../git/branch_comparison.dart';
 import '../git/git_service.dart';
 import '../git/host_fs_service.dart';
 import '../git/ignore_oracle.dart';
@@ -1158,7 +1160,8 @@ class ConnectionController extends Notifier<ConnectionState> {
     _lastConnectionLabel = connectionLabel;
     _lastRepoPaths = repoPaths;
     _lastFsmonitorPaths = fsmonitorPaths;
-    _lastScopedGitDirs = scopedGitDirs; // updated to the healed map once resolved
+    _lastScopedGitDirs =
+        scopedGitDirs; // updated to the healed map once resolved
     _hostLogins.clear(); // new connection identity — re-auth forge hosts lazily
     // A new gate for this attempt's background logins. Captured locally so
     // this attempt only ever completes its *own* gate, never a successor's.
@@ -1200,8 +1203,8 @@ class ConnectionController extends Notifier<ConnectionState> {
       connectionId: connectionId,
       connectionLabel: connectionLabel ?? profile.host,
       host: profile.host,
-        sessionEpoch: _attempt,
-      );
+      sessionEpoch: _attempt,
+    );
     // Per-stage wall-clock, logged at connected so "why is connecting slow"
     // is answerable from inside the app (Output view) instead of by guesswork:
     // the SSH handshake, the environment probe (which spawns the login shell
@@ -1654,8 +1657,8 @@ class ConnectionController extends Notifier<ConnectionState> {
       repoPath: repoPath,
       connectionId: id,
       connectionLabel: label,
-        sessionEpoch: _attempt,
-      );
+      sessionEpoch: _attempt,
+    );
     try {
       // Resolve the environment FIRST so the augmented PATH / absolute git path
       // is in place before any git runs. A Finder-launched app inherits a bare
@@ -2052,7 +2055,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     // Async body so a failed login always evicts its memo entry before the
     // error surfaces — `catchError` + rethrow left a completed-error Future
     // that some callers still treated as memoized depending on timing.
-    final future = () async {
+    final future = Future<void>.sync(() async {
       try {
         switch (forge) {
           case Forge.github:
@@ -2071,10 +2074,10 @@ class ConnectionController extends Notifier<ConnectionState> {
           ref.invalidate(forgeAuthProvider((forge, false)));
         }
       } catch (_) {
-        _hostLogins.remove(key);
+        _hostLogins.remove(key)?.ignore();
         rethrow;
       }
-    }();
+    });
     return _hostLogins[key] = future;
   }
 
@@ -2202,8 +2205,8 @@ class ConnectionController extends Notifier<ConnectionState> {
       connectionId: conn.id,
       connectionLabel: conn.displayName,
       host: conn.host,
-        sessionEpoch: _attempt,
-      );
+      sessionEpoch: _attempt,
+    );
     try {
       await ref
           .read(sshClientManagerProvider)
@@ -2380,7 +2383,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       host: conn.host,
       warning: warning,
       connectedAt: DateTime.now(),
-        sessionEpoch: _attempt,
+      sessionEpoch: _attempt,
       // The connection's full scoped map (empty for an ordinary repo) so a later
       // GitService rebuild re-registers every scope from ConnectionState.
       scopedGitDirs: updated.scopedGitDirs,
@@ -2534,6 +2537,11 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   logSearchProvider,
   refsProvider,
   repoLayoutProvider,
+  repositoryUiIdentityProvider,
+  branchWorkspacePrefsProvider,
+  branchBaseProvider,
+  branchReviewProvider,
+  repoMergePolicyCacheProvider,
   // remotesProvider is cheap (bundled in the snapshot); remoteTagsProvider
   // costs an `ls-remote` round trip, which is exactly what an EXPLICIT ⌘R
   // asks for — and both must die on connect/disconnect, or a keepAlive'd
@@ -2641,6 +2649,8 @@ List<ProviderOrFamily> repoMutationFamilies(String repoPath) => [
   logProvider,
   logSearchProvider,
   refsProvider,
+  branchBaseProvider,
+  branchReviewProvider,
   // Configured remotes ride the same snapshot as refs, and mutations can
   // change them too (`git remote add/remove` in the create/publish flows).
   remotesProvider,
@@ -3154,8 +3164,12 @@ final gitWorktreesProvider = FutureProvider.autoDispose
 final refsProvider = FutureProvider.autoDispose.family<List<GitRef>, String>((
   ref,
   repoPath,
-) {
-  return ref.watch(gitServiceProvider).refs(repoPath);
+) async {
+  final result = await ref.watch(gitServiceProvider).refsWithWarnings(repoPath);
+  for (final warning in result.parseWarnings) {
+    ref.read(outputLogProvider.notifier).logInfo('Ref parse warning: $warning');
+  }
+  return result.refs;
 });
 
 /// Local branches fully merged into the current HEAD — the source of the
@@ -3170,6 +3184,127 @@ final mergedBranchesProvider = FutureProvider.autoDispose
       } catch (_) {
         return const <String>{};
       }
+    });
+
+class RepoMergePolicyCache extends Notifier<Object?> {
+  RepoMergePolicyCache(this.repoPath);
+
+  final String repoPath;
+
+  @override
+  Object? build() => null;
+
+  void set(Object policy) => state = policy;
+}
+
+/// Passive cache only: watching this family never initiates forge work.
+final repoMergePolicyCacheProvider =
+    NotifierProvider.family<RepoMergePolicyCache, Object?, String>(
+      RepoMergePolicyCache.new,
+    );
+
+/// Deterministic comparison base. Browse passes `allowForgeFetch: false`;
+/// Review/explicit refresh may pass true and populate the passive policy cache.
+final branchBaseProvider = FutureProvider.autoDispose
+    .family<BranchBaseResolution, ({String repoPath, bool allowForgeFetch})>((
+      ref,
+      key,
+    ) async {
+      final refs = await ref.watch(refsProvider(key.repoPath).future);
+      final remotes = await ref.watch(remotesProvider(key.repoPath).future);
+      final status = await ref.watch(statusProvider(key.repoPath).future);
+      final prefs = await ref.watch(
+        branchWorkspacePrefsProvider(key.repoPath).future,
+      );
+
+      Object? policy = key.allowForgeFetch
+          ? ref.read(repoMergePolicyCacheProvider(key.repoPath))
+          : ref.watch(repoMergePolicyCacheProvider(key.repoPath));
+      if (key.allowForgeFetch) {
+        try {
+          final fetched = await ref.watch(
+            repoMergePolicyProvider(key.repoPath).future,
+          );
+          policy = fetched;
+          ref
+              .read(repoMergePolicyCacheProvider(key.repoPath).notifier)
+              .set(fetched);
+        } catch (_) {
+          // Forge default is additive. Git candidates still resolve offline.
+        }
+      }
+      final forgeDefault = switch (policy) {
+        GhRepoMergePolicy(:final defaultBranch) => defaultBranch,
+        GlRepoMergePolicy(:final defaultBranch) => defaultBranch,
+        _ => null,
+      };
+      final candidates = [
+        for (final gitRef in refs)
+          BranchBaseCandidate(
+            refName: gitRef.name,
+            displayName: gitRef.shortName,
+            oid: gitRef.commitOid,
+          ),
+      ];
+      final git = ref.watch(gitServiceProvider);
+      return resolveBranchBase(
+        refs: candidates,
+        remotes: remotes,
+        currentBranch: status.branch.head,
+        headOid: status.branch.oid,
+        storedRefName: prefs.selectedBaseRefName,
+        forgeDefaultBranch: forgeDefault,
+        resolveCommit: (revision) => git.revParse(key.repoPath, revision),
+        resolveRemoteHead: (remote) => git.remoteHead(key.repoPath, remote),
+      );
+    });
+
+final branchReviewProvider = FutureProvider.autoDispose
+    .family<
+      BranchReviewBatchResult,
+      ({String repoPath, String baseOid, BranchRefsFingerprint refsFingerprint})
+    >((ref, key) async {
+      final refs = await ref.watch(refsProvider(key.repoPath).future);
+      final locals = [
+        for (final gitRef in refs)
+          if (gitRef.isLocalBranch)
+            (refName: gitRef.name, oid: gitRef.commitOid),
+      ];
+      // The key is deliberately consumed as a value assertion rather than a bare
+      // hash; callers cannot receive truth for a colliding/moved ref snapshot.
+      if (BranchRefsFingerprint(locals) != key.refsFingerprint) {
+        throw StateError('Branch refs changed while starting review summary.');
+      }
+      final result = await ref
+          .watch(gitServiceProvider)
+          .branchReviewSummaries(
+            key.repoPath,
+            baseOid: key.baseOid,
+            branches: locals,
+          );
+      final refsByName = {for (final gitRef in refs) gitRef.name: gitRef};
+      return BranchReviewBatchResult(
+        summariesByRefName: {
+          for (final entry in result.summariesByRefName.entries)
+            entry.key: BranchReviewSummary(
+              refName: entry.value.refName,
+              shortName: entry.value.shortName,
+              branchOid: entry.value.branchOid,
+              baseOid: entry.value.baseOid,
+              aheadOfBase: entry.value.aheadOfBase,
+              behindBase: entry.value.behindBase,
+              lastCommitAt: refsByName[entry.key]?.creatorDate == null
+                  ? null
+                  : DateTime.fromMillisecondsSinceEpoch(
+                      refsByName[entry.key]!.creatorDate! * 1000,
+                      isUtc: true,
+                    ),
+              lastAuthorName: refsByName[entry.key]?.authorName,
+              lastAuthorEmail: refsByName[entry.key]?.authorEmail,
+            ),
+        },
+        failuresByRefName: result.failuresByRefName,
+      );
     });
 
 /// Absolute layout for [repoPath] (linked worktree aware). Null when layout
@@ -3207,10 +3342,7 @@ final repositoryUiIdentityProvider = FutureProvider.autoDispose
             gitCommonDir: common,
           );
         }
-        return RepositoryUiIdentity.ssh(
-          connectionId: id,
-          gitCommonDir: common,
-        );
+        return RepositoryUiIdentity.ssh(connectionId: id, gitCommonDir: common);
       }
 
       return RepositoryUiIdentity.adhoc(
@@ -3220,6 +3352,21 @@ final repositoryUiIdentityProvider = FutureProvider.autoDispose
       );
     });
 
+/// Identity-keyed Branches workspace preferences. The layout/identity read is
+/// lazy and never gates refs first paint; the first durable load migrates the
+/// legacy path-keyed pins and global Branches collapse bits.
+final branchWorkspacePrefsProvider = FutureProvider.autoDispose
+    .family<BranchWorkspacePrefs, String>((ref, repoPath) async {
+      final identity = await ref.watch(
+        repositoryUiIdentityProvider(repoPath).future,
+      );
+      if (identity == null) return const BranchWorkspacePrefs();
+      return loadBranchWorkspacePrefs(
+        identity: identity,
+        legacyRepoPath: repoPath,
+        globalCollapsed: await loadLegacyBranchCollapsedSections(),
+      );
+    });
 
 /// The repo's *configured* remotes (`git remote`), e.g. `['origin']` — the
 /// canonical "does this repo have a remote" signal. NOT derivable from
@@ -4416,13 +4563,15 @@ final mergeRequestDetailProvider = FutureProvider.autoDispose
 final repoMergePolicyProvider = FutureProvider.autoDispose
     .family<Object, String>((ref, repoPath) async {
       await _forgeAuthReady(ref);
-      switch (await ref.watch(forgeProvider(repoPath).future)) {
-        case Forge.github:
-          return ref.watch(ghServiceProvider).repoMergePolicy(repoPath);
-        case Forge.gitlab:
-          return ref.watch(glabServiceProvider).repoMergePolicy(repoPath);
-        case Forge.none:
-        case Forge.unknown:
-          throw StateError('No forge configured for this repository.');
-      }
+      final policy = switch (await ref.watch(forgeProvider(repoPath).future)) {
+        Forge.github =>
+          await ref.watch(ghServiceProvider).repoMergePolicy(repoPath),
+        Forge.gitlab =>
+          await ref.watch(glabServiceProvider).repoMergePolicy(repoPath),
+        Forge.none || Forge.unknown => throw StateError(
+          'No forge configured for this repository.',
+        ),
+      };
+      ref.read(repoMergePolicyCacheProvider(repoPath).notifier).set(policy);
+      return policy;
     });

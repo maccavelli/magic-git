@@ -1,6 +1,7 @@
 // Phase-3 differentiators on the Branches tab: the single-branch linear commit
-// view in the detail pane, the empty-state review dashboard's one-click
-// "delete merged" cleanup, and keyboard navigation across all sections.
+// view in the detail pane and keyboard navigation across all sections. The
+// former HEAD-relative dashboard cleanup is intentionally absent until the
+// base-safe Phase 4 flow replaces it.
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
@@ -133,33 +134,15 @@ void main() {
     expect(find.text('Add a test'), findsOneWidget);
   });
 
-  testWidgets(
-    'the review dashboard deletes all merged branches in one action',
-    (tester) async {
-      final git = await _pump(tester, merged: const {'feature', 'other'});
+  testWidgets('the dashboard has no HEAD-relative merged bulk delete', (
+    tester,
+  ) async {
+    final git = await _pump(tester, merged: const {'feature', 'other'});
 
-      // Nothing selected → the dashboard, with the merged-cleanup action.
-      expect(find.text('Branches'), findsOneWidget);
-      final deleteBtn = find.widgetWithText(
-        InlineActionButton,
-        'Delete 2 merged…',
-      );
-      expect(deleteBtn, findsOneWidget);
-
-      await tester.tap(deleteBtn);
-      await tester.pumpAndSettle();
-      // Confirm.
-      await tester.tap(find.text('Delete').last);
-      await tester.pumpAndSettle();
-
-      expect(git.deleted, containsAll(<String>['feature', 'other']));
-      expect(
-        git.deleted,
-        isNot(contains('main')),
-        reason: 'HEAD is never merged-deletable',
-      );
-    },
-  );
+    expect(find.text('Branches'), findsOneWidget);
+    expect(find.textContaining('Delete 2 merged'), findsNothing);
+    expect(git.deleted, isEmpty);
+  });
 
   testWidgets('arrow keys walk across local, remote and tag sections', (
     tester,
