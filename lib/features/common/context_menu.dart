@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'escape_dismissible.dart';
 import 'tappable.dart';
@@ -121,7 +122,7 @@ class ContextMenuOverlay {
   }
 }
 
-class _ContextMenuCard extends StatelessWidget {
+class _ContextMenuCard extends StatefulWidget {
   final double width;
   final List<ContextMenuEntry> entries;
   final VoidCallback onDismiss;
@@ -132,58 +133,126 @@ class _ContextMenuCard extends StatelessWidget {
   });
 
   @override
+  State<_ContextMenuCard> createState() => _ContextMenuCardState();
+}
+
+class _ContextMenuCardState extends State<_ContextMenuCard> {
+  late final FocusNode _focus;
+  int _focusedItem = -1;
+
+  List<int> get _actionIndexes {
+    final out = <int>[];
+    for (var i = 0; i < widget.entries.length; i++) {
+      final e = widget.entries[i];
+      if (e is ContextMenuItem && e.enabled) out.add(i);
+    }
+    return out;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _focus = FocusNode(debugLabel: 'context-menu');
+    final actions = _actionIndexes;
+    if (actions.isNotEmpty) _focusedItem = actions.first;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focus.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final actions = _actionIndexes;
+    if (actions.isEmpty) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.escape) {
+      widget.onDismiss();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.arrowUp) {
+      final dir = key == LogicalKeyboardKey.arrowDown ? 1 : -1;
+      final pos = actions.indexOf(_focusedItem);
+      final next = (pos < 0 ? 0 : pos + dir).clamp(0, actions.length - 1);
+      setState(() => _focusedItem = actions[next]);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter ||
+        key == LogicalKeyboardKey.space) {
+      final e = widget.entries[_focusedItem];
+      if (e is ContextMenuItem && e.enabled) {
+        widget.onDismiss();
+        e.onTap();
+      }
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: width,
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-          color: const Color(0xFF2C2C2E),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: MacosColors.separatorColor),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x66000000),
-              blurRadius: 18,
-              offset: Offset(0, 8),
-            ),
-          ],
-        ),
-        // A menu taller than the screen scrolls instead of overflowing past
-        // the bottom edge (the show() height estimate clamps top to 0, so a
-        // very long menu would otherwise run off-screen with no recourse).
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(context).height - 16,
+    final brightness = MacosTheme.brightnessOf(context);
+    final surface = brightness == Brightness.dark
+        ? const Color(0xFF2C2C2E)
+        : const Color(0xFFF5F5F7);
+    return Focus(
+      focusNode: _focus,
+      onKeyEvent: _onKey,
+      child: SizedBox(
+        width: widget.width,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: surface,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: MacosColors.separatorColor),
+            boxShadow: [
+              BoxShadow(
+                color: brightness == Brightness.dark
+                    ? const Color(0x66000000)
+                    : const Color(0x33000000),
+                blurRadius: 18,
+                offset: const Offset(0, 8),
+              ),
+            ],
           ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (final e in entries)
-                  switch (e) {
-                    ContextMenuDivider() => Container(
-                      height: 1,
-                      margin: const EdgeInsets.symmetric(vertical: 4),
-                      color: MacosColors.separatorColor,
-                    ),
-                    ContextMenuItem() => _ContextMenuRow(
-                      icon: e.icon,
-                      label: e.label,
-                      enabled: e.enabled,
-                      disabledTooltip: e.disabledTooltip,
-                      iconColor: e.iconColor,
-                      // Dismiss first, then act — matches a click on a native
-                      // menu item, and lets item callbacks freely rebuild the
-                      // widget that showed this menu without it fighting a still
-                      // -open overlay pointed at now-stale data.
-                      onTap: () {
-                        onDismiss();
-                        e.onTap();
-                      },
-                    ),
-                  },
-              ],
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height - 16,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < widget.entries.length; i++)
+                    switch (widget.entries[i]) {
+                      ContextMenuDivider() => Container(
+                        height: 1,
+                        margin: const EdgeInsets.symmetric(vertical: 4),
+                        color: MacosColors.separatorColor,
+                      ),
+                      final ContextMenuItem e => _ContextMenuRow(
+                        icon: e.icon,
+                        label: e.label,
+                        enabled: e.enabled,
+                        disabledTooltip: e.disabledTooltip,
+                        iconColor: e.iconColor,
+                        focused: i == _focusedItem,
+                        onTap: () {
+                          widget.onDismiss();
+                          e.onTap();
+                        },
+                      ),
+                    },
+                ],
+              ),
             ),
           ),
         ),
@@ -199,6 +268,7 @@ class _ContextMenuRow extends StatefulWidget {
   final bool enabled;
   final String? disabledTooltip;
   final Color? iconColor;
+  final bool focused;
   const _ContextMenuRow({
     required this.icon,
     required this.label,
@@ -206,6 +276,7 @@ class _ContextMenuRow extends StatefulWidget {
     this.enabled = true,
     this.disabledTooltip,
     this.iconColor,
+    this.focused = false,
   });
 
   @override
@@ -222,13 +293,14 @@ class _ContextMenuRowState extends State<_ContextMenuRow> {
     // A disabled row greys everything uniformly; an enabled row lets an
     // explicit iconColor (e.g. a red trash can) tint just the icon.
     final iconColor = enabled ? widget.iconColor : color;
+    final highlight = (_hover || widget.focused) && enabled;
     final row = Tappable(
       onEnter: enabled ? (_) => setState(() => _hover = true) : null,
       onExit: enabled ? (_) => setState(() => _hover = false) : null,
       onTap: enabled ? widget.onTap : null,
       behavior: HitTestBehavior.opaque,
       child: Container(
-        color: _hover && enabled
+        color: highlight
             ? MacosColors.systemBlueColor.withValues(alpha: 0.25)
             : const Color(0x00000000),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),

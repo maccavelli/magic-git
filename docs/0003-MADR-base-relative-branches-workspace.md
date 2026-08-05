@@ -1,8 +1,8 @@
 # Evolve the Branches tab into a base-relative branch workspace
 
 - Status: **accepted for implementation sequencing** (companion plan Phases
-  0–5 landed; lifecycle actions and forge/history handoffs in place;
-  Checkpoint C/D/E maintainer review still recommended before wide rollout)
+  0–6 landed; a11y and interaction polish in place; Phase 7 performance/
+  release evidence and Checkpoint E still recommended before wide rollout)
 - Date: 2026-08-03
 - Deciders: Mac Smith
 - Tags: branches, git, github, gitlab, forge, worktrees, comparison, ui, ux, accessibility

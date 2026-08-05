@@ -6,14 +6,22 @@ import 'package:flutter/widgets.dart';
 /// is built and `Scrollable.ensureVisible` can reach it even when the row is
 /// just off-screen. A no-op when the row isn't currently built (a large jump) —
 /// the selection still moves; only the auto-scroll is skipped.
-void ensureRowVisible(GlobalKey key, {double alignment = 0.5}) {
+///
+/// Honors Reduce Motion: when animations are disabled, jumps without duration.
+void ensureRowVisible(
+  GlobalKey key, {
+  double alignment = 0.5,
+  bool reduceMotion = false,
+}) {
   WidgetsBinding.instance.addPostFrameCallback((_) {
     final ctx = key.currentContext;
     if (ctx == null) return;
+    final disable =
+        reduceMotion || MediaQuery.maybeOf(ctx)?.disableAnimations == true;
     Scrollable.ensureVisible(
       ctx,
       alignment: alignment,
-      duration: const Duration(milliseconds: 90),
+      duration: disable ? Duration.zero : const Duration(milliseconds: 90),
       curve: Curves.easeOut,
     );
   });

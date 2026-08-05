@@ -1097,11 +1097,17 @@ class _BranchComparisonInspectorState
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  'Incoming changes from merge base '
-                  '(${base.displayName}...${widget.branch.shortName})',
-                  style: typography.caption1.copyWith(
-                    color: MacosColors.systemGrayColor,
+                MacosTooltip(
+                  message:
+                      'Three-dot range (A...B): changes since the merge base '
+                      'of A and B — what would appear in a pull request. '
+                      'Distinct from two-dot (A..B), which is commits only on B.',
+                  child: Text(
+                    'Incoming changes from merge base '
+                    '(${base.displayName}...${widget.branch.shortName}) · three-dot',
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 6),
@@ -1549,11 +1555,17 @@ class _BranchComparisonInspectorState
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'Commits only on ${widget.branch.shortName} '
-          '(${base.displayName}..${widget.branch.shortName})',
-          style: typography.caption1.copyWith(
-            color: MacosColors.systemGrayColor,
+        MacosTooltip(
+          message:
+              'Two-dot range (A..B): commits reachable from B but not A — '
+              'unique history on this branch. Distinct from three-dot (A...B) '
+              'file changes since the merge base, and from upstream to-push/to-pull.',
+          child: Text(
+            'Commits only on ${widget.branch.shortName} '
+            '(${base.displayName}..${widget.branch.shortName}) · two-dot',
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemGrayColor,
+            ),
           ),
         ),
         const SizedBox(height: 8),

@@ -30,6 +30,7 @@ import '../dnd/drag_item.dart';
 import '../forge/forge_widgets.dart' show CiDot;
 import '../worktrees/worktree_tabs.dart';
 import 'branch_detail.dart' show TagRemoteStatus, tagStatus;
+import 'branch_row_semantics.dart';
 import 'branch_view_model.dart';
 
 // ---------------------------------------------------------------------------
@@ -405,7 +406,10 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
       }
     }
     widget.onSelect(refEntry);
-    ensureRowVisible(_rowKeyFor(refEntry.name));
+    ensureRowVisible(
+      _rowKeyFor(refEntry.name),
+      reduceMotion: MediaQuery.maybeOf(context)?.disableAnimations == true,
+    );
   }
 
   List<String> _visibleLocalFullRefs() {
@@ -438,6 +442,11 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
     _select(navigable[next], shift: shift);
   }
 
+  /// Type-to-find buffer (does not steal focus from the filter field).
+  String _typeFind = '';
+  DateTime? _typeFindAt;
+  static const _typeFindWindow = Duration(milliseconds: 700);
+
   KeyEventResult _onBranchKey(FocusNode node, KeyEvent event) {
     if (event is KeyUpEvent || !widget.isActive || widget.busy) {
       return KeyEventResult.ignored;
@@ -450,6 +459,9 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
       return KeyEventResult.ignored;
     }
     final shift = HardwareKeyboard.instance.isShiftPressed;
+    final command =
+        HardwareKeyboard.instance.isMetaPressed ||
+        HardwareKeyboard.instance.isControlPressed;
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowDown:
         _moveSelection(1, shift: shift);
@@ -457,12 +469,25 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
       case LogicalKeyboardKey.arrowUp:
         _moveSelection(-1, shift: shift);
         return KeyEventResult.handled;
+      case LogicalKeyboardKey.home:
+        _jumpSelection(0, shift: shift);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.end:
+        _jumpSelection(widget.vm.navigable.length - 1, shift: shift);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.pageDown:
+        _moveSelection(10, shift: shift);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.pageUp:
+        _moveSelection(-10, shift: shift);
+        return KeyEventResult.handled;
       case LogicalKeyboardKey.space:
         if (widget.mode == BranchWorkspaceMode.review &&
             _selectionCursor != null) {
           final name = _selectionCursor!;
           final onMulti = widget.onMultiSelect;
           if (onMulti != null) {
+            // Command-Space also toggles (parity with multi-select docs).
             onMulti(widget.multiSelection.toggle(name));
             return KeyEventResult.handled;
           }
@@ -474,6 +499,11 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
         if (sel != null && !sel.isHead && sel.elsewhereWorktreePath == null) {
           widget.onCheckout(ref.read(gitServiceProvider), sel);
         }
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.contextMenu:
+      case LogicalKeyboardKey.f10
+          when shift:
+        _openContextMenuForSelection();
         return KeyEventResult.handled;
       case LogicalKeyboardKey.escape:
         // Canonical deselect — see dnd/deselect.dart for the Esc layering
@@ -487,8 +517,83 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
             widget.onMultiSelect?.call(BranchMultiSelection.empty);
           },
         );
+      default:
+        // Type-to-find: printable characters jump to the next matching row.
+        if (!command && !shift && event.character != null) {
+          final ch = event.character!;
+          if (ch.length == 1 &&
+              ch.codeUnitAt(0) >= 0x20 &&
+              ch.codeUnitAt(0) != 0x7f) {
+            final now = DateTime.now();
+            if (_typeFindAt == null ||
+                now.difference(_typeFindAt!) > _typeFindWindow) {
+              _typeFind = ch.toLowerCase();
+            } else {
+              _typeFind += ch.toLowerCase();
+            }
+            _typeFindAt = now;
+            _typeFindJump(_typeFind);
+            return KeyEventResult.handled;
+          }
+        }
     }
     return KeyEventResult.ignored;
+  }
+
+  void _jumpSelection(int index, {bool shift = false}) {
+    final navigable = widget.vm.navigable;
+    if (navigable.isEmpty || index < 0) return;
+    final i = index.clamp(0, navigable.length - 1);
+    _select(navigable[i], shift: shift);
+  }
+
+  void _typeFindJump(String prefix) {
+    final navigable = widget.vm.navigable;
+    if (navigable.isEmpty || prefix.isEmpty) return;
+    final start = () {
+      if (_selectionCursor == null) return 0;
+      for (var i = 0; i < navigable.length; i++) {
+        if (navigable[i].name == _selectionCursor) return i + 1;
+      }
+      return 0;
+    }();
+    for (var offset = 0; offset < navigable.length; offset++) {
+      final i = (start + offset) % navigable.length;
+      if (navigable[i].shortName.toLowerCase().startsWith(prefix)) {
+        _select(navigable[i]);
+        return;
+      }
+    }
+  }
+
+  void _openContextMenuForSelection() {
+    final name = _selectionCursor ?? widget.selectedRef;
+    if (name == null) return;
+    final git = ref.read(gitServiceProvider);
+    GitRef? refEntry;
+    for (final r in widget.vm.navigable) {
+      if (r.name == name) {
+        refEntry = r;
+        break;
+      }
+    }
+    if (refEntry == null) return;
+    final key = _rowKeyFor(name);
+    final box = key.currentContext?.findRenderObject() as RenderBox?;
+    final origin = box != null
+        ? box.localToGlobal(Offset(box.size.width * 0.5, box.size.height * 0.5))
+        : const Offset(200, 200);
+    final entries = refEntry.isTag
+        ? _tagMenu(
+            git,
+            refEntry,
+            tagStatus(refEntry, widget.vm.remoteTags),
+            widget.vm.tagRemote,
+          )
+        : refEntry.isRemote
+        ? _remoteMenu(git, refEntry)
+        : _localMenu(git, refEntry);
+    _menu.show(context, origin, entries, width: 250);
   }
 
   /// First tap selects (immediately); a quick second tap on the same local
@@ -1194,69 +1299,99 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
     String label,
   ) {
     final typography = MacosTheme.of(context).typography;
-    final selected = widget.selectedRef == branch.name;
+    final selected =
+        widget.selectedRef == branch.name ||
+        widget.multiSelection.contains(branch.name);
     final elsewhere = branch.elsewhereWorktreePath;
-    return DragItemDraggable(
-      item: DragRef(branch),
-      immediate: true,
-      onDragSelect: () => _select(branch),
-      child: Tappable(
-        // Manual double-tap detection rather than GestureDetector.onDoubleTap:
-        // registering onDoubleTap makes the recognizer defer EVERY single tap
-        // by the ~300ms double-tap timeout (a visible select lag, and it
-        // breaks tap-to-select in tests). Here the first tap selects
-        // immediately and a quick second tap on the same row also checks out.
-        onTap: () => _handleLocalTap(git, branch),
-        onSecondaryTapUp: (d) => _menu.show(
-          context,
-          d.globalPosition,
-          _localMenu(git, branch),
-          width: 250,
-        ),
-        child: Container(
-          color: branch.isHead
-              ? MacosColors.systemGreenColor.withValues(alpha: 0.12)
-              : selected
-              ? AppTheme.rowSelectionTint
-              : const Color(0x00000000),
-          padding: EdgeInsets.fromLTRB(16.0 + depth * 14, 7, 12, 7),
-          child: Row(
-            children: [
-              MacosIcon(
-                CupertinoIcons.arrow_branch,
-                size: 15,
-                color: branch.isHead
-                    ? MacosColors.systemGreenColor
-                    : MacosColors.systemBlueColor,
-              ),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  style: typography.body.copyWith(
-                    fontWeight: branch.isHead
-                        ? FontWeight.bold
-                        : FontWeight.normal,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+    final navigable = widget.vm.navigable;
+    final pos = navigable.indexWhere((r) => r.name == branch.name);
+    final reviewSummary =
+        widget.review?.value?.summariesByRefName[branch.name];
+    final isReview = widget.mode == BranchWorkspaceMode.review;
+    final isMerged = isReview
+        ? reviewSummary?.mergedIntoBase ?? false
+        : !branch.isHead && widget.vm.merged.contains(branch.shortName);
+    final bf = widget.vm.forge[branch.shortName];
+    // Selection tint wins over current-only green so HEAD is not "mask-only".
+    final bg = selected
+        ? AppTheme.rowSelectionTint
+        : branch.isHead
+        ? MacosColors.systemGreenColor.withValues(alpha: 0.12)
+        : const Color(0x00000000);
+    return Semantics(
+      container: true,
+      selected: selected,
+      button: true,
+      enabled: true,
+      label: branchRowSemanticsLabel(
+        branch: branch,
+        selected: selected,
+        multiSelected: widget.multiSelection.contains(branch.name),
+        position: pos >= 0 ? pos + 1 : null,
+        count: navigable.isEmpty ? null : navigable.length,
+        forge: bf,
+        merged: isMerged,
+        baseDisplayName: widget.baseState?.value?.base?.displayName,
+      ),
+      onTap: () => _handleLocalTap(git, branch),
+      child: DragItemDraggable(
+        item: DragRef(branch),
+        immediate: true,
+        onDragSelect: () => _select(branch),
+        child: Tappable(
+          // Manual double-tap detection rather than GestureDetector.onDoubleTap:
+          // registering onDoubleTap makes the recognizer defer EVERY single tap
+          // by the ~300ms double-tap timeout (a visible select lag, and it
+          // breaks tap-to-select in tests). Here the first tap selects
+          // immediately and a quick second tap on the same row also checks out.
+          onTap: () => _handleLocalTap(git, branch),
+          onSecondaryTapUp: (d) => _menu.show(
+            context,
+            d.globalPosition,
+            _localMenu(git, branch),
+            width: 250,
+          ),
+          child: Container(
+            color: bg,
+            padding: EdgeInsets.fromLTRB(16.0 + depth * 14, 7, 12, 7),
+            child: Row(
+              children: [
+                MacosIcon(
+                  CupertinoIcons.arrow_branch,
+                  size: 15,
+                  color: branch.isHead
+                      ? MacosColors.systemGreenColor
+                      : MacosColors.systemBlueColor,
                 ),
-              ),
-              if (elsewhere != null) ...[
-                const SizedBox(width: 6),
-                MacosTooltip(
-                  message: checkedOutElsewhereMessage(elsewhere),
-                  child: LabelChip(
-                    elsewhere.split('/').last,
-                    color: MacosColors.systemPurpleColor,
-                    icon: kWorktreeIcon,
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    label,
+                    style: typography.body.copyWith(
+                      fontWeight: branch.isHead
+                          ? FontWeight.bold
+                          : FontWeight.normal,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                if (elsewhere != null) ...[
+                  const SizedBox(width: 6),
+                  MacosTooltip(
+                    message: checkedOutElsewhereMessage(elsewhere),
+                    child: LabelChip(
+                      elsewhere.split('/').last,
+                      color: MacosColors.systemPurpleColor,
+                      icon: kWorktreeIcon,
+                    ),
+                  ),
+                ],
+                const Spacer(),
+                ..._forgeBadges(branch),
+                _divergenceCluster(context, branch),
               ],
-              const Spacer(),
-              ..._forgeBadges(branch),
-              _divergenceCluster(context, branch),
-            ],
+            ),
           ),
         ),
       ),
@@ -1306,9 +1441,28 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
       if (bf?.ci != null) ...[
         MacosTooltip(
           message: 'CI: ${_ciLabel(bf!.ci!)}',
-          child: CiDot(_forgeCiColor(bf.ci!), size: 9),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Non-color-only: glyph + color + spoken tooltip.
+              Text(
+                forgeCiGlyph(bf.ci!),
+                style: TextStyle(
+                  fontSize: 11,
+                  height: 1,
+                  color: _forgeCiColor(bf.ci!),
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 3),
+              CiDot(_forgeCiColor(bf.ci!), size: 9),
+            ],
+          ),
         ),
         const SizedBox(width: 6),
+      ] else ...[
+        // Reserve trailing status width so lazy forge badges do not jump text.
+        const SizedBox(width: 28),
       ],
     ];
   }
@@ -1402,10 +1556,22 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
   Widget _remoteRow(BuildContext context, GitService git, GitRef branch) {
     final typography = MacosTheme.of(context).typography;
     final selected = widget.selectedRef == branch.name;
+    final navigable = widget.vm.navigable;
+    final pos = navigable.indexWhere((r) => r.name == branch.name);
     // Keyed like [_localRow] so ↑/↓ into this section can scroll the selected
     // row into view — [ensureRowVisible] no-ops without a resolvable key, so an
     // unkeyed remote/tag row moved the selection off-screen invisibly.
-    return KeyedSubtree(
+    return Semantics(
+      container: true,
+      selected: selected,
+      button: true,
+      label: remoteBranchSemanticsLabel(
+        branch: branch,
+        selected: selected,
+        position: pos >= 0 ? pos + 1 : null,
+        count: navigable.isEmpty ? null : navigable.length,
+      ),
+      child: KeyedSubtree(
       key: _rowKeyFor(branch.name),
       child: Tappable(
         behavior: HitTestBehavior.opaque,
@@ -1438,6 +1604,7 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
             ],
           ),
         ),
+      ),
       ),
     );
   }
