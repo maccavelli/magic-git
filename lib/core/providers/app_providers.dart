@@ -2561,6 +2561,10 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   commitFileDiffProvider,
   conflictFileProvider,
   untrackedDiffProvider,
+  // Phase 2 comparison inspector (OID-keyed; cleared on disconnect / ⌘R).
+  branchUniqueCommitsProvider,
+  branchComparisonMetadataProvider,
+  branchDiffProvider,
   mergeRequestsProvider,
   pipelinesProvider,
   jobsProvider,

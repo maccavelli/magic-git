@@ -1007,16 +1007,22 @@ class _BranchComparisonInspectorState
         branchOid: branchOid,
       )),
     );
-    // Patch is only watched on the Changes tab.
-    final patchAsync = ref.watch(
-      branchDiffProvider((
-        repoPath: widget.repoPath,
-        baseOid: baseOid,
-        branchOid: branchOid,
-        context: _contextLines,
-        ignoreWhitespace: _ignoreWs,
-      )),
-    );
+    // Patch is only watched on the Changes tab, and only after ancestry is
+    // known to be connected — unrelated histories must not run three-dot diff.
+    final meta = metaAsync.asData?.value;
+    final fetchPatch =
+        meta != null && meta.ancestry == ComparisonAncestry.connected;
+    final AsyncValue<String>? patchAsync = fetchPatch
+        ? ref.watch(
+            branchDiffProvider((
+              repoPath: widget.repoPath,
+              baseOid: baseOid,
+              branchOid: branchOid,
+              context: _contextLines,
+              ignoreWhitespace: _ignoreWs,
+            )),
+          )
+        : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1066,23 +1072,8 @@ class _BranchComparisonInspectorState
         ),
         const SizedBox(height: 8),
         metaAsync.when(
-          loading: () => const SizedBox.shrink(),
-          error: (_, _) => const SizedBox.shrink(),
-          data: (meta) {
-            if (meta.ancestry == ComparisonAncestry.unrelated) {
-              return Text(
-                'No common ancestor — three-dot patch not available.',
-                style: typography.caption1.copyWith(
-                  color: MacosColors.systemOrangeColor,
-                ),
-              );
-            }
-            return const SizedBox.shrink();
-          },
-        ),
-        patchAsync.when(
           loading: () => Text(
-            'Loading patch…',
+            'Loading comparison…',
             style: typography.caption1.copyWith(
               color: MacosColors.systemGrayColor,
             ),
@@ -1093,20 +1084,53 @@ class _BranchComparisonInspectorState
               color: MacosColors.systemRedColor,
             ),
           ),
-          data: (patch) {
-            if (patch.trim().isEmpty) {
+          data: (resolved) {
+            if (resolved.ancestry == ComparisonAncestry.unrelated) {
               return Text(
-                'No patch changes.',
+                'No common ancestor — three-dot patch not available.',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemOrangeColor,
+                ),
+              );
+            }
+            final async = patchAsync;
+            if (async == null) {
+              return Text(
+                'Loading patch…',
                 style: typography.caption1.copyWith(
                   color: MacosColors.systemGrayColor,
                 ),
               );
             }
-            return SizedBox(
-              height: 360,
-              child: _split
-                  ? SplitDiffView(diff: patch)
-                  : DiffView(diff: patch),
+            return async.when(
+              loading: () => Text(
+                'Loading patch…',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              ),
+              error: (e, _) => Text(
+                displayError(e),
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemRedColor,
+                ),
+              ),
+              data: (patch) {
+                if (patch.trim().isEmpty) {
+                  return Text(
+                    'No patch changes.',
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
+                    ),
+                  );
+                }
+                return SizedBox(
+                  height: 360,
+                  child: _split
+                      ? SplitDiffView(diff: patch)
+                      : DiffView(diff: patch),
+                );
+              },
             );
           },
         ),

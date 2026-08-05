@@ -96,16 +96,17 @@ void main() {
           }
           if (args.contains('sh') && args.contains('branch-cmp')) {
             const sep = '\u0002RMGCMP\u0002';
-            return SSHCommandResult(
+            const stdout =
+                '${sep}NS\n'
+                'M\u0000lib/a.dart\u0000'
+                '$sep'
+                'NU\n'
+                '4\t2\tlib/a.dart\u0000'
+                '$sep'
+                'EC\n0 0\n';
+            return const SSHCommandResult(
               exitCode: 0,
-              stdout:
-                  '${sep}NS\n'
-                  'M\u0000lib/a.dart\u0000'
-                  '$sep'
-                  'NU\n'
-                  '4\t2\tlib/a.dart\u0000'
-                  '$sep'
-                  'EC\n0 0\n',
+              stdout: stdout,
               stderr: '',
             );
           }
@@ -186,6 +187,124 @@ void main() {
       );
       expect(meta.files.single.path, 'only.txt');
       expect(calls, greaterThanOrEqualTo(4)); // mb + combined + ns + nu
+    });
+
+    test('empty connected diff returns zero files, not unrelated', () async {
+      final exec = MockExecutor(
+        onExecute: (call) {
+          final args = call.gitArgs.join(' ');
+          if (args.contains('merge-base')) {
+            return const SSHCommandResult(
+              exitCode: 0,
+              stdout: '$_mergeBase\n',
+              stderr: '',
+            );
+          }
+          if (args.contains('sh') && args.contains('branch-cmp')) {
+            const sep = '\u0002RMGCMP\u0002';
+            const stdout =
+                '${sep}NS\n'
+                '$sep'
+                'NU\n'
+                '$sep'
+                'EC\n0 0\n';
+            return const SSHCommandResult(
+              exitCode: 0,
+              stdout: stdout,
+              stderr: '',
+            );
+          }
+          fail('unexpected: $args');
+        },
+      );
+      final meta = await GitService(exec).branchComparisonMetadata(
+        _repo,
+        baseOid: _base,
+        branchOid: _branch,
+      );
+      expect(meta.ancestry, ComparisonAncestry.connected);
+      expect(meta.files, isEmpty);
+      expect(meta.additions, 0);
+      expect(meta.deletions, 0);
+      expect(meta.truncated, isFalse);
+    });
+
+    test('merge-base hard failure is an error, not unrelated', () async {
+      final exec = MockExecutor(
+        onExecute: (call) {
+          final args = call.gitArgs.join(' ');
+          if (args.contains('merge-base')) {
+            return const SSHCommandResult(
+              exitCode: 128,
+              stdout: '',
+              stderr: 'fatal: Not a valid object name',
+            );
+          }
+          fail('diff must not run on merge-base failure: $args');
+        },
+      );
+      await expectLater(
+        GitService(exec).branchComparisonMetadata(
+          _repo,
+          baseOid: _base,
+          branchOid: _branch,
+        ),
+        throwsA(isA<GitException>()),
+      );
+    });
+  });
+
+  group('path edge cases', () {
+    test('parses Unicode, tab, and newline path segments under NUL framing', () {
+      const unicode = 'docs/日本語.md';
+      const withTab = 'a\tb.txt';
+      const withNl = 'line\nbreak.c';
+      final names = parseNameStatusZ(
+        'M\u0000$unicode\u0000'
+        'A\u0000$withTab\u0000'
+        'D\u0000$withNl\u0000'
+        'R100\u0000old name\u0000new name\u0000',
+      );
+      expect(names.map((n) => n.path).toList(), [
+        unicode,
+        withTab,
+        withNl,
+        'new name',
+      ]);
+      expect(names[3].oldPath, 'old name');
+
+      final stats = parseNumstatZ(
+        '1\t0\t$unicode\u0000'
+        '2\t1\t$withTab\u0000'
+        '-\t-\t$withNl\u0000'
+        '3\t0\u0000old name\u0000new name\u0000',
+      );
+      expect(stats[unicode]?.additions, 1);
+      expect(stats[withTab]?.deletions, 1);
+      expect(stats[withNl]?.binary, isTrue);
+      expect(stats['new name']?.additions, 3);
+
+      final meta = assembleComparisonMetadata(
+        baseOid: _base,
+        branchOid: _branch,
+        mergeBaseOid: _mergeBase,
+        nameStatusZ:
+            'M\u0000$unicode\u0000'
+            'A\u0000$withTab\u0000',
+        numstatZ:
+            '1\t0\t$unicode\u0000'
+            '2\t1\t$withTab\u0000',
+      );
+      expect(meta.files, hasLength(2));
+      expect(meta.additions, 3);
+      expect(meta.deletions, 1);
+    });
+
+    test('copy status is parsed like rename', () {
+      final names = parseNameStatusZ('C080\u0000src\u0000dst\u0000');
+      expect(names.single.status, 'C080');
+      expect(names.single.oldPath, 'src');
+      expect(names.single.path, 'dst');
     });
   });
 }

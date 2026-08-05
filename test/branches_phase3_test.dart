@@ -47,6 +47,7 @@ class _FakeGit extends GitService {
   final deleted = <String>[];
   final checkouts = <String>[];
   final trackingCheckouts = <(String, String)>[]; // (localName, remoteRef)
+  final diffRanges = <String>[];
   Map<String, List<GitCommit>> logsByRevision = const {};
 
   @override
@@ -94,6 +95,17 @@ class _FakeGit extends GitService {
     if (skip >= allCommits.length) return const [];
     return allCommits.skip(skip).take(maxCount).toList();
   }
+
+  @override
+  Future<String> diffRange(
+    String repoPath,
+    String range, {
+    bool ignoreWhitespace = false,
+    int? context,
+  }) async {
+    diffRanges.add(range);
+    return 'diff --git a/f b/f\n+hi\n';
+  }
 }
 
 GitCommit _commit(String hash, String subject) => GitCommit(
@@ -111,6 +123,8 @@ Future<_FakeGit> _pump(
   List<GitRef> refs = _refs,
   Set<String> merged = const {},
   Map<String, List<GitCommit>> logsByRevision = const {},
+  BranchComparisonMetadata Function(({String repoPath, String baseOid, String branchOid}) key)?
+      metadataFor,
 }) async {
   tester.view.physicalSize = const Size(1500, 1300);
   tester.view.devicePixelRatio = 1.0;
@@ -142,10 +156,12 @@ Future<_FakeGit> _pump(
         ),
       ),
       branchComparisonMetadataProvider.overrideWith(
-        (ref, key) async => BranchComparisonMetadata.unrelated(
-          baseOid: key.baseOid,
-          branchOid: key.branchOid,
-        ),
+        (ref, key) async =>
+            metadataFor?.call(key) ??
+            BranchComparisonMetadata.unrelated(
+              baseOid: key.baseOid,
+              branchOid: key.branchOid,
+            ),
       ),
     ],
   );
@@ -188,6 +204,70 @@ void main() {
     expect(find.text('Wire the thing'), findsOneWidget);
     expect(find.text('Add a test'), findsOneWidget);
   });
+
+  testWidgets(
+    'Overview and Commits do not fetch the three-dot patch; Changes does once',
+    (tester) async {
+      final git = await _pump(
+        tester,
+        metadataFor: (key) => BranchComparisonMetadata(
+          baseOid: key.baseOid,
+          branchOid: key.branchOid,
+          mergeBaseOid: _mainOid,
+          ancestry: ComparisonAncestry.connected,
+          files: const [
+            BranchChangedFile(status: 'M', path: 'lib/a.dart', additions: 1, deletions: 0),
+          ],
+          additions: 1,
+          deletions: 0,
+          truncated: false,
+        ),
+      );
+
+      await tester.tap(find.text('feature'));
+      await tester.pumpAndSettle();
+
+      // Default Overview tab — metadata only.
+      expect(find.textContaining('Compared with main'), findsWidgets);
+      expect(git.diffRanges, isEmpty);
+
+      await tester.tap(find.text('Commits'));
+      await tester.pumpAndSettle();
+      expect(git.diffRanges, isEmpty);
+
+      await tester.tap(find.text('Changes'));
+      await tester.pumpAndSettle();
+      expect(git.diffRanges, ['$_mainOid...$_featureOid']);
+      expect(find.textContaining('three-dot'), findsOneWidget);
+
+      // Re-tapping Changes does not re-request while the provider stays warm.
+      await tester.tap(find.text('Overview'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Changes'));
+      await tester.pumpAndSettle();
+      expect(git.diffRanges, ['$_mainOid...$_featureOid']);
+    },
+  );
+
+  testWidgets(
+    'unrelated histories show no common ancestor and never fetch the patch',
+    (tester) async {
+      final git = await _pump(tester);
+
+      await tester.tap(find.text('feature'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('No common ancestor'), findsOneWidget);
+      expect(git.diffRanges, isEmpty);
+
+      await tester.tap(find.text('Changes'));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('No common ancestor — three-dot patch not available'),
+        findsOneWidget,
+      );
+      expect(git.diffRanges, isEmpty);
+    },
+  );
 
   testWidgets('the dashboard has no HEAD-relative merged bulk delete', (
     tester,
