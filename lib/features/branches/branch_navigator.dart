@@ -51,9 +51,9 @@ enum DropOp { merge, rebase, cancel }
 // Private types
 // ---------------------------------------------------------------------------
 
-/// Stable names for the canonical collapse store (`collapsedSectionsProvider`
-/// in `../common/section_collapse.dart`), prefixed so they never collide with
-/// another tab's sections in that shared flat namespace.
+/// Stable names for Branch section collapse keys (`branches.*`).
+/// Matches the coordinator's identity-keyed workspace prefs storage; the
+/// global `collapsedSectionsProvider` is only a legacy migration source.
 abstract final class _BranchSections {
   static const pinned = 'branches.pinned';
   static const local = 'branches.local';
@@ -700,6 +700,15 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
                 ),
               ],
             ),
+            if (_reviewStatusLabel() case final status?) ...[
+              const SizedBox(height: 6),
+              Text(
+                status,
+                style: MacosTheme.of(context).typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              ),
+            ],
           ],
           const SizedBox(height: 8),
           Row(
@@ -742,6 +751,29 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
         ],
       ),
     );
+  }
+
+  /// Loading / error / partial-failure caption for the Review summary load.
+  String? _reviewStatusLabel() {
+    final review = widget.review;
+    if (review == null) {
+      final base = widget.baseState;
+      if (base == null || base.isLoading) return 'Resolving comparison base…';
+      if (base.hasError) return 'Could not resolve a comparison base.';
+      if (base.value?.base == null) return null;
+      return 'Preparing base-relative summary…';
+    }
+    if (review.isLoading) return 'Loading base-relative summary…';
+    if (review.hasError) {
+      return 'Could not load base-relative summary. Try switching modes or '
+          'refreshing.';
+    }
+    final failures = review.value?.failuresByRefName.length ?? 0;
+    if (failures > 0) {
+      return '$failures branch${failures == 1 ? '' : 'es'} could not be '
+          'compared with the base.';
+    }
+    return null;
   }
 
   Widget _baseSelector() {

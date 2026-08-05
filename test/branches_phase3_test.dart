@@ -1,7 +1,6 @@
-// Phase-3 differentiators on the Branches tab: the single-branch linear commit
-// view in the detail pane and keyboard navigation across all sections. The
-// former HEAD-relative dashboard cleanup is intentionally absent until the
-// base-safe Phase 4 flow replaces it.
+// Branches detail comparison commits (baseOid..branchOid) and keyboard
+// navigation across all sections. The former HEAD-relative dashboard cleanup
+// is intentionally absent until the base-safe Phase 4 flow replaces it.
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
@@ -9,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/branch_forge_status.dart';
+import 'package:remote_magic_git/core/git/branch_comparison.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -18,18 +18,28 @@ import 'package:remote_magic_git/features/branches/branches_view.dart';
 import 'package:remote_magic_git/features/common/inline_action_button.dart';
 
 const _repo = '/repo';
+const _mainOid = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _featureOid = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const _otherOid = 'cccccccccccccccccccccccccccccccccccccccc';
+const _remoteOid = 'dddddddddddddddddddddddddddddddddddddddd';
+const _tagOid = 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
 
 const _refs = [
-  GitRef(name: 'refs/heads/main', oid: 'aaa', isHead: true, subject: 's'),
-  GitRef(name: 'refs/heads/feature', oid: 'bbb', isHead: false, subject: 's'),
-  GitRef(name: 'refs/heads/other', oid: 'ccc', isHead: false, subject: 's'),
+  GitRef(name: 'refs/heads/main', oid: _mainOid, isHead: true, subject: 's'),
   GitRef(
-    name: 'refs/remotes/origin/topic',
-    oid: 'ddd',
+    name: 'refs/heads/feature',
+    oid: _featureOid,
     isHead: false,
     subject: 's',
   ),
-  GitRef(name: 'refs/tags/v1', oid: 'eee', isHead: false, subject: 's'),
+  GitRef(name: 'refs/heads/other', oid: _otherOid, isHead: false, subject: 's'),
+  GitRef(
+    name: 'refs/remotes/origin/topic',
+    oid: _remoteOid,
+    isHead: false,
+    subject: 's',
+  ),
+  GitRef(name: 'refs/tags/v1', oid: _tagOid, isHead: false, subject: 's'),
 ];
 
 class _FakeGit extends GitService {
@@ -37,6 +47,7 @@ class _FakeGit extends GitService {
   final deleted = <String>[];
   final checkouts = <String>[];
   final trackingCheckouts = <(String, String)>[]; // (localName, remoteRef)
+  Map<String, List<GitCommit>> logsByRevision = const {};
 
   @override
   Future<void> deleteBranch(
@@ -60,6 +71,29 @@ class _FakeGit extends GitService {
   }) async {
     trackingCheckouts.add((localName, remoteRef));
   }
+
+  @override
+  Future<List<GitCommit>> log(
+    String repoPath, {
+    String revision = 'HEAD',
+    int maxCount = 200,
+    int skip = 0,
+    String? grep,
+    String? author,
+    String? since,
+    String? until,
+    String? path,
+    String? pathQuery,
+    String? sha,
+    bool all = false,
+    bool follow = false,
+    bool noMerges = false,
+    bool fullHistory = false,
+  }) async {
+    final allCommits = logsByRevision[revision] ?? const <GitCommit>[];
+    if (skip >= allCommits.length) return const [];
+    return allCommits.skip(skip).take(maxCount).toList();
+  }
 }
 
 GitCommit _commit(String hash, String subject) => GitCommit(
@@ -76,12 +110,12 @@ Future<_FakeGit> _pump(
   WidgetTester tester, {
   List<GitRef> refs = _refs,
   Set<String> merged = const {},
-  Map<(String, String), List<GitCommit>> commits = const {},
+  Map<String, List<GitCommit>> logsByRevision = const {},
 }) async {
   tester.view.physicalSize = const Size(1500, 1300);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
-  final git = _FakeGit();
+  final git = _FakeGit()..logsByRevision = logsByRevision;
   final container = ProviderContainer(
     overrides: [
       gitServiceProvider.overrideWithValue(git),
@@ -91,11 +125,28 @@ Future<_FakeGit> _pump(
       branchForgeProvider(_repo).overrideWith((ref) async => const {}),
       mergedBranchesProvider(_repo).overrideWith((ref) async => merged),
       statusProvider(_repo).overrideWith(
-        (ref) async =>
-            GitStatus(branch: const GitBranchInfo(), files: const []),
+        (ref) async => GitStatus(
+          branch: const GitBranchInfo(head: 'main', oid: _mainOid),
+          files: const [],
+        ),
       ),
-      for (final e in commits.entries)
-        branchCommitsProvider(e.key).overrideWith((ref) async => e.value),
+      branchBaseProvider.overrideWith(
+        (ref, key) async => const BranchBaseResolution(
+          base: BranchBase(
+            refName: 'refs/heads/main',
+            displayName: 'main',
+            oid: _mainOid,
+            source: BranchBaseSource.localMain,
+            isFallback: false,
+          ),
+        ),
+      ),
+      branchComparisonMetadataProvider.overrideWith(
+        (ref, key) async => BranchComparisonMetadata.unrelated(
+          baseOid: key.baseOid,
+          branchOid: key.branchOid,
+        ),
+      ),
     ],
   );
   addTearDown(container.dispose);
@@ -113,15 +164,15 @@ Future<_FakeGit> _pump(
 }
 
 void main() {
-  testWidgets('the detail pane shows the selected branch\'s recent commits', (
+  testWidgets('the detail pane shows unique commits vs the comparison base', (
     tester,
   ) async {
     await _pump(
       tester,
-      commits: {
-        (_repo, 'feature'): [
-          _commit('abcdef1234', 'Wire the thing'),
-          _commit('bbccdd5678', 'Add a test'),
+      logsByRevision: {
+        '$_mainOid..$_featureOid': [
+          _commit('abcdef1234abcdef1234abcdef1234abcdef1234', 'Wire the thing'),
+          _commit('bbccdd5678bbccdd5678bbccdd5678bbccdd5678', 'Add a test'),
         ],
       },
     );
@@ -129,7 +180,11 @@ void main() {
     await tester.tap(find.text('feature'));
     await tester.pumpAndSettle();
 
-    expect(find.text('RECENT COMMITS'), findsOneWidget);
+    // Overview is default; open Commits tab for unique history.
+    await tester.tap(find.text('Commits'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Commits only on feature'), findsOneWidget);
     expect(find.text('Wire the thing'), findsOneWidget);
     expect(find.text('Add a test'), findsOneWidget);
   });
@@ -200,11 +255,21 @@ void main() {
   testWidgets('a remote whose local branch already exists switches to it '
       '(plain checkout, no re-create)', (tester) async {
     const refs = [
-      GitRef(name: 'refs/heads/main', oid: 'aaa', isHead: true, subject: 's'),
-      GitRef(name: 'refs/heads/topic', oid: 'bbb', isHead: false, subject: 's'),
+      GitRef(
+        name: 'refs/heads/main',
+        oid: _mainOid,
+        isHead: true,
+        subject: 's',
+      ),
+      GitRef(
+        name: 'refs/heads/topic',
+        oid: _featureOid,
+        isHead: false,
+        subject: 's',
+      ),
       GitRef(
         name: 'refs/remotes/origin/topic',
-        oid: 'ccc',
+        oid: _remoteOid,
         isHead: false,
         subject: 's',
       ),

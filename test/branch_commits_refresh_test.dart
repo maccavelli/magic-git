@@ -1,11 +1,9 @@
-// The Branches detail's RECENT COMMITS preview must not go stale.
+// Branches detail comparison commits are OID-keyed (`baseOid..branchOid`) via
+// branchUniqueCommitsProvider. The legacy branchCommitsProvider (name-keyed)
+// remains for non-comparison surfaces and must still re-fetch when refs move.
 //
-// branchCommitsProvider is keyed by branch *name*, which is stable across a
-// tip move, and it sits in neither refresh family — so a commit/merge/rebase
-// on the selected branch would leave the preview on pre-mutation history until
-// the branch was reselected, and ⌘R wouldn't fix it. The fix makes it depend
-// on refsProvider (invalidated by every mutation + the watcher), so it rides
-// that refresh. This pins that dependency.
+// This file pins: (1) name-keyed preview rides refs invalidation; (2) unique
+// commits request the two-dot range, not inherited branch history.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -87,6 +85,29 @@ void main() {
         greaterThan(before),
         reason: 'refs invalidation must re-fetch the branch preview',
       );
+    },
+  );
+
+  test(
+    'branchUniqueCommitsProvider walks base..branch, not bare branch name',
+    () async {
+      final git = _CountingGit();
+      final container = ProviderContainer(
+        overrides: [gitServiceProvider.overrideWithValue(git)],
+      );
+      addTearDown(container.dispose);
+
+      const base = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const tip = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      await container.read(
+        branchUniqueCommitsProvider((
+          repoPath: _repo,
+          baseOid: base,
+          branchOid: tip,
+        )).future,
+      );
+      expect(git.logRevisions, ['$base..$tip']);
+      expect(git.logRevisions.single, isNot(equals('feature')));
     },
   );
 }

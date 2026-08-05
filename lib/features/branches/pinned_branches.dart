@@ -49,14 +49,15 @@ Future<void> setPinnedBranch(
       : null;
   if (identity != null) {
     try {
-      final current = await ref.read(
-        branchWorkspacePrefsProvider(repoPath).future,
-      );
-      final pins = current.pinnedBranchNames.toSet();
-      pinned ? pins.add(branch) : pins.remove(branch);
-      await saveBranchWorkspacePrefs(
+      await updateBranchWorkspacePrefs(
         identity: identity,
-        next: current.copyWith(pinnedBranchNames: pins.toList()..sort()),
+        legacyRepoPath: repoPath,
+        globalCollapsed: await loadLegacyBranchCollapsedSections(),
+        update: (current) {
+          final pins = current.pinnedBranchNames.toSet();
+          pinned ? pins.add(branch) : pins.remove(branch);
+          return current.copyWith(pinnedBranchNames: pins.toList()..sort());
+        },
       );
     } finally {
       ref.invalidate(branchWorkspacePrefsProvider(repoPath));

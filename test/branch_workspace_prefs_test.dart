@@ -163,4 +163,75 @@ void main() {
       expect(merged.grouped, isTrue); // untouched field from disk
     });
   });
+
+  group('updateBranchWorkspacePrefs serialization', () {
+    test('concurrent updates do not clobber each other', () async {
+      final identity = RepositoryUiIdentity.ssh(
+        connectionId: 'c-race',
+        gitCommonDir: '/repo/.git',
+      );
+      SharedPreferences.setMockInitialValues({});
+      await saveBranchWorkspacePrefs(
+        identity: identity,
+        next: const BranchWorkspacePrefs(),
+      );
+
+      // Two concurrent RMW updates: pin and mode. Without serialization the
+      // second writer would reload the empty record and drop the pin.
+      final pin = updateBranchWorkspacePrefs(
+        identity: identity,
+        update: (c) => c.copyWith(pinnedBranchNames: ['main']),
+      );
+      final mode = updateBranchWorkspacePrefs(
+        identity: identity,
+        update: (c) => c.copyWith(lastMode: 'review'),
+      );
+      await Future.wait([pin, mode]);
+
+      final loaded = await loadBranchWorkspacePrefs(
+        identity: identity,
+        legacyRepoPath: null,
+      );
+      expect(loaded.pinnedBranchNames, ['main']);
+      expect(loaded.lastMode, 'review');
+    });
+  });
+
+  group('session wipe', () {
+    test('clearSessionBranchWorkspacePrefs drops all ad-hoc records', () async {
+      final a = RepositoryUiIdentity.adhoc(
+        backend: 'ssh',
+        sessionEpoch: 1,
+        gitCommonDir: '/a/.git',
+      );
+      final b = RepositoryUiIdentity.adhoc(
+        backend: 'local',
+        sessionEpoch: 2,
+        gitCommonDir: '/b/.git',
+      );
+      await saveBranchWorkspacePrefs(
+        identity: a,
+        next: const BranchWorkspacePrefs(lastMode: 'review'),
+      );
+      await saveBranchWorkspacePrefs(
+        identity: b,
+        next: const BranchWorkspacePrefs(grouped: true),
+      );
+      clearSessionBranchWorkspacePrefs();
+      expect(
+        (await loadBranchWorkspacePrefs(
+          identity: a,
+          legacyRepoPath: null,
+        )).lastMode,
+        'browse',
+      );
+      expect(
+        (await loadBranchWorkspacePrefs(
+          identity: b,
+          legacyRepoPath: null,
+        )).grouped,
+        isFalse,
+      );
+    });
+  });
 }

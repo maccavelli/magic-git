@@ -92,12 +92,29 @@ Future<BranchBaseResolution> resolveBranchBase({
       : (remotes.contains('origin') ? 'origin' : remotes.first);
   if (preferredRemote != null) {
     final remoteHead = await resolveRemoteHead(preferredRemote);
-    final candidate = _refByName(refs, remoteHead);
-    if (candidate != null) {
-      return BranchBaseResolution(
-        base: _baseFromRef(candidate, BranchBaseSource.remoteHead),
-        unavailableStoredRef: unavailableStoredRef,
-      );
+    if (remoteHead != null && remoteHead.isNotEmpty) {
+      final candidate = _refByName(refs, remoteHead);
+      if (candidate != null && isFullGitOid(candidate.oid)) {
+        return BranchBaseResolution(
+          base: _baseFromRef(candidate, BranchBaseSource.remoteHead),
+          unavailableStoredRef: unavailableStoredRef,
+        );
+      }
+      // Symref exists but the tip is missing from the snapshot (partial fetch,
+      // pruned remote-tracking ref, etc.). Resolve the commit OID directly.
+      final oid = await resolveCommit('$remoteHead^{commit}');
+      if (oid != null && isFullGitOid(oid)) {
+        return BranchBaseResolution(
+          base: BranchBase(
+            refName: remoteHead,
+            displayName: _displayRef(remoteHead),
+            oid: oid,
+            source: BranchBaseSource.remoteHead,
+            isFallback: false,
+          ),
+          unavailableStoredRef: unavailableStoredRef,
+        );
+      }
     }
   }
 
@@ -107,7 +124,7 @@ Future<BranchBaseResolution> resolveBranchBase({
         ? null
         : _refByName(refs, 'refs/remotes/$preferredRemote/$forgeDefaultBranch');
     final candidate = local ?? remote;
-    if (candidate != null) {
+    if (candidate != null && isFullGitOid(candidate.oid)) {
       return BranchBaseResolution(
         base: _baseFromRef(candidate, BranchBaseSource.forgeDefault),
         unavailableStoredRef: unavailableStoredRef,
@@ -120,7 +137,7 @@ Future<BranchBaseResolution> resolveBranchBase({
     ('refs/heads/master', BranchBaseSource.localMaster),
   ]) {
     final ref = _refByName(refs, candidate.$1);
-    if (ref != null) {
+    if (ref != null && isFullGitOid(ref.oid)) {
       return BranchBaseResolution(
         base: _baseFromRef(ref, candidate.$2, isFallback: true),
         unavailableStoredRef: unavailableStoredRef,
@@ -131,7 +148,7 @@ Future<BranchBaseResolution> resolveBranchBase({
   final currentName = currentBranch;
   if (currentName != null) {
     final current = _refByName(refs, 'refs/heads/$currentName');
-    if (current != null) {
+    if (current != null && isFullGitOid(current.oid)) {
       return BranchBaseResolution(
         base: _baseFromRef(
           current,
@@ -256,4 +273,198 @@ class BranchRefsFingerprint {
 
   @override
   int get hashCode => canonical.hashCode;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — comparison inspector domain
+// ---------------------------------------------------------------------------
+
+/// How the patch between base and branch is computed. Only three-dot is
+/// shipped; a future direct two-dot path must opt in explicitly.
+enum BranchComparisonMethod { threeDot }
+
+enum ComparisonAncestry { connected, unrelated }
+
+class BranchChangedFile {
+  final String status;
+  final String path;
+  final String? oldPath;
+  final int? additions;
+  final int? deletions;
+  final bool binary;
+
+  const BranchChangedFile({
+    required this.status,
+    required this.path,
+    this.oldPath,
+    this.additions,
+    this.deletions,
+    this.binary = false,
+  });
+}
+
+class BranchComparisonMetadata {
+  final String baseOid;
+  final String branchOid;
+  final String? mergeBaseOid;
+  final ComparisonAncestry ancestry;
+  final List<BranchChangedFile> files;
+  final int additions;
+  final int deletions;
+  final bool truncated;
+  final BranchComparisonMethod method;
+
+  const BranchComparisonMetadata({
+    required this.baseOid,
+    required this.branchOid,
+    required this.mergeBaseOid,
+    required this.ancestry,
+    required this.files,
+    required this.additions,
+    required this.deletions,
+    required this.truncated,
+    this.method = BranchComparisonMethod.threeDot,
+  });
+
+  static BranchComparisonMetadata unrelated({
+    required String baseOid,
+    required String branchOid,
+  }) => BranchComparisonMetadata(
+    baseOid: baseOid,
+    branchOid: branchOid,
+    mergeBaseOid: null,
+    ancestry: ComparisonAncestry.unrelated,
+    files: const [],
+    additions: 0,
+    deletions: 0,
+    truncated: false,
+  );
+}
+
+/// Default file-list cap for comparison metadata before [truncated] is set.
+const int kBranchComparisonMaxFiles = 500;
+
+/// Parses `git diff --name-status -z` output into ordered path records.
+///
+/// Ordinary: `STATUS\0path\0`. Rename/copy: `STATUS\0old\0new\0` (status may
+/// include a similarity score, e.g. `R100`).
+List<({String status, String path, String? oldPath})> parseNameStatusZ(
+  String raw,
+) {
+  final out = <({String status, String path, String? oldPath})>[];
+  final parts = raw.split('\u0000');
+  var i = 0;
+  while (i < parts.length) {
+    final status = parts[i];
+    if (status.isEmpty) {
+      i++;
+      continue;
+    }
+    final code = status[0];
+    if ((code == 'R' || code == 'C') && i + 2 < parts.length) {
+      out.add((status: status, path: parts[i + 2], oldPath: parts[i + 1]));
+      i += 3;
+      continue;
+    }
+    if (i + 1 < parts.length) {
+      out.add((status: status, path: parts[i + 1], oldPath: null));
+      i += 2;
+      continue;
+    }
+    break;
+  }
+  return out;
+}
+
+/// Parses `git diff --numstat -z` into path → (add, del, binary).
+///
+/// Ordinary: `added\tdeleted\tpath\0`. With renames under `-z`, git emits
+/// `added\tdeleted\0old\0new\0` (no path on the first field). Binary files use
+/// `-` for both counts.
+Map<String, ({int? additions, int? deletions, bool binary})> parseNumstatZ(
+  String raw,
+) {
+  final out = <String, ({int? additions, int? deletions, bool binary})>{};
+  final parts = raw.split('\u0000');
+  var i = 0;
+  while (i < parts.length) {
+    final head = parts[i];
+    if (head.isEmpty) {
+      i++;
+      continue;
+    }
+    final tabs = head.split('\t');
+    if (tabs.length >= 3) {
+      final path = tabs.sublist(2).join('\t');
+      out[path] = _numstatCounts(tabs[0], tabs[1]);
+      i++;
+      continue;
+    }
+    if (tabs.length == 2 && i + 2 < parts.length) {
+      // Rename form: counts\0old\0new\0 — index by new path.
+      final newPath = parts[i + 2];
+      out[newPath] = _numstatCounts(tabs[0], tabs[1]);
+      i += 3;
+      continue;
+    }
+    i++;
+  }
+  return out;
+}
+
+({int? additions, int? deletions, bool binary}) _numstatCounts(
+  String add,
+  String del,
+) {
+  if (add == '-' || del == '-') {
+    return (additions: null, deletions: null, binary: true);
+  }
+  return (
+    additions: int.tryParse(add),
+    deletions: int.tryParse(del),
+    binary: false,
+  );
+}
+
+/// Join name-status + numstat into [BranchComparisonMetadata] for a connected
+/// history. Applies [maxFiles] truncation to the file list only.
+BranchComparisonMetadata assembleComparisonMetadata({
+  required String baseOid,
+  required String branchOid,
+  required String mergeBaseOid,
+  required String nameStatusZ,
+  required String numstatZ,
+  int maxFiles = kBranchComparisonMaxFiles,
+}) {
+  final names = parseNameStatusZ(nameStatusZ);
+  final stats = parseNumstatZ(numstatZ);
+  final truncated = names.length > maxFiles;
+  final limited = truncated ? names.take(maxFiles).toList() : names;
+  final files = <BranchChangedFile>[
+    for (final n in limited)
+      BranchChangedFile(
+        status: n.status,
+        path: n.path,
+        oldPath: n.oldPath,
+        additions: stats[n.path]?.additions,
+        deletions: stats[n.path]?.deletions,
+        binary: stats[n.path]?.binary ?? false,
+      ),
+  ];
+  var additions = 0;
+  var deletions = 0;
+  for (final f in files) {
+    additions += f.additions ?? 0;
+    deletions += f.deletions ?? 0;
+  }
+  return BranchComparisonMetadata(
+    baseOid: baseOid,
+    branchOid: branchOid,
+    mergeBaseOid: mergeBaseOid,
+    ancestry: ComparisonAncestry.connected,
+    files: files,
+    additions: additions,
+    deletions: deletions,
+    truncated: truncated,
+  );
 }

@@ -110,6 +110,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // Browse with no selection does not resolve base or review summary.
     expect(baseReads, 0);
     expect(reviewReads, 0);
     expect(find.text('origin/feature'), findsOneWidget);

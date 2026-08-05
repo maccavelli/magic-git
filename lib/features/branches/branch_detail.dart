@@ -10,7 +10,9 @@ import '../../core/git/branch_comparison.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/utils/display_error.dart';
+import '../common/diff_view.dart';
 import '../common/inline_action_button.dart';
+import '../common/split_diff_view.dart';
 import '../common/tappable.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'branch_dashboard_stats.dart';
@@ -231,18 +233,30 @@ class BranchDetail extends ConsumerWidget {
               _statChip('Remote', s.remote, MacosColors.systemGrayColor),
               _statChip('Tags', s.tags, MacosColors.systemTealColor),
               if (mode == BranchWorkspaceMode.review)
-                _reviewStatChip(
-                  'Merged',
-                  review?.value == null
-                      ? '—'
-                      : '${review!.value!.summariesByRefName.values.where((s) => s.mergedIntoBase).length}',
-                  MacosColors.systemGrayColor,
-                  selected: reviewFilter == BranchReviewQuickFilter.merged,
-                  onTap: () => onReviewFilterChanged(
-                    reviewFilter == BranchReviewQuickFilter.merged
-                        ? BranchReviewQuickFilter.all
-                        : BranchReviewQuickFilter.merged,
-                  ),
+                Builder(
+                  builder: (context) {
+                    final r = review;
+                    final mergedLabel = r == null || r.isLoading
+                        ? '—'
+                        : r.hasError
+                        ? '!'
+                        : '${r.value!.summariesByRefName.values.where((s) => s.mergedIntoBase).length}';
+                    final canFilter =
+                        r != null && !r.isLoading && !r.hasError && r.value != null;
+                    return _reviewStatChip(
+                      'Merged',
+                      mergedLabel,
+                      MacosColors.systemGrayColor,
+                      selected: reviewFilter == BranchReviewQuickFilter.merged,
+                      onTap: canFilter
+                          ? () => onReviewFilterChanged(
+                              reviewFilter == BranchReviewQuickFilter.merged
+                                  ? BranchReviewQuickFilter.all
+                                  : BranchReviewQuickFilter.merged,
+                            )
+                          : null,
+                    );
+                  },
                 ),
             ],
           ),
@@ -368,79 +382,6 @@ class BranchDetail extends ConsumerWidget {
           ),
         );
       },
-    );
-  }
-
-  // --------------------------------------------------------------------------
-  // Branch commits preview
-  // --------------------------------------------------------------------------
-
-  /// The single-branch linear view: a preview of the most recent commits
-  /// reachable from [revision] — GitKraken's missing "just this branch" list.
-  /// Renders nothing until (and unless) [branchCommitsProvider] resolves.
-  Widget _branchCommits(BuildContext context, WidgetRef ref, String revision) {
-    final commits =
-        ref.watch(branchCommitsProvider((repoPath, revision))).value ??
-        const [];
-    if (commits.isEmpty) return const SizedBox.shrink();
-    final typography = MacosTheme.of(context).typography;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 20),
-        Text(
-          'RECENT COMMITS',
-          style: typography.caption2.copyWith(
-            color: MacosColors.systemGrayColor,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 0.5,
-          ),
-        ),
-        const SizedBox(height: 6),
-        for (final c in commits)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  width: 6,
-                  height: 6,
-                  margin: const EdgeInsets.only(top: 5, right: 9),
-                  decoration: BoxDecoration(
-                    color: c.isMerge
-                        ? MacosColors.systemGrayColor
-                        : MacosColors.systemBlueColor,
-                    shape: BoxShape.circle,
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    c.subject,
-                    style: typography.caption1,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  c.shortHash,
-                  style: typography.caption2.copyWith(
-                    color: MacosColors.systemGrayColor,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  relativeIsoLabel(c.date),
-                  style: typography.caption2.copyWith(
-                    color: MacosColors.systemGrayColor,
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
     );
   }
 
@@ -649,7 +590,13 @@ class BranchDetail extends ConsumerWidget {
       info: [Builder(builder: (c) => Column(children: info))],
       actions: actions,
       callout: callout,
-      below: [_branchCommits(context, ref, b.shortName)],
+      below: [
+        _BranchComparisonInspector(
+          repoPath: repoPath,
+          branch: b,
+          baseState: baseState,
+        ),
+      ],
     );
   }
 
@@ -686,7 +633,7 @@ class BranchDetail extends ConsumerWidget {
           tone: InlineActionTone.destructive,
         ),
       ],
-      below: [_branchCommits(context, ref, b.shortName)],
+      below: const [],
     );
   }
 
@@ -812,4 +759,470 @@ class BranchDetail extends ConsumerWidget {
       ).typography.body.copyWith(color: MacosColors.systemRedColor),
     ),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2 — Overview / Changes / Commits comparison inspector
+// ---------------------------------------------------------------------------
+
+enum _CompareTab { overview, changes, commits }
+
+/// Lazy three-dot comparison inspector for a local branch vs the workspace base.
+///
+/// Overview and Commits never watch the patch provider; Changes does once.
+class _BranchComparisonInspector extends ConsumerStatefulWidget {
+  final String repoPath;
+  final GitRef branch;
+  final AsyncValue<BranchBaseResolution>? baseState;
+
+  const _BranchComparisonInspector({
+    required this.repoPath,
+    required this.branch,
+    required this.baseState,
+  });
+
+  @override
+  ConsumerState<_BranchComparisonInspector> createState() =>
+      _BranchComparisonInspectorState();
+}
+
+class _BranchComparisonInspectorState
+    extends ConsumerState<_BranchComparisonInspector> {
+  _CompareTab _tab = _CompareTab.overview;
+  bool _split = false;
+  bool _ignoreWs = false;
+  int _contextLines = 3;
+  String? _anchor;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = widget.branch.name;
+    if (_anchor != name) {
+      _anchor = name;
+      _tab = _CompareTab.overview;
+      _split = false;
+      _ignoreWs = false;
+      _contextLines = 3;
+    }
+
+    final typography = MacosTheme.of(context).typography;
+    final baseState = widget.baseState;
+    if (baseState == null || baseState.isLoading) {
+      return _section(
+        typography,
+        child: Text(
+          'Resolving comparison base…',
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemGrayColor,
+          ),
+        ),
+      );
+    }
+    if (baseState.hasError) {
+      return _section(
+        typography,
+        child: Text(
+          'Could not resolve a comparison base.',
+          style: typography.caption1.copyWith(color: MacosColors.systemRedColor),
+        ),
+      );
+    }
+    final base = baseState.value?.base;
+    if (base == null) {
+      return _section(
+        typography,
+        child: Text(
+          'No comparison base available yet.',
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemGrayColor,
+          ),
+        ),
+      );
+    }
+    if (!isFullGitOid(base.oid) || !isFullGitOid(widget.branch.commitOid)) {
+      return _section(
+        typography,
+        child: Text(
+          'Comparison needs full commit OIDs.',
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemGrayColor,
+          ),
+        ),
+      );
+    }
+
+    final baseOid = base.oid;
+    final branchOid = widget.branch.commitOid;
+
+    return _section(
+      typography,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            'Compared with ${base.displayName} · ${base.source.label}',
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemGrayColor,
+            ),
+          ),
+          const SizedBox(height: 8),
+          CupertinoSlidingSegmentedControl<_CompareTab>(
+            groupValue: _tab,
+            children: const {
+              _CompareTab.overview: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 10),
+                child: Text('Overview'),
+              ),
+              _CompareTab.changes: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 10),
+                child: Text('Changes'),
+              ),
+              _CompareTab.commits: Padding(
+                padding: EdgeInsets.symmetric(horizontal: 10),
+                child: Text('Commits'),
+              ),
+            },
+            onValueChanged: (t) {
+              if (t != null) setState(() => _tab = t);
+            },
+          ),
+          const SizedBox(height: 12),
+          switch (_tab) {
+            _CompareTab.overview => _overview(baseOid, branchOid, base),
+            _CompareTab.changes => _changes(baseOid, branchOid, base),
+            _CompareTab.commits => _commits(baseOid, branchOid, base),
+          },
+        ],
+      ),
+    );
+  }
+
+  Widget _section(MacosTypography typography, {required Widget child}) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 16),
+      child: child,
+    );
+  }
+
+  Widget _overview(String baseOid, String branchOid, BranchBase base) {
+    final typography = MacosTheme.of(context).typography;
+    final metaAsync = ref.watch(
+      branchComparisonMetadataProvider((
+        repoPath: widget.repoPath,
+        baseOid: baseOid,
+        branchOid: branchOid,
+      )),
+    );
+    return metaAsync.when(
+      loading: () => Text(
+        'Loading comparison…',
+        style: typography.caption1.copyWith(color: MacosColors.systemGrayColor),
+      ),
+      error: (e, _) => Text(
+        displayError(e),
+        style: typography.caption1.copyWith(color: MacosColors.systemRedColor),
+      ),
+      data: (meta) {
+        if (meta.ancestry == ComparisonAncestry.unrelated) {
+          return Text(
+            'No common ancestor with ${base.displayName}.',
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemOrangeColor,
+            ),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Incoming changes from merge base '
+              '(${base.displayName}...${widget.branch.shortName})',
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              '${meta.files.length} file${meta.files.length == 1 ? '' : 's'} · '
+              '+${meta.additions} / −${meta.deletions}'
+              '${meta.truncated ? ' · truncated' : ''}',
+              style: typography.body,
+            ),
+            if (meta.mergeBaseOid != null) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Merge base ${meta.mergeBaseOid!.substring(0, 7)}',
+                style: typography.caption2.copyWith(
+                  color: MacosColors.systemGrayColor,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+            if (meta.files.isEmpty) ...[
+              const SizedBox(height: 8),
+              Text(
+                'No file changes vs base.',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              ),
+            ] else ...[
+              const SizedBox(height: 8),
+              for (final f in meta.files.take(40))
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text(
+                    '${f.status.padRight(4)} ${f.oldPath != null ? '${f.oldPath} → ${f.path}' : f.path}'
+                    '${f.binary ? ' (binary)' : ''}'
+                    '${f.additions != null ? '  +${f.additions}/−${f.deletions}' : ''}',
+                    style: typography.caption1.copyWith(
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              if (meta.files.length > 40 || meta.truncated)
+                Text(
+                  meta.truncated
+                      ? 'File list truncated.'
+                      : '…and ${meta.files.length - 40} more',
+                  style: typography.caption2.copyWith(
+                    color: MacosColors.systemGrayColor,
+                  ),
+                ),
+            ],
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _changes(String baseOid, String branchOid, BranchBase base) {
+    final typography = MacosTheme.of(context).typography;
+    final metaAsync = ref.watch(
+      branchComparisonMetadataProvider((
+        repoPath: widget.repoPath,
+        baseOid: baseOid,
+        branchOid: branchOid,
+      )),
+    );
+    // Patch is only watched on the Changes tab.
+    final patchAsync = ref.watch(
+      branchDiffProvider((
+        repoPath: widget.repoPath,
+        baseOid: baseOid,
+        branchOid: branchOid,
+        context: _contextLines,
+        ignoreWhitespace: _ignoreWs,
+      )),
+    );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Incoming changes from merge base '
+          '(${base.displayName}...${widget.branch.shortName}) · three-dot',
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemGrayColor,
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            MacosPulldownButton(
+              title: _split ? 'Split' : 'Unified',
+              items: [
+                MacosPulldownMenuItem(
+                  title: const Text('Unified'),
+                  onTap: () => setState(() => _split = false),
+                ),
+                MacosPulldownMenuItem(
+                  title: const Text('Split'),
+                  onTap: () => setState(() => _split = true),
+                ),
+              ],
+            ),
+            MacosCheckbox(
+              value: _ignoreWs,
+              onChanged: (v) => setState(() => _ignoreWs = v),
+            ),
+            Text('Ignore whitespace', style: typography.caption1),
+            MacosPulldownButton(
+              title: 'Context $_contextLines',
+              items: [
+                for (final n in const [1, 3, 5, 10])
+                  MacosPulldownMenuItem(
+                    title: Text('$n lines'),
+                    onTap: () => setState(() => _contextLines = n),
+                  ),
+              ],
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        metaAsync.when(
+          loading: () => const SizedBox.shrink(),
+          error: (_, _) => const SizedBox.shrink(),
+          data: (meta) {
+            if (meta.ancestry == ComparisonAncestry.unrelated) {
+              return Text(
+                'No common ancestor — three-dot patch not available.',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemOrangeColor,
+                ),
+              );
+            }
+            return const SizedBox.shrink();
+          },
+        ),
+        patchAsync.when(
+          loading: () => Text(
+            'Loading patch…',
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemGrayColor,
+            ),
+          ),
+          error: (e, _) => Text(
+            displayError(e),
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemRedColor,
+            ),
+          ),
+          data: (patch) {
+            if (patch.trim().isEmpty) {
+              return Text(
+                'No patch changes.',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              );
+            }
+            return SizedBox(
+              height: 360,
+              child: _split
+                  ? SplitDiffView(diff: patch)
+                  : DiffView(diff: patch),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _commits(String baseOid, String branchOid, BranchBase base) {
+    final typography = MacosTheme.of(context).typography;
+    final key = (
+      repoPath: widget.repoPath,
+      baseOid: baseOid,
+      branchOid: branchOid,
+    );
+    final async = ref.watch(branchUniqueCommitsProvider(key));
+    final notifier = ref.read(branchUniqueCommitsProvider(key).notifier);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          'Commits only on ${widget.branch.shortName} '
+          '(${base.displayName}..${widget.branch.shortName})',
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemGrayColor,
+          ),
+        ),
+        const SizedBox(height: 8),
+        async.when(
+          loading: () => Text(
+            'Loading commits…',
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemGrayColor,
+            ),
+          ),
+          error: (e, _) => Text(
+            displayError(e),
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemRedColor,
+            ),
+          ),
+          data: (commits) {
+            if (commits.isEmpty) {
+              return Text(
+                'No unique commits vs base.',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              );
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (final c in commits)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Container(
+                          width: 6,
+                          height: 6,
+                          margin: const EdgeInsets.only(top: 5, right: 9),
+                          decoration: BoxDecoration(
+                            color: c.isMerge
+                                ? MacosColors.systemGrayColor
+                                : MacosColors.systemBlueColor,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        Expanded(
+                          child: Text(
+                            c.subject,
+                            style: typography.caption1,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          c.shortHash,
+                          style: typography.caption2.copyWith(
+                            color: MacosColors.systemGrayColor,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          relativeIsoLabel(c.date),
+                          style: typography.caption2.copyWith(
+                            color: MacosColors.systemGrayColor,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                if (notifier.pageFailed) ...[
+                  const SizedBox(height: 8),
+                  InlineActionButton(
+                    label: 'Retry',
+                    icon: CupertinoIcons.arrow_clockwise,
+                    onPressed: () => notifier.retryPage(),
+                  ),
+                ] else if (!notifier.exhausted) ...[
+                  const SizedBox(height: 8),
+                  InlineActionButton(
+                    label: 'Show more',
+                    icon: CupertinoIcons.chevron_down,
+                    onPressed: () => notifier.loadMore(),
+                  ),
+                ],
+              ],
+            );
+          },
+        ),
+      ],
+    );
+  }
 }

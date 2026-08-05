@@ -345,4 +345,148 @@ void main() {
     // Instead, "Switch to worktree" should be available.
     expect(find.text('Switch to worktree'), findsOneWidget);
   });
+
+  testWidgets('unmerged delete escalates to force-delete confirmation', (
+    tester,
+  ) async {
+    final git = _ForceDeleteGit();
+    final container = ProviderContainer(
+      overrides: [
+        gitServiceProvider.overrideWithValue(git),
+        refsProvider(_repo).overrideWith((ref) async => _refs),
+        remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+        remoteTagsProvider(_repo).overrideWith((ref) async => null),
+        branchForgeProvider(_repo).overrideWith((ref) async => const {}),
+        mergedBranchesProvider(_repo).overrideWith((ref) async => const {}),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: BranchesView(repoPath: _repo),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('feature'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete'));
+    await tester.pumpAndSettle();
+
+    // First confirmation: ordinary delete.
+    expect(find.text('Delete branch'), findsOneWidget);
+    await tester.tap(find.text('Delete').last);
+    await tester.pumpAndSettle();
+
+    // Escalation: not fully merged → force-delete dialog (undo still comes
+    // from GitService._runCaptured on the eventual force path).
+    expect(find.text('Branch not fully merged'), findsOneWidget);
+    expect(find.text('Force Delete'), findsOneWidget);
+    expect(git.deleteCalls, 1);
+    expect(git.forceCalls, 0);
+
+    await tester.tap(find.text('Force Delete'));
+    await tester.pumpAndSettle();
+    expect(git.forceCalls, 1);
+  });
+
+  testWidgets('repo path change clears selection scroll and local overrides', (
+    tester,
+  ) async {
+    final container = ProviderContainer(
+      overrides: [
+        gitServiceProvider.overrideWithValue(_FakeGit()),
+        refsProvider(_repo).overrideWith((ref) async => _refs),
+        refsProvider('/other').overrideWith((ref) async => _refs),
+        remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+        remotesProvider('/other').overrideWith((ref) async => const ['origin']),
+        remoteTagsProvider(_repo).overrideWith((ref) async => null),
+        remoteTagsProvider('/other').overrideWith((ref) async => null),
+        branchForgeProvider(_repo).overrideWith((ref) async => const {}),
+        branchForgeProvider('/other').overrideWith((ref) async => const {}),
+        mergedBranchesProvider(_repo).overrideWith((ref) async => const {}),
+        mergedBranchesProvider('/other').overrideWith((ref) async => const {}),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: _RepoSwitchHarness(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('feature'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete'), findsOneWidget);
+
+    await tester.tap(find.text('Switch repo'));
+    await tester.pumpAndSettle();
+
+    // Selection cleared — empty-state dashboard, not feature detail.
+    expect(find.text('Delete'), findsNothing);
+    expect(find.textContaining('Select a branch'), findsOneWidget);
+  });
+}
+
+/// Fake that refuses non-force deletes as "not fully merged".
+class _ForceDeleteGit extends GitService {
+  _ForceDeleteGit() : super(SSHCommandExecutor(SSHClientManager()));
+
+  int deleteCalls = 0;
+  int forceCalls = 0;
+
+  @override
+  Future<void> deleteBranch(
+    String repoPath,
+    String name, {
+    bool force = false,
+  }) async {
+    deleteCalls++;
+    if (force) {
+      forceCalls++;
+      return;
+    }
+    throw const GitException(
+      'not fully merged',
+      SSHCommandResult(
+        exitCode: 1,
+        stdout: '',
+        stderr: "error: the branch 'feature' is not fully merged.",
+      ),
+    );
+  }
+}
+
+class _RepoSwitchHarness extends StatefulWidget {
+  const _RepoSwitchHarness();
+
+  @override
+  State<_RepoSwitchHarness> createState() => _RepoSwitchHarnessState();
+}
+
+class _RepoSwitchHarnessState extends State<_RepoSwitchHarness> {
+  String _repo = '/repo';
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        TextButton(
+          onPressed: () => setState(() => _repo = '/other'),
+          child: const Text('Switch repo'),
+        ),
+        Expanded(child: BranchesView(repoPath: _repo)),
+      ],
+    );
+  }
 }

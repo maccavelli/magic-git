@@ -84,5 +84,21 @@ void main() {
       expect(id.durable, isFalse);
       expect(id.gitCommonDir, startsWith('unresolved:'));
     });
+
+    test('identity uses public sessionEpoch only — never a controller', () {
+      final adhoc = RepositoryUiIdentity.adhoc(
+        backend: 'ssh',
+        sessionEpoch: 42,
+        gitCommonDir: '/x/.git',
+      );
+      expect(adhoc.sessionEpoch, 42);
+      expect(adhoc.scopeKey, 'adhoc:ssh:42');
+      final durable = RepositoryUiIdentity.ssh(
+        connectionId: 'saved-1',
+        gitCommonDir: '/x/.git',
+      );
+      expect(durable.sessionEpoch, isNull);
+      expect(durable.scopeKey, 'ssh:saved-1');
+    });
   });
 }

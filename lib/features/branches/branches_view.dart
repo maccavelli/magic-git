@@ -41,9 +41,12 @@ import 'pinned_branches.dart';
 /// delegated to [BranchNavigator] (left panel) and [BranchDetail] (right
 /// panel).
 ///
-/// Stable names for the canonical collapse store (`collapsedSectionsProvider`
-/// in `../common/section_collapse.dart`), prefixed so they never collide with
-/// another tab's sections in that shared flat namespace.
+/// Stable names for Branch section collapse keys (`branches.*`).
+///
+/// When connected, collapse lives on the identity-keyed [BranchWorkspacePrefs]
+/// record. The global `collapsedSectionsProvider` remains the Forge-shared
+/// legacy store and the one-time migration source for `branches.*` bits only
+/// (legacy global keys are never deleted).
 abstract final class _BranchSections {
   static const pinned = 'branches.pinned';
   static const local = 'branches.local';
@@ -205,13 +208,25 @@ class _BranchesViewState extends ConsumerState<BranchesView>
             ? BranchWorkspaceMode.review
             : BranchWorkspaceMode.browse);
 
-    final AsyncValue<BranchBaseResolution>? baseState;
+    final selectedRef = _refByName(refs, _selectedRef);
+
+    // Base is needed for Review (summary + inspector) and for a selected local
+    // branch's comparison tabs. Browse with no selection does not start base
+    // resolution (keeps the list paint free of git discovery work).
+    final needsBase =
+        mode == BranchWorkspaceMode.review ||
+        (selectedRef != null && selectedRef.isLocalBranch);
+    final AsyncValue<BranchBaseResolution>? baseState = needsBase
+        ? ref.watch(
+            branchBaseProvider((
+              repoPath: repoPath,
+              allowForgeFetch: mode == BranchWorkspaceMode.review,
+            )),
+          )
+        : null;
     final AsyncValue<BranchReviewBatchResult>? review;
     if (mode == BranchWorkspaceMode.review) {
-      baseState = ref.watch(
-        branchBaseProvider((repoPath: repoPath, allowForgeFetch: true)),
-      );
-      final base = baseState!.value?.base;
+      final base = baseState?.value?.base;
       if (base == null) {
         review = null;
       } else {
@@ -229,7 +244,6 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         );
       }
     } else {
-      baseState = null;
       review = null;
     }
 
@@ -254,8 +268,6 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       collapsedTagCount: _collapsedTagCount,
       collapsedRemoteCount: _collapsedRemoteCount,
     );
-
-    final selectedRef = _refByName(refs, _selectedRef);
 
     return ResizableMasterDetail(
       paneId: PaneId.branchesList,
@@ -387,11 +399,16 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       repositoryUiIdentityProvider(repoPath).future,
     );
     if (identity == null) return;
-    final current = await ref.read(
-      branchWorkspacePrefsProvider(repoPath).future,
+    // Serialized RMW so concurrent pin/mode/base/collapse actions cannot
+    // last-write-wins drop each other's fields (Phase 0 single-writer rule).
+    await updateBranchWorkspacePrefs(
+      identity: identity,
+      legacyRepoPath: repoPath,
+      globalCollapsed: await loadLegacyBranchCollapsedSections(),
+      update: update,
     );
-    await saveBranchWorkspacePrefs(identity: identity, next: update(current));
     ref.invalidate(branchWorkspacePrefsProvider(repoPath));
+    ref.invalidate(pinnedBranchesProvider(repoPath));
     ref.invalidate(branchBaseProvider);
   }
 

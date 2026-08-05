@@ -134,6 +134,24 @@ void main() {
     expect(remote.base?.source, BranchBaseSource.remoteHead);
     expect(remote.base?.isFallback, isFalse);
 
+    // Symref tip absent from the snapshot still resolves via rev-parse.
+    final missingTip = await resolveBranchBase(
+      refs: [_ref('refs/heads/main', _b)],
+      remotes: const ['origin'],
+      currentBranch: 'main',
+      headOid: _b,
+      storedRefName: null,
+      forgeDefaultBranch: null,
+      resolveCommit: (revision) async {
+        expect(revision, 'refs/remotes/origin/develop^{commit}');
+        return _a;
+      },
+      resolveRemoteHead: (_) async => 'refs/remotes/origin/develop',
+    );
+    expect(missingTip.base?.source, BranchBaseSource.remoteHead);
+    expect(missingTip.base?.oid, _a);
+    expect(missingTip.base?.refName, 'refs/remotes/origin/develop');
+
     final forge = await resolveBranchBase(
       refs: [_ref('refs/heads/develop', _a), _ref('refs/heads/main', _b)],
       remotes: const ['origin'],

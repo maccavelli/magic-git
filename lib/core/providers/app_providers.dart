@@ -2603,6 +2603,7 @@ void clearHashKeyedRepoCaches() {
   _commitDiffLru.clear();
   _commitFileDiffLru.clear();
   _commitRangeDiffLru.clear();
+  _branchDiffLru.clear();
   _blobLru.clear();
   _conflictFileLru.clear();
   _untrackedDiffLru.clear();
@@ -3211,11 +3212,26 @@ final branchBaseProvider = FutureProvider.autoDispose
       key,
     ) async {
       final refs = await ref.watch(refsProvider(key.repoPath).future);
-      final remotes = await ref.watch(remotesProvider(key.repoPath).future);
-      final status = await ref.watch(statusProvider(key.repoPath).future);
-      final prefs = await ref.watch(
-        branchWorkspacePrefsProvider(key.repoPath).future,
-      );
+      // Remotes/prefs: await when available. Catch so a host without remotes
+      // prefs storage does not fail the whole base family. HEAD comes from the
+      // refs snapshot (isHead) so we do not depend on statusProvider.
+      List<String> remotes = const [];
+      try {
+        remotes = await ref.watch(remotesProvider(key.repoPath).future);
+      } catch (_) {}
+      BranchWorkspacePrefs prefs = const BranchWorkspacePrefs();
+      try {
+        prefs = await ref.watch(
+          branchWorkspacePrefsProvider(key.repoPath).future,
+        );
+      } catch (_) {}
+      final headRef = refs.where((r) => r.isHead).firstOrNull;
+      final currentBranch = headRef != null && headRef.isLocalBranch
+          ? headRef.shortName
+          : null;
+      final headOid = headRef != null && isFullGitOid(headRef.commitOid)
+          ? headRef.commitOid
+          : null;
 
       Object? policy = key.allowForgeFetch
           ? ref.read(repoMergePolicyCacheProvider(key.repoPath))
@@ -3250,12 +3266,24 @@ final branchBaseProvider = FutureProvider.autoDispose
       return resolveBranchBase(
         refs: candidates,
         remotes: remotes,
-        currentBranch: status.branch.head,
-        headOid: status.branch.oid,
+        currentBranch: currentBranch,
+        headOid: headOid,
         storedRefName: prefs.selectedBaseRefName,
         forgeDefaultBranch: forgeDefault,
-        resolveCommit: (revision) => git.revParse(key.repoPath, revision),
-        resolveRemoteHead: (remote) => git.remoteHead(key.repoPath, remote),
+        resolveCommit: (revision) async {
+          try {
+            return await git.revParse(key.repoPath, revision);
+          } catch (_) {
+            return null;
+          }
+        },
+        resolveRemoteHead: (remote) async {
+          try {
+            return await git.remoteHead(key.repoPath, remote);
+          } catch (_) {
+            return null;
+          }
+        },
       );
     });
 
@@ -3264,23 +3292,44 @@ final branchReviewProvider = FutureProvider.autoDispose
       BranchReviewBatchResult,
       ({String repoPath, String baseOid, BranchRefsFingerprint refsFingerprint})
     >((ref, key) async {
-      final refs = await ref.watch(refsProvider(key.repoPath).future);
+      // Read (do not watch) refs: this family is already re-keyed by the UI when
+      // the local tip fingerprint moves. Watching refs here re-ran the same key
+      // against a newer snapshot and threw StateError during ordinary fetch/
+      // checkout churn, flashing a Review error.
+      final refs = await ref.read(refsProvider(key.repoPath).future);
       final locals = [
         for (final gitRef in refs)
           if (gitRef.isLocalBranch)
             (refName: gitRef.name, oid: gitRef.commitOid),
       ];
-      // The key is deliberately consumed as a value assertion rather than a bare
-      // hash; callers cannot receive truth for a colliding/moved ref snapshot.
+      // Key is a collision-free snapshot identity. A mismatch means this
+      // invocation is stale relative to the live tip set; return empty rather
+      // than error so a superseding key can own the UI.
       if (BranchRefsFingerprint(locals) != key.refsFingerprint) {
-        throw StateError('Branch refs changed while starting review summary.');
+        return const BranchReviewBatchResult();
+      }
+      final invalidOidFailures = <String, BranchReviewFailure>{
+        for (final branch in locals)
+          if (!isFullGitOid(branch.oid))
+            branch.refName: BranchReviewFailure(
+              refName: branch.refName,
+              branchOid: branch.oid,
+              reasonCode: 'invalidOid',
+            ),
+      };
+      final validLocals = [
+        for (final branch in locals)
+          if (isFullGitOid(branch.oid)) branch,
+      ];
+      if (validLocals.isEmpty) {
+        return BranchReviewBatchResult(failuresByRefName: invalidOidFailures);
       }
       final result = await ref
-          .watch(gitServiceProvider)
+          .read(gitServiceProvider)
           .branchReviewSummaries(
             key.repoPath,
             baseOid: key.baseOid,
-            branches: locals,
+            branches: validLocals,
           );
       final refsByName = {for (final gitRef in refs) gitRef.name: gitRef};
       return BranchReviewBatchResult(
@@ -3303,8 +3352,155 @@ final branchReviewProvider = FutureProvider.autoDispose
               lastAuthorEmail: refsByName[entry.key]?.authorEmail,
             ),
         },
-        failuresByRefName: result.failuresByRefName,
+        failuresByRefName: {
+          ...invalidOidFailures,
+          ...result.failuresByRefName,
+        },
       );
+    });
+
+
+// ---------------------------------------------------------------------------
+// Phase 2 — lazy comparison inspector (OID-keyed, Browse-safe)
+// ---------------------------------------------------------------------------
+
+/// Page size for [branchUniqueCommitsProvider].
+const int kBranchUniqueCommitsPageSize = 50;
+
+typedef BranchUniqueCommitsKey = ({
+  String repoPath,
+  String baseOid,
+  String branchOid,
+});
+
+/// Paged commits only on the branch (`baseOid..branchOid`).
+class BranchUniqueCommitsNotifier extends AsyncNotifier<List<GitCommit>> {
+  BranchUniqueCommitsNotifier(this.key);
+
+  final BranchUniqueCommitsKey key;
+
+  bool get exhausted => _exhausted;
+  bool _exhausted = false;
+
+  bool get pageFailed => _pageFailed;
+  bool _pageFailed = false;
+
+  bool _loadingMore = false;
+
+  Future<List<GitCommit>> _page(GitService git, {required int skip}) {
+    return git.log(
+      key.repoPath,
+      revision: '${key.baseOid}..${key.branchOid}',
+      maxCount: kBranchUniqueCommitsPageSize,
+      skip: skip,
+    );
+  }
+
+  @override
+  Future<List<GitCommit>> build() async {
+    _pageFailed = false;
+    _exhausted = false;
+    if (!isFullGitOid(key.baseOid) || !isFullGitOid(key.branchOid)) {
+      return const [];
+    }
+    final git = ref.watch(gitServiceProvider);
+    final page = await _page(git, skip: 0);
+    _exhausted = page.length < kBranchUniqueCommitsPageSize;
+    return page;
+  }
+
+  Future<void> loadMore() async {
+    final current = state.value;
+    if (current == null ||
+        state.isLoading ||
+        _loadingMore ||
+        _exhausted ||
+        _pageFailed) {
+      return;
+    }
+    _loadingMore = true;
+    try {
+      final next = await _page(
+        ref.read(gitServiceProvider),
+        skip: current.length,
+      );
+      if (!identical(state.value, current)) return;
+      final seen = {for (final c in current) c.hash};
+      final merged = [
+        ...current,
+        for (final c in next)
+          if (seen.add(c.hash)) c,
+      ];
+      _exhausted = next.length < kBranchUniqueCommitsPageSize;
+      state = AsyncData(merged);
+    } catch (_) {
+      _pageFailed = true;
+    } finally {
+      _loadingMore = false;
+    }
+  }
+
+  Future<void> retryPage() async {
+    _pageFailed = false;
+    await loadMore();
+  }
+}
+
+final branchUniqueCommitsProvider = AsyncNotifierProvider.autoDispose
+    .family<
+      BranchUniqueCommitsNotifier,
+      List<GitCommit>,
+      BranchUniqueCommitsKey
+    >(BranchUniqueCommitsNotifier.new);
+
+/// Three-dot comparison metadata for Overview / Changes file list.
+final branchComparisonMetadataProvider = FutureProvider.autoDispose
+    .family<
+      BranchComparisonMetadata,
+      ({String repoPath, String baseOid, String branchOid})
+    >((ref, key) {
+      return ref
+          .watch(gitServiceProvider)
+          .branchComparisonMetadata(
+            key.repoPath,
+            baseOid: key.baseOid,
+            branchOid: key.branchOid,
+          );
+    });
+
+/// Three-dot patch (`baseOid...branchOid`). Lazy — only watched from Changes.
+final branchDiffProvider = FutureProvider.autoDispose
+    .family<
+      String,
+      ({
+        String repoPath,
+        String baseOid,
+        String branchOid,
+        int context,
+        bool ignoreWhitespace,
+      })
+    >((ref, key) {
+      final lruKey = (
+        key.repoPath,
+        key.baseOid,
+        key.branchOid,
+        key.context,
+        key.ignoreWhitespace,
+      );
+      _branchDiffLru.touch(lruKey, ref.keepAlive());
+      final future = ref
+          .watch(gitServiceProvider)
+          .diffRange(
+            key.repoPath,
+            '${key.baseOid}...${key.branchOid}',
+            context: key.context,
+            ignoreWhitespace: key.ignoreWhitespace,
+          );
+      future.then(
+        (d) => _branchDiffLru.reportSize(lruKey, d.length),
+        onError: (_) => _branchDiffLru.evict(lruKey),
+      );
+      return future;
     });
 
 /// Absolute layout for [repoPath] (linked worktree aware). Null when layout
@@ -3863,7 +4059,13 @@ final _commitRangeDiffLru = KeepAliveLru<(String, String, String, int)>(
   maxEntryBytes: 16 * _mib,
 );
 
-// Worktree tier.
+/// Three-dot branch comparison patches (`base...branch`), keyed by immutable
+/// OIDs + diff options. Byte-accounted like [commitRangeDiffProvider].
+final _branchDiffLru = KeepAliveLru<(String, String, String, int, bool)>(
+  12,
+  maxTotalBytes: 64 * _mib,
+  maxEntryBytes: 16 * _mib,
+);
 final _fileDiffLru = KeepAliveLru<(String, String, bool, bool, int)>(
   64,
   maxTotalBytes: 64 * _mib,
@@ -3874,6 +4076,7 @@ final _untrackedDiffLru = KeepAliveLru<(String, String)>(
   maxTotalBytes: 32 * _mib,
   maxEntryBytes: 8 * _mib,
 );
+
 final _conflictFileLru = KeepAliveLru<(String, String)>(
   32,
   maxTotalBytes: 16 * _mib,

@@ -10,19 +10,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/branch_forge_status.dart';
+import 'package:remote_magic_git/core/git/branch_comparison.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
 
 const _repo = '/repo';
+const _mainOid = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 /// Generates [count] fake local branch refs plus a few remotes and tags.
 List<GitRef> _generateRefs({int localCount = 500}) {
   final refs = <GitRef>[
     const GitRef(
       name: 'refs/heads/main',
-      oid: 'aaa',
+      oid: _mainOid,
       isHead: true,
       subject: 'main branch',
     ),
@@ -135,6 +138,25 @@ void main() {
         remoteTagsProvider(_repo).overrideWith((ref) async => null),
         branchForgeProvider(_repo).overrideWith((ref) async => const {}),
         mergedBranchesProvider(_repo).overrideWith((ref) async => const {}),
+        // Stub base/status so the list baseline is not dominated by base
+        // discovery. Comparison (rev-list / merge-tree / patch) must stay zero.
+        statusProvider(_repo).overrideWith(
+          (ref) async => GitStatus(
+            branch: const GitBranchInfo(head: 'main', oid: _mainOid),
+            files: const [],
+          ),
+        ),
+        branchBaseProvider.overrideWith(
+          (ref, key) async => const BranchBaseResolution(
+            base: BranchBase(
+              refName: 'refs/heads/main',
+              displayName: 'main',
+              oid: _mainOid,
+              source: BranchBaseSource.localMain,
+              isFallback: false,
+            ),
+          ),
+        ),
       ],
     );
     addTearDown(container.dispose);
@@ -153,16 +175,17 @@ void main() {
     // Record the command count after first paint.
     final firstPaintCommandCount = exec.commands.length;
 
-    // Browse first paint must NOT issue comparison/summary/diff commands.
-    // These are Phase 1+ features that should only run in Review mode.
+    // Browse first paint must NOT issue review-summary / merge-tree / patch
+    // commands. Base may be resolved, but never per-branch rev-list or log
+    // range comparison for the unselected list.
     final comparisonCommands = exec.commands
         .where(
           (cmd) =>
               cmd.contains('rev-list') ||
-              cmd.contains('merge-base') ||
               cmd.contains('merge-tree') ||
-              cmd.contains('diff') ||
-              cmd.contains('log'),
+              cmd.contains('branch-review') ||
+              cmd.contains('branch-cmp') ||
+              (cmd.contains('diff') && cmd.contains('...')),
         )
         .toList();
 
@@ -209,6 +232,23 @@ void main() {
         remoteTagsProvider(_repo).overrideWith((ref) async => null),
         branchForgeProvider(_repo).overrideWith((ref) async => const {}),
         mergedBranchesProvider(_repo).overrideWith((ref) async => const {}),
+        statusProvider(_repo).overrideWith(
+          (ref) async => GitStatus(
+            branch: const GitBranchInfo(head: 'main', oid: _mainOid),
+            files: const [],
+          ),
+        ),
+        branchBaseProvider.overrideWith(
+          (ref, key) async => const BranchBaseResolution(
+            base: BranchBase(
+              refName: 'refs/heads/main',
+              displayName: 'main',
+              oid: _mainOid,
+              source: BranchBaseSource.localMain,
+              isFallback: false,
+            ),
+          ),
+        ),
       ],
     );
     addTearDown(container.dispose);

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -211,6 +212,53 @@ Future<void> saveBranchWorkspacePrefs({
     BranchWorkspacePrefs.storageKeyFor(identity),
     next.encode(),
   );
+}
+
+/// Per-identity write chain so concurrent pin / mode / base / collapse updates
+/// cannot last-write-wins clobber each other (Phase 0 single-writer rule).
+final Map<String, Future<void>> _prefsWriteChains = {};
+
+Future<T> _serializedPrefsWrite<T>(
+  String lockKey,
+  Future<T> Function() body,
+) async {
+  final previous = _prefsWriteChains[lockKey] ?? Future<void>.value();
+  final gate = Completer<void>();
+  _prefsWriteChains[lockKey] = gate.future;
+  try {
+    await previous;
+    return await body();
+  } finally {
+    gate.complete();
+    if (identical(_prefsWriteChains[lockKey], gate.future)) {
+      // remove() returns the prior Future; do not await it (already finished).
+      unawaited(_prefsWriteChains.remove(lockKey) ?? Future<void>.value());
+    }
+  }
+}
+
+String _prefsLockKey(RepositoryUiIdentity identity) =>
+    identity.durable ? identity.preferenceKey : identity.memoryKey;
+
+/// Load → [update] → save under a per-identity mutex. Call sites that mutate
+/// workspace prefs (pins, mode, base, collapse, grouping) must use this so
+/// concurrent UI actions cannot drop each other's fields.
+Future<BranchWorkspacePrefs> updateBranchWorkspacePrefs({
+  required RepositoryUiIdentity identity,
+  required BranchWorkspacePrefs Function(BranchWorkspacePrefs) update,
+  String? legacyRepoPath,
+  Set<String> globalCollapsed = const {},
+}) {
+  return _serializedPrefsWrite(_prefsLockKey(identity), () async {
+    final current = await loadBranchWorkspacePrefs(
+      identity: identity,
+      legacyRepoPath: legacyRepoPath,
+      globalCollapsed: globalCollapsed,
+    );
+    final next = update(current);
+    await saveBranchWorkspacePrefs(identity: identity, next: next);
+    return next;
+  });
 }
 
 /// Merge [incoming] into [current], preserving fields the user has already

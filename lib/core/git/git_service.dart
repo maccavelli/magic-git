@@ -3415,6 +3415,195 @@ done
     );
   }
 
+  /// Section markers for [branchComparisonMetadata]'s combined host script.
+  /// Same STX-bracketed style as [_snapshotSep]: paths may contain almost any
+  /// byte except NUL, so a collision falls back to separate invocations.
+  static const String _comparisonSep = '\u0002RMGCMP\u0002';
+
+  /// Maximum files listed in comparison metadata before [truncated] is set.
+  static const int branchComparisonMaxFiles = kBranchComparisonMaxFiles;
+
+  /// Three-dot comparison stats for [baseOid]...[branchOid]: merge base,
+  /// per-file name-status + numstat, aggregates. Unrelated histories return
+  /// [ComparisonAncestry.unrelated] without running the three-dot diff.
+  Future<BranchComparisonMetadata> branchComparisonMetadata(
+    String repoPath, {
+    required String baseOid,
+    required String branchOid,
+    int maxFiles = branchComparisonMaxFiles,
+  }) async {
+    if (!isFullGitOid(baseOid)) {
+      throw ArgumentError.value(baseOid, 'baseOid', 'must be a full Git OID');
+    }
+    if (!isFullGitOid(branchOid)) {
+      throw ArgumentError.value(
+        branchOid,
+        'branchOid',
+        'must be a full Git OID',
+      );
+    }
+
+    final mb = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: [
+        'git',
+        'merge-base',
+        '--end-of-options',
+        baseOid,
+        branchOid,
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    final mbOut = mb.stdout.trim();
+    if (mb.exitCode == 1 && mbOut.isEmpty) {
+      return BranchComparisonMetadata.unrelated(
+        baseOid: baseOid,
+        branchOid: branchOid,
+      );
+    }
+    if (!mb.isSuccess || !isFullGitOid(mbOut)) {
+      throw GitException('git merge-base failed', mb);
+    }
+    final mergeBaseOid = mbOut;
+
+    // Combined name-status + numstat with section markers. On framing failure,
+    // fall back to two separate marker-free reads.
+    const rangeSep = '...';
+    final range = '$baseOid$rangeSep$branchOid';
+    const sep = _comparisonSep;
+    final combined = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: {...?_scopeEnvFor(repoPath), 'LC_ALL': 'C'},
+      gitArgs: [
+        'sh',
+        '-c',
+        r'''
+base=$1; branch=$2; sep=$3
+printf '%s' "$sep"
+printf 'NS\n'
+git diff --name-status -z --find-renames --end-of-options "$base...$branch"
+ns=$?
+printf '%s' "$sep"
+printf 'NU\n'
+git diff --numstat -z --find-renames --end-of-options "$base...$branch"
+nu=$?
+printf '%s' "$sep"
+printf 'EC\n%d %d\n' "$ns" "$nu"
+''',
+        'branch-cmp',
+        baseOid,
+        branchOid,
+        sep,
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    if (!combined.isSuccess) {
+      throw GitException('branch comparison metadata failed', combined);
+    }
+
+    late String nameStatus;
+    late String numstat;
+    final parts = combined.stdout.split(sep);
+    // Expect: [prefix?] NS…, NU…, EC…
+    final bodies = [
+      for (final p in parts)
+        if (p.startsWith('NS\n') ||
+            p.startsWith('NU\n') ||
+            p.startsWith('EC\n'))
+          p,
+    ];
+    if (bodies.length == 3 &&
+        bodies[0].startsWith('NS\n') &&
+        bodies[1].startsWith('NU\n') &&
+        bodies[2].startsWith('EC\n')) {
+      nameStatus = bodies[0].substring(3);
+      numstat = bodies[1].substring(3);
+      final codes = bodies[2].substring(3).trim().split(RegExp(r'\s+'));
+      final ns = int.tryParse(codes.isNotEmpty ? codes[0] : '');
+      final nu = int.tryParse(codes.length > 1 ? codes[1] : '');
+      // git diff exits 0 even when there are changes; non-zero is real failure.
+      if (ns != 0 || nu != 0) {
+        final separate = await _branchComparisonMetadataSeparate(
+          repoPath,
+          range,
+        );
+        nameStatus = separate.$1;
+        numstat = separate.$2;
+      }
+    } else {
+      final separate = await _branchComparisonMetadataSeparate(repoPath, range);
+      nameStatus = separate.$1;
+      numstat = separate.$2;
+    }
+
+    if (nameStatus.length + numstat.length > _isolateThreshold) {
+      return Isolate.run(
+        () => assembleComparisonMetadata(
+          baseOid: baseOid,
+          branchOid: branchOid,
+          mergeBaseOid: mergeBaseOid,
+          nameStatusZ: nameStatus,
+          numstatZ: numstat,
+          maxFiles: maxFiles,
+        ),
+      );
+    }
+    return assembleComparisonMetadata(
+      baseOid: baseOid,
+      branchOid: branchOid,
+      mergeBaseOid: mergeBaseOid,
+      nameStatusZ: nameStatus,
+      numstatZ: numstat,
+      maxFiles: maxFiles,
+    );
+  }
+
+  Future<(String, String)> _branchComparisonMetadataSeparate(
+    String repoPath,
+    String range,
+  ) async {
+    final ns = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: [
+        'git',
+        'diff',
+        '--name-status',
+        '-z',
+        '--find-renames',
+        '--end-of-options',
+        range,
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    if (!ns.isSuccess) {
+      throw GitException('git diff --name-status failed', ns);
+    }
+    final nu = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: [
+        'git',
+        'diff',
+        '--numstat',
+        '-z',
+        '--find-renames',
+        '--end-of-options',
+        range,
+      ],
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    if (!nu.isSuccess) {
+      throw GitException('git diff --numstat failed', nu);
+    }
+    return (ns.stdout, nu.stdout);
+  }
+
   /// Creates a branch, optionally checking it out.
   ///
   /// The checkout form deliberately has no `--end-of-options` before [name]:
