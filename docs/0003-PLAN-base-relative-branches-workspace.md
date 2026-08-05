@@ -1,22 +1,13 @@
 # Implementation plan: base-relative branches workspace
 
-- Status: **implementation in progress** (codebase re-grounded 2026-08-04;
-  Phases 0–3 complete. Identity-keyed preferences, the extracted pure Browse
-  model, and the 500-ref baseline are landed. Review has NUL-framed attributed
-  refs with warnings, forge-aware deterministic base resolution with visible
-  provenance and explicit unavailable/unborn states, grouped full-ref base
-  choices, batched base-relative summaries, clickable Merged/Stale facets,
-  Activity/Name sorting, and no legacy HEAD-relative bulk cleanup action or
-  universal safety copy. Checkpoint B's HEAD-different-base, passive-cache
-  Browse, and zero-comparison-command tests pass. Phase 2: lazy comparison
-  inspector (OID-keyed unique commits, three-dot metadata/patch, Overview/
-  Changes/Commits). Phase 3: Git ≥2.38 merge-tree capability probe, OID-keyed
-  local merge prediction with per-repo concurrency gate, Overview readiness
-  (local prediction separate from forge), conflict paths open Changes, and an
-  explicit Conflicts scan facet that never treats unscanned branches as clean.
-  **Trust gate (Phases 1–3) is implementation-complete** pending maintainer
-  Checkpoint C review. Phase 4 (Review multi-select / bulk delete) is next and
-  remains gated on that sign-off.)
+- Status: **implementation in progress** (Phases 0–4 landed). Phases 0–3 remain
+  the trust foundation (base semantics, comparison inspector, merge-tree
+  preview). Phase 4 adds Review search grammar + AND facets, natural/smart
+  sorts, multi-selection (click/⌘/⇧/Space), base-safe OID-pinned bulk delete
+  with preflight/result sheet and undo only on true deletes, plus batch
+  pin/hide (never Merge). Full forge-protection knowledge and every dashboard
+  facet chip remain iterative polish under Phase 4 exit criteria. Phase 5
+  (lifecycle action hierarchy) is next.
 - Date: 2026-08-05
 - MADR: `docs/0003-MADR-base-relative-branches-workspace.md` (Option C)
 - Owner: implementation agent + maintainer review

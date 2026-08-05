@@ -10,6 +10,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/forge/branch_forge_status.dart';
 import '../../core/git/branch_comparison.dart';
+import '../../core/git/branch_review_query.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
@@ -219,6 +220,9 @@ class BranchNavigator extends ConsumerStatefulWidget {
   final BranchReviewSort reviewSort;
   /// Full ref names known to conflict after an explicit Review scan.
   final Set<String> conflictRefNames;
+  /// Ordered multi-selection (Review primarily; harmless in Browse).
+  final BranchMultiSelection multiSelection;
+  final ValueChanged<BranchMultiSelection>? onMultiSelect;
   final TextEditingController filterController;
   final FocusNode focusNode;
   final ScrollController scrollController;
@@ -282,6 +286,8 @@ class BranchNavigator extends ConsumerStatefulWidget {
     required this.reviewFilter,
     required this.reviewSort,
     this.conflictRefNames = const {},
+    this.multiSelection = BranchMultiSelection.empty,
+    this.onMultiSelect,
     required this.filterController,
     required this.focusNode,
     required this.scrollController,
@@ -381,14 +387,42 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
     return sel != null && !sel.isHead;
   }
 
-  void _select(GitRef refEntry) {
+  void _select(GitRef refEntry, {bool command = false, bool shift = false}) {
     _selectionCursor = refEntry.name;
     widget.focusNode.requestFocus();
+    final onMulti = widget.onMultiSelect;
+    if (onMulti != null && widget.mode == BranchWorkspaceMode.review) {
+      final visible = [
+        for (final r in _visibleLocalFullRefs()) r,
+      ];
+      final current = widget.multiSelection;
+      if (shift) {
+        onMulti(current.rangeTo(refEntry.name, visible));
+      } else if (command) {
+        onMulti(current.toggle(refEntry.name));
+      } else {
+        onMulti(current.replace(refEntry.name));
+      }
+    }
     widget.onSelect(refEntry);
     ensureRowVisible(_rowKeyFor(refEntry.name));
   }
 
-  void _moveSelection(int dir) {
+  List<String> _visibleLocalFullRefs() {
+    if (widget.mode == BranchWorkspaceMode.review) {
+      final branches = shapePhase1ReviewBranches(
+        branches: widget.vm.filteredLocals,
+        summaries: widget.review?.value?.summariesByRefName ?? const {},
+        filter: widget.reviewFilter,
+        sort: widget.reviewSort,
+        conflictRefNames: widget.conflictRefNames,
+      );
+      return [for (final b in branches) b.name];
+    }
+    return [for (final b in widget.vm.localsOnScreen) b.name];
+  }
+
+  void _moveSelection(int dir, {bool shift = false}) {
     final navigable = widget.vm.navigable;
     if (navigable.isEmpty) return;
     var current = -1;
@@ -401,7 +435,7 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
       }
     }
     final next = stepSelection(current, dir, navigable.length);
-    _select(navigable[next]);
+    _select(navigable[next], shift: shift);
   }
 
   KeyEventResult _onBranchKey(FocusNode node, KeyEvent event) {
@@ -415,13 +449,25 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
     if (PanelShortcuts.textInteractionHasFocus()) {
       return KeyEventResult.ignored;
     }
+    final shift = HardwareKeyboard.instance.isShiftPressed;
     switch (event.logicalKey) {
       case LogicalKeyboardKey.arrowDown:
-        _moveSelection(1);
+        _moveSelection(1, shift: shift);
         return KeyEventResult.handled;
       case LogicalKeyboardKey.arrowUp:
-        _moveSelection(-1);
+        _moveSelection(-1, shift: shift);
         return KeyEventResult.handled;
+      case LogicalKeyboardKey.space:
+        if (widget.mode == BranchWorkspaceMode.review &&
+            _selectionCursor != null) {
+          final name = _selectionCursor!;
+          final onMulti = widget.onMultiSelect;
+          if (onMulti != null) {
+            onMulti(widget.multiSelection.toggle(name));
+            return KeyEventResult.handled;
+          }
+        }
+        return KeyEventResult.ignored;
       case LogicalKeyboardKey.enter:
       case LogicalKeyboardKey.numpadEnter:
         final sel = _selectedLocal;
@@ -433,10 +479,12 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
         // Canonical deselect — see dnd/deselect.dart for the Esc layering
         // (overlay closes first, then a live drag cancels, then this).
         return escDeselect(
-          hasSelection: _selectionCursor != null,
+          hasSelection:
+              _selectionCursor != null || widget.multiSelection.isMulti,
           clear: () {
             _selectionCursor = null;
             widget.onSelect(null);
+            widget.onMultiSelect?.call(BranchMultiSelection.empty);
           },
         );
     }
@@ -455,7 +503,11 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
         now.difference(_lastTapAt!) < _doubleTapWindow;
     _lastTapRef = branch.name;
     _lastTapAt = now;
-    _select(branch);
+    final command =
+        HardwareKeyboard.instance.isMetaPressed ||
+        HardwareKeyboard.instance.isControlPressed;
+    final shift = HardwareKeyboard.instance.isShiftPressed;
+    _select(branch, command: command, shift: shift);
     if (isDouble &&
         !branch.isHead &&
         branch.elsewhereWorktreePath == null &&

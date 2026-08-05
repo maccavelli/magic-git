@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart' show launchUrl;
 
 import '../../core/forge/branch_forge_status.dart';
 import '../../core/git/branch_comparison.dart';
+import '../../core/git/branch_review_query.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/pane_layout.dart';
@@ -15,12 +16,14 @@ import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
+import '../common/inline_action_button.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/ref_name_validation.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/section_collapse.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
+import 'branch_bulk_delete_sheet.dart';
 import 'branch_detail.dart' show BranchDetail, TagRemoteStatus;
 import 'branch_navigator.dart'
     show BranchNavigator, DropOp, TagDeleteScope, remoteLocalName;
@@ -94,6 +97,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   BranchWorkspaceMode? _modeOverride;
   BranchReviewQuickFilter _reviewFilter = BranchReviewQuickFilter.all;
   BranchReviewSort _reviewSort = BranchReviewSort.activity;
+  BranchMultiSelection _multiSel = BranchMultiSelection.empty;
 
   final _filterCtl = TextEditingController();
   final FocusNode _branchFocus = FocusNode(debugLabel: 'branch-list');
@@ -113,6 +117,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         _modeOverride = null;
         _reviewFilter = BranchReviewQuickFilter.all;
         _reviewSort = BranchReviewSort.activity;
+        _multiSel = BranchMultiSelection.empty;
         _groupedOverride = null;
         _collapsedFoldersOverride = null;
         _collapsedSectionsOverride = null;
@@ -293,7 +298,19 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         filterController: _filterCtl,
         focusNode: _branchFocus,
         scrollController: _branchScroll,
-        onSelect: (r) => setState(() => _selectedRef = r?.name),
+        onSelect: (r) => setState(() {
+          _selectedRef = r?.name;
+          if (r == null) {
+            _multiSel = BranchMultiSelection.empty;
+          } else if (!_multiSel.isMulti) {
+            _multiSel = BranchMultiSelection.empty.replace(r.name);
+          }
+        }),
+        multiSelection: _multiSel,
+        onMultiSelect: (sel) => setState(() {
+          _multiSel = sel;
+          _selectedRef = sel.primary;
+        }),
         onLocalTap: (g, b) => _checkout(g, b.shortName),
         onCreateBranch: _createBranchPrompt,
         onOpenCreateTagSheet: _openCreateTagSheet,
@@ -333,35 +350,271 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         onBaseReset: _resetBase,
         onReviewSortChanged: (sort) => setState(() => _reviewSort = sort),
       ),
-      detail: BranchDetail(
-        repoPath: repoPath,
-        git: git,
-        selectedRef: selectedRef,
-        vm: vm,
-        remoteTags: remoteTags,
-        tagRemote: vm.tagRemote,
-        busy: busy,
-        mode: mode,
-        baseState: baseState,
-        review: review,
-        reviewFilter: _reviewFilter,
-        onReviewFilterChanged: (filter) =>
-            setState(() => _reviewFilter = filter),
-        onCheckout: _checkout,
-        onSwitchToWorktree: _switchToWorktree,
-        onCheckoutInNewWorktree: _checkoutInNewWorktree,
-        onCheckoutRemote: (g, r) => _checkoutRemote(vm, g, r),
-        onMerge: _mergeBranch,
-        onSetUpstream: _setUpstream,
-        onRenameBranch: _renameBranch,
-        onTogglePin: (branch) => _togglePin(vm, branch),
-        onDeleteBranch: (g, branch) => _deleteBranch(vm, g, branch),
-        onDeleteRemoteBranch: _deleteRemoteBranch,
-        onDeleteTag: _deleteTag,
-        onPushTag: _pushTag,
-        onOpenUrl: _open,
+      detail: _multiSel.isMulti
+          ? _multiSelectDetail(
+              context,
+              vm,
+              baseState,
+              git,
+              busy,
+              review?.value?.summariesByRefName ?? const {},
+            )
+          : BranchDetail(
+              repoPath: repoPath,
+              git: git,
+              selectedRef: selectedRef,
+              vm: vm,
+              remoteTags: remoteTags,
+              tagRemote: vm.tagRemote,
+              busy: busy,
+              mode: mode,
+              baseState: baseState,
+              review: review,
+              reviewFilter: _reviewFilter,
+              onReviewFilterChanged: (filter) =>
+                  setState(() => _reviewFilter = filter),
+              onCheckout: _checkout,
+              onSwitchToWorktree: _switchToWorktree,
+              onCheckoutInNewWorktree: _checkoutInNewWorktree,
+              onCheckoutRemote: (g, r) => _checkoutRemote(vm, g, r),
+              onMerge: _mergeBranch,
+              onSetUpstream: _setUpstream,
+              onRenameBranch: _renameBranch,
+              onTogglePin: (branch) => _togglePin(vm, branch),
+              onDeleteBranch: (g, branch) => _deleteBranch(vm, g, branch),
+              onDeleteRemoteBranch: _deleteRemoteBranch,
+              onDeleteTag: _deleteTag,
+              onPushTag: _pushTag,
+              onOpenUrl: _open,
+            ),
+    );
+  }
+
+  Widget _multiSelectDetail(
+    BuildContext context,
+    BranchViewModel vm,
+    AsyncValue<BranchBaseResolution>? baseState,
+    GitService git,
+    bool busy,
+    Map<String, BranchReviewSummary> summaries,
+  ) {
+    final typography = MacosTheme.of(context).typography;
+    final n = _multiSel.length;
+    final base = baseState?.value?.base;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 18, 20, 20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '$n branches selected',
+            style: typography.title2.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Batch actions never include Merge. Delete only removes branches '
+            'that are still ancestors of the comparison base.',
+            style: typography.caption1.copyWith(
+              color: MacosColors.systemGrayColor,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              InlineActionButton(
+                label: 'Pin',
+                icon: CupertinoIcons.pin,
+                onPressed: busy ? null : () => _batchPin(vm, pin: true),
+              ),
+              InlineActionButton(
+                label: 'Unpin',
+                icon: CupertinoIcons.pin_slash,
+                onPressed: busy ? null : () => _batchPin(vm, pin: false),
+              ),
+              InlineActionButton(
+                label: 'Hide',
+                icon: CupertinoIcons.eye_slash,
+                onPressed: busy ? null : () => _batchHide(vm),
+              ),
+              InlineActionButton(
+                label: 'Delete if merged…',
+                icon: CupertinoIcons.trash,
+                onPressed: busy || base == null
+                    ? null
+                    : () => _bulkDeleteSelected(vm, git, base, summaries),
+              ),
+            ],
+          ),
+        ],
       ),
     );
+  }
+
+  Future<void> _batchPin(BranchViewModel vm, {required bool pin}) async {
+    final names = <String>{
+      for (final full in _multiSel.ordered)
+        if (full.startsWith('refs/heads/')) full.substring('refs/heads/'.length),
+    };
+    await _updateWorkspacePrefs((prefs) {
+      final pins = prefs.pinnedBranchNames.toSet();
+      if (pin) {
+        pins.addAll(names);
+      } else {
+        pins.removeAll(names);
+      }
+      return prefs.copyWith(pinnedBranchNames: pins.toList()..sort());
+    });
+  }
+
+  Future<void> _batchHide(BranchViewModel vm) async {
+    // Skip current/default/pinned/worktree-held — report as skipped by omitting.
+    final baseName = ref
+        .read(
+          branchBaseProvider((
+            repoPath: repoPath,
+            allowForgeFetch: false,
+          )),
+        )
+        .value
+        ?.base
+        ?.displayName;
+    final hide = <String>{};
+    for (final full in _multiSel.ordered) {
+      if (!full.startsWith('refs/heads/')) continue;
+      final short = full.substring('refs/heads/'.length);
+      final refEntry = vm.allLocalBranches
+          .where((r) => r.shortName == short)
+          .firstOrNull;
+      if (refEntry == null) continue;
+      if (refEntry.isHead) continue;
+      if (refEntry.worktreePath != null ||
+          refEntry.elsewhereWorktreePath != null) {
+        continue;
+      }
+      if (vm.pinned.contains(short)) continue;
+      if (baseName != null && short == baseName) continue;
+      hide.add(short);
+    }
+    if (hide.isEmpty) return;
+    await _updateWorkspacePrefs((prefs) {
+      final next = {...prefs.hiddenBranchNames, ...hide}.toList()..sort();
+      return prefs.copyWith(hiddenBranchNames: next);
+    });
+    // Collapse multi-selection to surviving visible primary.
+    setState(() {
+      _multiSel = BranchMultiSelection.empty;
+      _selectedRef = null;
+    });
+  }
+
+  Future<void> _bulkDeleteSelected(
+    BranchViewModel vm,
+    GitService git,
+    BranchBase base,
+    Map<String, BranchReviewSummary> summaries,
+  ) async {
+    final candidates = <BulkDeleteCandidate>[];
+    for (final full in _multiSel.ordered) {
+      if (!full.startsWith('refs/heads/')) continue;
+      final short = full.substring('refs/heads/'.length);
+      final refEntry = vm.allLocalBranches
+          .where((r) => r.name == full)
+          .firstOrNull;
+      if (refEntry == null) {
+        candidates.add(
+          BulkDeleteCandidate(
+            branchName: short,
+            fullRef: full,
+            expectedOid: '',
+            skipReason: 'missing',
+          ),
+        );
+        continue;
+      }
+      if (refEntry.isHead) {
+        candidates.add(
+          BulkDeleteCandidate(
+            branchName: short,
+            fullRef: full,
+            expectedOid: refEntry.commitOid,
+            skipReason: 'current branch',
+          ),
+        );
+        continue;
+      }
+      if (refEntry.worktreePath != null ||
+          refEntry.elsewhereWorktreePath != null) {
+        candidates.add(
+          BulkDeleteCandidate(
+            branchName: short,
+            fullRef: full,
+            expectedOid: refEntry.commitOid,
+            skipReason: 'checked out in a worktree',
+          ),
+        );
+        continue;
+      }
+      if (short == base.displayName || full == base.refName) {
+        candidates.add(
+          BulkDeleteCandidate(
+            branchName: short,
+            fullRef: full,
+            expectedOid: refEntry.commitOid,
+            skipReason: 'comparison base',
+          ),
+        );
+        continue;
+      }
+      final summary = summaries[full];
+      if (summary != null && !summary.mergedIntoBase) {
+        candidates.add(
+          BulkDeleteCandidate(
+            branchName: short,
+            fullRef: full,
+            expectedOid: refEntry.commitOid,
+            skipReason: 'not merged into base',
+          ),
+        );
+        continue;
+      }
+      if (!isFullGitOid(refEntry.commitOid)) {
+        candidates.add(
+          BulkDeleteCandidate(
+            branchName: short,
+            fullRef: full,
+            expectedOid: refEntry.commitOid,
+            skipReason: 'incomplete OID',
+          ),
+        );
+        continue;
+      }
+      candidates.add(
+        BulkDeleteCandidate(
+          branchName: short,
+          fullRef: full,
+          expectedOid: refEntry.commitOid,
+        ),
+      );
+    }
+
+    if (!mounted) return;
+    final results = await showBranchBulkDeleteSheet(
+      context,
+      git: git,
+      repoPath: repoPath,
+      baseOid: base.oid,
+      baseDisplayName: base.displayName,
+      candidates: candidates,
+    );
+    if (results != null) {
+      _refresh();
+      setState(() {
+        _multiSel = BranchMultiSelection.empty;
+        _selectedRef = null;
+      });
+    }
   }
 
   // --------------------------------------------------------------------------
@@ -373,7 +626,15 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   }
 
   void _setMode(BranchWorkspaceMode mode) {
-    setState(() => _modeOverride = mode);
+    setState(() {
+      _modeOverride = mode;
+      // Multi-selection is Review-oriented; collapse when leaving Review.
+      if (mode != BranchWorkspaceMode.review) {
+        _multiSel = _multiSel.primary == null
+            ? BranchMultiSelection.empty
+            : BranchMultiSelection.empty.replace(_multiSel.primary!);
+      }
+    });
     // Conflict scan is Review-only; drop results when leaving the mode.
     ref.read(conflictScanControllerProvider(repoPath).notifier).reset();
     unawaited(

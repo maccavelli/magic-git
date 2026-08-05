@@ -3805,6 +3805,106 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     );
   }
 
+  /// OID-pinned base-safe local branch delete for Review bulk cleanup.
+  ///
+  /// Does **not** force-delete a non-ancestor. Expected decisions (moved,
+  /// notMerged, checkedOut, missing) return [BaseDeleteResult] with exit 0;
+  /// unexpected transport/Git failures throw [GitException]. An undo record is
+  /// created only when this invocation actually deleted the tip.
+  Future<BaseDeleteResult> deleteBranchMergedIntoBase(
+    String repoPath, {
+    required String branchName,
+    required String expectedBranchOid,
+    required String baseOid,
+  }) async {
+    if (branchName.isEmpty ||
+        branchName.contains(RegExp(r'[\s~^:?*\[\\]')) ||
+        branchName.contains('..') ||
+        branchName.startsWith('-')) {
+      throw ArgumentError.value(
+        branchName,
+        'branchName',
+        'invalid local branch name',
+      );
+    }
+    if (!isFullGitOid(expectedBranchOid)) {
+      throw ArgumentError.value(
+        expectedBranchOid,
+        'expectedBranchOid',
+        'must be a full Git OID',
+      );
+    }
+    if (!isFullGitOid(baseOid)) {
+      throw ArgumentError.value(baseOid, 'baseOid', 'must be a full Git OID');
+    }
+
+    final fullRef = 'refs/heads/$branchName';
+    final refQ = ShellEscaper.escape(fullRef);
+    final oidQ = ShellEscaper.escape(expectedBranchOid);
+    final baseQ = ShellEscaper.escape(baseOid);
+
+    // Subshell so `exit` does not abort _runCaptured's post-capture prologue.
+    // Status tokens on stdout; exit 0 for all expected decisions.
+    final script =
+        '('
+        'set +e; '
+        'ref=$refQ; '
+        'want=$oidQ; '
+        'base=$baseQ; '
+        'tip=\$(git rev-parse -q --verify "\$ref^{commit}" 2>/dev/null || true); '
+        'if [ -z "\$tip" ]; then printf "missing\\n"; exit 0; fi; '
+        'if [ "\$tip" != "\$want" ]; then printf "moved\\n"; exit 0; fi; '
+        'held=\$(git for-each-ref --format="%(worktreepath)" --count=1 -- "\$ref" 2>/dev/null || true); '
+        'if [ -n "\$held" ]; then printf "checkedOut\\n"; exit 0; fi; '
+        'git merge-base --is-ancestor "\$want" "\$base" >/dev/null 2>&1; '
+        'anc=\$?; '
+        'if [ "\$anc" -ne 0 ]; then printf "notMerged\\n"; exit 0; fi; '
+        'git update-ref -d "\$ref" "\$want" >/dev/null 2>&1; '
+        'if [ \$? -ne 0 ]; then printf "moved\\n"; exit 0; fi; '
+        'printf "deleted\\n"; '
+        'exit 0'
+        ')';
+
+    final tipCapture =
+        'git rev-parse -q --verify ${ShellEscaper.escape('$fullRef^{commit}')} 2>/dev/null || true';
+
+    final result = await _runCaptured(
+      repoPath,
+      const [],
+      'base-safe delete $branchName',
+      mutationScript: script,
+      extraCaptures: [tipCapture],
+      postCaptures: [tipCapture],
+      record: (c) {
+        // Only journal when pre-tip matched the expected OID and post is gone.
+        final pre = c.extras.isNotEmpty ? c.extras[0].trim() : '';
+        final post = c.postExtras.isNotEmpty ? c.postExtras[0].trim() : '';
+        if (pre != expectedBranchOid || post.isNotEmpty) return null;
+        return c.toRecord(
+          repoPath: repoPath,
+          kind: UndoOpKind.deleteBranch,
+          description: 'Deletion of branch $branchName',
+          refName: branchName,
+          deletedOid: expectedBranchOid,
+        );
+      },
+    );
+
+    final token = result.stdout.trim().split('\n').lastWhere(
+      (l) => l.isNotEmpty,
+      orElse: () => '',
+    );
+    // record() does not expose mutation stdout; re-parse token from cleaned out.
+    final status = parseBaseDeleteStatusToken(token);
+    // Only journal on deleted — record callback already enforced OID match.
+    // If status is deleted but record was skipped (race), still report deleted.
+    return BaseDeleteResult(
+      branchName: branchName,
+      status: status,
+      deletedOid: status == BaseDeleteStatus.deleted ? expectedBranchOid : null,
+    );
+  }
+
   /// Renames a local branch (`git branch -m`). git carries the reflog and
   /// upstream config across, and updates the HEAD of any worktree that has
   /// the branch checked out — so this is safe for the current branch and for

@@ -515,6 +515,40 @@ class BranchMergePreview {
   bool get hasConflicts => state == MergePreviewState.conflicts;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 4 — base-safe bulk delete domain
+// ---------------------------------------------------------------------------
+
+/// Outcome of an OID-pinned, base-ancestor-checked local branch deletion.
+enum BaseDeleteStatus { deleted, moved, notMerged, checkedOut, missing }
+
+class BaseDeleteResult {
+  final String branchName;
+  final BaseDeleteStatus status;
+  final String? deletedOid;
+
+  const BaseDeleteResult({
+    required this.branchName,
+    required this.status,
+    this.deletedOid,
+  });
+
+  bool get deleted => status == BaseDeleteStatus.deleted;
+}
+
+/// Parses the single status token from a base-safe delete host script.
+BaseDeleteStatus parseBaseDeleteStatusToken(String raw) {
+  final token = raw.trim();
+  return switch (token) {
+    'deleted' => BaseDeleteStatus.deleted,
+    'moved' => BaseDeleteStatus.moved,
+    'notMerged' => BaseDeleteStatus.notMerged,
+    'checkedOut' => BaseDeleteStatus.checkedOut,
+    'missing' => BaseDeleteStatus.missing,
+    _ => throw FormatException('unknown base-delete status: $token'),
+  };
+}
+
 /// Parses `git merge-tree --write-tree --name-only -z --no-messages` stdout.
 ///
 /// Framing (Git ≥ 2.38): first NUL-terminated record is the result tree OID;
