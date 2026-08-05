@@ -1,11 +1,14 @@
 # Implementation plan: base-relative branches workspace
 
-- Status: **implementation in progress** (Phases 0–6 landed). Trust foundation
-  (0–3), Review multi-select/bulk delete (4), lifecycle actions (5), and a11y
-  polish (6): semantic branch rows, Home/End/Page/type-to-find/context-menu
-  keyboard, themed+keyboard context menus, non-color CI glyphs, selection tint
-  for current HEAD, reserved forge badge width, Reduce Motion scroll, and
-  two-dot/three-dot help tooltips. Phase 7 (performance/release review) is next.
+- Status: **implementation complete (Phases 0–7)**. Trust foundation (0–3),
+  Review multi-select/bulk delete (4), lifecycle (5), a11y (6), and performance
+  gates (7): Browse zero comparison/patch ops; Overview metadata without patch;
+  Changes one three-dot fetch with cache hit on revisit; review batch size 100 /
+  page size 50 / comparison file cap 500 documented; 500-ref Browse baseline +
+  integration review-summary scale fixture; LRU clear membership for branch
+  patch and merge-tree caches. Maintainer Checkpoint E / product sign-off still
+  recommended before wide rollout; wall-clock/CPU release measurements are
+  optional evidence outside ordinary CI.
 - Date: 2026-08-05
 - MADR: `docs/0003-MADR-base-relative-branches-workspace.md` (Option C)
 - Owner: implementation agent + maintainer review

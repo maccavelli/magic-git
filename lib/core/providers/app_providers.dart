@@ -4305,11 +4305,13 @@ final _commitRangeDiffLru = KeepAliveLru<(String, String, String, int)>(
 
 /// Three-dot branch comparison patches (`base...branch`), keyed by immutable
 /// OIDs + diff options. Byte-accounted like [commitRangeDiffProvider].
+/// Phase 7: three-dot branch patch cache (byte-bounded; cleared on repo retarget).
 final _branchDiffLru = KeepAliveLru<(String, String, String, int, bool)>(
   12,
   maxTotalBytes: 64 * _mib,
   maxEntryBytes: 16 * _mib,
 );
+/// Phase 7: merge-tree preview cache (OID-keyed; cleared on repo retarget).
 final _mergePreviewLru = KeepAliveLru<(String, String, String)>(
   48,
   maxTotalBytes: 2 * _mib,

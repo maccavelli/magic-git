@@ -3255,7 +3255,12 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     return target;
   }
 
+  /// Phase 7: base-relative Review summary batch size. Sequential batches of
+  /// this many tips per host invocation; never client-side per-branch SSH.
+  /// Tuned 2026-08 for the 500-ref fixture (≤ ceil(n/100) host calls).
   static const int branchReviewBatchSize = 100;
+
+  /// Phase 7: per-batch host timeout for [branchReviewSummaries].
   static const Duration branchReviewBatchTimeout = Duration(seconds: 60);
   static const String _branchReviewFieldSep = '\u001f';
 

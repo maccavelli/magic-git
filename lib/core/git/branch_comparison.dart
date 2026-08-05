@@ -342,6 +342,8 @@ class BranchComparisonMetadata {
 }
 
 /// Default file-list cap for comparison metadata before [truncated] is set.
+/// Phase 7: keeps Overview file lists bounded; aggregate stats still cover the
+/// truncated prefix only (documented UX).
 const int kBranchComparisonMaxFiles = 500;
 
 /// Parses `git diff --name-status -z` output into ordered path records.
