@@ -7,6 +7,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:url_launcher/url_launcher.dart' show launchUrl;
 
 import '../../core/forge/branch_forge_status.dart';
+import '../../core/forge/forge_urls.dart';
 import '../../core/git/branch_comparison.dart';
 import '../../core/git/branch_review_query.dart';
 import '../../core/git/git_service.dart';
@@ -17,10 +18,14 @@ import '../common/actions.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
 import '../common/inline_action_button.dart';
+import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/ref_name_validation.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/section_collapse.dart';
+import '../forge/forge_create_coordinator.dart';
+import '../forge/forge_prefs.dart';
+import '../tabs/tab_ui_providers.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'branch_bulk_delete_sheet.dart';
@@ -386,6 +391,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
               onDeleteTag: _deleteTag,
               onPushTag: _pushTag,
               onOpenUrl: _open,
+              onPublish: _publishBranch,
+              onCreateRequest: _createRequest,
+              onOpenHistory: _openHistory,
+              onOpenOnForge: _openOnForge,
             ),
     );
   }
@@ -753,16 +762,150 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
   Future<void> _createBranchPrompt(GitService git) async {
     if (busy) return;
-    final name = await promptText(
+    final startDefault = _selectedRef != null
+        ? (_refByName(
+                ref.read(refsProvider(repoPath)).value ?? const [],
+                _selectedRef,
+              )?.shortName ??
+              'HEAD')
+        : 'HEAD';
+    final values = await promptForm(
       context,
       'New branch',
-      placeholder: 'branch name',
-      description: 'Creates a branch at the current HEAD and checks it out.',
       confirmLabel: 'Create',
-      validate: refNameProblem,
+      fields: [
+        PromptField(
+          key: 'name',
+          label: 'Name',
+          placeholder: 'feature/my-work',
+          validate: refNameProblem,
+        ),
+        PromptField(
+          key: 'start',
+          label: 'Start at',
+          placeholder: 'HEAD, branch, tag, or commit',
+          initial: startDefault,
+        ),
+      ],
     );
-    if (name == null || name.isEmpty || !mounted) return;
-    await runGuarded(() => git.createBranch(repoPath, name));
+    if (values == null || !mounted) return;
+    final name = values['name']?.trim() ?? '';
+    final start = (values['start'] ?? 'HEAD').trim();
+    if (name.isEmpty) return;
+
+    // Worktree path: open sheet with both name and start (no create-then-checkout).
+    final useWorktree = await confirmAction(
+      context,
+      title: 'Create location',
+      message:
+          'Create "$name" in a new worktree instead of checking it out here?',
+      confirmLabel: 'New worktree',
+      cancelLabel: 'Here',
+    );
+    if (!mounted) return;
+    if (useWorktree) {
+      final created = await showMacosSheet<bool>(
+        context: context,
+        builder: (ctx) => AddWorktreeSheet(
+          repoPath: repoPath,
+          initialCommitish: start == 'HEAD' ? null : start,
+          initialBranchName: name,
+        ),
+      );
+      if (created == true) _refresh();
+      return;
+    }
+
+    // Checkout after create is the default (mutually exclusive with worktree).
+    if (start == 'HEAD' || start.isEmpty) {
+      await runGuarded(
+        () => guardedBranchSwitch(
+          context,
+          ref,
+          repoPath,
+          () => git.createBranch(repoPath, name, checkout: true),
+        ),
+      );
+    } else {
+      await runGuarded(
+        () => guardedBranchSwitch(
+          context,
+          ref,
+          repoPath,
+          () => git.branchFrom(repoPath, name, start, checkout: true),
+        ),
+      );
+    }
+  }
+
+  Future<void> _publishBranch(GitService git, GitRef branch) async {
+    if (busy) return;
+    final remotes =
+        ref.read(remotesProvider(repoPath)).value ?? const <String>[];
+    if (remotes.isEmpty) return;
+    final remote = remotes.length == 1
+        ? remotes.first
+        : defaultRemote(remotes);
+    final ok = await confirmAction(
+      context,
+      title: 'Publish branch',
+      message:
+          'Push "${branch.shortName}" to $remote and set upstream tracking?',
+      confirmLabel: 'Publish',
+    );
+    if (!ok || !mounted) return;
+    await runGuarded(() async {
+      await git.push(
+        repoPath,
+        remote: remote,
+        branch: branch.shortName,
+        setUpstream: true,
+        force: PushForce.none,
+      );
+      // Publishing does not change tags — do not invalidate remoteTagsProvider.
+    });
+  }
+
+  Future<void> _createRequest(GitRef branch) async {
+    if (busy) return;
+    final base = ref
+        .read(
+          branchBaseProvider((
+            repoPath: repoPath,
+            allowForgeFetch: false,
+          )),
+        )
+        .value
+        ?.base;
+    await openCreateChangeRequest(
+      context: context,
+      ref: ref,
+      branchShortName: branch.shortName,
+      baseRefName: base?.refName ?? base?.displayName,
+    );
+  }
+
+  void _openHistory(GitRef branch) {
+    ref
+        .read(historyNavigationIntentProvider.notifier)
+        .set(repoPath, branch.shortName);
+    ref.read(pageIndexProvider.notifier).select(1);
+    ref.read(visitedPagesProvider.notifier).visit(1);
+  }
+
+  Future<void> _openOnForge(GitRef branch) async {
+    final remoteUrl = await ref.read(originRemoteUrlProvider(repoPath).future);
+    final forge = await ref.read(forgeProvider(repoPath).future);
+    if (remoteUrl == null || !mounted) return;
+    final url = forgeBranchWebUrl(remoteUrl, forge, branch.shortName);
+    if (url == null) {
+      await showErrorDialog(
+        context,
+        'This branch is not available on the origin-backed forge web UI.',
+      );
+      return;
+    }
+    _open(url);
   }
 
   Future<void> _deleteBranch(

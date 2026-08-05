@@ -2,14 +2,12 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart' show MacosColors, showMacosSheet;
 
-import '../../core/forge/forge.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
-import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
 import '../common/context_menu.dart';
 import '../common/prompt_text_sheet.dart';
-import '../forge/forge_prefs.dart';
+import '../forge/forge_create_coordinator.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart' show kWorktreeIcon;
 import 'drag_item.dart';
@@ -348,36 +346,15 @@ Future<void> _stashFiles(DropContext ctx, List<String> paths) async {
 }
 
 Future<void> _createRequestFromBranch(DropContext ctx, String branch) async {
-  // Which forge this repo talks to decides PR (GitHub) vs MR (GitLab). Resolve
-  // it (cheap once the Forge tab has been visited) so an unknown forge fails
-  // with a dialog here rather than a dead Forge tab.
-  //
-  // The resolution can hit the network and throw (host unreachable, gh/glab
-  // missing) — and runDrop's future is fire-and-forget from the DragTarget, so
-  // an escaped exception here would be an unhandled async error, not a dialog.
-  final Forge forge;
-  try {
-    forge = await ctx.ref.read(forgeProvider(ctx.repoPath).future);
-  } catch (e) {
-    if (ctx.context.mounted) {
-      await showErrorDialog(ctx.context, displayError(e));
-    }
-    return;
-  }
+  // Shared with Branches detail Create PR/MR (Phase 5 coordinator). Errors
+  // (no forge, network) surface as dialogs inside the coordinator.
+  await openCreateChangeRequest(
+    context: ctx.context,
+    ref: ctx.ref,
+    branchShortName: branch,
+    fromDrop: true,
+  );
   if (!ctx.context.mounted) return;
-  switch (forge) {
-    case Forge.github:
-    case Forge.gitlab:
-      // Seed the Forge tab's inline create form with the dropped branch and
-      // bring the tab forward; the mounted forge panel consumes the seed
-      // (see forgeCreateSeedProvider).
-      ctx.ref.read(forgeCreateSeedProvider.notifier).set(ctx.repoPath, branch);
-      ctx.selectPage(DropZoneId.forge.pageIndex);
-    case Forge.none:
-    case Forge.unknown:
-      await showErrorDialog(
-        ctx.context,
-        'No GitHub or GitLab remote detected for this repository.',
-      );
-  }
+  // Keep DropContext navigation in sync with pageIndexProvider.
+  ctx.selectPage(DropZoneId.forge.pageIndex);
 }

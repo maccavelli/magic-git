@@ -21,6 +21,10 @@ class CreatePrForm extends ConsumerStatefulWidget {
   /// nav item. Null keeps the default "prefill from the checked-out branch".
   final String? initialHead;
 
+  /// Pre-fills the PR base branch once in initState. Null defaults to `main`.
+  /// Never rewritten after the user can edit it.
+  final String? initialBase;
+
   /// Dismisses the form back to the "nothing selected" pane state — called on
   /// Cancel and after a successful create.
   final VoidCallback onClose;
@@ -34,6 +38,7 @@ class CreatePrForm extends ConsumerStatefulWidget {
     required this.repoPath,
     required this.onClose,
     this.initialHead,
+    this.initialBase,
     this.onDirtyChanged,
   });
 
@@ -42,8 +47,8 @@ class CreatePrForm extends ConsumerStatefulWidget {
 }
 
 class _CreatePrFormState extends ConsumerState<CreatePrForm> {
-  final _head = TextEditingController();
-  final _base = TextEditingController(text: 'main');
+  late final TextEditingController _head;
+  late final TextEditingController _base;
   final _title = TextEditingController();
   final _body = TextEditingController();
   final _reviewers = TextEditingController();
@@ -64,9 +69,15 @@ class _CreatePrFormState extends ConsumerState<CreatePrForm> {
     // checked-out-branch prefill so the drop's branch wins.
     final seeded = widget.initialHead;
     if (seeded != null && seeded.isNotEmpty) {
-      _head.text = seeded;
+      _head = TextEditingController(text: seeded);
       _headPrefilled = true;
+    } else {
+      _head = TextEditingController();
     }
+    final baseSeed = widget.initialBase;
+    _base = TextEditingController(
+      text: (baseSeed != null && baseSeed.isNotEmpty) ? baseSeed : 'main',
+    );
   }
 
   void _maybePrefillHead(GitStatus? status) {

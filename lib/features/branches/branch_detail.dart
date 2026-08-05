@@ -16,7 +16,6 @@ import '../common/diff_view.dart';
 import '../common/inline_action_button.dart';
 import '../common/split_diff_view.dart';
 import '../common/tappable.dart';
-import '../worktrees/worktree_tabs.dart';
 import 'branch_dashboard_stats.dart';
 import 'branch_view_model.dart';
 
@@ -114,6 +113,11 @@ class BranchDetail extends ConsumerWidget {
   final void Function(GitService, GitRef, TagRemoteStatus, String?) onDeleteTag;
   final void Function(GitService, String, String) onPushTag;
   final void Function(String?) onOpenUrl;
+  /// Phase 5 lifecycle actions.
+  final void Function(GitService, GitRef)? onPublish;
+  final void Function(GitRef)? onCreateRequest;
+  final void Function(GitRef)? onOpenHistory;
+  final void Function(GitRef)? onOpenOnForge;
 
   const BranchDetail({
     super.key,
@@ -142,6 +146,10 @@ class BranchDetail extends ConsumerWidget {
     required this.onDeleteTag,
     required this.onPushTag,
     required this.onOpenUrl,
+    this.onPublish,
+    this.onCreateRequest,
+    this.onOpenHistory,
+    this.onOpenOnForge,
   });
 
   @override
@@ -591,60 +599,137 @@ class BranchDetail extends ConsumerWidget {
         '${b.upstream == null ? '' : ', or open a pull request'}.',
       );
     }
-    final actions = <Widget>[
-      if (bf != null && bf.hasRequest)
+    // Phase 5 primary-action precedence (§4.6).
+    final remotes = ref.watch(remotesProvider(repoPath)).value ?? const <String>[];
+    final unpublished = b.upstream == null;
+    final canPublish = unpublished && remotes.isNotEmpty && onPublish != null;
+    final hasRequest = bf != null && bf.hasRequest;
+    final canCreateRequest =
+        !hasRequest && onCreateRequest != null && !unpublished;
+
+    final ({String label, IconData icon, VoidCallback? onTap}) primary;
+    if (elsewhere != null) {
+      primary = (
+        label: 'Switch to worktree',
+        icon: CupertinoIcons.square_arrow_right,
+        onTap: busy ? null : () => onSwitchToWorktree(elsewhere),
+      );
+    } else if (!b.isHead && mode == BranchWorkspaceMode.browse) {
+      primary = (
+        label: 'Check out',
+        icon: CupertinoIcons.square_arrow_down,
+        onTap: busy ? null : () => onCheckout(git, b.shortName),
+      );
+    } else if (hasRequest && mode == BranchWorkspaceMode.review) {
+      primary = (
+        label: 'Open ${bf.requestLabel}',
+        icon: CupertinoIcons.arrow_up_right_square,
+        onTap: () => onOpenUrl(bf.requestUrl),
+      );
+    } else if (canPublish && mode == BranchWorkspaceMode.review) {
+      primary = (
+        label: 'Publish Branch',
+        icon: CupertinoIcons.cloud_upload,
+        onTap: busy ? null : () => onPublish!(git, b),
+      );
+    } else if (canCreateRequest && mode == BranchWorkspaceMode.review) {
+      primary = (
+        label: bf?.isMr == true ? 'Create Merge Request' : 'Create Pull Request',
+        icon: CupertinoIcons.plus_rectangle_on_rectangle,
+        onTap: busy ? null : () => onCreateRequest!(b),
+      );
+    } else {
+      primary = (
+        label: 'Compare Changes',
+        icon: CupertinoIcons.doc_text,
+        onTap: null, // comparison inspector is always visible below
+      );
+    }
+
+    final secondary = <Widget>[
+      if (hasRequest && primary.label != 'Open ${bf.requestLabel}')
         _detailButton(
           'Open ${bf.requestLabel}',
           CupertinoIcons.arrow_up_right_square,
           () => onOpenUrl(bf.requestUrl),
         ),
-      if (!b.isHead && elsewhere == null)
+      if (bf?.ciUrl != null)
         _detailButton(
-          'Check out',
-          CupertinoIcons.square_arrow_down,
-          busy ? null : () => onCheckout(git, b.shortName),
+          'Open CI',
+          CupertinoIcons.gauge,
+          () => onOpenUrl(bf!.ciUrl),
+        ),
+      if (canPublish && primary.label != 'Publish Branch')
+        _detailButton(
+          'Publish Branch',
+          CupertinoIcons.cloud_upload,
+          busy ? null : () => onPublish!(git, b),
+        ),
+    ].take(2).toList();
+
+    final moreItems = <MacosPulldownMenuItem>[
+      if (!b.isHead && elsewhere == null)
+        MacosPulldownMenuItem(
+          title: const Text('Check out'),
+          onTap: busy ? null : () => onCheckout(git, b.shortName),
         ),
       if (elsewhere != null)
-        _detailButton(
-          'Switch to worktree',
-          CupertinoIcons.square_arrow_right,
-          busy ? null : () => onSwitchToWorktree(elsewhere),
+        MacosPulldownMenuItem(
+          title: const Text('Switch to worktree'),
+          onTap: busy ? null : () => onSwitchToWorktree(elsewhere),
         ),
-      _detailButton(
-        'New worktree…',
-        kWorktreeIcon,
-        busy ? null : () => onCheckoutInNewWorktree(b.shortName),
+      MacosPulldownMenuItem(
+        title: const Text('New worktree…'),
+        onTap: busy ? null : () => onCheckoutInNewWorktree(b.shortName),
       ),
+      if (canCreateRequest)
+        MacosPulldownMenuItem(
+          title: Text(
+            bf?.isMr == true ? 'Create Merge Request' : 'Create Pull Request',
+          ),
+          onTap: busy ? null : () => onCreateRequest!(b),
+        ),
+      if (onOpenOnForge != null)
+        MacosPulldownMenuItem(
+          title: const Text('Open on Forge'),
+          onTap: () => onOpenOnForge!(b),
+        ),
+      if (onOpenHistory != null)
+        MacosPulldownMenuItem(
+          title: const Text('Open reachable history'),
+          onTap: () => onOpenHistory!(b),
+        ),
       if (!b.isHead)
-        _detailButton(
-          'Merge into current',
-          CupertinoIcons.arrow_merge,
-          busy ? null : () => onMerge(git, b.shortName, MergeMode.normal),
+        MacosPulldownMenuItem(
+          title: const Text('Merge into current'),
+          onTap: busy ? null : () => onMerge(git, b.shortName, MergeMode.normal),
         ),
-      _detailButton(
-        'Set upstream…',
-        CupertinoIcons.arrow_up_arrow_down,
-        busy ? null : () => onSetUpstream(git, b),
+      MacosPulldownMenuItem(
+        title: const Text('Set upstream…'),
+        onTap: busy ? null : () => onSetUpstream(git, b),
       ),
-      _detailButton(
-        'Rename…',
-        CupertinoIcons.pencil,
-        busy ? null : () => onRenameBranch(git, b.shortName),
+      MacosPulldownMenuItem(
+        title: const Text('Rename…'),
+        onTap: busy ? null : () => onRenameBranch(git, b.shortName),
       ),
-      _detailButton(
-        vm.pinned.contains(b.shortName) ? 'Unpin' : 'Pin to top',
-        vm.pinned.contains(b.shortName)
-            ? CupertinoIcons.star_slash
-            : CupertinoIcons.star,
-        () => onTogglePin(b.shortName),
+      MacosPulldownMenuItem(
+        title: Text(vm.pinned.contains(b.shortName) ? 'Unpin' : 'Pin to top'),
+        onTap: () => onTogglePin(b.shortName),
       ),
       if (!b.isHead && elsewhere == null)
-        _detailButton(
-          'Delete',
-          CupertinoIcons.trash,
-          busy ? null : () => onDeleteBranch(git, b.shortName),
-          tone: InlineActionTone.destructive,
+        MacosPulldownMenuItem(
+          title: const Text('Delete'),
+          onTap: busy ? null : () => onDeleteBranch(git, b.shortName),
         ),
+    ];
+
+    final actions = <Widget>[
+      _detailButton(primary.label, primary.icon, primary.onTap),
+      ...secondary,
+      MacosPulldownButton(
+        title: 'More',
+        items: moreItems,
+      ),
     ];
     return _detailScaffold(
       icon: CupertinoIcons.arrow_branch,

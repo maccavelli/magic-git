@@ -62,3 +62,49 @@ String? forgeReleaseWebUrl(String remoteUrl, Forge forge, String tagName) {
     Forge.none || Forge.unknown => null,
   };
 }
+
+/// The tree browser page for a local branch name known on the forge remote.
+/// [branchName] must be a short branch name (`main`), not `origin/main`.
+String? forgeBranchWebUrl(String remoteUrl, Forge forge, String branchName) {
+  final base = forgeProjectWebUrl(remoteUrl);
+  if (base == null || branchName.isEmpty) return null;
+  final branch = Uri.encodeComponent(branchName);
+  return switch (forge) {
+    Forge.github => '$base/tree/$branch',
+    Forge.gitlab => '$base/-/tree/$branch',
+    Forge.none || Forge.unknown => null,
+  };
+}
+
+/// Normalize a comparison-base ref to a forge branch name for create-PR/MR
+/// seeds. Returns null for tags, detached OIDs, or other-remote tracking refs
+/// that should not seed the form base.
+String? forgeBranchNameForCreateSeed(String? refName) {
+  if (refName == null || refName.isEmpty) return null;
+  if (refName.startsWith('refs/tags/')) return null;
+  if (RegExp(r'^[0-9a-f]{40}$').hasMatch(refName) ||
+      RegExp(r'^[0-9a-f]{64}$').hasMatch(refName)) {
+    return null;
+  }
+  if (refName.startsWith('refs/heads/')) {
+    return refName.substring('refs/heads/'.length);
+  }
+  if (refName.startsWith('refs/remotes/')) {
+    final rest = refName.substring('refs/remotes/'.length);
+    final slash = rest.indexOf('/');
+    if (slash <= 0 || slash == rest.length - 1) return null;
+    final remote = rest.substring(0, slash);
+    // Only origin-backed (or first-remote) tracking names seed forms.
+    if (remote != 'origin') return null;
+    return rest.substring(slash + 1);
+  }
+  // Bare short name (already a forge branch name).
+  if (refName.contains('/')) {
+    // origin/main style without refs/ prefix.
+    if (refName.startsWith('origin/')) {
+      return refName.substring('origin/'.length);
+    }
+    return null;
+  }
+  return refName;
+}

@@ -42,6 +42,7 @@ const LogQuery _historyQuery = (
   sha: null,
   noMerges: false,
   all: false,
+    revision: null,
 );
 
 class _CountingGit extends GitService {

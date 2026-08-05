@@ -1,13 +1,13 @@
 # Implementation plan: base-relative branches workspace
 
-- Status: **implementation in progress** (Phases 0–4 landed). Phases 0–3 remain
-  the trust foundation (base semantics, comparison inspector, merge-tree
-  preview). Phase 4 adds Review search grammar + AND facets, natural/smart
-  sorts, multi-selection (click/⌘/⇧/Space), base-safe OID-pinned bulk delete
-  with preflight/result sheet and undo only on true deletes, plus batch
-  pin/hide (never Merge). Full forge-protection knowledge and every dashboard
-  facet chip remain iterative polish under Phase 4 exit criteria. Phase 5
-  (lifecycle action hierarchy) is next.
+- Status: **implementation in progress** (Phases 0–5 landed). Trust foundation
+  (0–3), Review multi-select/bulk delete (4), and lifecycle actions (5): New
+  Branch form (start-at / worktree / checkout matrix), Publish (`-u`,
+  PushForce.none), shared forge create coordinator with seed base, Create
+  PR/MR forms `initialBase`/`initialTarget`, primary+secondary+More detail
+  hierarchy, Open CI / Open on Forge / History of branch handoff
+  (`historyNavigationIntentProvider` + `LogQuery.revision` + Clear chip), and
+  palette IDs for publish/create/open-CI/compare. Phase 6 (a11y/polish) is next.
 - Date: 2026-08-05
 - MADR: `docs/0003-MADR-base-relative-branches-workspace.md` (Option C)
 - Owner: implementation agent + maintainer review

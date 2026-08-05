@@ -3932,6 +3932,8 @@ typedef LogQuery = ({
   String? sha,
   bool noMerges,
   bool all,
+  /// When set, walk only this revision (branch/tag/commit) instead of HEAD/`--all`.
+  String? revision,
 });
 
 /// The History panel's commit list, walked a page at a time.
@@ -3989,6 +3991,7 @@ class LogSearchNotifier extends AsyncNotifier<List<GitCommit>> {
   }) {
     return git.log(
       query.repoPath,
+      revision: query.revision ?? 'HEAD',
       maxCount: count,
       skip: skip,
       grep: query.grep,
@@ -4000,7 +4003,8 @@ class LogSearchNotifier extends AsyncNotifier<List<GitCommit>> {
       pathQuery: query.path,
       sha: query.sha,
       noMerges: query.noMerges,
-      all: query.all,
+      // Revision scope and --all are mutually exclusive for a branch handoff.
+      all: query.revision == null && query.all,
     );
   }
 

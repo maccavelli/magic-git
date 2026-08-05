@@ -33,6 +33,7 @@ import '../common/tool_icon_button.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/drag_state.dart';
+import '../forge/forge_prefs.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'commit_graph_view.dart';
@@ -179,6 +180,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   // key (initState-only capture froze the AppSettings default of `true`).
   bool _filtersExpanded = false;
   Timer? _searchDebounce;
+  /// Branch/tag revision scope from Branches handoff; null = ordinary HEAD/`--all`.
+  String? _revisionScope;
 
   @override
   void dispose() {
@@ -238,7 +241,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     path: _effPath,
     sha: _effSha,
     noMerges: _hideMerges,
-    all: ref.read(appSettingsProvider).historyAllBranches,
+    all: _revisionScope == null &&
+        ref.read(appSettingsProvider).historyAllBranches,
+    revision: _revisionScope,
   );
 
   GlobalKey _commitRowKeyFor(String hash) =>
@@ -1183,7 +1188,29 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     final allBranches = ref.watch(
       appSettingsProvider.select((s) => s.historyAllBranches),
     );
-    final filtering = _hasQueryFilters || allBranches;
+    // One-shot handoff from Branches: seed revision scope for this mount only.
+    ref.listen(historyNavigationIntentProvider, (prev, next) {
+      if (next == null) return;
+      if (next.repoPath != widget.repoPath) return;
+      setState(() => _revisionScope = next.revision);
+      ref.read(historyNavigationIntentProvider.notifier).clear();
+    });
+    final intent = ref.watch(historyNavigationIntentProvider);
+    if (intent != null &&
+        intent.repoPath == widget.repoPath &&
+        _revisionScope != intent.revision) {
+      // Apply on first paint if listen missed a pre-mounted intent.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final still = ref.read(historyNavigationIntentProvider);
+        if (still != null && still.repoPath == widget.repoPath) {
+          setState(() => _revisionScope = still.revision);
+          ref.read(historyNavigationIntentProvider.notifier).clear();
+        }
+      });
+    }
+    final filtering =
+        _hasQueryFilters || allBranches || _revisionScope != null;
     final query = (
       repoPath: widget.repoPath,
       grep: _effGrep,
@@ -1193,7 +1220,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       path: _effPath,
       sha: _effSha,
       noMerges: _hideMerges,
-      all: allBranches,
+      all: _revisionScope == null && allBranches,
+      revision: _revisionScope,
     );
     // Event-driven refresh: each coalesced remote-change tick re-fetches history
     // and refs when git's own state moves (.git/refs, HEAD, index).
@@ -1318,6 +1346,28 @@ class _HistoryViewState extends ConsumerState<HistoryView>
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _filterBar(context, filtering, allBranches: allBranches),
+            if (_revisionScope != null) ...[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'History of $_revisionScope',
+                        style: MacosTheme.of(context).typography.caption1
+                            .copyWith(color: MacosColors.systemBlueColor),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    InlineActionButton(
+                      label: 'Clear',
+                      icon: CupertinoIcons.xmark_circle,
+                      onPressed: () => setState(() => _revisionScope = null),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             Container(height: 1, color: MacosColors.separatorColor),
             Expanded(
               child: _historyBody(

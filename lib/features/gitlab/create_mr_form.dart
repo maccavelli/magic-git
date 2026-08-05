@@ -21,6 +21,10 @@ class CreateMrForm extends ConsumerStatefulWidget {
   /// Null keeps the default "prefill from the checked-out branch".
   final String? initialSource;
 
+  /// Pre-fills the MR target branch once in initState. Null defaults to `main`.
+  /// Never rewritten after the user can edit it.
+  final String? initialTarget;
+
   /// Dismisses the form back to the "nothing selected" pane state — called on
   /// Cancel and after a successful create.
   final VoidCallback onClose;
@@ -34,6 +38,7 @@ class CreateMrForm extends ConsumerStatefulWidget {
     required this.repoPath,
     required this.onClose,
     this.initialSource,
+    this.initialTarget,
     this.onDirtyChanged,
   });
 
@@ -42,8 +47,8 @@ class CreateMrForm extends ConsumerStatefulWidget {
 }
 
 class _CreateMrFormState extends ConsumerState<CreateMrForm> {
-  final _source = TextEditingController();
-  final _target = TextEditingController(text: 'main');
+  late final TextEditingController _source;
+  late final TextEditingController _target;
   final _title = TextEditingController();
   final _description = TextEditingController();
   final _reviewers = TextEditingController();
@@ -70,9 +75,15 @@ class _CreateMrFormState extends ConsumerState<CreateMrForm> {
     // checked-out-branch prefill so the drop's branch wins.
     final seeded = widget.initialSource;
     if (seeded != null && seeded.isNotEmpty) {
-      _source.text = seeded;
+      _source = TextEditingController(text: seeded);
       _sourcePrefilled = true;
+    } else {
+      _source = TextEditingController();
     }
+    final targetSeed = widget.initialTarget;
+    _target = TextEditingController(
+      text: (targetSeed != null && targetSeed.isNotEmpty) ? targetSeed : 'main',
+    );
   }
 
   void _maybePrefillSource(GitStatus? status) {

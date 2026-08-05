@@ -77,6 +77,7 @@ void main() {
     // above, otherwise the widget computes a different LogQuery key than the
     // one the test warmed and gets a loading spinner instead of data.
     all: false,
+    revision: null,
   );
 
   setUp(() async {
@@ -322,6 +323,7 @@ void main() {
       sha: null,
       noMerges: false,
       all: false,
+    revision: null,
     ));
 
     await filter(tester, 'author: other');

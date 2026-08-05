@@ -120,6 +120,7 @@ const LogQuery _defaultQuery = (
   sha: null,
   noMerges: false,
   all: true,
+    revision: null,
 );
 
 Future<ProviderContainer> _pump(WidgetTester tester, _PagingGit git) async {

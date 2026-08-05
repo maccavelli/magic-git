@@ -249,7 +249,12 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         if (!mounted) return;
         if (ref.read(forgeCreateSeedProvider)?.repoPath != repoPath) return;
         ref.read(forgeCreateSeedProvider.notifier).clear();
-        _select(ForgeCreatingChangeRequest(seedSource: seed.branch));
+        _select(
+          ForgeCreatingChangeRequest(
+            seedSource: seed.branch,
+            seedBase: seed.baseRef,
+          ),
+        );
       });
     }
 
@@ -671,10 +676,11 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         // "nothing is wrong") while the left-pane row still shows selected.
         if (mrs.hasError) return PaneError(mrs.error!);
         return const CenteredHint('Select an item on the left');
-      case ForgeCreatingChangeRequest(:final seedSource):
+      case ForgeCreatingChangeRequest(:final seedSource, :final seedBase):
         return CreateMrForm(
           repoPath: repoPath,
           initialSource: seedSource,
+          initialTarget: seedBase,
           onClose: () => setState(() {
             _sel = const ForgeNothingSel();
             _draftDirty = false;

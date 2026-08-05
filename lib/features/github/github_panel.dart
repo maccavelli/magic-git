@@ -196,7 +196,12 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         if (!mounted) return;
         if (ref.read(forgeCreateSeedProvider)?.repoPath != repoPath) return;
         ref.read(forgeCreateSeedProvider.notifier).clear();
-        _select(ForgeCreatingChangeRequest(seedSource: seed.branch));
+        _select(
+          ForgeCreatingChangeRequest(
+            seedSource: seed.branch,
+            seedBase: seed.baseRef,
+          ),
+        );
       });
     }
 
@@ -619,10 +624,11 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         // "nothing is wrong") while the left-pane row still shows selected.
         if (prs.hasError) return PaneError(prs.error!);
         return const CenteredHint('Select an item on the left');
-      case ForgeCreatingChangeRequest(:final seedSource):
+      case ForgeCreatingChangeRequest(:final seedSource, :final seedBase):
         return CreatePrForm(
           repoPath: repoPath,
           initialHead: seedSource,
+          initialBase: seedBase,
           onClose: () => setState(() {
             _sel = const ForgeNothingSel();
             _draftDirty = false;

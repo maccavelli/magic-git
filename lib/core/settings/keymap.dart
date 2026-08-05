@@ -337,6 +337,30 @@ final List<KeymapAction> kKeymapActions = [
       KeyBinding.fromKey(LogicalKeyboardKey.keyM, meta: true, shift: true),
     ],
   ),
+  const KeymapAction(
+    id: 'branches.publish',
+    label: 'Publish Branch',
+    category: KeymapCategory.branches,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'branches.createRequest',
+    label: 'Create Pull/Merge Request',
+    category: KeymapCategory.branches,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'branches.openCi',
+    label: 'Open CI',
+    category: KeymapCategory.branches,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'branches.compare',
+    label: 'Compare with Base',
+    category: KeymapCategory.branches,
+    defaultBindings: [],
+  ),
   KeymapAction(
     id: 'branches.delete',
     label: 'Delete selected branch',

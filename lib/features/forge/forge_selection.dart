@@ -41,10 +41,13 @@ class ForgeCreatingIssue extends ForgeSel {
 }
 
 /// The inline "New MR/PR" form. [seedSource] pre-fills the source/head branch
-/// (a branch dropped on the Forge nav item); null prefills from HEAD.
+/// (a branch dropped on the Forge nav item or Branches Create action); null
+/// prefills from HEAD. [seedBase] pre-fills the base/target forge branch name
+/// (`main`, never `origin/main`); null leaves the form default.
 class ForgeCreatingChangeRequest extends ForgeSel {
   final String? seedSource;
-  const ForgeCreatingChangeRequest({this.seedSource});
+  final String? seedBase;
+  const ForgeCreatingChangeRequest({this.seedSource, this.seedBase});
 }
 
 /// Whether [sel] is one of the inline create forms (the ones whose unsaved

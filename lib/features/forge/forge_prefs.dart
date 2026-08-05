@@ -5,23 +5,51 @@ import 'package:shared_preferences/shared_preferences.dart';
 // `collapsedSectionsProvider` in `../common/section_collapse.dart` so the
 // Forge and Branches tabs share one minimize/expand mechanism.
 
-/// A branch dropped on the Forge nav item: the mounted forge panel for
-/// [repoPath] opens its inline create-MR/PR form seeded with [branch], then
-/// clears this. A provider (not a constructor argument) because the drop
-/// handler lives outside the panel's widget tree.
-class ForgeCreateSeed extends Notifier<({String repoPath, String branch})?> {
-  @override
-  ({String repoPath, String branch})? build() => null;
+/// A branch destined for the Forge create-PR/MR form: the mounted forge panel
+/// for [repoPath] opens its inline form seeded with [branch] (and optional
+/// [baseRef] forge branch name), then clears this. A provider (not a
+/// constructor argument) because drop handlers and Branches live outside the
+/// panel's widget tree.
+typedef ForgeCreateSeedData = ({
+  String repoPath,
+  String branch,
+  String? baseRef,
+});
 
-  void set(String repoPath, String branch) =>
-      state = (repoPath: repoPath, branch: branch);
+class ForgeCreateSeed extends Notifier<ForgeCreateSeedData?> {
+  @override
+  ForgeCreateSeedData? build() => null;
+
+  /// [baseRef] is a forge branch name (`main`), never `origin/main`.
+  void set(String repoPath, String branch, {String? baseRef}) =>
+      state = (repoPath: repoPath, branch: branch, baseRef: baseRef);
 
   void clear() => state = null;
 }
 
 final forgeCreateSeedProvider =
-    NotifierProvider<ForgeCreateSeed, ({String repoPath, String branch})?>(
+    NotifierProvider<ForgeCreateSeed, ForgeCreateSeedData?>(
       ForgeCreateSeed.new,
+    );
+
+/// History handoff from Branches (and similar): main History mount consumes
+/// once into a visible revision scope, then clears. Parallel to forge seed.
+typedef HistoryNavigationIntent = ({String repoPath, String revision});
+
+class HistoryNavigationIntentNotifier
+    extends Notifier<HistoryNavigationIntent?> {
+  @override
+  HistoryNavigationIntent? build() => null;
+
+  void set(String repoPath, String revision) =>
+      state = (repoPath: repoPath, revision: revision);
+
+  void clear() => state = null;
+}
+
+final historyNavigationIntentProvider =
+    NotifierProvider<HistoryNavigationIntentNotifier, HistoryNavigationIntent?>(
+      HistoryNavigationIntentNotifier.new,
     );
 
 /// Whether the Forge list column shows the Inbox (unified triage list) or
