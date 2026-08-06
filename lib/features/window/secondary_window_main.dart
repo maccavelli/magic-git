@@ -46,6 +46,7 @@ import '../common/undo_toast.dart';
 import '../history/history_view.dart';
 import '../recovery/recovery_sheet.dart';
 import '../repository/repo_status_view.dart';
+import '../viewer/remote_edit_service.dart';
 import 'secondary_window_binding.dart';
 
 /// The per-engine bootstrap/allowlist channel (fixed name; each engine has its
@@ -748,6 +749,33 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
 
   @override
   Widget build(BuildContext context) {
+    // Remote-edit notices (H4) — same UX as the main shell.
+    ref.listen(remoteEditNoticeProvider, (previous, next) {
+      if (next == null || next == previous) return;
+      final notice = next;
+      ref.read(remoteEditNoticeProvider.notifier).clear();
+      unawaited(() async {
+        if (!mounted) return;
+        if (notice.isConflict && notice.conflictSessionKey != null) {
+          final overwrite = await confirmAction(
+            context,
+            title: notice.title,
+            message:
+                '${notice.message}\n\nOverwrite the remote file with your '
+                'local editor buffer?',
+            confirmLabel: 'Overwrite Remote',
+            destructive: true,
+          );
+          if (overwrite && mounted) {
+            await ref
+                .read(remoteEditServiceProvider.notifier)
+                .forceUploadAfterConflict(notice.conflictSessionKey!);
+          }
+        } else {
+          await showErrorDialog(context, notice.message);
+        }
+      }());
+    });
     // The Recovery sheet opens locally in this window (full parity with the
     // in-app tab) — the reflog/snapshot reads and restore actions all flow
     // through the same proxied executor as everything else here.

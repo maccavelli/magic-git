@@ -211,6 +211,56 @@ class ProxyExecuteException implements Exception {
   String toString() => message;
 }
 
+/// One `uploadBytes` call's parameters for the secondary-window hub.
+class UploadBytesRequest {
+  final String remotePath;
+  final Uint8List bytes;
+
+  /// Session-routing key (repo the main isolate must own) — see
+  /// [CommandExecutor.uploadBytes] `routingRepo`.
+  final String routingRepo;
+
+  const UploadBytesRequest({
+    required this.remotePath,
+    required this.bytes,
+    required this.routingRepo,
+  });
+}
+
+Map<String, Object?> encodeUploadBytesRequest(UploadBytesRequest request) => {
+  'remotePath': request.remotePath,
+  'bytes': request.bytes,
+  'routingRepo': request.routingRepo,
+};
+
+UploadBytesRequest decodeUploadBytesRequest(Map<Object?, Object?> map) {
+  final raw = map['bytes'];
+  final Uint8List bytes = switch (raw) {
+    final Uint8List b => b,
+    final List<int> list => Uint8List.fromList(list),
+    _ => Uint8List(0),
+  };
+  return UploadBytesRequest(
+    remotePath: map['remotePath'] as String? ?? '',
+    bytes: bytes,
+    routingRepo: map['routingRepo'] as String? ?? '',
+  );
+}
+
+/// Success envelope for uploadBytes (void on the real executor).
+Map<String, Object?> encodeUploadBytesResult() => {'ok': true};
+
+/// Failure envelope — reuses execute error tags where meaningful.
+Map<String, Object?> encodeUploadBytesError(Object error) =>
+    encodeExecuteError(error);
+
+/// Decodes an uploadBytes reply: returns on success, throws on failure.
+void decodeUploadBytesResponse(Map<Object?, Object?> map) {
+  if (map['ok'] == true) return;
+  // Reuse execute decoder by forcing a throw path.
+  decodeExecuteResponse(map);
+}
+
 /// The connection snapshot pushed to (and requested by) the History window.
 /// Phase/backend stay raw enum *names* here — the codec must not drag the
 /// provider layer in; each side converts with its own enums in scope.

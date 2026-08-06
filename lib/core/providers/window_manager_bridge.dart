@@ -595,6 +595,34 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
           // into the channel as an opaque PlatformException.
           return encodeExecuteError(e);
         }
+      case 'uploadBytes':
+        final upload = decodeUploadBytesRequest(
+          call.arguments as Map<Object?, Object?>,
+        );
+        final uploadContainer = _execContainerFor(
+          container,
+          upload.routingRepo,
+        );
+        if (uploadContainer == null) throw _relayDown();
+        try {
+          await uploadContainer
+              .read(activeExecutorProvider)
+              .uploadBytes(upload.remotePath, upload.bytes);
+          // Mirror exclusive-lane mutation refresh so main-window status
+          // tracks a remote-edit save performed in a pop-out.
+          uploadContainer.read(ownMutationTrackerProvider).mark(
+            upload.routingRepo,
+          );
+          uploadContainer
+              .read(worktreeEditsProvider.notifier)
+              .noteRepo(upload.routingRepo);
+          for (final p in repoMutationFamilies(upload.routingRepo)) {
+            uploadContainer.invalidate(p);
+          }
+          return encodeUploadBytesResult();
+        } catch (e) {
+          return encodeUploadBytesError(e);
+        }
       case 'requestState':
         if (container == null) throw _relayDown();
         // `handle` is guaranteed non-null here: `container` is derived from

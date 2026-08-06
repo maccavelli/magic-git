@@ -227,9 +227,61 @@ class ProxyCommandExecutor implements CommandExecutor {
     'executeStream is not proxied to a secondary window',
   );
 
+  /// Relays file upload to the main isolate (remote-edit sync). Requires
+  /// [routingRepo] so the hub can pick the owning session like `execute`.
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes) =>
-      throw UnsupportedError('uploadBytes is not proxied to a secondary window');
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  }) async {
+    final repo = routingRepo;
+    if (repo == null || repo.isEmpty) {
+      throw const ProxyExecuteException(
+        'uploadBytes from a secondary window requires routingRepo '
+        '(the repository path that owns the file).',
+      );
+    }
+    final request = UploadBytesRequest(
+      remotePath: remotePath,
+      bytes: bytes,
+      routingRepo: repo,
+    );
+
+    final abandoned = Completer<Never>();
+    _outstanding.add(abandoned);
+    _startProbing();
+
+    final Map<Object?, Object?>? reply;
+    try {
+      reply = await Future.any<Map<Object?, Object?>?>([
+        channel.invokeMethod<Map<Object?, Object?>>(
+          'uploadBytes',
+          encodeUploadBytesRequest(request),
+        ),
+        abandoned.future,
+      ]);
+    } on PlatformException catch (e) {
+      throw ProxyExecuteException(
+        'The main window could not upload this file: ${e.message ?? e.code}',
+      );
+    } on MissingPluginException {
+      throw const ProxyExecuteException(
+        'The main window is no longer accepting uploads for this window.',
+      );
+    } finally {
+      _outstanding.remove(abandoned);
+      if (_outstanding.isEmpty) _stopProbing();
+    }
+
+    if (reply == null) {
+      throw const ProxyExecuteException(
+        'The main window returned no response for this upload.',
+      );
+    }
+    decodeUploadBytesResponse(reply);
+    onMutationCompleted?.call(repo);
+  }
 
   /// Environment ownership stays with the main isolate's real executor —
   /// these are deliberate no-ops, not errors, because the connection
@@ -241,9 +293,8 @@ class ProxyCommandExecutor implements CommandExecutor {
   /// Null: this proxy holds no resolved environment (it lives in a pop-out
   /// window and relays exec calls to the main isolate, whose real executor
   /// owns binary resolution and does the `argv[0]` rewrite). Forge credential
-  /// helpers fall back to the bare CLI name here, which still resolves via the
-  /// augmented PATH the main isolate exports — and pop-out windows are
-  /// read-only viewers that never push/pull/fetch anyway.
+  /// helpers fall back to the bare CLI name here. Mutations and uploads are
+  /// proxied via [execute] / [uploadBytes] — this window is not read-only.
   @override
   String? resolvedBinaryPath(String name) => null;
 

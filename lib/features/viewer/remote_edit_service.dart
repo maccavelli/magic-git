@@ -1,13 +1,14 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-
-import '../../core/providers/app_providers.dart';
-import '../../core/utils/file_actions.dart';
 import '../../core/output/output_log.dart';
+import '../../core/providers/app_providers.dart';
+import '../../core/utils/display_error.dart';
+import '../../core/utils/file_actions.dart';
 
 class RemoteEditSession {
   final String repoPath;
@@ -16,6 +17,10 @@ class RemoteEditSession {
   final File tempFile;
   final StreamSubscription<FileSystemEvent> subscription;
   String lastKnownHash;
+
+  /// Pending local bytes when a conflict aborted an upload — used by
+  /// [RemoteEditManager.forceUploadAfterConflict].
+  Uint8List? pendingConflictBytes;
 
   RemoteEditSession({
     required this.repoPath,
@@ -26,6 +31,38 @@ class RemoteEditSession {
     required this.lastKnownHash,
   });
 }
+
+/// User-visible remote-edit event (H4). AppShell / secondary shell listen and
+/// show dialogs or toasts; the output log remains a secondary transcript.
+class RemoteEditNotice {
+  final String title;
+  final String message;
+
+  /// When non-null, the shell may offer "Overwrite remote" for this session key.
+  final String? conflictSessionKey;
+
+  const RemoteEditNotice({
+    required this.title,
+    required this.message,
+    this.conflictSessionKey,
+  });
+
+  bool get isConflict => conflictSessionKey != null;
+}
+
+class RemoteEditNoticeNotifier extends Notifier<RemoteEditNotice?> {
+  @override
+  RemoteEditNotice? build() => null;
+
+  void show(RemoteEditNotice notice) => state = notice;
+
+  void clear() => state = null;
+}
+
+final remoteEditNoticeProvider =
+    NotifierProvider<RemoteEditNoticeNotifier, RemoteEditNotice?>(
+      RemoteEditNoticeNotifier.new,
+    );
 
 class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
   @override
@@ -57,7 +94,11 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
     final sessionKey = '$repoPath/$path';
     if (state.containsKey(sessionKey)) {
       // Already editing, just bring it to front or re-open
-      unawaited(ref.read(fileActionsProvider).openFiles([state[sessionKey]!.tempFile.absolute.path]));
+      unawaited(
+        ref.read(fileActionsProvider).openFiles([
+          state[sessionKey]!.tempFile.absolute.path,
+        ]),
+      );
       return;
     }
 
@@ -73,7 +114,7 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
     // To preserve the extension and name which helps the IDE with syntax highlighting
     final slashIndex = path.lastIndexOf('/');
     final fileName = slashIndex >= 0 ? path.substring(slashIndex + 1) : path;
-    
+
     final tempDir = Directory.systemTemp.createTempSync('magic_git_edit_');
     final tempFile = File('${tempDir.path}/$fileName');
     tempFile.writeAsBytesSync(bytes);
@@ -100,7 +141,9 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
     state = {...state, sessionKey: session};
 
     // 5. Open in editor
-    unawaited(ref.read(fileActionsProvider).openFiles([tempFile.absolute.path]));
+    unawaited(
+      ref.read(fileActionsProvider).openFiles([tempFile.absolute.path]),
+    );
   }
 
   Future<void> _syncFile(String repoPath, String path, File tempFile) async {
@@ -110,35 +153,99 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
 
     try {
       final newBytes = tempFile.readAsBytesSync();
-      
+
       // Integrity check
       final currentRemoteHash = await _getRemoteHash(repoPath, path);
-      if (currentRemoteHash != session.lastKnownHash && currentRemoteHash.isNotEmpty) {
-        // Conflict! The remote file changed out-of-band.
-        ref.read(outputLogProvider.notifier).logError(
-          'Remote Edit Conflict', 
-          'The remote file "$path" changed since you opened it. Upload aborted to prevent data loss.'
-        );
+      if (currentRemoteHash != session.lastKnownHash &&
+          currentRemoteHash.isNotEmpty) {
+        session.pendingConflictBytes = newBytes;
+        final message =
+            'The remote file "$path" changed since you opened it. '
+            'Upload aborted to prevent data loss.';
+        ref
+            .read(outputLogProvider.notifier)
+            .logError('Remote Edit Conflict', message);
+        ref
+            .read(remoteEditNoticeProvider.notifier)
+            .show(
+              RemoteEditNotice(
+                title: 'Remote Edit Conflict',
+                message: message,
+                conflictSessionKey: sessionKey,
+              ),
+            );
         return;
       }
 
-      // Upload
-      final executor = ref.read(activeExecutorProvider);
-      await executor.uploadBytes('$repoPath/$path', newBytes);
-
-      // Update known hash to the newly uploaded file's hash
-      final newHash = await _getRemoteHash(repoPath, path);
-      session.lastKnownHash = newHash;
-
-      // Invalidate status so UI updates with the new working tree changes
-      ref.invalidate(statusProvider(repoPath));
+      await _upload(session, newBytes);
     } catch (e) {
-      ref.read(outputLogProvider.notifier).logError(
-        'Remote Edit Sync Failed',
-        'Failed to sync "$path": $e'
+      final message = 'Failed to sync "$path": ${displayError(e)}';
+      ref
+          .read(outputLogProvider.notifier)
+          .logError('Remote Edit Sync Failed', message);
+      ref
+          .read(remoteEditNoticeProvider.notifier)
+          .show(
+            RemoteEditNotice(
+              title: 'Remote Edit Sync Failed',
+              message: message,
+            ),
+          );
+    }
+  }
+
+  Future<void> _upload(RemoteEditSession session, List<int> newBytes) async {
+    final bytes = newBytes is Uint8List
+        ? newBytes
+        : Uint8List.fromList(newBytes);
+    final executor = ref.read(activeExecutorProvider);
+    await executor.uploadBytes(
+      '${session.repoPath}/${session.relativePath}',
+      bytes,
+      routingRepo: session.repoPath,
+    );
+
+    final newHash = await _getRemoteHash(
+      session.repoPath,
+      session.relativePath,
+    );
+    session.lastKnownHash = newHash;
+    session.pendingConflictBytes = null;
+    ref.invalidate(statusProvider(session.repoPath));
+  }
+
+  /// User chose to overwrite the remote after a conflict notice.
+  Future<void> forceUploadAfterConflict(String sessionKey) async {
+    final session = state[sessionKey];
+    if (session == null) return;
+    final bytes =
+        session.pendingConflictBytes ?? session.tempFile.readAsBytesSync();
+    try {
+      // Accept current remote as base, then upload local bytes.
+      session.lastKnownHash = await _getRemoteHash(
+        session.repoPath,
+        session.relativePath,
       );
+      await _upload(session, bytes);
+    } catch (e) {
+      final message =
+          'Failed to overwrite "${session.relativePath}": ${displayError(e)}';
+      ref
+          .read(outputLogProvider.notifier)
+          .logError('Remote Edit Sync Failed', message);
+      ref
+          .read(remoteEditNoticeProvider.notifier)
+          .show(
+            RemoteEditNotice(
+              title: 'Remote Edit Sync Failed',
+              message: message,
+            ),
+          );
     }
   }
 }
 
-final remoteEditServiceProvider = NotifierProvider<RemoteEditManager, Map<String, RemoteEditSession>>(RemoteEditManager.new);
+final remoteEditServiceProvider =
+    NotifierProvider<RemoteEditManager, Map<String, RemoteEditSession>>(
+      RemoteEditManager.new,
+    );

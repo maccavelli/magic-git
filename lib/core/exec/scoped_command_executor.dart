@@ -74,8 +74,11 @@ class ScopedCommandExecutor implements CommandExecutor {
   );
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes) =>
-      _inner.uploadBytes(remotePath, bytes);
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  }) => _inner.uploadBytes(remotePath, bytes, routingRepo: routingRepo);
 
   @override
   void configureEnvironment({

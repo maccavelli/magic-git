@@ -188,9 +188,17 @@ abstract class CommandExecutor {
 
   /// Uploads [bytes] to [remotePath] on the host: the SSH backend streams over
   /// SFTP, the local backend writes to the filesystem. Used by guided install's
-  /// file sideload (an air-gapped host that can't download for itself). Throws
-  /// on failure.
-  Future<void> uploadBytes(String remotePath, Uint8List bytes);
+  /// file sideload (an air-gapped host that can't download for itself) and
+  /// remote-edit sync. Throws on failure.
+  ///
+  /// [routingRepo] is ignored by real executors; the secondary-window proxy
+  /// uses it to pick the main-isolate session that owns the file (same role
+  /// as `execute`'s `repoPath`).
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  });
 
   /// Applies a resolved environment (augmented PATH + resolved binary
   /// locations) so commands find user-installed tools. See
@@ -318,7 +326,11 @@ class SSHCommandExecutor implements CommandExecutor {
       defaultTimeout + Duration(seconds: byteCount ~/ (64 * 1024));
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes) async {
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  }) async {
     final gen = _clientManager.generation;
     final gitArgs = ['sh', '-c', 'cat > ${ShellEscaper.escape(remotePath)}'];
     final timeout = uploadTimeoutFor(bytes.length);

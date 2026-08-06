@@ -38,6 +38,7 @@ import 'stash/stash_view.dart';
 import 'switcher/connection_switcher.dart';
 import 'switcher/current_repo_indicator.dart';
 import 'tabs/tab_ui_providers.dart';
+import 'viewer/remote_edit_service.dart';
 import 'viewer/viewer_host.dart';
 import 'viewer/viewer_providers.dart';
 import 'workspace/clone_sheet.dart';
@@ -514,6 +515,35 @@ class _AppShellState extends ConsumerState<AppShell> {
           Navigator.of(context, rootNavigator: true).removeRoute(route);
         }
       }
+    });
+    // Remote-edit conflict / sync failure (H4): surface above Output so a
+    // save that never reaches the host is never silent.
+    ref.listen(remoteEditNoticeProvider, (previous, next) {
+      if (next == null || next == previous) return;
+      final notice = next;
+      // Clear immediately so the same failure can re-fire later.
+      ref.read(remoteEditNoticeProvider.notifier).clear();
+      unawaited(() async {
+        if (!mounted) return;
+        if (notice.isConflict && notice.conflictSessionKey != null) {
+          final overwrite = await confirmAction(
+            context,
+            title: notice.title,
+            message:
+                '${notice.message}\n\nOverwrite the remote file with your '
+                'local editor buffer?',
+            confirmLabel: 'Overwrite Remote',
+            destructive: true,
+          );
+          if (overwrite && mounted) {
+            await ref
+                .read(remoteEditServiceProvider.notifier)
+                .forceUploadAfterConflict(notice.conflictSessionKey!);
+          }
+        } else {
+          await showErrorDialog(context, notice.message);
+        }
+      }());
     });
     // The Recovery sheet follows the Dashboard's provider-driven route
     // pattern exactly — see the comment above.

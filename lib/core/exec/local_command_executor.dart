@@ -70,7 +70,11 @@ class LocalCommandExecutor implements CommandExecutor {
   /// Writes [bytes] to [remotePath] on this machine's own filesystem — the
   /// local-backend equivalent of the SSH SFTP upload.
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes) async {
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  }) async {
     await File(remotePath).writeAsBytes(bytes);
   }
 

@@ -151,6 +151,34 @@ void main() {
       );
     });
 
+    test('uploadBytes request round-trips path, bytes, and routingRepo', () {
+      final bytes = Uint8List.fromList([0, 1, 2, 255, 0]);
+      final request = UploadBytesRequest(
+        remotePath: '/srv/repo/lib/a.dart',
+        bytes: bytes,
+        routingRepo: '/srv/repo',
+      );
+      final wire = encodeUploadBytesRequest(request);
+      expect(wire['bytes'], isA<Uint8List>());
+      final decoded = decodeUploadBytesRequest(wire);
+      expect(decoded.remotePath, '/srv/repo/lib/a.dart');
+      expect(decoded.routingRepo, '/srv/repo');
+      expect(decoded.bytes, bytes);
+    });
+
+    test('uploadBytes success envelope decodes without throw', () {
+      expect(() => decodeUploadBytesResponse(encodeUploadBytesResult()), returnsNormally);
+    });
+
+    test('uploadBytes error envelope rethrows typed failures', () {
+      expect(
+        () => decodeUploadBytesResponse(
+          encodeUploadBytesError(const SSHCommandTimeout('upload')),
+        ),
+        throwsA(isA<SSHCommandTimeout>()),
+      );
+    });
+
     test('any other error degrades to ProxyExecuteException with the message',
         () {
       expect(
