@@ -2180,6 +2180,22 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     ], 'git config fsmonitor');
   }
 
+  /// Whether this repo (or global config) enables GPG commit signing.
+  /// Magic Git always passes `--no-gpg-sign` on commits (no agent over SSH),
+  /// so callers use this for a user-facing disclosure only. Unset/errors → false.
+  Future<bool> commitGpgSignEnabled(String repoPath) async {
+    // `--get` exits 1 when unset — do not use [_run] (throws on non-zero).
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['git', 'config', '--bool', '--get', 'commit.gpgsign'],
+      extraEnv: _scopeEnvFor(repoPath),
+      lane: ExecLane.read,
+      retries: 0,
+    );
+    final v = result.stdout.trim().toLowerCase();
+    return v == 'true' || v == '1' || v == 'yes' || v == 'on';
+  }
+
   static String _fsmonitorScript({required bool enabled}) {
     if (!enabled) return 'git config core.fsmonitor false';
     // `core.fsmonitor=true` is only honored where git's fsmonitor daemon can

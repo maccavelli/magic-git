@@ -45,6 +45,7 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
   bool _generated = false; // a hook produced a message we're reviewing
   bool _editable = false; // the message field accepts edits
   String? _error; // preview generation failed (non-fatal: fall back to manual)
+  bool _gpgSignConfigured = false;
 
   String get repoPath => widget.repoPath;
 
@@ -52,6 +53,18 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
   void initState() {
     super.initState();
     _generatePreview();
+    unawaited(_loadGpgNotice());
+  }
+
+  Future<void> _loadGpgNotice() async {
+    try {
+      final enabled = await ref
+          .read(gitServiceProvider)
+          .commitGpgSignEnabled(repoPath);
+      if (mounted) setState(() => _gpgSignConfigured = enabled);
+    } catch (_) {
+      // Best-effort disclosure only.
+    }
   }
 
   @override
@@ -232,6 +245,18 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
                   'branch. Accept + Push also sends it to the remote right '
                   'away.',
                 ),
+                if (_gpgSignConfigured)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'This repository enables GPG commit signing, but Magic '
+                      'Git records unsigned commits (--no-gpg-sign). Signing '
+                      'is not available over the remote executor.',
+                      style: typography.caption1.copyWith(
+                        color: MacosColors.systemOrangeColor,
+                      ),
+                    ),
+                  ),
                 const SizedBox(height: 12),
                 if (_loadingPreview)
                   _previewLoading(context)
