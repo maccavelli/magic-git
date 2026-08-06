@@ -241,6 +241,21 @@ class ForgeMilestone {
   );
 }
 
+/// A conversation comment on an issue or change request (not a review thread).
+class ForgeComment {
+  final String id;
+  final String author;
+  final String body;
+  final String? createdAt;
+
+  const ForgeComment({
+    required this.id,
+    required this.author,
+    required this.body,
+    this.createdAt,
+  });
+}
+
 /// A release/tag published on the forge.
 class ForgeRelease {
   final String tagName;

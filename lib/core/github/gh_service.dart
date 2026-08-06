@@ -787,6 +787,50 @@ class GhService {
     }
   }
 
+  /// Lists issue conversation comments (`gh api …/issues/{n}/comments`).
+  Future<List<ForgeComment>> listIssueComments(
+    String repoPath,
+    int number,
+  ) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: [
+        'gh',
+        'api',
+        'repos/{owner}/{repo}/issues/$number/comments',
+        '--paginate',
+      ],
+      lane: ExecLane.read,
+    );
+    if (!result.isSuccess) {
+      throw GhException('gh api issue comments failed', result);
+    }
+    return _parseIssueComments(result.stdout);
+  }
+
+  List<ForgeComment> _parseIssueComments(String stdout) {
+    final raw = stdout.trim();
+    if (raw.isEmpty) return const [];
+    final decoded = jsonDecode(raw);
+    final List<dynamic> list = decoded is List
+        ? decoded
+        : decoded is Map && decoded['items'] is List
+        ? decoded['items'] as List<dynamic>
+        : const <dynamic>[];
+    return [
+      for (final item in list)
+        if (item is Map)
+          ForgeComment(
+            id: '${item['id'] ?? ''}',
+            author: item['user'] is Map
+                ? (item['user'] as Map)['login'] as String? ?? ''
+                : '',
+            body: item['body'] as String? ?? '',
+            createdAt: item['created_at'] as String?,
+          ),
+    ];
+  }
+
   /// Adds a comment to an issue via `gh issue comment --body` (a discrete argv
   /// token, so newlines/`=`/markdown survive).
   Future<void> commentOnIssue(String repoPath, int number, String body) async {

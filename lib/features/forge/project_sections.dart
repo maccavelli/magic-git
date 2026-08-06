@@ -205,7 +205,12 @@ List<Widget> projectSectionChildren({
         ];
         return visible.isEmpty
             ? const SectionEmpty('No releases')
-            : Column(children: [for (final r in visible) _releaseRow(r)]);
+            : Column(
+                children: [
+                  for (final r in visible)
+                    _releaseRow(r, sel, onSelect),
+                ],
+              );
       }),
     const SizedBox(height: 16),
     // 6. CI (Workflow Runs / Pipelines) — forge-specific, built by the caller.
@@ -303,18 +308,23 @@ Widget _milestoneRow(
   );
 }
 
-Widget _releaseRow(ForgeRelease release) {
+Widget _releaseRow(
+  ForgeRelease release,
+  ForgeSel sel,
+  void Function(ForgeSel) onSelect,
+) {
   final date = release.publishedDate;
+  final tag = release.tagName;
   return ForgeListRow(
     leading: const MacosIcon(
       CupertinoIcons.tag,
       size: 14,
       color: MacosColors.systemOrangeColor,
     ),
-    title: release.name.isEmpty ? release.tagName : release.name,
-    trailingCaption: date == null
-        ? release.tagName
-        : '${release.tagName} · $date',
+    title: release.name.isEmpty ? tag : release.name,
+    trailingCaption: date == null ? tag : '$tag · $date',
+    selected: sel is ForgeReleaseSel && sel.tagName == tag,
+    onTap: tag.isEmpty ? null : () => onSelect(ForgeReleaseSel(tag)),
   );
 }
 
@@ -384,19 +394,68 @@ Widget? projectDetailFor({
       return form;
     case ForgeIssueSel(:final id):
       final detail = ref.watch(issueDetailProvider((repoPath, id)));
+      final comments = ref.watch(issueCommentsProvider((repoPath, id)));
       final labels = dashboard.value?.labels ?? const <ForgeLabel>[];
       final palette = {for (final l in labels) l.name: l};
       return detail.when(
         loading: () => const Center(child: ProgressCircle()),
         error: (err, _) => PaneError(err),
-        data: (issue) =>
-            _issueDetail(issue, palette, forge, remoteUrl, repoPath),
+        data: (issue) => _issueDetail(
+          issue,
+          palette,
+          forge,
+          remoteUrl,
+          repoPath,
+          comments: comments,
+        ),
       );
     case ForgeMilestoneSel(:final id):
       return _milestoneDetail(ref, repoPath, id, forge, remoteUrl);
+    case ForgeReleaseSel(:final tagName):
+      final data = dashboard.value;
+      final release = data?.releases
+          .where((r) => r.tagName == tagName)
+          .firstOrNull;
+      if (release == null) {
+        return dashboard.isLoading
+            ? const Center(child: ProgressCircle())
+            : const PaneError('Release not found in dashboard.');
+      }
+      return _releaseDetail(release, forge, remoteUrl);
     default:
       return null;
   }
+}
+
+Widget _releaseDetail(
+  ForgeRelease release,
+  Forge forge,
+  String? remoteUrl,
+) {
+  final title = release.name.isEmpty ? release.tagName : release.name;
+  final url = remoteUrl == null || release.tagName.isEmpty
+      ? null
+      : forgeReleaseWebUrl(remoteUrl, forge, release.tagName);
+  return ForgeDetailScaffold(
+    leading: StatusBadge(release.tagName, MacosColors.systemOrangeColor),
+    title: title,
+    headerActions: [
+      if (url != null) OpenInBrowserButton(url),
+    ],
+    lines: [
+      DetailLine('Tag', release.tagName),
+      if (release.publishedDate != null)
+        DetailLine('Published', release.publishedDate!),
+    ],
+    body: const Padding(
+      padding: EdgeInsets.all(16),
+      child: Text(
+        'Release notes are not loaded in this build — open on the forge for '
+        'the full description and assets.',
+        style: TextStyle(color: MacosColors.systemGrayColor),
+      ),
+    ),
+  );
 }
 
 Widget _issueDetail(
@@ -404,8 +463,9 @@ Widget _issueDetail(
   Map<String, ForgeLabel> palette,
   Forge forge,
   String? remoteUrl,
-  String repoPath,
-) {
+  String repoPath, {
+  AsyncValue<List<ForgeComment>>? comments,
+}) {
   final body = issue.body?.trim() ?? '';
   return ForgeDetailScaffold(
     leading: StatusBadge('#${issue.id ?? '—'}', MacosColors.systemGreenColor),
@@ -430,9 +490,64 @@ Widget _issueDetail(
           ),
         ),
     ],
-    body: body.isEmpty
-        ? const CenteredHint('No description')
-        : _detailBody(body),
+    body: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: body.isEmpty
+              ? const CenteredHint('No description')
+              : _detailBody(body),
+        ),
+        if (comments != null) ...[
+          Container(height: 1, color: MacosColors.separatorColor),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+            child: Text(
+              'Comments',
+              style: MacosThemeData.dark().typography.headline,
+            ),
+          ),
+          SizedBox(
+            height: 160,
+            child: comments.when(
+              loading: () => const Center(child: ProgressCircle()),
+              error: (err, _) => SectionError(err),
+              data: (list) {
+                if (list.isEmpty) {
+                  return const CenteredHint('No comments yet');
+                }
+                final shown = list.length > 50
+                    ? list.sublist(list.length - 50)
+                    : list;
+                return ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  itemCount: shown.length,
+                  itemBuilder: (context, i) {
+                    final c = shown[i];
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '@${c.author}${c.createdAt != null ? ' · ${c.createdAt!.split('T').first}' : ''}',
+                            style: const TextStyle(
+                              color: MacosColors.systemGrayColor,
+                              fontSize: 11,
+                            ),
+                          ),
+                          SelectableText(c.body),
+                        ],
+                      ),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ],
+    ),
     // Issues become actionable here (they were view-only before): the same
     // set as the row's right-click menu, as buttons + a "More" pulldown.
     actions: [

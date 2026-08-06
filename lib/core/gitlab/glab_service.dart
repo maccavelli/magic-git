@@ -1226,6 +1226,41 @@ query($path: ID!) {
     }
   }
 
+  /// Lists issue notes (conversation comments) via REST; skips system notes.
+  Future<List<ForgeComment>> listIssueComments(
+    String repoPath,
+    int iid,
+  ) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: [
+        'glab',
+        'api',
+        'projects/:fullpath/issues/$iid/notes',
+      ],
+      lane: ExecLane.read,
+    );
+    if (!result.isSuccess) {
+      throw GlabException('glab api issue notes failed', result);
+    }
+    final raw = result.stdout.trim();
+    if (raw.isEmpty) return const [];
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return const [];
+    return [
+      for (final item in decoded)
+        if (item is Map && item['system'] != true)
+          ForgeComment(
+            id: '${item['id'] ?? ''}',
+            author: item['author'] is Map
+                ? (item['author'] as Map)['username'] as String? ?? ''
+                : '',
+            body: item['body'] as String? ?? '',
+            createdAt: item['created_at'] as String?,
+          ),
+    ];
+  }
+
   /// Adds a comment to an issue via `glab issue note --message` (a discrete
   /// argv token — same reasoning as [createIssue]).
   Future<void> commentOnIssue(String repoPath, int iid, String body) async {

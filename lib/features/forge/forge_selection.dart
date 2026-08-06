@@ -35,6 +35,12 @@ class ForgeMilestoneSel extends ForgeSel {
   const ForgeMilestoneSel(this.id);
 }
 
+/// A published release, keyed by tag name (stable across forges).
+class ForgeReleaseSel extends ForgeSel {
+  final String tagName;
+  const ForgeReleaseSel(this.tagName);
+}
+
 /// The inline "New Issue" form.
 class ForgeCreatingIssue extends ForgeSel {
   const ForgeCreatingIssue();

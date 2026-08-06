@@ -155,7 +155,8 @@ class _ConflictViewState extends State<ConflictView> {
     if (_isBinary) {
       return Center(
         child: Text(
-          'Binary file conflict — resolve via the command line',
+          'Binary conflict — text preview unavailable. Use Use Ours / Use Theirs '
+          'above to take one whole side.',
           style: MacosTheme.of(
             context,
           ).typography.caption1.copyWith(color: MacosColors.systemGrayColor),

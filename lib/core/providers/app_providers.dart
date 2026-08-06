@@ -4993,6 +4993,23 @@ final issueDetailProvider = FutureProvider.autoDispose
       }
     });
 
+/// Conversation comments on an issue (G-M8). Keyed by (repoPath, issue id).
+final issueCommentsProvider = FutureProvider.autoDispose
+    .family<List<ForgeComment>, (String, int)>((ref, key) async {
+      final (repoPath, id) = key;
+      final gh = ref.watch(ghServiceProvider);
+      final glab = ref.watch(glabServiceProvider);
+      switch (await ref.watch(forgeProvider(repoPath).future)) {
+        case Forge.github:
+          return gh.listIssueComments(repoPath, id);
+        case Forge.gitlab:
+          return glab.listIssueComments(repoPath, id);
+        case Forge.none:
+        case Forge.unknown:
+          return const <ForgeComment>[];
+      }
+    });
+
 /// Single PR detail (mergeability, head SHA, body). Keyed by (repoPath, number).
 final pullRequestDetailProvider = FutureProvider.autoDispose
     .family<PullRequest, (String, int)>((ref, key) async {

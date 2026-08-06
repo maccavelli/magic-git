@@ -98,13 +98,15 @@ class ForgeIssueActions {
       confirmLabel: 'Comment',
     );
     if (body == null || !context.mounted) return;
-    await runAction(
+    final ok = await runAction(
       context,
       () => _isGithub
           ? ref.read(ghServiceProvider).commentOnIssue(repoPath, id, body)
           : ref.read(glabServiceProvider).commentOnIssue(repoPath, id, body),
     );
-    // Comments aren't rendered in the detail body — nothing to invalidate.
+    if (ok) {
+      ref.invalidate(issueCommentsProvider((repoPath, id)));
+    }
   }
 
   /// Full title + description edit. Fetches the authoritative fields first (a
