@@ -5,6 +5,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
@@ -531,14 +532,14 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
         context,
         icon: CupertinoIcons.doc_text_search,
         title: 'File too large to display',
-        detail: '$err',
+        detail: displayError(err),
       );
     }
     return _notice(
       context,
       icon: CupertinoIcons.exclamationmark_triangle,
       title: title,
-      detail: '$err',
+      detail: displayError(err),
       color: MacosColors.systemRedColor,
     );
   }

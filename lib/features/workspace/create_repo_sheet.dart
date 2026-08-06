@@ -14,6 +14,7 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/ssh/ssh_command_executor.dart';
 import '../../core/storage/saved_connection.dart';
+import '../../core/utils/display_error.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
@@ -621,7 +622,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           } on GhException catch (e) {
             log.logResult(label, e.result);
             createFailure = e.result.stderr.trim().isEmpty
-                ? '$e'
+                ? displayError(e)
                 : e.result.stderr.trim();
           }
           // Always attempt origin wiring — partial create success is common.
@@ -673,7 +674,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           } on GlabException catch (e) {
             log.logResult(label, e.result);
             createFailure = e.result.stderr.trim().isEmpty
-                ? '$e'
+                ? displayError(e)
                 : e.result.stderr.trim();
           }
           final before = warnings.length;
@@ -766,7 +767,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) setState(() => _error = displayError(e));
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -987,7 +988,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       final err = result.stderr.trim();
       return err.isEmpty ? '$label exited with code ${result.exitCode}' : err;
     } catch (e) {
-      return '$e';
+      return displayError(e);
     }
   }
 

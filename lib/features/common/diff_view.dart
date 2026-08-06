@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/unified_diff.dart';
+import '../../core/utils/display_error.dart';
 import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
 import 'diff_highlight.dart';
 
@@ -370,7 +371,7 @@ class DiffFailure extends StatelessWidget {
     child: Padding(
       padding: const EdgeInsets.all(16),
       child: Text(
-        '$error',
+        displayError(error),
         style: MacosTheme.of(
           context,
         ).typography.body.copyWith(color: MacosColors.systemRedColor),

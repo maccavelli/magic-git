@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/utils/display_error.dart';
 import '../common/diff_view.dart' show kDiffMono;
 import '../common/tool_icon_button.dart';
 
@@ -60,7 +61,7 @@ class BlameSheet extends ConsumerWidget {
                   child: Padding(
                     padding: const EdgeInsets.all(16),
                     child: Text(
-                      '$err',
+                      displayError(err),
                       style: typography.body.copyWith(
                         color: MacosColors.systemRedColor,
                       ),

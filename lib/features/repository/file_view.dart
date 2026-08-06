@@ -9,8 +9,9 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/pane_layout.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/utils/git_porcelain_parser.dart';
+import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
+import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
 import '../common/context_menu.dart';
 import '../common/escape_dismissible.dart';
@@ -18,8 +19,8 @@ import '../common/status_style.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../history/file_history_sheet.dart';
-import '../viewer/viewer_providers.dart';
 import '../viewer/remote_edit_service.dart';
+import '../viewer/viewer_providers.dart';
 import 'blame_sheet.dart';
 
 /// Called when a file is chosen in the tree so the host panel can show its diff.
@@ -593,7 +594,7 @@ class _FileViewState extends ConsumerState<FileView> {
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Text(
-            '$err',
+            displayError(err),
             style: MacosTheme.of(
               context,
             ).typography.caption1.copyWith(color: MacosColors.systemRedColor),

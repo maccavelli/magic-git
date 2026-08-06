@@ -8,6 +8,7 @@ import '../../core/forge/forge_repo_summary.dart';
 import '../../core/git/host_fs_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
+import '../../core/utils/display_error.dart';
 import '../../core/workspace/clone_controller.dart';
 import '../common/async_views.dart';
 import '../common/buttons.dart';
@@ -377,7 +378,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
       if (!mounted) return;
       Navigator.of(context).pop();
     } catch (e) {
-      if (mounted) setState(() => _error = '$e');
+      if (mounted) setState(() => _error = displayError(e));
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

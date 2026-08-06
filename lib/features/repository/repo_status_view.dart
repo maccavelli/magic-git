@@ -11,6 +11,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
@@ -27,11 +28,11 @@ import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
-import '../viewer/remote_edit_service.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/staging_drop_banner.dart';
 import '../settings/settings_sheet.dart';
+import '../viewer/remote_edit_service.dart';
 import 'blame_sheet.dart';
 import 'commit_dialog.dart';
 import 'conflict_view.dart';
@@ -1354,7 +1355,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               child: Padding(
                 padding: const EdgeInsets.all(24),
                 child: Text(
-                  '$err',
+                  displayError(err),
                   style: typography.body.copyWith(
                     color: MacosColors.systemRedColor,
                   ),

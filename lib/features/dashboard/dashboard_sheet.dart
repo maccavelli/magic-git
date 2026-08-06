@@ -10,6 +10,7 @@ import '../../core/forge/auth_status.dart';
 import '../../core/forge/forge.dart';
 import '../../core/git/watch_event.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/utils/display_error.dart';
 import '../common/buttons.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
@@ -242,7 +243,7 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
         children: [
           _authTargetHeaderRow(typography, fallbackLabel),
           Text(
-            'Could not check: $err',
+            'Could not check: ${displayError(err)}',
             style: typography.caption1.copyWith(
               color: MacosColors.systemOrangeColor,
             ),
@@ -714,7 +715,7 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
                   ),
                 ),
                 error: (err, _) => Text(
-                  'Could not measure: $err',
+                  'Could not measure: ${displayError(err)}',
                   style: typography.caption1.copyWith(
                     color: MacosColors.systemOrangeColor,
                   ),

@@ -7,6 +7,7 @@ import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
 import '../common/buttons.dart';
 import '../common/diff_view.dart';
@@ -148,7 +149,7 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
 
     return reflogAsync.when(
       loading: () => const Center(child: ProgressCircle()),
-      error: (err, _) => _errorText('$err'),
+      error: (err, _) => _errorText(displayError(err)),
       data: (entries) {
         final snapshots = snapshotsAsync.value ?? const <SnapshotRef>[];
         return ListView(

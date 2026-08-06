@@ -2346,7 +2346,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     child: Padding(
       padding: const EdgeInsets.all(24),
       child: Text(
-        '$err',
+        displayError(err),
         style: MacosTheme.of(
           context,
         ).typography.body.copyWith(color: MacosColors.systemRedColor),
