@@ -215,6 +215,59 @@ final List<KeymapAction> kKeymapActions = [
     category: KeymapCategory.global,
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.digit6, meta: true)],
   ),
+  // View toggles — defaults match MainFlutterWindow ⇧⌘ chords (G-M1=A).
+  KeymapAction(
+    id: 'global.toggleOutput',
+    label: 'Toggle Output View',
+    category: KeymapCategory.global,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyO, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'global.toggleFileView',
+    label: 'Toggle File View',
+    category: KeymapCategory.global,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyE, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'global.toggleDashboard',
+    label: 'Toggle Dashboard',
+    category: KeymapCategory.global,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyD, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'global.toggleRecovery',
+    label: 'Toggle Recovery',
+    category: KeymapCategory.global,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyU, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'global.openHistoryWindow',
+    label: 'Open History in New Window',
+    category: KeymapCategory.global,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyH, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
+    id: 'global.newTab',
+    label: 'New Tab',
+    category: KeymapCategory.global,
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyT, meta: true)],
+  ),
+  KeymapAction(
+    id: 'global.closeTab',
+    label: 'Close Tab',
+    category: KeymapCategory.global,
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyW, meta: true)],
+  ),
   KeymapAction(
     id: 'repository.fetch',
     label: 'Fetch',

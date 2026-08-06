@@ -32,12 +32,14 @@ import 'history/history_view.dart';
 import 'recovery/recovery_sheet.dart';
 import 'repository/repo_status_view.dart';
 import 'settings/keyboard_shortcuts_sheet.dart';
+import 'common/session_exit_guard.dart';
 import 'settings/settings_sheet.dart';
 import 'settings/tool_health_banner.dart';
 import 'stash/stash_view.dart';
 import 'switcher/connection_switcher.dart';
 import 'switcher/current_repo_indicator.dart';
 import 'tabs/tab_ui_providers.dart';
+import 'tabs/tabs_controller.dart';
 import 'viewer/remote_edit_service.dart';
 import 'viewer/viewer_host.dart';
 import 'viewer/viewer_providers.dart';
@@ -620,6 +622,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     });
 
     final keymap = ref.watch(keymapProvider);
+    final tabs = TabsController.current;
     final shortcuts = resolveShortcuts(keymap, {
       'global.refresh': _refresh,
       'global.openSettings': () => _openSettings(context),
@@ -635,6 +638,42 @@ class _AppShellState extends ConsumerState<AppShell> {
       'global.panel4': connected ? () => _selectPage(3) : null,
       'global.panel5': connected ? () => _selectPage(4) : null,
       'global.panel6': connected ? () => _selectPage(5) : null,
+      'global.toggleOutput': () =>
+          ref.read(outputLogProvider.notifier).toggle(),
+      'global.toggleFileView': () =>
+          ref.read(fileViewVisibleProvider.notifier).toggle(),
+      'global.toggleDashboard': () =>
+          ref.read(dashboardVisibleProvider.notifier).toggle(),
+      'global.toggleRecovery': () =>
+          ref.read(recoveryVisibleProvider.notifier).toggle(),
+      'global.openHistoryWindow': () =>
+          WindowManagerBridge.current?.openHistory(),
+      'global.newTab': tabs != null && tabs.canOpenTab
+          ? () => tabs.newTab()
+          : null,
+      'global.closeTab': tabs != null && tabs.tabs.length > 1
+          ? () {
+              final active = tabs.active;
+              if (active == null) return;
+              // Confirm runs in tab strip for UI close; keyboard path uses
+              // the same guard against the active tab's container.
+              final conn = active.container.read(connectionProvider);
+              final repo = conn.repoPath;
+              if (repo != null && conn.isConnected) {
+                unawaited(() async {
+                  final ok = await confirmSessionExit(
+                    context,
+                    active.container,
+                    repoPath: repo,
+                    title: 'Close tab?',
+                  );
+                  if (ok) await tabs.close(active.id);
+                }());
+              } else {
+                unawaited(tabs.close(active.id));
+              }
+            }
+          : null,
     });
 
     return CallbackShortcuts(

@@ -96,16 +96,17 @@ void main() {
   test('payloads are rejected by zones with no action for them', () {
     // branch -> Branches is a future phase, not this cut.
     expect(canDrop(_branch, DropZoneId.branches), isFalse);
-    // Zones with no drop actions at all reject the commit/branch payloads.
-    // (Stashes now accepts DragFiles, but never a commit or a branch.)
-    for (final zone in const [
-      DropZoneId.history,
-      DropZoneId.stashes,
-    ]) {
-      expect(canDrop(_commit, zone), isFalse, reason: '$zone');
-      expect(canDrop(_branch, zone), isFalse, reason: '$zone');
-      expect(dropVerb(_commit, zone), isNull);
-    }
+    // Stashes accepts DragFiles, but never a commit or a branch.
+    expect(canDrop(_commit, DropZoneId.stashes), isFalse);
+    expect(canDrop(_branch, DropZoneId.stashes), isFalse);
+    expect(dropVerb(_commit, DropZoneId.stashes), isNull);
+  });
+
+  test('commit or branch dropped on History opens scoped history', () {
+    expect(canDrop(_commit, DropZoneId.history), isTrue);
+    expect(dropVerb(_commit, DropZoneId.history), 'Show in History');
+    expect(canDrop(_branch, DropZoneId.history), isTrue);
+    expect(dropVerb(_branch, DropZoneId.history), 'Show history');
   });
 
   test('a zone id maps to its sidebar page index', () {

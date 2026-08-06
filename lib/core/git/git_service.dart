@@ -3826,6 +3826,39 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     );
   }
 
+  /// Moves a local branch tip to [targetOid] (`git branch -f`). Undo restores
+  /// the previous tip. Used by DnD E1 (branch label → commit).
+  Future<void> moveBranch(
+    String repoPath,
+    String name,
+    String targetOid,
+  ) async {
+    await _runCaptured(
+      repoPath,
+      [
+        'git',
+        'branch',
+        '-f',
+        '--end-of-options',
+        name,
+        targetOid,
+      ],
+      'git branch -f',
+      extraCaptures: [
+        'git rev-parse -q --verify ${ShellEscaper.escape('refs/heads/$name')}',
+      ],
+      record: (c) => c.extras[0].isEmpty
+          ? null
+          : c.toRecord(
+              repoPath: repoPath,
+              kind: UndoOpKind.deleteBranch,
+              description: 'Move branch $name',
+              refName: name,
+              deletedOid: c.extras[0],
+            ),
+    );
+  }
+
   /// OID-pinned base-safe local branch delete for Review bulk cleanup.
   ///
   /// Does **not** force-delete a non-ancestor. Expected decisions (moved,

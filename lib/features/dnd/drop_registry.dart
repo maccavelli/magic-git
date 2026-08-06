@@ -8,6 +8,7 @@ import '../common/actions.dart';
 import '../common/context_menu.dart';
 import '../common/prompt_text_sheet.dart';
 import '../forge/forge_create_coordinator.dart';
+import '../forge/forge_prefs.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart' show kWorktreeIcon;
 import 'drag_item.dart';
@@ -193,8 +194,31 @@ List<DropAction> _actionsFor(DragItem item, DropZoneId zone) {
         ];
       }
       return const [];
-    // No nav-drop actions for this zone yet.
     case DropZoneId.history:
+      // Navigational: open History scoped to the payload (G-M5 History zone).
+      if (item is DragCommit) {
+        final commit = item.commit;
+        return [
+          DropAction(
+            label: 'Show ${commit.shortHash} in History',
+            verb: 'Show in History',
+            icon: CupertinoIcons.clock,
+            run: (ctx) => _openHistoryAt(ctx, commit.hash),
+          ),
+        ];
+      }
+      if (item is DragRef &&
+          (item.ref.isLocalBranch || item.ref.isRemote)) {
+        final name = item.ref.shortName;
+        return [
+          DropAction(
+            label: 'Show history of $name',
+            verb: 'Show history',
+            icon: CupertinoIcons.clock,
+            run: (ctx) => _openHistoryAt(ctx, name),
+          ),
+        ];
+      }
       return const [];
   }
 }
@@ -256,6 +280,13 @@ Future<void> _confirmAndRun(DropContext ctx, DropAction action) async {
 }
 
 // ---- Action handlers (each self-contained; reuses existing UI + services) ---
+
+Future<void> _openHistoryAt(DropContext ctx, String revision) async {
+  ctx.ref
+      .read(historyNavigationIntentProvider.notifier)
+      .set(ctx.repoPath, revision);
+  ctx.selectPage(DropZoneId.history.pageIndex);
+}
 
 Future<void> _newBranchFromCommit(DropContext ctx, GitCommit commit) async {
   final name = await promptText(

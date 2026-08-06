@@ -135,6 +135,7 @@ const List<_ActionSpec> _panelActions = [
   _ActionSpec('history.zoomIn', PaletteCategory.app, 1, CupertinoIcons.zoom_in),
   _ActionSpec('history.zoomOut', PaletteCategory.app, 1, CupertinoIcons.zoom_out),
   _ActionSpec('history.zoomReset', PaletteCategory.app, 1, CupertinoIcons.zoom_out),
+  // zoomReset uses a distinct glyph from zoomOut for discoverability.
 ];
 
 /// A ⌘K quick-action launcher, in the style of VSCode / Linear / Tower's Quick
@@ -349,13 +350,30 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
         icon: CupertinoIcons.sidebar_right,
         label: 'Toggle File View',
         category: PaletteCategory.app,
+        shortcut: _shortcutFor(keymap, 'global.toggleFileView'),
         run: fileView.toggle,
       ),
       _PaletteCommand(
         icon: CupertinoIcons.square_list,
         label: 'Toggle Output View',
         category: PaletteCategory.app,
+        shortcut: _shortcutFor(keymap, 'global.toggleOutput'),
         run: output.toggle,
+      ),
+      _PaletteCommand(
+        icon: CupertinoIcons.chart_bar_square,
+        label: 'Toggle Dashboard',
+        category: PaletteCategory.app,
+        shortcut: _shortcutFor(keymap, 'global.toggleDashboard'),
+        run: () =>
+            ref.read(dashboardVisibleProvider.notifier).toggle(),
+      ),
+      _PaletteCommand(
+        icon: CupertinoIcons.arrow_counterclockwise_circle,
+        label: 'Toggle Recovery',
+        category: PaletteCategory.app,
+        shortcut: _shortcutFor(keymap, 'global.toggleRecovery'),
+        run: recovery.toggle,
       ),
       _PaletteCommand(
         icon: CupertinoIcons.settings,

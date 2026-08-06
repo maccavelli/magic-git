@@ -186,6 +186,15 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
               _textRow('Name', _name, 'e.g. Jane Developer'),
               const SizedBox(height: 10),
               _textRow('Email', _email, 'e.g. jane@example.com'),
+              const SizedBox(height: 8),
+              Text(
+                'Magic Git always records unsigned commits (--no-gpg-sign), even '
+                'when the repository enables commit.gpgsign — GPG agents are not '
+                'available on the remote executor path.',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              ),
 
               const SizedBox(height: 20),
               _section(
