@@ -49,7 +49,7 @@ class FakeExecutor implements ScopedCommandExecutor {
   }
 
   @override
-  Future<void> uploadBytes(String destinationPath, List<int> bytes) async {
+  Future<void> uploadBytes(String destinationPath, List<int> bytes, {String? routingRepo}) async {
     uploads[destinationPath] = bytes;
   }
   

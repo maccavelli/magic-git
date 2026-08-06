@@ -76,7 +76,7 @@ class _RecordingExecutor implements CommandExecutor {
       throw UnimplementedError();
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes) async {}
+  Future<void> uploadBytes(String remotePath, Uint8List bytes, {String? routingRepo}) async {}
 
   @override
   void configureEnvironment({String? path, Map<String, String> binaries = const {}}) {}

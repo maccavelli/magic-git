@@ -120,7 +120,7 @@ void main() {
       // and brings the Forge tab forward.
       expect(
         container.read(forgeCreateSeedProvider),
-        (repoPath: _repo, branch: 'feature'),
+        (repoPath: _repo, branch: 'feature', baseRef: null),
       );
       expect(selected, [DropZoneId.forge.pageIndex]);
     },

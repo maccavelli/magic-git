@@ -29,7 +29,7 @@ class _FakeExecutor extends SSHCommandExecutor {
   _FakeExecutor() : super(SSHClientManager());
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes) async {
+  Future<void> uploadBytes(String remotePath, Uint8List bytes, {String? routingRepo}) async {
     uploads[remotePath] = utf8.decode(bytes);
   }
 

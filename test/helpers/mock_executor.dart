@@ -182,7 +182,7 @@ class MockExecutor extends CommandExecutor {
   }
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes) async {}
+  Future<void> uploadBytes(String remotePath, Uint8List bytes, {String? routingRepo}) async {}
 
   @override
   void configureEnvironment({

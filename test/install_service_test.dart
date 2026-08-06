@@ -36,7 +36,7 @@ class _RecordingExecutor extends SSHCommandExecutor {
   }
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes) async {
+  Future<void> uploadBytes(String remotePath, Uint8List bytes, {String? routingRepo}) async {
     uploads.add((remotePath, bytes.length));
   }
 }
