@@ -133,7 +133,7 @@ void main() {
       await _pump(tester, 'abc${String.fromCharCode(0)}def');
 
       expect(
-        find.text('Binary file conflict — resolve via the command line'),
+        find.textContaining('Binary conflict — text preview unavailable'),
         findsOneWidget,
       );
       // The raw (garbled) content must not be rendered as conflict lines.
@@ -149,7 +149,7 @@ void main() {
         await _pump(tester, garbage);
 
         expect(
-          find.text('Binary file conflict — resolve via the command line'),
+          find.textContaining('Binary conflict — text preview unavailable'),
           findsOneWidget,
         );
       },
@@ -161,7 +161,7 @@ void main() {
       await _pump(tester, _twoWayConflict);
 
       expect(
-        find.text('Binary file conflict — resolve via the command line'),
+        find.textContaining('Binary conflict — text preview unavailable'),
         findsNothing,
       );
       expect(find.text('our line'), findsOneWidget);

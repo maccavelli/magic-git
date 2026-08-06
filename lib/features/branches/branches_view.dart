@@ -128,7 +128,13 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         _collapsedSectionsOverride = null;
         _filterCtl.clear();
       });
-      ref.read(conflictScanControllerProvider(oldWidget.repoPath).notifier).reset();
+      // Defer provider writes: didUpdateWidget runs mid-build and Riverpod
+      // forbids notifyListeners while the tree is building.
+      final oldPath = oldWidget.repoPath;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref.read(conflictScanControllerProvider(oldPath).notifier).reset();
+      });
       if (_branchScroll.hasClients) _branchScroll.jumpTo(0);
     }
   }

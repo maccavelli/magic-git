@@ -3,6 +3,7 @@
 // with no override flag). Regression guard for the row still being selectable —
 // the badge and the extra button sit in the same Row as the name.
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -132,11 +133,16 @@ void main() {
       'checkout, and no delete', (tester) async {
     await pump(tester);
 
-    // The free branch: its detail pane offers Check out and Delete.
+    // The free branch: Check out is primary; Delete lives under More.
     await tester.tap(find.text('hotfix/login'));
     await tester.pumpAndSettle();
     expect(find.widgetWithText(InlineActionButton, 'Check out'), findsOneWidget);
-    expect(find.widgetWithText(InlineActionButton, 'Delete'), findsOneWidget);
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete'), findsOneWidget);
+    // Dismiss the More menu so the next row tap is not blocked.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
 
     // A branch checked out elsewhere: Switch to worktree replaces Check out,
     // and Delete is withheld (git refuses, with no override flag).
@@ -147,6 +153,8 @@ void main() {
       findsOneWidget,
     );
     expect(find.widgetWithText(InlineActionButton, 'Check out'), findsNothing);
-    expect(find.widgetWithText(InlineActionButton, 'Delete'), findsNothing);
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+    expect(find.text('Delete'), findsNothing);
   });
 }

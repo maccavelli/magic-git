@@ -119,16 +119,16 @@ void main() {
     await tester.tap(find.text('fix/crash'));
     await tester.pumpAndSettle();
 
-    // The detail pane now offers this branch's actions.
+    // Primary action is Check out; Merge/Rename live under More.
     expect(
       find.widgetWithText(InlineActionButton, 'Check out'),
       findsOneWidget,
     );
-    expect(
-      find.widgetWithText(InlineActionButton, 'Merge into current'),
-      findsOneWidget,
-    );
-    expect(find.widgetWithText(InlineActionButton, 'Rename…'), findsOneWidget);
+    expect(find.text('More'), findsOneWidget);
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+    expect(find.text('Merge into current'), findsOneWidget);
+    expect(find.text('Rename…'), findsOneWidget);
   });
 
   testWidgets('flat by default; the toggle groups branches into folders', (

@@ -122,11 +122,12 @@ void main() {
     expect(find.text('New branch'), findsOneWidget); // Branches
     expect(find.text('New worktree'), findsOneWidget); // Worktrees
     expect(find.text('Cherry-pick'), findsOneWidget); // Repository
+    expect(find.text('Show in History'), findsOneWidget); // History (nav drop)
     expect(find.text('Branches'), findsNothing);
     expect(find.text('Worktrees'), findsNothing);
     expect(find.text('Repository'), findsNothing);
+    expect(find.text('History'), findsNothing);
     // ...while zones with no action for a commit keep their label (dimmed).
-    expect(find.text('History'), findsOneWidget);
     expect(find.text('Stashes'), findsOneWidget);
   });
 

@@ -1062,7 +1062,7 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
             '${base?.displayName ?? 'no fallback'}.',
           ),
           const SizedBox(height: 4),
-          GestureDetector(
+          Tappable(
             onTap: widget.onBaseReset,
             child: Text(
               'Reset saved base',

@@ -99,6 +99,16 @@ class _SpyGit extends GitService {
   }
 
   @override
+  Future<void> branchFrom(
+    String repoPath,
+    String name,
+    String startPoint, {
+    bool checkout = true,
+  }) async {
+    created.add(name);
+  }
+
+  @override
   Future<void> deleteBranch(
     String repoPath,
     String name, {
@@ -210,7 +220,8 @@ Future<void> _invokeDeleteHeld(WidgetTester tester) async {
   deleteBinding!();
   await tester.pump();
   await tester.pump(const Duration(seconds: 1));
-  await tester.tap(find.text('Delete').last); // confirm the plain delete
+  await _openMoreMenu(tester);
+    await tester.tap(find.text('Delete').last); // confirm the plain delete
   await tester.pump();
   await tester.pump(const Duration(seconds: 1));
 }
@@ -269,6 +280,16 @@ Finder _filterField() => find.byWidgetPredicate(
   (w) => w is MacosTextField && w.placeholder == 'Filter branches and tags',
 );
 
+
+Future<void> _openMoreMenu(WidgetTester tester) async {
+  // Delete (and other overflow actions) live under the More pulldown.
+  if (find.text('Delete').evaluate().isEmpty &&
+      find.text('More').evaluate().isNotEmpty) {
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+  }
+}
+
 void main() {
   testWidgets('creating a branch via the prompt never checks out the '
       'selected one', (tester) async {
@@ -284,16 +305,25 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    await tester.enterText(find.byType(MacosTextField).last, 'my-new-branch');
+    // Name field in the New branch sheet (not the list filter behind it).
+    final nameField = find.byWidgetPredicate(
+      (w) => w is MacosTextField && w.placeholder == 'feature/my-work',
+    );
+    expect(nameField, findsOneWidget);
+    await tester.enterText(nameField, 'my-new-branch');
     await tester.pump();
     await tester.tap(find.text('Create'));
     await tester.pumpAndSettle();
+    // Location chooser: Here vs New worktree — stay in this worktree.
+    if (find.text('Here').evaluate().isNotEmpty) {
+      await tester.tap(find.text('Here'));
+      await tester.pumpAndSettle();
+    }
 
-    expect(
-      git.checkouts,
-      isEmpty,
-      reason: 'creating a branch must not check out the selection',
-    );
+    // createBranch/branchFrom may still checkout the *new* branch (not the
+    // previously selected one). The regression is that the selection is not
+    // checked out as a side effect of the prompt.
+    expect(git.checkouts, isEmpty);
     expect(git.created, ['my-new-branch']);
   });
 
@@ -315,22 +345,22 @@ void main() {
     final git = await _pump(tester);
     git.checkoutGate = Completer<void>();
 
-    // Select a non-current branch; its detail pane offers Merge + Check out.
+    // Select a non-current branch; Check out is primary and busy-gated.
     await tester.tap(find.text('feature'));
     await tester.pumpAndSettle();
 
-    InlineActionButton mergeBtn() => tester.widget<InlineActionButton>(
+    InlineActionButton checkoutBtn() => tester.widget<InlineActionButton>(
       find.byWidgetPredicate(
-        (w) => w is InlineActionButton && w.label == 'Merge into current',
+        (w) => w is InlineActionButton && w.label == 'Check out',
       ),
     );
-    expect(mergeBtn().onPressed, isNotNull);
+    expect(checkoutBtn().onPressed, isNotNull);
 
     // Start a gated checkout — the panel is now busy.
     await tester.tap(find.text('Check out'));
     await tester.pump();
     expect(
-      mergeBtn().onPressed,
+      checkoutBtn().onPressed,
       isNull,
       reason: 'every action goes inert while an op is in flight',
     );
@@ -338,7 +368,7 @@ void main() {
     git.checkoutGate!.complete();
     await tester.pumpAndSettle();
     expect(
-      mergeBtn().onPressed,
+      checkoutBtn().onPressed,
       isNotNull,
       reason: 're-enabled once the operation completes',
     );

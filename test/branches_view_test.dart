@@ -108,6 +108,16 @@ Future<_FakeGit> _pump(WidgetTester tester) async {
   return git;
 }
 
+
+Future<void> _openMoreMenu(WidgetTester tester) async {
+  // Delete (and other overflow actions) live under the More pulldown.
+  if (find.text('Delete').evaluate().isEmpty &&
+      find.text('More').evaluate().isNotEmpty) {
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+  }
+}
+
 void main() {
   testWidgets(
     'a branch rejected as "not fully merged" offers a force-delete '
@@ -124,7 +134,8 @@ void main() {
       expect(find.text('Delete branch'), findsWidgets);
 
       // Confirm the plain delete — it fails as "not fully merged".
-      await tester.tap(find.text('Delete').last);
+      await _openMoreMenu(tester);
+    await tester.tap(find.text('Delete').last);
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
 
@@ -150,7 +161,8 @@ void main() {
       await tester.tap(find.text('Delete branch'));
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
-      await tester.tap(find.text('Delete').last);
+      await _openMoreMenu(tester);
+    await tester.tap(find.text('Delete').last);
       await tester.pump();
       await tester.pump(const Duration(seconds: 1));
 

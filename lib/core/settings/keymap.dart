@@ -262,11 +262,13 @@ final List<KeymapAction> kKeymapActions = [
     category: KeymapCategory.global,
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyT, meta: true)],
   ),
-  KeymapAction(
+  // Unbound by default: ⌘W is owned by viewer.close (and many macOS apps'
+  // close-window). Users can still bind Close Tab in Keyboard Mappings.
+  const KeymapAction(
     id: 'global.closeTab',
     label: 'Close Tab',
     category: KeymapCategory.global,
-    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyW, meta: true)],
+    defaultBindings: [],
   ),
   KeymapAction(
     id: 'repository.fetch',

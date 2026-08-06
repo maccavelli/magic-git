@@ -77,28 +77,34 @@ Future<ProviderContainer> _pump(
   return container;
 }
 
+
+Future<void> _openMoreMenu(WidgetTester tester) async {
+  // Delete (and other overflow actions) live under the More pulldown.
+  if (find.text('Delete').evaluate().isEmpty &&
+      find.text('More').evaluate().isNotEmpty) {
+    await tester.tap(find.text('More'));
+    await tester.pumpAndSettle();
+  }
+}
+
 void main() {
-  testWidgets('HEAD row uses green tint that masks selection background', (
+  testWidgets('HEAD row uses selection tint when selected (a11y)', (
     tester,
   ) async {
     await _pump(tester);
 
-    // Select HEAD (main).
-    await tester.tap(find.text('main'));
-    await tester.pumpAndSettle();
-
-    // The local row for HEAD paints systemGreen at 0.12 alpha, not the
-    // selection tint — characterization of the known a11y debt (Phase 6).
-    final greenContainers = find.byWidgetPredicate((w) {
+    // Unselected HEAD keeps a soft green identity wash.
+    final greenUnselected = find.byWidgetPredicate((w) {
       if (w is! Container) return false;
       final c = w.color;
       if (c == null) return false;
-      // systemGreen with alpha ~0.12
       return c.a < 0.2 && c.a > 0.05 && c.g > c.r && c.g > c.b;
     });
-    expect(greenContainers, findsWidgets);
+    expect(greenUnselected, findsWidgets);
 
-    // Selection tint should still exist as a constant for non-HEAD rows.
+    // Select HEAD (main) — selection owns the background (no longer masked).
+    await tester.tap(find.text('main'));
+    await tester.pumpAndSettle();
     expect(AppTheme.rowSelectionTint, isNotNull);
   });
 
@@ -147,6 +153,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('feature'));
     await tester.pumpAndSettle();
+    await _openMoreMenu(tester);
     expect(find.text('Delete'), findsOneWidget);
 
     await tester.pumpWidget(
@@ -281,6 +288,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // Click the Delete button in the detail pane.
+    await _openMoreMenu(tester);
     await tester.tap(find.text('Delete'));
     await tester.pumpAndSettle();
 
@@ -374,11 +382,13 @@ void main() {
 
     await tester.tap(find.text('feature'));
     await tester.pumpAndSettle();
+    await _openMoreMenu(tester);
     await tester.tap(find.text('Delete'));
     await tester.pumpAndSettle();
 
     // First confirmation: ordinary delete.
     expect(find.text('Delete branch'), findsOneWidget);
+    await _openMoreMenu(tester);
     await tester.tap(find.text('Delete').last);
     await tester.pumpAndSettle();
 
@@ -427,7 +437,11 @@ void main() {
 
     await tester.tap(find.text('feature'));
     await tester.pumpAndSettle();
+    await _openMoreMenu(tester);
     expect(find.text('Delete'), findsOneWidget);
+    // Close More so Switch repo is hittable.
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
 
     await tester.tap(find.text('Switch repo'));
     await tester.pumpAndSettle();

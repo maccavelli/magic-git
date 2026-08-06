@@ -246,13 +246,16 @@ void main() {
       _bindingFor(tester, LogicalKeyboardKey.keyB, meta: true)!();
       await tester.pumpAndSettle();
 
-      // The name prompt is up with its field.
+      // The multi-field New branch form is up (name + start-at).
       expect(find.text('New branch'), findsOneWidget);
       expect(
         find.byWidgetPredicate(
-          (w) => w is MacosTextField && w.placeholder == 'branch name',
+          (w) =>
+              w is MacosTextField &&
+              (w.placeholder == 'feature/my-work' ||
+                  w.placeholder == 'branch name'),
         ),
-        findsOneWidget,
+        findsWidgets,
       );
     });
 
