@@ -12,6 +12,7 @@ import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/hover_pop.dart';
 import '../common/label_chip.dart';
+import '../common/session_exit_guard.dart';
 import '../common/sized_sheet.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
@@ -119,7 +120,20 @@ class LogoutButton extends ConsumerWidget {
           secondary: true,
           // Returns to ConnectionLanding: disconnect() drops the session, which
           // flips `connected` false in the shell and pins content to the card.
-          onPressed: () => ref.read(connectionProvider.notifier).disconnect(),
+          // Dirty / pending-op trees confirm first (session_exit_guard, H8).
+          onPressed: () async {
+            final repoPath = ref.read(connectionProvider).repoPath;
+            if (repoPath != null) {
+              final ok = await confirmSessionExit(
+                context,
+                ProviderScope.containerOf(context),
+                repoPath: repoPath,
+                title: 'Log out?',
+              );
+              if (!ok || !context.mounted) return;
+            }
+            await ref.read(connectionProvider.notifier).disconnect();
+          },
           child: Row(
             children: [
               // White for parity with the connections-manager button's icon,

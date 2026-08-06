@@ -185,6 +185,10 @@ class TabsController extends ChangeNotifier {
   /// Closes a tab: gracefully disconnects its session (clean SSH bye / env
   /// reset), then disposes its container. Re-activates a neighbor; if it was the
   /// last tab, opens a fresh blank one so the app always has a landing tab.
+  ///
+  /// User-initiated closes confirm dirty/pending work via [confirmSessionExit]
+  /// in the tab strip *before* calling this (no dialog inside the controller,
+  /// so app-quit / teardown can always call close without blocking).
   Future<void> close(String id) async {
     final idx = _tabs.indexWhere((t) => t.id == id);
     if (idx < 0) return;

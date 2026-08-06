@@ -1,9 +1,11 @@
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/material.dart'
     show ReorderableDragStartListener, ReorderableListView;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/providers/app_providers.dart';
+import '../common/session_exit_guard.dart';
 import '../common/tappable.dart';
 import 'tabs_controller.dart';
 import 'tabs_scope.dart';
@@ -17,11 +19,31 @@ String _basename(String path) {
 /// repository, the active one highlighted, each closable, plus a "+" to open a
 /// fresh landing tab. Hidden entirely while a single tab is open, so a
 /// one-repo session looks exactly as it did before tabs existed.
-class TabStrip extends StatelessWidget {
+class TabStrip extends ConsumerWidget {
   const TabStrip({super.key});
 
+  Future<void> _closeTab(
+    BuildContext context,
+    TabsController controller,
+    RepoTab tab,
+  ) async {
+    // Confirm against THIS tab's session — the close target may be background.
+    final conn = tab.container.read(connectionProvider);
+    final repoPath = conn.repoPath;
+    if (repoPath != null && conn.isConnected) {
+      final ok = await confirmSessionExit(
+        context,
+        tab.container,
+        repoPath: repoPath,
+        title: 'Close tab?',
+      );
+      if (!ok || !context.mounted) return;
+    }
+    await controller.close(tab.id);
+  }
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final controller = TabsScope.of(context);
     final tabs = controller.tabs;
     // A single tab is the pre-tabs experience — no strip.
@@ -58,7 +80,7 @@ class TabStrip extends StatelessWidget {
                     tab: tab,
                     active: tab.id == controller.activeId,
                     onTap: () => controller.activate(tab.id),
-                    onClose: () => controller.close(tab.id),
+                    onClose: () => _closeTab(context, controller, tab),
                   ),
                 );
               },
