@@ -86,18 +86,23 @@ class _NavRow extends ConsumerWidget {
     // Something is being dragged but this row can't take it -> recede.
     final dimmed = drag != null && !eligible;
 
-    return DropZone(
-      id: item.zone,
-      selectPage: selectPage,
-      refresh: refresh,
-      builder: (context, hovering) => _NavRowVisual(
-        icon: item.icon,
-        label: verb ?? item.label,
-        selected: selected,
-        eligible: eligible,
-        activeDrop: hovering && eligible,
-        dimmed: dimmed,
-        onTap: onTap,
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: item.label,
+      child: DropZone(
+        id: item.zone,
+        selectPage: selectPage,
+        refresh: refresh,
+        builder: (context, hovering) => _NavRowVisual(
+          icon: item.icon,
+          label: verb ?? item.label,
+          selected: selected,
+          eligible: eligible,
+          activeDrop: hovering && eligible,
+          dimmed: dimmed,
+          onTap: onTap,
+        ),
       ),
     );
   }

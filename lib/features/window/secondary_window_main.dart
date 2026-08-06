@@ -585,7 +585,8 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       ref.read(recoveryVisibleProvider.notifier).setVisible(false);
     }
     final repoName = session.repoPath?.split('/').last;
-    final prefix = _kind == WindowKind.history ? 'History' : 'Repo';
+    // Detached windows are status-only (not a full workspace shell) — M12.
+    final prefix = _kind == WindowKind.history ? 'History' : 'Status';
     _native(
       'setWindowTitle',
       repoName == null
@@ -828,9 +829,22 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
     final showBody = session.repoPath != null &&
         (session.isConnected || session.phase == ConnectionPhase.lost);
     // Only the keymap actions that mean something in this window; the rest
-    // (panels, palette, refresh) belong to the main shell.
+    // (panels, palette) belong to the main shell. ⌘R invalidates repo families
+    // (M12) the same way the main shell's refresh does for open pop-outs.
     final shortcuts = resolveShortcuts(ref.watch(keymapProvider), {
       'global.undo': showBody ? _undoGitOperation : null,
+      'global.refresh': showBody && session.repoPath != null
+          ? () {
+              final repo = session.repoPath!;
+              for (final family in repoScopedFetchFamilies) {
+                ref.invalidate(family);
+              }
+              // Also ask main to refresh shared state for this repo.
+              _hub.invokeMethod<void>('invalidateAll', {
+                'repoPath': repo,
+              }).catchError((_) {});
+            }
+          : null,
     });
     return CallbackShortcuts(
       bindings: shortcuts,

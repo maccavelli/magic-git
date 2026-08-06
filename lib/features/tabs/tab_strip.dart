@@ -134,45 +134,50 @@ class _TabChip extends StatelessWidget {
         ? 'New Tab'
         : (tab.repoPath != null ? _basename(tab.repoPath!) : 'Connecting…');
 
-    return Tappable(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Container(
-        width: 168,
-        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-        padding: const EdgeInsets.only(left: 10, right: 4),
-        decoration: BoxDecoration(
-          color: active
-              ? MacosColors.systemBlueColor.withValues(alpha: 0.16)
-              : null,
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Row(
-          children: [
-            MacosIcon(
-              tab.isBlank
-                  ? CupertinoIcons.plus_app
-                  : isLocal
-                  ? CupertinoIcons.folder
-                  : CupertinoIcons.desktopcomputer,
-              size: 13,
-              color: active
-                  ? MacosColors.systemBlueColor
-                  : MacosColors.systemGrayColor,
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: typography.caption1.copyWith(
-                  fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+    return Semantics(
+      button: true,
+      selected: active,
+      label: label,
+      child: Tappable(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          width: 168,
+          margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+          padding: const EdgeInsets.only(left: 10, right: 4),
+          decoration: BoxDecoration(
+            color: active
+                ? MacosColors.systemBlueColor.withValues(alpha: 0.16)
+                : null,
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            children: [
+              MacosIcon(
+                tab.isBlank
+                    ? CupertinoIcons.plus_app
+                    : isLocal
+                    ? CupertinoIcons.folder
+                    : CupertinoIcons.desktopcomputer,
+                size: 13,
+                color: active
+                    ? MacosColors.systemBlueColor
+                    : MacosColors.systemGrayColor,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: typography.caption1.copyWith(
+                    fontWeight: active ? FontWeight.w600 : FontWeight.normal,
+                  ),
                 ),
               ),
-            ),
-            _CloseButton(onClose: onClose),
-          ],
+              _CloseButton(onClose: onClose),
+            ],
+          ),
         ),
       ),
     );
