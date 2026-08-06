@@ -110,6 +110,10 @@ const List<_ActionSpec> _panelActions = [
   _ActionSpec('branches.createTag', PaletteCategory.git, 2, CupertinoIcons.tag),
   _ActionSpec('branches.merge', PaletteCategory.git, 2, CupertinoIcons.arrow_merge),
   _ActionSpec('branches.delete', PaletteCategory.git, 2, CupertinoIcons.trash),
+  _ActionSpec('branches.publish', PaletteCategory.git, 2, CupertinoIcons.cloud_upload),
+  _ActionSpec('branches.createRequest', PaletteCategory.forge, 2, CupertinoIcons.plus_rectangle_on_rectangle),
+  _ActionSpec('branches.openCi', PaletteCategory.forge, 2, CupertinoIcons.gauge),
+  _ActionSpec('branches.compare', PaletteCategory.git, 2, CupertinoIcons.doc_text),
   // Stashes (panel 3).
   _ActionSpec('stashes.apply', PaletteCategory.git, 3, CupertinoIcons.tray_arrow_up),
   _ActionSpec('stashes.pop', PaletteCategory.git, 3, CupertinoIcons.tray_arrow_up_fill),

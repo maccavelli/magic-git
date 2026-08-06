@@ -118,6 +118,8 @@ class BranchDetail extends ConsumerWidget {
   final void Function(GitRef)? onCreateRequest;
   final void Function(GitRef)? onOpenHistory;
   final void Function(GitRef)? onOpenOnForge;
+  /// Switches to Review / focuses comparison — used by the primary CTA and keymap.
+  final VoidCallback? onCompare;
 
   const BranchDetail({
     super.key,
@@ -150,6 +152,7 @@ class BranchDetail extends ConsumerWidget {
     this.onCreateRequest,
     this.onOpenHistory,
     this.onOpenOnForge,
+    this.onCompare,
   });
 
   @override
@@ -639,10 +642,12 @@ class BranchDetail extends ConsumerWidget {
         onTap: busy ? null : () => onCreateRequest!(b),
       );
     } else {
+      // Never a permanently disabled primary CTA — tap enters Review (or
+      // reaffirms comparison) via [onCompare]; inspector stays visible below.
       primary = (
         label: 'Compare Changes',
         icon: CupertinoIcons.doc_text,
-        onTap: null, // comparison inspector is always visible below
+        onTap: onCompare,
       );
     }
 

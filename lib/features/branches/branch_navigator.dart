@@ -262,6 +262,13 @@ class BranchNavigator extends ConsumerStatefulWidget {
   })
   onDropOnCurrent;
 
+  /// Publish / create-request / open CI / compare — same actions as the detail
+  /// pane, so keymap + palette handlers stay in lockstep with the buttons.
+  final void Function(GitService, GitRef)? onPublish;
+  final void Function(GitRef)? onCreateRequest;
+  final void Function(String?)? onOpenUrl;
+  final VoidCallback? onCompare;
+
   /// Called when the filter text changes so the coordinator can rebuild the
   /// view model with the new filter.
   final void Function(String) onFilterChanged;
@@ -319,6 +326,10 @@ class BranchNavigator extends ConsumerStatefulWidget {
     required this.onPushTag,
     required this.onPushAllLocalOnly,
     required this.onDropOnCurrent,
+    this.onPublish,
+    this.onCreateRequest,
+    this.onOpenUrl,
+    this.onCompare,
     required this.onFilterChanged,
     required this.onModeChanged,
     required this.onBaseChanged,
@@ -701,6 +712,27 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
 
     // One handler map for both consumers: the keyboard shortcuts and the
     // command palette's dispatched intents (see PanelShortcuts.handlers).
+    // Preconditions mirror branch_detail primary/secondary gates so a
+    // remapped key never does something the UI would leave disabled.
+    final local = _selectedLocal;
+    final remotes =
+        ref.watch(remotesProvider(widget.repoPath)).value ?? const <String>[];
+    final unpublished = local != null && local.upstream == null;
+    final bf = local == null ? null : widget.vm.forge[local.shortName];
+    final hasRequest = bf != null && bf.hasRequest;
+    final canPublish = local != null &&
+        !local.isHead &&
+        unpublished &&
+        remotes.isNotEmpty &&
+        widget.onPublish != null &&
+        !widget.busy;
+    final canCreateRequest = local != null &&
+        !local.isHead &&
+        !unpublished &&
+        !hasRequest &&
+        widget.onCreateRequest != null &&
+        !widget.busy;
+    final ciUrl = bf?.ciUrl;
     final handlers = <String, VoidCallback?>{
       'branches.newBranch': () => widget.onCreateBranch(git),
       'branches.createTag': widget.onOpenCreateTagSheet,
@@ -711,6 +743,16 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
           : null,
       'branches.delete': _canActOnSelection
           ? () => widget.onDeleteBranch(git, _selectedLocal!.shortName)
+          : null,
+      'branches.publish':
+          canPublish ? () => widget.onPublish!(git, local) : null,
+      'branches.createRequest':
+          canCreateRequest ? () => widget.onCreateRequest!(local) : null,
+      'branches.openCi': ciUrl != null && widget.onOpenUrl != null
+          ? () => widget.onOpenUrl!(ciUrl)
+          : null,
+      'branches.compare': local != null && widget.onCompare != null
+          ? widget.onCompare
           : null,
     };
 

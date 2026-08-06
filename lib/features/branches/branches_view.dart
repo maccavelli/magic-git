@@ -349,6 +349,15 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         onPushTag: _pushTag,
         onPushAllLocalOnly: _pushAllLocalOnly,
         onDropOnCurrent: _dropOnCurrent,
+        onPublish: _publishBranch,
+        onCreateRequest: _createRequest,
+        onOpenUrl: _open,
+        onCompare: () {
+          // Surface the base-relative comparison: Review mode + keep selection.
+          if (mode != BranchWorkspaceMode.review) {
+            _setMode(BranchWorkspaceMode.review);
+          }
+        },
         onFilterChanged: (_) => setState(() {}),
         onModeChanged: _setMode,
         onBaseChanged: _setBase,
@@ -395,6 +404,11 @@ class _BranchesViewState extends ConsumerState<BranchesView>
               onCreateRequest: _createRequest,
               onOpenHistory: _openHistory,
               onOpenOnForge: _openOnForge,
+              onCompare: () {
+                if (mode != BranchWorkspaceMode.review) {
+                  _setMode(BranchWorkspaceMode.review);
+                }
+              },
             ),
     );
   }
