@@ -14,6 +14,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/settings/pane_layout.dart';
+import '../../core/utils/display_error.dart';
 import '../branches/create_tag_sheet.dart';
 import '../common/actions.dart';
 import '../common/branch_switch.dart';
@@ -1096,7 +1097,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         revision: '${commit.parents.first}..HEAD',
         maxCount: 10000,
       );
-    } catch (_) {
+    } catch (e) {
+      if (!mounted) return;
+      await showErrorDialog(context, displayError(e));
       return;
     }
     if (!mounted) return;

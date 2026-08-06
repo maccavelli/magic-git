@@ -285,10 +285,10 @@ untestable `catch` in the State class.
 
 #### Exit criteria
 
-* [ ] Failed `git.log` for rebase range shows a user-facing error.
-* [ ] Analyzer + tests green.
+* [x] Failed `git.log` for rebase range shows a user-facing error.
+* [x] Analyzer + tests green.
 
-**Checkpoint B:** Silent rebase failure closed.
+**Checkpoint B:** Silent rebase failure closed — **implemented**.
 
 ---
 
