@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/features/dnd/drag_item.dart';
 import 'package:remote_magic_git/features/dnd/drop_registry.dart';
+import 'package:remote_magic_git/features/worktrees/worktree_tabs.dart';
 
 const _commit = DragCommit(
   GitCommit(
@@ -109,7 +110,25 @@ void main() {
 
   test('a zone id maps to its sidebar page index', () {
     expect(DropZoneId.repository.pageIndex, 0);
+    expect(DropZoneId.history.pageIndex, 1);
     expect(DropZoneId.branches.pageIndex, 2);
+    expect(DropZoneId.stashes.pageIndex, 3);
+    expect(DropZoneId.forge.pageIndex, 4);
     expect(DropZoneId.worktrees.pageIndex, 5);
+  });
+
+  test('shell has six panels; Worktrees index matches DropZoneId', () {
+    // Locks the H1 invariant from docs/0004-PLAN-ui-ux-deep-debug-audit.md:
+    // kWorktreesPageIndex must not drift after panel renumbering.
+    expect(DropZoneId.values.length, 6);
+    expect(kWorktreesPageIndex, DropZoneId.worktrees.pageIndex);
+    expect(kWorktreesPageIndex, 5);
+    for (final zone in DropZoneId.values) {
+      expect(
+        zone.pageIndex,
+        inInclusiveRange(0, DropZoneId.values.length - 1),
+        reason: '$zone',
+      );
+    }
   });
 }

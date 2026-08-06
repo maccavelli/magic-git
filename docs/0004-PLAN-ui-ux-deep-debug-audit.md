@@ -122,8 +122,8 @@ Page indices (must stay aligned)
     4 ForgePanel
     5 WorktreesView
   DropZoneId.index == pageIndex (drop_registry.dart; tested)
-  kWorktreesPageIndex  ← BUG: still 6 in worktree_tabs.dart
-  global.panel1…panel6 → select(0…5); dead global.panel7 → select(6)
+  kWorktreesPageIndex  ← fixed: 5 (Phase 0)
+  global.panel1…panel6 → select(0…5); panel7 removed (Phase 0)
 
 Keymap / palette / panels
   kKeymapActions          lib/core/settings/keymap.dart
@@ -161,7 +161,7 @@ Errors
 | Claim | Codebase fact |
 | --- | --- |
 | Worktrees is page 5 | `app_shell.dart` `_pages` last child; `DropZoneId.worktrees.pageIndex == 5` in `test/drop_registry_test.dart` |
-| `kWorktreesPageIndex == 6` | `worktree_tabs.dart:11`; used by `switchToWorktree` |
+| `kWorktreesPageIndex == 5` | Fixed Phase 0; used by `switchToWorktree` |
 | Publish/Create already implemented | `branches_view.dart` `_publishBranch` / `_createRequest`; wired to detail, not navigator handlers |
 | Open CI is `onOpenUrl(bf.ciUrl)` | `branch_detail.dart` secondary button; needs selection + forge status |
 | Compare primary is dead CTA | `branch_detail.dart` `onTap: null` with inspector-always-visible comment |
@@ -231,11 +231,13 @@ Worktrees off-by-one; delete the landmine `panel7` mapping.
 
 #### Exit criteria
 
-* [ ] `switchToWorktree` selects Worktrees panel content (index 5).
-* [ ] No `panel7` / index-6 navigation in production code.
-* [ ] `flutter analyze` + targeted tests green.
+* [x] `switchToWorktree` selects Worktrees panel content (index 5).
+* [x] No `panel7` / index-6 navigation in production code.
+* [x] `flutter analyze` + targeted tests green.
 
-**Checkpoint A (maintainer):** Navigation constants accepted.
+**Checkpoint A (maintainer):** Navigation constants accepted — **implemented 2026-08-06**
+(`kWorktreesPageIndex = 5`, `global.panel7` removed, invariant in
+`test/drop_registry_test.dart`).
 
 ---
 
@@ -1135,3 +1137,4 @@ Gates G-H5/M1/M5/M6/M8 are **locked**. Still open:
 | --- | --- |
 | 2026-08-06 | Initial plan for review; grounded in MADR 0004 + tree facts. |
 | 2026-08-06 | Product gates locked: **G-H5=B**, **G-M1=A**, **G-M5=A**, **G-M6=A**, **G-M8=A**. Phases 3/7/8 expanded for full paths; non-goals clarify review-threads vs conversation comments. |
+| 2026-08-06 | **Phase 0 done:** `kWorktreesPageIndex = 5`, remove `global.panel7`, six-panel contract docs, `drop_registry_test` invariants. |

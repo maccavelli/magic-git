@@ -4,11 +4,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../tabs/tab_ui_providers.dart';
 import 'worktree_access.dart';
 
-/// Sidebar index of the Worktrees panel — defined once, here, next to the
-/// navigation helper that uses it. (It used to be re-declared privately in
-/// each feature that navigates here, with a comment lamenting the circular
-/// import that forced the copy.)
-const int kWorktreesPageIndex = 6;
+/// Sidebar / [IndexedStack] index of the Worktrees panel.
+///
+/// Must stay equal to [DropZoneId.worktrees.pageIndex] (enum index **5**).
+/// The six shell pages, in order: Repository, History, Branches, Stashes,
+/// Forge, Worktrees. Valid indices are `0..5` — a seventh panel would need
+/// `DropZoneId`, the shell stack, keymap `global.panelN`, and this constant
+/// updated together.
+///
+/// Kept as a literal rather than `DropZoneId.worktrees.pageIndex` to avoid a
+/// circular import (`drop_registry.dart` imports this library for
+/// [kWorktreeIcon]). The equality is locked by unit test.
+const int kWorktreesPageIndex = 5;
 
 /// Canonical glyph for a git worktree: SF Symbol **tree**
 /// ([CupertinoIcons.tree]). Do **not** use `square_split_2x1` — that means

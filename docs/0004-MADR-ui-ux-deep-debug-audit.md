@@ -420,3 +420,4 @@ Chosen option: **"B. Accept this audit as the authoritative prioritized backlog"
 | 2026-08-06 | Initial audit recorded; status `proposed` pending maintainer scheduling. |
 | 2026-08-06 | Companion [0004-PLAN-ui-ux-deep-debug-audit.md](0004-PLAN-ui-ux-deep-debug-audit.md) written for review (phased HIGH→MED→LOW delivery). |
 | 2026-08-06 | Product gates locked for the companion PLAN: **H5=B** (proxy `uploadBytes`), **M1=A** (remappable View globals), **M5=A** (DnD E1/E2), **M6=A** (release detail), **M8=A** (in-app comment timelines). |
+| 2026-08-06 | **H1 fixed (Phase 0):** `kWorktreesPageIndex = 5`; dead `global.panel7` removed; page-index invariant tests. |

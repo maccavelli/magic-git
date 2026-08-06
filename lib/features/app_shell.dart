@@ -596,13 +596,15 @@ class _AppShellState extends ConsumerState<AppShell> {
       'global.showShortcuts': () => _openShortcuts(context),
       'global.commandPalette': connected ? () => _openPalette(context) : null,
       'global.undo': connected ? _undoGitOperation : null,
+      // Six panels: Repository…Worktrees (indices 0–5). No panel7 — the old
+      // Project tab was folded into Forge; a seventh entry would select an
+      // out-of-range IndexedStack index.
       'global.panel1': connected ? () => _selectPage(0) : null,
       'global.panel2': connected ? () => _selectPage(1) : null,
       'global.panel3': connected ? () => _selectPage(2) : null,
       'global.panel4': connected ? () => _selectPage(3) : null,
       'global.panel5': connected ? () => _selectPage(4) : null,
       'global.panel6': connected ? () => _selectPage(5) : null,
-      'global.panel7': connected ? () => _selectPage(6) : null,
     });
 
     return CallbackShortcuts(

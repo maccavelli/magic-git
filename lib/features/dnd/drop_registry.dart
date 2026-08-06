@@ -14,6 +14,11 @@ import 'drag_item.dart';
 
 /// The nav-rail drop zones, in sidebar order — so [DropZonePage.pageIndex]
 /// equals the `IndexedStack` page index a drop should navigate to.
+///
+/// Contract (six panels, indices `0..5`):
+/// repository, history, branches, stashes, forge, worktrees.
+/// Keep this enum, `AppShell`'s stack, keymap `global.panel1`–`panel6`, and
+/// `kWorktreesPageIndex` (`worktree_tabs.dart`) in lockstep when adding a page.
 enum DropZoneId {
   repository,
   history,
