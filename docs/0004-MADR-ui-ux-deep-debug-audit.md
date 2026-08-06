@@ -1,6 +1,6 @@
 # Treat the 2026-08 UI/UX deep-debug audit as the prioritized remediation backlog
 
-- Status: proposed
+- Status: accepted (HIGH track + core MED delivered; residual MED/LOW tracked in PLAN)
 - Date: 2026-08-06
 - Deciders: Mac Smith
 - Tags: ui, ux, flutter, macos, debugging, accessibility, shortcuts, multi-window, forge, wiring
@@ -421,3 +421,4 @@ Chosen option: **"B. Accept this audit as the authoritative prioritized backlog"
 | 2026-08-06 | Companion [0004-PLAN-ui-ux-deep-debug-audit.md](0004-PLAN-ui-ux-deep-debug-audit.md) written for review (phased HIGH→MED→LOW delivery). |
 | 2026-08-06 | Product gates locked for the companion PLAN: **H5=B** (proxy `uploadBytes`), **M1=A** (remappable View globals), **M5=A** (DnD E1/E2), **M6=A** (release detail), **M8=A** (in-app comment timelines). |
 | 2026-08-06 | **H1 fixed (Phase 0):** `kWorktreesPageIndex = 5`; dead `global.panel7` removed; page-index invariant tests. |
+| 2026-08-06 | Phases 0–10 implemented on master (commits per phase): H1–H8 core fixes; remappable View globals; History DnD navigational + `moveBranch`; release detail + issue comments; secondary ⌘R + a11y chrome. Residual: full in-panel E1 disambiguation menu, PR/MR comment timelines, GH live logs. |

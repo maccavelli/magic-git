@@ -2,7 +2,7 @@
 
 Associated MADR: [0004-MADR-ui-ux-deep-debug-audit.md](0004-MADR-ui-ux-deep-debug-audit.md)
 
-- Status: **for review** (product gates locked 2026-08-06; implementation not started)
+- Status: **implemented** (Phases 0–10 landed 2026-08-06; residual notes in change log)
 - Date: 2026-08-06
 - MADR decision: Option B — treat the audit as the prioritized remediation backlog
 - Owner: implementation agent + maintainer review
@@ -1138,3 +1138,4 @@ Gates G-H5/M1/M5/M6/M8 are **locked**. Still open:
 | 2026-08-06 | Initial plan for review; grounded in MADR 0004 + tree facts. |
 | 2026-08-06 | Product gates locked: **G-H5=B**, **G-M1=A**, **G-M5=A**, **G-M6=A**, **G-M8=A**. Phases 3/7/8 expanded for full paths; non-goals clarify review-threads vs conversation comments. |
 | 2026-08-06 | **Phase 0 done:** `kWorktreesPageIndex = 5`, remove `global.panel7`, six-panel contract docs, `drop_registry_test` invariants. |
+| 2026-08-06 | **Phases 1–10 done** (per-phase commits, not pushed): H3 rebase errors; H2 branch keymap; H4/H5 remote-edit + uploadBytes proxy; H6 displayError; H8 session exit; H7 GPG disclosure; M1/M4/M5 View keys + History nav DnD + moveBranch; M6/M8/M9 releases/comments/binary conflict; M12–M14 secondary refresh + Semantics; docs. Residual: in-panel E1 menu on commit rows, PR/MR comment lists, optional M10/M11. |

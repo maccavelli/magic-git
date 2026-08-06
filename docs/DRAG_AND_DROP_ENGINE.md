@@ -1,6 +1,9 @@
 # Drag-and-Drop Engine — Feasibility & Design Report
 
-**Status:** proposal for review (not yet implemented)
+**Status:** **A–D shipped**; History nav navigational drops + `GitService.moveBranch`
+(E1 service) landed with audit plan 0004 Phase 7. Remaining: in-panel E1
+disambiguation menu on commit rows and full E2 cherry-pick-onto-branch row
+targets (see §5 and `docs/0004-PLAN-ui-ux-deep-debug-audit.md`).
 **Scope:** a canonical, reusable drag-and-drop (DnD) engine for Magic Git, with the
 signature interaction being **drag an item out of a tab panel and drop it onto a
 nav-rail tab** to trigger a git/forge workflow (e.g. commit → *Branches* = new
