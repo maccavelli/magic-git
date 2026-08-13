@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
+import 'package:flutter/material.dart' show SelectableText;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -9,6 +10,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/providers/window_manager_bridge.dart';
+import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/utils/display_error.dart';
 import '../branches/branches_view.dart';
 import '../common/actions.dart';
@@ -19,8 +21,12 @@ import '../common/context_menu.dart';
 import '../common/label_chip.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/repository_context.dart';
+import '../common/repository_context_bar.dart';
+import '../common/repository_workspace_scaffold.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
+import '../common/workspace_focus.dart';
+import '../common/workspace_navigation.dart';
 import '../history/history_view.dart';
 import '../repository/repo_status_view.dart';
 import '../stash/stash_view.dart';
@@ -96,8 +102,15 @@ const List<(String, IconData)> _subPanels = [
 class _WorktreesViewState extends ConsumerState<WorktreesView>
     with BusyActionState {
   final ContextMenuOverlay _contextMenu = ContextMenuOverlay();
+  String? _selectedOverviewPath;
 
   String get repoPath => widget.repoPath;
+
+  @override
+  void didUpdateWidget(WorktreesView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repoPath != widget.repoPath) _selectedOverviewPath = null;
+  }
 
   @override
   void dispose() {
@@ -545,8 +558,32 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
               ),
               RepositoryContextSupplement(worktreeLabel: label),
             );
+        final focusedPath = selected ?? _selectedOverviewPath;
+        if (focusedPath != null) {
+          ref
+              .read(
+                workspaceNavigationProvider(
+                  WorkspaceSessionKey(repoPath, connection.sessionEpoch),
+                ).notifier,
+              )
+              .visit(
+                WorkspaceFocus(
+                  repositoryPath: repoPath,
+                  sessionEpoch: connection.sessionEpoch,
+                  kind: WorkspaceFocusKind.worktree,
+                  identity: focusedPath,
+                  panelIndex: 5,
+                ),
+              );
+        }
       });
       final paths = live.map((w) => w.path).toSet();
+      if (_selectedOverviewPath != null &&
+          !paths.contains(_selectedOverviewPath)) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) setState(() => _selectedOverviewPath = null);
+        });
+      }
       final dead = tabs.open.where((p) => !paths.contains(p)).toList();
       if (dead.isNotEmpty) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -565,17 +602,73 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       }
     }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _strip(context, tabs, worktreesAsync.value ?? const []),
-        Container(height: 1, color: MacosColors.separatorColor),
-        Expanded(
-          child: tabs.selected == null
-              ? _overview(context, worktreesAsync)
-              : _workspace(context, tabs.selected!),
-        ),
-      ],
+    if (tabs.selected != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _strip(context, tabs, worktreesAsync.value ?? const []),
+          Container(height: 1, color: MacosColors.separatorColor),
+          Expanded(child: _workspace(context, tabs.selected!)),
+        ],
+      );
+    }
+    final connection = ref.watch(connectionProvider);
+    final worktrees = worktreesAsync.value ?? const <GitWorktree>[];
+    final main = worktrees.where((item) => item.isMain).firstOrNull;
+    final selectedWorktree = worktrees
+        .where((item) => item.path == _selectedOverviewPath)
+        .firstOrNull;
+    final pathParts = repoPath.split('/').where((part) => part.isNotEmpty);
+    final snapshot = RepositoryContextSnapshot(
+      repositoryPath: repoPath,
+      repositoryName:
+          'Repository: ${pathParts.isEmpty ? repoPath : pathParts.last}',
+      connectionLabel: connection.connectionLabel,
+      hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
+      branchLabel: main == null ? 'Worktrees' : 'Main: ${main.branchLabel}',
+      connected: connection.isConnected,
+      busy: busy,
+      supplement: connection.sessionEpoch <= 0
+          ? null
+          : ref.watch(
+              repositoryContextSupplementCacheProvider.select(
+                (cache) =>
+                    cache[RepositoryContextSupplementKey(
+                      repositoryIdentity: repositoryContextIdentityKey(
+                        backend: connection.backend.name,
+                        connectionId: connection.connectionId,
+                        repositoryPath: repoPath,
+                      ),
+                      sessionEpoch: connection.sessionEpoch,
+                    )],
+              ),
+            ),
+    );
+    return RepositoryWorkspaceScaffold(
+      repositoryContext: Column(
+        children: [
+          RepositoryContextBar(
+            snapshot: snapshot,
+            primaryAction: RepositoryPrimaryAction(
+              kind: RepositoryPrimaryActionKind.fetch,
+              label: 'Add Worktree',
+              disabledReason: busy
+                  ? 'Another worktree operation is running'
+                  : null,
+            ),
+            onPrimaryAction: (_) => _add(),
+          ),
+          _strip(context, tabs, worktrees),
+          Container(height: 1, color: MacosColors.separatorColor),
+        ],
+      ),
+      navigator: worktrees.length <= 1
+          ? null
+          : _overview(context, worktreesAsync),
+      canvas: selectedWorktree == null
+          ? _overviewPlaceholder(context, worktrees)
+          : _worktreeDetail(context, selectedWorktree),
+      preferences: const RepositoryWorkspacePrefs(navigatorWidth: 520),
     );
   }
 
@@ -758,7 +851,8 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       _ => (kWorktreeIcon, MacosColors.systemBlueColor),
     };
 
-    return GestureDetector(
+    return Tappable(
+      onTap: () => setState(() => _selectedOverviewPath = wt.path),
       onDoubleTap: () => _openWorktree(wt),
       onSecondaryTapUp: (d) => _contextMenu.show(
         context,
@@ -858,6 +952,100 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
               ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _overviewPlaceholder(
+    BuildContext context,
+    List<GitWorktree> worktrees,
+  ) {
+    if (worktrees.length <= 1) return _empty(context);
+    return Center(
+      child: Text(
+        'Select a worktree to inspect its path, state, and actions',
+        style: MacosTheme.of(
+          context,
+        ).typography.body.copyWith(color: MacosColors.systemGrayColor),
+      ),
+    );
+  }
+
+  Widget _worktreeDetail(BuildContext context, GitWorktree wt) {
+    final typography = MacosTheme.of(context).typography;
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Worktree: ${wt.name}',
+            style: typography.title2.copyWith(fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 6),
+          SelectableText(wt.path, style: typography.body),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              LabelChip(wt.branchLabel, color: MacosColors.systemBlueColor),
+              if (wt.isMain)
+                const LabelChip(
+                  'main worktree',
+                  color: MacosColors.systemGreenColor,
+                ),
+              if (wt.isLocked)
+                LabelChip(
+                  wt.lockReason?.isNotEmpty ?? false
+                      ? 'locked: ${wt.lockReason}'
+                      : 'locked',
+                  color: MacosColors.systemGrayColor,
+                ),
+              if (wt.isPrunable)
+                const LabelChip('missing', color: MacosColors.systemRedColor),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (!wt.isMain && !wt.isPrunable)
+                AppPushButton(
+                  controlSize: ControlSize.regular,
+                  onPressed: busy ? null : () => _openWorktree(wt),
+                  child: const Text('Open Worktree'),
+                ),
+              if (!wt.isMain)
+                AppPushButton(
+                  controlSize: ControlSize.regular,
+                  onPressed: busy ? null : () => _toggleLock(wt),
+                  child: Text(wt.isLocked ? 'Unlock' : 'Lock'),
+                ),
+              if (wt.isPrunable)
+                AppPushButton(
+                  controlSize: ControlSize.regular,
+                  onPressed: busy ? null : () => _repair(wt),
+                  child: const Text('Repair…'),
+                ),
+              if (!wt.isMain && !wt.isPrunable && !wt.isLocked)
+                AppPushButton(
+                  controlSize: ControlSize.regular,
+                  onPressed: busy ? null : () => _move(wt),
+                  child: const Text('Move…'),
+                ),
+              if (!wt.isMain)
+                AppPushButton(
+                  controlSize: ControlSize.regular,
+                  onPressed: busy
+                      ? null
+                      : () => _remove(wt, alsoDeleteBranch: false),
+                  child: const Text('Remove…'),
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }

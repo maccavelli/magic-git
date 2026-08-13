@@ -19,6 +19,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/features/common/repository_workspace_scaffold.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_access.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_tabs.dart';
 import 'package:remote_magic_git/features/worktrees/worktrees_view.dart';
@@ -146,6 +147,26 @@ void main() {
     // The stale one, flagged rather than silently listed as healthy.
     expect(find.text('app-gone'), findsOneWidget);
     expect(find.text('missing'), findsOneWidget);
+    expect(find.byType(RepositoryWorkspaceScaffold), findsOneWidget);
+  });
+
+  testWidgets('selecting a worktree reveals its details and actions', (
+    tester,
+  ) async {
+    await pump(tester);
+
+    await tester.tap(find.text('app-feature'));
+    // The row also supports double-click-to-open, so Flutter waits out the
+    // double-click interval before dispatching the single-click selection.
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Worktree: app-feature'), findsOneWidget);
+    expect(find.text('${tmp.path}/app-feature'), findsWidgets);
+    expect(find.text('Open Worktree'), findsOneWidget);
+    expect(find.text('Lock'), findsOneWidget);
+    expect(find.text('Move…'), findsOneWidget);
+    expect(find.text('Remove…'), findsOneWidget);
   });
 
   testWidgets('a stale worktree offers Repair and Prune inline', (
@@ -218,37 +239,36 @@ void main() {
     });
   });
 
-  testWidgets(
-    "a dead tab's sandbox grant is released, not just its tab",
-    (tester) async {
-      // A worktree pruned or removed in a terminal: build()'s dead-path sweep
-      // drops the tab — and must ALSO release the security-scoped grant,
-      // which used to leak until the whole container was disposed (the
-      // explicit close/remove/move paths release theirs themselves).
-      late _RecordingAccess access;
-      final c = await pump(
-        tester,
-        extraOverrides: [
-          worktreeAccessProvider.overrideWith((ref) {
-            access = _RecordingAccess(ref);
-            return access;
-          }),
-        ],
-      );
+  testWidgets("a dead tab's sandbox grant is released, not just its tab", (
+    tester,
+  ) async {
+    // A worktree pruned or removed in a terminal: build()'s dead-path sweep
+    // drops the tab — and must ALSO release the security-scoped grant,
+    // which used to leak until the whole container was disposed (the
+    // explicit close/remove/move paths release theirs themselves).
+    late _RecordingAccess access;
+    final c = await pump(
+      tester,
+      extraOverrides: [
+        worktreeAccessProvider.overrideWith((ref) {
+          access = _RecordingAccess(ref);
+          return access;
+        }),
+      ],
+    );
 
-      final tabs = c.read(worktreeTabsProvider.notifier);
-      tabs.open('/dead/path');
-      // Keep the Overview frontmost: selecting the dead tab would mount a
-      // whole workspace against the nonexistent path (real subprocesses,
-      // pending watchdog timers) — and the realistic scenario is exactly a
-      // background tab whose worktree got pruned in a terminal.
-      tabs.select(null);
-      await tester.pumpAndSettle();
+    final tabs = c.read(worktreeTabsProvider.notifier);
+    tabs.open('/dead/path');
+    // Keep the Overview frontmost: selecting the dead tab would mount a
+    // whole workspace against the nonexistent path (real subprocesses,
+    // pending watchdog timers) — and the realistic scenario is exactly a
+    // background tab whose worktree got pruned in a terminal.
+    tabs.select(null);
+    await tester.pumpAndSettle();
 
-      expect(c.read(worktreeTabsProvider).open, isEmpty);
-      expect(access.released, contains('/dead/path'));
-    },
-  );
+    expect(c.read(worktreeTabsProvider).open, isEmpty);
+    expect(access.released, contains('/dead/path'));
+  });
 
   testWidgets('a repo with only a main worktree explains what they are', (
     tester,

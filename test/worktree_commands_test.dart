@@ -89,7 +89,11 @@ void main() {
     // A worktree cleanup path may already have removed the scratch root. Test
     // teardown is idempotent so suite-level concurrency cannot turn successful
     // assertions into a spurious PathNotFoundException.
-    if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+    try {
+      tempDir.deleteSync(recursive: true);
+    } on PathNotFoundException {
+      // An asynchronous git cleanup may win the race after the test ends.
+    }
   });
 
   group('repoLayout', () {
