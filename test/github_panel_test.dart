@@ -86,7 +86,12 @@ final _runs = [
 ];
 
 final _jobs = [
-  const GhJob(id: 900, name: 'build', status: 'completed', conclusion: 'success'),
+  const GhJob(
+    id: 900,
+    name: 'build',
+    status: 'completed',
+    conclusion: 'success',
+  ),
 ];
 
 final _remoteRefs = [
@@ -106,6 +111,9 @@ class _BrowseMode extends ForgeInboxMode {
 }
 
 Future<void> _pump(WidgetTester tester, {GhService? gh}) async {
+  tester.view.physicalSize = const Size(1200, 800);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
   final container = ProviderContainer(
     overrides: [
       forgeInboxModeProvider.overrideWith(_BrowseMode.new),
@@ -115,12 +123,13 @@ Future<void> _pump(WidgetTester tester, {GhService? gh}) async {
       // remotes (remotesProvider), not remote-tracking refs.
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
-      pullRequestDetailProvider(
-        (_repo, 7),
-      ).overrideWith((ref) async => _readyPr),
-      repoMergePolicyProvider(_repo).overrideWith(
-        (ref) async => const GhRepoMergePolicy(),
-      ),
+      pullRequestDetailProvider((
+        _repo,
+        7,
+      )).overrideWith((ref) async => _readyPr),
+      repoMergePolicyProvider(
+        _repo,
+      ).overrideWith((ref) async => const GhRepoMergePolicy()),
       workflowRunsProvider(_repo).overrideWith((ref) async => _runs),
       runJobsProvider((_repo, 200)).overrideWith((ref) => Stream.value(_jobs)),
       // The PR detail's inline Checks body mounts the head branch's latest
@@ -201,7 +210,9 @@ void main() {
     expect(prefs.getDouble('paneWidth_forgeList'), 380);
   });
 
-  testWidgets('selecting a run opens its jobs in the main pane', (tester) async {
+  testWidgets('selecting a run opens its jobs in the main pane', (
+    tester,
+  ) async {
     await _pump(tester);
     await tester.tap(find.text('Build'));
     await tester.pumpAndSettle();
@@ -238,8 +249,9 @@ void main() {
     expect(find.text('Head'), findsOneWidget);
     expect(find.text('Base'), findsOneWidget);
   });
-  testWidgets('merge options sheet confirms squash path with SHA pin',
-      (tester) async {
+  testWidgets('merge options sheet confirms squash path with SHA pin', (
+    tester,
+  ) async {
     final gh = _MergeCapturingGh();
     await _pump(tester, gh: gh);
 
@@ -264,5 +276,4 @@ void main() {
 
     expect(gh.merges, [(7, 'squash', _readyPr.headOid)]);
   });
-
 }

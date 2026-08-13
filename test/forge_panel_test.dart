@@ -10,6 +10,7 @@ import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/features/common/repository_workspace_scaffold.dart';
 import 'package:remote_magic_git/features/forge/forge_panel.dart';
 import 'package:remote_magic_git/features/forge/forge_prefs.dart';
 
@@ -76,12 +77,16 @@ Future<void> _pumpForge(WidgetTester tester, Forge forge) async {
 void main() {
   testWidgets('github → the GitHub panel', (tester) async {
     await _pumpForge(tester, Forge.github);
+    expect(find.byType(RepositoryWorkspaceScaffold), findsOneWidget);
+    expect(find.text('New Pull Request'), findsOneWidget);
     expect(find.text('Pull Requests'), findsOneWidget);
     expect(find.text('Merge Requests'), findsNothing);
   });
 
   testWidgets('gitlab → the (unchanged) GitLab panel', (tester) async {
     await _pumpForge(tester, Forge.gitlab);
+    expect(find.byType(RepositoryWorkspaceScaffold), findsOneWidget);
+    expect(find.text('New Merge Request'), findsOneWidget);
     expect(find.text('Merge Requests'), findsOneWidget);
     expect(find.text('Pull Requests'), findsNothing);
   });

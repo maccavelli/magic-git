@@ -8,7 +8,6 @@ import '../../core/forge/merge_plan.dart';
 import '../../core/gitlab/models.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
-import '../../core/settings/pane_layout.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/branch_switch.dart';
@@ -17,13 +16,13 @@ import '../common/context_menu.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
-import '../common/resizable_master_detail.dart';
 import '../common/section_collapse.dart';
 import '../common/show_more_row.dart';
 import '../forge/forge_inbox.dart';
 import '../forge/forge_prefs.dart';
 import '../forge/forge_selection.dart';
 import '../forge/forge_widgets.dart';
+import '../forge/forge_workspace.dart';
 import '../forge/issue_actions.dart';
 import '../forge/merge_options_sheet.dart';
 import '../forge/merge_readiness.dart';
@@ -219,6 +218,12 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       _sel = next;
       _draftDirty = false;
     });
+    publishLandedForgeSelection(
+      ref,
+      repoPath: repoPath,
+      forgeLabel: 'GitLab',
+      selection: next,
+    );
   }
 
   @override
@@ -281,10 +286,14 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
           ? resolveShortcuts(keymap, handlers)
           : const <ShortcutActivator, VoidCallback>{},
       handlers: widget.isActive ? handlers : const {},
-      child: ResizableMasterDetail(
-        paneId: PaneId.forgeList,
-        master: _leftPane(mrs, pipelines, pipeByRef),
-        detail: _mainPane(mrs, pipelines, pipeByRef),
+      child: ForgeRepositoryWorkspace(
+        repoPath: repoPath,
+        forgeLabel: 'GitLab',
+        navigator: _leftPane(mrs, pipelines, pipeByRef),
+        canvas: _mainPane(mrs, pipelines, pipeByRef),
+        selection: _sel,
+        primaryActionLabel: 'New Merge Request',
+        onPrimaryAction: _createMr,
       ),
     );
   }
@@ -906,11 +915,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         AppPushButton(
           controlSize: ControlSize.large,
           onPressed: enabled
-              ? () => _merge(
-                  mr.iid,
-                  squash: primarySquash,
-                  listMr: mr,
-                )
+              ? () => _merge(mr.iid, squash: primarySquash, listMr: mr)
               : null,
           child: Text(primarySquash ? 'Squash and merge' : 'Merge'),
         ),
@@ -1091,7 +1096,8 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     if (_mergingMrs.contains(iid)) return; // already in flight
     final repoPath = this.repoPath; // see _approve
 
-    MergeRequest detailMr = listMr ??
+    MergeRequest detailMr =
+        listMr ??
         const MergeRequest(
           iid: 0,
           title: '',
@@ -1111,8 +1117,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     if (!mounted) return;
 
     GlRepoMergePolicy? policy;
-    final policyVal =
-        ref.read(repoMergePolicyProvider(repoPath)).asData?.value;
+    final policyVal = ref.read(repoMergePolicyProvider(repoPath)).asData?.value;
     if (policyVal is GlRepoMergePolicy) policy = policyVal;
 
     final plan = mergePlanForGitLab(mr: detailMr, policy: policy);
@@ -1126,8 +1131,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       return;
     }
 
-    final initialMethod =
-        squash ? MergeMethod.squash : MergeMethod.mergeCommit;
+    final initialMethod = squash ? MergeMethod.squash : MergeMethod.mergeCommit;
     final chosenMethod = plan.allowedMethods.contains(initialMethod)
         ? initialMethod
         : plan.defaultMethod;

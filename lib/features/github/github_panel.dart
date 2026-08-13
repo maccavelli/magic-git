@@ -8,7 +8,6 @@ import '../../core/forge/merge_plan.dart';
 import '../../core/github/models.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
-import '../../core/settings/pane_layout.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/branch_switch.dart';
@@ -17,13 +16,13 @@ import '../common/context_menu.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
-import '../common/resizable_master_detail.dart';
 import '../common/section_collapse.dart';
 import '../common/show_more_row.dart';
 import '../forge/forge_inbox.dart';
 import '../forge/forge_prefs.dart';
 import '../forge/forge_selection.dart';
 import '../forge/forge_widgets.dart';
+import '../forge/forge_workspace.dart';
 import '../forge/issue_actions.dart';
 import '../forge/merge_options_sheet.dart';
 import '../forge/merge_readiness.dart';
@@ -171,6 +170,12 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       _sel = next;
       _draftDirty = false;
     });
+    publishLandedForgeSelection(
+      ref,
+      repoPath: repoPath,
+      forgeLabel: 'GitHub',
+      selection: next,
+    );
   }
 
   @override
@@ -228,10 +233,14 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
           ? resolveShortcuts(keymap, handlers)
           : const <ShortcutActivator, VoidCallback>{},
       handlers: widget.isActive ? handlers : const {},
-      child: ResizableMasterDetail(
-        paneId: PaneId.forgeList,
-        master: _leftPane(prs, runs, runByBranch),
-        detail: _mainPane(prs, runs, runByBranch),
+      child: ForgeRepositoryWorkspace(
+        repoPath: repoPath,
+        forgeLabel: 'GitHub',
+        navigator: _leftPane(prs, runs, runByBranch),
+        canvas: _mainPane(prs, runs, runByBranch),
+        selection: _sel,
+        primaryActionLabel: 'New Pull Request',
+        onPrimaryAction: _createPr,
       ),
     );
   }
@@ -860,9 +869,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   Widget _mergeButton(PullRequest pr, MergePlan plan) {
     final enabled = plan.canMergeNow;
     final methods = plan.allowedMethods;
-    final extras = methods
-        .where((m) => m != MergeMethod.mergeCommit)
-        .toList();
+    final extras = methods.where((m) => m != MergeMethod.mergeCommit).toList();
     // Prefer plan default for the primary action label/method.
     final primaryMethod = plan.defaultMethod;
     final primaryLabel = switch (primaryMethod) {
@@ -1080,7 +1087,8 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     final repoPath = this.repoPath;
 
     // Warm detail before confirm so we can pin SHA and re-check the plan.
-    PullRequest detailPr = listPr ??
+    PullRequest detailPr =
+        listPr ??
         const PullRequest(
           number: 0,
           title: '',

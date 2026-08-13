@@ -4,7 +4,7 @@
 
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -17,6 +17,9 @@ import 'package:remote_magic_git/core/gitlab/models.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/common/repository_context.dart';
+import 'package:remote_magic_git/features/common/workspace_focus.dart';
+import 'package:remote_magic_git/features/common/workspace_navigation.dart';
 import 'package:remote_magic_git/features/forge/forge_prefs.dart';
 import 'package:remote_magic_git/features/gitlab/gitlab_panel.dart';
 import 'package:riverpod/misc.dart' show Override;
@@ -119,6 +122,15 @@ class _BrowseMode extends ForgeInboxMode {
   bool build() => false;
 }
 
+class _Connected extends ConnectionController {
+  @override
+  ConnectionState build() => const ConnectionState(
+    phase: ConnectionPhase.connected,
+    repoPath: _repo,
+    sessionEpoch: 7,
+  );
+}
+
 /// The unified Forge panel also renders the project sections — settle their
 /// providers so no section is left spinning (pumpAndSettle would hang).
 /// (The Browse-mode override lives at each container, not here — this helper
@@ -132,9 +144,16 @@ List<Override> _projectOverrides(String repo) => [
   originRemoteUrlProvider(repo).overrideWith((ref) async => null),
 ];
 
-Future<void> _pump(WidgetTester tester, {GlabService? glab}) async {
+Future<ProviderContainer> _pump(
+  WidgetTester tester, {
+  GlabService? glab,
+}) async {
+  tester.view.physicalSize = const Size(1200, 800);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
   final container = ProviderContainer(
     overrides: [
+      connectionProvider.overrideWith(_Connected.new),
       forgeInboxModeProvider.overrideWith(_BrowseMode.new),
       if (glab != null) glabServiceProvider.overrideWithValue(glab),
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
@@ -142,12 +161,13 @@ Future<void> _pump(WidgetTester tester, {GlabService? glab}) async {
       // remotes (remotesProvider), not remote-tracking refs.
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
-      mergeRequestDetailProvider(
-        (_repo, 7),
-      ).overrideWith((ref) async => _readyMr),
-      repoMergePolicyProvider(_repo).overrideWith(
-        (ref) async => const GlRepoMergePolicy(),
-      ),
+      mergeRequestDetailProvider((
+        _repo,
+        7,
+      )).overrideWith((ref) async => _readyMr),
+      repoMergePolicyProvider(
+        _repo,
+      ).overrideWith((ref) async => const GlRepoMergePolicy()),
       pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
       jobsProvider((_repo, 100)).overrideWith((ref) async => _jobs),
       // The MR detail's inline Checks body mounts the head pipeline's jobs
@@ -171,6 +191,7 @@ Future<void> _pump(WidgetTester tester, {GlabService? glab}) async {
     ),
   );
   await tester.pumpAndSettle();
+  return container;
 }
 
 /// ToolIconButton / status dots use macos_ui's MacosIcon, which find.byIcon
@@ -226,7 +247,8 @@ void main() {
   testWidgets('selecting a pipeline opens its jobs in the main pane', (
     tester,
   ) async {
-    await _pump(tester);
+    final container = await _pump(tester);
+    await tester.ensureVisible(find.textContaining('aaaaaaa1'));
     await tester.tap(find.textContaining('aaaaaaa1'));
     await tester.pumpAndSettle();
 
@@ -234,6 +256,20 @@ void main() {
     expect(find.textContaining('Pipeline #100'), findsOneWidget);
     expect(find.text('build'), findsOneWidget); // job row
     expect(find.text('Select a job to view its log'), findsOneWidget);
+    expect(
+      container
+          .read(repositoryContextSupplementCacheProvider)
+          .values
+          .single
+          .selectionLabel,
+      'GitLab CI run 100',
+    );
+    final focus = container
+        .read(workspaceNavigationProvider(const WorkspaceSessionKey(_repo, 7)))
+        .current;
+    expect(focus?.kind, WorkspaceFocusKind.pipeline);
+    expect(focus?.identity, '100');
+    expect(focus?.panelIndex, 4);
   });
 
   testWidgets('left-pane sections list in the canonical order', (tester) async {
@@ -299,12 +335,13 @@ void main() {
           // remotes (remotesProvider), not remote-tracking refs.
           remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
           mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
-          mergeRequestDetailProvider(
-            (_repo, 7),
-          ).overrideWith((ref) async => _readyMr),
-          repoMergePolicyProvider(_repo).overrideWith(
-            (ref) async => const GlRepoMergePolicy(),
-          ),
+          mergeRequestDetailProvider((
+            _repo,
+            7,
+          )).overrideWith((ref) async => _readyMr),
+          repoMergePolicyProvider(
+            _repo,
+          ).overrideWith((ref) async => const GlRepoMergePolicy()),
           pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
           jobsProvider((_repo, 101)).overrideWith((ref) async => _jobs),
           glabServiceProvider.overrideWithValue(glab),
@@ -372,6 +409,9 @@ void main() {
     "pane), since the panel isn't repo-keyed and this State survives the "
     'switch',
     (tester) async {
+      tester.view.physicalSize = const Size(1200, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
       const repoB = '/repo-b';
       final container = ProviderContainer(
         overrides: [
@@ -410,6 +450,7 @@ void main() {
       await tester.pumpWidget(host(_repo));
       await tester.pumpAndSettle();
 
+      await tester.ensureVisible(find.textContaining('aaaaaaa1'));
       await tester.tap(find.textContaining('aaaaaaa1'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Pipeline #100'), findsOneWidget);
