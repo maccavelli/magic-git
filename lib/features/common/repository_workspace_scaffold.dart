@@ -3,6 +3,8 @@ import 'package:flutter/widgets.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
 import 'adaptive_workspace_layout.dart';
 import 'async_views.dart';
+import 'repository_workspace_models.dart';
+import 'workspace_focus_order.dart';
 
 /// Feature-neutral frame for repository-centered workspaces.
 class RepositoryWorkspaceScaffold extends StatelessWidget {
@@ -58,12 +60,18 @@ class RepositoryWorkspaceScaffold extends StatelessWidget {
         onPreferencesChanged: onPreferencesChanged,
       );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        repositoryContext,
-        Expanded(child: content),
-      ],
+    return FocusTraversalGroup(
+      policy: OrderedTraversalPolicy(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          WorkspaceFocusRegion(
+            role: WorkspacePaneRole.repositoryContext,
+            child: repositoryContext,
+          ),
+          Expanded(child: content),
+        ],
+      ),
     );
   }
 }

@@ -7,6 +7,7 @@ import 'buttons.dart';
 import 'repository_context.dart';
 import 'repository_workspace_models.dart';
 import 'tool_icon_button.dart';
+import 'workspace_focus_order.dart';
 
 class RepositoryContextBar extends StatelessWidget {
   final RepositoryContextSnapshot snapshot;
@@ -82,7 +83,12 @@ class RepositoryContextBar extends StatelessWidget {
                   _CompactMetadata(snapshot: snapshot),
                 ],
                 const SizedBox(width: 6),
-                ActivityCenterButton(repositoryPath: snapshot.repositoryPath),
+                WorkspaceFocusRegion(
+                  role: WorkspacePaneRole.activity,
+                  child: ActivityCenterButton(
+                    repositoryPath: snapshot.repositoryPath,
+                  ),
+                ),
                 const SizedBox(width: 6),
                 MacosTooltip(
                   message: primaryAction.disabledReason ?? primaryAction.label,

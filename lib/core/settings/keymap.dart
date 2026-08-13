@@ -290,6 +290,36 @@ final List<KeymapAction> kKeymapActions = [
     category: KeymapCategory.global,
     defaultBindings: [],
   ),
+  const KeymapAction(
+    id: 'global.focusNavigator',
+    label: 'Focus Repository Navigator',
+    category: KeymapCategory.global,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'global.focusCanvas',
+    label: 'Focus Repository Canvas',
+    category: KeymapCategory.global,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'global.focusInspector',
+    label: 'Focus Repository Inspector',
+    category: KeymapCategory.global,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'global.focusTaskDock',
+    label: 'Focus Repository Task Dock',
+    category: KeymapCategory.global,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'global.focusActivity',
+    label: 'Focus Repository Activity',
+    category: KeymapCategory.global,
+    defaultBindings: [],
+  ),
   KeymapAction(
     id: 'repository.fetch',
     label: 'Fetch',

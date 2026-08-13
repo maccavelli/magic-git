@@ -89,25 +89,30 @@ class WorkspacePartialError extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Row(
-        children: [
-          Expanded(child: SectionError(error)),
-          if (onRetry != null)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: InlineActionButton(
-                label: 'Retry',
-                icon: CupertinoIcons.refresh,
-                onPressed: onRetry,
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    liveRegion: true,
+    label: 'Refresh failed. Existing content remains available.',
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(child: SectionError(error)),
+            if (onRetry != null)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: InlineActionButton(
+                  label: 'Retry',
+                  icon: CupertinoIcons.refresh,
+                  onPressed: onRetry,
+                ),
               ),
-            ),
-        ],
-      ),
-      Expanded(child: child),
-    ],
+          ],
+        ),
+        Expanded(child: child),
+      ],
+    ),
   );
 }
 
@@ -182,8 +187,16 @@ class SectionError extends StatelessWidget {
   const SectionError(this.error, {super.key});
 
   @override
-  Widget build(BuildContext context) =>
-      SectionMessage(displayError(error), color: MacosColors.systemRedColor);
+  Widget build(BuildContext context) {
+    final message = displayError(error);
+    return Semantics(
+      container: true,
+      label: 'Error: $message',
+      child: ExcludeSemantics(
+        child: SectionMessage(message, color: MacosColors.systemRedColor),
+      ),
+    );
+  }
 }
 
 /// Grey inline "nothing here" text for an empty section.

@@ -3,6 +3,7 @@ import 'package:flutter/widgets.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
 import 'repository_workspace_models.dart';
 import 'resizable_master_detail.dart';
+import 'workspace_focus_order.dart';
 
 enum CompactWorkspacePage { navigator, canvas }
 
@@ -137,6 +138,7 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
         final dock = widget.taskDock;
         if (dock != null &&
             arrangement.taskDock != WorkspaceTaskDockPresentation.hidden) {
+          final mainWithoutDock = main;
           final compact =
               arrangement.taskDock == WorkspaceTaskDockPresentation.compact;
           final dockHeight = compact
@@ -145,8 +147,11 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
           main = LayoutBuilder(
             builder: (context, inner) => ResizablePanePair(
               axis: Axis.vertical,
-              leading: main,
-              trailing: dock,
+              leading: mainWithoutDock,
+              trailing: WorkspaceFocusRegion(
+                role: WorkspacePaneRole.taskDock,
+                child: dock,
+              ),
               extent: inner.maxHeight - dockHeight - 1,
               minExtent: 160,
               maxExtent: inner.maxHeight - 121,
@@ -178,7 +183,10 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
                   RepositoryWorkspacePrefs.minInspectorWidth,
                   constraints.maxWidth,
                 ),
-                child: widget.inspector!,
+                child: WorkspaceFocusRegion(
+                  role: WorkspacePaneRole.inspector,
+                  child: widget.inspector!,
+                ),
               ),
             ],
           );
@@ -190,16 +198,24 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
 
   Widget _mainFor(AdaptiveWorkspaceArrangement arrangement) {
     final navigator = widget.navigator;
-    if (navigator == null) return widget.canvas;
+    final canvas = WorkspaceFocusRegion(
+      role: WorkspacePaneRole.canvas,
+      child: widget.canvas,
+    );
+    if (navigator == null) return canvas;
+    final navigatorRegion = WorkspaceFocusRegion(
+      role: WorkspacePaneRole.navigator,
+      child: navigator,
+    );
     if (!arrangement.navigatorAndCanvas) {
       return widget.compactPage == CompactWorkspacePage.navigator
-          ? navigator
-          : widget.canvas;
+          ? navigatorRegion
+          : canvas;
     }
 
     Widget body = ResizablePanePair(
-      leading: navigator,
-      trailing: widget.canvas,
+      leading: navigatorRegion,
+      trailing: canvas,
       extent: _navigatorWidth,
       minExtent: RepositoryWorkspacePrefs.minNavigatorWidth,
       maxExtent: RepositoryWorkspacePrefs.maxNavigatorWidth,
@@ -217,7 +233,10 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
       body = LayoutBuilder(
         builder: (context, constraints) => ResizablePanePair(
           leading: main,
-          trailing: widget.inspector!,
+          trailing: WorkspaceFocusRegion(
+            role: WorkspacePaneRole.inspector,
+            child: widget.inspector!,
+          ),
           extent: constraints.maxWidth - _inspectorWidth - 1,
           minExtent: 320,
           maxExtent:

@@ -142,3 +142,53 @@ After Phase 11, duplicate the task matrix with observed values and report:
 5. Overflow, clipping, and primary-action reachability at all three widths.
 6. Command count, p95 command duration, build/raster p50 and p95, and worst
    frame for both the 2,000-file and 20,000-line fixtures.
+
+## Phase 9 automated follow-up — 2026-08-13
+
+The deterministic portion of the Phase 9 gate is now implemented and green.
+Human timing, VoiceOver listening, and a configured SSH task-study remain
+explicitly `unavailable`; the baseline integrity rule above still applies.
+
+| Gate | Follow-up result | Evidence |
+| --- | --- | --- |
+| Explicit pane focus | Context 1, navigator 2, canvas 4, inspector 5, task dock 6, activity 7; direct actions are remappable and unbound by default | `test/workspace_accessibility_test.dart` |
+| Semantic regions | All workspace roles have stable names; loading, stale, partial-error, and error states carry non-color/live-region descriptions | `test/workspace_accessibility_test.dart`, `test/workspace_async_views_test.dart` |
+| Target and motion | Inline targets enforce the 28 px compact token; list navigation, inline actions, and focus treatment use zero duration when animations are disabled | `test/workspace_accessibility_test.dart` |
+| Width and text scale | 640×480, 1080×720, and 1600×1000 pass at 1.0×, 1.3×, and 1.6× with the primary action reachable and no overflow | `test/workspace_responsive_test.dart` |
+| Visual matrix | 48 checked-in DPR-1 fixtures cover 16 required states/screens at all three sizes | `test/workspace_golden_test.dart`, `test/goldens/workspace/` |
+| 2,000-file filter | 2,690 µs median on the implementation host; 55,000 µs hard budget (recorded 50,000 µs baseline + 10%) | `test/workspace_performance_baseline_test.dart` |
+| 20,000-line diff | 20,831 µs diagnostic parse/flatten; the production `DiffParser` selects its guarded background-isolate path | `test/workspace_performance_baseline_test.dart` |
+| Passive chrome/palette | Rendering pure workspace chrome and ranking an empty palette query record zero executor commands | `test/workspace_performance_baseline_test.dart` |
+| Hidden/provider budget | 500-ref Branches remains bounded; Forge and other visited pages stop polling/streaming when inactive; Forge chrome consumes only landed cache values | `test/branches_phase7_command_budget_test.dart`, `test/github_panel_test.dart`, `test/gitlab_panel_test.dart` |
+
+The same host's Phase 0 clues were 4,996 µs for status parsing and 22,020 µs
+for diff parsing. The Phase 9 diagnostic run measured 4,588 µs and 20,831 µs
+respectively. These are improvements of approximately 8% and 5%; they remain
+single-host clues, not portable wall-clock contracts. The deterministic filter
+budget and off-isolate branch are the enforced regression contracts.
+
+The expanded dock fixture also exposed a recursive closure capture in the
+adaptive pane composition. Phase 9 fixed it by capturing the pre-dock canvas
+before constructing the vertical pane pair and now exercises the combination
+in accessibility and golden tests.
+
+### Interactive follow-up status
+
+No configured SSH fixture, profile-mode interactive harness, human participant,
+or VoiceOver observer is available in this implementation session. Therefore:
+
+| Required observation | Result |
+| --- | --- |
+| Local task-study repetitions | unavailable |
+| SSH task-study repetitions | unavailable |
+| Median stage-review-commit interaction reduction | unavailable |
+| Human-observed error/backtracking rate | unavailable |
+| Profile build/raster p50 and p95 | unavailable |
+| VoiceOver announcement quality | unavailable |
+| Maintainer visual acceptance of the 48 golden fixtures | pending review |
+
+Automated coverage confirms standard committing remains inline, mutation
+activity is acknowledged immediately, keyboard routes exist, and ordinary
+tests introduce no error-rate regression. The human/SSH numbers must be filled
+from the protocol above before claiming the observational portion of the core
+release gate; they are not inferred from automated tests.

@@ -121,57 +121,64 @@ class _InlineActionButtonState extends State<InlineActionButton> {
       onTapUp: enabled ? (_) => setState(() => _pressed = false) : null,
       onTapCancel: enabled ? () => setState(() => _pressed = false) : null,
       onTap: widget.onPressed,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 110),
-        curve: Curves.easeOut,
-        height: 18,
-        padding: const EdgeInsets.symmetric(horizontal: 7),
-        decoration: BoxDecoration(
-          // A vertical sheen rather than a flat fill — the thing that makes a
-          // small macOS control look like a physical surface catching light
-          // from above instead of a rectangle of colour.
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              Color.alphaBlend(
-                MacosColors.white.withValues(alpha: dark ? 0.08 : 0.35),
-                fill,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 28),
+        child: Center(
+          child: AnimatedContainer(
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 110),
+            curve: Curves.easeOut,
+            height: 18,
+            padding: const EdgeInsets.symmetric(horizontal: 7),
+            decoration: BoxDecoration(
+              // A vertical sheen rather than a flat fill — the thing that makes a
+              // small macOS control look like a physical surface catching light
+              // from above instead of a rectangle of colour.
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color.alphaBlend(
+                    MacosColors.white.withValues(alpha: dark ? 0.08 : 0.35),
+                    fill,
+                  ),
+                  fill,
+                ],
               ),
-              fill,
-            ],
-          ),
-          borderRadius: BorderRadius.circular(9),
-          border: Border.all(color: border, width: 0.5),
-          boxShadow: [
-            // Lifted while hovered, sunk while pressed, resting otherwise —
-            // and flat while disabled, which never lifts.
-            if (!_pressed)
-              BoxShadow(
-                color: MacosColors.black.withValues(
-                  alpha: _hovered && enabled ? 0.22 : 0.10,
-                ),
-                blurRadius: _hovered && enabled ? 3 : 1,
-                offset: Offset(0, _hovered && enabled ? 1 : 0.5),
-              ),
-          ],
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            MacosIcon(widget.icon, size: 9, color: fg),
-            const SizedBox(width: 4),
-            Text(
-              widget.label,
-              style: theme.typography.body.copyWith(
-                fontSize: 11,
-                height: 1.0,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.1,
-                color: fg,
-              ),
+              borderRadius: BorderRadius.circular(9),
+              border: Border.all(color: border, width: 0.5),
+              boxShadow: [
+                // Lifted while hovered, sunk while pressed, resting otherwise —
+                // and flat while disabled, which never lifts.
+                if (!_pressed)
+                  BoxShadow(
+                    color: MacosColors.black.withValues(
+                      alpha: _hovered && enabled ? 0.22 : 0.10,
+                    ),
+                    blurRadius: _hovered && enabled ? 3 : 1,
+                    offset: Offset(0, _hovered && enabled ? 1 : 0.5),
+                  ),
+              ],
             ),
-          ],
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                MacosIcon(widget.icon, size: 9, color: fg),
+                const SizedBox(width: 4),
+                Text(
+                  widget.label,
+                  style: theme.typography.body.copyWith(
+                    fontSize: 11,
+                    height: 1.0,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.1,
+                    color: fg,
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
       ),
     );

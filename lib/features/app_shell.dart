@@ -23,10 +23,12 @@ import 'common/escape_dismissible.dart';
 import 'common/palette_intents.dart';
 import 'common/palette_models.dart';
 import 'common/repository_context.dart';
+import 'common/repository_workspace_models.dart';
 import 'common/session_exit_guard.dart';
 import 'common/sidebar_branding.dart';
 import 'common/undo_toast.dart';
 import 'common/workspace_focus.dart';
+import 'common/workspace_focus_order.dart';
 import 'common/workspace_navigation.dart';
 import 'connection/connection_landing.dart';
 import 'dashboard/dashboard_sheet.dart';
@@ -780,6 +782,31 @@ class _AppShellState extends ConsumerState<AppShell> {
                 unawaited(tabs.close(active.id));
               }
             }
+          : null,
+      'global.focusNavigator': connected
+          ? () => WorkspacePaneFocusRegistry.instance.request(
+              WorkspacePaneRole.navigator,
+            )
+          : null,
+      'global.focusCanvas': connected
+          ? () => WorkspacePaneFocusRegistry.instance.request(
+              WorkspacePaneRole.canvas,
+            )
+          : null,
+      'global.focusInspector': connected
+          ? () => WorkspacePaneFocusRegistry.instance.request(
+              WorkspacePaneRole.inspector,
+            )
+          : null,
+      'global.focusTaskDock': connected
+          ? () => WorkspacePaneFocusRegistry.instance.request(
+              WorkspacePaneRole.taskDock,
+            )
+          : null,
+      'global.focusActivity': connected
+          ? () => WorkspacePaneFocusRegistry.instance.request(
+              WorkspacePaneRole.activity,
+            )
           : null,
     });
 

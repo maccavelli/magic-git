@@ -9,6 +9,7 @@ enum WorkspacePaneRole {
   canvas,
   inspector,
   taskDock,
+  activity,
 }
 
 enum WorkspaceSizeClass {
