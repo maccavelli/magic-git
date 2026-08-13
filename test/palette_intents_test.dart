@@ -7,9 +7,31 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/features/common/palette_intents.dart';
+import 'package:remote_magic_git/features/common/palette_models.dart';
 import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 
 void main() {
+  test('typed intent retains stable entity and repository session', () {
+    final container = ProviderContainer.test();
+    const entity = CommitPaletteEntry(
+      id: 'commit:abc',
+      primaryLabel: 'Fix it',
+      oid: 'abc',
+    );
+    container
+        .read(paletteIntentProvider.notifier)
+        .dispatchEntity(
+          actionId: 'commit.open',
+          entity: entity,
+          repositoryPath: '/repo',
+          sessionEpoch: 9,
+        );
+    final intent = container.read(paletteIntentProvider)!;
+    expect(intent.entity, same(entity));
+    expect(intent.repositoryPath, '/repo');
+    expect(intent.sessionEpoch, 9);
+  });
+
   testWidgets('a dispatched intent runs the owning panel handler once and '
       'clears', (tester) async {
     final container = ProviderContainer();
@@ -39,8 +61,9 @@ void main() {
   });
 
   testWidgets('an intent parked BEFORE the panel builds is consumed on the '
-      'first build — the switch-then-dispatch order the shell uses',
-      (tester) async {
+      'first build — the switch-then-dispatch order the shell uses', (
+    tester,
+  ) async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     var ran = 0;

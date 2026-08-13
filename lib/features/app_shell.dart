@@ -21,10 +21,13 @@ import 'common/command_palette.dart';
 import 'common/diff_view.dart' show kDiffMono;
 import 'common/escape_dismissible.dart';
 import 'common/palette_intents.dart';
+import 'common/palette_models.dart';
 import 'common/repository_context.dart';
 import 'common/session_exit_guard.dart';
 import 'common/sidebar_branding.dart';
 import 'common/undo_toast.dart';
+import 'common/workspace_focus.dart';
+import 'common/workspace_navigation.dart';
 import 'connection/connection_landing.dart';
 import 'dashboard/dashboard_sheet.dart';
 import 'dnd/drop_registry.dart';
@@ -246,6 +249,82 @@ class _AppShellState extends ConsumerState<AppShell> {
   void _selectPage(int index) {
     ref.read(pageIndexProvider.notifier).select(index);
     ref.read(visitedPagesProvider.notifier).visit(index);
+    final connection = ref.read(connectionProvider);
+    final repoPath = connection.repoPath;
+    if (repoPath != null && connection.sessionEpoch > 0) {
+      final key = WorkspaceSessionKey(repoPath, connection.sessionEpoch);
+      ref
+          .read(workspaceNavigationProvider(key).notifier)
+          .visit(
+            WorkspaceFocus(
+              repositoryPath: repoPath,
+              sessionEpoch: connection.sessionEpoch,
+              kind: WorkspaceFocusKind.repository,
+              identity: 'panel:$index',
+              panelIndex: index,
+            ),
+          );
+    }
+  }
+
+  void _restoreWorkspaceLocation(bool forward) {
+    final connection = ref.read(connectionProvider);
+    final repoPath = connection.repoPath;
+    if (repoPath == null || connection.sessionEpoch <= 0) return;
+    final key = WorkspaceSessionKey(repoPath, connection.sessionEpoch);
+    final history = ref.read(workspaceNavigationProvider(key).notifier);
+    final location = forward ? history.forward() : history.back();
+    if (location == null) return;
+    ref.read(pageIndexProvider.notifier).select(location.panelIndex);
+    ref.read(visitedPagesProvider.notifier).visit(location.panelIndex);
+  }
+
+  void _openPaletteEntity(PaletteEntry entry) {
+    final connection = ref.read(connectionProvider);
+    final repoPath = connection.repoPath;
+    if (repoPath == null || connection.sessionEpoch <= 0) return;
+    final (kind, identity, panelIndex) = switch (entry) {
+      BranchPaletteEntry(:final refName) => (
+        WorkspaceFocusKind.branch,
+        refName,
+        2,
+      ),
+      CommitPaletteEntry(:final oid) => (WorkspaceFocusKind.revision, oid, 1),
+      FilePaletteEntry(:final path) => (WorkspaceFocusKind.path, path, 0),
+      StashPaletteEntry(:final oid) => (WorkspaceFocusKind.stash, oid, 3),
+      WorktreePaletteEntry(:final path) => (
+        WorkspaceFocusKind.worktree,
+        path,
+        5,
+      ),
+      IssuePaletteEntry(:final issueId) => (
+        WorkspaceFocusKind.issue,
+        issueId,
+        4,
+      ),
+      ChangeRequestPaletteEntry(:final requestId) => (
+        WorkspaceFocusKind.request,
+        requestId,
+        4,
+      ),
+      PipelinePaletteEntry(:final pipelineId) => (
+        WorkspaceFocusKind.pipeline,
+        pipelineId,
+        4,
+      ),
+      _ => (WorkspaceFocusKind.repository, entry.id, 0),
+    };
+    final location = WorkspaceFocus(
+      repositoryPath: repoPath,
+      sessionEpoch: connection.sessionEpoch,
+      kind: kind,
+      identity: identity,
+      panelIndex: panelIndex,
+    );
+    final key = WorkspaceSessionKey(repoPath, connection.sessionEpoch);
+    ref.read(workspaceNavigationProvider(key).notifier).visit(location);
+    ref.read(pageIndexProvider.notifier).select(panelIndex);
+    ref.read(visitedPagesProvider.notifier).visit(panelIndex);
   }
 
   void _openSettings(BuildContext context) {
@@ -294,6 +373,16 @@ class _AppShellState extends ConsumerState<AppShell> {
   void _openPalette(BuildContext context) {
     final repoPath = ref.read(connectionProvider).repoPath;
     if (repoPath == null) return;
+    final refs = refsProvider(repoPath);
+    final worktrees = gitWorktreesProvider(repoPath);
+    final forge = forgeProvider(repoPath);
+    final landedRefs = ref.exists(refs)
+        ? ref.read(refs).value ?? const <GitRef>[]
+        : const <GitRef>[];
+    final landedWorktrees = ref.exists(worktrees)
+        ? ref.read(worktrees).value ?? const <GitWorktree>[]
+        : const <GitWorktree>[];
+    final landedForge = ref.exists(forge) ? ref.read(forge).value : null;
     showMacosSheet<void>(
       context: context,
       builder: (_) => EscapeDismissible(
@@ -312,6 +401,10 @@ class _AppShellState extends ConsumerState<AppShell> {
           onCheckoutBranch: (branch) =>
               _checkoutBranch(context, repoPath, branch),
           onOpenWorktree: (path) => _openWorktree(context, path),
+          onOpenEntity: _openPaletteEntity,
+          landedRefs: landedRefs,
+          landedWorktrees: landedWorktrees,
+          landedForge: landedForge,
         ),
       ),
     );
@@ -831,11 +924,38 @@ class _AppShellState extends ConsumerState<AppShell> {
   }
 
   Widget _pages(String repoPath, int pageIndex, Set<int> visitedPages) {
+    final connection = ref.read(connectionProvider);
+    final key = WorkspaceSessionKey(repoPath, connection.sessionEpoch);
+    final navigation = ref.watch(workspaceNavigationProvider(key));
+    if (navigation.locations.isEmpty && connection.sessionEpoch > 0) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ref
+            .read(workspaceNavigationProvider(key).notifier)
+            .visit(
+              WorkspaceFocus(
+                repositoryPath: repoPath,
+                sessionEpoch: connection.sessionEpoch,
+                kind: WorkspaceFocusKind.repository,
+                identity: 'panel:$pageIndex',
+                panelIndex: pageIndex,
+              ),
+            );
+      });
+    }
     return IndexedStack(
       index: pageIndex,
       children: [
         visitedPages.contains(0)
-            ? RepoStatusView(repoPath: repoPath, isActive: pageIndex == 0)
+            ? RepoStatusView(
+                repoPath: repoPath,
+                isActive: pageIndex == 0,
+                onBack: navigation.canBack
+                    ? () => _restoreWorkspaceLocation(false)
+                    : null,
+                onForward: navigation.canForward
+                    ? () => _restoreWorkspaceLocation(true)
+                    : null,
+              )
             : const SizedBox.shrink(),
         visitedPages.contains(1)
             ? HistoryView(

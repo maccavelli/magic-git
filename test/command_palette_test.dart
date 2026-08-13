@@ -28,7 +28,12 @@ const _refs = [
 ];
 
 const _worktrees = [
-  GitWorktree(path: _repo, headOid: 'aaa', branch: 'refs/heads/main', isMain: true),
+  GitWorktree(
+    path: _repo,
+    headOid: 'aaa',
+    branch: 'refs/heads/main',
+    isMain: true,
+  ),
   GitWorktree(
     path: '/repo-feature',
     headOid: 'bbb',
@@ -52,11 +57,16 @@ Future<void> _open(
   WidgetTester tester,
   _Recorder rec, {
   Forge forge = Forge.github,
+  bool provideLandedEntities = true,
+  VoidCallback? onRefsLoad,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
-        refsProvider(_repo).overrideWith((ref) async => _refs),
+        refsProvider(_repo).overrideWith((ref) async {
+          onRefsLoad?.call();
+          return _refs;
+        }),
         // The palette lists worktrees by name too. Without this it would reach
         // for a real git through the unconnected executor and leave its retry
         // timer pending past the test.
@@ -78,6 +88,11 @@ Future<void> _open(
                 builder: (_) => EscapeDismissible(
                   child: CommandPalette(
                     repoPath: _repo,
+                    landedRefs: provideLandedEntities ? _refs : const [],
+                    landedWorktrees: provideLandedEntities
+                        ? _worktrees
+                        : const [],
+                    landedForge: provideLandedEntities ? forge : null,
                     onGoToPanel: (i) => rec.panel = i,
                     onRefresh: () => rec.refreshed++,
                     onOpenSettings: () {},
@@ -106,6 +121,36 @@ Future<void> _open(
 }
 
 void main() {
+  testWidgets(
+    'empty open is landed-only; entity prefix debounces and opens actions',
+    (tester) async {
+      var loads = 0;
+      final recorder = _Recorder();
+      await _open(
+        tester,
+        recorder,
+        provideLandedEntities: false,
+        onRefsLoad: () => loads++,
+      );
+      expect(loads, 0);
+
+      await tester.enterText(find.byType(MacosTextField), 'branch: feature');
+      await tester.pump(const Duration(milliseconds: 149));
+      expect(loads, 0);
+      await tester.pump(const Duration(milliseconds: 2));
+      await tester.pumpAndSettle();
+      expect(loads, 1);
+      expect(find.text('Checkout feature-x'), findsOneWidget);
+
+      await tester.tap(find.text('Checkout feature-x'));
+      await tester.pump();
+      expect(find.textContaining('Choose an action for'), findsOneWidget);
+      await tester.tap(find.text('Checkout feature-x'));
+      await tester.pumpAndSettle();
+      expect(recorder.checkedOut, 'feature-x');
+    },
+  );
+
   testWidgets('lists navigation commands', (tester) async {
     await _open(tester, _Recorder());
 
@@ -193,7 +238,9 @@ void main() {
     expect(rec.checkedOut, 'feature-x');
   });
 
-  testWidgets('running a worktree target opens its stable path', (tester) async {
+  testWidgets('running a worktree target opens its stable path', (
+    tester,
+  ) async {
     final rec = _Recorder();
     await _open(tester, rec);
 
@@ -285,9 +332,7 @@ void main() {
     expect(find.text('New pull request'), findsNothing);
   });
 
-  testWidgets('Undo Last Git Operation invokes the shell undo', (
-    tester,
-  ) async {
+  testWidgets('Undo Last Git Operation invokes the shell undo', (tester) async {
     final rec = _Recorder();
     await _open(tester, rec);
     await tester.enterText(find.byType(MacosTextField), 'undo');

@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'palette_models.dart';
+
 /// A one-shot command the palette dispatched at a panel it may first have had
 /// to switch to.
 ///
@@ -13,13 +15,22 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// keyboard shortcut would.
 class PaletteIntent {
   final String actionId;
+  final PaletteEntry? entity;
+  final String? repositoryPath;
+  final int? sessionEpoch;
 
   /// When the intent was dispatched — see [PaletteIntentNotifier.maxAge].
   final DateTime at;
 
-  PaletteIntent(this.actionId) : at = DateTime.now();
+  PaletteIntent(
+    this.actionId, {
+    this.entity,
+    this.repositoryPath,
+    this.sessionEpoch,
+  }) : at = DateTime.now();
 
-  bool get expired => DateTime.now().difference(at) > PaletteIntentNotifier.maxAge;
+  bool get expired =>
+      DateTime.now().difference(at) > PaletteIntentNotifier.maxAge;
 }
 
 class PaletteIntentNotifier extends Notifier<PaletteIntent?> {
@@ -33,6 +44,20 @@ class PaletteIntentNotifier extends Notifier<PaletteIntent?> {
   PaletteIntent? build() => null;
 
   void dispatch(String actionId) => state = PaletteIntent(actionId);
+
+  void dispatchEntity({
+    required String actionId,
+    required PaletteEntry entity,
+    required String repositoryPath,
+    required int sessionEpoch,
+  }) {
+    state = PaletteIntent(
+      actionId,
+      entity: entity,
+      repositoryPath: repositoryPath,
+      sessionEpoch: sessionEpoch,
+    );
+  }
 
   void clear() => state = null;
 

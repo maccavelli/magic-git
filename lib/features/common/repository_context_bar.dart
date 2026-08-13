@@ -58,12 +58,16 @@ class RepositoryContextBar extends StatelessWidget {
                 ],
                 ToolIconButton(
                   icon: CupertinoIcons.chevron_back,
-                  tooltip: 'Back (navigation history is not available yet)',
+                  tooltip: onBack == null
+                      ? 'Back (no earlier location)'
+                      : 'Back',
                   onPressed: onBack,
                 ),
                 ToolIconButton(
                   icon: CupertinoIcons.chevron_forward,
-                  tooltip: 'Forward (navigation history is not available yet)',
+                  tooltip: onForward == null
+                      ? 'Forward (no later location)'
+                      : 'Forward',
                   onPressed: onForward,
                 ),
                 const SizedBox(width: 6),

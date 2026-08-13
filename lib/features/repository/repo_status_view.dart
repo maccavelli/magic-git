@@ -79,11 +79,15 @@ class RepoStatusView extends ConsumerStatefulWidget {
   /// mounted (via the shell's [IndexedStack]) when another page is shown, so
   /// its keyboard shortcuts must go quiet rather than fire in the background.
   final bool isActive;
+  final VoidCallback? onBack;
+  final VoidCallback? onForward;
 
   const RepoStatusView({
     super.key,
     required this.repoPath,
     this.isActive = true,
+    this.onBack,
+    this.onForward,
   });
 
   @override
@@ -109,6 +113,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       clearSection: value == null,
     );
   }
+
   // Paths currently selected within _selectionKind's section. A lone path is
   // the common case and drives the diff/conflict panel; 2+ show the
   // multi-select summary panel instead.
@@ -118,6 +123,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       paths: Set.unmodifiable(value),
     );
   }
+
   // Anchor for shift-click range selection: the fixed end a range extends
   // from, so repeated shift-clicks extend/contract from the same point
   // rather than the last-clicked row.
@@ -673,14 +679,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   ) async {
     final outcome = await controller.submit(
       commit: (message) => runGuarded(
-        () => ref
-            .read(gitServiceProvider)
-            .commit(repoPath, message: message),
+        () => ref.read(gitServiceProvider).commit(repoPath, message: message),
       ),
       push: push
-          ? () => _push(
-              followTags: ref.read(appSettingsProvider).pushFollowTags,
-            )
+          ? () =>
+                _push(followTags: ref.read(appSettingsProvider).pushFollowTags)
           : null,
     );
     if (!mounted || !outcome.localCommitted) return;
@@ -1506,6 +1509,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               primaryAction: primaryAction,
               onToggleSidebar: () =>
                   MacosWindowScope.maybeOf(context)?.toggleSidebar(),
+              onBack: widget.onBack,
+              onForward: widget.onForward,
               onPrimaryAction: (kind) => _invokePrimaryRepositoryAction(
                 kind,
                 status: status,
@@ -1514,17 +1519,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             ),
             canvas: canvas,
             taskDock:
-                _composerExpanded &&
-                    status != null &&
-                    status.staged.isNotEmpty
+                _composerExpanded && status != null && status.staged.isNotEmpty
                 ? CommitComposer(
                     controller: composerController,
                     presentation: CommitComposerPresentation.expanded,
                     branchLabel: status.branch.head ?? 'Detached HEAD',
                     onAccept: (push) =>
                         _acceptCommitComposer(composerController, push),
-                    onCollapse: () =>
-                        setState(() => _composerExpanded = false),
+                    onCollapse: () => setState(() => _composerExpanded = false),
                     focused: true,
                   )
                 : null,
@@ -1833,8 +1835,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                     setState(() => _diffIgnoreWs = !_diffIgnoreWs),
                 onToggleContext: () =>
                     setState(() => _diffExpandContext = !_diffExpandContext),
-                onToggleBlame: () =>
-                    setState(() => _diffBlame = !_diffBlame),
+                onToggleBlame: () => setState(() => _diffBlame = !_diffBlame),
                 onPopOut: () => setState(() => _popout = true),
                 onClose: _clearSelection,
               ),
@@ -2262,37 +2263,37 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             supplement: supplement,
           )
         : Focus(
-      focusNode: _listFocus,
-      onKeyEvent: _onListKey,
-      // The staging banner overlays the top of the list, but only while a file
-      // drag is live (idle it's zero-size and the list is fully interactive).
-      // It dispatches to the same bulk stage/unstage the row icons and context
-      // menu use, so drag-to-stage stays consistent with every other path.
-      child: DeselectOnEmptyClick(
-        onDeselect: _clearSelection,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: ListView.builder(
-                controller: _listScroll,
-                itemCount: rows.length,
-                itemBuilder: (context, index) =>
-                    _statusRow(context, rows[index], rows),
+            focusNode: _listFocus,
+            onKeyEvent: _onListKey,
+            // The staging banner overlays the top of the list, but only while a file
+            // drag is live (idle it's zero-size and the list is fully interactive).
+            // It dispatches to the same bulk stage/unstage the row icons and context
+            // menu use, so drag-to-stage stays consistent with every other path.
+            child: DeselectOnEmptyClick(
+              onDeselect: _clearSelection,
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: ListView.builder(
+                      controller: _listScroll,
+                      itemCount: rows.length,
+                      itemBuilder: (context, index) =>
+                          _statusRow(context, rows[index], rows),
+                    ),
+                  ),
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: StagingDropBanner(
+                      onStage: _stageMany,
+                      onUnstage: _unstageMany,
+                    ),
+                  ),
+                ],
               ),
             ),
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: StagingDropBanner(
-                onStage: _stageMany,
-                onUnstage: _unstageMany,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+          );
     final mode = _navigatorModeOverride ?? preferences.navigatorMode;
     return RepoChangeNavigator(
       mode: mode,
@@ -2373,13 +2374,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     final meta = keys.isMetaPressed;
     final shift = keys.isShiftPressed;
     setState(() {
-      _selectionController.select(
-        rows,
-        path,
-        kind,
-        toggle: meta,
-        range: shift,
-      );
+      _selectionController.select(rows, path, kind, toggle: meta, range: shift);
       // Popout only ever shows a single non-conflict file's diff; drop it
       // once the selection no longer looks like that (a conflict, none, or
       // several files) rather than leaving it showing a stale file.

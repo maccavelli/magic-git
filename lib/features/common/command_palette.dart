@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/forge/forge.dart';
+import '../../core/git/git_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
@@ -10,6 +13,7 @@ import '../../core/storage/saved_connection.dart';
 import '../tabs/tabs_controller.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'field_styles.dart';
+import 'palette_models.dart';
 import 'sized_sheet.dart';
 import 'tappable.dart';
 
@@ -49,22 +53,35 @@ enum PaletteCategory {
 /// palette has closed, so it must not depend on the palette's own context — the
 /// closures here call back into the app shell (whose context is stable), into
 /// notifiers captured up front, or dispatch a [PaletteIntent] at a panel.
-class _PaletteCommand {
+class PaletteCommand {
   final IconData icon;
   final String label;
   final PaletteCategory category;
+  final PaletteEntry entry;
 
   /// The action's current keyboard shortcut, when it has one — shown as a
   /// right-aligned hint so the palette doubles as shortcut discovery.
   final String? shortcut;
   final VoidCallback run;
-  const _PaletteCommand({
+  PaletteCommand({
     required this.icon,
     required this.label,
     required this.category,
     required this.run,
     this.shortcut,
-  });
+    PaletteEntry? entry,
+  }) : entry =
+           entry ??
+           ActionPaletteEntry(
+             id: 'action:${category.prefix}:${label.toLowerCase()}',
+             primaryLabel: label,
+             category: switch (category) {
+               PaletteCategory.go => PaletteQueryScope.go,
+               PaletteCategory.git => PaletteQueryScope.git,
+               PaletteCategory.forge => PaletteQueryScope.forge,
+               PaletteCategory.app => PaletteQueryScope.app,
+             },
+           );
 }
 
 /// Palette metadata for a keymap-registered, panel-scoped action: where it
@@ -87,54 +104,239 @@ class _ActionSpec {
 /// window the palette can't address).
 const List<_ActionSpec> _panelActions = [
   // Repository (panel 0) — sync + staging + commit.
-  _ActionSpec('repository.fetch', PaletteCategory.git, 0, CupertinoIcons.cloud_download),
-  _ActionSpec('repository.pull', PaletteCategory.git, 0, CupertinoIcons.arrow_down_circle),
-  _ActionSpec('repository.push', PaletteCategory.git, 0, CupertinoIcons.arrow_up_circle),
-  _ActionSpec('repository.sync', PaletteCategory.git, 0, CupertinoIcons.arrow_2_circlepath),
-  _ActionSpec('repository.forcePush', PaletteCategory.git, 0, CupertinoIcons.arrow_up_circle_fill),
-  _ActionSpec('repository.stageAll', PaletteCategory.git, 0, CupertinoIcons.tray_arrow_down),
-  _ActionSpec('repository.toggleStage', PaletteCategory.git, 0, CupertinoIcons.tray_arrow_down_fill),
-  _ActionSpec('repository.discard', PaletteCategory.git, 0, CupertinoIcons.trash),
-  _ActionSpec('repository.focusCommit', PaletteCategory.git, 0, CupertinoIcons.checkmark_seal),
-  _ActionSpec('repository.stash', PaletteCategory.git, 0, CupertinoIcons.tray_2),
+  _ActionSpec(
+    'repository.fetch',
+    PaletteCategory.git,
+    0,
+    CupertinoIcons.cloud_download,
+  ),
+  _ActionSpec(
+    'repository.pull',
+    PaletteCategory.git,
+    0,
+    CupertinoIcons.arrow_down_circle,
+  ),
+  _ActionSpec(
+    'repository.push',
+    PaletteCategory.git,
+    0,
+    CupertinoIcons.arrow_up_circle,
+  ),
+  _ActionSpec(
+    'repository.sync',
+    PaletteCategory.git,
+    0,
+    CupertinoIcons.arrow_2_circlepath,
+  ),
+  _ActionSpec(
+    'repository.forcePush',
+    PaletteCategory.git,
+    0,
+    CupertinoIcons.arrow_up_circle_fill,
+  ),
+  _ActionSpec(
+    'repository.stageAll',
+    PaletteCategory.git,
+    0,
+    CupertinoIcons.tray_arrow_down,
+  ),
+  _ActionSpec(
+    'repository.toggleStage',
+    PaletteCategory.git,
+    0,
+    CupertinoIcons.tray_arrow_down_fill,
+  ),
+  _ActionSpec(
+    'repository.discard',
+    PaletteCategory.git,
+    0,
+    CupertinoIcons.trash,
+  ),
+  _ActionSpec(
+    'repository.focusCommit',
+    PaletteCategory.git,
+    0,
+    CupertinoIcons.checkmark_seal,
+  ),
+  _ActionSpec(
+    'repository.stash',
+    PaletteCategory.git,
+    0,
+    CupertinoIcons.tray_2,
+  ),
   // History (panel 1) — commit-level operations.
   _ActionSpec('history.filter', PaletteCategory.git, 1, CupertinoIcons.search),
-  _ActionSpec('history.copySha', PaletteCategory.git, 1, CupertinoIcons.doc_on_clipboard),
-  _ActionSpec('history.checkout', PaletteCategory.git, 1, CupertinoIcons.arrow_branch),
-  _ActionSpec('history.branchFrom', PaletteCategory.git, 1, CupertinoIcons.arrow_branch),
-  _ActionSpec('history.cherryPick', PaletteCategory.git, 1, CupertinoIcons.arrow_merge),
-  _ActionSpec('history.rebaseFrom', PaletteCategory.git, 1, CupertinoIcons.arrow_swap),
-  _ActionSpec('history.amend', PaletteCategory.git, 1, CupertinoIcons.pencil_circle),
+  _ActionSpec(
+    'history.copySha',
+    PaletteCategory.git,
+    1,
+    CupertinoIcons.doc_on_clipboard,
+  ),
+  _ActionSpec(
+    'history.checkout',
+    PaletteCategory.git,
+    1,
+    CupertinoIcons.arrow_branch,
+  ),
+  _ActionSpec(
+    'history.branchFrom',
+    PaletteCategory.git,
+    1,
+    CupertinoIcons.arrow_branch,
+  ),
+  _ActionSpec(
+    'history.cherryPick',
+    PaletteCategory.git,
+    1,
+    CupertinoIcons.arrow_merge,
+  ),
+  _ActionSpec(
+    'history.rebaseFrom',
+    PaletteCategory.git,
+    1,
+    CupertinoIcons.arrow_swap,
+  ),
+  _ActionSpec(
+    'history.amend',
+    PaletteCategory.git,
+    1,
+    CupertinoIcons.pencil_circle,
+  ),
   // Branches (panel 2).
-  _ActionSpec('branches.newBranch', PaletteCategory.git, 2, CupertinoIcons.plus_circle),
+  _ActionSpec(
+    'branches.newBranch',
+    PaletteCategory.git,
+    2,
+    CupertinoIcons.plus_circle,
+  ),
   _ActionSpec('branches.createTag', PaletteCategory.git, 2, CupertinoIcons.tag),
-  _ActionSpec('branches.merge', PaletteCategory.git, 2, CupertinoIcons.arrow_merge),
+  _ActionSpec(
+    'branches.merge',
+    PaletteCategory.git,
+    2,
+    CupertinoIcons.arrow_merge,
+  ),
   _ActionSpec('branches.delete', PaletteCategory.git, 2, CupertinoIcons.trash),
-  _ActionSpec('branches.publish', PaletteCategory.git, 2, CupertinoIcons.cloud_upload),
-  _ActionSpec('branches.createRequest', PaletteCategory.forge, 2, CupertinoIcons.plus_rectangle_on_rectangle),
-  _ActionSpec('branches.openCi', PaletteCategory.forge, 2, CupertinoIcons.gauge),
-  _ActionSpec('branches.compare', PaletteCategory.git, 2, CupertinoIcons.doc_text),
+  _ActionSpec(
+    'branches.publish',
+    PaletteCategory.git,
+    2,
+    CupertinoIcons.cloud_upload,
+  ),
+  _ActionSpec(
+    'branches.createRequest',
+    PaletteCategory.forge,
+    2,
+    CupertinoIcons.plus_rectangle_on_rectangle,
+  ),
+  _ActionSpec(
+    'branches.openCi',
+    PaletteCategory.forge,
+    2,
+    CupertinoIcons.gauge,
+  ),
+  _ActionSpec(
+    'branches.compare',
+    PaletteCategory.git,
+    2,
+    CupertinoIcons.doc_text,
+  ),
   // Stashes (panel 3).
-  _ActionSpec('stashes.apply', PaletteCategory.git, 3, CupertinoIcons.tray_arrow_up),
-  _ActionSpec('stashes.pop', PaletteCategory.git, 3, CupertinoIcons.tray_arrow_up_fill),
+  _ActionSpec(
+    'stashes.apply',
+    PaletteCategory.git,
+    3,
+    CupertinoIcons.tray_arrow_up,
+  ),
+  _ActionSpec(
+    'stashes.pop',
+    PaletteCategory.git,
+    3,
+    CupertinoIcons.tray_arrow_up_fill,
+  ),
   _ActionSpec('stashes.drop', PaletteCategory.git, 3, CupertinoIcons.trash),
   // Forge (panel 4) — gated by the detected forge below.
-  _ActionSpec('github.newPr', PaletteCategory.forge, 4, CupertinoIcons.plus_rectangle),
-  _ActionSpec('github.approve', PaletteCategory.forge, 4, CupertinoIcons.checkmark_circle),
-  _ActionSpec('github.merge', PaletteCategory.forge, 4, CupertinoIcons.arrow_merge),
-  _ActionSpec('github.rerun', PaletteCategory.forge, 4, CupertinoIcons.refresh_thick),
-  _ActionSpec('gitlab.newMr', PaletteCategory.forge, 4, CupertinoIcons.plus_rectangle),
-  _ActionSpec('gitlab.approve', PaletteCategory.forge, 4, CupertinoIcons.checkmark_circle),
-  _ActionSpec('gitlab.merge', PaletteCategory.forge, 4, CupertinoIcons.arrow_merge),
-  _ActionSpec('gitlab.retry', PaletteCategory.forge, 4, CupertinoIcons.refresh_thick),
+  _ActionSpec(
+    'github.newPr',
+    PaletteCategory.forge,
+    4,
+    CupertinoIcons.plus_rectangle,
+  ),
+  _ActionSpec(
+    'github.approve',
+    PaletteCategory.forge,
+    4,
+    CupertinoIcons.checkmark_circle,
+  ),
+  _ActionSpec(
+    'github.merge',
+    PaletteCategory.forge,
+    4,
+    CupertinoIcons.arrow_merge,
+  ),
+  _ActionSpec(
+    'github.rerun',
+    PaletteCategory.forge,
+    4,
+    CupertinoIcons.refresh_thick,
+  ),
+  _ActionSpec(
+    'gitlab.newMr',
+    PaletteCategory.forge,
+    4,
+    CupertinoIcons.plus_rectangle,
+  ),
+  _ActionSpec(
+    'gitlab.approve',
+    PaletteCategory.forge,
+    4,
+    CupertinoIcons.checkmark_circle,
+  ),
+  _ActionSpec(
+    'gitlab.merge',
+    PaletteCategory.forge,
+    4,
+    CupertinoIcons.arrow_merge,
+  ),
+  _ActionSpec(
+    'gitlab.retry',
+    PaletteCategory.forge,
+    4,
+    CupertinoIcons.refresh_thick,
+  ),
   // View/appearance toggles live with the app, not the repo, in the user's
   // mental model — they change what is SHOWN, not the repository.
-  _ActionSpec('repository.toggleSplitDiff', PaletteCategory.app, 0, CupertinoIcons.square_split_2x1),
-  _ActionSpec('repository.toggleIgnoreWhitespace', PaletteCategory.app, 0, CupertinoIcons.paintbrush),
-  _ActionSpec('repository.toggleExpandContext', PaletteCategory.app, 0, CupertinoIcons.arrow_up_arrow_down),
+  _ActionSpec(
+    'repository.toggleSplitDiff',
+    PaletteCategory.app,
+    0,
+    CupertinoIcons.square_split_2x1,
+  ),
+  _ActionSpec(
+    'repository.toggleIgnoreWhitespace',
+    PaletteCategory.app,
+    0,
+    CupertinoIcons.paintbrush,
+  ),
+  _ActionSpec(
+    'repository.toggleExpandContext',
+    PaletteCategory.app,
+    0,
+    CupertinoIcons.arrow_up_arrow_down,
+  ),
   _ActionSpec('history.zoomIn', PaletteCategory.app, 1, CupertinoIcons.zoom_in),
-  _ActionSpec('history.zoomOut', PaletteCategory.app, 1, CupertinoIcons.zoom_out),
-  _ActionSpec('history.zoomReset', PaletteCategory.app, 1, CupertinoIcons.zoom_out),
+  _ActionSpec(
+    'history.zoomOut',
+    PaletteCategory.app,
+    1,
+    CupertinoIcons.zoom_out,
+  ),
+  _ActionSpec(
+    'history.zoomReset',
+    PaletteCategory.app,
+    1,
+    CupertinoIcons.zoom_out,
+  ),
   // zoomReset uses a distinct glyph from zoomOut for discoverability.
 ];
 
@@ -177,6 +379,12 @@ class CommandPalette extends ConsumerStatefulWidget {
   /// grant on the worktree's folder.
   final void Function(String worktreePath) onOpenWorktree;
 
+  /// Records the semantic entity before its selected action runs.
+  final ValueChanged<PaletteEntry>? onOpenEntity;
+  final List<GitRef> landedRefs;
+  final List<GitWorktree> landedWorktrees;
+  final Forge? landedForge;
+
   const CommandPalette({
     super.key,
     required this.repoPath,
@@ -192,6 +400,10 @@ class CommandPalette extends ConsumerStatefulWidget {
     required this.onDispatchAction,
     required this.onCheckoutBranch,
     required this.onOpenWorktree,
+    this.onOpenEntity,
+    this.landedRefs = const [],
+    this.landedWorktrees = const [],
+    this.landedForge,
   });
 
   @override
@@ -203,44 +415,24 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
   final _fieldFocus = FocusNode();
   final _scroll = ScrollController();
   int _highlighted = 0;
+  PaletteCommand? _selectedEntity;
+  Timer? _entityDebounce;
+  int _entityGeneration = 0;
+  bool _entityLoading = false;
+  List<PaletteCommand> _entityResults = const [];
+  List<GitRef>? _loadedRefs;
+  List<GitWorktree>? _loadedWorktrees;
+  Forge? _loadedForge;
 
   static const _rowHeight = 40.0;
 
   @override
   void dispose() {
+    _entityDebounce?.cancel();
     _query.dispose();
     _fieldFocus.dispose();
     _scroll.dispose();
     super.dispose();
-  }
-
-  /// Case-insensitive subsequence match: every character of [q] appears in [s]
-  /// in order (so "grst" matches "Go to Repository Status"). Empty query
-  /// matches everything.
-  static bool _matches(String q, String s) {
-    if (q.isEmpty) return true;
-    final query = q.toLowerCase();
-    final target = s.toLowerCase();
-    var i = 0;
-    for (var j = 0; j < target.length && i < query.length; j++) {
-      if (target[j] == query[i]) i++;
-    }
-    return i == query.length;
-  }
-
-  /// Splits the raw query into an optional category restriction and the text
-  /// to fuzzy-match: `git: pu` → (git, "pu"). A prefix that names no category
-  /// is treated as plain text (so searching for a literal `origin: fix` still
-  /// works).
-  static (PaletteCategory?, String) parseQuery(String raw) {
-    final colon = raw.indexOf(':');
-    if (colon > 0) {
-      final category = PaletteCategory.byPrefix(raw.substring(0, colon));
-      if (category != null) {
-        return (category, raw.substring(colon + 1).trim());
-      }
-    }
-    return (null, raw.trim());
   }
 
   /// The action's primary shortcut under the CURRENT keymap (overrides
@@ -256,7 +448,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
     return parts.isEmpty ? path : parts.last;
   }
 
-  List<_PaletteCommand> _allCommands() {
+  List<PaletteCommand> _allCommands() {
     // Captured up front so the closures don't touch a torn-down ref/context
     // after the palette pops (the notifiers outlive this widget).
     final fileView = ref.read(fileViewVisibleProvider.notifier);
@@ -275,17 +467,22 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
       (5, kWorktreeIcon, 'Worktrees'),
     ];
 
-    final commands = <_PaletteCommand>[
+    final commands = <PaletteCommand>[
       // ---- go: navigation --------------------------------------------------
       for (final (index, icon, name) in panels)
-        _PaletteCommand(
+        PaletteCommand(
           icon: icon,
           label: 'Go to $name',
           category: PaletteCategory.go,
           shortcut: _shortcutFor(keymap, 'global.panel${index + 1}'),
           run: () => widget.onGoToPanel(index),
+          entry: PanelPaletteEntry(
+            id: 'panel:$index',
+            primaryLabel: 'Go to $name',
+            panelIndex: index,
+          ),
         ),
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.macwindow,
         label: 'Open History in New Window',
         category: PaletteCategory.go,
@@ -297,7 +494,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
     // The forge actions are gated by the detected forge, so a GitHub repo
     // isn't offered GitLab merge requests (and vice versa). Unknown / still
     // loading keeps both — better to over-offer than to hide real commands.
-    final forge = ref.watch(forgeProvider(widget.repoPath)).value;
+    final forge = _loadedForge ?? widget.landedForge;
     bool forgeAllows(String id) {
       if (id.startsWith('github.')) {
         return forge == null || forge == Forge.github || forge == Forge.unknown;
@@ -313,7 +510,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
       final action = kKeymapActionsById[spec.id];
       if (action == null) continue; // an id retired from the keymap
       commands.add(
-        _PaletteCommand(
+        PaletteCommand(
           icon: spec.icon,
           label: action.label,
           category: spec.category,
@@ -325,83 +522,82 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
 
     // ---- git: recovery + undo (shell-handled) ----------------------------
     commands.addAll([
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.arrow_uturn_left,
         label: 'Undo Last Git Operation',
         category: PaletteCategory.git,
         shortcut: _shortcutFor(keymap, 'global.undo'),
         run: widget.onUndo,
       ),
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.arrow_counterclockwise_circle,
         label: 'Recovery: Browse Reflog & Snapshots',
         category: PaletteCategory.git,
         run: recovery.toggle,
       ),
       // ---- app: views, sheets, workspace ----------------------------------
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.arrow_clockwise,
         label: 'Refresh',
         category: PaletteCategory.app,
         shortcut: _shortcutFor(keymap, 'global.refresh'),
         run: widget.onRefresh,
       ),
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.sidebar_right,
         label: 'Toggle File View',
         category: PaletteCategory.app,
         shortcut: _shortcutFor(keymap, 'global.toggleFileView'),
         run: fileView.toggle,
       ),
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.square_list,
         label: 'Toggle Output View',
         category: PaletteCategory.app,
         shortcut: _shortcutFor(keymap, 'global.toggleOutput'),
         run: output.toggle,
       ),
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.chart_bar_square,
         label: 'Toggle Dashboard',
         category: PaletteCategory.app,
         shortcut: _shortcutFor(keymap, 'global.toggleDashboard'),
-        run: () =>
-            ref.read(dashboardVisibleProvider.notifier).toggle(),
+        run: () => ref.read(dashboardVisibleProvider.notifier).toggle(),
       ),
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.arrow_counterclockwise_circle,
         label: 'Toggle Recovery',
         category: PaletteCategory.app,
         shortcut: _shortcutFor(keymap, 'global.toggleRecovery'),
         run: recovery.toggle,
       ),
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.settings,
         label: 'Open Settings',
         category: PaletteCategory.app,
         shortcut: _shortcutFor(keymap, 'global.openSettings'),
         run: widget.onOpenSettings,
       ),
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.command,
         label: 'Keyboard Shortcuts',
         category: PaletteCategory.app,
         shortcut: _shortcutFor(keymap, 'global.showShortcuts'),
         run: widget.onOpenShortcuts,
       ),
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.rectangle_stack_person_crop,
         label: 'Manage Connections',
         category: PaletteCategory.app,
         run: widget.onOpenConnections,
       ),
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.cloud_download,
         label: 'Clone Repository',
         category: PaletteCategory.app,
         run: widget.onCloneRepository,
       ),
-      _PaletteCommand(
+      PaletteCommand(
         icon: CupertinoIcons.plus_rectangle_on_rectangle,
         label: 'Create Repository',
         category: PaletteCategory.app,
@@ -412,7 +608,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
     // ---- dynamic targets: branches (git) and worktrees (go) ---------------
     // Checkout targets: local branches only (checking out a remote-tracking ref
     // detaches HEAD — offer the local ones the guard can switch to cleanly).
-    final refs = ref.watch(refsProvider(widget.repoPath)).value ?? const [];
+    final refs = _loadedRefs ?? widget.landedRefs;
     for (final r in refs.where((r) => r.isLocalBranch)) {
       // A branch checked out in ANOTHER worktree can't be checked out here —
       // git refuses. Offer to go to the worktree that has it instead, so the
@@ -420,33 +616,55 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
       final elsewhere = r.elsewhereWorktreePath;
       commands.add(
         elsewhere == null
-            ? _PaletteCommand(
+            ? PaletteCommand(
                 icon: CupertinoIcons.arrow_branch,
                 label: 'Checkout ${r.shortName}',
                 category: PaletteCategory.git,
                 run: () => widget.onCheckoutBranch(r.shortName),
+                entry: BranchPaletteEntry(
+                  id: 'branch:${r.name}',
+                  primaryLabel: 'Checkout ${r.shortName}',
+                  refName: r.name,
+                  contextLabel: r.subject,
+                  searchTokens: [r.shortName, r.name, r.oid],
+                  allowedActionIds: const ['branch.checkout'],
+                ),
               )
-            : _PaletteCommand(
+            : PaletteCommand(
                 icon: kWorktreeIcon,
                 label: 'Switch to worktree for ${r.shortName}',
                 category: PaletteCategory.go,
                 run: () => widget.onOpenWorktree(elsewhere),
+                entry: WorktreePaletteEntry(
+                  id: 'worktree:$elsewhere',
+                  primaryLabel: 'Switch to worktree for ${r.shortName}',
+                  path: elsewhere,
+                  contextLabel: elsewhere,
+                  allowedActionIds: const ['worktree.open'],
+                ),
               ),
       );
     }
 
     // Worktrees by their own name — how anyone with more than a handful of them
     // actually navigates.
-    final worktrees =
-        ref.watch(gitWorktreesProvider(widget.repoPath)).value ?? const [];
+    final worktrees = _loadedWorktrees ?? widget.landedWorktrees;
     for (final wt in worktrees) {
       if (wt.isMain || wt.isPrunable) continue;
       commands.add(
-        _PaletteCommand(
+        PaletteCommand(
           icon: kWorktreeIcon,
           label: 'Open worktree ${wt.name}',
           category: PaletteCategory.go,
           run: () => widget.onOpenWorktree(wt.path),
+          entry: WorktreePaletteEntry(
+            id: 'worktree:${wt.path}',
+            primaryLabel: 'Open worktree ${wt.name}',
+            path: wt.path,
+            contextLabel: wt.branch ?? wt.path,
+            searchTokens: [wt.name, wt.path],
+            allowedActionIds: const ['worktree.open'],
+          ),
         ),
       );
     }
@@ -478,7 +696,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
     }
 
     final savedConns =
-        ref.watch(savedConnectionsProvider).value ?? const <SavedConnection>[];
+        ref.read(savedConnectionsProvider).value ?? const <SavedConnection>[];
     for (final conn in savedConns) {
       for (final repo in conn.allRepoPaths) {
         // Skip the repo already active on the current connection.
@@ -487,16 +705,26 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
           continue;
         }
         commands.add(
-          _PaletteCommand(
+          PaletteCommand(
             icon: CupertinoIcons.folder,
             label: 'Switch to ${_repoBasename(repo)} · ${conn.displayName}',
             category: PaletteCategory.go,
             run: () => switchTo(conn, repo),
+            entry: RepositoryPaletteEntry(
+              id: 'repository:${conn.id}:$repo',
+              primaryLabel:
+                  'Switch to ${_repoBasename(repo)} · ${conn.displayName}',
+              repositoryPath: repo,
+              connectionId: conn.id,
+              contextLabel: conn.displayName,
+              searchTokens: [repo, conn.displayName],
+              allowedActionIds: const ['repository.open'],
+            ),
           ),
         );
       }
     }
-    return commands;
+    return [...commands, ..._entityResults];
   }
 
   void _move(int delta, int count) {
@@ -514,30 +742,182 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
       if (target < top) {
         _scroll.jumpTo(target);
       } else if (target > bottom) {
-        _scroll.jumpTo(target - _scroll.position.viewportDimension + _rowHeight);
+        _scroll.jumpTo(
+          target - _scroll.position.viewportDimension + _rowHeight,
+        );
       }
     }
   }
 
-  void _run(_PaletteCommand command) {
+  void _run(PaletteCommand command) {
+    if (_selectedEntity == null &&
+        parsePaletteQuery(_query.text).isEntity &&
+        command.entry.allowedActionIds.isNotEmpty &&
+        command.entry.kind != PaletteEntryKind.action &&
+        command.entry.kind != PaletteEntryKind.panel) {
+      setState(() {
+        _selectedEntity = command;
+        _highlighted = 0;
+      });
+      return;
+    }
+    final selectedEntry = _selectedEntity?.entry;
     Navigator.of(context).pop();
     command.run();
+    if (selectedEntry != null) widget.onOpenEntity?.call(selectedEntry);
+  }
+
+  List<PaletteCommand> _entityActions(PaletteCommand entity) => [
+    for (final actionId in entity.entry.allowedActionIds)
+      PaletteCommand(
+        icon: actionId == 'branch.checkout'
+            ? CupertinoIcons.arrow_branch
+            : CupertinoIcons.arrow_right_circle,
+        label: switch (actionId) {
+          'branch.checkout' ||
+          'worktree.open' ||
+          'repository.open' => entity.entry.primaryLabel,
+          'commit.open' => 'Show commit in History',
+          'stash.open' => 'Show stash',
+          'file.open' => 'Open changed file',
+          _ => actionId,
+        },
+        category: PaletteCategory.go,
+        run: entity.run,
+      ),
+  ];
+
+  void _onQueryChanged(String raw) {
+    setState(() {
+      _highlighted = 0;
+      _selectedEntity = null;
+    });
+    _entityDebounce?.cancel();
+    final query = parsePaletteQuery(raw);
+    if (!query.isEntity && query.scope != PaletteQueryScope.forge) {
+      _entityResults = const [];
+      _entityLoading = false;
+      return;
+    }
+    final generation = ++_entityGeneration;
+    _entityDebounce = Timer(const Duration(milliseconds: 150), () {
+      unawaited(_loadEntitySource(query, generation));
+    });
+  }
+
+  Future<void> _loadEntitySource(PaletteQuery query, int generation) async {
+    if (mounted) setState(() => _entityLoading = true);
+    final results = <PaletteCommand>[];
+    try {
+      switch (query.scope) {
+        case PaletteQueryScope.branch:
+          _loadedRefs = await ref.read(refsProvider(widget.repoPath).future);
+        case PaletteQueryScope.worktree:
+          _loadedWorktrees = await ref.read(
+            gitWorktreesProvider(widget.repoPath).future,
+          );
+        case PaletteQueryScope.commit:
+          final commits = await ref.read(logProvider(widget.repoPath).future);
+          for (final commit in commits.take(50)) {
+            results.add(
+              PaletteCommand(
+                icon: CupertinoIcons.clock,
+                label: commit.subject,
+                category: PaletteCategory.git,
+                run: () => widget.onGoToPanel(1),
+                entry: CommitPaletteEntry(
+                  id: 'commit:${commit.hash}',
+                  primaryLabel: commit.subject,
+                  oid: commit.hash,
+                  contextLabel: commit.shortHash,
+                  searchTokens: [commit.hash, commit.authorName],
+                  allowedActionIds: const ['commit.open'],
+                ),
+              ),
+            );
+          }
+        case PaletteQueryScope.stash:
+          final stashes = await ref.read(
+            stashesProvider(widget.repoPath).future,
+          );
+          for (final stash in stashes.take(50)) {
+            results.add(
+              PaletteCommand(
+                icon: CupertinoIcons.tray_2,
+                label: stash.subject,
+                category: PaletteCategory.git,
+                run: () => widget.onGoToPanel(3),
+                entry: StashPaletteEntry(
+                  id: 'stash:${stash.oid}',
+                  primaryLabel: stash.subject,
+                  oid: stash.oid,
+                  contextLabel: stash.ref,
+                  searchTokens: [stash.oid, stash.branch],
+                  allowedActionIds: const ['stash.open'],
+                ),
+              ),
+            );
+          }
+        case PaletteQueryScope.file:
+          final status = await ref.read(statusProvider(widget.repoPath).future);
+          final paths = <String>{
+            ...status.staged.map((item) => item.path),
+            ...status.unstaged.map((item) => item.path),
+            ...status.untracked.map((item) => item.path),
+            ...status.conflicted.map((item) => item.path),
+          };
+          for (final path in paths.take(50)) {
+            results.add(
+              PaletteCommand(
+                icon: CupertinoIcons.doc,
+                label: path,
+                category: PaletteCategory.go,
+                run: () => widget.onGoToPanel(0),
+                entry: FilePaletteEntry.changed(
+                  id: 'changed-file:$path',
+                  primaryLabel: path,
+                  path: path,
+                  allowedActionIds: const ['file.open'],
+                ),
+              ),
+            );
+          }
+        case PaletteQueryScope.issue ||
+            PaletteQueryScope.request ||
+            PaletteQueryScope.ci:
+        // Forge adapters contribute landed values in Phase 8. Keeping these
+        // scopes empty is preferable to starting every forge provider.
+        case PaletteQueryScope.forge:
+          _loadedForge = await ref.read(forgeProvider(widget.repoPath).future);
+        case PaletteQueryScope.all ||
+            PaletteQueryScope.go ||
+            PaletteQueryScope.git ||
+            PaletteQueryScope.app:
+          break;
+      }
+    } catch (_) {
+      // One failed source leaves the rest of the palette available.
+    }
+    if (!mounted || generation != _entityGeneration) return;
+    setState(() {
+      _entityResults = results;
+      _entityLoading = false;
+      _highlighted = 0;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
-    final (category, text) = parseQuery(_query.text);
-    final commands = _allCommands()
-        .where(
-          (c) =>
-              (category == null || c.category == category) &&
-              // Match against the label alone AND the prefixed form, so
-              // typing "git fetch" (no colon) finds `git: Fetch` too.
-              (_matches(text, c.label) ||
-                  _matches(text, '${c.category.prefix} ${c.label}')),
-        )
-        .toList();
+    final query = parsePaletteQuery(_query.text);
+    final allCommands = _selectedEntity == null
+        ? _allCommands()
+        : _entityActions(_selectedEntity!);
+    final ranked = _selectedEntity == null
+        ? rankPaletteEntries(allCommands.map((command) => command.entry), query)
+        : allCommands.map((command) => command.entry).toList();
+    final byEntry = {for (final command in allCommands) command.entry: command};
+    final commands = [for (final entry in ranked) byEntry[entry]!];
     if (_highlighted >= commands.length) {
       _highlighted = commands.isEmpty ? 0 : commands.length - 1;
     }
@@ -573,7 +953,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
                   controller: _query,
                   focusNode: _fieldFocus,
                   autofocus: true,
-                  placeholder: 'Type a command — or go: git: forge: app:…',
+                  placeholder: 'Go to or do — try branch:, commit:, file:…',
                   placeholderStyle: kAppPlaceholderStyle,
                   prefix: const Padding(
                     padding: EdgeInsets.only(left: 6),
@@ -581,16 +961,21 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
                   ),
                   decoration: kAppTextFieldDecoration,
                   focusedDecoration: kAppTextFieldFocusedDecoration,
-                  onChanged: (_) => setState(() => _highlighted = 0),
+                  onChanged: _onQueryChanged,
                 ),
-                const FieldHint(
-                  'Search every command and branch — prefix with go: git: '
-                  'forge: or app: to narrow a category. ↑/↓ to highlight, '
-                  'Return to run, Esc to close.',
+                FieldHint(
+                  _selectedEntity == null
+                      ? 'Prefix with go:, git:, forge:, app:, branch:, '
+                            'commit:, file:, stash:, worktree:, issue:, '
+                            'request:, or ci:. ↑/↓ to highlight, Return to open.'
+                      : 'Choose an action for '
+                            '${_selectedEntity!.entry.primaryLabel}.',
                 ),
                 const SizedBox(height: 10),
                 Expanded(
-                  child: commands.isEmpty
+                  child: commands.isEmpty && _entityLoading
+                      ? const Center(child: ProgressCircle(radius: 10))
+                      : commands.isEmpty
                       ? Center(
                           child: Text(
                             'No matching commands',
@@ -615,7 +1000,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
     );
   }
 
-  Widget _row(BuildContext context, _PaletteCommand command, bool highlighted) {
+  Widget _row(BuildContext context, PaletteCommand command, bool highlighted) {
     final typography = MacosTheme.of(context).typography;
     return Tappable(
       onTap: () => _run(command),
