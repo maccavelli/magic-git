@@ -183,6 +183,10 @@ class _SupplementSummary extends StatelessWidget {
     final supplement = snapshot.supplement;
     final label =
         supplement?.worktreeLabel ??
+        supplement?.selectionLabel ??
+        supplement?.branchLabel ??
+        supplement?.revisionLabel ??
+        supplement?.baseLabel ??
         supplement?.forgeLabel ??
         supplement?.recentCommitLabel ??
         snapshot.hostLabel ??
@@ -221,6 +225,14 @@ class _CompactMetadata extends StatelessWidget {
         snapshot.supplement!.recentCommitLabel!,
       if (snapshot.supplement?.forgeLabel != null)
         snapshot.supplement!.forgeLabel!,
+      if (snapshot.supplement?.branchLabel != null)
+        snapshot.supplement!.branchLabel!,
+      if (snapshot.supplement?.baseLabel != null)
+        snapshot.supplement!.baseLabel!,
+      if (snapshot.supplement?.revisionLabel != null)
+        snapshot.supplement!.revisionLabel!,
+      if (snapshot.supplement?.selectionLabel != null)
+        snapshot.supplement!.selectionLabel!,
     ];
     return Semantics(
       button: true,

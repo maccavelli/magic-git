@@ -12,9 +12,10 @@ import '../../core/git/branch_comparison.dart';
 import '../../core/git/branch_review_query.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
-import '../../core/settings/pane_layout.dart';
+import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
+import '../common/adaptive_workspace_layout.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
 import '../common/inline_action_button.dart';
@@ -22,8 +23,11 @@ import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/ref_name_validation.dart';
 import '../common/repository_context.dart';
-import '../common/resizable_master_detail.dart';
+import '../common/repository_context_bar.dart';
+import '../common/repository_workspace_scaffold.dart';
 import '../common/section_collapse.dart';
+import '../common/workspace_focus.dart';
+import '../common/workspace_navigation.dart';
 import '../forge/forge_create_coordinator.dart';
 import '../forge/forge_prefs.dart';
 import '../tabs/tab_ui_providers.dart';
@@ -198,31 +202,6 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     // Lazy forge + merged + pins — never block the list.
     final forgeAsync = ref.watch(branchForgeProvider(repoPath));
     final forge = forgeAsync.value ?? const {};
-    if (forgeAsync.value != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        final connection = ref.read(connectionProvider);
-        if (connection.sessionEpoch <= 0) return;
-        ref
-            .read(repositoryContextSupplementCacheProvider.notifier)
-            .publish(
-              RepositoryContextSupplementKey(
-                repositoryIdentity: repositoryContextIdentityKey(
-                  backend: connection.backend.name,
-                  connectionId: connection.connectionId,
-                  repositoryPath: repoPath,
-                ),
-                sessionEpoch: connection.sessionEpoch,
-              ),
-              RepositoryContextSupplement(
-                forgeLabel: forge.isEmpty
-                    ? 'No branch reviews'
-                    : '${forge.length} branch review'
-                          '${forge.length == 1 ? '' : 's'}',
-              ),
-            );
-      });
-    }
     final merged =
         ref.watch(mergedBranchesProvider(repoPath)).value ?? const <String>{};
     final pinned =
@@ -315,134 +294,227 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       collapsedRemoteCount: _collapsedRemoteCount,
     );
 
-    return ResizableMasterDetail(
-      paneId: PaneId.branchesList,
-      detailFloor: 280,
-      master: BranchNavigator(
-        repoPath: repoPath,
-        vm: vm,
-        selectedRef: _selectedRef,
-        busy: busy,
-        isActive: widget.isActive,
-        grouped: grouped,
-        collapsedFolders: collapsedFolderPrefixes,
-        showStale: _showStale,
-        mode: mode,
-        baseState: baseState,
-        review: review,
-        reviewFilter: _reviewFilter,
-        reviewSort: _reviewSort,
-        conflictRefNames: conflictScan.conflictRefNames,
-        filterController: _filterCtl,
-        focusNode: _branchFocus,
-        scrollController: _branchScroll,
-        onSelect: (r) => setState(() {
-          _selectedRef = r?.name;
-          if (r == null) {
-            _multiSel = BranchMultiSelection.empty;
-          } else if (!_multiSel.isMulti) {
-            _multiSel = BranchMultiSelection.empty.replace(r.name);
-          }
-        }),
-        multiSelection: _multiSel,
-        onMultiSelect: (sel) => setState(() {
-          _multiSel = sel;
-          _selectedRef = sel.primary;
-        }),
-        onLocalTap: (g, b) => _checkout(g, b.shortName),
-        onCreateBranch: _createBranchPrompt,
-        onOpenCreateTagSheet: _openCreateTagSheet,
-        onFetchPrune: _fetchPrune,
-        onToggleSection: (section) =>
-            _toggleSection(effectiveCollapsedSections, section),
-        onToggleFolder: (path) => _toggleFolder(collapsedFolderPrefixes, path),
-        onToggleGrouped: () {
-          final next = !grouped;
-          setState(() => _groupedOverride = next);
-          unawaited(
-            _updateWorkspacePrefs((prefs) => prefs.copyWith(grouped: next)),
-          );
-        },
-        onToggleShowStale: () => setState(() => _showStale = !_showStale),
-        onShowAllTags: () => setState(() => _showAllTags = true),
-        onShowAllRemotes: () => setState(() => _showAllRemotes = true),
-        onCheckout: (g, r) => _checkout(g, r.shortName),
-        onCheckoutRemote: (g, r) => _checkoutRemote(vm, g, r),
-        onSwitchToWorktree: _switchToWorktree,
-        onCheckoutInNewWorktree: _checkoutInNewWorktree,
-        onMerge: (g, b, mode) => _mergeBranch(g, b.shortName, mode),
-        onSetUpstream: _setUpstream,
-        onUnsetUpstream: _unsetUpstream,
-        onRenameBranch: _renameBranch,
-        onTogglePin: (branch) => _togglePin(vm, branch),
-        onCopyName: _copyName,
-        onDeleteBranch: (g, branch) => _deleteBranch(vm, g, branch),
-        onDeleteRemoteBranch: _deleteRemoteBranch,
-        onDeleteTag: _deleteTag,
-        onPushTag: _pushTag,
-        onPushAllLocalOnly: _pushAllLocalOnly,
-        onDropOnCurrent: _dropOnCurrent,
-        onPublish: _publishBranch,
-        onCreateRequest: _createRequest,
-        onOpenUrl: _open,
-        onCompare: () {
-          // Surface the base-relative comparison: Review mode + keep selection.
-          if (mode != BranchWorkspaceMode.review) {
-            _setMode(BranchWorkspaceMode.review);
-          }
-        },
-        onFilterChanged: (_) => setState(() {}),
-        onModeChanged: _setMode,
-        onBaseChanged: _setBase,
-        onBaseReset: _resetBase,
-        onReviewSortChanged: (sort) => setState(() => _reviewSort = sort),
-      ),
-      detail: _multiSel.isMulti
-          ? _multiSelectDetail(
-              context,
-              vm,
-              baseState,
-              git,
-              busy,
-              review?.value?.summariesByRefName ?? const {},
-            )
-          : BranchDetail(
-              repoPath: repoPath,
-              git: git,
-              selectedRef: selectedRef,
-              vm: vm,
-              remoteTags: remoteTags,
-              tagRemote: vm.tagRemote,
-              busy: busy,
-              mode: mode,
-              baseState: baseState,
-              review: review,
-              reviewFilter: _reviewFilter,
-              onReviewFilterChanged: (filter) =>
-                  setState(() => _reviewFilter = filter),
-              onCheckout: _checkout,
-              onSwitchToWorktree: _switchToWorktree,
-              onCheckoutInNewWorktree: _checkoutInNewWorktree,
-              onCheckoutRemote: (g, r) => _checkoutRemote(vm, g, r),
-              onMerge: _mergeBranch,
-              onSetUpstream: _setUpstream,
-              onRenameBranch: _renameBranch,
-              onTogglePin: (branch) => _togglePin(vm, branch),
-              onDeleteBranch: (g, branch) => _deleteBranch(vm, g, branch),
-              onDeleteRemoteBranch: _deleteRemoteBranch,
-              onDeleteTag: _deleteTag,
-              onPushTag: _pushTag,
-              onOpenUrl: _open,
-              onPublish: _publishBranch,
-              onCreateRequest: _createRequest,
-              onOpenHistory: _openHistory,
-              onOpenOnForge: _openOnForge,
-              onCompare: () {
-                if (mode != BranchWorkspaceMode.review) {
-                  _setMode(BranchWorkspaceMode.review);
-                }
-              },
+    final connection = ref.watch(connectionProvider);
+    final head = refs.where((item) => item.isHead).firstOrNull;
+    final base = baseState?.value?.base;
+    final supplementKey = connection.sessionEpoch > 0
+        ? RepositoryContextSupplementKey(
+            repositoryIdentity: repositoryContextIdentityKey(
+              backend: connection.backend.name,
+              connectionId: connection.connectionId,
+              repositoryPath: repoPath,
             ),
+            sessionEpoch: connection.sessionEpoch,
+          )
+        : null;
+    if (supplementKey != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref
+            .read(repositoryContextSupplementCacheProvider.notifier)
+            .publish(
+              supplementKey,
+              RepositoryContextSupplement(
+                branchLabel: selectedRef == null
+                    ? null
+                    : 'Selected: ${selectedRef.shortName}',
+                baseLabel: base == null ? null : 'Base: ${base.displayName}',
+                forgeLabel: forgeAsync.value == null
+                    ? null
+                    : forge.isEmpty
+                    ? 'No branch reviews'
+                    : '${forge.length} branch review${forge.length == 1 ? '' : 's'}',
+              ),
+            );
+        if (selectedRef != null) {
+          ref
+              .read(
+                workspaceNavigationProvider(
+                  WorkspaceSessionKey(repoPath, connection.sessionEpoch),
+                ).notifier,
+              )
+              .visit(
+                WorkspaceFocus(
+                  repositoryPath: repoPath,
+                  sessionEpoch: connection.sessionEpoch,
+                  kind: selectedRef.isTag
+                      ? WorkspaceFocusKind.revision
+                      : WorkspaceFocusKind.branch,
+                  identity: selectedRef.name,
+                  secondaryIdentity: base?.refName,
+                  panelIndex: 2,
+                ),
+              );
+        }
+      });
+    }
+
+    final navigator = BranchNavigator(
+      repoPath: repoPath,
+      vm: vm,
+      selectedRef: _selectedRef,
+      busy: busy,
+      isActive: widget.isActive,
+      grouped: grouped,
+      collapsedFolders: collapsedFolderPrefixes,
+      showStale: _showStale,
+      mode: mode,
+      baseState: baseState,
+      review: review,
+      reviewFilter: _reviewFilter,
+      reviewSort: _reviewSort,
+      conflictRefNames: conflictScan.conflictRefNames,
+      filterController: _filterCtl,
+      focusNode: _branchFocus,
+      scrollController: _branchScroll,
+      onSelect: (r) => setState(() {
+        _selectedRef = r?.name;
+        if (r == null) {
+          _multiSel = BranchMultiSelection.empty;
+        } else if (!_multiSel.isMulti) {
+          _multiSel = BranchMultiSelection.empty.replace(r.name);
+        }
+      }),
+      multiSelection: _multiSel,
+      onMultiSelect: (sel) => setState(() {
+        _multiSel = sel;
+        _selectedRef = sel.primary;
+      }),
+      onLocalTap: (g, b) => _checkout(g, b.shortName),
+      onCreateBranch: _createBranchPrompt,
+      onOpenCreateTagSheet: _openCreateTagSheet,
+      onFetchPrune: _fetchPrune,
+      onToggleSection: (section) =>
+          _toggleSection(effectiveCollapsedSections, section),
+      onToggleFolder: (path) => _toggleFolder(collapsedFolderPrefixes, path),
+      onToggleGrouped: () {
+        final next = !grouped;
+        setState(() => _groupedOverride = next);
+        unawaited(
+          _updateWorkspacePrefs((prefs) => prefs.copyWith(grouped: next)),
+        );
+      },
+      onToggleShowStale: () => setState(() => _showStale = !_showStale),
+      onShowAllTags: () => setState(() => _showAllTags = true),
+      onShowAllRemotes: () => setState(() => _showAllRemotes = true),
+      onCheckout: (g, r) => _checkout(g, r.shortName),
+      onCheckoutRemote: (g, r) => _checkoutRemote(vm, g, r),
+      onSwitchToWorktree: _switchToWorktree,
+      onCheckoutInNewWorktree: _checkoutInNewWorktree,
+      onMerge: (g, b, mode) => _mergeBranch(g, b.shortName, mode),
+      onSetUpstream: _setUpstream,
+      onUnsetUpstream: _unsetUpstream,
+      onRenameBranch: _renameBranch,
+      onTogglePin: (branch) => _togglePin(vm, branch),
+      onCopyName: _copyName,
+      onDeleteBranch: (g, branch) => _deleteBranch(vm, g, branch),
+      onDeleteRemoteBranch: _deleteRemoteBranch,
+      onDeleteTag: _deleteTag,
+      onPushTag: _pushTag,
+      onPushAllLocalOnly: _pushAllLocalOnly,
+      onDropOnCurrent: _dropOnCurrent,
+      onPublish: _publishBranch,
+      onCreateRequest: _createRequest,
+      onOpenUrl: _open,
+      onCompare: () {
+        // Surface the base-relative comparison: Review mode + keep selection.
+        if (mode != BranchWorkspaceMode.review) {
+          _setMode(BranchWorkspaceMode.review);
+        }
+      },
+      onFilterChanged: (_) => setState(() {}),
+      onModeChanged: _setMode,
+      onBaseChanged: _setBase,
+      onBaseReset: _resetBase,
+      onReviewSortChanged: (sort) => setState(() => _reviewSort = sort),
+    );
+    final detail = _multiSel.isMulti
+        ? _multiSelectDetail(
+            context,
+            vm,
+            baseState,
+            git,
+            busy,
+            review?.value?.summariesByRefName ?? const {},
+          )
+        : BranchDetail(
+            repoPath: repoPath,
+            git: git,
+            selectedRef: selectedRef,
+            vm: vm,
+            remoteTags: remoteTags,
+            tagRemote: vm.tagRemote,
+            busy: busy,
+            mode: mode,
+            baseState: baseState,
+            review: review,
+            reviewFilter: _reviewFilter,
+            onReviewFilterChanged: (filter) =>
+                setState(() => _reviewFilter = filter),
+            onCheckout: _checkout,
+            onSwitchToWorktree: _switchToWorktree,
+            onCheckoutInNewWorktree: _checkoutInNewWorktree,
+            onCheckoutRemote: (g, r) => _checkoutRemote(vm, g, r),
+            onMerge: _mergeBranch,
+            onSetUpstream: _setUpstream,
+            onRenameBranch: _renameBranch,
+            onTogglePin: (branch) => _togglePin(vm, branch),
+            onDeleteBranch: (g, branch) => _deleteBranch(vm, g, branch),
+            onDeleteRemoteBranch: _deleteRemoteBranch,
+            onDeleteTag: _deleteTag,
+            onPushTag: _pushTag,
+            onOpenUrl: _open,
+            onPublish: _publishBranch,
+            onCreateRequest: _createRequest,
+            onOpenHistory: _openHistory,
+            onOpenOnForge: _openOnForge,
+            onCompare: () {
+              if (mode != BranchWorkspaceMode.review) {
+                _setMode(BranchWorkspaceMode.review);
+              }
+            },
+          );
+    final pathParts = repoPath.split('/').where((part) => part.isNotEmpty);
+    final supplement = supplementKey == null
+        ? null
+        : ref.watch(
+            repositoryContextSupplementCacheProvider.select(
+              (cache) => cache[supplementKey],
+            ),
+          );
+    final snapshot = RepositoryContextSnapshot(
+      repositoryPath: repoPath,
+      repositoryName:
+          'Repository: ${pathParts.isEmpty ? repoPath : pathParts.last}',
+      connectionLabel: connection.connectionLabel,
+      hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
+      branchLabel: head == null ? 'Detached HEAD' : 'Branch: ${head.shortName}',
+      upstreamLabel: head?.upstream,
+      ahead: head?.ahead ?? 0,
+      behind: head?.behind ?? 0,
+      hasUpstream: head?.upstream != null,
+      hasConfiguredRemote: refs.any((item) => item.isRemote),
+      connected: connection.isConnected,
+      busy: busy,
+      refCount: refs.length,
+      supplement: supplement,
+    );
+    return RepositoryWorkspaceScaffold(
+      repositoryContext: RepositoryContextBar(
+        snapshot: snapshot,
+        primaryAction: RepositoryPrimaryAction(
+          kind: RepositoryPrimaryActionKind.fetch,
+          label: 'Fetch & Prune',
+          disabledReason: busy ? 'Another branch operation is running' : null,
+        ),
+        onPrimaryAction: (_) => _fetchPrune(git),
+      ),
+      navigator: navigator,
+      canvas: detail,
+      activePage: selectedRef == null
+          ? CompactWorkspacePage.navigator
+          : CompactWorkspacePage.canvas,
+      preferences: const RepositoryWorkspacePrefs(navigatorWidth: 380),
     );
   }
 

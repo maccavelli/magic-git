@@ -13,8 +13,9 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
+import 'package:remote_magic_git/features/common/adaptive_workspace_layout.dart';
 import 'package:remote_magic_git/features/common/inline_action_button.dart';
-import 'package:remote_magic_git/features/common/resizable_master_detail.dart';
+import 'package:remote_magic_git/features/common/repository_workspace_scaffold.dart';
 
 const _repo = '/repo';
 
@@ -101,7 +102,8 @@ void main() {
     tester,
   ) async {
     await _pump(tester);
-    expect(find.byType(ResizableMasterDetail), findsOneWidget);
+    expect(find.byType(RepositoryWorkspaceScaffold), findsOneWidget);
+    expect(find.byType(AdaptiveWorkspaceLayout), findsOneWidget);
     // The empty state is the review dashboard: a title + stat chips.
     expect(find.text('Branches'), findsOneWidget);
     expect(find.text('Local'), findsOneWidget);
