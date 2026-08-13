@@ -20,6 +20,9 @@ class RepoChangeNavigator extends StatelessWidget {
   final int hiddenSelectionCount;
   final VoidCallback onRevealSelection;
   final VoidCallback onClearSelection;
+  final int selectedCount;
+  final VoidCallback? onReviewSelected;
+  final VoidCallback? onReviewAllVisible;
   final Widget changes;
   final Widget files;
 
@@ -35,6 +38,9 @@ class RepoChangeNavigator extends StatelessWidget {
     required this.hiddenSelectionCount,
     required this.onRevealSelection,
     required this.onClearSelection,
+    this.selectedCount = 0,
+    this.onReviewSelected,
+    this.onReviewAllVisible,
     required this.changes,
     required this.files,
   });
@@ -172,6 +178,25 @@ class RepoChangeNavigator extends StatelessWidget {
                           ),
                         ),
                       ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 5),
+                Wrap(
+                  alignment: WrapAlignment.end,
+                  spacing: 6,
+                  runSpacing: 3,
+                  children: [
+                    if (selectedCount > 1)
+                      InlineActionButton(
+                        label: 'Review selected ($selectedCount)',
+                        icon: CupertinoIcons.rectangle_stack,
+                        onPressed: onReviewSelected,
+                      ),
+                    InlineActionButton(
+                      label: 'Review all visible',
+                      icon: CupertinoIcons.eye,
+                      onPressed: visibleCount == 0 ? null : onReviewAllVisible,
                     ),
                   ],
                 ),

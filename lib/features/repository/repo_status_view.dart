@@ -47,10 +47,12 @@ import 'diff_popout_window.dart';
 import 'diff_view_controls.dart';
 import 'file_view.dart';
 import 'hunk_diff_view.dart';
+import 'multi_file_review.dart';
 import 'output_view.dart';
 import 'repo_change_filter.dart';
 import 'repo_change_model.dart';
 import 'repo_change_navigator.dart';
+import 'repo_review_state.dart';
 import 'repository_clean_state.dart';
 
 /// How to proceed when a plain push would be rejected because the branch is
@@ -97,6 +99,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   RepoChangeFilter _changeFilter = const RepoChangeFilter();
   RepositoryNavigatorMode? _navigatorModeOverride;
   bool _composerExpanded = false;
+  final _reviewController = RepoReviewController();
+  bool _reviewOpen = false;
 
   _SectionKind? get _selectionKind => _selectionController.value.section;
   set _selectionKind(_SectionKind? value) {
@@ -286,6 +290,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     _listScroll.dispose();
     _selectionController.dispose();
     _changeFilterController.dispose();
+    _reviewController.dispose();
     super.dispose();
   }
 
@@ -371,6 +376,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       _changeFilterController.clear();
       _changeFilter = const RepoChangeFilter();
       _navigatorModeOverride = null;
+      _reviewOpen = false;
+      _reviewController.clear();
     }
     // The watch listener skips refetching status while this page is hidden (see
     // build). Re-sync once when it becomes visible again so nothing missed while
@@ -1660,6 +1667,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     // gets its full width back instead of splitting the row with it.
     final Widget? panel = _popout
         ? null
+        : _reviewOpen
+        ? _multiFileReviewPanel()
         : _isMultiSelect
         ? _multiSelectPanel(context)
         : _selectedConflict != null
@@ -1724,6 +1733,17 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       ],
     );
   }
+
+  Widget _multiFileReviewPanel() => MultiFileReviewView(
+    repoPath: repoPath,
+    controller: _reviewController,
+    onClose: () => setState(() => _reviewOpen = false),
+    onStage: _stageMany,
+    onUnstage: _unstageMany,
+    onDiscard: _discardMany,
+    onDelete: _discardUntrackedMany,
+    onIgnore: _addToGitignoreMany,
+  );
 
   Widget _conflictPanel(BuildContext context, String path) {
     final contentAsync = ref.watch(conflictFileProvider((repoPath, path)));
@@ -2300,6 +2320,36 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         });
       },
       onClearSelection: _clearSelection,
+      selectedCount: _selectedPaths.length,
+      onReviewSelected: _selectedPaths.length > 1
+          ? () {
+              final items = reviewItemsFromRows(
+                canonical,
+                paths: _selectedPaths,
+                section: _selectionKind,
+              );
+              _reviewController.open(items);
+              setState(() => _reviewOpen = items.isNotEmpty);
+            }
+          : null,
+      onReviewAllVisible: result.visibleFiles == 0
+          ? null
+          : () {
+              final visible = result.rows.whereType<_FileRow>().toList();
+              final firstSection = visible.first.section;
+              final sameSection = visible
+                  .where((row) => row.section == firstSection)
+                  .map((row) => row.file.path)
+                  .toSet();
+              _reviewController.open(
+                reviewItemsFromRows(
+                  result.rows,
+                  paths: sameSection,
+                  section: firstSection,
+                ),
+              );
+              setState(() => _reviewOpen = true);
+            },
       changes: changes,
       files: FileView(
         maxWidth: preferences.navigatorWidth,
