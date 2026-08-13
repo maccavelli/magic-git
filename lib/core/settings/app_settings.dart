@@ -5,6 +5,8 @@ import 'pane_layout.dart';
 import 'settings_bus.dart';
 import 'tool_catalog.dart';
 
+enum WorkspaceDensity { compact, comfortable }
+
 /// User-tunable knobs persisted across sessions:
 ///  * the two generous per-command timeouts, so a legitimately slow push/commit
 ///    on a slow link isn't killed as if it had hung;
@@ -95,6 +97,14 @@ class AppSettings {
   /// are clamped to the pane's spec bounds on both write and load.
   final Map<PaneId, double> paneWidths;
 
+  /// Workspace information density. This is global because target sizing and
+  /// row rhythm should remain predictable while moving between repositories.
+  final WorkspaceDensity workspaceDensity;
+
+  /// Strengthens semantic borders, focus rings, and status contrast without
+  /// introducing a second (light) color scheme.
+  final bool workspaceHighContrast;
+
   const AppSettings({
     this.networkTimeout = GitService.defaultNetworkTimeout,
     this.commitTimeout = GitService.defaultCommitTimeout,
@@ -114,6 +124,8 @@ class AppSettings {
     this.tagAnnotatedByDefault = true,
     this.tagPushAfterCreate = true,
     this.paneWidths = const {},
+    this.workspaceDensity = WorkspaceDensity.comfortable,
+    this.workspaceHighContrast = false,
   });
 
   /// The effective width for [id]: the stored value, else the spec default.
@@ -143,6 +155,8 @@ class AppSettings {
     bool? tagAnnotatedByDefault,
     bool? tagPushAfterCreate,
     Map<PaneId, double>? paneWidths,
+    WorkspaceDensity? workspaceDensity,
+    bool? workspaceHighContrast,
   }) => AppSettings(
     networkTimeout: networkTimeout ?? this.networkTimeout,
     commitTimeout: commitTimeout ?? this.commitTimeout,
@@ -163,6 +177,8 @@ class AppSettings {
     tagAnnotatedByDefault: tagAnnotatedByDefault ?? this.tagAnnotatedByDefault,
     tagPushAfterCreate: tagPushAfterCreate ?? this.tagPushAfterCreate,
     paneWidths: paneWidths ?? this.paneWidths,
+    workspaceDensity: workspaceDensity ?? this.workspaceDensity,
+    workspaceHighContrast: workspaceHighContrast ?? this.workspaceHighContrast,
   );
 
   // Value equality so a cross-tab [reloadFromDisk] that re-reads the same value
@@ -187,6 +203,8 @@ class AppSettings {
       other.worktreePostCreateEnabled == worktreePostCreateEnabled &&
       other.tagAnnotatedByDefault == tagAnnotatedByDefault &&
       other.tagPushAfterCreate == tagPushAfterCreate &&
+      other.workspaceDensity == workspaceDensity &&
+      other.workspaceHighContrast == workspaceHighContrast &&
       _mapEquals(other.binaryOverrides, binaryOverrides) &&
       _mapEquals(other.paneWidths, paneWidths);
 
@@ -208,6 +226,8 @@ class AppSettings {
     worktreePostCreateEnabled,
     tagAnnotatedByDefault,
     tagPushAfterCreate,
+    workspaceDensity,
+    workspaceHighContrast,
     Object.hashAllUnordered(
       binaryOverrides.entries.map((e) => Object.hash(e.key, e.value)),
     ),
@@ -248,6 +268,8 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   static const _wtPostCreateEnabledKey = 'worktreePostCreateEnabled';
   static const _tagAnnotatedKey = 'tagAnnotatedByDefault';
   static const _tagPushAfterCreateKey = 'tagPushAfterCreate';
+  static const _workspaceDensityKey = 'workspaceDensity';
+  static const _workspaceHighContrastKey = 'workspaceHighContrast';
 
   /// Per-pane width keys: `paneWidth_<PaneId.name>` (mirrors [_binPrefix]).
   /// Enum names are part of the on-disk format — see pane_layout.dart.
@@ -315,6 +337,7 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     final n = prefs.getInt(_networkKey);
     final c = prefs.getInt(_commitKey);
     final pull = prefs.getInt(_pullModeKey);
+    final workspaceDensity = prefs.getInt(_workspaceDensityKey);
     final overrides = <String, String>{};
     for (final bin in overridableBinaries) {
       final v = prefs.getString('$_binPrefix$bin');
@@ -333,7 +356,8 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
       commitTimeout: c != null ? _floorTimeout(Duration(seconds: c)) : null,
       committerName: prefs.getString(_nameKey),
       committerEmail: prefs.getString(_emailKey),
-      defaultPullMode: pull != null && pull >= 0 && pull < PullMode.values.length
+      defaultPullMode:
+          pull != null && pull >= 0 && pull < PullMode.values.length
           ? PullMode.values[pull]
           : null,
       pushFollowTags: prefs.getBool(_followTagsKey),
@@ -354,6 +378,13 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
       worktreePostCreateEnabled: prefs.getBool(_wtPostCreateEnabledKey),
       tagAnnotatedByDefault: prefs.getBool(_tagAnnotatedKey),
       tagPushAfterCreate: prefs.getBool(_tagPushAfterCreateKey),
+      workspaceDensity:
+          workspaceDensity != null &&
+              workspaceDensity >= 0 &&
+              workspaceDensity < WorkspaceDensity.values.length
+          ? WorkspaceDensity.values[workspaceDensity]
+          : null,
+      workspaceHighContrast: prefs.getBool(_workspaceHighContrastKey),
     );
   }
 
@@ -403,7 +434,8 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
 
   /// Floors a timeout to [_minTimeout] so a 0-second (or negative) value —
   /// user-set or a corrupted/stale stored value — never kills every command.
-  static Duration _floorTimeout(Duration d) => d < _minTimeout ? _minTimeout : d;
+  static Duration _floorTimeout(Duration d) =>
+      d < _minTimeout ? _minTimeout : d;
 
   /// Updates the timeouts and persists them. Values are clamped to a sane floor
   /// so a user can't set a 0-second timeout that kills every command.
@@ -501,6 +533,28 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     await _persist(
       (prefs) => prefs.setDouble('$_paneWidthPrefix${id.name}', clamped),
     );
+  }
+
+  /// Updates the global workspace visual ergonomics. Reduced motion remains a
+  /// per-window accessibility signal supplied by MediaQuery.
+  Future<void> setWorkspaceAppearance({
+    WorkspaceDensity? density,
+    bool? highContrast,
+  }) async {
+    final next = state.copyWith(
+      workspaceDensity: density,
+      workspaceHighContrast: highContrast,
+    );
+    if (next == state) return;
+    _userEdited = true;
+    state = next;
+    await _persist((prefs) async {
+      await prefs.setInt(_workspaceDensityKey, state.workspaceDensity.index);
+      await prefs.setBool(
+        _workspaceHighContrastKey,
+        state.workspaceHighContrast,
+      );
+    });
   }
 
   /// Toggles and persists whether History diff views wrap long lines. Shared

@@ -1,8 +1,151 @@
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/utils/display_error.dart';
+import 'buttons.dart';
+import 'inline_action_button.dart';
+
+/// Consistent workspace-level loading treatment with a live-region label for
+/// assistive technology. Reduced-motion policy is inherited from MediaQuery;
+/// this widget does not add decorative animation.
+class WorkspaceLoading extends StatelessWidget {
+  final String label;
+
+  const WorkspaceLoading({super.key, this.label = 'Loading'});
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    container: true,
+    liveRegion: true,
+    label: label,
+    child: const ExcludeSemantics(child: SectionLoading()),
+  );
+}
+
+class WorkspaceEmptyState extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+
+  const WorkspaceEmptyState({
+    super.key,
+    required this.icon,
+    required this.title,
+    required this.message,
+    this.actionLabel,
+    this.onAction,
+  }) : assert((actionLabel == null) == (onAction == null));
+
+  @override
+  Widget build(BuildContext context) {
+    final typography = MacosTheme.of(context).typography;
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            MacosIcon(icon, color: MacosColors.systemGrayColor, size: 28),
+            const SizedBox(height: 10),
+            Text(title, style: typography.headline),
+            const SizedBox(height: 4),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+            if (onAction != null) ...[
+              const SizedBox(height: 12),
+              AppPushButton(
+                controlSize: ControlSize.regular,
+                onPressed: onAction,
+                child: Text(actionLabel!),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Keeps last-known-good content usable while reporting a refresh failure.
+class WorkspacePartialError extends StatelessWidget {
+  final Object error;
+  final Widget child;
+  final VoidCallback? onRetry;
+
+  const WorkspacePartialError({
+    super.key,
+    required this.error,
+    required this.child,
+    this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      Row(
+        children: [
+          Expanded(child: SectionError(error)),
+          if (onRetry != null)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: InlineActionButton(
+                label: 'Retry',
+                icon: CupertinoIcons.refresh,
+                onPressed: onRetry,
+              ),
+            ),
+        ],
+      ),
+      Expanded(child: child),
+    ],
+  );
+}
+
+class WorkspaceStaleBanner extends StatelessWidget {
+  final String message;
+
+  const WorkspaceStaleBanner({
+    super.key,
+    this.message = 'Showing last-known data while refreshing.',
+  });
+
+  @override
+  Widget build(BuildContext context) => Semantics(
+    liveRegion: true,
+    label: message,
+    child: ExcludeSemantics(
+      child: SectionMessage(message, color: MacosColors.systemYellowColor),
+    ),
+  );
+}
+
+class WorkspaceUnavailable extends StatelessWidget {
+  final String title;
+  final String message;
+
+  const WorkspaceUnavailable({
+    super.key,
+    required this.title,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) => WorkspaceEmptyState(
+    icon: CupertinoIcons.info_circle,
+    title: title,
+    message: message,
+  );
+}
 
 /// Padded, centered spinner for an in-flight section load.
 class SectionLoading extends StatelessWidget {

@@ -22,6 +22,50 @@ void main() {
     expect(s.networkTimeout, GitService.defaultNetworkTimeout);
     expect(s.commitTimeout, GitService.defaultCommitTimeout);
     expect(s.autoFetchMinutes, 5);
+    expect(s.workspaceDensity, WorkspaceDensity.comfortable);
+    expect(s.workspaceHighContrast, isFalse);
+  });
+
+  test('loads and persists workspace appearance settings', () async {
+    SharedPreferences.setMockInitialValues({
+      'workspaceDensity': WorkspaceDensity.compact.index,
+      'workspaceHighContrast': true,
+    });
+    final c = ProviderContainer();
+    addTearDown(c.dispose);
+
+    final loaded = Completer<AppSettings>();
+    c.listen(appSettingsProvider, (_, next) {
+      if (next.workspaceHighContrast && !loaded.isCompleted) {
+        loaded.complete(next);
+      }
+    });
+    c.read(appSettingsProvider);
+    final initial = await loaded.future.timeout(const Duration(seconds: 2));
+    expect(initial.workspaceDensity, WorkspaceDensity.compact);
+
+    await c
+        .read(appSettingsProvider.notifier)
+        .setWorkspaceAppearance(
+          density: WorkspaceDensity.comfortable,
+          highContrast: false,
+        );
+    expect(c.read(appSettingsProvider).workspaceHighContrast, isFalse);
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getInt('workspaceDensity'),
+      WorkspaceDensity.comfortable.index,
+    );
+    expect(prefs.getBool('workspaceHighContrast'), isFalse);
+  });
+
+  test('workspace appearance participates in value equality', () {
+    const defaults = AppSettings();
+    expect(
+      defaults.copyWith(workspaceDensity: WorkspaceDensity.compact),
+      isNot(defaults),
+    );
+    expect(defaults.copyWith(workspaceHighContrast: true), isNot(defaults));
   });
 
   test('loads stored values into state after build', () async {
@@ -50,10 +94,12 @@ void main() {
     final c = ProviderContainer();
     addTearDown(c.dispose);
 
-    await c.read(appSettingsProvider.notifier).setTimeouts(
-      network: const Duration(seconds: 1), // below the 5s floor
-      commit: const Duration(seconds: 420),
-    );
+    await c
+        .read(appSettingsProvider.notifier)
+        .setTimeouts(
+          network: const Duration(seconds: 1), // below the 5s floor
+          commit: const Duration(seconds: 420),
+        );
     final s = c.read(appSettingsProvider);
     expect(s.networkTimeout, const Duration(seconds: 5));
     expect(s.commitTimeout, const Duration(seconds: 420));
@@ -63,21 +109,24 @@ void main() {
     expect(prefs.getInt('commitTimeoutSecs'), 420);
   });
 
-  test('setPaneWidth clamps to the spec bounds and persists per-id keys', () async {
-    SharedPreferences.setMockInitialValues({});
-    final c = ProviderContainer();
-    addTearDown(c.dispose);
-    final notifier = c.read(appSettingsProvider.notifier);
+  test(
+    'setPaneWidth clamps to the spec bounds and persists per-id keys',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final c = ProviderContainer();
+      addTearDown(c.dispose);
+      final notifier = c.read(appSettingsProvider.notifier);
 
-    await notifier.setPaneWidth(PaneId.historyList, 10000); // above ceiling
-    expect(c.read(appSettingsProvider).paneWidth(PaneId.historyList), 800);
-    await notifier.setPaneWidth(PaneId.jobsList, 10); // below floor
-    expect(c.read(appSettingsProvider).paneWidth(PaneId.jobsList), 180);
+      await notifier.setPaneWidth(PaneId.historyList, 10000); // above ceiling
+      expect(c.read(appSettingsProvider).paneWidth(PaneId.historyList), 800);
+      await notifier.setPaneWidth(PaneId.jobsList, 10); // below floor
+      expect(c.read(appSettingsProvider).paneWidth(PaneId.jobsList), 180);
 
-    final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getDouble('paneWidth_historyList'), 800);
-    expect(prefs.getDouble('paneWidth_jobsList'), 180);
-  });
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getDouble('paneWidth_historyList'), 800);
+      expect(prefs.getDouble('paneWidth_jobsList'), 180);
+    },
+  );
 
   test('pane widths load from disk with clamping, fall back to spec defaults, '
       'and load never writes back', () async {
@@ -135,68 +184,71 @@ void main() {
     expect(changes, 2);
   });
 
-  test('reloadFromDisk re-landing equal pane widths is a state no-op', () async {
-    SharedPreferences.setMockInitialValues({'paneWidth_historyList': 500.0});
-    final c = ProviderContainer();
-    addTearDown(c.dispose);
-
-    final loaded = Completer<void>();
-    c.listen(appSettingsProvider, (_, next) {
-      if (next.paneWidthOrNull(PaneId.historyList) == 500 &&
-          !loaded.isCompleted) {
-        loaded.complete();
-      }
-    });
-    c.read(appSettingsProvider);
-    await loaded.future.timeout(const Duration(seconds: 2));
-
-    // A cross-isolate 'settingsChanged' that re-reads identical disk state
-    // must not emit — the map field participates in value equality, which is
-    // what terminates the sync echo between windows.
-    var changes = 0;
-    c.listen(appSettingsProvider, (_, _) => changes++);
-    await c.read(appSettingsProvider.notifier).reloadFromDisk();
-    expect(changes, 0);
-  });
-
-  test('setPreferences clamps autoFetchMinutes to a floor and a ceiling', () async {
-    SharedPreferences.setMockInitialValues({});
-    final c = ProviderContainer();
-    addTearDown(c.dispose);
-    final notifier = c.read(appSettingsProvider.notifier);
-
-    await notifier.setPreferences(autoFetchMinutes: -5); // below floor
-    expect(c.read(appSettingsProvider).autoFetchMinutes, 0);
-
-    await notifier.setPreferences(autoFetchMinutes: 999999); // above ceiling
-    expect(c.read(appSettingsProvider).autoFetchMinutes, 1440);
-
-    final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getInt('autoFetchMinutes'), 1440);
-  });
-
   test(
-    'a user edit that lands before _load resolves is not clobbered by the '
-    'stale on-disk value',
+    'reloadFromDisk re-landing equal pane widths is a state no-op',
     () async {
-      // Stored value differs from what the user is about to set; the async
-      // _load must not overwrite the just-made edit.
-      SharedPreferences.setMockInitialValues({'autoFetchMinutes': 30});
+      SharedPreferences.setMockInitialValues({'paneWidth_historyList': 500.0});
       final c = ProviderContainer();
       addTearDown(c.dispose);
 
-      // Read triggers build()/_load (fire-and-forget); immediately edit before
-      // the async load can resolve.
+      final loaded = Completer<void>();
+      c.listen(appSettingsProvider, (_, next) {
+        if (next.paneWidthOrNull(PaneId.historyList) == 500 &&
+            !loaded.isCompleted) {
+          loaded.complete();
+        }
+      });
       c.read(appSettingsProvider);
-      await c
-          .read(appSettingsProvider.notifier)
-          .setPreferences(autoFetchMinutes: 7);
+      await loaded.future.timeout(const Duration(seconds: 2));
 
-      // Give _load ample time to (wrongly) fire; the edit must survive.
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      expect(c.read(appSettingsProvider).autoFetchMinutes, 7);
+      // A cross-isolate 'settingsChanged' that re-reads identical disk state
+      // must not emit — the map field participates in value equality, which is
+      // what terminates the sync echo between windows.
+      var changes = 0;
+      c.listen(appSettingsProvider, (_, _) => changes++);
+      await c.read(appSettingsProvider.notifier).reloadFromDisk();
+      expect(changes, 0);
     },
   );
+
+  test(
+    'setPreferences clamps autoFetchMinutes to a floor and a ceiling',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final c = ProviderContainer();
+      addTearDown(c.dispose);
+      final notifier = c.read(appSettingsProvider.notifier);
+
+      await notifier.setPreferences(autoFetchMinutes: -5); // below floor
+      expect(c.read(appSettingsProvider).autoFetchMinutes, 0);
+
+      await notifier.setPreferences(autoFetchMinutes: 999999); // above ceiling
+      expect(c.read(appSettingsProvider).autoFetchMinutes, 1440);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getInt('autoFetchMinutes'), 1440);
+    },
+  );
+
+  test('a user edit that lands before _load resolves is not clobbered by the '
+      'stale on-disk value', () async {
+    // Stored value differs from what the user is about to set; the async
+    // _load must not overwrite the just-made edit.
+    SharedPreferences.setMockInitialValues({'autoFetchMinutes': 30});
+    final c = ProviderContainer();
+    addTearDown(c.dispose);
+
+    // Read triggers build()/_load (fire-and-forget); immediately edit before
+    // the async load can resolve.
+    c.read(appSettingsProvider);
+    await c
+        .read(appSettingsProvider.notifier)
+        .setPreferences(autoFetchMinutes: 7);
+
+    // Give _load ample time to (wrongly) fire; the edit must survive.
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(c.read(appSettingsProvider).autoFetchMinutes, 7);
+  });
 
   test(
     'a setting GitService ignores does not rebuild it (avoids an SSH refetch '

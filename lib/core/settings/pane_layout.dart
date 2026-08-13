@@ -36,6 +36,27 @@ enum PaneId {
   filesTree,
 }
 
+/// Workspace dimensions that can inherit a compatible pre-workspace pane
+/// width on their first load. Missing mappings intentionally use the new
+/// workspace defaults.
+enum WorkspaceLegacyWidth { navigator, inspector, taskDock }
+
+const workspaceLegacyPaneMapping = <WorkspaceLegacyWidth, PaneId>{
+  WorkspaceLegacyWidth.navigator: PaneId.filesTree,
+};
+
+double? legacyWorkspaceWidthSeed(
+  WorkspaceLegacyWidth dimension,
+  Map<PaneId, double> legacyWidths,
+) {
+  final pane = workspaceLegacyPaneMapping[dimension];
+  if (pane == null) return null;
+  final width = legacyWidths[pane];
+  if (width == null) return null;
+  final spec = paneSpecs[pane]!;
+  return width.clamp(spec.min, spec.max).toDouble();
+}
+
 /// Geometry contract for one resizable pane.
 class PaneSpec {
   /// Width when nothing is stored — today's previously fixed constant, so

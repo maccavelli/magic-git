@@ -35,6 +35,7 @@ import '../local/scoped_access.dart';
 import '../output/output_log.dart';
 import '../settings/app_settings.dart';
 import '../settings/install_service.dart';
+import '../settings/repository_workspace_prefs.dart';
 import '../settings/tool_catalog.dart';
 import '../ssh/command_formatter.dart';
 import '../ssh/environment_probe.dart';
@@ -976,6 +977,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     // linger in the LRUs' own bookkeeping.
     clearHashKeyedRepoCaches();
     clearSessionBranchWorkspacePrefs();
+    clearSessionRepositoryWorkspacePrefs();
     // Keyed purely by repoPath with no connection identity — without this, a
     // mutation marked just before disconnecting could suppress a genuinely
     // external change reported by a *different* connection that happens to
@@ -2540,6 +2542,7 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   repoLayoutProvider,
   repositoryUiIdentityProvider,
   branchWorkspacePrefsProvider,
+  repositoryWorkspacePrefsProvider,
   branchBaseProvider,
   branchReviewProvider,
   repoMergePolicyCacheProvider,
@@ -3360,13 +3363,9 @@ final branchReviewProvider = FutureProvider.autoDispose
               lastAuthorEmail: refsByName[entry.key]?.authorEmail,
             ),
         },
-        failuresByRefName: {
-          ...invalidOidFailures,
-          ...result.failuresByRefName,
-        },
+        failuresByRefName: {...invalidOidFailures, ...result.failuresByRefName},
       );
     });
-
 
 // ---------------------------------------------------------------------------
 // Phase 2 — lazy comparison inspector (OID-keyed, Browse-safe)
@@ -3524,7 +3523,9 @@ const ToolVersion kMergeTreeMinGit = ToolVersion(2, 38);
 /// Pure mapping from a landed/on-demand Git version string to capability.
 /// Returns null when [versionString] is null/unparseable — callers treat that
 /// as a probe error (AsyncError), not as unsupported.
-MergePreviewCapability? mergePreviewCapabilityForVersion(String? versionString) {
+MergePreviewCapability? mergePreviewCapabilityForVersion(
+  String? versionString,
+) {
   if (versionString == null || versionString.isEmpty) return null;
   final v = ToolVersion.parse(versionString);
   if (v == null) return null;
@@ -3539,10 +3540,10 @@ MergePreviewCapability? mergePreviewCapabilityForVersion(String? versionString) 
 /// one on-demand Git-only [EnvironmentResolver.probeVersions] call. Does not
 /// probe gh/glab.
 final mergePreviewCapabilityProvider = FutureProvider.autoDispose
-    .family<
-      MergePreviewCapability,
-      ({String repoPath, int sessionEpoch})
-    >((ref, key) async {
+    .family<MergePreviewCapability, ({String repoPath, int sessionEpoch})>((
+      ref,
+      key,
+    ) async {
       final env = ref.watch(binaryEnvironmentProvider);
       final landed = mergePreviewCapabilityForVersion(env.versionOf('git'));
       if (landed != null) return landed;
@@ -3621,6 +3622,7 @@ class ConflictScanState {
   final int scanned;
   final int total;
   final String? error;
+
   /// full ref name → preview (only successful scans).
   final Map<String, BranchMergePreview> byRefName;
 
@@ -3804,6 +3806,25 @@ final branchWorkspacePrefsProvider = FutureProvider.autoDispose
       );
     });
 
+/// Durable presentation preferences for the shared repository workspace.
+/// Identity resolution keeps colliding paths on different hosts isolated;
+/// unresolved/ad-hoc sessions stay memory-only. Legacy global pane widths seed
+/// only the first record and remain untouched as a rollback source.
+final repositoryWorkspacePrefsProvider = FutureProvider.autoDispose
+    .family<RepositoryWorkspacePrefs, String>((ref, repoPath) async {
+      final identity = await ref.watch(
+        repositoryUiIdentityProvider(repoPath).future,
+      );
+      if (identity == null) return const RepositoryWorkspacePrefs();
+      final legacyPaneWidths = ref.watch(
+        appSettingsProvider.select((settings) => settings.paneWidths),
+      );
+      return loadRepositoryWorkspacePrefs(
+        identity: identity,
+        legacyPaneWidths: legacyPaneWidths,
+      );
+    });
+
 /// The repo's *configured* remotes (`git remote`), e.g. `['origin']` — the
 /// canonical "does this repo have a remote" signal. NOT derivable from
 /// [refsProvider]: an empty repository (fresh create, clone of an empty
@@ -3932,6 +3953,7 @@ typedef LogQuery = ({
   String? sha,
   bool noMerges,
   bool all,
+
   /// When set, walk only this revision (branch/tag/commit) instead of HEAD/`--all`.
   String? revision,
 });
@@ -4311,6 +4333,7 @@ final _branchDiffLru = KeepAliveLru<(String, String, String, int, bool)>(
   maxTotalBytes: 64 * _mib,
   maxEntryBytes: 16 * _mib,
 );
+
 /// Phase 7: merge-tree preview cache (OID-keyed; cleared on repo retarget).
 final _mergePreviewLru = KeepAliveLru<(String, String, String)>(
   48,
