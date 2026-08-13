@@ -10,6 +10,7 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/storage/saved_connection.dart';
+import '../../core/storage/saved_workspace_set.dart';
 import '../tabs/tabs_controller.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'field_styles.dart';
@@ -83,6 +84,9 @@ class PaletteCommand {
              },
            );
 }
+
+void _noopSavedWorkspaces() {}
+void _noopWorkspaceSet(SavedWorkspaceSet _) {}
 
 /// Palette metadata for a keymap-registered, panel-scoped action: where it
 /// lives (so the palette can switch there) and how it reads in the list. The
@@ -361,6 +365,8 @@ class CommandPalette extends ConsumerStatefulWidget {
   final VoidCallback onOpenSettings;
   final VoidCallback onOpenShortcuts;
   final VoidCallback onOpenConnections;
+  final VoidCallback onOpenSavedWorkspaces;
+  final ValueChanged<SavedWorkspaceSet> onOpenWorkspaceSet;
   final VoidCallback onCloneRepository;
   final VoidCallback onCreateRepository;
   final VoidCallback onOpenHistoryWindow;
@@ -393,6 +399,8 @@ class CommandPalette extends ConsumerStatefulWidget {
     required this.onOpenSettings,
     required this.onOpenShortcuts,
     required this.onOpenConnections,
+    this.onOpenSavedWorkspaces = _noopSavedWorkspaces,
+    this.onOpenWorkspaceSet = _noopWorkspaceSet,
     required this.onCloneRepository,
     required this.onCreateRepository,
     required this.onOpenHistoryWindow,
@@ -592,6 +600,12 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
         run: widget.onOpenConnections,
       ),
       PaletteCommand(
+        icon: CupertinoIcons.rectangle_stack,
+        label: 'Manage Saved Workspaces',
+        category: PaletteCategory.app,
+        run: widget.onOpenSavedWorkspaces,
+      ),
+      PaletteCommand(
         icon: CupertinoIcons.cloud_download,
         label: 'Clone Repository',
         category: PaletteCategory.app,
@@ -604,6 +618,56 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
         run: widget.onCreateRepository,
       ),
     ]);
+
+    final tabs = TabsController.current;
+    if (tabs != null) {
+      for (final tab in tabs.tabs) {
+        if (tab.id == tabs.activeId || tab.isBlank) continue;
+        final alias = tabs.aliasFor(tab);
+        final target = alias ?? _repoBasename(tab.repoPath ?? 'Repository');
+        commands.add(
+          PaletteCommand(
+            icon: CupertinoIcons.rectangle_on_rectangle,
+            label: 'Switch to tab $target',
+            category: PaletteCategory.go,
+            run: () => tabs.activate(tab.id),
+            entry: RepositoryPaletteEntry(
+              id: 'tab:${tab.id}',
+              primaryLabel: 'Switch to tab $target',
+              repositoryPath: tab.repoPath ?? '',
+              connectionId: tab.connectionId ?? '',
+              searchTokens: [?alias, ?tab.repoPath],
+              allowedActionIds: const ['repository.open'],
+            ),
+          ),
+        );
+      }
+    }
+
+    final workspaceSets =
+        ref.watch(savedWorkspaceSetsProvider).value ??
+        const <SavedWorkspaceSet>[];
+    for (final set in workspaceSets) {
+      commands.add(
+        PaletteCommand(
+          icon: CupertinoIcons.rectangle_stack,
+          label: 'Open workspace ${set.displayName}',
+          category: PaletteCategory.go,
+          run: () => widget.onOpenWorkspaceSet(set),
+          entry: ActionPaletteEntry(
+            id: 'workspace:${set.id}',
+            primaryLabel: 'Open workspace ${set.displayName}',
+            category: PaletteQueryScope.go,
+            searchTokens: [
+              for (final repository in set.repositories) ...[
+                repository.repoPath,
+                if (repository.tabAlias != null) repository.tabAlias!,
+              ],
+            ],
+          ),
+        ),
+      );
+    }
 
     // ---- dynamic targets: branches (git) and worktrees (go) ---------------
     // Checkout targets: local branches only (checking out a remote-tracking ref
@@ -689,6 +753,7 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
       tabs.openOrFocus(
         connectionId: conn.id,
         repoPath: repo,
+        savedKind: SavedRepositoryKind.ssh,
         connect: (container) => container
             .read(connectionProvider.notifier)
             .connectToSaved(conn, repoPath: repo),
@@ -704,20 +769,26 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
             repo == currentConn.repoPath) {
           continue;
         }
+        final identity = SavedRepositoryIdentity(
+          kind: SavedRepositoryKind.ssh,
+          savedId: conn.id,
+          repoPath: repo,
+        );
+        final alias = TabsController.current?.aliasForReference(identity);
+        final target = alias ?? _repoBasename(repo);
         commands.add(
           PaletteCommand(
             icon: CupertinoIcons.folder,
-            label: 'Switch to ${_repoBasename(repo)} · ${conn.displayName}',
+            label: 'Switch to $target · ${conn.displayName}',
             category: PaletteCategory.go,
             run: () => switchTo(conn, repo),
             entry: RepositoryPaletteEntry(
               id: 'repository:${conn.id}:$repo',
-              primaryLabel:
-                  'Switch to ${_repoBasename(repo)} · ${conn.displayName}',
+              primaryLabel: 'Switch to $target · ${conn.displayName}',
               repositoryPath: repo,
               connectionId: conn.id,
               contextLabel: conn.displayName,
-              searchTokens: [repo, conn.displayName],
+              searchTokens: [repo, conn.displayName, ?alias],
               allowedActionIds: const ['repository.open'],
             ),
           ),

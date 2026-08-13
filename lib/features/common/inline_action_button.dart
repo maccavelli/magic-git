@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import 'tappable.dart';
+import 'workspace_appearance.dart';
 
 /// How an action reads: an ordinary one, or one that throws work away.
 enum InlineActionTone { normal, destructive }
@@ -67,6 +68,11 @@ class _InlineActionButtonState extends State<InlineActionButton> {
     final theme = MacosTheme.of(context);
     final dark = theme.brightness.isDark;
     final enabled = widget.onPressed != null;
+    final minimumTarget =
+        WorkspaceAppearanceScope.maybeOf(
+          context,
+        )?.tokens.metrics.minimumTargetSize ??
+        28;
     final accent = switch (widget.tone) {
       InlineActionTone.normal => theme.primaryColor,
       InlineActionTone.destructive => MacosColors.systemRedColor,
@@ -122,7 +128,7 @@ class _InlineActionButtonState extends State<InlineActionButton> {
       onTapCancel: enabled ? () => setState(() => _pressed = false) : null,
       onTap: widget.onPressed,
       child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 28),
+        constraints: BoxConstraints(minHeight: minimumTarget),
         child: Center(
           child: AnimatedContainer(
             duration: MediaQuery.disableAnimationsOf(context)

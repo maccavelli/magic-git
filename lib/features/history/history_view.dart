@@ -21,6 +21,7 @@ import '../common/actions.dart';
 import '../common/adaptive_workspace_layout.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
+import '../common/commit_assistance.dart';
 import '../common/commit_patch_view.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
@@ -37,6 +38,7 @@ import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../common/workspace_focus.dart';
 import '../common/workspace_navigation.dart';
+import '../common/workspace_preferences_binding.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/drag_state.dart';
@@ -1204,6 +1206,19 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         (settings) => settings.paneWidth(PaneId.historyList),
       ),
     );
+    final workspace = watchWorkspacePreferences(
+      context: context,
+      ref: ref,
+      repositoryPath: widget.repoPath,
+      fallback: RepositoryWorkspacePrefs(navigatorWidth: historyListWidth),
+      preserveFallbackNavigatorWidth: true,
+      onLegacyChanged: (next) {
+        ref
+            .read(appSettingsProvider.notifier)
+            .setPaneWidth(PaneId.historyList, next.navigatorWidth)
+            .ignore();
+      },
+    );
     // One-shot handoff from Branches: seed revision scope for this mount only.
     ref.listen(historyNavigationIntentProvider, (prev, next) {
       if (next == null) return;
@@ -1264,6 +1279,18 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       // hashes absent from the new list.
       final landed = next.value;
       if (landed != null) {
+        if (!filtering) {
+          ref
+              .read(
+                landedCommitSubjectsProvider(
+                  CommitAssistanceKey(
+                    widget.repoPath,
+                    ref.read(connectionProvider).sessionEpoch,
+                  ),
+                ).notifier,
+              )
+              .publish(landed.map((commit) => commit.subject));
+        }
         final live = {for (final c in landed) c.hash};
         // Prune GlobalKey map: keys for commits no longer displayed are useless
         // and, over a long session with many page-loads, accumulate without
@@ -1516,13 +1543,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         activePage: selectedHash == null
             ? CompactWorkspacePage.navigator
             : CompactWorkspacePage.canvas,
-        preferences: RepositoryWorkspacePrefs(navigatorWidth: historyListWidth),
-        onPreferencesChanged: (next) {
-          ref
-              .read(appSettingsProvider.notifier)
-              .setPaneWidth(PaneId.historyList, next.navigatorWidth)
-              .ignore();
-        },
+        preferences: workspace.preferences,
+        onPreferencesChanged: workspace.onChanged,
+        workspaceOptionsEnabled: true,
       ),
     );
   }

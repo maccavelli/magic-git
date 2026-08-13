@@ -4,7 +4,31 @@ import '../../core/settings/repository_workspace_prefs.dart';
 import 'adaptive_workspace_layout.dart';
 import 'async_views.dart';
 import 'repository_workspace_models.dart';
+import 'workspace_appearance.dart';
 import 'workspace_focus_order.dart';
+
+class WorkspacePreferencesScope extends InheritedWidget {
+  final RepositoryWorkspacePrefs preferences;
+  final ValueChanged<RepositoryWorkspacePrefs>? onChanged;
+  final bool optionsEnabled;
+
+  const WorkspacePreferencesScope({
+    super.key,
+    required this.preferences,
+    required this.onChanged,
+    required this.optionsEnabled,
+    required super.child,
+  });
+
+  static WorkspacePreferencesScope? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<WorkspacePreferencesScope>();
+
+  @override
+  bool updateShouldNotify(WorkspacePreferencesScope oldWidget) =>
+      preferences != oldWidget.preferences ||
+      onChanged != oldWidget.onChanged ||
+      optionsEnabled != oldWidget.optionsEnabled;
+}
 
 /// Feature-neutral frame for repository-centered workspaces.
 class RepositoryWorkspaceScaffold extends StatelessWidget {
@@ -21,6 +45,7 @@ class RepositoryWorkspaceScaffold extends StatelessWidget {
   final bool taskDockFocused;
   final RepositoryWorkspacePrefs preferences;
   final ValueChanged<RepositoryWorkspacePrefs>? onPreferencesChanged;
+  final bool workspaceOptionsEnabled;
 
   const RepositoryWorkspaceScaffold({
     super.key,
@@ -37,6 +62,7 @@ class RepositoryWorkspaceScaffold extends StatelessWidget {
     this.taskDockFocused = false,
     this.preferences = const RepositoryWorkspacePrefs(),
     this.onPreferencesChanged,
+    this.workspaceOptionsEnabled = false,
   });
 
   @override
@@ -60,17 +86,24 @@ class RepositoryWorkspaceScaffold extends StatelessWidget {
         onPreferencesChanged: onPreferencesChanged,
       );
     }
-    return FocusTraversalGroup(
-      policy: OrderedTraversalPolicy(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          WorkspaceFocusRegion(
-            role: WorkspacePaneRole.repositoryContext,
-            child: repositoryContext,
+    return WorkspaceAppearanceBoundary(
+      child: WorkspacePreferencesScope(
+        preferences: preferences,
+        onChanged: onPreferencesChanged,
+        optionsEnabled: workspaceOptionsEnabled,
+        child: FocusTraversalGroup(
+          policy: OrderedTraversalPolicy(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              WorkspaceFocusRegion(
+                role: WorkspacePaneRole.repositoryContext,
+                child: repositoryContext,
+              ),
+              Expanded(child: content),
+            ],
           ),
-          Expanded(child: content),
-        ],
+        ),
       ),
     );
   }

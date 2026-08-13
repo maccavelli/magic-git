@@ -41,3 +41,22 @@ class VisitedPagesNotifier extends Notifier<Set<int>> {
 final visitedPagesProvider = NotifierProvider<VisitedPagesNotifier, Set<int>>(
   VisitedPagesNotifier.new,
 );
+
+/// The active tab's persisted display alias, hydrated by [TabsController]
+/// from the stable saved-repository identity. It lives in the tab container so
+/// the native window-title provider can react without depending on a runtime
+/// tab id.
+class TabAliasNotifier extends Notifier<String?> {
+  @override
+  String? build() => null;
+
+  void set(String? alias) {
+    final normalized = alias?.trim();
+    final next = normalized == null || normalized.isEmpty ? null : normalized;
+    if (state != next) state = next;
+  }
+}
+
+final tabAliasProvider = NotifierProvider<TabAliasNotifier, String?>(
+  TabAliasNotifier.new,
+);

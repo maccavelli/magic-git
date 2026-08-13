@@ -38,6 +38,8 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
   late PullMode _pullMode;
   late bool _followTags;
   late int _autoFetch;
+  late WorkspaceDensity _workspaceDensity;
+  late bool _workspaceHighContrast;
   late final Map<String, TextEditingController> _bin;
 
   // Null while the initial load is in flight; populated afterward and
@@ -65,6 +67,8 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
     _autoFetch = _fetchChoices.contains(s.autoFetchMinutes)
         ? s.autoFetchMinutes
         : 0;
+    _workspaceDensity = s.workspaceDensity;
+    _workspaceHighContrast = s.workspaceHighContrast;
     _bin = {
       for (final b in AppSettingsNotifier.overridableBinaries)
         b: TextEditingController(text: s.binaryOverrides[b] ?? ''),
@@ -109,6 +113,10 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
     await notifier.setBinaryOverrides({
       for (final e in _bin.entries) e.key: e.value.text,
     });
+    await notifier.setWorkspaceAppearance(
+      density: _workspaceDensity,
+      highContrast: _workspaceHighContrast,
+    );
     // Re-resolve the remote environment so new overrides take effect at once.
     await ref.read(connectionProvider.notifier).reprobeBinaries();
     if (mounted) Navigator.of(context).pop();
@@ -243,6 +251,45 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
                         onTap: () => setState(() => _autoFetch = m),
                       ),
                   ],
+                ),
+              ),
+
+              const SizedBox(height: 20),
+              _section(
+                context,
+                'Workspace appearance',
+                'Choose the information density used by every repository '
+                    'screen. High contrast strengthens pane boundaries, focus, '
+                    'and selection while preserving the dark color scheme. '
+                    'Reduce Motion follows the macOS accessibility setting.',
+              ),
+              _rowLabelled(
+                'Density',
+                MacosPulldownButton(
+                  title: switch (_workspaceDensity) {
+                    WorkspaceDensity.compact => 'Compact',
+                    WorkspaceDensity.comfortable => 'Comfortable',
+                  },
+                  items: [
+                    for (final density in WorkspaceDensity.values)
+                      MacosPulldownMenuItem(
+                        title: Text(switch (density) {
+                          WorkspaceDensity.compact => 'Compact',
+                          WorkspaceDensity.comfortable => 'Comfortable',
+                        }),
+                        onTap: () =>
+                            setState(() => _workspaceDensity = density),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+              _rowLabelled(
+                'High contrast',
+                MacosSwitch(
+                  value: _workspaceHighContrast,
+                  onChanged: (value) =>
+                      setState(() => _workspaceHighContrast = value),
                 ),
               ),
 
@@ -492,7 +539,9 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
           // Fixed width so widening the sheet does not stretch path fields.
           SizedBox(
             width: statusText.isNotEmpty
-                ? _binaryFieldWidth - 8 - 64 // room for status caption
+                ? _binaryFieldWidth -
+                      8 -
+                      64 // room for status caption
                 : _binaryFieldWidth,
             child: MacosTextField(
               controller: _bin[bin],

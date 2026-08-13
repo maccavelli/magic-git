@@ -11,6 +11,7 @@ import '../common/repository_context_bar.dart';
 import '../common/repository_workspace_scaffold.dart';
 import '../common/workspace_focus.dart';
 import '../common/workspace_navigation.dart';
+import '../common/workspace_preferences_binding.dart';
 import 'forge_selection.dart';
 
 /// Shared repository chrome for GitHub and GitLab without introducing a forge
@@ -61,6 +62,19 @@ class ForgeRepositoryWorkspace extends ConsumerWidget {
         (settings) => settings.paneWidth(PaneId.forgeList),
       ),
     );
+    final workspace = watchWorkspacePreferences(
+      context: context,
+      ref: ref,
+      repositoryPath: repoPath,
+      fallback: RepositoryWorkspacePrefs(navigatorWidth: navigatorWidth),
+      preserveFallbackNavigatorWidth: true,
+      onLegacyChanged: (next) {
+        ref
+            .read(appSettingsProvider.notifier)
+            .setPaneWidth(PaneId.forgeList, next.navigatorWidth)
+            .ignore();
+      },
+    );
     final snapshot = RepositoryContextSnapshot(
       repositoryPath: repoPath,
       repositoryName:
@@ -97,13 +111,9 @@ class ForgeRepositoryWorkspace extends ConsumerWidget {
       activePage: selection is ForgeNothingSel
           ? CompactWorkspacePage.navigator
           : CompactWorkspacePage.canvas,
-      preferences: RepositoryWorkspacePrefs(navigatorWidth: navigatorWidth),
-      onPreferencesChanged: (next) {
-        ref
-            .read(appSettingsProvider.notifier)
-            .setPaneWidth(PaneId.forgeList, next.navigatorWidth)
-            .ignore();
-      },
+      preferences: workspace.preferences,
+      onPreferencesChanged: workspace.onChanged,
+      workspaceOptionsEnabled: true,
     );
   }
 }

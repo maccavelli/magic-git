@@ -34,11 +34,15 @@ AdaptiveWorkspaceArrangement resolveAdaptiveWorkspaceArrangement({
   required bool taskDockFocused,
 }) {
   final sizeClass = WorkspaceSizeClass.fromWidth(width);
+  final inspectorRequested =
+      hasInspector &&
+      !preferences.inspectorCollapsed &&
+      (inspectorVisible || preferences.inspectorPinned);
   return switch (sizeClass) {
     WorkspaceSizeClass.compact => AdaptiveWorkspaceArrangement(
       sizeClass: sizeClass,
       navigatorAndCanvas: false,
-      inspectorOverlay: hasInspector && inspectorVisible,
+      inspectorOverlay: inspectorRequested,
       pinnedInspector: false,
       taskDock: taskDockFocused
           ? WorkspaceTaskDockPresentation.compact
@@ -47,7 +51,7 @@ AdaptiveWorkspaceArrangement resolveAdaptiveWorkspaceArrangement({
     WorkspaceSizeClass.standard => AdaptiveWorkspaceArrangement(
       sizeClass: sizeClass,
       navigatorAndCanvas: true,
-      inspectorOverlay: hasInspector && inspectorVisible,
+      inspectorOverlay: inspectorRequested,
       pinnedInspector: false,
       taskDock: preferences.taskDockCollapsed
           ? WorkspaceTaskDockPresentation.hidden
@@ -56,10 +60,8 @@ AdaptiveWorkspaceArrangement resolveAdaptiveWorkspaceArrangement({
     WorkspaceSizeClass.wide => AdaptiveWorkspaceArrangement(
       sizeClass: sizeClass,
       navigatorAndCanvas: true,
-      inspectorOverlay:
-          hasInspector && inspectorVisible && !preferences.inspectorPinned,
-      pinnedInspector:
-          hasInspector && inspectorVisible && preferences.inspectorPinned,
+      inspectorOverlay: inspectorRequested && !preferences.inspectorPinned,
+      pinnedInspector: inspectorRequested && preferences.inspectorPinned,
       taskDock: preferences.taskDockCollapsed
           ? WorkspaceTaskDockPresentation.hidden
           : WorkspaceTaskDockPresentation.full,
@@ -208,6 +210,7 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
       child: navigator,
     );
     if (!arrangement.navigatorAndCanvas) {
+      if (widget.preferences.navigatorCollapsed) return canvas;
       return widget.compactPage == CompactWorkspacePage.navigator
           ? navigatorRegion
           : canvas;

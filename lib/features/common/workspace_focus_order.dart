@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import 'repository_workspace_models.dart';
+import 'workspace_appearance.dart';
 
 /// Stable keyboard/VoiceOver order for every repository-centered screen.
 double workspacePaneFocusOrder(WorkspacePaneRole role) => switch (role) {
@@ -104,6 +105,9 @@ class _WorkspaceFocusRegionState extends State<WorkspaceFocusRegion> {
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final focusColor =
+        WorkspaceAppearanceScope.maybeOf(context)?.tokens.palette.focus ??
+        MacosTheme.of(context).primaryColor;
     return FocusTraversalOrder(
       order: NumericFocusOrder(workspacePaneFocusOrder(widget.role)),
       child: Semantics(
@@ -119,12 +123,7 @@ class _WorkspaceFocusRegionState extends State<WorkspaceFocusRegion> {
                 ? Duration.zero
                 : const Duration(milliseconds: 90),
             foregroundDecoration: BoxDecoration(
-              border: _focused
-                  ? Border.all(
-                      color: MacosTheme.of(context).primaryColor,
-                      width: 2,
-                    )
-                  : null,
+              border: _focused ? Border.all(color: focusColor, width: 2) : null,
             ),
             child: widget.child,
           ),

@@ -542,6 +542,50 @@ void main() {
       });
     });
   });
+
+  group('commitTemplate', () {
+    test('reads the configured path through the active executor', () async {
+      final executor = _fixed(
+        const SSHCommandResult(
+          exitCode: 0,
+          stdout: 'feat: subject\n\nTemplate body\n',
+          stderr: '',
+        ),
+      );
+
+      final template = await GitService(executor).commitTemplate(_repo);
+
+      expect(template, 'feat: subject\n\nTemplate body');
+      expect(executor.calls, hasLength(1));
+      expect(executor.calls.single.repoPath, _repo);
+      expect(executor.calls.single.gitArgs.take(2), ['sh', '-c']);
+      expect(
+        executor.calls.single.gitArgs.singleWhere(
+          (argument) => argument.contains('commit.template'),
+        ),
+        contains('cat -- "\$template"'),
+      );
+      expect(executor.calls.single.lane, ExecLane.read);
+    });
+
+    test('empty output means no configured template', () async {
+      expect(await GitService(_ok()).commitTemplate(_repo), isNull);
+    });
+
+    test('unreadable configured template is reported', () async {
+      final service = GitService(
+        _fixed(
+          const SSHCommandResult(
+            exitCode: 66,
+            stdout: '',
+            stderr: 'unreadable',
+          ),
+        ),
+      );
+
+      expect(() => service.commitTemplate(_repo), throwsA(isA<GitException>()));
+    });
+  });
 }
 
 String _reflogRec(String hashChar, String selector, String subject) {

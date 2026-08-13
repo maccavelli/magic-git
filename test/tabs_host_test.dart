@@ -17,7 +17,10 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/output/output_log.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/providers/window_manager_bridge.dart';
+import 'package:remote_magic_git/core/storage/saved_workspace_set.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/app_shell.dart';
+import 'package:remote_magic_git/features/tabs/tab_ui_providers.dart';
 import 'package:remote_magic_git/features/tabs/tabs_controller.dart';
 import 'package:remote_magic_git/features/tabs/tabs_host.dart';
 import 'package:riverpod/misc.dart' show Override;
@@ -35,6 +38,14 @@ class _MarkedConn extends ConnectionController {
   final String marker;
   @override
   ConnectionState build() => ConnectionState(host: marker);
+}
+
+class _Connected extends ConnectionController {
+  _Connected(this.initial);
+  final ConnectionState initial;
+
+  @override
+  ConnectionState build() => initial;
 }
 
 /// Each tab is its own root container with a disconnected session (so AppShell
@@ -71,7 +82,9 @@ Future<void> _sendMenu(WidgetTester tester, String method) async {
 // also schedules an untracked zero-duration Timer per build — drained by
 // [_teardownHost] before teardown).
 const _windowManager = MethodChannel('window_manager');
-const _macosWindowUtils = MethodChannel('macos_window_utils/window_manipulator');
+const _macosWindowUtils = MethodChannel(
+  'macos_window_utils/window_manipulator',
+);
 
 Future<void> _pumpHost(WidgetTester tester, TabsController c) async {
   final messenger = tester.binding.defaultBinaryMessenger;
@@ -81,9 +94,7 @@ Future<void> _pumpHost(WidgetTester tester, TabsController c) async {
   }
   // TabsHost now owns MacosApp and watches the bridge, so it needs a
   // ProviderScope ancestor (the app's root container).
-  await tester.pumpWidget(
-    ProviderScope(child: TabsHost(controller: c)),
-  );
+  await tester.pumpWidget(ProviderScope(child: TabsHost(controller: c)));
   await tester.pumpAndSettle();
 }
 
@@ -138,24 +149,90 @@ void main() {
   });
 
   testWidgets(
-    'the History bridge is wired to the tab controller after mount',
+    'a stable alias replaces the repository basename in the tab strip',
     (tester) async {
       final c = TabsController(containerFactory: _tabContainer);
       addTearDown(c.dispose);
+      c.ensureInitialTab();
+      final alpha = c.openOrFocus(
+        connectionId: 'a',
+        repoPath: '/repo-alpha',
+        savedKind: SavedRepositoryKind.ssh,
+        connect: (_) {},
+      );
+      c.openOrFocus(
+        connectionId: 'b',
+        repoPath: '/repo-beta',
+        savedKind: SavedRepositoryKind.ssh,
+        connect: (_) {},
+      );
+      await c.setAlias(alpha, 'API');
       await _pumpHost(tester, c);
 
-      // The bridge (built during MacosApp's first build) must have its
-      // resolvers wired to the controller — otherwise openHistory() gates out
-      // with "no session container" and no window ever launches.
-      final bridge = WindowManagerBridge.current;
-      expect(bridge, isNotNull);
-      expect(bridge!.activeTabId(), c.activeId,
-          reason: 'activeTabId resolver is wired');
-      expect(bridge.sessionContainerFor(c.activeId), same(c.active!.container),
-          reason: 'sessionContainerFor resolver is wired');
+      expect(find.text('API'), findsOneWidget);
+      expect(find.text('repo-alpha'), findsNothing);
       await _teardownHost(tester);
     },
   );
+
+  test(
+    'window title uses the tab alias without changing repository identity',
+    () async {
+      const repo = '/srv/repository';
+      final container = ProviderContainer(
+        retry: (_, _) => null,
+        overrides: [
+          connectionProvider.overrideWith(
+            () => _Connected(
+              const ConnectionState(
+                phase: ConnectionPhase.connected,
+                connectionId: 'saved',
+                repoPath: repo,
+                repoPaths: [repo],
+              ),
+            ),
+          ),
+          statusProvider(repo).overrideWith(
+            (ref) async => GitStatus(
+              branch: const GitBranchInfo(head: 'main'),
+              files: const [],
+            ),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+      container.read(tabAliasProvider.notifier).set('Backend');
+      await container.read(statusProvider(repo).future);
+
+      expect(container.read(windowTitleProvider), 'Backend (main) — Magic Git');
+      expect(container.read(connectionProvider).repoPath, repo);
+    },
+  );
+
+  testWidgets('the History bridge is wired to the tab controller after mount', (
+    tester,
+  ) async {
+    final c = TabsController(containerFactory: _tabContainer);
+    addTearDown(c.dispose);
+    await _pumpHost(tester, c);
+
+    // The bridge (built during MacosApp's first build) must have its
+    // resolvers wired to the controller — otherwise openHistory() gates out
+    // with "no session container" and no window ever launches.
+    final bridge = WindowManagerBridge.current;
+    expect(bridge, isNotNull);
+    expect(
+      bridge!.activeTabId(),
+      c.activeId,
+      reason: 'activeTabId resolver is wired',
+    );
+    expect(
+      bridge.sessionContainerFor(c.activeId),
+      same(c.active!.container),
+      reason: 'sessionContainerFor resolver is wired',
+    );
+    await _teardownHost(tester);
+  });
 
   testWidgets(
     'a sheet on the root navigator reads the active tab session, not root',
@@ -193,8 +270,11 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      expect(seenHost, 'TAB-MARKER',
-          reason: 'the sheet resolved the active tab container, not empty root');
+      expect(
+        seenHost,
+        'TAB-MARKER',
+        reason: 'the sheet resolved the active tab container, not empty root',
+      );
       await _teardownHost(tester);
     },
   );
@@ -205,7 +285,11 @@ void main() {
       final c = TabsController(containerFactory: _tabContainer);
       addTearDown(c.dispose);
       c.ensureInitialTab();
-      c.openOrFocus(connectionId: 'a', repoPath: '/repo-alpha', connect: (_) {});
+      c.openOrFocus(
+        connectionId: 'a',
+        repoPath: '/repo-alpha',
+        connect: (_) {},
+      );
       c.openOrFocus(connectionId: 'b', repoPath: '/repo-beta', connect: (_) {});
       await _pumpHost(tester, c);
 

@@ -14,6 +14,8 @@ class RepositoryContextSupplement {
   final String? baseLabel;
   final String? revisionLabel;
   final String? selectionLabel;
+  final String? commitPolicyBranch;
+  final String? commitPolicyLabel;
 
   const RepositoryContextSupplement({
     this.worktreeLabel,
@@ -23,6 +25,8 @@ class RepositoryContextSupplement {
     this.baseLabel,
     this.revisionLabel,
     this.selectionLabel,
+    this.commitPolicyBranch,
+    this.commitPolicyLabel,
   });
 
   RepositoryContextSupplement merge(RepositoryContextSupplement next) =>
@@ -34,6 +38,8 @@ class RepositoryContextSupplement {
         baseLabel: next.baseLabel ?? baseLabel,
         revisionLabel: next.revisionLabel ?? revisionLabel,
         selectionLabel: next.selectionLabel ?? selectionLabel,
+        commitPolicyBranch: next.commitPolicyBranch ?? commitPolicyBranch,
+        commitPolicyLabel: next.commitPolicyLabel ?? commitPolicyLabel,
       );
 
   bool contentEquals(RepositoryContextSupplement other) =>
@@ -43,7 +49,9 @@ class RepositoryContextSupplement {
       branchLabel == other.branchLabel &&
       baseLabel == other.baseLabel &&
       revisionLabel == other.revisionLabel &&
-      selectionLabel == other.selectionLabel;
+      selectionLabel == other.selectionLabel &&
+      commitPolicyBranch == other.commitPolicyBranch &&
+      commitPolicyLabel == other.commitPolicyLabel;
 }
 
 /// A cache address contains both stable repository identity and connection

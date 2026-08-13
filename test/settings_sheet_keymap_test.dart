@@ -11,9 +11,8 @@ import 'package:remote_magic_git/features/settings/settings_sheet.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// InlineActionButton wraps MacosTooltip (not Flutter's Tooltip).
-Finder _byMacosTooltip(String message) => find.byWidgetPredicate(
-  (w) => w is MacosTooltip && w.message == message,
-);
+Finder _byMacosTooltip(String message) =>
+    find.byWidgetPredicate((w) => w is MacosTooltip && w.message == message);
 
 void main() {
   testWidgets('Customize icon opens the Keyboard Mappings sheet', (
@@ -42,5 +41,28 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(KeyboardMappingsSheet), findsOneWidget);
+  });
+
+  testWidgets('workspace appearance controls are visible in Settings', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: SettingsSheet(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final appearance = find.text('Workspace appearance');
+    await tester.ensureVisible(appearance);
+    await tester.pumpAndSettle();
+    expect(appearance, findsOneWidget);
+    expect(find.text('Density'), findsOneWidget);
+    expect(find.text('High contrast'), findsOneWidget);
+    expect(find.textContaining('Reduce Motion'), findsOneWidget);
   });
 }

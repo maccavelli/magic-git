@@ -9,6 +9,8 @@ CommitComposerController _controller({bool gpg = false}) {
     repoPath: '/repo',
     generatePreview: () async => null,
     loadGpgSignConfigured: () async => gpg,
+    loadRecentSubjects: () async => const ['feat: loaded subject'],
+    loadTemplate: () async => 'chore: from template',
   );
   controller.updateStaged(count: 2, signature: 'a');
   return controller;
@@ -64,5 +66,87 @@ void main() {
     expect(find.text('Accept'), findsOneWidget);
     expect(find.text('Accept + Push'), findsOneWidget);
     expect(find.text('Clear'), findsOneWidget);
+  });
+
+  testWidgets('assistance stays opt-in and unknown policy is not passing', (
+    tester,
+  ) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    await _pump(tester, controller, CommitComposerPresentation.expanded);
+
+    expect(find.text('Load recent'), findsNothing);
+    await tester.tap(find.text('Assistance'));
+    await tester.pump();
+
+    expect(find.text('Load recent'), findsOneWidget);
+    expect(find.text('Load template'), findsOneWidget);
+    expect(find.textContaining('Not checked'), findsOneWidget);
+    expect(find.textContaining('Passing'), findsNothing);
+  });
+
+  testWidgets('loads recent/template explicitly and adds a co-author', (
+    tester,
+  ) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    await _pump(tester, controller, CommitComposerPresentation.expanded);
+    await tester.tap(find.text('Assistance'));
+    await tester.pump();
+
+    await tester.tap(find.text('Load recent'));
+    await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('recent-commit-subjects')),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.text('Load template'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Use template'));
+    await tester.pump();
+    expect(controller.message, 'chore: from template');
+
+    await tester.enterText(
+      find.byKey(const ValueKey('co-author-name')),
+      'Grace Hopper',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('co-author-email')),
+      'grace@example.com',
+    );
+    await tester.tap(find.text('Add co-author'));
+    await tester.pump();
+    expect(
+      find.textContaining('Grace Hopper <grace@example.com>'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('cached advisory is rendered without claiming pass status', (
+    tester,
+  ) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MacosApp(
+        home: SizedBox(
+          width: 800,
+          height: 420,
+          child: CommitComposer(
+            controller: controller,
+            presentation: CommitComposerPresentation.expanded,
+            branchLabel: 'feature/composer',
+            policyAdvisory: '#42 · checks success',
+            onAccept: (_) async {},
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Assistance'));
+    await tester.pump();
+
+    expect(find.textContaining('#42 · checks success'), findsOneWidget);
   });
 }

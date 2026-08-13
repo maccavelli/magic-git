@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -17,6 +19,7 @@ class CommitComposer extends StatefulWidget {
   final VoidCallback? onExpand;
   final VoidCallback? onCollapse;
   final bool focused;
+  final String? policyAdvisory;
 
   const CommitComposer({
     super.key,
@@ -27,6 +30,7 @@ class CommitComposer extends StatefulWidget {
     this.onExpand,
     this.onCollapse,
     this.focused = false,
+    this.policyAdvisory,
   });
 
   @override
@@ -37,6 +41,8 @@ class _CommitComposerState extends State<CommitComposer> {
   static const int _messageColumns = 80;
   final _message = TextEditingController();
   final _focus = FocusNode(debugLabel: 'commit-composer-message');
+  final _coAuthorName = TextEditingController();
+  final _coAuthorEmail = TextEditingController();
   bool _syncing = false;
 
   @override
@@ -92,6 +98,8 @@ class _CommitComposerState extends State<CommitComposer> {
     widget.controller.removeListener(_syncFromController);
     _message.dispose();
     _focus.dispose();
+    _coAuthorName.dispose();
+    _coAuthorEmail.dispose();
     super.dispose();
   }
 
@@ -174,6 +182,15 @@ class _CommitComposerState extends State<CommitComposer> {
                     onPressed: () => controller.ensurePreview(regenerate: true),
                   ),
                 InlineActionButton(
+                  label: controller.assistanceExpanded
+                      ? 'Hide Assistance'
+                      : 'Assistance',
+                  icon: CupertinoIcons.lightbulb,
+                  onPressed: controller.committing
+                      ? null
+                      : controller.toggleAssistance,
+                ),
+                InlineActionButton(
                   label: 'Clear',
                   icon: CupertinoIcons.clear,
                   onPressed: controller.committing
@@ -204,6 +221,10 @@ class _CommitComposerState extends State<CommitComposer> {
                   ),
                 ),
               ),
+            if (controller.assistanceExpanded) ...[
+              const SizedBox(height: 8),
+              _assistancePanel(context, controller),
+            ],
             const SizedBox(height: 8),
             if (controller.loadingPreview && controller.message.isEmpty)
               const Expanded(child: Center(child: ProgressCircle()))
@@ -259,6 +280,179 @@ class _CommitComposerState extends State<CommitComposer> {
         ),
       ),
     );
+  }
+
+  Widget _assistancePanel(
+    BuildContext context,
+    CommitComposerController controller,
+  ) {
+    final typography = MacosTheme.of(context).typography;
+    final template = controller.template;
+    final templateAvailable = template != null && template.trim().isNotEmpty;
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: MacosColors.controlBackgroundColor,
+        border: Border.all(color: MacosColors.separatorColor),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text('Commit assistance', style: typography.caption1),
+              const Spacer(),
+              Text(
+                'Request/check advisory: '
+                '${widget.policyAdvisory ?? 'Not checked'}',
+                key: const ValueKey('commit-policy-advisory'),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              if (controller.recentSubjects.isNotEmpty)
+                Expanded(
+                  child: MacosPopupButton<String>(
+                    key: const ValueKey('recent-commit-subjects'),
+                    hint: const Text('Use a recent subject…'),
+                    items: [
+                      for (final subject in controller.recentSubjects)
+                        MacosPopupMenuItem(
+                          value: subject,
+                          child: Text(subject),
+                        ),
+                    ],
+                    onChanged: controller.committing
+                        ? null
+                        : (subject) {
+                            if (subject != null) {
+                              controller.useRecentSubject(subject);
+                            }
+                          },
+                  ),
+                )
+              else
+                const Expanded(
+                  child: Text(
+                    'No landed History subjects cached.',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              const SizedBox(width: 6),
+              AppPushButton(
+                controlSize: ControlSize.regular,
+                secondary: true,
+                onPressed:
+                    controller.committing || controller.loadingRecentSubjects
+                    ? null
+                    : () => unawaited(controller.loadRecentSubjects()),
+                child: Text(
+                  controller.loadingRecentSubjects
+                      ? 'Loading recent…'
+                      : 'Load recent',
+                ),
+              ),
+              const SizedBox(width: 6),
+              AppPushButton(
+                controlSize: ControlSize.regular,
+                secondary: true,
+                onPressed: controller.committing || controller.loadingTemplate
+                    ? null
+                    : !controller.templateLoaded
+                    ? () => unawaited(controller.loadTemplate())
+                    : templateAvailable && controller.message.trim().isEmpty
+                    ? controller.useTemplate
+                    : null,
+                child: Text(
+                  controller.loadingTemplate
+                      ? 'Loading template…'
+                      : !controller.templateLoaded
+                      ? 'Load template'
+                      : templateAvailable
+                      ? 'Use template'
+                      : 'No template',
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: MacosTextField(
+                  key: const ValueKey('co-author-name'),
+                  controller: _coAuthorName,
+                  placeholder: 'Co-author name',
+                  placeholderStyle: kAppPlaceholderStyle,
+                  decoration: kAppTextFieldDecoration,
+                  focusedDecoration: kAppTextFieldFocusedDecoration,
+                  enabled: !controller.committing,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: MacosTextField(
+                  key: const ValueKey('co-author-email'),
+                  controller: _coAuthorEmail,
+                  placeholder: 'email@example.com',
+                  placeholderStyle: kAppPlaceholderStyle,
+                  decoration: kAppTextFieldDecoration,
+                  focusedDecoration: kAppTextFieldFocusedDecoration,
+                  enabled: !controller.committing,
+                  onSubmitted: (_) => _addCoAuthor(controller),
+                ),
+              ),
+              const SizedBox(width: 6),
+              AppPushButton(
+                controlSize: ControlSize.regular,
+                secondary: true,
+                onPressed: controller.committing
+                    ? null
+                    : () => _addCoAuthor(controller),
+                child: const Text('Add co-author'),
+              ),
+            ],
+          ),
+          if (controller.coAuthors.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final author in controller.coAuthors) ...[
+                    InlineActionButton(
+                      label: '${author.name} <${author.email}>',
+                      icon: CupertinoIcons.xmark_circle,
+                      onPressed: controller.committing
+                          ? null
+                          : () => controller.removeCoAuthor(author),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _addCoAuthor(CommitComposerController controller) {
+    if (!controller.addCoAuthor(_coAuthorName.text, _coAuthorEmail.text)) {
+      return;
+    }
+    _coAuthorName.clear();
+    _coAuthorEmail.clear();
   }
 
   Widget _statusText(

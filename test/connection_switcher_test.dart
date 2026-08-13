@@ -14,6 +14,7 @@ import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/switcher/connection_switcher.dart';
+import 'package:remote_magic_git/features/tabs/saved_workspaces_sheet.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 // ToolIconButton wraps MacosTooltip (not Flutter's standard Tooltip), so
@@ -77,9 +78,7 @@ Future<void> _pump(
 }
 
 void main() {
-  testWidgets('shows the empty state with all start options', (
-    tester,
-  ) async {
+  testWidgets('shows the empty state with all start options', (tester) async {
     await _pump(tester);
     expect(find.text('No saved connections'), findsOneWidget);
     expect(find.text('Add local repository'), findsOneWidget);
@@ -87,6 +86,16 @@ void main() {
     expect(find.text('Clone repository'), findsOneWidget);
     expect(find.text('Create repository'), findsOneWidget);
     expect(find.text('Local Repositories'), findsNothing);
+  });
+
+  testWidgets('Saved workspaces opens the management sheet', (tester) async {
+    await _pump(tester);
+
+    await tester.tap(_byMacosTooltip('Saved workspaces'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(SavedWorkspacesSheet), findsOneWidget);
+    expect(find.text('No saved workspaces yet.'), findsOneWidget);
   });
 
   testWidgets(
@@ -276,14 +285,20 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('alpha'), findsOneWidget);
       expect(find.text('beta'), findsOneWidget);
-      expect(recorder.connected, isEmpty,
-          reason: 'expanding a host must not initiate a connection');
+      expect(
+        recorder.connected,
+        isEmpty,
+        reason: 'expanding a host must not initiate a connection',
+      );
 
       await tester.tap(find.text('beta'));
       await tester.pumpAndSettle();
       expect(recorder.connected, [('c1', '/srv/beta')]);
-      expect(find.byType(ConnectionsPanel), findsNothing,
-          reason: 'connecting closes the panel');
+      expect(
+        find.byType(ConnectionsPanel),
+        findsNothing,
+        reason: 'connecting closes the panel',
+      );
     },
   );
 
@@ -359,50 +374,49 @@ void main() {
     expect(fake.disconnectCalled, isTrue);
   });
 
-  testWidgets(
-    'deleting active sole local repo disconnects and pops sheet',
-    (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      final fake = _FakeConnectionController(
-        const ConnectionState(
-          phase: ConnectionPhase.connected,
-          backend: ConnectionBackend.local,
-          connectionId: 'l1',
-          repoPath: '/path',
-        ),
-      );
-      await tester.pumpWidget(
-        ProviderScope(
-          overrides: [
-            savedLocalReposProvider.overrideWith(
-              (ref) async => const [
-                SavedLocalRepo(id: 'l1', label: 'Sole Repo', repoPath: '/path'),
-              ],
-            ),
-            savedConnectionsProvider.overrideWith((ref) async => const []),
-            connectionProvider.overrideWith(() => fake),
-          ],
-          child: const MacosApp(
-            debugShowCheckedModeBanner: false,
-            home: ConnectionsPanel(),
+  testWidgets('deleting active sole local repo disconnects and pops sheet', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final fake = _FakeConnectionController(
+      const ConnectionState(
+        phase: ConnectionPhase.connected,
+        backend: ConnectionBackend.local,
+        connectionId: 'l1',
+        repoPath: '/path',
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          savedLocalReposProvider.overrideWith(
+            (ref) async => const [
+              SavedLocalRepo(id: 'l1', label: 'Sole Repo', repoPath: '/path'),
+            ],
           ),
+          savedConnectionsProvider.overrideWith((ref) async => const []),
+          connectionProvider.overrideWith(() => fake),
+        ],
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: ConnectionsPanel(),
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(find.text('Sole Repo'), findsOneWidget);
-      // Find trash button for local repo tile
-      final trash = _byMacosTooltip('Remove repository');
-      expect(trash, findsOneWidget);
-      await tester.tap(trash);
-      await tester.pumpAndSettle();
+    expect(find.text('Sole Repo'), findsOneWidget);
+    // Find trash button for local repo tile
+    final trash = _byMacosTooltip('Remove repository');
+    expect(trash, findsOneWidget);
+    await tester.tap(trash);
+    await tester.pumpAndSettle();
 
-      // Confirm dialog appears
-      expect(find.text('Remove local repository'), findsOneWidget);
-      await tester.tap(find.text('Remove'));
-      await tester.pumpAndSettle();
+    // Confirm dialog appears
+    expect(find.text('Remove local repository'), findsOneWidget);
+    await tester.tap(find.text('Remove'));
+    await tester.pumpAndSettle();
 
-      expect(fake.disconnectCalled, isTrue);
-    },
-  );
+    expect(fake.disconnectCalled, isTrue);
+  });
 }

@@ -2199,6 +2199,30 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     return v == 'true' || v == '1' || v == 'yes' || v == 'on';
   }
 
+  /// Resolves and reads `commit.template` on the active executor's host.
+  /// Relative paths remain relative to the repository command's working
+  /// directory; SSH repositories never consult this Mac's filesystem.
+  Future<String?> commitTemplate(String repoPath) async {
+    const script =
+        'template=\$(git config --path --get commit.template 2>/dev/null); '
+        'rc=\$?; [ \$rc -eq 1 ] && exit 0; [ \$rc -eq 0 ] || exit \$rc; '
+        '[ -n "\$template" ] || exit 0; '
+        'test -r "\$template" || exit 66; cat -- "\$template"';
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: ['sh', '-c', script],
+      retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
+    );
+    if (!result.isSuccess) {
+      throw GitException('reading commit template failed', result);
+    }
+    final template = result.stdout.trim();
+    return template.isEmpty ? null : template;
+  }
+
   static String _fsmonitorScript({required bool enabled}) {
     if (!enabled) return 'git config core.fsmonitor false';
     // `core.fsmonitor=true` is only honored where git's fsmonitor daemon can

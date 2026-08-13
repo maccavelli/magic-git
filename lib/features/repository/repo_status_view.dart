@@ -1330,6 +1330,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             ),
           );
     final branch = status?.branch;
+    final commitPolicyAdvisory = supplement?.commitPolicyBranch == branch?.head
+        ? supplement?.commitPolicyLabel
+        : null;
     final pathSegments = repoPath.split('/').where((part) => part.isNotEmpty);
     final snapshot = RepositoryContextSnapshot(
       repositoryPath: repoPath,
@@ -1465,7 +1468,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                 _pendingBanner(context, pending),
               statusArea,
               if (status != null && !status.isClean)
-                _commitBar(context, status, composerController),
+                _commitBar(
+                  context,
+                  status,
+                  composerController,
+                  policyAdvisory: commitPolicyAdvisory,
+                ),
               if (outputVisible) OutputView(maxHeight: constraints.maxHeight),
             ],
           );
@@ -1526,6 +1534,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                     controller: composerController,
                     presentation: CommitComposerPresentation.expanded,
                     branchLabel: status.branch.head ?? 'Detached HEAD',
+                    policyAdvisory: commitPolicyAdvisory,
                     onAccept: (push) =>
                         _acceptCommitComposer(composerController, push),
                     onCollapse: () => setState(() => _composerExpanded = false),
@@ -1535,6 +1544,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             taskDockFocused: _composerExpanded,
             preferences: workspacePreferences,
             onPreferencesChanged: saveWorkspacePreferences,
+            workspaceOptionsEnabled: true,
           );
         },
       ),
@@ -1605,8 +1615,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   Widget _commitBar(
     BuildContext context,
     GitStatus status,
-    CommitComposerController composerController,
-  ) {
+    CommitComposerController composerController, {
+    required String? policyAdvisory,
+  }) {
     final stagedCount = status.staged.length;
     // "Active" (accent-colored) while there's something left to stage; once
     // everything is staged it reverts to the same secondary look it always had.
@@ -1628,6 +1639,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               controller: composerController,
               presentation: CommitComposerPresentation.collapsed,
               branchLabel: status.branch.head ?? 'Detached HEAD',
+              policyAdvisory: policyAdvisory,
               onAccept: (push) =>
                   _acceptCommitComposer(composerController, push),
               onExpand: _expandCommitComposer,
@@ -1689,6 +1701,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       maxExtent: RepositoryWorkspacePrefs.maxNavigatorWidth,
       trailingFloor: 320,
       defaultExtent: RepositoryWorkspacePrefs.defaultNavigatorWidth,
+      collapsed: preferences.navigatorCollapsed,
       semanticLabel: 'Resize repository change navigator',
       onCommit: (width) => onPreferencesChanged?.call(
         preferences.copyWith(navigatorWidth: width),

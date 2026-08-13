@@ -27,6 +27,7 @@ import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../common/workspace_focus.dart';
 import '../common/workspace_navigation.dart';
+import '../common/workspace_preferences_binding.dart';
 import '../history/history_view.dart';
 import '../repository/repo_status_view.dart';
 import '../stash/stash_view.dart';
@@ -612,6 +613,12 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
         ],
       );
     }
+    final workspace = watchWorkspacePreferences(
+      context: context,
+      ref: ref,
+      repositoryPath: repoPath,
+      fallback: const RepositoryWorkspacePrefs(navigatorWidth: 520),
+    );
     final connection = ref.watch(connectionProvider);
     final worktrees = worktreesAsync.value ?? const <GitWorktree>[];
     final main = worktrees.where((item) => item.isMain).firstOrNull;
@@ -668,7 +675,9 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       canvas: selectedWorktree == null
           ? _overviewPlaceholder(context, worktrees)
           : _worktreeDetail(context, selectedWorktree),
-      preferences: const RepositoryWorkspacePrefs(navigatorWidth: 520),
+      preferences: workspace.preferences,
+      onPreferencesChanged: workspace.onChanged,
+      workspaceOptionsEnabled: true,
     );
   }
 

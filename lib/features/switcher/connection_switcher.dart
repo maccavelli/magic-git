@@ -7,6 +7,7 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/storage/saved_local_repo.dart';
+import '../../core/storage/saved_workspace_set.dart';
 import '../common/actions.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
@@ -18,6 +19,7 @@ import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../connection/connection_form.dart';
 import '../connection/local_repo_form.dart';
+import '../tabs/saved_workspaces_sheet.dart';
 import '../tabs/tabs_controller.dart';
 import '../workspace/clone_sheet.dart';
 import '../workspace/create_repo_sheet.dart';
@@ -201,9 +203,13 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     final connection = ref.watch(connectionProvider);
     final typography = MacosTheme.of(context).typography;
     final showAdhoc =
-        connection.isConnected && !connection.isLocal && connection.connectionId == null;
+        connection.isConnected &&
+        !connection.isLocal &&
+        connection.connectionId == null;
     final showAdhocLocal =
-        connection.isConnected && connection.isLocal && connection.connectionId == null;
+        connection.isConnected &&
+        connection.isLocal &&
+        connection.connectionId == null;
     final empty =
         saved.isEmpty && savedLocal.isEmpty && !showAdhoc && !showAdhocLocal;
 
@@ -222,6 +228,18 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                 children: [
                   Text('Connections', style: typography.title2),
                   const Spacer(),
+                  ToolIconButton(
+                    icon: CupertinoIcons.rectangle_stack,
+                    tooltip: 'Saved workspaces',
+                    size: 16,
+                    onPressed: () => showMacosSheet<void>(
+                      context: context,
+                      builder: (_) => const EscapeDismissible(
+                        child: SavedWorkspacesSheet(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
                   ToolIconButton(
                     icon: CupertinoIcons.add,
                     tooltip: 'Add connection',
@@ -637,11 +655,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
       padding: const EdgeInsets.fromLTRB(16, 5, 10, 5),
       child: Row(
         children: [
-          const MacosIcon(
-            CupertinoIcons.folder_fill,
-            size: 14,
-            color: _accent,
-          ),
+          const MacosIcon(CupertinoIcons.folder_fill, size: 14, color: _accent),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -768,6 +782,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     tabs.openOrFocus(
       connectionId: conn.id,
       repoPath: repo,
+      savedKind: SavedRepositoryKind.ssh,
       connect: (container) => container
           .read(connectionProvider.notifier)
           .connectToSaved(conn, repoPath: repo),
@@ -886,8 +901,9 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
   ) async {
     final result = await showMacosSheet<(String, String, bool)?>(
       context: context,
-      builder: (_) =>
-          EscapeDismissible(child: EditRemoteRepoSheet(conn: conn, repo: repo)),
+      builder: (_) => EscapeDismissible(
+        child: EditRemoteRepoSheet(conn: conn, repo: repo),
+      ),
     );
     if (result == null || !context.mounted) return;
     final (label, newPath, fsmonitor) = result;
@@ -940,7 +956,9 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
         !pathChanged &&
         ref.read(connectionProvider).connectionId == conn.id) {
       try {
-        await ref.read(gitServiceProvider).setFsmonitor(repo, enabled: fsmonitor);
+        await ref
+            .read(gitServiceProvider)
+            .setFsmonitor(repo, enabled: fsmonitor);
       } catch (e) {
         ref
             .read(outputLogProvider.notifier)
@@ -1104,6 +1122,8 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     tabs.openOrFocus(
       connectionId: repo.id,
       repoPath: path,
+      savedKind: SavedRepositoryKind.local,
+      savedReferencePath: repo.repoPath,
       connect: (container) {
         connected = true;
         container

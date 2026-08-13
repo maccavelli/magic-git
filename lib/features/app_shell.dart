@@ -12,6 +12,7 @@ import '../core/providers/app_providers.dart';
 import '../core/providers/window_manager_bridge.dart';
 import '../core/settings/keymap.dart';
 import '../core/ssh/host_key_prompt.dart';
+import '../core/storage/saved_workspace_set.dart';
 import '../core/undo/undo_controller.dart';
 import 'branches/branches_view.dart';
 import 'common/actions.dart';
@@ -44,6 +45,8 @@ import 'settings/tool_health_banner.dart';
 import 'stash/stash_view.dart';
 import 'switcher/connection_switcher.dart';
 import 'switcher/current_repo_indicator.dart';
+import 'tabs/saved_workspace_actions.dart';
+import 'tabs/saved_workspaces_sheet.dart';
 import 'tabs/tab_ui_providers.dart';
 import 'tabs/tabs_controller.dart';
 import 'viewer/remote_edit_service.dart';
@@ -350,6 +353,31 @@ class _AppShellState extends ConsumerState<AppShell> {
     );
   }
 
+  void _openSavedWorkspaces(BuildContext context) {
+    showMacosSheet<void>(
+      context: context,
+      builder: (_) => const EscapeDismissible(child: SavedWorkspacesSheet()),
+    );
+  }
+
+  Future<void> _openWorkspaceSet(
+    BuildContext context,
+    SavedWorkspaceSet set,
+  ) async {
+    final report = await openSavedWorkspaceSet(context, ref, set);
+    if (!context.mounted || !report.hasFailures) return;
+    final details = [
+      for (final failure in report.failures)
+        '${failure.repository.tabAlias ?? failure.repository.repoPath}: '
+            '${failure.reason}',
+    ];
+    await showErrorDialog(
+      context,
+      '${report.openedCount + report.focusedCount} repositories opened.\n\n'
+      '${details.join('\n')}',
+    );
+  }
+
   /// Palette entries — the sheets adapt to the active workspace (connected
   /// mode) and own their Escape handling, so no EscapeDismissible wrapper.
   void _openCloneRepository(BuildContext context) {
@@ -395,6 +423,8 @@ class _AppShellState extends ConsumerState<AppShell> {
           onOpenSettings: () => _openSettings(context),
           onOpenShortcuts: () => _openShortcuts(context),
           onOpenConnections: () => _openConnections(context),
+          onOpenSavedWorkspaces: () => _openSavedWorkspaces(context),
+          onOpenWorkspaceSet: (set) => _openWorkspaceSet(context, set),
           onCloneRepository: () => _openCloneRepository(context),
           onCreateRepository: () => _openCreateRepository(context),
           onOpenHistoryWindow: () => WindowManagerBridge.current?.openHistory(),

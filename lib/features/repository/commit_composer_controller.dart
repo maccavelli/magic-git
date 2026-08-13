@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers/app_providers.dart';
+import '../common/commit_assistance.dart';
 
 @immutable
 class CommitComposerKey {
@@ -38,22 +39,31 @@ class CommitComposerController extends ChangeNotifier {
     required String repoPath,
     required Future<String?> Function() generatePreview,
     required Future<bool> Function() loadGpgSignConfigured,
+    Future<List<String>> Function()? loadRecentSubjects,
+    Future<String?> Function()? loadTemplate,
   }) : this._(
          repoPath: repoPath,
          generatePreview: generatePreview,
          loadGpgSignConfigured: loadGpgSignConfigured,
+         loadRecentSubjects: loadRecentSubjects ?? (() async => const []),
+         loadTemplate: loadTemplate ?? (() async => null),
        );
 
   CommitComposerController._({
     required this.repoPath,
     required this._generatePreview,
     required this._loadGpgSignConfigured,
+    required this._loadRecentSubjects,
+    required this._loadTemplate,
   });
 
   final String repoPath;
   final Future<String?> Function() _generatePreview;
   final Future<bool> Function() _loadGpgSignConfigured;
+  final Future<List<String>> Function() _loadRecentSubjects;
+  final Future<String?> Function() _loadTemplate;
   final Set<String> _previewedSignatures = {};
+  bool _disposed = false;
 
   String message = '';
   String stagedSignature = '';
@@ -66,10 +76,27 @@ class CommitComposerController extends ChangeNotifier {
   bool committing = false;
   bool gpgDisclosureLoaded = false;
   bool gpgSignConfigured = false;
+  bool assistanceExpanded = false;
+  bool loadingRecentSubjects = false;
+  bool loadingTemplate = false;
+  bool templateLoaded = false;
+  String? template;
+  List<String> recentSubjects = const [];
+  List<CommitCoAuthor> coAuthors = const [];
   String? error;
 
   bool get canAccept =>
       stagedCount > 0 && !committing && message.trim().isNotEmpty;
+
+  void _notifyListeners() {
+    if (!_disposed) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
 
   void updateStaged({required int count, required String signature}) {
     if (stagedCount == count && stagedSignature == signature) return;
@@ -114,11 +141,98 @@ class CommitComposerController extends ChangeNotifier {
 
   void clearDraft() {
     message = '';
+    coAuthors = const [];
     generated = false;
     editable = true;
     previewStale = false;
     error = null;
     _previewedSignatures.clear();
+    notifyListeners();
+  }
+
+  void toggleAssistance() {
+    assistanceExpanded = !assistanceExpanded;
+    notifyListeners();
+  }
+
+  void publishLandedSubjects(List<String> subjects) {
+    final normalized = <String>[];
+    final seen = <String>{};
+    for (final subject in subjects) {
+      final value = subject.trim();
+      if (value.isNotEmpty && seen.add(value)) normalized.add(value);
+      if (normalized.length == 10) break;
+    }
+    if (listEquals(recentSubjects, normalized)) return;
+    recentSubjects = List.unmodifiable(normalized);
+    _notifyListeners();
+  }
+
+  Future<void> loadRecentSubjects() async {
+    if (loadingRecentSubjects) return;
+    loadingRecentSubjects = true;
+    error = null;
+    _notifyListeners();
+    try {
+      final loaded = await _loadRecentSubjects();
+      publishLandedSubjects(loaded);
+    } catch (caught) {
+      error = 'Could not load recent commit subjects.\n$caught';
+    } finally {
+      loadingRecentSubjects = false;
+      _notifyListeners();
+    }
+  }
+
+  Future<void> loadTemplate() async {
+    if (loadingTemplate || templateLoaded) return;
+    loadingTemplate = true;
+    error = null;
+    _notifyListeners();
+    try {
+      template = await _loadTemplate();
+      templateLoaded = true;
+    } catch (caught) {
+      error = 'Could not load the configured commit template.\n$caught';
+    } finally {
+      loadingTemplate = false;
+      _notifyListeners();
+    }
+  }
+
+  void useTemplate() {
+    final value = template;
+    if (value == null || value.trim().isEmpty || message.trim().isNotEmpty) {
+      return;
+    }
+    updateMessage(value.trim());
+  }
+
+  void useRecentSubject(String subject) => updateMessage(subject.trim());
+
+  bool addCoAuthor(String name, String email) {
+    final author = CommitCoAuthor.validated(name, email);
+    if (author == null) {
+      error = 'Enter a valid co-author name and email address.';
+      notifyListeners();
+      return false;
+    }
+    if (coAuthors.any((item) => item.email == author.email)) {
+      error = null;
+      _notifyListeners();
+      return true;
+    }
+    coAuthors = [...coAuthors, author];
+    error = null;
+    notifyListeners();
+    return true;
+  }
+
+  void removeCoAuthor(CommitCoAuthor author) {
+    coAuthors = [
+      for (final item in coAuthors)
+        if (item != author) item,
+    ];
     notifyListeners();
   }
 
@@ -178,15 +292,15 @@ class CommitComposerController extends ChangeNotifier {
         duplicateIgnored: true,
       );
     }
-    final trimmed = message.trim();
-    if (trimmed.isEmpty || stagedCount == 0) {
+    final composed = composeCommitMessage(message, coAuthors);
+    if (composed.isEmpty || stagedCount == 0) {
       return const CommitComposerOutcome(localCommitted: false);
     }
     committing = true;
     error = null;
     notifyListeners();
     try {
-      final committed = await commit(trimmed);
+      final committed = await commit(composed);
       if (!committed) {
         return const CommitComposerOutcome(localCommitted: false);
       }
@@ -206,10 +320,21 @@ class CommitComposerController extends ChangeNotifier {
 final commitComposerControllerProvider =
     Provider.family<CommitComposerController, CommitComposerKey>((ref, key) {
       final git = ref.watch(gitServiceProvider);
+      final assistanceKey = CommitAssistanceKey(key.repoPath, key.sessionEpoch);
       final controller = CommitComposerController(
         repoPath: key.repoPath,
         generatePreview: () => git.generateCommitMessage(key.repoPath),
         loadGpgSignConfigured: () => git.commitGpgSignEnabled(key.repoPath),
+        loadRecentSubjects: () async => [
+          for (final commit in await git.log(key.repoPath, maxCount: 10))
+            commit.subject,
+        ],
+        loadTemplate: () => git.commitTemplate(key.repoPath),
+      );
+      ref.listen<List<String>>(
+        landedCommitSubjectsProvider(assistanceKey),
+        (_, next) => controller.publishLandedSubjects(next),
+        fireImmediately: true,
       );
       ref.onDispose(controller.dispose);
       return controller;

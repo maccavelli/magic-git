@@ -61,6 +61,51 @@ void main() {
     expect(keys, isNot(contains('commitMessage')));
   });
 
+  test('built-in presets change only pane arrangement state', () {
+    const original = RepositoryWorkspacePrefs(
+      navigatorMode: RepositoryNavigatorMode.files,
+      diffLayout: RepositoryDiffLayout.split,
+      ignoreWhitespace: true,
+      diffContextLines: 12,
+      grouping: RepositoryChangeGrouping.directory,
+      showToolbarLabels: true,
+      filesPinned: true,
+    );
+
+    for (final preset in WorkspacePreset.values) {
+      final applied = applyWorkspacePreset(original, preset);
+      expect(applied.preset, preset);
+      expect(applied.navigatorMode, original.navigatorMode);
+      expect(applied.diffLayout, original.diffLayout);
+      expect(applied.ignoreWhitespace, original.ignoreWhitespace);
+      expect(applied.diffContextLines, original.diffContextLines);
+      expect(applied.grouping, original.grouping);
+      expect(applied.showToolbarLabels, original.showToolbarLabels);
+      expect(applied.filesPinned, original.filesPinned);
+    }
+  });
+
+  test('preset arrangements have deterministic pane visibility', () {
+    const original = RepositoryWorkspacePrefs();
+    final review = applyWorkspacePreset(original, WorkspacePreset.review);
+    final commit = applyWorkspacePreset(original, WorkspacePreset.commit);
+    final investigate = applyWorkspacePreset(
+      original,
+      WorkspacePreset.investigate,
+    );
+    final minimal = applyWorkspacePreset(original, WorkspacePreset.minimal);
+
+    expect(review.taskDockCollapsed, isTrue);
+    expect(review.inspectorPinned, isFalse);
+    expect(commit.taskDockCollapsed, isFalse);
+    expect(commit.inspectorCollapsed, isTrue);
+    expect(investigate.inspectorPinned, isTrue);
+    expect(investigate.inspectorCollapsed, isFalse);
+    expect(minimal.navigatorCollapsed, isTrue);
+    expect(minimal.inspectorCollapsed, isTrue);
+    expect(minimal.taskDockCollapsed, isTrue);
+  });
+
   test('same path and common dir on different hosts remain isolated', () async {
     final hostA = RepositoryUiIdentity.ssh(
       connectionId: 'host-a',

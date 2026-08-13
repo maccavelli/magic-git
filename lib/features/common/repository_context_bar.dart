@@ -2,12 +2,17 @@ import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/widgets.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../../core/settings/app_settings.dart';
 import 'activity_center.dart';
 import 'buttons.dart';
 import 'repository_context.dart';
 import 'repository_workspace_models.dart';
+import 'repository_workspace_scaffold.dart';
+import 'tappable.dart';
 import 'tool_icon_button.dart';
+import 'workspace_appearance.dart';
 import 'workspace_focus_order.dart';
+import 'workspace_view_options.dart';
 
 class RepositoryContextBar extends StatelessWidget {
   final RepositoryContextSnapshot snapshot;
@@ -33,6 +38,12 @@ class RepositoryContextBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
+        final appearance = WorkspaceAppearanceScope.maybeOf(context);
+        final preferencesScope = WorkspacePreferencesScope.maybeOf(context);
+        final preferences = preferencesScope?.preferences;
+        final showWorkspaceOptions =
+            preferencesScope?.optionsEnabled == true &&
+            preferencesScope?.onChanged != null;
         final compact =
             WorkspaceSizeClass.fromWidth(constraints.maxWidth) ==
             WorkspaceSizeClass.compact;
@@ -40,11 +51,19 @@ class RepositoryContextBar extends StatelessWidget {
           container: true,
           label: 'Repository context',
           child: Container(
-            height: compact ? 46 : 52,
+            height: appearance == null
+                ? (compact ? 46 : 52)
+                : appearance.density == WorkspaceDensity.compact
+                ? (compact ? 40 : 46)
+                : (compact ? 46 : 52),
             padding: EdgeInsets.symmetric(horizontal: compact ? 8 : 12),
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               border: Border(
-                bottom: BorderSide(color: MacosColors.separatorColor),
+                bottom: BorderSide(
+                  color:
+                      appearance?.tokens.palette.border ??
+                      MacosColors.separatorColor,
+                ),
               ),
             ),
             child: Row(
@@ -57,19 +76,25 @@ class RepositoryContextBar extends StatelessWidget {
                   ),
                   const SizedBox(width: 2),
                 ],
-                ToolIconButton(
+                _SecondaryActionButton(
                   icon: CupertinoIcons.chevron_back,
+                  label: 'Back',
                   tooltip: onBack == null
                       ? 'Back (no earlier location)'
                       : 'Back',
                   onPressed: onBack,
+                  showLabel:
+                      !compact && (preferences?.showToolbarLabels ?? false),
                 ),
-                ToolIconButton(
+                _SecondaryActionButton(
                   icon: CupertinoIcons.chevron_forward,
+                  label: 'Forward',
                   tooltip: onForward == null
                       ? 'Forward (no later location)'
                       : 'Forward',
                   onPressed: onForward,
+                  showLabel:
+                      !compact && (preferences?.showToolbarLabels ?? false),
                 ),
                 const SizedBox(width: 6),
                 Expanded(child: _RepositoryIdentity(snapshot: snapshot)),
@@ -82,7 +107,12 @@ class RepositoryContextBar extends StatelessWidget {
                   const SizedBox(width: 4),
                   _CompactMetadata(snapshot: snapshot),
                 ],
-                const SizedBox(width: 6),
+                if (showWorkspaceOptions) ...[
+                  const SizedBox(width: 6),
+                  const WorkspaceViewOptionsButton(),
+                  const SizedBox(width: 4),
+                ] else
+                  const SizedBox(width: 6),
                 WorkspaceFocusRegion(
                   role: WorkspacePaneRole.activity,
                   child: ActivityCenterButton(
@@ -109,6 +139,50 @@ class RepositoryContextBar extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _SecondaryActionButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String tooltip;
+  final VoidCallback? onPressed;
+  final bool showLabel;
+
+  const _SecondaryActionButton({
+    required this.icon,
+    required this.label,
+    required this.tooltip,
+    required this.onPressed,
+    required this.showLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (!showLabel) {
+      return ToolIconButton(icon: icon, tooltip: tooltip, onPressed: onPressed);
+    }
+    final disabled = onPressed == null;
+    return MacosTooltip(
+      message: tooltip,
+      child: Opacity(
+        opacity: disabled ? 0.35 : 1,
+        child: Tappable(
+          onTap: onPressed,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                MacosIcon(icon, size: 14),
+                const SizedBox(width: 4),
+                Text(label),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

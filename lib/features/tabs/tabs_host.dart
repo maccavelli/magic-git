@@ -13,6 +13,7 @@ import '../../core/providers/window_manager_bridge.dart';
 import '../../core/theme/app_theme.dart';
 import '../app_shell.dart';
 import 'tab_strip.dart';
+import 'tab_ui_providers.dart';
 import 'tabs_controller.dart';
 import 'tabs_scope.dart';
 
@@ -25,8 +26,9 @@ final windowTitleProvider = Provider.autoDispose<String>((ref) {
   final connection = ref.watch(connectionProvider);
   final repoPath = connection.repoPath;
   if (!connection.isConnected || repoPath == null) return 'Magic Git';
+  final alias = ref.watch(tabAliasProvider);
   final segments = repoPath.split('/').where((seg) => seg.isNotEmpty);
-  final name = segments.isEmpty ? repoPath : segments.last;
+  final name = alias ?? (segments.isEmpty ? repoPath : segments.last);
   final branch = ref.watch(
     statusProvider(repoPath).select((s) => s.value?.branch.head),
   );

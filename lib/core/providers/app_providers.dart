@@ -52,6 +52,8 @@ import '../storage/recent_repos_store.dart';
 import '../storage/repository_ui_identity.dart';
 import '../storage/saved_connection.dart';
 import '../storage/saved_local_repo.dart';
+import '../storage/saved_workspace_set.dart';
+import '../storage/saved_workspace_store.dart';
 import '../undo/undo_journal.dart';
 import '../utils/git_porcelain_parser.dart';
 import 'keep_alive_lru.dart';
@@ -372,6 +374,17 @@ final knownHostsStoreProvider = Provider<KnownHostsStore>((ref) {
 /// credentials).
 final localRepoStoreProvider = Provider<LocalRepoStore>((ref) {
   return LocalRepoStore();
+});
+
+/// Reference-only saved multi-repository workspaces and stable tab aliases.
+final savedWorkspaceStoreProvider = Provider<SavedWorkspaceStore>((ref) {
+  return SavedWorkspaceStore();
+});
+
+final savedWorkspaceSetsProvider = FutureProvider<List<SavedWorkspaceSet>>((
+  ref,
+) async {
+  return ref.watch(savedWorkspaceStoreProvider).list();
 });
 
 /// The per-repo most-recently-used log — the authoritative recency source for

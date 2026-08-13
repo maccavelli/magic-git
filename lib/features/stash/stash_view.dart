@@ -27,6 +27,7 @@ import '../common/repository_workspace_scaffold.dart';
 import '../common/tool_icon_button.dart';
 import '../common/workspace_focus.dart';
 import '../common/workspace_navigation.dart';
+import '../common/workspace_preferences_binding.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 
@@ -258,6 +259,19 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
         (settings) => settings.paneWidth(PaneId.stashList),
       ),
     );
+    final workspace = watchWorkspacePreferences(
+      context: context,
+      ref: ref,
+      repositoryPath: repoPath,
+      fallback: RepositoryWorkspacePrefs(navigatorWidth: stashListWidth),
+      preserveFallbackNavigatorWidth: true,
+      onLegacyChanged: (next) {
+        ref
+            .read(appSettingsProvider.notifier)
+            .setPaneWidth(PaneId.stashList, next.navigatorWidth)
+            .ignore();
+      },
+    );
 
     // The selected stash (if any) in the current list — apply/pop/drop act on it.
     GitStash? selEntry;
@@ -356,12 +370,18 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
           repositoryContext: _contextBar(snapshot, git),
           canvas: const SizedBox.shrink(),
           loading: true,
+          preferences: workspace.preferences,
+          onPreferencesChanged: workspace.onChanged,
+          workspaceOptionsEnabled: true,
         ),
         error: (err, _) => RepositoryWorkspaceScaffold(
           repositoryContext: _contextBar(snapshot, git),
           canvas: const SizedBox.shrink(),
           error: err,
           onRetry: _refresh,
+          preferences: workspace.preferences,
+          onPreferencesChanged: workspace.onChanged,
+          workspaceOptionsEnabled: true,
         ),
         data: (stashes) {
           final visible = _visibleStashes(stashes);
@@ -407,15 +427,9 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
             activePage: selected == null
                 ? CompactWorkspacePage.navigator
                 : CompactWorkspacePage.canvas,
-            preferences: RepositoryWorkspacePrefs(
-              navigatorWidth: stashListWidth,
-            ),
-            onPreferencesChanged: (next) {
-              ref
-                  .read(appSettingsProvider.notifier)
-                  .setPaneWidth(PaneId.stashList, next.navigatorWidth)
-                  .ignore();
-            },
+            preferences: workspace.preferences,
+            onPreferencesChanged: workspace.onChanged,
+            workspaceOptionsEnabled: true,
           );
         },
       ),

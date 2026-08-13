@@ -109,6 +109,13 @@ void main() {
       )
       ..publish(first, const RepositoryContextSupplement(forgeLabel: 'PR #42'))
       ..publish(
+        first,
+        const RepositoryContextSupplement(
+          commitPolicyBranch: 'main',
+          commitPolicyLabel: '#42 · checks success',
+        ),
+      )
+      ..publish(
         second,
         const RepositoryContextSupplement(worktreeLabel: 'new session'),
       );
@@ -116,6 +123,8 @@ void main() {
     final cache = container.read(repositoryContextSupplementCacheProvider);
     expect(cache[first]?.worktreeLabel, 'main worktree');
     expect(cache[first]?.forgeLabel, 'PR #42');
+    expect(cache[first]?.commitPolicyBranch, 'main');
+    expect(cache[first]?.commitPolicyLabel, '#42 · checks success');
     expect(cache[second]?.worktreeLabel, 'new session');
 
     notifier.clearSession(1);

@@ -142,7 +142,7 @@ class AppTheme {
   }) {
     final border = highContrast
         ? const Color(0x99EEF0F5)
-        : const Color(0x33EEF0F5);
+        : MacosColors.separatorColor;
     return WorkspaceThemeTokens(
       metrics: WorkspaceMetrics.resolve(density),
       palette: WorkspacePalette(

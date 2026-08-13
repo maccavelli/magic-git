@@ -28,6 +28,7 @@ import '../common/repository_workspace_scaffold.dart';
 import '../common/section_collapse.dart';
 import '../common/workspace_focus.dart';
 import '../common/workspace_navigation.dart';
+import '../common/workspace_preferences_binding.dart';
 import '../forge/forge_create_coordinator.dart';
 import '../forge/forge_prefs.dart';
 import '../tabs/tab_ui_providers.dart';
@@ -198,6 +199,12 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
   Widget _content(BuildContext context, List<GitRef> refs) {
     final git = ref.read(gitServiceProvider);
+    final workspace = watchWorkspacePreferences(
+      context: context,
+      ref: ref,
+      repositoryPath: repoPath,
+      fallback: const RepositoryWorkspacePrefs(navigatorWidth: 380),
+    );
 
     // Lazy forge + merged + pins — never block the list.
     final forgeAsync = ref.watch(branchForgeProvider(repoPath));
@@ -296,6 +303,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
     final connection = ref.watch(connectionProvider);
     final head = refs.where((item) => item.isHead).firstOrNull;
+    final headForge = head == null ? null : forge[head.shortName];
     final base = baseState?.value?.base;
     final supplementKey = connection.sessionEpoch > 0
         ? RepositoryContextSupplementKey(
@@ -324,6 +332,16 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                     : forge.isEmpty
                     ? 'No branch reviews'
                     : '${forge.length} branch review${forge.length == 1 ? '' : 's'}',
+                commitPolicyBranch: head?.shortName,
+                commitPolicyLabel: forgeAsync.value == null
+                    ? null
+                    : headForge == null
+                    ? 'No open request or recent checks'
+                    : [
+                        if (headForge.hasRequest) headForge.requestLabel,
+                        if (headForge.ci != null)
+                          'checks ${headForge.ci!.name}',
+                      ].join(' · '),
               ),
             );
         if (selectedRef != null) {
@@ -514,7 +532,9 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       activePage: selectedRef == null
           ? CompactWorkspacePage.navigator
           : CompactWorkspacePage.canvas,
-      preferences: const RepositoryWorkspacePrefs(navigatorWidth: 380),
+      preferences: workspace.preferences,
+      onPreferencesChanged: workspace.onChanged,
+      workspaceOptionsEnabled: true,
     );
   }
 

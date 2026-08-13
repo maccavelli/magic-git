@@ -7,7 +7,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
+import 'package:remote_magic_git/core/storage/saved_workspace_set.dart';
+import 'package:remote_magic_git/core/storage/saved_workspace_store.dart';
+import 'package:remote_magic_git/features/tabs/tab_ui_providers.dart';
 import 'package:remote_magic_git/features/tabs/tabs_controller.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _Recorder extends ConnectionController {
   final calls = <String>[];
@@ -34,6 +38,8 @@ class _Recorder extends ConnectionController {
 
   @override
   Future<void> disconnect() async => disconnected = true;
+
+  void publish(ConnectionState next) => state = next;
 }
 
 const _conn = SavedConnection(
@@ -49,6 +55,8 @@ const _conn = SavedConnection(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   TabsController makeController() => TabsController(
     containerFactory: (overrides) => ProviderContainer(
       retry: (_, _) => null,
@@ -56,38 +64,43 @@ void main() {
     ),
   );
 
-  void connectSaved(ProviderContainer c, String repoPath) =>
-      c.read(connectionProvider.notifier).connectToSaved(_conn, repoPath: repoPath);
+  void connectSaved(ProviderContainer c, String repoPath) => c
+      .read(connectionProvider.notifier)
+      .connectToSaved(_conn, repoPath: repoPath);
 
-  test('blank landing tab is reused for the first repo; new repos open new tabs',
-      () {
-    final c = makeController();
-    addTearDown(c.dispose);
-    final t0 = c.ensureInitialTab();
-    expect(t0.isBlank, isTrue);
-    expect(c.tabs, hasLength(1));
+  test(
+    'blank landing tab is reused for the first repo; new repos open new tabs',
+    () {
+      final c = makeController();
+      addTearDown(c.dispose);
+      final t0 = c.ensureInitialTab();
+      expect(t0.isBlank, isTrue);
+      expect(c.tabs, hasLength(1));
 
-    final t1 = c.openOrFocus(
-      connectionId: 'c1',
-      repoPath: '/a',
-      connect: (cont) => connectSaved(cont, '/a'),
-    );
-    expect(t1.id, t0.id, reason: 'the blank tab is reused, not duplicated');
-    expect(c.tabs, hasLength(1));
-    expect((t1.container.read(connectionProvider.notifier) as _Recorder).calls,
-        ['save:c1:/a']);
-    expect(t1.connectionId, 'c1');
-    expect(t1.repoPath, '/a');
+      final t1 = c.openOrFocus(
+        connectionId: 'c1',
+        repoPath: '/a',
+        connect: (cont) => connectSaved(cont, '/a'),
+      );
+      expect(t1.id, t0.id, reason: 'the blank tab is reused, not duplicated');
+      expect(c.tabs, hasLength(1));
+      expect(
+        (t1.container.read(connectionProvider.notifier) as _Recorder).calls,
+        ['save:c1:/a'],
+      );
+      expect(t1.connectionId, 'c1');
+      expect(t1.repoPath, '/a');
 
-    final t2 = c.openOrFocus(
-      connectionId: 'c1',
-      repoPath: '/b',
-      connect: (cont) => connectSaved(cont, '/b'),
-    );
-    expect(t2.id, isNot(t1.id));
-    expect(c.tabs, hasLength(2));
-    expect(c.activeId, t2.id);
-  });
+      final t2 = c.openOrFocus(
+        connectionId: 'c1',
+        repoPath: '/b',
+        connect: (cont) => connectSaved(cont, '/b'),
+      );
+      expect(t2.id, isNot(t1.id));
+      expect(c.tabs, hasLength(2));
+      expect(c.activeId, t2.id);
+    },
+  );
 
   test('dedupe focuses an already-open (connectionId, repoPath) tab', () {
     final c = makeController();
@@ -112,7 +125,11 @@ void main() {
       connect: (_) => connectCalled = true,
     );
     expect(again.id, t1.id);
-    expect(connectCalled, isFalse, reason: 'an open repo is focused, not reconnected');
+    expect(
+      connectCalled,
+      isFalse,
+      reason: 'an open repo is focused, not reconnected',
+    );
     expect(c.activeId, t1.id);
     expect(c.tabs, hasLength(2));
   });
@@ -121,16 +138,28 @@ void main() {
     final c = makeController();
     addTearDown(c.dispose);
     c.ensureInitialTab();
-    final t1 = c.openOrFocus(connectionId: 'c1', repoPath: '/a', connect: (_) {});
-    final t2 = c.openOrFocus(connectionId: 'c1', repoPath: '/b', connect: (_) {});
+    final t1 = c.openOrFocus(
+      connectionId: 'c1',
+      repoPath: '/a',
+      connect: (_) {},
+    );
+    final t2 = c.openOrFocus(
+      connectionId: 'c1',
+      repoPath: '/b',
+      connect: (_) {},
+    );
     expect(
-      identical(t1.container.read(activeExecutorProvider),
-          t2.container.read(activeExecutorProvider)),
+      identical(
+        t1.container.read(activeExecutorProvider),
+        t2.container.read(activeExecutorProvider),
+      ),
       isFalse,
     );
     expect(
-      identical(t1.container.read(connectionProvider.notifier),
-          t2.container.read(connectionProvider.notifier)),
+      identical(
+        t1.container.read(connectionProvider.notifier),
+        t2.container.read(connectionProvider.notifier),
+      ),
       isFalse,
     );
   });
@@ -139,15 +168,30 @@ void main() {
     final c = makeController();
     addTearDown(c.dispose);
     c.ensureInitialTab();
-    final t1 = c.openOrFocus(connectionId: 'c1', repoPath: '/a', connect: (_) {});
-    final t2 = c.openOrFocus(connectionId: 'c1', repoPath: '/b', connect: (_) {});
+    final t1 = c.openOrFocus(
+      connectionId: 'c1',
+      repoPath: '/a',
+      connect: (_) {},
+    );
+    final t2 = c.openOrFocus(
+      connectionId: 'c1',
+      repoPath: '/b',
+      connect: (_) {},
+    );
     final rec2 = t2.container.read(connectionProvider.notifier) as _Recorder;
     final closed = t2.container;
 
     await c.close(t2.id);
-    expect(rec2.disconnected, isTrue, reason: 'graceful disconnect before dispose');
-    expect(() => closed.read(activeExecutorProvider), throwsA(anything),
-        reason: 'container disposed');
+    expect(
+      rec2.disconnected,
+      isTrue,
+      reason: 'graceful disconnect before dispose',
+    );
+    expect(
+      () => closed.read(activeExecutorProvider),
+      throwsA(anything),
+      reason: 'container disposed',
+    );
     expect(c.tabs, hasLength(1));
     expect(c.activeId, t1.id);
   });
@@ -157,8 +201,16 @@ void main() {
     final c = makeController();
     addTearDown(c.dispose);
     c.ensureInitialTab();
-    final t1 = c.openOrFocus(connectionId: 'c1', repoPath: '/a', connect: (_) {});
-    final t2 = c.openOrFocus(connectionId: 'c1', repoPath: '/b', connect: (_) {});
+    final t1 = c.openOrFocus(
+      connectionId: 'c1',
+      repoPath: '/a',
+      connect: (_) {},
+    );
+    final t2 = c.openOrFocus(
+      connectionId: 'c1',
+      repoPath: '/b',
+      connect: (_) {},
+    );
     expect(c.activeId, t2.id);
 
     // Do NOT await: disconnect() is async, so these assertions run DURING the
@@ -166,7 +218,11 @@ void main() {
     // MacosApp builder derefs `active!` on any rebuild (which a background tab's
     // connection flip can trigger mid-close), so a transient null would crash.
     final pending = c.close(t2.id);
-    expect(c.active, isNotNull, reason: 'no null-active window during disconnect');
+    expect(
+      c.active,
+      isNotNull,
+      reason: 'no null-active window during disconnect',
+    );
     expect(c.activeId, t1.id);
     await pending;
     expect(c.activeId, t1.id);
@@ -177,30 +233,36 @@ void main() {
     final c = makeController();
     addTearDown(c.dispose);
     c.ensureInitialTab();
-    c.openOrFocus(connectionId: 'c1', repoPath: '/a', connect: (_) {}); // reuses it
+    c.openOrFocus(
+      connectionId: 'c1',
+      repoPath: '/a',
+      connect: (_) {},
+    ); // reuses it
     await c.close(c.activeId!);
     expect(c.tabs, hasLength(1));
     expect(c.active!.isBlank, isTrue);
   });
 
-  test('newTab opens a fresh blank tab, but reuses an already-blank active one',
-      () {
-    final c = makeController();
-    addTearDown(c.dispose);
-    final t0 = c.ensureInitialTab();
-    // Active tab is already blank — "+" focuses it rather than stacking a
-    // duplicate empty tab.
-    final again = c.newTab();
-    expect(again.id, t0.id);
-    expect(c.tabs, hasLength(1));
+  test(
+    'newTab opens a fresh blank tab, but reuses an already-blank active one',
+    () {
+      final c = makeController();
+      addTearDown(c.dispose);
+      final t0 = c.ensureInitialTab();
+      // Active tab is already blank — "+" focuses it rather than stacking a
+      // duplicate empty tab.
+      final again = c.newTab();
+      expect(again.id, t0.id);
+      expect(c.tabs, hasLength(1));
 
-    // With a connected active tab, "+" opens a new blank landing tab.
-    c.openOrFocus(connectionId: 'c1', repoPath: '/a', connect: (_) {});
-    final fresh = c.newTab();
-    expect(fresh.isBlank, isTrue);
-    expect(c.tabs, hasLength(2));
-    expect(c.activeId, fresh.id);
-  });
+      // With a connected active tab, "+" opens a new blank landing tab.
+      c.openOrFocus(connectionId: 'c1', repoPath: '/a', connect: (_) {});
+      final fresh = c.newTab();
+      expect(fresh.isBlank, isTrue);
+      expect(c.tabs, hasLength(2));
+      expect(c.activeId, fresh.id);
+    },
+  );
 
   test('reorder moves a tab to its target slot; active tab is unchanged', () {
     final c = makeController();
@@ -208,7 +270,11 @@ void main() {
     c.ensureInitialTab();
     final a = c.openOrFocus(connectionId: 'a', repoPath: '/a', connect: (_) {});
     final b = c.openOrFocus(connectionId: 'b', repoPath: '/b', connect: (_) {});
-    final cc = c.openOrFocus(connectionId: 'c', repoPath: '/c', connect: (_) {});
+    final cc = c.openOrFocus(
+      connectionId: 'c',
+      repoPath: '/c',
+      connect: (_) {},
+    );
     c.activate(b.id);
     expect(c.tabs.map((t) => t.id), [a.id, b.id, cc.id]);
 
@@ -262,4 +328,102 @@ void main() {
     expect(c.activeId, again.id);
     expect(c.tabs, hasLength(TabsController.maxTabs));
   });
+
+  test('hydrates and persists aliases by stable repository identity', () async {
+    final store = SavedWorkspaceStore();
+    const identity = SavedRepositoryIdentity(
+      kind: SavedRepositoryKind.ssh,
+      savedId: 'c1',
+      repoPath: '/a',
+    );
+    await store.setAlias(identity, 'Backend');
+    final controller = TabsController(
+      workspaceStore: store,
+      containerFactory: (overrides) => ProviderContainer(
+        retry: (_, _) => null,
+        overrides: [
+          connectionProvider.overrideWith(_Recorder.new),
+          ...overrides,
+        ],
+      ),
+    );
+    addTearDown(controller.dispose);
+    await controller.aliasesReady;
+    controller.ensureInitialTab();
+    final tab = controller.openOrFocus(
+      connectionId: 'c1',
+      repoPath: '/a',
+      savedKind: SavedRepositoryKind.ssh,
+      connect: (_) {},
+    );
+
+    expect(controller.aliasFor(tab), 'Backend');
+    expect(tab.container.read(tabAliasProvider), 'Backend');
+
+    await controller.setAlias(tab, 'API');
+    expect(tab.container.read(tabAliasProvider), 'API');
+    expect((await store.aliases())[identity], 'API');
+
+    await controller.setAlias(tab, '');
+    expect(controller.aliasFor(tab), isNull);
+    expect(tab.container.read(tabAliasProvider), isNull);
+    expect((await store.aliases())[identity], isNull);
+  });
+
+  test(
+    'saved kind prevents a local and SSH id/path collision from deduping',
+    () {
+      final c = makeController();
+      addTearDown(c.dispose);
+      c.ensureInitialTab();
+      c.openOrFocus(
+        connectionId: 'same',
+        repoPath: '/same',
+        savedKind: SavedRepositoryKind.ssh,
+        connect: (_) {},
+      );
+      c.openOrFocus(
+        connectionId: 'same',
+        repoPath: '/same',
+        savedKind: SavedRepositoryKind.local,
+        connect: (_) {},
+      );
+
+      expect(c.tabs, hasLength(2));
+      expect(c.tabs.map((tab) => tab.savedKind), [
+        SavedRepositoryKind.ssh,
+        SavedRepositoryKind.local,
+      ]);
+    },
+  );
+
+  test(
+    'an SSH repo switch moves the stable alias identity to the new path',
+    () {
+      final c = makeController();
+      addTearDown(c.dispose);
+      c.ensureInitialTab();
+      final tab = c.openOrFocus(
+        connectionId: 'c1',
+        repoPath: '/a',
+        savedKind: SavedRepositoryKind.ssh,
+        connect: (_) {},
+      );
+      final recorder =
+          tab.container.read(connectionProvider.notifier) as _Recorder;
+
+      recorder.publish(
+        const ConnectionState(
+          phase: ConnectionPhase.connected,
+          connectionId: 'c1',
+          repoPath: '/b',
+          repoPaths: ['/a', '/b'],
+          sessionEpoch: 1,
+        ),
+      );
+
+      expect(c.repositoryIdentityFor(tab)?.repoPath, '/b');
+      expect(tab.repoPath, '/b');
+    },
+  );
 }

@@ -1,6 +1,8 @@
 import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import 'workspace_appearance.dart';
+
 /// Canonical compact icon button for **small** inline actions.
 ///
 /// Use this — not [PushButton], not a bare [MacosIconButton] — whenever the
@@ -45,13 +47,19 @@ class ToolIconButton extends StatelessWidget {
     // instead of filling the background, so a disabled button just looks
     // faded rather than "selected".
     final disabled = onPressed == null;
+    final target =
+        WorkspaceAppearanceScope.maybeOf(
+          context,
+        )?.tokens.metrics.minimumTargetSize ??
+        29;
+    final inset = ((target - size) / 2).clamp(4, 9).toDouble();
     return MacosTooltip(
       message: tooltip,
       child: Opacity(
         opacity: disabled ? 0.35 : 1.0,
         child: MacosIconButton(
           icon: MacosIcon(icon, size: size, color: color),
-          padding: const EdgeInsets.all(6),
+          padding: EdgeInsets.all(inset),
           disabledColor: const Color(0x00000000),
           // Canonical cursor policy (see common/buttons.dart): pointing hand
           // over anything clickable, arrow when disabled.

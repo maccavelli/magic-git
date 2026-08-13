@@ -9,6 +9,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/pane_layout.dart';
+import 'workspace_appearance.dart';
 
 /// Reusable, accessible split primitive. It owns only interaction-local state;
 /// its caller owns and persists [extent].
@@ -132,6 +133,9 @@ class _ResizablePanePairState extends State<ResizablePanePair> {
         rendered = math.min(rendered, math.max(0, available - 1));
         final visibleExtent = widget.collapsed ? 0.0 : rendered;
         final divider = _divider(rendered);
+        final dividerColor =
+            WorkspaceAppearanceScope.maybeOf(context)?.tokens.palette.border ??
+            MacosColors.separatorColor;
 
         if (widget.axis == Axis.horizontal) {
           return Stack(
@@ -143,7 +147,7 @@ class _ResizablePanePairState extends State<ResizablePanePair> {
                     width: visibleExtent,
                     child: widget.collapsed ? null : widget.leading,
                   ),
-                  Container(width: 1, color: MacosColors.separatorColor),
+                  Container(width: 1, color: dividerColor),
                   Expanded(child: widget.trailing),
                 ],
               ),
@@ -166,7 +170,7 @@ class _ResizablePanePairState extends State<ResizablePanePair> {
                   height: visibleExtent,
                   child: widget.collapsed ? null : widget.leading,
                 ),
-                Container(height: 1, color: MacosColors.separatorColor),
+                Container(height: 1, color: dividerColor),
                 Expanded(child: widget.trailing),
               ],
             ),

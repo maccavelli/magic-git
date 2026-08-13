@@ -132,7 +132,10 @@ class _TabChip extends StatelessWidget {
     final isLocal = conn.isLocal;
     final label = tab.isBlank
         ? 'New Tab'
-        : (tab.repoPath != null ? _basename(tab.repoPath!) : 'Connecting…');
+        : (TabsController.current?.aliasFor(tab) ??
+              (tab.repoPath != null
+                  ? _basename(tab.repoPath!)
+                  : 'Connecting…'));
 
     return Semantics(
       button: true,

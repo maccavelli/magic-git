@@ -6,7 +6,10 @@ import 'package:riverpod/misc.dart' show Override;
 
 import '../../core/providers/app_providers.dart';
 import '../../core/providers/window_manager_bridge.dart';
+import '../../core/storage/saved_workspace_set.dart';
+import '../../core/storage/saved_workspace_store.dart';
 import '../../core/storage/store_bus.dart';
+import 'tab_ui_providers.dart';
 
 /// One open repository tab: a stable id and its OWN root [ProviderContainer].
 ///
@@ -25,6 +28,8 @@ class RepoTab {
   final ProviderContainer container;
   String? connectionId;
   String? repoPath;
+  SavedRepositoryKind? savedKind;
+  String? savedReferencePath;
   ProviderSubscription<ConnectionState>? _connSub;
 
   bool get isBlank => connectionId == null && repoPath == null;
@@ -35,9 +40,11 @@ class RepoTab {
 /// (created, disposed), not reactive provider state. Exposed to the tree via
 /// [TabsScope]; created once at app bootstrap.
 class TabsController extends ChangeNotifier {
-  TabsController({ProviderContainer Function(List<Override> overrides)? containerFactory})
-    : _containerFactory =
-          containerFactory ?? _defaultContainerFactory {
+  TabsController({
+    ProviderContainer Function(List<Override> overrides)? containerFactory,
+    SavedWorkspaceStore? workspaceStore,
+  }) : _containerFactory = containerFactory ?? _defaultContainerFactory,
+       _workspaceStore = workspaceStore ?? SavedWorkspaceStore() {
     // Any tab's saved-list write refreshes every tab's list (each tab reads
     // disk in its own container, so a write elsewhere would otherwise go
     // unseen). recentWorkspacesProvider derives from these, so it follows.
@@ -63,6 +70,14 @@ class TabsController extends ChangeNotifier {
         }
       }),
     );
+    _storeSubs.add(
+      StoreBus.instance.onWorkspaceSetsChanged.listen((_) {
+        for (final t in _tabs) {
+          t.container.invalidate(savedWorkspaceSetsProvider);
+        }
+      }),
+    );
+    aliasesReady = _loadAliases();
   }
 
   /// The live main-window controller while a [TabsHost] is mounted (null
@@ -84,8 +99,11 @@ class TabsController extends ChangeNotifier {
   static const int maxTabs = 8;
 
   final ProviderContainer Function(List<Override>) _containerFactory;
+  final SavedWorkspaceStore _workspaceStore;
   final List<StreamSubscription<void>> _storeSubs = [];
   final List<RepoTab> _tabs = [];
+  Map<SavedRepositoryIdentity, String> _aliases = const {};
+  late final Future<void> aliasesReady;
   String? _activeId;
   int _nextId = 1;
   bool _disposed = false;
@@ -111,6 +129,107 @@ class TabsController extends ChangeNotifier {
   /// open-in-new-tab paths stop creating; dedupe/blank-reuse still work.
   bool get canOpenTab => _tabs.length < maxTabs;
 
+  Future<void> _loadAliases() async {
+    try {
+      final loaded = await _workspaceStore.aliases();
+      if (_disposed) return;
+      _aliases = loaded;
+      for (final tab in _tabs) {
+        _syncTabAlias(tab);
+      }
+      notifyListeners();
+    } catch (_) {
+      // Storage unavailable: aliases are optional presentation metadata.
+    }
+  }
+
+  SavedRepositoryIdentity? repositoryIdentityFor(RepoTab tab) {
+    final savedId = tab.connectionId;
+    final repoPath = tab.savedReferencePath ?? tab.repoPath;
+    var kind = tab.savedKind;
+    if (kind == null && savedId != null && repoPath != null) {
+      final connection = tab.container.read(connectionProvider);
+      if (connection.connectionId == savedId) {
+        kind = connection.isLocal
+            ? SavedRepositoryKind.local
+            : SavedRepositoryKind.ssh;
+      }
+    }
+    if (kind == null ||
+        savedId == null ||
+        savedId.isEmpty ||
+        repoPath == null ||
+        repoPath.isEmpty) {
+      return null;
+    }
+    return SavedRepositoryIdentity(
+      kind: kind,
+      savedId: savedId,
+      repoPath: repoPath,
+    );
+  }
+
+  String? aliasFor(RepoTab tab) {
+    final identity = repositoryIdentityFor(tab);
+    return identity == null ? null : _aliases[identity];
+  }
+
+  String? aliasForReference(SavedRepositoryIdentity identity) =>
+      _aliases[identity];
+
+  RepoTab? tabForIdentity(SavedRepositoryIdentity identity) {
+    for (final tab in _tabs) {
+      if (repositoryIdentityFor(tab) == identity) return tab;
+    }
+    return null;
+  }
+
+  Future<void> setAlias(RepoTab tab, String? alias) async {
+    final identity = repositoryIdentityFor(tab);
+    if (identity == null) return;
+    await setAliasForReference(identity, alias);
+  }
+
+  Future<void> setAliasForReference(
+    SavedRepositoryIdentity identity,
+    String? alias,
+  ) async {
+    await aliasesReady;
+    final previous = _aliases[identity];
+    final normalized = alias?.trim() ?? '';
+    final next = Map<SavedRepositoryIdentity, String>.of(_aliases);
+    if (normalized.isEmpty) {
+      next.remove(identity);
+    } else {
+      next[identity] = normalized;
+    }
+    _aliases = next;
+    for (final tab in _tabs) {
+      if (repositoryIdentityFor(tab) == identity) _syncTabAlias(tab);
+    }
+    notifyListeners();
+    try {
+      await _workspaceStore.setAlias(identity, normalized);
+    } catch (_) {
+      final rollback = Map<SavedRepositoryIdentity, String>.of(_aliases);
+      if (previous == null) {
+        rollback.remove(identity);
+      } else {
+        rollback[identity] = previous;
+      }
+      _aliases = rollback;
+      for (final tab in _tabs) {
+        if (repositoryIdentityFor(tab) == identity) _syncTabAlias(tab);
+      }
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  void _syncTabAlias(RepoTab tab) {
+    tab.container.read(tabAliasProvider.notifier).set(aliasFor(tab));
+  }
+
   /// Ensures at least one (blank, disconnected) tab exists — it shows the
   /// landing screen. Called at boot and whenever the last tab closes.
   RepoTab ensureInitialTab() => _tabs.isEmpty ? _create() : active!;
@@ -135,11 +254,16 @@ class TabsController extends ChangeNotifier {
   RepoTab openOrFocus({
     String? connectionId,
     String? repoPath,
+    SavedRepositoryKind? savedKind,
+    String? savedReferencePath,
     List<Override> overrides = const [],
     required void Function(ProviderContainer container) connect,
   }) {
-    final existing = _find(connectionId, repoPath);
+    final existing = _find(connectionId, repoPath, savedKind);
     if (existing != null) {
+      existing.savedKind ??= savedKind;
+      existing.savedReferencePath ??= savedReferencePath;
+      _syncTabAlias(existing);
       activate(existing.id);
       return existing;
     }
@@ -147,6 +271,9 @@ class TabsController extends ChangeNotifier {
     if (act != null && act.isBlank) {
       act.connectionId = connectionId;
       act.repoPath = repoPath;
+      act.savedKind = savedKind;
+      act.savedReferencePath = savedReferencePath ?? repoPath;
+      _syncTabAlias(act);
       connect(act.container);
       notifyListeners();
       return act;
@@ -158,6 +285,8 @@ class TabsController extends ChangeNotifier {
     final tab = _create(
       connectionId: connectionId,
       repoPath: repoPath,
+      savedKind: savedKind,
+      savedReferencePath: savedReferencePath,
       overrides: overrides,
     );
     connect(tab.container);
@@ -216,7 +345,9 @@ class TabsController extends ChangeNotifier {
       // Best-effort — a disconnect hiccup must not block teardown.
     }
     tab.container.dispose();
-    if (_disposed) return; // the host tore us down mid-close — touch nothing else
+    if (_disposed) {
+      return; // the host tore us down mid-close — touch nothing else
+    }
     if (_tabs.isEmpty) {
       _create(); // keep >=1 tab (a blank landing tab); notifies + re-homes windows
     } else {
@@ -237,20 +368,38 @@ class TabsController extends ChangeNotifier {
   RepoTab _create({
     String? connectionId,
     String? repoPath,
+    SavedRepositoryKind? savedKind,
+    String? savedReferencePath,
     List<Override> overrides = const [],
   }) {
-    final tab = RepoTab(
-      id: 'tab-${_nextId++}',
-      container: _containerFactory(overrides),
-    )
-      ..connectionId = connectionId
-      ..repoPath = repoPath;
+    final tab =
+        RepoTab(id: 'tab-${_nextId++}', container: _containerFactory(overrides))
+          ..connectionId = connectionId
+          ..repoPath = repoPath
+          ..savedKind = savedKind
+          ..savedReferencePath = savedReferencePath ?? repoPath;
     // Keep the dedupe key in sync with the tab's live session.
     tab._connSub = tab.container.listen(connectionProvider, (_, next) {
       tab.connectionId = next.connectionId;
       tab.repoPath = next.repoPath;
+      if (next.connectionId != null && next.repoPath != null) {
+        tab.savedKind = next.isLocal
+            ? SavedRepositoryKind.local
+            : SavedRepositoryKind.ssh;
+        if (!next.isLocal) {
+          // An SSH tab can switch among repos on one saved connection. Its
+          // stable alias/dedupe reference must follow that switch. A local
+          // bookmark may resolve to a moved path, so local tabs retain the
+          // original saved reference path supplied by the open flow.
+          tab.savedReferencePath = next.repoPath;
+        } else {
+          tab.savedReferencePath ??= next.repoPath;
+        }
+      }
+      _syncTabAlias(tab);
       notifyListeners();
     });
+    _syncTabAlias(tab);
     _tabs.add(tab);
     _activeId = tab.id;
     notifyListeners();
@@ -264,12 +413,22 @@ class TabsController extends ChangeNotifier {
     return null;
   }
 
-  RepoTab? _find(String? connectionId, String? repoPath) {
+  RepoTab? _find(
+    String? connectionId,
+    String? repoPath,
+    SavedRepositoryKind? savedKind,
+  ) {
     // Never match a blank tab (both null) — that's the landing tab, handled by
     // reuse in openOrFocus, not dedupe.
     if (connectionId == null && repoPath == null) return null;
     for (final t in _tabs) {
-      if (t.connectionId == connectionId && t.repoPath == repoPath) return t;
+      final sameKind =
+          savedKind == null || t.savedKind == null || t.savedKind == savedKind;
+      if (sameKind &&
+          t.connectionId == connectionId &&
+          t.repoPath == repoPath) {
+        return t;
+      }
     }
     return null;
   }

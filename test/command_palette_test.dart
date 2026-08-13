@@ -10,9 +10,12 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/storage/saved_workspace_set.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/command_palette.dart';
 import 'package:remote_magic_git/features/common/escape_dismissible.dart';
+import 'package:remote_magic_git/features/tabs/tabs_controller.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 const _repo = '/repo';
 
@@ -50,6 +53,7 @@ class _Recorder {
   String? openedWorktree;
   int refreshed = 0;
   int undone = 0;
+  String? workspaceOpened;
   final dispatched = <(String, int)>[];
 }
 
@@ -59,6 +63,7 @@ Future<void> _open(
   Forge forge = Forge.github,
   bool provideLandedEntities = true,
   VoidCallback? onRefsLoad,
+  List<SavedWorkspaceSet> savedWorkspaces = const [],
 }) async {
   await tester.pumpWidget(
     ProviderScope(
@@ -73,6 +78,7 @@ Future<void> _open(
         gitWorktreesProvider(_repo).overrideWith((ref) async => _worktrees),
         // The palette gates its forge commands by the detected forge.
         forgeProvider(_repo).overrideWith((ref) async => forge),
+        savedWorkspaceSetsProvider.overrideWith((ref) async => savedWorkspaces),
       ],
       child: MacosApp(
         debugShowCheckedModeBanner: false,
@@ -98,6 +104,7 @@ Future<void> _open(
                     onOpenSettings: () {},
                     onOpenShortcuts: () {},
                     onOpenConnections: () {},
+                    onOpenWorkspaceSet: (set) => rec.workspaceOpened = set.id,
                     onCloneRepository: () => rec.cloneOpened++,
                     onCreateRepository: () => rec.createOpened++,
                     onOpenHistoryWindow: () => rec.historyWindowOpened++,
@@ -121,6 +128,71 @@ Future<void> _open(
 }
 
 void main() {
+  testWidgets('tab aliases are searchable and switch the existing tab', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final tabs = TabsController();
+    addTearDown(tabs.dispose);
+    tabs.ensureInitialTab();
+    final backend = tabs.openOrFocus(
+      connectionId: 'ssh-1',
+      repoPath: '/srv/backend',
+      savedKind: SavedRepositoryKind.ssh,
+      connect: (_) {},
+    );
+    tabs.openOrFocus(
+      connectionId: 'ssh-2',
+      repoPath: '/srv/frontend',
+      savedKind: SavedRepositoryKind.ssh,
+      connect: (_) {},
+    );
+    await tabs.setAlias(backend, 'Backend API');
+    TabsController.current = tabs;
+    addTearDown(() => TabsController.current = null);
+
+    await _open(tester, _Recorder());
+    await tester.enterText(find.byType(MacosTextField), 'Backend API');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Switch to tab Backend API'), findsOneWidget);
+    await tester.tap(find.text('Switch to tab Backend API'));
+    await tester.pumpAndSettle();
+    expect(tabs.activeId, backend.id);
+  });
+
+  testWidgets('saved workspace commands are searchable and runnable', (
+    tester,
+  ) async {
+    final recorder = _Recorder();
+    await _open(
+      tester,
+      recorder,
+      savedWorkspaces: const [
+        SavedWorkspaceSet(
+          id: 'daily',
+          displayName: 'Daily Work',
+          repositories: [
+            SavedWorkspaceRepositoryRef(
+              kind: SavedRepositoryKind.ssh,
+              savedId: 'ssh-1',
+              repoPath: '/srv/backend',
+              tabAlias: 'Backend',
+            ),
+          ],
+          activeIndex: 0,
+        ),
+      ],
+    );
+
+    await tester.enterText(find.byType(MacosTextField), 'Daily Work');
+    await tester.pumpAndSettle();
+    expect(find.text('Open workspace Daily Work'), findsOneWidget);
+    await tester.tap(find.text('Open workspace Daily Work'));
+    await tester.pumpAndSettle();
+    expect(recorder.workspaceOpened, 'daily');
+  });
+
   testWidgets(
     'empty open is landed-only; entity prefix debounces and opens actions',
     (tester) async {

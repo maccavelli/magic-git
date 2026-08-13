@@ -47,6 +47,7 @@ class _HoverPopState extends State<HoverPop> {
     final active = widget.enabled;
     final hovered = active && _hovered;
     final pressed = active && _pressed;
+    final reduceMotion = MediaQuery.disableAnimationsOf(context);
 
     final scale = pressed ? 0.97 : (hovered ? 1.02 : 1.0);
 
@@ -66,10 +67,14 @@ class _HoverPopState extends State<HoverPop> {
           // Press-in is near-instant (the finger hit something solid);
           // pop/release take the scenic route with a whisper of overshoot —
           // the spring read.
-          duration: Duration(milliseconds: pressed ? 90 : 180),
+          duration: reduceMotion
+              ? Duration.zero
+              : Duration(milliseconds: pressed ? 90 : 180),
           curve: pressed ? Curves.easeOut : Curves.easeOutBack,
           child: AnimatedContainer(
-            duration: Duration(milliseconds: pressed ? 90 : 180),
+            duration: reduceMotion
+                ? Duration.zero
+                : Duration(milliseconds: pressed ? 90 : 180),
             curve: Curves.easeOut,
             decoration: BoxDecoration(
               borderRadius: widget.borderRadius,

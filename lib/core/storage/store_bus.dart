@@ -17,6 +17,7 @@ class StoreBus {
   final _connections = StreamController<void>.broadcast();
   final _localRepos = StreamController<void>.broadcast();
   final _recentRepos = StreamController<void>.broadcast();
+  final _workspaceSets = StreamController<void>.broadcast();
 
   /// Fires after any container saves/deletes/updates a saved SSH connection.
   Stream<void> get onConnectionsChanged => _connections.stream;
@@ -28,7 +29,11 @@ class StoreBus {
   /// every tab's recent-repos list refreshes.
   Stream<void> get onRecentReposChanged => _recentRepos.stream;
 
+  /// Fires after a named workspace set is saved or deleted.
+  Stream<void> get onWorkspaceSetsChanged => _workspaceSets.stream;
+
   void notifyConnectionsChanged() => _connections.add(null);
   void notifyLocalReposChanged() => _localRepos.add(null);
   void notifyRecentReposChanged() => _recentRepos.add(null);
+  void notifyWorkspaceSetsChanged() => _workspaceSets.add(null);
 }

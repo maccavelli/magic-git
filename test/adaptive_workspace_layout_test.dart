@@ -42,6 +42,52 @@ void main() {
     expect(wide.taskDock, WorkspaceTaskDockPresentation.full);
   });
 
+  test(
+    'collapsed inspector remains absent even when requested by the screen',
+    () {
+      const prefs = RepositoryWorkspacePrefs(
+        inspectorPinned: true,
+        inspectorCollapsed: true,
+      );
+      final arrangement = resolveAdaptiveWorkspaceArrangement(
+        width: 1400,
+        preferences: prefs,
+        hasInspector: true,
+        inspectorVisible: true,
+        taskDockFocused: false,
+      );
+
+      expect(arrangement.inspectorOverlay, isFalse);
+      expect(arrangement.pinnedInspector, isFalse);
+    },
+  );
+
+  testWidgets('minimal preset forces canvas in compact layout', (tester) async {
+    tester.view.physicalSize = const Size(640, 480);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      MacosApp(
+        home: SizedBox(
+          width: 640,
+          height: 480,
+          child: AdaptiveWorkspaceLayout(
+            navigator: const SizedBox(key: Key('navigator')),
+            canvas: const SizedBox(key: Key('canvas')),
+            compactPage: CompactWorkspacePage.navigator,
+            preferences: applyWorkspacePreset(
+              const RepositoryWorkspacePrefs(),
+              WorkspacePreset.minimal,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byKey(const Key('navigator')), findsNothing);
+    expect(find.byKey(const Key('canvas')), findsOneWidget);
+  });
+
   testWidgets(
     'compact shows one primary pane and can switch without overflow',
     (tester) async {

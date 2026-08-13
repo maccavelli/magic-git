@@ -1,15 +1,21 @@
 import 'dart:async';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_magic_git/features/common/commit_assistance.dart';
 import 'package:remote_magic_git/features/repository/commit_composer_controller.dart';
 
 CommitComposerController _controller({
   Future<String?> Function()? preview,
   Future<bool> Function()? gpg,
+  Future<List<String>> Function()? recentSubjects,
+  Future<String?> Function()? template,
 }) => CommitComposerController(
   repoPath: '/repo',
   generatePreview: preview ?? () async => null,
   loadGpgSignConfigured: gpg ?? () async => false,
+  loadRecentSubjects: recentSubjects,
+  loadTemplate: template,
 );
 
 void main() {
@@ -97,5 +103,108 @@ void main() {
       const CommitComposerKey('/repo', 1),
       isNot(const CommitComposerKey('/repo', 2)),
     );
+  });
+
+  test('landed recent subjects require no load and stay session-scoped', () {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    const first = CommitAssistanceKey('/repo', 1);
+    const second = CommitAssistanceKey('/repo', 2);
+
+    container.read(landedCommitSubjectsProvider(first).notifier).publish([
+      'feat: one',
+      'feat: one',
+      ' fix: two ',
+    ]);
+
+    expect(container.read(landedCommitSubjectsProvider(first)), [
+      'feat: one',
+      'fix: two',
+    ]);
+    expect(container.read(landedCommitSubjectsProvider(second)), isEmpty);
+  });
+
+  test(
+    'explicit recent load is bounded, trimmed, and user-selectable',
+    () async {
+      var calls = 0;
+      final controller = _controller(
+        recentSubjects: () async {
+          calls++;
+          return [
+            ' feat: newest ',
+            '',
+            'feat: newest',
+            for (var i = 0; i < 12; i++) 'fix: $i',
+          ];
+        },
+      );
+      addTearDown(controller.dispose);
+
+      expect(controller.recentSubjects, isEmpty);
+      expect(calls, 0);
+      await controller.loadRecentSubjects();
+
+      expect(calls, 1);
+      expect(controller.recentSubjects, hasLength(10));
+      expect(controller.recentSubjects.first, 'feat: newest');
+      controller.useRecentSubject(controller.recentSubjects.last);
+      expect(controller.message, controller.recentSubjects.last);
+    },
+  );
+
+  test('template loads once and never overwrites a non-empty draft', () async {
+    var calls = 0;
+    final controller = _controller(
+      template: () async {
+        calls++;
+        return 'feat: template\n\nDetails';
+      },
+    );
+    addTearDown(controller.dispose);
+
+    await controller.loadTemplate();
+    await controller.loadTemplate();
+    expect(calls, 1);
+    controller.useTemplate();
+    expect(controller.message, 'feat: template\n\nDetails');
+
+    controller.updateMessage('fix: keep this');
+    controller.useTemplate();
+    expect(controller.message, 'fix: keep this');
+  });
+
+  test('validated co-authors append deterministic unique trailers', () async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    controller
+      ..updateStaged(count: 1, signature: 'a')
+      ..updateMessage(
+        'feat: pair\n\nCo-authored-by: Existing <existing@example.com>',
+      );
+
+    expect(
+      controller.addCoAuthor(' Ada  Lovelace ', 'ADA@EXAMPLE.COM'),
+      isTrue,
+    );
+    expect(controller.addCoAuthor('Bad\nName', 'bad@example.com'), isFalse);
+    expect(controller.addCoAuthor('Existing', 'existing@example.com'), isTrue);
+
+    String? committed;
+    final outcome = await controller.submit(
+      commit: (message) async {
+        committed = message;
+        return true;
+      },
+    );
+
+    expect(outcome.localCommitted, isTrue);
+    expect(
+      committed,
+      'feat: pair\n\n'
+      'Co-authored-by: Existing <existing@example.com>\n'
+      'Co-authored-by: Ada Lovelace <ada@example.com>',
+    );
+    expect(controller.coAuthors, isEmpty);
   });
 }

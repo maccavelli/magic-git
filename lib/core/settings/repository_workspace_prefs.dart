@@ -10,6 +10,52 @@ enum RepositoryNavigatorMode { changes, files }
 
 enum WorkspacePreset { review, commit, investigate, minimal }
 
+extension WorkspacePresetPresentation on WorkspacePreset {
+  String get label => switch (this) {
+    WorkspacePreset.review => 'Review',
+    WorkspacePreset.commit => 'Commit',
+    WorkspacePreset.investigate => 'Investigate',
+    WorkspacePreset.minimal => 'Minimal',
+  };
+}
+
+/// Applies a built-in pane arrangement without touching Git-facing view state.
+/// Navigator mode, filters/grouping, diff options, and toolbar presentation
+/// remain exactly as the user configured them.
+RepositoryWorkspacePrefs applyWorkspacePreset(
+  RepositoryWorkspacePrefs current,
+  WorkspacePreset preset,
+) => switch (preset) {
+  WorkspacePreset.review => current.copyWith(
+    preset: preset,
+    navigatorCollapsed: false,
+    inspectorCollapsed: false,
+    inspectorPinned: false,
+    taskDockCollapsed: true,
+  ),
+  WorkspacePreset.commit => current.copyWith(
+    preset: preset,
+    navigatorCollapsed: false,
+    inspectorCollapsed: true,
+    inspectorPinned: false,
+    taskDockCollapsed: false,
+  ),
+  WorkspacePreset.investigate => current.copyWith(
+    preset: preset,
+    navigatorCollapsed: false,
+    inspectorCollapsed: false,
+    inspectorPinned: true,
+    taskDockCollapsed: true,
+  ),
+  WorkspacePreset.minimal => current.copyWith(
+    preset: preset,
+    navigatorCollapsed: true,
+    inspectorCollapsed: true,
+    inspectorPinned: false,
+    taskDockCollapsed: true,
+  ),
+};
+
 enum RepositoryDiffLayout { unified, split }
 
 enum RepositoryChangeGrouping { status, directory, none }
