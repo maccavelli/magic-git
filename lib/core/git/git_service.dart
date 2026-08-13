@@ -3039,6 +3039,15 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     }
   }
 
+  /// Applies a structurally validated line/range patch to the index. Kept as a
+  /// distinct endpoint so line staging cannot silently acquire retry or
+  /// worktree semantics if the general hunk endpoint evolves.
+  Future<void> applySelectionPatch(
+    String repoPath,
+    String patch, {
+    required bool reverse,
+  }) => applyPatch(repoPath, patch, cached: true, reverse: reverse);
+
   /// Discards a single worktree hunk by reverse-applying [patch] — the
   /// hunk-scoped sibling of [discard], with the same flavor-A snapshot taken
   /// in the same invocation so ⌘Z brings the pre-discard content back. Plain
@@ -3073,6 +3082,15 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
             ),
     );
   }
+
+  /// Destructive line/range sibling of [applySelectionPatch]. It reuses the
+  /// atomic snapshot + reverse-apply transaction and therefore records an
+  /// ordinary path-scoped undo entry before changing the worktree.
+  Future<void> discardSelectionPatch(
+    String repoPath,
+    String patch, {
+    required String path,
+  }) => discardHunk(repoPath, patch, path: path);
 
   /// Stages everything (`git add -A`).
   Future<void> stageAll(String repoPath) =>

@@ -64,6 +64,201 @@ void main() {
     expect(find.text('Discard'), findsNothing);
   });
 
+  testWidgets('click and Shift-click select a changed-line range', (
+    tester,
+  ) async {
+    (String, int, HunkAction)? selectedAction;
+    await tester.pumpWidget(
+      MacosApp(
+        home: MacosWindow(
+          child: ContentArea(
+            builder: (_, _) => HunkDiffView(
+              diff: _diff,
+              staged: false,
+              onAction: (_, _, _) {},
+              onSelectionAction: (_, patch, count, action) {
+                selectedAction = (patch, count, action);
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('-old'));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.tap(find.text('+new'));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 changed lines selected'), findsOneWidget);
+    await tester.tap(find.text('Stage Selection'));
+    expect(selectedAction?.$2, 2);
+    expect(selectedAction?.$3, HunkAction.stage);
+    expect(selectedAction?.$1, contains('-old\n+new'));
+  });
+
+  testWidgets('Shift-arrow extends keyboard line selection', (tester) async {
+    await tester.pumpWidget(
+      MacosApp(
+        home: MacosWindow(
+          child: ContentArea(
+            builder: (_, _) => HunkDiffView(
+              diff: _diff,
+              staged: true,
+              onAction: (_, _, _) {},
+              onSelectionAction: (_, _, _, _) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('-old'));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 changed lines selected'), findsOneWidget);
+    expect(find.text('Unstage Selection'), findsOneWidget);
+  });
+
+  testWidgets('mouse drag selects adjacent changed rows', (tester) async {
+    await tester.pumpWidget(
+      MacosApp(
+        home: MacosWindow(
+          child: ContentArea(
+            builder: (_, _) => HunkDiffView(
+              diff: _diff,
+              staged: false,
+              onAction: (_, _, _) {},
+              onSelectionAction: (_, _, _, _) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('-old')),
+      kind: PointerDeviceKind.mouse,
+    );
+    await gesture.moveTo(tester.getCenter(find.text('+new')));
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(find.text('2 changed lines selected'), findsOneWidget);
+  });
+
+  testWidgets('disabled modes explain why line actions are unavailable', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MacosApp(
+        home: MacosWindow(
+          child: ContentArea(
+            builder: (_, _) => HunkDiffView(
+              diff: _diff,
+              staged: false,
+              onAction: (_, _, _) {},
+              onSelectionAction: (_, _, _, _) {},
+              selectionDisabledReason:
+                  'Line actions require whitespace-exact diff mode.',
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Line actions require whitespace-exact diff mode.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('+new'));
+    await tester.pump();
+    expect(find.textContaining('changed line selected'), findsNothing);
+  });
+
+  testWidgets('Shift-click across hunks is rejected with an explanation', (
+    tester,
+  ) async {
+    const twoHunks =
+        'diff --git a/a.dart b/a.dart\n'
+        'index 1..2 100644\n'
+        '--- a/a.dart\n'
+        '+++ b/a.dart\n'
+        '@@ -1 +1 @@\n'
+        '-old one\n'
+        '+new one\n'
+        '@@ -10 +10 @@\n'
+        '-old two\n'
+        '+new two\n';
+    await tester.pumpWidget(
+      MacosApp(
+        home: MacosWindow(
+          child: ContentArea(
+            builder: (_, _) => HunkDiffView(
+              diff: twoHunks,
+              staged: false,
+              onAction: (_, _, _) {},
+              onSelectionAction: (_, _, _, _) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('-old one'));
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.tap(find.text('-old two'));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Line selections cannot cross hunk boundaries.'),
+      findsOneWidget,
+    );
+    expect(find.text('1 changed line selected'), findsOneWidget);
+  });
+
+  testWidgets('binary fallback explains why line mutation is unavailable', (
+    tester,
+  ) async {
+    const binary =
+        'diff --git a/image.png b/image.png\n'
+        'index 1..2 100644\n'
+        'Binary files a/image.png and b/image.png differ\n';
+    await tester.pumpWidget(
+      MacosApp(
+        home: MacosWindow(
+          child: ContentArea(
+            builder: (_, _) => HunkDiffView(
+              diff: binary,
+              staged: false,
+              onAction: (_, _, _) {},
+              onSelectionAction: (_, _, _, _) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(
+        'Line actions are unavailable because this diff has no selectable '
+        'text hunks.',
+      ),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('tapping Stage reports the hunk with the stage action', (
     tester,
   ) async {
@@ -287,7 +482,9 @@ void main() {
       return container.decoration! as BoxDecoration;
     }
 
-    testWidgets('the pointer over one is a hand, not an I-beam', (tester) async {
+    testWidgets('the pointer over one is a hand, not an I-beam', (
+      tester,
+    ) async {
       await _pump(tester, staged: false);
 
       await hover(tester, find.text('Stage'));

@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
+import 'package:flutter/gestures.dart' show kPrimaryMouseButton;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -14,6 +15,14 @@ import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
 /// What a per-hunk button does, given whether the index or worktree diff is
 /// shown.
 enum HunkAction { stage, unstage, discard }
+
+typedef SelectionActionCallback =
+    void Function(
+      DiffFile file,
+      String patch,
+      int selectedLineCount,
+      HunkAction action,
+    );
 
 /// Fixed width of the inline blame gutter column.
 const double _kBlameGutterWidth = 150;
@@ -37,6 +46,8 @@ class HunkDiffView extends StatefulWidget {
   /// false for the worktree diff — its hunks can be staged or discarded.
   final bool staged;
   final void Function(DiffFile file, DiffHunk hunk, HunkAction action) onAction;
+  final SelectionActionCallback? onSelectionAction;
+  final String? selectionDisabledReason;
 
   /// Per-line blame of the file's post-image (working copy), keyed by final-file
   /// line number. When non-null, a collapsed blame gutter is drawn to the left
@@ -49,6 +60,8 @@ class HunkDiffView extends StatefulWidget {
     required this.diff,
     required this.staged,
     required this.onAction,
+    this.onSelectionAction,
+    this.selectionDisabledReason,
     this.blame,
   });
 
@@ -75,7 +88,20 @@ class _LineItem {
   final String text;
   final DiffLineHighlight? render;
   final int newLine;
-  const _LineItem(this.text, this.render, this.newLine);
+  final int hunkIndex;
+  final int lineIndex;
+  const _LineItem(
+    this.text,
+    this.render,
+    this.newLine,
+    this.hunkIndex,
+    this.lineIndex,
+  );
+
+  bool get selectable {
+    final kind = diffLineKind(text);
+    return kind == DiffLineKind.add || kind == DiffLineKind.remove;
+  }
 }
 
 /// Flattens [file]'s hunks into the header/line items [HunkDiffView] renders in
@@ -91,7 +117,8 @@ List<Object> _buildItems(DiffFile file, List<DiffLineHighlight> highlights) {
     // New-file line numbers advance on add + context lines, starting at the
     // hunk's post-image start (mirrors DiffHunk.postImageLineCount).
     var newNo = hunk.range?.newStart ?? -1;
-    for (final line in hunk.lines) {
+    for (var lineIndex = 0; lineIndex < hunk.lines.length; lineIndex++) {
+      final line = hunk.lines[lineIndex];
       final kind = diffLineKind(line);
       final int lineNo;
       if (newNo >= 0 &&
@@ -102,7 +129,13 @@ List<Object> _buildItems(DiffFile file, List<DiffLineHighlight> highlights) {
         lineNo = -1;
       }
       items.add(
-        _LineItem(line, bi < highlights.length ? highlights[bi] : null, lineNo),
+        _LineItem(
+          line,
+          bi < highlights.length ? highlights[bi] : null,
+          lineNo,
+          h,
+          lineIndex,
+        ),
       );
       bi++;
     }
@@ -129,7 +162,10 @@ _ParsedDiff _parseAndBuild(String diff) {
   final file = parseUnifiedDiff(diff);
   if (file == null) return const _ParsedDiff(null, []);
   final highlight = diffLineCount(diff) <= kDiffIsolateLineThreshold;
-  final highlights = computeDiffLineHighlights(file, enableHighlight: highlight);
+  final highlights = computeDiffLineHighlights(
+    file,
+    enableHighlight: highlight,
+  );
   return _ParsedDiff(file, _buildItems(file, highlights));
 }
 
@@ -167,6 +203,22 @@ class _HunkDiffViewState extends State<HunkDiffView> {
   final ScrollController _horizontal = ScrollController();
   final Map<int, GlobalKey> _headerKeys = {};
   int _focusedHunk = -1;
+  final Set<({int hunk, int line})> _selectedLines = {};
+  final Map<({int hunk, int line}), String> _selectionTexts = {};
+  ({int hunk, int line})? _selectionAnchor;
+  ({int hunk, int line})? _focusedLine;
+  String? _selectionError;
+
+  String? get _lineSelectionDisabledReason {
+    if (widget.selectionDisabledReason case final reason?) return reason;
+    if (widget.blame != null) {
+      return 'Line actions are unavailable while blame annotations are shown.';
+    }
+    if (_file?.hunks.any((hunk) => hunk.range == null) ?? false) {
+      return 'Line actions are unavailable for combined or malformed diffs.';
+    }
+    return null;
+  }
 
   @override
   void initState() {
@@ -201,6 +253,24 @@ class _HunkDiffViewState extends State<HunkDiffView> {
       _maxLineWidth = measureDiffWidth(_lineTexts(_items));
       // A hunk cursor from the previous diff means nothing against this one.
       _focusedHunk = -1;
+      final file = parsed?.file;
+      _selectedLines.removeWhere((identity) {
+        if (file == null ||
+            identity.hunk >= file.hunks.length ||
+            identity.line >= file.hunks[identity.hunk].lines.length) {
+          return true;
+        }
+        return file.hunks[identity.hunk].lines[identity.line] !=
+            _selectionTexts[identity];
+      });
+      _selectionTexts.removeWhere(
+        (identity, _) => !_selectedLines.contains(identity),
+      );
+      if (_selectedLines.isEmpty) {
+        _selectionAnchor = null;
+        _focusedLine = null;
+      }
+      _selectionError = null;
     }
 
     final inline = _parser.parse(
@@ -266,6 +336,109 @@ class _HunkDiffViewState extends State<HunkDiffView> {
     );
   }
 
+  List<int> _selectableLines(int hunkIndex) {
+    final file = _file;
+    if (file == null || hunkIndex < 0 || hunkIndex >= file.hunks.length) {
+      return const [];
+    }
+    final lines = file.hunks[hunkIndex].lines;
+    return [
+      for (var index = 0; index < lines.length; index++)
+        if (diffLineKind(lines[index]) == DiffLineKind.add ||
+            diffLineKind(lines[index]) == DiffLineKind.remove)
+          index,
+    ];
+  }
+
+  void _selectLine(
+    _LineItem item, {
+    required bool extend,
+    bool additive = false,
+  }) {
+    if (!item.selectable || _lineSelectionDisabledReason != null) return;
+    final target = (hunk: item.hunkIndex, line: item.lineIndex);
+    final anchor = _selectionAnchor;
+    if (extend && anchor != null && anchor.hunk != target.hunk) {
+      setState(() {
+        _selectionError = 'Line selections cannot cross hunk boundaries.';
+      });
+      return;
+    }
+    setState(() {
+      _selectionError = null;
+      if (extend && anchor != null && anchor.hunk == target.hunk) {
+        final selectable = _selectableLines(target.hunk);
+        final start = selectable.indexOf(anchor.line);
+        final end = selectable.indexOf(target.line);
+        if (start >= 0 && end >= 0) {
+          if (!additive) {
+            _selectedLines.clear();
+            _selectionTexts.clear();
+          }
+          final lower = start < end ? start : end;
+          final upper = start < end ? end : start;
+          for (var index = lower; index <= upper; index++) {
+            _selectedLines.add((hunk: target.hunk, line: selectable[index]));
+            _selectionTexts[(hunk: target.hunk, line: selectable[index])] =
+                _file!.hunks[target.hunk].lines[selectable[index]];
+          }
+        }
+      } else {
+        if (!additive) {
+          _selectedLines.clear();
+          _selectionTexts.clear();
+        }
+        if (additive && _selectedLines.contains(target)) {
+          _selectedLines.remove(target);
+          _selectionTexts.remove(target);
+        } else {
+          _selectedLines.add(target);
+          _selectionTexts[target] = item.text;
+        }
+        _selectionAnchor = target;
+      }
+      _focusedLine = target;
+      _focusedHunk = target.hunk;
+    });
+    _hunkFocus.requestFocus();
+  }
+
+  void _extendPointerSelection(_LineItem item, PointerEnterEvent event) {
+    if (event.buttons & kPrimaryMouseButton == 0) return;
+    _selectLine(item, extend: true, additive: true);
+  }
+
+  void _moveLine(int direction, {required bool extend}) {
+    final current = _focusedLine;
+    if (current == null) return;
+    final selectable = _selectableLines(current.hunk);
+    final at = selectable.indexOf(current.line);
+    if (at < 0 || selectable.isEmpty) return;
+    final next = (at + direction).clamp(0, selectable.length - 1);
+    final file = _file!;
+    final item = _LineItem(
+      file.hunks[current.hunk].lines[selectable[next]],
+      null,
+      -1,
+      current.hunk,
+      selectable[next],
+    );
+    _selectLine(item, extend: extend);
+  }
+
+  void _actOnSelection(HunkAction action) {
+    final file = _file;
+    final callback = widget.onSelectionAction;
+    if (file == null || callback == null || _selectedLines.isEmpty) return;
+    final byHunk = <int, Set<int>>{};
+    for (final row in _selectedLines) {
+      (byHunk[row.hunk] ??= <int>{}).add(row.line);
+    }
+    final result = buildSelectionPatch(file, byHunk);
+    if (result is! SelectionPatchBuilt) return;
+    callback(file, result.patch, result.selectedLineCount, action);
+  }
+
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is KeyUpEvent) return KeyEventResult.ignored;
     final keys = HardwareKeyboard.instance;
@@ -286,6 +459,32 @@ class _HunkDiffViewState extends State<HunkDiffView> {
       _actOnFocusedHunk();
       return KeyEventResult.handled;
     }
+    if (_focusedLine != null && !keys.isAltPressed && !keys.isMetaPressed) {
+      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+        _moveLine(1, extend: keys.isShiftPressed);
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+        _moveLine(-1, extend: keys.isShiftPressed);
+        return KeyEventResult.handled;
+      }
+      if (event.logicalKey == LogicalKeyboardKey.space) {
+        final current = _focusedLine!;
+        final file = _file!;
+        _selectLine(
+          _LineItem(
+            file.hunks[current.hunk].lines[current.line],
+            null,
+            -1,
+            current.hunk,
+            current.line,
+          ),
+          extend: false,
+          additive: true,
+        );
+        return KeyEventResult.handled;
+      }
+    }
     return KeyEventResult.ignored;
   }
 
@@ -293,7 +492,19 @@ class _HunkDiffViewState extends State<HunkDiffView> {
   Widget build(BuildContext context) {
     if (_loading) return const DiffPending();
     final file = _file;
-    if (file == null) return DiffView(diff: widget.diff);
+    if (file == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _selectionNotice(
+            context,
+            'Line actions are unavailable because this diff has no '
+            'selectable text hunks.',
+          ),
+          Expanded(child: DiffView(diff: widget.diff)),
+        ],
+      );
+    }
 
     final macosTheme = MacosTheme.of(context);
     final defaultColor =
@@ -307,24 +518,107 @@ class _HunkDiffViewState extends State<HunkDiffView> {
     final maxLineWidth =
         _maxLineWidth + (gutters == null ? 0 : _kBlameGutterWidth);
 
+    final selectionReason = _lineSelectionDisabledReason;
     return Focus(
       focusNode: _hunkFocus,
       onKeyEvent: _onKey,
-      child: DiffPan(
-        vertical: _vertical,
-        horizontal: _horizontal,
-        maxLineWidth: maxLineWidth,
-        builder: (context, contentWidth, viewportWidth) => _list(
-          file,
-          defaultColor,
-          codeTheme,
-          gutters,
-          contentWidth,
-          viewportWidth,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (selectionReason != null)
+            _selectionNotice(context, selectionReason)
+          else ...[
+            if (_selectionError case final message?)
+              _selectionNotice(context, message),
+            if (_selectedLines.isNotEmpty) _selectionActions(context),
+          ],
+          Expanded(
+            child: DiffPan(
+              vertical: _vertical,
+              horizontal: _horizontal,
+              maxLineWidth: maxLineWidth,
+              builder: (context, contentWidth, viewportWidth) => _list(
+                file,
+                defaultColor,
+                codeTheme,
+                gutters,
+                contentWidth,
+                viewportWidth,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
+
+  Widget _selectionNotice(BuildContext context, String message) => Semantics(
+    label: message,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      color: MacosColors.systemYellowColor.withValues(alpha: 0.12),
+      child: Text(message, style: MacosTheme.of(context).typography.caption1),
+    ),
+  );
+
+  Widget _selectionActions(BuildContext context) => SelectionContainer.disabled(
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      color: MacosColors.systemBlueColor.withValues(alpha: 0.12),
+      child: Row(
+        children: [
+          Expanded(
+            child: Semantics(
+              liveRegion: true,
+              label: '${_selectedLines.length} changed lines selected',
+              child: Text(
+                '${_selectedLines.length} changed '
+                '${_selectedLines.length == 1 ? 'line' : 'lines'} selected',
+                style: MacosTheme.of(context).typography.caption1,
+              ),
+            ),
+          ),
+          if (widget.staged)
+            InlineActionButton(
+              label: 'Unstage Selection',
+              icon: CupertinoIcons.minus,
+              onPressed: widget.onSelectionAction == null
+                  ? null
+                  : () => _actOnSelection(HunkAction.unstage),
+            )
+          else ...[
+            InlineActionButton(
+              label: 'Stage Selection',
+              icon: CupertinoIcons.plus,
+              onPressed: widget.onSelectionAction == null
+                  ? null
+                  : () => _actOnSelection(HunkAction.stage),
+            ),
+            const SizedBox(width: 6),
+            InlineActionButton(
+              label: 'Discard Selection',
+              icon: CupertinoIcons.arrow_uturn_left,
+              tone: InlineActionTone.destructive,
+              onPressed: widget.onSelectionAction == null
+                  ? null
+                  : () => _actOnSelection(HunkAction.discard),
+            ),
+          ],
+          const SizedBox(width: 6),
+          InlineActionButton(
+            label: 'Clear',
+            icon: CupertinoIcons.clear,
+            onPressed: () => setState(() {
+              _selectedLines.clear();
+              _selectionTexts.clear();
+              _selectionAnchor = null;
+              _selectionError = null;
+            }),
+          ),
+        ],
+      ),
+    ),
+  );
 
   /// A blame cell per item, parallel to [_items] — resolved from the new-file
   /// line number, and marked to print its meta only at the start of a run of
@@ -425,10 +719,11 @@ class _HunkDiffViewState extends State<HunkDiffView> {
               ),
               border: Border.symmetric(
                 horizontal: BorderSide(
-                  color: (focused
-                          ? MacosColors.systemBlueColor
-                          : MacosColors.systemGrayColor)
-                      .withValues(alpha: 0.18),
+                  color:
+                      (focused
+                              ? MacosColors.systemBlueColor
+                              : MacosColors.systemGrayColor)
+                          .withValues(alpha: 0.18),
                   width: 0.5,
                 ),
               ),
@@ -485,6 +780,8 @@ class _HunkDiffViewState extends State<HunkDiffView> {
     required bool gutterOn,
     _Gutter? gutter,
   }) {
+    final identity = (hunk: line.hunkIndex, line: line.lineIndex);
+    final selected = _selectedLines.contains(identity);
     final text = Text.rich(
       // Marker in the kind colour + syntax-highlighted content. Falls back to
       // whole-line kind colour when no highlight data.
@@ -495,31 +792,59 @@ class _HunkDiffViewState extends State<HunkDiffView> {
     );
     // Full-width soft band (same as DiffView) so add/remove rows read as a
     // continuous gutter, not a tint that stops where the glyph run ends.
-    final band = diffLineBackground(line.text);
+    final baseBand = diffLineBackground(line.text);
+    final band = selected
+        ? Color.alphaBlend(
+            MacosColors.systemBlueColor.withValues(alpha: 0.34),
+            baseBand ?? const Color(0x00000000),
+          )
+        : baseBand;
     if (!gutterOn) {
-      return Container(
-        width: contentWidth,
-        color: band,
-        padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
-        alignment: Alignment.centerLeft,
-        child: text,
+      return Tappable(
+        cursor: SystemMouseCursors.text,
+        onTapDown: line.selectable && _lineSelectionDisabledReason == null
+            ? (_) => _selectLine(
+                line,
+                extend: HardwareKeyboard.instance.isShiftPressed,
+              )
+            : null,
+        onEnter: line.selectable && _lineSelectionDisabledReason == null
+            ? (event) => _extendPointerSelection(line, event)
+            : null,
+        child: Semantics(
+          selected: selected,
+          label: line.selectable
+              ? '${diffLineKind(line.text).name} line, '
+                    '${selected ? 'selected' : 'not selected'}'
+              : null,
+          child: Container(
+            width: contentWidth,
+            color: band,
+            padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
+            alignment: Alignment.centerLeft,
+            child: text,
+          ),
+        ),
       );
     }
     // Gutter mode: a fixed blame column, then the code. No Container alignment —
     // that would loosen the Row's width and break its Expanded child.
-    return Container(
-      width: contentWidth,
-      color: band,
-      child: Row(
-        children: [
-          _gutterCell(gutter),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
-              child: Align(alignment: Alignment.centerLeft, child: text),
+    return Tappable(
+      cursor: SystemMouseCursors.text,
+      child: Container(
+        width: contentWidth,
+        color: band,
+        child: Row(
+          children: [
+            _gutterCell(gutter),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: kDiffHPad),
+                child: Align(alignment: Alignment.centerLeft, child: text),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

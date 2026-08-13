@@ -1851,8 +1851,29 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             // diff of a tracked file. Split view is read-only, and a `-w` diff
             // isn't a valid apply patch — both fall back to a read-only render.
             data: (diff) {
-              if (_diffSplit) return SplitDiffView(diff: diff);
-              if (untracked || _diffIgnoreWs) return DiffView(diff: diff);
+              if (_diffSplit) {
+                return Column(
+                  children: [
+                    _warningBanner(
+                      context,
+                      'Line actions require Unified view because split rows '
+                      'do not map one-to-one to the patch.',
+                    ),
+                    Expanded(child: SplitDiffView(diff: diff)),
+                  ],
+                );
+              }
+              if (_diffIgnoreWs) {
+                return Column(
+                  children: [
+                    _warningBanner(
+                      context,
+                      'Line actions require whitespace-exact diff mode.',
+                    ),
+                    Expanded(child: DiffView(diff: diff)),
+                  ],
+                );
+              }
               // Blame gutter: fetched only while the toggle is on, and only for
               // the tracked unified diff. Renders as soon as it lands; the diff
               // shows immediately without waiting on it.
@@ -1863,6 +1884,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                 diff: diff,
                 staged: staged,
                 onAction: _applyHunk,
+                onSelectionAction: _applySelection,
+                selectionDisabledReason: _diffBlame
+                    ? 'Line actions are unavailable while blame annotations '
+                          'are shown.'
+                    : null,
                 blame: blame,
               );
             },
@@ -1923,6 +1949,45 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     // or failure) — mounted-guarded, marking the own-mutation (so the
     // watcher's echo tick is suppressed rather than triggering a redundant
     // refetch) and invalidating status plus the selected file's diff key.
+  }
+
+  Future<void> _applySelection(
+    DiffFile file,
+    String patch,
+    int selectedLineCount,
+    HunkAction action,
+  ) async {
+    final selected = _selected;
+    if (selected == null) return;
+    final git = ref.read(gitServiceProvider);
+    if (action == HunkAction.discard) {
+      final ok = await confirmAction(
+        context,
+        title: 'Discard selected lines',
+        message:
+            'Discard $selectedLineCount selected changed '
+            '${selectedLineCount == 1 ? 'line' : 'lines'} from the working '
+            'tree? The file is snapshotted first, so this remains undoable.',
+        confirmLabel: 'Discard Selection',
+        destructive: true,
+      );
+      if (!ok) return;
+    }
+    if (!mounted) return;
+    await runGuarded(() {
+      switch (action) {
+        case HunkAction.stage:
+          return git.applySelectionPatch(repoPath, patch, reverse: false);
+        case HunkAction.unstage:
+          return git.applySelectionPatch(repoPath, patch, reverse: true);
+        case HunkAction.discard:
+          return git.discardSelectionPatch(
+            repoPath,
+            patch,
+            path: file.newPath ?? file.oldPath ?? selected.path,
+          );
+      }
+    });
   }
 
   Widget _warningBanner(BuildContext context, String message) {

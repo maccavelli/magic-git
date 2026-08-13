@@ -194,9 +194,7 @@ DiffFile? _parseFileAt(List<String> lines, int from, int to) {
       body.add(lines[i]);
       i++;
     }
-    hunks.add(
-      DiffHunk(hunkHeader, body, range: parseHunkHeader(hunkHeader)),
-    );
+    hunks.add(DiffHunk(hunkHeader, body, range: parseHunkHeader(hunkHeader)));
   }
   if (hunks.isEmpty) return null;
 
@@ -330,4 +328,159 @@ String buildHunkPatch(DiffFile file, DiffHunk hunk) {
     buf.write('\n');
   }
   return buf.toString();
+}
+
+enum SelectionPatchUnsupportedReason {
+  emptySelection,
+  crossHunkSelection,
+  nonChangeLine,
+  binary,
+  modeOnly,
+  combinedDiff,
+  malformedHunk,
+}
+
+sealed class SelectionPatchResult {
+  const SelectionPatchResult();
+}
+
+final class SelectionPatchBuilt extends SelectionPatchResult {
+  final String patch;
+  final int selectedLineCount;
+
+  const SelectionPatchBuilt(this.patch, this.selectedLineCount);
+}
+
+final class SelectionPatchUnsupported extends SelectionPatchResult {
+  final SelectionPatchUnsupportedReason reason;
+  final String message;
+
+  const SelectionPatchUnsupported(this.reason, this.message);
+}
+
+/// Builds a one-hunk patch for changed row indices from the parsed file.
+/// Indices address [DiffHunk.lines], so identities never escape the displayed
+/// file/hunk. Unselected removals become context; unselected additions vanish.
+SelectionPatchResult buildSelectionPatch(
+  DiffFile file,
+  Map<int, Set<int>> selectedRowsByHunk,
+) {
+  if (file.change == DiffFileChange.binary) {
+    return const SelectionPatchUnsupported(
+      SelectionPatchUnsupportedReason.binary,
+      'Binary changes do not have selectable patch lines.',
+    );
+  }
+  if (file.change == DiffFileChange.modeOnly) {
+    return const SelectionPatchUnsupported(
+      SelectionPatchUnsupportedReason.modeOnly,
+      'Mode-only changes do not have selectable content lines.',
+    );
+  }
+  final nonEmpty = selectedRowsByHunk.entries
+      .where((entry) => entry.value.isNotEmpty)
+      .toList();
+  if (nonEmpty.isEmpty) {
+    return const SelectionPatchUnsupported(
+      SelectionPatchUnsupportedReason.emptySelection,
+      'Select at least one added or removed line.',
+    );
+  }
+  if (nonEmpty.length != 1) {
+    return const SelectionPatchUnsupported(
+      SelectionPatchUnsupportedReason.crossHunkSelection,
+      'Line selections cannot cross hunk boundaries.',
+    );
+  }
+  final entry = nonEmpty.single;
+  if (entry.key < 0 || entry.key >= file.hunks.length) {
+    return const SelectionPatchUnsupported(
+      SelectionPatchUnsupportedReason.malformedHunk,
+      'The selected hunk no longer exists.',
+    );
+  }
+  final hunk = file.hunks[entry.key];
+  final range = hunk.range;
+  if (range == null) {
+    return SelectionPatchUnsupported(
+      hunk.header.startsWith('@@@')
+          ? SelectionPatchUnsupportedReason.combinedDiff
+          : SelectionPatchUnsupportedReason.malformedHunk,
+      hunk.header.startsWith('@@@')
+          ? 'Combined merge diffs cannot be line-staged.'
+          : 'The hunk header is malformed.',
+    );
+  }
+  final selected = entry.value;
+  for (final index in selected) {
+    if (index < 0 || index >= hunk.lines.length) {
+      return const SelectionPatchUnsupported(
+        SelectionPatchUnsupportedReason.malformedHunk,
+        'A selected line no longer exists.',
+      );
+    }
+    final kind = diffLineKind(hunk.lines[index]);
+    if (kind != DiffLineKind.add && kind != DiffLineKind.remove) {
+      return const SelectionPatchUnsupported(
+        SelectionPatchUnsupportedReason.nonChangeLine,
+        'Only added and removed lines can be selected.',
+      );
+    }
+  }
+
+  final body = <String>[];
+  var previousBodyLineEmitted = false;
+  for (var index = 0; index < hunk.lines.length; index++) {
+    final line = hunk.lines[index];
+    switch (diffLineKind(line)) {
+      case DiffLineKind.add:
+        previousBodyLineEmitted = selected.contains(index);
+        if (previousBodyLineEmitted) body.add(line);
+      case DiffLineKind.remove:
+        body.add(selected.contains(index) ? line : ' ${line.substring(1)}');
+        previousBodyLineEmitted = true;
+      case DiffLineKind.context:
+        body.add(line);
+        previousBodyLineEmitted = true;
+      case DiffLineKind.noNewline:
+        // The marker describes the immediately preceding +/- line. If that
+        // addition was omitted from the selected patch, its marker must be
+        // omitted too or `git apply` sees it attached to the wrong row.
+        if (previousBodyLineEmitted) body.add(line);
+        previousBodyLineEmitted = false;
+      case DiffLineKind.other:
+        return const SelectionPatchUnsupported(
+          SelectionPatchUnsupportedReason.malformedHunk,
+          'The hunk contains an unrecognized line.',
+        );
+    }
+  }
+  final oldCount = body.where((line) {
+    final kind = diffLineKind(line);
+    return kind == DiffLineKind.context || kind == DiffLineKind.remove;
+  }).length;
+  final newCount = body.where((line) {
+    final kind = diffLineKind(line);
+    return kind == DiffLineKind.context || kind == DiffLineKind.add;
+  }).length;
+  final suffix = hunk.header.substring(
+    _hunkHeaderPattern.firstMatch(hunk.header)!.end,
+  );
+  final header =
+      '@@ -${range.oldStart},$oldCount +${range.newStart},$newCount @@$suffix';
+  final buffer = StringBuffer();
+  for (final line in file.header) {
+    buffer
+      ..write(line)
+      ..write('\n');
+  }
+  buffer
+    ..write(header)
+    ..write('\n');
+  for (final line in body) {
+    buffer
+      ..write(line)
+      ..write('\n');
+  }
+  return SelectionPatchBuilt(buffer.toString(), selected.length);
 }
