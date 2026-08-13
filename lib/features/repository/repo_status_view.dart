@@ -40,7 +40,8 @@ import '../dnd/staging_drop_banner.dart';
 import '../settings/settings_sheet.dart';
 import '../viewer/remote_edit_service.dart';
 import 'blame_sheet.dart';
-import 'commit_dialog.dart';
+import 'commit_composer.dart';
+import 'commit_composer_controller.dart';
 import 'conflict_view.dart';
 import 'diff_popout_window.dart';
 import 'diff_view_controls.dart';
@@ -95,6 +96,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   final _changeFilterController = TextEditingController();
   RepoChangeFilter _changeFilter = const RepoChangeFilter();
   RepositoryNavigatorMode? _navigatorModeOverride;
+  bool _composerExpanded = false;
 
   _SectionKind? get _selectionKind => _selectionController.value.section;
   set _selectionKind(_SectionKind? value) {
@@ -646,19 +648,42 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     await runGuarded(() => git.amendCommit(repoPath));
   }
 
-  Future<void> _openCommitDialog(int stagedCount) async {
-    // The dialog pops with `true` when the user chose Commit & Push (⌘⇧↩), so
-    // the push runs here — after the sheet closes — through the panel's own
-    // logged/​guarded push path rather than being reimplemented in the dialog.
-    final andPush = await showMacosSheet<bool>(
-      context: context,
-      builder: (_) => EscapeDismissible(
-        child: CommitDialog(repoPath: repoPath, stagedCount: stagedCount),
+  String _stagedSignature(GitStatus status) {
+    final parts = [
+      for (final file in status.staged)
+        '${file.path}\u001f${file.statusX}\u001f${file.statusY}',
+    ]..sort();
+    return parts.join('\u001e');
+  }
+
+  void _expandCommitComposer() {
+    if (!_composerExpanded) setState(() => _composerExpanded = true);
+  }
+
+  Future<void> _acceptCommitComposer(
+    CommitComposerController controller,
+    bool push,
+  ) async {
+    final outcome = await controller.submit(
+      commit: (message) => runGuarded(
+        () => ref
+            .read(gitServiceProvider)
+            .commit(repoPath, message: message),
       ),
+      push: push
+          ? () => _push(
+              followTags: ref.read(appSettingsProvider).pushFollowTags,
+            )
+          : null,
     );
-    if (andPush == true && mounted) {
-      await _push(followTags: ref.read(appSettingsProvider).pushFollowTags);
+    if (!mounted || !outcome.localCommitted) return;
+    if (!push) {
+      ref
+          .read(connectionProvider.notifier)
+          .fetchInBackground(repoPath)
+          .ignore();
     }
+    setState(() => _composerExpanded = false);
   }
 
   @override
@@ -709,7 +734,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     }, dock: true);
   }
 
-  Future<void> _push({
+  Future<bool> _push({
     PushForce force = PushForce.none,
     bool setUpstream = false,
     bool followTags = false,
@@ -738,15 +763,16 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         // The confirm dialog spans an await — the widget can be gone (repo
         // switch, disconnect) by the time it resolves, before `ref`/`context`
         // are touched again.
-        if (!mounted) return;
-        if (choice == null || choice == _PushChoice.cancel) return;
+        if (!mounted) return false;
+        if (choice == null || choice == _PushChoice.cancel) return false;
         if (choice == _PushChoice.pullThenPush) {
           // _sync inlines pull-then-push and skips the push if the pull fails.
-          return _sync(ref.read(appSettingsProvider).defaultPullMode);
+          await _sync(ref.read(appSettingsProvider).defaultPullMode);
+          return true;
         }
       }
     }
-    if (!mounted) return;
+    if (!mounted) return false;
     // A history-rewriting push is confirmed before it fires.
     if (force != PushForce.none) {
       final ok = await confirmAction(
@@ -759,7 +785,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   'and can destroy others\' commits.',
         confirmLabel: 'Force Push',
       );
-      if (!ok || !mounted) return;
+      if (!ok || !mounted) return false;
     }
     final git = ref.read(gitServiceProvider);
     final label = [
@@ -769,7 +795,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       if (setUpstream) '-u',
       if (followTags) '--follow-tags',
     ].join(' ');
-    await runLogged(label, (log) async {
+    final success = await runLogged(label, (log) async {
       // Capture the old remote tip before the push advances the tracking ref.
       final base = await git.revParse(repoPath, '@{upstream}');
       log.logResult(
@@ -786,6 +812,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     // A --follow-tags push may have just put local tags on the remote — the
     // cached remote-tag listing is stale.
     if (followTags && mounted) refreshRemoteTags(ref, repoPath);
+    return success;
   }
 
   Future<void> _sync([PullMode mode = PullMode.ffOnly]) async {
@@ -1255,6 +1282,23 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
 
     final status = statusAsync.value;
     final connection = ref.watch(connectionProvider);
+    final composerController = ref.watch(
+      commitComposerControllerProvider(
+        CommitComposerKey(repoPath, connection.sessionEpoch),
+      ),
+    );
+    if (status != null) {
+      final stagedSignature = _stagedSignature(status);
+      if (composerController.stagedCount != status.staged.length ||
+          composerController.stagedSignature != stagedSignature) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          composerController.updateStaged(
+            count: status.staged.length,
+            signature: stagedSignature,
+          );
+        });
+      }
+    }
     final identityKey = repositoryContextIdentityKey(
       backend: connection.backend.name,
       connectionId: connection.connectionId,
@@ -1347,7 +1391,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                 ? _discardUntracked(selected.path)
                 : _discard(selected.path),
       'repository.focusCommit': status != null && status.staged.isNotEmpty
-          ? () => _openCommitDialog(status.staged.length)
+          ? _expandCommitComposer
           : null,
     };
     final live = widget.isActive && !busy;
@@ -1409,7 +1453,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                 _pendingBanner(context, pending),
               statusArea,
               if (status != null && !status.isClean)
-                _commitBar(context, status),
+                _commitBar(context, status, composerController),
               if (outputVisible) OutputView(maxHeight: constraints.maxHeight),
             ],
           );
@@ -1462,6 +1506,22 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               ),
             ),
             canvas: canvas,
+            taskDock:
+                _composerExpanded &&
+                    status != null &&
+                    status.staged.isNotEmpty
+                ? CommitComposer(
+                    controller: composerController,
+                    presentation: CommitComposerPresentation.expanded,
+                    branchLabel: status.branch.head ?? 'Detached HEAD',
+                    onAccept: (push) =>
+                        _acceptCommitComposer(composerController, push),
+                    onCollapse: () =>
+                        setState(() => _composerExpanded = false),
+                    focused: true,
+                  )
+                : null,
+            taskDockFocused: _composerExpanded,
             preferences: workspacePreferences,
             onPreferencesChanged: saveWorkspacePreferences,
           );
@@ -1492,7 +1552,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           return;
         }
         final stagedCount = status?.staged.length ?? 0;
-        if (stagedCount > 0) _openCommitDialog(stagedCount);
+        if (stagedCount > 0) _expandCommitComposer();
         return;
       case RepositoryPrimaryActionKind.sync:
         _sync(ref.read(appSettingsProvider).defaultPullMode).ignore();
@@ -1531,7 +1591,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     });
   }
 
-  Widget _commitBar(BuildContext context, GitStatus status) {
+  Widget _commitBar(
+    BuildContext context,
+    GitStatus status,
+    CommitComposerController composerController,
+  ) {
     final stagedCount = status.staged.length;
     // "Active" (accent-colored) while there's something left to stage; once
     // everything is staged it reverts to the same secondary look it always had.
@@ -1548,13 +1612,17 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       padding: const EdgeInsets.all(12),
       child: Row(
         children: [
-          Text(
-            stagedCount > 0 ? '$stagedCount staged' : 'Stage files to commit',
-            style: MacosTheme.of(
-              context,
-            ).typography.caption1.copyWith(color: MacosColors.systemGrayColor),
+          Expanded(
+            child: CommitComposer(
+              controller: composerController,
+              presentation: CommitComposerPresentation.collapsed,
+              branchLabel: status.branch.head ?? 'Detached HEAD',
+              onAccept: (push) =>
+                  _acceptCommitComposer(composerController, push),
+              onExpand: _expandCommitComposer,
+            ),
           ),
-          const Spacer(),
+          const SizedBox(width: 8),
           AppPushButton(
             controlSize: ControlSize.large,
             secondary: true,
@@ -1568,17 +1636,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             secondary: !hasUnstaged,
             onPressed: _stageAll,
             child: const Text('Stage All'),
-          ),
-          const SizedBox(width: 8),
-          AppPushButton(
-            controlSize: ControlSize.large,
-            // Same convention as "Stage All": grey when idle, blue once
-            // there's something to act on.
-            secondary: stagedCount == 0,
-            onPressed: stagedCount > 0
-                ? () => _openCommitDialog(stagedCount)
-                : null,
-            child: const Text('Commit…'),
           ),
         ],
       ),
