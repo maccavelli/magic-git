@@ -22,6 +22,7 @@ import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/dnd/deselect.dart';
 import 'package:remote_magic_git/features/repository/diff_popout_window.dart';
+import 'package:remote_magic_git/features/repository/diff_view_controls.dart';
 import 'package:remote_magic_git/features/repository/repo_status_view.dart';
 import 'package:riverpod/misc.dart' show Override;
 
@@ -401,7 +402,7 @@ void main() {
     );
 
     // In the header's pulldown menu.
-    await tester.tap(find.byType(MacosPulldownButton));
+    await tester.tap(find.byType(MacosPulldownButton).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Amend last commit'));
     await tester.pumpAndSettle();
@@ -1241,7 +1242,7 @@ void main() {
         // in the staged section and the diff chrome.
         expect(find.text('lib/a.dart'), findsWidgets);
         expect(find.text('Staged (1)'), findsOneWidget);
-        expect(find.text('Changes'), findsNothing);
+        expect(find.text('Changes (1)'), findsNothing);
       },
     );
   });
@@ -1515,7 +1516,7 @@ void main() {
         await rightClick(tester, find.text('lib/c.dart'));
 
         expect(find.text('Stage'), findsOneWidget);
-        expect(find.textContaining('Files'), findsNothing);
+        expect(find.text('3 files selected'), findsNothing);
       },
     );
 
@@ -1724,7 +1725,13 @@ void main() {
 
       await tester.tap(find.text('lib/a.dart'));
       await tester.pumpAndSettle();
-      await tester.tap(_icon(CupertinoIcons.arrow_up_left_arrow_down_right));
+      final diffMenu = find.descendant(
+        of: find.byType(DiffViewControls),
+        matching: find.byType(MacosPulldownButton),
+      );
+      await tester.tap(diffMenu);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Open diff in larger window'));
       await tester.pumpAndSettle();
       expect(find.byType(DiffPopoutWindow), findsOneWidget);
 

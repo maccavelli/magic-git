@@ -19,6 +19,7 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/split_diff_view.dart';
 import 'package:remote_magic_git/features/repository/diff_popout_window.dart';
+import 'package:remote_magic_git/features/repository/diff_view_controls.dart';
 import 'package:remote_magic_git/features/repository/hunk_diff_view.dart';
 import 'package:remote_magic_git/features/repository/repo_status_view.dart';
 
@@ -46,6 +47,17 @@ class _HiddenFileView extends FileViewVisibility {
 Finder _byMacosTooltip(String message) =>
     find.byWidgetPredicate((w) => w is MacosTooltip && w.message == message);
 
+Future<void> _openPopout(WidgetTester tester) async {
+  final menu = find.descendant(
+    of: find.byType(DiffViewControls),
+    matching: find.byType(MacosPulldownButton),
+  );
+  await tester.tap(menu);
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Open diff in larger window'));
+  await tester.pumpAndSettle();
+}
+
 Future<void> _pump(WidgetTester tester) async {
   final container = ProviderContainer(
     overrides: [
@@ -59,9 +71,9 @@ Future<void> _pump(WidgetTester tester) async {
         ),
       ),
       pendingOpProvider(_repo).overrideWith((ref) async => PendingOp.none),
-      repoWatchProvider(_repo).overrideWith(
-        (ref) => const Stream<RepoWatchEvent>.empty(),
-      ),
+      repoWatchProvider(
+        _repo,
+      ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
       fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
       refsProvider(_repo).overrideWith((ref) async => const []),
       // Sibling of the refs override: the views now read CONFIGURED
@@ -101,8 +113,7 @@ void main() {
       expect(_byMacosTooltip('Close diff'), findsOneWidget);
       expect(find.byType(DiffPopoutWindow), findsNothing);
 
-      await tester.tap(_byMacosTooltip('Open diff in a larger window'));
-      await tester.pumpAndSettle();
+      await _openPopout(tester);
 
       expect(find.byType(DiffPopoutWindow), findsOneWidget);
       expect(_byMacosTooltip('Close diff'), findsNothing);
@@ -112,23 +123,21 @@ void main() {
     },
   );
 
-  testWidgets(
-    'closing the pop-out returns the diff to the inline panel',
-    (tester) async {
-      await _pump(tester);
-      await tester.tap(find.text('lib/a.dart'));
-      await tester.pumpAndSettle();
-      await tester.tap(_byMacosTooltip('Open diff in a larger window'));
-      await tester.pumpAndSettle();
+  testWidgets('closing the pop-out returns the diff to the inline panel', (
+    tester,
+  ) async {
+    await _pump(tester);
+    await tester.tap(find.text('lib/a.dart'));
+    await tester.pumpAndSettle();
+    await _openPopout(tester);
 
-      await tester.tap(_byMacosTooltip('Close pop-out'));
-      await tester.pumpAndSettle();
+    await tester.tap(_byMacosTooltip('Close pop-out'));
+    await tester.pumpAndSettle();
 
-      expect(find.byType(DiffPopoutWindow), findsNothing);
-      expect(_byMacosTooltip('Close diff'), findsOneWidget);
-      expect(find.text('+new'), findsOneWidget);
-    },
-  );
+    expect(find.byType(DiffPopoutWindow), findsNothing);
+    expect(_byMacosTooltip('Close diff'), findsOneWidget);
+    expect(find.text('+new'), findsOneWidget);
+  });
 
   testWidgets(
     "the pop-out's side-by-side toggle is independent and switches its own "
@@ -137,8 +146,7 @@ void main() {
       await _pump(tester);
       await tester.tap(find.text('lib/a.dart'));
       await tester.pumpAndSettle();
-      await tester.tap(_byMacosTooltip('Open diff in a larger window'));
-      await tester.pumpAndSettle();
+      await _openPopout(tester);
 
       // Seeded from the inline panel's untouched default: unified, not split.
       expect(find.byType(HunkDiffView), findsOneWidget);
@@ -158,8 +166,7 @@ void main() {
       await _pump(tester);
       await tester.tap(find.text('lib/a.dart'));
       await tester.pumpAndSettle();
-      await tester.tap(_byMacosTooltip('Open diff in a larger window'));
-      await tester.pumpAndSettle();
+      await _openPopout(tester);
 
       // Opens at 60% of the host — narrower than two comfortable columns.
       final initial = tester.getSize(find.byType(DiffPopoutWindow));
@@ -167,8 +174,11 @@ void main() {
       await tester.tap(_byMacosTooltip('Side-by-side'));
       await tester.pumpAndSettle();
       final grown = tester.getSize(find.byType(DiffPopoutWindow));
-      expect(grown.width, greaterThan(initial.width),
-          reason: 'split needs the room of two columns');
+      expect(
+        grown.width,
+        greaterThan(initial.width),
+        reason: 'split needs the room of two columns',
+      );
 
       // Toggling split OFF leaves the size alone (a nudge, not a constraint).
       await tester.tap(_byMacosTooltip('Side-by-side'));
@@ -183,8 +193,7 @@ void main() {
       await _pump(tester);
       await tester.tap(find.text('lib/a.dart'));
       await tester.pumpAndSettle();
-      await tester.tap(_byMacosTooltip('Open diff in a larger window'));
-      await tester.pumpAndSettle();
+      await _openPopout(tester);
 
       final initial = tester.getSize(find.byType(DiffPopoutWindow));
       final handle = find.byIcon(CupertinoIcons.arrow_up_left_arrow_down_right);
@@ -210,8 +219,7 @@ void main() {
     await _pump(tester);
     await tester.tap(find.text('lib/a.dart'));
     await tester.pumpAndSettle();
-    await tester.tap(_byMacosTooltip('Open diff in a larger window'));
-    await tester.pumpAndSettle();
+    await _openPopout(tester);
     expect(find.byType(DiffPopoutWindow), findsOneWidget);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
@@ -367,9 +375,9 @@ void main() {
             ),
           ),
           pendingOpProvider(_repo).overrideWith((ref) async => PendingOp.none),
-          repoWatchProvider(_repo).overrideWith(
-            (ref) => const Stream<RepoWatchEvent>.empty(),
-          ),
+          repoWatchProvider(
+            _repo,
+          ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
           // Sibling of the refs override: the views now read CONFIGURED
@@ -405,15 +413,17 @@ void main() {
 
       await tester.tap(find.text('lib/a.dart'));
       await tester.pumpAndSettle();
-      await tester.tap(_byMacosTooltip('Open diff in a larger window'));
-      await tester.pumpAndSettle();
+      await _openPopout(tester);
       expect(find.byType(DiffPopoutWindow), findsOneWidget);
 
       // The pop-out defaults to roughly centered, covering the file list
       // beneath it — drag it out of the way (by its title bar) before
       // clicking a row, exactly as a real user would need to.
       final titleBar = tester.getTopLeft(find.byType(DiffPopoutWindow));
-      await tester.dragFrom(titleBar + const Offset(20, 10), const Offset(2000, 2000));
+      await tester.dragFrom(
+        titleBar + const Offset(20, 10),
+        const Offset(2000, 2000),
+      );
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('lib/b.dart'));

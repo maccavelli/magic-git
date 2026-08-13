@@ -42,12 +42,14 @@ class FileView extends ConsumerStatefulWidget {
   final double maxWidth;
   final String repoPath;
   final OpenFileCallback onOpenFile;
+  final bool embedded;
 
   const FileView({
     super.key,
     required this.maxWidth,
     required this.repoPath,
     required this.onOpenFile,
+    this.embedded = false,
   });
 
   @override
@@ -429,6 +431,9 @@ class _FileViewState extends ConsumerState<FileView> {
   Widget build(BuildContext context) {
     final async = ref.watch(repoStructureProvider(repoPath));
     final overlay = ref.watch(repoStatusOverlayProvider(repoPath));
+    if (widget.embedded) {
+      return RepaintBoundary(child: _body(context, async, overlay));
+    }
     // The stored width is clamped to THIS panel's relative bounds on render
     // only — a width chosen on a wide window renders clamped on a narrow one
     // without being overwritten (only drags persist).

@@ -29,6 +29,7 @@ import '../common/panel_shortcuts.dart';
 import '../common/repository_context.dart';
 import '../common/repository_context_bar.dart';
 import '../common/repository_workspace_scaffold.dart';
+import '../common/resizable_master_detail.dart';
 import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
 import '../common/tappable.dart';
@@ -42,9 +43,14 @@ import 'blame_sheet.dart';
 import 'commit_dialog.dart';
 import 'conflict_view.dart';
 import 'diff_popout_window.dart';
+import 'diff_view_controls.dart';
 import 'file_view.dart';
 import 'hunk_diff_view.dart';
 import 'output_view.dart';
+import 'repo_change_filter.dart';
+import 'repo_change_model.dart';
+import 'repo_change_navigator.dart';
+import 'repository_clean_state.dart';
 
 /// How to proceed when a plain push would be rejected because the branch is
 /// behind its upstream.
@@ -54,7 +60,10 @@ enum _PushChoice { pullThenPush, pushAnyway, cancel }
 /// sections (see [_RepoStatusViewState._handleRowTap]) — mixing, say, one
 /// staged and one unstaged file makes "Stage"/"Discard" ambiguous — so this
 /// single value describes every currently-selected path at once.
-enum _SectionKind { conflict, staged, unstaged, untracked }
+typedef _SectionKind = RepoChangeSection;
+typedef _StatusRow = RepoChangeRow;
+typedef _HeaderRow = RepoChangeHeaderRow;
+typedef _FileRow = RepoChangeFileRow;
 
 /// Live working-tree status for the connected repository. Proves the end-to-end
 /// path: SSH → `git status --porcelain=v2 -z` → isolate parse → reactive UI,
@@ -82,15 +91,37 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     with BusyActionState {
   // Which status section the current selection belongs to; null means
   // nothing is selected.
-  _SectionKind? _selectionKind;
+  final _selectionController = RepoChangeSelectionController();
+  final _changeFilterController = TextEditingController();
+  RepoChangeFilter _changeFilter = const RepoChangeFilter();
+  RepositoryNavigatorMode? _navigatorModeOverride;
+
+  _SectionKind? get _selectionKind => _selectionController.value.section;
+  set _selectionKind(_SectionKind? value) {
+    _selectionController.value = _selectionController.value.copyWith(
+      section: value,
+      clearSection: value == null,
+    );
+  }
   // Paths currently selected within _selectionKind's section. A lone path is
   // the common case and drives the diff/conflict panel; 2+ show the
   // multi-select summary panel instead.
-  Set<String> _selectedPaths = {};
+  Set<String> get _selectedPaths => _selectionController.value.paths;
+  set _selectedPaths(Set<String> value) {
+    _selectionController.value = _selectionController.value.copyWith(
+      paths: Set.unmodifiable(value),
+    );
+  }
   // Anchor for shift-click range selection: the fixed end a range extends
   // from, so repeated shift-clicks extend/contract from the same point
   // rather than the last-clicked row.
-  String? _selectionAnchor;
+  String? get _selectionAnchor => _selectionController.value.anchor;
+  set _selectionAnchor(String? value) {
+    _selectionController.value = _selectionController.value.copyWith(
+      anchor: value,
+      clearAnchor: value == null,
+    );
+  }
 
   // Single-file view of the selection — non-null only when exactly one
   // non-conflict file is selected. Named record so field reads are
@@ -251,6 +282,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     _contextMenu.dispose();
     _listFocus.dispose();
     _listScroll.dispose();
+    _selectionController.dispose();
+    _changeFilterController.dispose();
     super.dispose();
   }
 
@@ -333,6 +366,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       _selectedPaths = {};
       _selectionAnchor = null;
       _popout = false;
+      _changeFilterController.clear();
+      _changeFilter = const RepoChangeFilter();
+      _navigatorModeOverride = null;
     }
     // The watch listener skips refetching status while this page is hidden (see
     // build). Re-sync once when it becomes visible again so nothing missed while
@@ -519,39 +555,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   bool _isPathSelected(String path, _SectionKind kind) =>
       _selectionKind == kind && _selectedPaths.contains(path);
 
-  /// Which status section currently owns [path], or null if the working tree
-  /// no longer reports it. Conflict wins over staged/unstaged (an unmerged
-  /// path is only listed under Conflicts).
-  _SectionKind? _sectionOfPath(GitStatus status, String path) {
-    if (status.conflicted.any((f) => f.path == path)) {
-      return _SectionKind.conflict;
-    }
-    // A partially-staged file is in both staged and unstaged lists. Prefer the
-    // section the selection is already in so a refresh doesn't yank a mixed
-    // file out of the pane the user is looking at; otherwise prefer unstaged
-    // (the "what did I just edit" half — same default as the file tree).
-    final staged = status.staged.any((f) => f.path == path);
-    final unstaged = status.unstaged.any((f) => f.path == path);
-    if (staged && unstaged) {
-      if (_selectionKind == _SectionKind.staged) return _SectionKind.staged;
-      return _SectionKind.unstaged;
-    }
-    if (staged) return _SectionKind.staged;
-    if (unstaged) return _SectionKind.unstaged;
-    if (status.untracked.any((f) => f.path == path)) {
-      return _SectionKind.untracked;
-    }
-    return null;
-  }
-
-  Set<String> _pathsInSection(GitStatus status, _SectionKind kind) =>
-      switch (kind) {
-        _SectionKind.conflict => {for (final f in status.conflicted) f.path},
-        _SectionKind.staged => {for (final f in status.staged) f.path},
-        _SectionKind.unstaged => {for (final f in status.unstaged) f.path},
-        _SectionKind.untracked => {for (final f in status.untracked) f.path},
-      };
-
   /// Keeps the selection honest against a freshly landed [status]: drop paths
   /// that left the selected section, and re-home a selection that moved as a
   /// unit (bulk stage/unstage, or an external stage of the sole selected
@@ -559,66 +562,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   /// key. When only *some* members left, the leavers are pruned and the rest
   /// stay — multi-select never spans sections.
   void _syncSelectionToStatus(GitStatus status) {
-    final kind = _selectionKind;
-    if (kind == null || _selectedPaths.isEmpty) return;
-
-    final inSection = _pathsInSection(status, kind);
-    final pruned = _selectedPaths.intersection(inSection);
-    if (pruned.length == _selectedPaths.length) return; // all still valid
-
-    // Every path that left this section: where did it go (if anywhere)?
-    final left = _selectedPaths.difference(inSection);
-    _SectionKind? commonNew;
-    final moved = <String>{};
-    var split = false;
-    for (final path in left) {
-      final nk = _sectionOfPath(status, path);
-      if (nk == null) continue; // gone from the working tree entirely
-      if (commonNew == null) {
-        commonNew = nk;
-      } else if (commonNew != nk) {
-        split = true;
-        break;
-      }
-      moved.add(path);
-    }
-
-    if (pruned.isEmpty) {
-      // Entire selection left the section. Re-home when every surviving path
-      // landed in the *same* new section (bulk stage of N files, or a single
-      // file staged externally); otherwise clear.
-      if (!split &&
-          commonNew != null &&
-          moved.length == _selectedPaths.length) {
-        setState(() {
-          _selectionKind = commonNew;
-          _selectedPaths = moved;
-          if (_selectionAnchor == null || !moved.contains(_selectionAnchor)) {
-            _selectionAnchor = moved.first;
-          }
-          if (moved.length != 1 || commonNew == _SectionKind.conflict) {
-            _popout = false;
-          }
-        });
-        return;
-      }
-      setState(() {
-        _selectionKind = null;
-        _selectedPaths = {};
-        _selectionAnchor = null;
-        _popout = false;
-      });
-      return;
-    }
-
-    // Partial: keep whoever is still in this section.
+    final before = _selectionController.value;
+    final after = before.reconcile(status);
+    if (identical(after, before)) return;
     setState(() {
-      _selectedPaths = pruned;
-      if (_selectionAnchor != null &&
-          !_selectedPaths.contains(_selectionAnchor)) {
-        _selectionAnchor = _selectedPaths.first;
+      _selectionController.value = after;
+      if (after.count != 1 || after.section == _SectionKind.conflict) {
+        _popout = false;
       }
-      if (_selectedPaths.length != 1) _popout = false;
     });
   }
 
@@ -1350,6 +1301,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     );
     final primaryAction = resolvePrimaryRepositoryAction(snapshot);
     final selected = _selected;
+    final navigatorMode =
+        _navigatorModeOverride ?? workspacePreferences.navigatorMode;
     final keymap = ref.watch(keymapProvider);
     // One handler map for both consumers: the keyboard shortcuts and the
     // command palette's dispatched intents (see PanelShortcuts.handlers).
@@ -1398,6 +1351,18 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           : null,
     };
     final live = widget.isActive && !busy;
+    final ValueChanged<RepositoryWorkspacePrefs>? saveWorkspacePreferences =
+        identity == null
+        ? null
+        : (next) {
+            saveRepositoryWorkspacePrefs(identity: identity, next: next).then((
+              _,
+            ) {
+              if (mounted) {
+                ref.invalidate(repositoryWorkspacePrefsProvider(repoPath));
+              }
+            }).ignore();
+          };
 
     return PanelShortcuts(
       bindings: live
@@ -1420,7 +1385,13 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   ),
                 ),
               ),
-              data: (status) => _body(context, status),
+              data: (status) => _body(
+                context,
+                status,
+                preferences: workspacePreferences,
+                onPreferencesChanged: saveWorkspacePreferences,
+                supplement: supplement,
+              ),
             ),
           );
           // Pane priority: a right pane (the file view) is the full-height "3rd
@@ -1449,7 +1420,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Expanded(child: centerColumn),
-                    if (fileVisible)
+                    if ((fileVisible || workspacePreferences.filesPinned) &&
+                        navigatorMode != RepositoryNavigatorMode.files &&
+                        canvasConstraints.maxWidth >= 1200)
                       FileView(
                         maxWidth: canvasConstraints.maxWidth,
                         repoPath: repoPath,
@@ -1490,20 +1463,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             ),
             canvas: canvas,
             preferences: workspacePreferences,
-            onPreferencesChanged: identity == null
-                ? null
-                : (next) {
-                    saveRepositoryWorkspacePrefs(
-                      identity: identity,
-                      next: next,
-                    ).then((_) {
-                      if (mounted) {
-                        ref.invalidate(
-                          repositoryWorkspacePrefsProvider(repoPath),
-                        );
-                      }
-                    }).ignore();
-                  },
+            onPreferencesChanged: saveWorkspacePreferences,
           );
         },
       ),
@@ -1625,8 +1585,20 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     );
   }
 
-  Widget _body(BuildContext context, GitStatus status) {
-    final list = _fileList(context, status);
+  Widget _body(
+    BuildContext context,
+    GitStatus status, {
+    required RepositoryWorkspacePrefs preferences,
+    required ValueChanged<RepositoryWorkspacePrefs>? onPreferencesChanged,
+    required RepositoryContextSupplement? supplement,
+  }) {
+    final list = _fileList(
+      context,
+      status,
+      preferences: preferences,
+      onPreferencesChanged: onPreferencesChanged,
+      supplement: supplement,
+    );
     // Popped out: the diff moved into the floating window, so the file list
     // gets its full width back instead of splitting the row with it.
     final Widget? panel = _popout
@@ -1639,18 +1611,18 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         ? _diffPanel(context)
         : null;
     if (panel == null) return list;
-    // Side-by-side needs the room of two columns — while it's active the diff
-    // panel takes a larger share of the row (the split cells wrap to fit
-    // whatever they get, but ~71% reads far better than 60% for two columns
-    // of code). The file list gives the space back the moment split is off.
-    final wideDiff = _diffSplit && !_isMultiSelect && _selectedConflict == null;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Expanded(flex: 2, child: list),
-        Container(width: 1, color: MacosColors.separatorColor),
-        Expanded(flex: wideDiff ? 5 : 3, child: panel),
-      ],
+    return ResizablePanePair(
+      leading: list,
+      trailing: panel,
+      extent: preferences.navigatorWidth,
+      minExtent: RepositoryWorkspacePrefs.minNavigatorWidth,
+      maxExtent: RepositoryWorkspacePrefs.maxNavigatorWidth,
+      trailingFloor: 320,
+      defaultExtent: RepositoryWorkspacePrefs.defaultNavigatorWidth,
+      semanticLabel: 'Resize repository change navigator',
+      onCommit: (width) => onPreferencesChanged?.call(
+        preferences.copyWith(navigatorWidth: width),
+      ),
     );
   }
 
@@ -1772,48 +1744,22 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              // Diff-viewer ergonomics: side-by-side, hide whitespace, expand
-              // context. Active toggles are tinted blue; inactive are gray.
-              _diffToggle(
-                icon: CupertinoIcons.square_split_2x1,
-                tooltip: 'Side-by-side',
-                active: _diffSplit,
-                onPressed: () => setState(() => _diffSplit = !_diffSplit),
-              ),
-              _diffToggle(
-                icon: CupertinoIcons.paintbrush,
-                tooltip: 'Ignore whitespace',
-                active: _diffIgnoreWs,
-                onPressed: () => setState(() => _diffIgnoreWs = !_diffIgnoreWs),
-              ),
-              _diffToggle(
-                icon: CupertinoIcons.arrow_up_arrow_down,
-                tooltip: 'Expand context',
-                active: _diffExpandContext,
-                onPressed: () =>
+              DiffViewControls(
+                split: _diffSplit,
+                ignoreWhitespace: _diffIgnoreWs,
+                expandedContext: _diffExpandContext,
+                blame: _diffBlame,
+                onToggleSplit: () => setState(() => _diffSplit = !_diffSplit),
+                onPrevious: () => _moveFileSelection(-1),
+                onNext: () => _moveFileSelection(1),
+                onToggleWhitespace: () =>
+                    setState(() => _diffIgnoreWs = !_diffIgnoreWs),
+                onToggleContext: () =>
                     setState(() => _diffExpandContext = !_diffExpandContext),
-              ),
-              _diffToggle(
-                icon: CupertinoIcons.person_crop_circle,
-                tooltip: 'Blame (who last changed each line)',
-                active: _diffBlame,
-                onPressed: () => setState(() => _diffBlame = !_diffBlame),
-              ),
-              const SizedBox(width: 4),
-              ToolIconButton(
-                icon: CupertinoIcons.arrow_up_left_arrow_down_right,
-                tooltip: 'Open diff in a larger window',
-                size: 15,
-                color: MacosColors.systemGrayColor,
-                onPressed: () => setState(() => _popout = true),
-              ),
-              const SizedBox(width: 4),
-              ToolIconButton(
-                icon: CupertinoIcons.xmark,
-                tooltip: 'Close diff',
-                size: 15,
-                color: MacosColors.systemGrayColor,
-                onPressed: _clearSelection,
+                onToggleBlame: () =>
+                    setState(() => _diffBlame = !_diffBlame),
+                onPopOut: () => setState(() => _popout = true),
+                onClose: _clearSelection,
               ),
             ],
           ),
@@ -1847,23 +1793,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       ],
     );
   }
-
-  /// A diff-viewer ergonomics toggle. Tinted with the same accent blue as the
-  /// toolbar's other menu icons when [active], gray otherwise.
-  Widget _diffToggle({
-    required IconData icon,
-    required String tooltip,
-    required bool active,
-    required VoidCallback onPressed,
-  }) => ToolIconButton(
-    icon: icon,
-    tooltip: tooltip,
-    size: 15,
-    color: active
-        ? MacosTheme.of(context).iconTheme.color
-        : MacosColors.systemGrayColor,
-    onPressed: onPressed,
-  );
 
   /// Stages / unstages / discards a single hunk by rebuilding a one-hunk patch
   /// and feeding it to `git apply`. Refreshes status and the *specific* diff key
@@ -2221,76 +2150,41 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
 
   List<_StatusRow> _statusRows(GitStatus status) {
     if (identical(status, _rowsForStatus)) return _rows;
-    final rows = <_StatusRow>[];
-    void addSection(
-      String title,
-      List<GitFileStatus> files, {
-      required bool staged,
-      bool discardable = false,
-      bool conflict = false,
-    }) {
-      if (files.isEmpty) return;
-      rows.add(_HeaderRow(title, files.length, conflict: conflict));
-      for (final f in files) {
-        rows.add(
-          _FileRow(
-            f,
-            staged: staged,
-            discardable: discardable,
-            conflict: conflict,
-          ),
-        );
-      }
-    }
-
-    addSection('Conflicts', status.conflicted, staged: false, conflict: true);
-    addSection('Staged', status.staged, staged: true);
-    addSection('Changes', status.unstaged, staged: false, discardable: true);
-    // Untracked files are "discardable" too — see _statusRow, which routes
-    // the discard action to _discardUntracked (delete) instead of _discard
-    // (restore) for these rows, since there's no tracked history to restore.
-    addSection('Untracked', status.untracked, staged: false, discardable: true);
+    final rows = deriveRepoChangeRows(status);
     _rowsForStatus = status;
     _rows = rows;
     return rows;
   }
 
-  Widget _fileList(BuildContext context, GitStatus status) {
-    if (status.isClean) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.asset(
-                'assets/MG-RKT-icon.png',
-                width: 200,
-                height: 200,
-                fit: BoxFit.cover,
-                filterQuality: FilterQuality.medium,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '|| The working tree is clean ||',
-              // Terminal-styled: same monospace family as the output view's
-              // log text, phosphor green, sized a touch larger than body text
-              // so its width roughly matches the icon above it.
-              style: MacosTheme.of(context).typography.body.copyWith(
-                fontFamily: 'Menlo',
-                fontFamilyFallback: const ['SF Mono', 'Consolas', 'monospace'],
-                color: const Color(0xFF33FF33),
-                fontSize: 14,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    final rows = _statusRows(status);
-    return Focus(
+  Widget _fileList(
+    BuildContext context,
+    GitStatus status, {
+    required RepositoryWorkspacePrefs preferences,
+    required ValueChanged<RepositoryWorkspacePrefs>? onPreferencesChanged,
+    required RepositoryContextSupplement? supplement,
+  }) {
+    final canonical = _statusRows(status);
+    final effectiveFilter = _changeFilter.copyWith(
+      grouping: preferences.grouping,
+    );
+    final result = filterRepoChangeRows(canonical, effectiveFilter);
+    final rows = result.rows;
+    final selectionSection = _selectionKind;
+    final visibleSelected = <String>{
+      for (final row in rows)
+        if (row is _FileRow && row.section == selectionSection) row.file.path,
+    };
+    final hiddenSelectionCount = _selectedPaths
+        .difference(visibleSelected)
+        .length;
+    final changes = status.isClean
+        ? RepositoryCleanState(
+            branchLabel: status.branch.isDetached
+                ? 'Detached HEAD'
+                : status.branch.head ?? 'Unborn branch',
+            supplement: supplement,
+          )
+        : Focus(
       focusNode: _listFocus,
       onKeyEvent: _onListKey,
       // The staging banner overlays the top of the list, but only while a file
@@ -2322,38 +2216,44 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         ),
       ),
     );
+    final mode = _navigatorModeOverride ?? preferences.navigatorMode;
+    return RepoChangeNavigator(
+      mode: mode,
+      onModeChanged: (next) {
+        setState(() => _navigatorModeOverride = next);
+        onPreferencesChanged?.call(preferences.copyWith(navigatorMode: next));
+      },
+      filterController: _changeFilterController,
+      filter: effectiveFilter,
+      onFilterChanged: (next) {
+        setState(() => _changeFilter = next);
+        if (next.grouping != preferences.grouping) {
+          onPreferencesChanged?.call(
+            preferences.copyWith(grouping: next.grouping),
+          );
+        }
+      },
+      visibleCount: result.visibleFiles,
+      totalCount: result.totalFiles,
+      hiddenSelectionCount: hiddenSelectionCount,
+      onRevealSelection: () {
+        _changeFilterController.clear();
+        setState(() {
+          _changeFilter = RepoChangeFilter(grouping: preferences.grouping);
+        });
+      },
+      onClearSelection: _clearSelection,
+      changes: changes,
+      files: FileView(
+        maxWidth: preferences.navigatorWidth,
+        repoPath: repoPath,
+        onOpenFile: _openFileFromTree,
+        embedded: true,
+      ),
+    );
   }
 
-  _SectionKind _kindOfFileRow(_FileRow row) => row.conflict
-      ? _SectionKind.conflict
-      : row.staged
-      ? _SectionKind.staged
-      : row.file.isUntracked
-      ? _SectionKind.untracked
-      : _SectionKind.unstaged;
-
-  /// The contiguous run of paths (within [kind]'s section, in on-screen
-  /// order) between [anchor] and [target], inclusive of both — the result of
-  /// a shift-click range-select. Falls back to just [target] if either
-  /// endpoint isn't in the section (e.g. the anchor's file was since staged
-  /// out of an unstaged-section anchor).
-  Set<String> _rangeBetween(
-    List<_StatusRow> rows,
-    _SectionKind kind,
-    String anchor,
-    String target,
-  ) {
-    final paths = [
-      for (final r in rows)
-        if (r is _FileRow && _kindOfFileRow(r) == kind) r.file.path,
-    ];
-    final i = paths.indexOf(anchor);
-    final j = paths.indexOf(target);
-    if (i == -1 || j == -1) return {target};
-    final lo = i < j ? i : j;
-    final hi = i < j ? j : i;
-    return paths.sublist(lo, hi + 1).toSet();
-  }
+  _SectionKind _kindOfFileRow(_FileRow row) => row.section;
 
   /// Handles a plain click, cmd-click, or shift-click on a file/conflict row —
   /// the macOS list-selection conventions: plain click replaces the
@@ -2366,23 +2266,13 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     final meta = keys.isMetaPressed;
     final shift = keys.isShiftPressed;
     setState(() {
-      if (meta && _selectionKind == kind) {
-        if (_selectedPaths.contains(path)) {
-          _selectedPaths = {..._selectedPaths}..remove(path);
-          if (_selectedPaths.isEmpty) _selectionKind = null;
-        } else {
-          _selectedPaths = {..._selectedPaths, path};
-        }
-        _selectionAnchor = path;
-      } else if (shift && _selectionKind == kind && _selectionAnchor != null) {
-        _selectedPaths = _rangeBetween(rows, kind, _selectionAnchor!, path);
-        // Anchor is deliberately left in place — repeated shift-clicks
-        // extend/contract from the same fixed end, matching Finder.
-      } else {
-        _selectionKind = kind;
-        _selectedPaths = {path};
-        _selectionAnchor = path;
-      }
+      _selectionController.select(
+        rows,
+        path,
+        kind,
+        toggle: meta,
+        range: shift,
+      );
       // Popout only ever shows a single non-conflict file's diff; drop it
       // once the selection no longer looks like that (a conflict, none, or
       // several files) rather than leaving it showing a stale file.
@@ -2754,33 +2644,4 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       ),
     );
   }
-}
-
-/// A row in the status file list: either a section header or a file. Sealed so
-/// [_statusRow] switches exhaustively and each variant carries only the fields
-/// it actually has — no nullable union with `!` force-unwraps.
-sealed class _StatusRow {
-  const _StatusRow();
-}
-
-/// A section header row ("Staged (3)", "Conflicts (1)", …).
-class _HeaderRow extends _StatusRow {
-  final String title;
-  final int count;
-  final bool conflict;
-  const _HeaderRow(this.title, this.count, {this.conflict = false});
-}
-
-/// A single file row under a section.
-class _FileRow extends _StatusRow {
-  final GitFileStatus file;
-  final bool staged;
-  final bool discardable;
-  final bool conflict;
-  const _FileRow(
-    this.file, {
-    required this.staged,
-    this.discardable = false,
-    this.conflict = false,
-  });
 }
