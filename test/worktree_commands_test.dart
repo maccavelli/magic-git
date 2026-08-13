@@ -85,7 +85,12 @@ void main() {
     await raw(['commit', '-q', '-m', 'first']);
   });
 
-  tearDown(() => tempDir.deleteSync(recursive: true));
+  tearDown(() {
+    // A worktree cleanup path may already have removed the scratch root. Test
+    // teardown is idempotent so suite-level concurrency cannot turn successful
+    // assertions into a spurious PathNotFoundException.
+    if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+  });
 
   group('repoLayout', () {
     test('main worktree: git dir equals common dir', () async {

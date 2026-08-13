@@ -14,9 +14,11 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/settings/pane_layout.dart';
+import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/utils/display_error.dart';
 import '../branches/create_tag_sheet.dart';
 import '../common/actions.dart';
+import '../common/adaptive_workspace_layout.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
 import '../common/commit_patch_view.dart';
@@ -29,9 +31,12 @@ import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/repository_context.dart';
-import '../common/resizable_master_detail.dart';
+import '../common/repository_context_bar.dart';
+import '../common/repository_workspace_scaffold.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
+import '../common/workspace_focus.dart';
+import '../common/workspace_navigation.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/drag_state.dart';
@@ -1194,6 +1199,11 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     final allBranches = ref.watch(
       appSettingsProvider.select((s) => s.historyAllBranches),
     );
+    final historyListWidth = ref.watch(
+      appSettingsProvider.select(
+        (settings) => settings.paneWidth(PaneId.historyList),
+      ),
+    );
     // One-shot handoff from Branches: seed revision scope for this mount only.
     ref.listen(historyNavigationIntentProvider, (prev, next) {
       if (next == null) return;
@@ -1336,6 +1346,63 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     final selectedHash = _soleSelectedHash;
     final selectedCommit = _selectedCommitIn(commits);
     final hasCommits = commits?.isNotEmpty ?? false;
+    final connection = ref.watch(connectionProvider);
+    final head = _stableRefs.where((item) => item.isHead).firstOrNull;
+    final supplementKey = connection.sessionEpoch > 0
+        ? RepositoryContextSupplementKey(
+            repositoryIdentity: repositoryContextIdentityKey(
+              backend: connection.backend.name,
+              connectionId: connection.connectionId,
+              repositoryPath: widget.repoPath,
+            ),
+            sessionEpoch: connection.sessionEpoch,
+          )
+        : null;
+    if (supplementKey != null && selectedHash != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final rangeEnd = _selectedHashes.length > 1
+            ? _selectedHashes.last
+            : null;
+        final selectedLabel = selectedHash.length <= 7
+            ? selectedHash
+            : selectedHash.substring(0, 7);
+        final rangeLabel = rangeEnd == null
+            ? null
+            : rangeEnd.length <= 7
+            ? rangeEnd
+            : rangeEnd.substring(0, 7);
+        ref
+            .read(repositoryContextSupplementCacheProvider.notifier)
+            .publish(
+              supplementKey,
+              RepositoryContextSupplement(
+                revisionLabel: rangeEnd == null
+                    ? 'Revision: $selectedLabel'
+                    : 'Range: $selectedLabel…$rangeLabel',
+                selectionLabel: _effPath == null ? null : 'Path: $_effPath',
+              ),
+            );
+        ref
+            .read(
+              workspaceNavigationProvider(
+                WorkspaceSessionKey(widget.repoPath, connection.sessionEpoch),
+              ).notifier,
+            )
+            .visit(
+              WorkspaceFocus(
+                repositoryPath: widget.repoPath,
+                sessionEpoch: connection.sessionEpoch,
+                kind: rangeEnd == null
+                    ? WorkspaceFocusKind.revision
+                    : WorkspaceFocusKind.range,
+                identity: selectedHash,
+                secondaryIdentity: rangeEnd ?? _effPath,
+                panelIndex: 1,
+              ),
+            );
+      });
+    }
 
     // One handler map for both consumers: the keyboard shortcuts and the
     // command palette's dispatched intents (see PanelShortcuts.handlers).
@@ -1366,12 +1433,43 @@ class _HistoryViewState extends ConsumerState<HistoryView>
           ? resolveShortcuts(keymap, handlers)
           : const <ShortcutActivator, VoidCallback>{},
       handlers: live ? handlers : const {},
-      child: ResizableMasterDetail(
-        paneId: PaneId.historyList,
-        // The diff/detail pane hosts real patch content — keep it usable
-        // when the commit list is dragged wide.
-        detailFloor: 360,
-        master: Column(
+      child: RepositoryWorkspaceScaffold(
+        repositoryContext: RepositoryContextBar(
+          snapshot: RepositoryContextSnapshot(
+            repositoryPath: widget.repoPath,
+            repositoryName:
+                'Repository: ${widget.repoPath.split('/').where((part) => part.isNotEmpty).lastOrNull ?? widget.repoPath}',
+            connectionLabel: connection.connectionLabel,
+            hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
+            branchLabel: head == null
+                ? 'Detached HEAD'
+                : 'Branch: ${head.shortName}',
+            upstreamLabel: head?.upstream,
+            ahead: head?.ahead ?? 0,
+            behind: head?.behind ?? 0,
+            hasUpstream: head?.upstream != null,
+            hasConfiguredRemote: _stableRefs.any((item) => item.isRemote),
+            connected: connection.isConnected,
+            busy: busy,
+            refCount: _stableRefs.length,
+            supplement: supplementKey == null
+                ? null
+                : ref.watch(
+                    repositoryContextSupplementCacheProvider.select(
+                      (cache) => cache[supplementKey],
+                    ),
+                  ),
+          ),
+          primaryAction: RepositoryPrimaryAction(
+            kind: RepositoryPrimaryActionKind.fetch,
+            label: 'Refresh',
+            disabledReason: busy
+                ? 'Another history operation is running'
+                : null,
+          ),
+          onPrimaryAction: (_) => _refresh(),
+        ),
+        navigator: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             _filterBar(context, filtering, allBranches: allBranches),
@@ -1414,7 +1512,17 @@ class _HistoryViewState extends ConsumerState<HistoryView>
             ],
           ],
         ),
-        detail: _rightPane(context, commits),
+        canvas: _rightPane(context, commits),
+        activePage: selectedHash == null
+            ? CompactWorkspacePage.navigator
+            : CompactWorkspacePage.canvas,
+        preferences: RepositoryWorkspacePrefs(navigatorWidth: historyListWidth),
+        onPreferencesChanged: (next) {
+          ref
+              .read(appSettingsProvider.notifier)
+              .setPaneWidth(PaneId.historyList, next.navigatorWidth)
+              .ignore();
+        },
       ),
     );
   }
