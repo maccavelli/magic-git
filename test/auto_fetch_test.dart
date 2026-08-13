@@ -34,6 +34,8 @@ class _FakeLocalExecutor extends LocalCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async => const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
 }
 
@@ -48,7 +50,10 @@ class _FetchCountingGit extends GitService {
   Future<RepoLayout?> validateLocalRepoRoot(String repoPath) async => null;
 
   @override
-  Future<SSHCommandResult> fetch(String repoPath) async {
+  Future<SSHCommandResult> fetch(
+    String repoPath, {
+    bool background = false,
+  }) async {
     fetchCalls++;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
@@ -76,9 +81,8 @@ void main() {
         // remote-tracking refs — derived here so each case's intent
         // (remote present / absent) carries over unchanged.
         remotesProvider(_repo).overrideWith(
-          (ref) async => refs.any((r) => r.isRemote)
-              ? const ['origin']
-              : const <String>[],
+          (ref) async =>
+              refs.any((r) => r.isRemote) ? const ['origin'] : const <String>[],
         ),
       ],
     );

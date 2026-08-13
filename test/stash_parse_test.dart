@@ -27,6 +27,8 @@ class _CannedExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async => SSHCommandResult(exitCode: 0, stdout: stdout, stderr: '');
 }
 
@@ -41,35 +43,46 @@ String _row(String gd, String oid, String date, String subject) =>
     [gd, oid, date, subject].join(_sep);
 
 void main() {
-  test('parses index, oid, branch, subject and date from a normal row',
-      () async {
-    final stashes = await _parse(
-      _row('stash@{0}', _oidA, '2 hours ago', 'WIP on main: abc1234 tweak it'),
-    );
-    expect(stashes, hasLength(1));
-    final s = stashes.single;
-    expect(s.index, 0);
-    expect(s.oid, _oidA);
-    expect(s.branch, 'main');
-    expect(s.relativeDate, '2 hours ago');
-    expect(s.subject, 'tweak it');
-  });
+  test(
+    'parses index, oid, branch, subject and date from a normal row',
+    () async {
+      final stashes = await _parse(
+        _row(
+          'stash@{0}',
+          _oidA,
+          '2 hours ago',
+          'WIP on main: abc1234 tweak it',
+        ),
+      );
+      expect(stashes, hasLength(1));
+      final s = stashes.single;
+      expect(s.index, 0);
+      expect(s.oid, _oidA);
+      expect(s.branch, 'main');
+      expect(s.relativeDate, '2 hours ago');
+      expect(s.subject, 'tweak it');
+    },
+  );
 
-  test('a separator byte inside the message does not dislodge the date',
-      () async {
-    // The adversarial case: a Unit-Separator smuggled into %gs. Pre-fix this
-    // shoved %cr past f[3] and a message fragment showed up as the date.
-    const poisoned = 'On main: note${_sep}with a separator';
-    final stashes = await _parse(_row('stash@{0}', _oidA, '3 days ago', poisoned));
-    expect(stashes, hasLength(1));
-    final s = stashes.single;
-    // The date column is intact...
-    expect(s.relativeDate, '3 days ago');
-    // ...and the stray byte is stripped from the rejoined message.
-    expect(s.message, 'On main: notewith a separator');
-    expect(s.subject, 'notewith a separator');
-    expect(s.branch, 'main');
-  });
+  test(
+    'a separator byte inside the message does not dislodge the date',
+    () async {
+      // The adversarial case: a Unit-Separator smuggled into %gs. Pre-fix this
+      // shoved %cr past f[3] and a message fragment showed up as the date.
+      const poisoned = 'On main: note${_sep}with a separator';
+      final stashes = await _parse(
+        _row('stash@{0}', _oidA, '3 days ago', poisoned),
+      );
+      expect(stashes, hasLength(1));
+      final s = stashes.single;
+      // The date column is intact...
+      expect(s.relativeDate, '3 days ago');
+      // ...and the stray byte is stripped from the rejoined message.
+      expect(s.message, 'On main: notewith a separator');
+      expect(s.subject, 'notewith a separator');
+      expect(s.branch, 'main');
+    },
+  );
 
   test('parses multiple rows and preserves per-row index', () async {
     final stashes = await _parse(

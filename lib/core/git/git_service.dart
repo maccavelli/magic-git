@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
+import '../exec/operation_activity.dart';
 import '../forge/forge.dart';
 import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
@@ -1087,6 +1088,7 @@ class GitService {
   /// `UndoJournal`; null (e.g. in most tests) simply disables recording —
   /// mutations behave identically either way.
   final void Function(UndoRecord record)? onUndoRecord;
+  final OperationEventCallback? onOperationEvent;
 
   /// One automatic retry for idempotent reads, so a sub-second transport blip
   /// (e.g. mid-reconnect) doesn't surface as an error before auto-reconnect
@@ -1103,6 +1105,7 @@ class GitService {
     this.committerName,
     this.committerEmail,
     this.onUndoRecord,
+    this.onOperationEvent,
   });
 
   /// `-c user.name=… -c user.email=…` overrides to inject right after `git` on
@@ -3468,13 +3471,7 @@ done
     final mb = await _executor.execute(
       repoPath: repoPath,
       extraEnv: _scopeEnvFor(repoPath),
-      gitArgs: [
-        'git',
-        'merge-base',
-        '--end-of-options',
-        baseOid,
-        branchOid,
-      ],
+      gitArgs: ['git', 'merge-base', '--end-of-options', baseOid, branchOid],
       retries: _readRetries,
       lane: ExecLane.read,
     );
@@ -3685,13 +3682,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     final mb = await _executor.execute(
       repoPath: repoPath,
       extraEnv: _scopeEnvFor(repoPath),
-      gitArgs: [
-        'git',
-        'merge-base',
-        '--end-of-options',
-        baseOid,
-        branchOid,
-      ],
+      gitArgs: ['git', 'merge-base', '--end-of-options', baseOid, branchOid],
       retries: _readRetries,
       lane: ExecLane.read,
     );
@@ -3729,10 +3720,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         stdout: result.stdout,
       );
     } on FormatException catch (e) {
-      throw GitException(
-        'git merge-tree output malformed: $e',
-        result,
-      );
+      throw GitException('git merge-tree output malformed: $e', result);
     }
   }
 
@@ -3835,14 +3823,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
   ) async {
     await _runCaptured(
       repoPath,
-      [
-        'git',
-        'branch',
-        '-f',
-        '--end-of-options',
-        name,
-        targetOid,
-      ],
+      ['git', 'branch', '-f', '--end-of-options', name, targetOid],
       'git branch -f',
       extraCaptures: [
         'git rev-parse -q --verify ${ShellEscaper.escape('refs/heads/$name')}',
@@ -3944,10 +3925,10 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       },
     );
 
-    final token = result.stdout.trim().split('\n').lastWhere(
-      (l) => l.isNotEmpty,
-      orElse: () => '',
-    );
+    final token = result.stdout
+        .trim()
+        .split('\n')
+        .lastWhere((l) => l.isNotEmpty, orElse: () => '');
     // record() does not expose mutation stdout; re-parse token from cleaned out.
     final status = parseBaseDeleteStatusToken(token);
     // Only journal on deleted — record callback already enforced OID match.
@@ -4721,22 +4702,26 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
   /// Installs both forge CLI credential helpers for the duration of the
   /// command ([forgeGitAuthConfigArgsAll]) because `--all` may touch remotes
   /// of either forge.
-  Future<SSHCommandResult> fetch(String repoPath) => _run(
-    repoPath,
-    [
-      'git',
-      ...forgeGitAuthConfigArgsAll(
-        ghPath: _executor.resolvedBinaryPath('gh'),
-        glabPath: _executor.resolvedBinaryPath('glab'),
-      ),
-      'fetch',
-      '--all',
-      '--prune',
-    ],
-    'git fetch',
-    timeout: networkTimeout,
-    lane: ExecLane.sync,
-  );
+  Future<SSHCommandResult> fetch(String repoPath, {bool background = false}) =>
+      _run(
+        repoPath,
+        [
+          'git',
+          ...forgeGitAuthConfigArgsAll(
+            ghPath: _executor.resolvedBinaryPath('gh'),
+            glabPath: _executor.resolvedBinaryPath('glab'),
+          ),
+          'fetch',
+          '--all',
+          '--prune',
+        ],
+        'git fetch',
+        timeout: networkTimeout,
+        lane: ExecLane.sync,
+        visibility: background
+            ? OperationVisibility.background
+            : OperationVisibility.normal,
+      );
 
   /// Pulls upstream work. Defaults to fast-forward-only (never creates a
   /// surprise merge commit); [mode] can request a rebase or an explicit merge,
@@ -5616,12 +5601,20 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         "printf '$postFmt' \"\$post\" \"\$postref\"$postPrintfArgs; "
         'exit \$rc';
 
+    final operation = OperationDescriptor(
+      id: OperationId.next(),
+      repositoryPath: repoPath,
+      label: label,
+      kind: OperationKind.gitMutation,
+      lane: ExecLane.exclusive,
+    );
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['sh', '-c', script],
       extraEnv: _scopeEnvFor(repoPath),
       timeout: timeout ?? SSHCommandExecutor.defaultTimeout,
       stdin: stdin,
+      operation: operation,
     );
 
     // Expected shape: '' pre preref extras… mutOut post postref postExtras…
@@ -5648,6 +5641,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       exitCode: result.exitCode,
       stdout: mutationStdout,
       stderr: result.stderr,
+      operationId: result.operationId,
     );
     if (!cleaned.isSuccess) {
       // argv[0] is `sh` here, but a missing git still surfaces as the
@@ -5659,7 +5653,21 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     }
     if (capture != null && onUndoRecord != null) {
       final entry = record(capture);
-      if (entry != null) onUndoRecord!(entry);
+      if (entry != null) {
+        onUndoRecord!(entry);
+        final id = operation.id;
+        if (id != null && onOperationEvent != null) {
+          onOperationEvent!(
+            OperationEvent(
+              id: id,
+              descriptor: operation,
+              phase: OperationPhase.succeeded,
+              occurredAt: DateTime.now(),
+              undoable: true,
+            ),
+          );
+        }
+      }
     }
     return cleaned;
   }
@@ -5899,6 +5907,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationVisibility visibility = OperationVisibility.normal,
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
@@ -5909,6 +5918,17 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       retries: retries,
       lane: lane,
       compress: compress,
+      operation: lane == ExecLane.read
+          ? null
+          : OperationDescriptor(
+              repositoryPath: repoPath,
+              label: label,
+              kind: lane == ExecLane.sync
+                  ? OperationKind.synchronization
+                  : OperationKind.gitMutation,
+              lane: lane,
+              visibility: visibility,
+            ),
     );
     if (!result.isSuccess) {
       // 127 means git itself wasn't found (argv[0] is always `git` here), not

@@ -70,7 +70,10 @@ class _FakeGitService extends GitService {
   }
 
   @override
-  Future<SSHCommandResult> fetch(String repoPath) async {
+  Future<SSHCommandResult> fetch(
+    String repoPath, {
+    bool background = false,
+  }) async {
     fetchCalls++;
     if (fetchGate != null) await fetchGate!.future;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
@@ -258,9 +261,9 @@ Future<_FakeGitService> _pump(
       gitServiceProvider.overrideWithValue(resolved),
       statusProvider(_repo).overrideWith((ref) async => status),
       pendingOpProvider(_repo).overrideWith((ref) async => resolved.pendingOp0),
-      repoWatchProvider(_repo).overrideWith(
-        (ref) => const Stream<RepoWatchEvent>.empty(),
-      ),
+      repoWatchProvider(
+        _repo,
+      ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
       fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
       refsProvider(_repo).overrideWith((ref) async => refs),
       // Sibling of the refs override: the header now reads CONFIGURED
@@ -271,9 +274,7 @@ Future<_FakeGitService> _pump(
       remotesProvider(_repo).overrideWith(
         (ref) async =>
             remotes ??
-            (refs.any((r) => r.isRemote)
-                ? const ['origin']
-                : const <String>[]),
+            (refs.any((r) => r.isRemote) ? const ['origin'] : const <String>[]),
       ),
       connectionProvider.overrideWith(
         () => _StubConnection(
@@ -479,13 +480,11 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           gitServiceProvider.overrideWithValue(git),
-          statusProvider(
-            _repo,
-          ).overrideWith((ref) async => _statusWith()),
+          statusProvider(_repo).overrideWith((ref) async => _statusWith()),
           pendingOpProvider(_repo).overrideWith((ref) async => git.pendingOp0),
-          repoWatchProvider(_repo).overrideWith(
-            (ref) => const Stream<RepoWatchEvent>.empty(),
-          ),
+          repoWatchProvider(
+            _repo,
+          ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
           // Sibling of the refs override: the views now read CONFIGURED
@@ -541,7 +540,9 @@ void main() {
             );
           }),
           pendingOpProvider(_repo).overrideWith((ref) async => git.pendingOp0),
-          repoWatchProvider(_repo).overrideWith((ref) => watchController.stream),
+          repoWatchProvider(
+            _repo,
+          ).overrideWith((ref) => watchController.stream),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
           // Sibling of the refs override: the views now read CONFIGURED
@@ -614,7 +615,9 @@ void main() {
             );
           }),
           pendingOpProvider(_repo).overrideWith((ref) async => git.pendingOp0),
-          repoWatchProvider(_repo).overrideWith((ref) => watchController.stream),
+          repoWatchProvider(
+            _repo,
+          ).overrideWith((ref) => watchController.stream),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
           // Sibling of the refs override: the views now read CONFIGURED
@@ -677,9 +680,9 @@ void main() {
             ),
           ),
           pendingOpProvider(_repo).overrideWith((ref) async => git.pendingOp0),
-          repoWatchProvider(_repo).overrideWith(
-            (ref) => const Stream<RepoWatchEvent>.empty(),
-          ),
+          repoWatchProvider(
+            _repo,
+          ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
           // Sibling of the refs override: the views now read CONFIGURED
@@ -727,7 +730,10 @@ void main() {
     Color? colorOf(IconData icon) =>
         tester.widget<MacosIcon>(_icon(icon)).color;
 
-    expect(colorOf(CupertinoIcons.arrow_down_circle), MacosColors.systemGreenColor);
+    expect(
+      colorOf(CupertinoIcons.arrow_down_circle),
+      MacosColors.systemGreenColor,
+    );
     expect(colorOf(CupertinoIcons.arrow_up_circle), isNull);
     expect(colorOf(CupertinoIcons.arrow_2_circlepath), isNull);
   });
@@ -751,8 +757,14 @@ void main() {
     Color? colorOf(IconData icon) =>
         tester.widget<MacosIcon>(_icon(icon)).color;
 
-    expect(colorOf(CupertinoIcons.arrow_up_circle), MacosColors.systemGreenColor);
-    expect(colorOf(CupertinoIcons.arrow_down_circle), MacosColors.systemGreenColor);
+    expect(
+      colorOf(CupertinoIcons.arrow_up_circle),
+      MacosColors.systemGreenColor,
+    );
+    expect(
+      colorOf(CupertinoIcons.arrow_down_circle),
+      MacosColors.systemGreenColor,
+    );
     expect(
       colorOf(CupertinoIcons.arrow_2_circlepath),
       MacosColors.systemGreenColor,
@@ -890,9 +902,9 @@ void main() {
           gitServiceProvider.overrideWithValue(git),
           statusProvider(_repo).overrideWith((ref) async => _statusWith()),
           pendingOpProvider(_repo).overrideWith((ref) async => git.pendingOp0),
-          repoWatchProvider(_repo).overrideWith(
-            (ref) => const Stream<RepoWatchEvent>.empty(),
-          ),
+          repoWatchProvider(
+            _repo,
+          ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) => neverCompletes.future),
           remotesProvider(_repo).overrideWith((ref) => remotesNever.future),
@@ -1034,10 +1046,7 @@ void main() {
         matching: find.byType(GestureDetector),
       );
       await tester.tap(
-        find.descendant(
-          of: aRow,
-          matching: _icon(CupertinoIcons.plus_circle),
-        ),
+        find.descendant(of: aRow, matching: _icon(CupertinoIcons.plus_circle)),
       );
       await tester.pumpAndSettle();
 
@@ -1064,7 +1073,10 @@ void main() {
         await cmdClick(tester, find.text('lib/b.dart'));
         expect(find.text('2 files selected'), findsOneWidget);
 
-        await tester.tap(find.text('lib/a.dart'), buttons: kSecondaryMouseButton);
+        await tester.tap(
+          find.text('lib/a.dart'),
+          buttons: kSecondaryMouseButton,
+        );
         await tester.pumpAndSettle();
         await tester.tap(find.text('Stage 2 Files'));
         await tester.pumpAndSettle();
@@ -1098,14 +1110,16 @@ void main() {
             pendingOpProvider(
               _repo,
             ).overrideWith((ref) async => PendingOp.none),
-            repoWatchProvider(_repo).overrideWith(
-              (ref) => const Stream<RepoWatchEvent>.empty(),
-            ),
+            repoWatchProvider(
+              _repo,
+            ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
             fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
             refsProvider(_repo).overrideWith((ref) async => const <GitRef>[]),
             // Sibling of the refs override: the views now read CONFIGURED
             // remotes (remotesProvider), not remote-tracking refs.
-            remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
+            remotesProvider(
+              _repo,
+            ).overrideWith((ref) async => const <String>[]),
             connectionProvider.overrideWith(
               () => _StubConnection(
                 const ConnectionState(backend: ConnectionBackend.ssh),
@@ -1166,14 +1180,16 @@ void main() {
             pendingOpProvider(
               _repo,
             ).overrideWith((ref) async => PendingOp.none),
-            repoWatchProvider(_repo).overrideWith(
-              (ref) => const Stream<RepoWatchEvent>.empty(),
-            ),
+            repoWatchProvider(
+              _repo,
+            ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
             fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
             refsProvider(_repo).overrideWith((ref) async => const <GitRef>[]),
             // Sibling of the refs override: the views now read CONFIGURED
             // remotes (remotesProvider), not remote-tracking refs.
-            remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
+            remotesProvider(
+              _repo,
+            ).overrideWith((ref) async => const <String>[]),
             connectionProvider.overrideWith(
               () => _StubConnection(
                 const ConnectionState(backend: ConnectionBackend.ssh),
@@ -1428,42 +1444,39 @@ void main() {
       },
     );
 
-    testWidgets(
-      'right-clicking within a multi-selection shows pluralized bulk '
-      'actions covering every selected file',
-      (tester) async {
-        final git = await _pump(
-          tester,
-          status: _statusWith(
-            unstaged: const [
-              GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
-              GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
-            ],
-          ),
-        );
+    testWidgets('right-clicking within a multi-selection shows pluralized bulk '
+        'actions covering every selected file', (tester) async {
+      final git = await _pump(
+        tester,
+        status: _statusWith(
+          unstaged: const [
+            GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+            GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+          ],
+        ),
+      );
 
-        await tester.tap(find.text('lib/a.dart'));
-        await tester.pumpAndSettle();
-        await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
-        await tester.tap(find.text('lib/b.dart'));
-        await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
-        await tester.pumpAndSettle();
-        expect(find.text('2 files selected'), findsOneWidget);
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.tap(find.text('lib/b.dart'));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pumpAndSettle();
+      expect(find.text('2 files selected'), findsOneWidget);
 
-        // Right-clicking a row that's part of the selection keeps it intact.
-        await rightClick(tester, find.text('lib/a.dart'));
-        expect(find.text('Stage 2 Files'), findsOneWidget);
-        expect(find.text('Discard Changes in 2 Files'), findsOneWidget);
-        // A single-file-only item (Blame) doesn't apply to a bulk selection.
-        expect(find.text('Blame'), findsNothing);
-        expect(find.text('Copy 2 Relative Paths'), findsOneWidget);
+      // Right-clicking a row that's part of the selection keeps it intact.
+      await rightClick(tester, find.text('lib/a.dart'));
+      expect(find.text('Stage 2 Files'), findsOneWidget);
+      expect(find.text('Discard Changes in 2 Files'), findsOneWidget);
+      // A single-file-only item (Blame) doesn't apply to a bulk selection.
+      expect(find.text('Blame'), findsNothing);
+      expect(find.text('Copy 2 Relative Paths'), findsOneWidget);
 
-        await tester.tap(find.text('Stage 2 Files'));
-        await tester.pumpAndSettle();
+      await tester.tap(find.text('Stage 2 Files'));
+      await tester.pumpAndSettle();
 
-        expect(git.staged, ['lib/a.dart', 'lib/b.dart']);
-      },
-    );
+      expect(git.staged, ['lib/a.dart', 'lib/b.dart']);
+    });
 
     testWidgets(
       'right-clicking a file outside the current multi-selection collapses '
@@ -1506,47 +1519,44 @@ void main() {
       },
     );
 
-    testWidgets(
-      'Reveal in Finder only appears for a local connection, '
-      'and Reveal is hidden once 2+ files are selected',
-      (tester) async {
-        await _pump(
-          tester,
-          isLocal: true,
-          status: _statusWith(
-            unstaged: const [
-              GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
-              GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
-            ],
-          ),
-          extraOverrides: [
-            fileDiffProvider((
-              _repo,
-              'lib/a.dart',
-              false,
-              false,
-              3,
-            )).overrideWith((ref) async => ''),
+    testWidgets('Reveal in Finder only appears for a local connection, '
+        'and Reveal is hidden once 2+ files are selected', (tester) async {
+      await _pump(
+        tester,
+        isLocal: true,
+        status: _statusWith(
+          unstaged: const [
+            GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+            GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
           ],
-        );
+        ),
+        extraOverrides: [
+          fileDiffProvider((
+            _repo,
+            'lib/a.dart',
+            false,
+            false,
+            3,
+          )).overrideWith((ref) async => ''),
+        ],
+      );
 
-        await rightClick(tester, find.text('lib/a.dart'));
-        expect(find.text('Reveal in Finder'), findsOneWidget);
-        expect(find.text('Open file'), findsOneWidget);
+      await rightClick(tester, find.text('lib/a.dart'));
+      expect(find.text('Reveal in Finder'), findsOneWidget);
+      expect(find.text('Open file'), findsOneWidget);
 
-        // Dismiss, then select both and right-click within the selection.
-        await tester.tapAt(const Offset(5, 5));
-        await tester.pumpAndSettle();
-        await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
-        await tester.tap(find.text('lib/b.dart'));
-        await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
-        await tester.pumpAndSettle();
-        await rightClick(tester, find.text('lib/a.dart'));
+      // Dismiss, then select both and right-click within the selection.
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.tap(find.text('lib/b.dart'));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pumpAndSettle();
+      await rightClick(tester, find.text('lib/a.dart'));
 
-        expect(find.text('Reveal in Finder'), findsNothing);
-        expect(find.text('Open 2 Files'), findsOneWidget);
-      },
-    );
+      expect(find.text('Reveal in Finder'), findsNothing);
+      expect(find.text('Open 2 Files'), findsOneWidget);
+    });
   });
 
   testWidgets(
@@ -1561,9 +1571,13 @@ void main() {
         remotes: const ['origin'], // …but the remote config is perfect
       );
 
-      expect(find.text('No remote detected'), findsNothing,
-          reason: 'origin IS configured — this label was a lie for empty '
-              'repos and read as a create/clone wiring failure');
+      expect(
+        find.text('No remote detected'),
+        findsNothing,
+        reason:
+            'origin IS configured — this label was a lie for empty '
+            'repos and read as a create/clone wiring failure',
+      );
       expect(
         find.text('No branches yet — repository is empty'),
         findsOneWidget,
@@ -1577,10 +1591,11 @@ void main() {
       expect(fetchIcon, findsOneWidget);
       expect(
         tester
-            .widget<MacosTooltip>(find.ancestor(
-              of: fetchIcon,
-              matching: find.byType(MacosTooltip),
-            ).first)
+            .widget<MacosTooltip>(
+              find
+                  .ancestor(of: fetchIcon, matching: find.byType(MacosTooltip))
+                  .first,
+            )
             .message,
         'Fetch',
       );
@@ -1597,10 +1612,7 @@ void main() {
         remotes: const [],
       );
       expect(find.text('No remote detected'), findsOneWidget);
-      expect(
-        find.text('No branches yet — repository is empty'),
-        findsNothing,
-      );
+      expect(find.text('No branches yet — repository is empty'), findsNothing);
     },
   );
 
@@ -1732,35 +1744,32 @@ void main() {
     });
   });
 
-  testWidgets(
-    'Stage All stays active while a partially-staged file still has '
-    'unstaged changes',
-    (tester) async {
-      // One record, in BOTH derived lists (added to the index, then edited
-      // again): the old files-vs-staged count comparison read this as
-      // "everything staged".
-      await _pump(
-        tester,
-        status: _statusWith(
-          staged: const [
-            GitFileStatus(path: 'lib/mixed.dart', statusX: 'A', statusY: 'M'),
-          ],
-        ),
-      );
+  testWidgets('Stage All stays active while a partially-staged file still has '
+      'unstaged changes', (tester) async {
+    // One record, in BOTH derived lists (added to the index, then edited
+    // again): the old files-vs-staged count comparison read this as
+    // "everything staged".
+    await _pump(
+      tester,
+      status: _statusWith(
+        staged: const [
+          GitFileStatus(path: 'lib/mixed.dart', statusX: 'A', statusY: 'M'),
+        ],
+      ),
+    );
 
-      final stageAll = tester.widget<AppPushButton>(
-        find.byWidgetPredicate(
-          (w) =>
-              w is AppPushButton &&
-              w.child is Text &&
-              (w.child as Text).data == 'Stage All',
-        ),
-      );
-      expect(
-        stageAll.secondary,
-        isFalse,
-        reason: 'the worktree half of a mixed file is still stageable',
-      );
-    },
-  );
+    final stageAll = tester.widget<AppPushButton>(
+      find.byWidgetPredicate(
+        (w) =>
+            w is AppPushButton &&
+            w.child is Text &&
+            (w.child as Text).data == 'Stage All',
+      ),
+    );
+    expect(
+      stageAll.secondary,
+      isFalse,
+      reason: 'the worktree half of a mixed file is still stageable',
+    );
+  });
 }

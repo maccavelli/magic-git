@@ -30,6 +30,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async => const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
 }
 
@@ -180,10 +182,7 @@ void main() {
     expect(find.text('main'), findsOneWidget);
     expect(find.textContaining('2 hours ago'), findsOneWidget);
     // Nothing selected yet — the preview shows its placeholder.
-    expect(
-      find.text('Select a stash to preview its contents'),
-      findsOneWidget,
-    );
+    expect(find.text('Select a stash to preview its contents'), findsOneWidget);
   });
 
   testWidgets('the stash-list divider drags and persists its width', (
@@ -210,7 +209,9 @@ void main() {
     expect(prefs.getDouble('paneWidth_stashList'), 380);
   });
 
-  testWidgets('shows the empty state when there are no stashes', (tester) async {
+  testWidgets('shows the empty state when there are no stashes', (
+    tester,
+  ) async {
     await _pump(tester, stashes: const []);
     expect(find.text('No stashes'), findsOneWidget);
     expect(find.textContaining('stash your current changes'), findsOneWidget);
@@ -222,9 +223,11 @@ void main() {
     await _pump(tester, stashes: _stashes, git: git);
 
     await tester.tap(
-      find.byWidgetPredicate(
-        (w) => w is MacosIcon && w.icon == CupertinoIcons.trash,
-      ).first,
+      find
+          .byWidgetPredicate(
+            (w) => w is MacosIcon && w.icon == CupertinoIcons.trash,
+          )
+          .first,
     );
     await tester.pumpAndSettle();
 
@@ -242,9 +245,11 @@ void main() {
     await _pump(tester, stashes: _stashes, git: git);
 
     await tester.tap(
-      find.byWidgetPredicate(
-        (w) => w is MacosIcon && w.icon == CupertinoIcons.trash,
-      ).first,
+      find
+          .byWidgetPredicate(
+            (w) => w is MacosIcon && w.icon == CupertinoIcons.trash,
+          )
+          .first,
     );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Drop'));
@@ -259,9 +264,11 @@ void main() {
     await _pump(tester, stashes: _stashes, git: git);
 
     await tester.tap(
-      find.byWidgetPredicate(
-        (w) => w is MacosIcon && w.icon == CupertinoIcons.tray_arrow_up,
-      ).last,
+      find
+          .byWidgetPredicate(
+            (w) => w is MacosIcon && w.icon == CupertinoIcons.tray_arrow_up,
+          )
+          .last,
     );
     await tester.pumpAndSettle();
 
@@ -291,10 +298,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // The placeholder is replaced by the stash's diff content.
-    expect(
-      find.text('Select a stash to preview its contents'),
-      findsNothing,
-    );
+    expect(find.text('Select a stash to preview its contents'), findsNothing);
     expect(find.textContaining('@@ -1 +1 @@'), findsOneWidget);
   });
 
@@ -412,28 +416,33 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('right-click a card offers the --index variants and create-branch',
-      (tester) async {
-    await _pump(tester, stashes: _stashes);
-    await openCardMenu(tester, 'tweak the parser');
-    expect(find.text('Apply, restoring staged files'), findsOneWidget);
-    expect(find.text('Pop, restoring staged files'), findsOneWidget);
-    expect(find.text('Create branch from stash…'), findsOneWidget);
-  });
+  testWidgets(
+    'right-click a card offers the --index variants and create-branch',
+    (tester) async {
+      await _pump(tester, stashes: _stashes);
+      await openCardMenu(tester, 'tweak the parser');
+      expect(find.text('Apply, restoring staged files'), findsOneWidget);
+      expect(find.text('Pop, restoring staged files'), findsOneWidget);
+      expect(find.text('Create branch from stash…'), findsOneWidget);
+    },
+  );
 
-  testWidgets('"Apply, restoring staged files" applies that stash with --index',
-      (tester) async {
-    final git = _ActionGit();
-    await _pump(tester, stashes: _stashes, git: git);
-    await openCardMenu(tester, 'tweak the parser'); // stash@{0} = _oidA
-    await tester.tap(find.text('Apply, restoring staged files'));
-    await tester.pumpAndSettle();
-    expect(git.applies, [_oidA]);
-    expect(git.applyRestoreIndex, [true]);
-  });
+  testWidgets(
+    '"Apply, restoring staged files" applies that stash with --index',
+    (tester) async {
+      final git = _ActionGit();
+      await _pump(tester, stashes: _stashes, git: git);
+      await openCardMenu(tester, 'tweak the parser'); // stash@{0} = _oidA
+      await tester.tap(find.text('Apply, restoring staged files'));
+      await tester.pumpAndSettle();
+      expect(git.applies, [_oidA]);
+      expect(git.applyRestoreIndex, [true]);
+    },
+  );
 
-  testWidgets('"Pop, restoring staged files" pops that stash with --index',
-      (tester) async {
+  testWidgets('"Pop, restoring staged files" pops that stash with --index', (
+    tester,
+  ) async {
     final git = _ActionGit();
     await _pump(tester, stashes: _stashes, git: git);
     await openCardMenu(tester, 'manual note'); // stash@{1} = _oidB
@@ -443,8 +452,9 @@ void main() {
     expect(git.popRestoreIndex, [true]);
   });
 
-  testWidgets('"Create branch from stash…" prompts then calls stashBranch',
-      (tester) async {
+  testWidgets('"Create branch from stash…" prompts then calls stashBranch', (
+    tester,
+  ) async {
     final git = _ActionGit();
     await _pump(tester, stashes: _stashes, git: git);
     await openCardMenu(tester, 'tweak the parser'); // stash@{0}, index 0, _oidA

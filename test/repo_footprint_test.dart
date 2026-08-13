@@ -26,6 +26,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     return next;
@@ -63,7 +65,8 @@ size-garbage: 0 bytes
     final exec = _FakeExecutor()
       ..next = const SSHCommandResult(
         exitCode: 0,
-        stdout: 'count: 9000\nsize: 40 MiB\nin-pack: 100\npacks: 1\n'
+        stdout:
+            'count: 9000\nsize: 40 MiB\nin-pack: 100\npacks: 1\n'
             'size-pack: 1 MiB\n',
         stderr: '',
       );

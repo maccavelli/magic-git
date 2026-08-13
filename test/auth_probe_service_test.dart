@@ -21,6 +21,8 @@ class _FakeExecutor extends CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     if (onExecute != null) return onExecute!(gitArgs);
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
@@ -32,11 +34,16 @@ class _FakeExecutor extends CommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
-  }) =>
-      throw UnimplementedError();
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+  }) => throw UnimplementedError();
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes, {String? routingRepo}) async {}
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  }) async {}
 
   @override
   void configureEnvironment({
@@ -71,7 +78,8 @@ void main() {
           if (argv.first == 'gh') {
             return const SSHCommandResult(
               exitCode: 0,
-              stdout: 'github.com\n  ✓ Logged in to github.com account u (k)'
+              stdout:
+                  'github.com\n  ✓ Logged in to github.com account u (k)'
                   '\n  - Active account: true\n',
               stderr: '',
             );
@@ -153,7 +161,8 @@ void main() {
           calledWith = List.of(argv);
           return const SSHCommandResult(
             exitCode: 0,
-            stdout: 'github.com\n  ✓ Logged in to github.com account u (k)'
+            stdout:
+                'github.com\n  ✓ Logged in to github.com account u (k)'
                 '\n  - Active account: true\n',
             stderr: '',
           );
@@ -207,9 +216,7 @@ void main() {
     });
 
     test('a thrown exception becomes unknown', () async {
-      final executor = _FakeExecutor(
-        onExecute: (_) => throw Exception('drop'),
-      );
+      final executor = _FakeExecutor(onExecute: (_) => throw Exception('drop'));
       final service = AuthProbeService(executor);
 
       final result = await service.probeForgeCli(Forge.github);

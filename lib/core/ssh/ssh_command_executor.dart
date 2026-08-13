@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../exec/command_drain.dart';
 import '../exec/command_lanes.dart';
 import '../exec/command_telemetry.dart';
+import '../exec/operation_activity.dart';
 import 'adaptive_read_concurrency.dart';
 import 'command_formatter.dart';
 import 'shell_escaper.dart';
@@ -22,6 +23,8 @@ export '../exec/command_drain.dart'
         maxCommandOutputChars,
         maxCommandOutputBytes;
 export '../exec/command_lanes.dart' show ExecLane;
+export '../exec/operation_activity.dart'
+    show OperationDescriptor, OperationEventCallback, OperationId;
 
 /// Transport-agnostic command result. [SSHCommandResult] remains as a
 /// compatibility typedef — both the SSH and local executors return this shape.
@@ -29,14 +32,23 @@ class CommandResult {
   final int exitCode;
   final String stdout;
   final String stderr;
+  final OperationId? operationId;
 
   const CommandResult({
     required this.exitCode,
     required this.stdout,
     required this.stderr,
+    this.operationId,
   });
 
   bool get isSuccess => exitCode == 0;
+
+  CommandResult withOperationId(OperationId? id) => CommandResult(
+    exitCode: exitCode,
+    stdout: stdout,
+    stderr: stderr,
+    operationId: id,
+  );
 }
 
 /// Compatibility alias — prefer [CommandResult] in new code.
@@ -174,6 +186,8 @@ abstract class CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   });
 
   /// Starts a long-running command and returns a live handle for incremental
@@ -184,6 +198,8 @@ abstract class CommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   });
 
   /// Uploads [bytes] to [remotePath] on the host: the SSH backend streams over
@@ -393,7 +409,9 @@ class SSHCommandExecutor implements CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
-  }) {
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+  }) async {
     // Pin this command to the connection generation active *right now*, at
     // enqueue time — not whatever generation happens to be active once its
     // turn in the scheduler comes up. A reconnect or a fresh connect()
@@ -404,30 +422,47 @@ class SSHCommandExecutor implements CommandExecutor {
     // every retry, so a re-enqueued attempt still refuses to run against a
     // newer generation rather than adopting the current one.
     final gen = _clientManager.generation;
-    final stdinBytes =
-        stdin == null ? null : Uint8List.fromList(utf8.encode(stdin));
-    return runWithRetries(
-      () => _run(
-        gen,
-        repoPath,
-        gitArgs,
-        extraEnv,
-        stdinBytes,
-        timeout,
-        compress,
-        lane,
-      ),
-      retries,
-      // One enqueued job per *attempt*, and an attempt is bounded by `timeout`
-      // (which also kills the channel/process). The scheduler's deadline is that
-      // plus a margin — a pure backstop against a body that never settles at
-      // all, which would otherwise hold its lane slot for the life of the app.
-      enqueue: (attempt) => _scheduler.run(
-        lane,
-        attempt,
-        deadline: timeout + CommandLaneScheduler.watchdogMargin,
-      ),
+    final stdinBytes = stdin == null
+        ? null
+        : Uint8List.fromList(utf8.encode(stdin));
+    final lifecycle = OperationLifecycleEmitter.begin(
+      operation,
+      onOperationEvent,
     );
+    try {
+      final result = await runWithRetries(
+        () => _run(
+          gen,
+          repoPath,
+          gitArgs,
+          extraEnv,
+          stdinBytes,
+          timeout,
+          compress,
+          lane,
+        ),
+        retries,
+        // One enqueued job per *attempt*, and an attempt is bounded by `timeout`
+        // (which also kills the channel/process). The scheduler's deadline is that
+        // plus a margin — a pure backstop against a body that never settles at
+        // all, which would otherwise hold its lane slot for the life of the app.
+        enqueue: (attempt) => _scheduler.run(
+          lane,
+          attempt,
+          deadline: timeout + CommandLaneScheduler.watchdogMargin,
+          onStarted: lifecycle?.started,
+        ),
+      );
+      if (result.isSuccess) {
+        lifecycle?.succeeded();
+      } else {
+        lifecycle?.failed('Exited with code ${result.exitCode}');
+      }
+      return result.withOperationId(lifecycle?.id);
+    } catch (_) {
+      lifecycle?.failed();
+      rethrow;
+    }
   }
 
   static const Duration _retryBackoff = Duration(milliseconds: 400);
@@ -489,9 +524,7 @@ class SSHCommandExecutor implements CommandExecutor {
       return false;
     }
     // dartssh2 auth / host-key / key-decode are deterministic for this attempt.
-    if (e is SSHAuthError ||
-        e is SSHHostkeyError ||
-        e is SSHKeyDecodeError) {
+    if (e is SSHAuthError || e is SSHHostkeyError || e is SSHKeyDecodeError) {
       return false;
     }
     // Capacity blip or mid-flight channel drop — worth one retry after backoff.
@@ -614,6 +647,7 @@ class SSHCommandExecutor implements CommandExecutor {
         ),
       );
     }
+
     // Set when the client-side timeout fires. Checked immediately after the
     // channel opens: a timeout that fired *while the open was still pending*
     // found a null session with nothing to kill, and the command it launched
@@ -815,7 +849,14 @@ class SSHCommandExecutor implements CommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
+    final lifecycle = OperationLifecycleEmitter.begin(
+      operation,
+      onOperationEvent,
+    );
+    lifecycle?.started();
     // Pin generation at open time — same contract as execute()'s enqueue pin.
     final gen = _clientManager.generation;
     // Prefer the dedicated stream client (dual-client mode) so long-lived
@@ -851,7 +892,7 @@ class SSHCommandExecutor implements CommandExecutor {
         await killAndCloseSession(session);
         throw SSHCommandSuperseded(gitArgs.join(' '));
       }
-      return _SshSessionStreamHandle(session);
+      return _ActivityStreamHandle(_SshSessionStreamHandle(session), lifecycle);
     } on TimeoutException {
       // If the open eventually does resolve in the background, don't leak the
       // session it produces — terminate and close it, mirroring `_run`'s
@@ -860,7 +901,45 @@ class SSHCommandExecutor implements CommandExecutor {
       throw SSHCommandTimeout(gitArgs.join(' '));
     } on SSHChannelOpenError {
       CommandTelemetry.instance.recordChannelOpenError();
+      lifecycle?.failed();
+      rethrow;
+    } catch (_) {
+      lifecycle?.failed();
       rethrow;
     }
+  }
+}
+
+class _ActivityStreamHandle implements CommandStreamHandle {
+  _ActivityStreamHandle(this._inner, this._lifecycle) {
+    unawaited(
+      _inner.exitCode.then((code) {
+        if (code == 0) {
+          _lifecycle?.succeeded();
+        } else {
+          _lifecycle?.failed(
+            code == null ? 'Stream ended' : 'Exited with code $code',
+          );
+        }
+      }, onError: (_) => _lifecycle?.failed()),
+    );
+  }
+
+  final CommandStreamHandle _inner;
+  final OperationLifecycleEmitter? _lifecycle;
+
+  @override
+  Stream<String> get stdout => _inner.stdout;
+
+  @override
+  Stream<String> get stderr => _inner.stderr;
+
+  @override
+  Future<int?> get exitCode => _inner.exitCode;
+
+  @override
+  Future<void> cancel() async {
+    _lifecycle?.canceled();
+    await _inner.cancel();
   }
 }

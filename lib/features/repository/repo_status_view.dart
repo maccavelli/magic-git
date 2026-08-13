@@ -15,6 +15,7 @@ import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
+import '../common/activity_center.dart';
 import '../common/busy_action.dart';
 import '../common/buttons.dart';
 import '../common/context_menu.dart';
@@ -541,14 +542,10 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
 
   Set<String> _pathsInSection(GitStatus status, _SectionKind kind) =>
       switch (kind) {
-        _SectionKind.conflict => {
-          for (final f in status.conflicted) f.path,
-        },
+        _SectionKind.conflict => {for (final f in status.conflicted) f.path},
         _SectionKind.staged => {for (final f in status.staged) f.path},
         _SectionKind.unstaged => {for (final f in status.unstaged) f.path},
-        _SectionKind.untracked => {
-          for (final f in status.untracked) f.path,
-        },
+        _SectionKind.untracked => {for (final f in status.untracked) f.path},
       };
 
   /// Keeps the selection honest against a freshly landed [status]: drop paths
@@ -592,8 +589,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         setState(() {
           _selectionKind = commonNew;
           _selectedPaths = moved;
-          if (_selectionAnchor == null ||
-              !moved.contains(_selectionAnchor)) {
+          if (_selectionAnchor == null || !moved.contains(_selectionAnchor)) {
             _selectionAnchor = moved.first;
           }
           if (moved.length != 1 || commonNew == _SectionKind.conflict) {
@@ -891,7 +887,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       destructive: true,
     );
     if (ok) {
-      await runGuarded(() => ref.read(gitServiceProvider).discard(repoPath, path));
+      await runGuarded(
+        () => ref.read(gitServiceProvider).discard(repoPath, path),
+      );
     }
   }
 
@@ -948,7 +946,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   }
 
   Future<void> _addToGitignore(String path) async {
-    await runGuarded(() => ref.read(gitServiceProvider).addToGitignore(repoPath, path));
+    await runGuarded(
+      () => ref.read(gitServiceProvider).addToGitignore(repoPath, path),
+    );
   }
 
   // ---- Bulk (multi-select) file actions -------------------------------
@@ -1020,8 +1020,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     );
     if (!ok) return;
     if (await runGuarded(
-      () =>
-          ref.read(gitServiceProvider).removeUntrackedFilesMany(repoPath, paths),
+      () => ref
+          .read(gitServiceProvider)
+          .removeUntrackedFilesMany(repoPath, paths),
     )) {
       if (!mounted) return;
       _dropPathsFromSelection(paths);
@@ -1286,7 +1287,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     // before the first fetch resolves.
     final refs = ref.watch(refsProvider(repoPath)).value;
     final typography = MacosTheme.of(context).typography;
-    final sessionWarning = ref.watch(connectionProvider.select((c) => c.warning));
+    final sessionWarning = ref.watch(
+      connectionProvider.select((c) => c.warning),
+    );
     final outputVisible = ref.watch(outputLogProvider.select((s) => s.visible));
     final fileVisible = ref.watch(fileViewVisibleProvider);
 
@@ -1296,49 +1299,49 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     // One handler map for both consumers: the keyboard shortcuts and the
     // command palette's dispatched intents (see PanelShortcuts.handlers).
     final handlers = <String, VoidCallback?>{
-            'repository.fetch': _fetch,
-            'repository.push': () =>
-                _push(followTags: ref.read(appSettingsProvider).pushFollowTags),
-            'repository.pull': () =>
-                _pull(ref.read(appSettingsProvider).defaultPullMode),
-            'repository.stash': _stashPush,
-            'repository.sync': _sync,
-            'repository.forcePush': () => _push(force: PushForce.withLease),
-            'repository.stageAll':
-                status != null &&
-                    (status.unstaged.isNotEmpty || status.untracked.isNotEmpty)
-                ? _stageAll
-                : null,
-            // Diff-view toggles: only meaningful while a file's diff is showing,
-            // so they fall through (null) when nothing is selected.
-            'repository.toggleSplitDiff': selected == null
-                ? null
-                : () => setState(() => _diffSplit = !_diffSplit),
-            'repository.toggleIgnoreWhitespace': selected == null
-                ? null
-                : () => setState(() => _diffIgnoreWs = !_diffIgnoreWs),
-            'repository.toggleExpandContext': selected == null
-                ? null
-                : () => setState(() => _diffExpandContext = !_diffExpandContext),
-            'repository.toggleStage': selected == null
-                ? null
-                : () => selected.staged
-                      ? _unstage(selected.path)
-                      : _stage(selected.path),
-            // Discard is only offered for unstaged rows elsewhere in this view
-            // (the "discardable" rows: unstaged tracked changes and untracked
-            // files) — matched here so the shortcut can't silently discard a
-            // staged selection. Untracked routes to the delete-file action
-            // instead of `git restore`, same split as the file-list row below.
-            'repository.discard': selected == null || selected.staged
-                ? null
-                : () => selected.untracked
-                      ? _discardUntracked(selected.path)
-                      : _discard(selected.path),
-            'repository.focusCommit': status != null && status.staged.isNotEmpty
-                ? () => _openCommitDialog(status.staged.length)
-                : null,
-          };
+      'repository.fetch': _fetch,
+      'repository.push': () =>
+          _push(followTags: ref.read(appSettingsProvider).pushFollowTags),
+      'repository.pull': () =>
+          _pull(ref.read(appSettingsProvider).defaultPullMode),
+      'repository.stash': _stashPush,
+      'repository.sync': _sync,
+      'repository.forcePush': () => _push(force: PushForce.withLease),
+      'repository.stageAll':
+          status != null &&
+              (status.unstaged.isNotEmpty || status.untracked.isNotEmpty)
+          ? _stageAll
+          : null,
+      // Diff-view toggles: only meaningful while a file's diff is showing,
+      // so they fall through (null) when nothing is selected.
+      'repository.toggleSplitDiff': selected == null
+          ? null
+          : () => setState(() => _diffSplit = !_diffSplit),
+      'repository.toggleIgnoreWhitespace': selected == null
+          ? null
+          : () => setState(() => _diffIgnoreWs = !_diffIgnoreWs),
+      'repository.toggleExpandContext': selected == null
+          ? null
+          : () => setState(() => _diffExpandContext = !_diffExpandContext),
+      'repository.toggleStage': selected == null
+          ? null
+          : () => selected.staged
+                ? _unstage(selected.path)
+                : _stage(selected.path),
+      // Discard is only offered for unstaged rows elsewhere in this view
+      // (the "discardable" rows: unstaged tracked changes and untracked
+      // files) — matched here so the shortcut can't silently discard a
+      // staged selection. Untracked routes to the delete-file action
+      // instead of `git restore`, same split as the file-list row below.
+      'repository.discard': selected == null || selected.staged
+          ? null
+          : () => selected.untracked
+                ? _discardUntracked(selected.path)
+                : _discard(selected.path),
+      'repository.focusCommit': status != null && status.staged.isNotEmpty
+          ? () => _openCommitDialog(status.staged.length)
+          : null,
+    };
     final live = widget.isActive && !busy;
 
     return PanelShortcuts(
@@ -1348,70 +1351,72 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       handlers: live ? handlers : const {},
       child: LayoutBuilder(
         builder: (context, constraints) {
-        final statusArea = Expanded(
-          child: statusAsync.when(
-            loading: () => const Center(child: ProgressCircle()),
-            error: (err, _) => Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  displayError(err),
-                  style: typography.body.copyWith(
-                    color: MacosColors.systemRedColor,
+          final statusArea = Expanded(
+            child: statusAsync.when(
+              loading: () => const Center(child: ProgressCircle()),
+              error: (err, _) => Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    displayError(err),
+                    style: typography.body.copyWith(
+                      color: MacosColors.systemRedColor,
+                    ),
                   ),
                 ),
               ),
+              data: (status) => _body(context, status),
             ),
-            data: (status) => _body(context, status),
-          ),
-        );
-        // Pane priority: a right pane (the file view) is the full-height "3rd
-        // panel" and takes precedence over any horizontal pane. Horizontal
-        // panes — including the output view — live inside the center "main"
-        // column, so they're clamped to its width and never extend under (or
-        // clip) the right pane.
-        final centerColumn = Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (sessionWarning != null) _warningBanner(context, sessionWarning),
-            _header(context, status, watchMode, refs),
-            if (pending != null && pending != PendingOp.none)
-              _pendingBanner(context, pending),
-            statusArea,
-            if (status != null && !status.isClean) _commitBar(context, status),
-            if (outputVisible) OutputView(maxHeight: constraints.maxHeight),
-          ],
-        );
-        return Stack(
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(child: centerColumn),
-                if (fileVisible)
-                  FileView(
-                    maxWidth: constraints.maxWidth,
-                    repoPath: repoPath,
-                    onOpenFile: _openFileFromTree,
-                  ),
-              ],
-            ),
-            if (_popout && selected != null)
-              DiffPopoutWindow(
-                repoPath: repoPath,
-                path: selected.path,
-                staged: selected.staged,
-                untracked: selected.untracked,
-                initialSplit: _diffSplit,
-                initialIgnoreWs: _diffIgnoreWs,
-                contextLines: _diffCtx,
-                bounds: Size(constraints.maxWidth, constraints.maxHeight),
-                onHunkAction: _applyHunk,
-                onClose: () => setState(() => _popout = false),
+          );
+          // Pane priority: a right pane (the file view) is the full-height "3rd
+          // panel" and takes precedence over any horizontal pane. Horizontal
+          // panes — including the output view — live inside the center "main"
+          // column, so they're clamped to its width and never extend under (or
+          // clip) the right pane.
+          final centerColumn = Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (sessionWarning != null)
+                _warningBanner(context, sessionWarning),
+              _header(context, status, watchMode, refs),
+              if (pending != null && pending != PendingOp.none)
+                _pendingBanner(context, pending),
+              statusArea,
+              if (status != null && !status.isClean)
+                _commitBar(context, status),
+              if (outputVisible) OutputView(maxHeight: constraints.maxHeight),
+            ],
+          );
+          return Stack(
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: centerColumn),
+                  if (fileVisible)
+                    FileView(
+                      maxWidth: constraints.maxWidth,
+                      repoPath: repoPath,
+                      onOpenFile: _openFileFromTree,
+                    ),
+                ],
               ),
-          ],
-        );
-      },
+              if (_popout && selected != null)
+                DiffPopoutWindow(
+                  repoPath: repoPath,
+                  path: selected.path,
+                  staged: selected.staged,
+                  untracked: selected.untracked,
+                  initialSplit: _diffSplit,
+                  initialIgnoreWs: _diffIgnoreWs,
+                  contextLines: _diffCtx,
+                  bounds: Size(constraints.maxWidth, constraints.maxHeight),
+                  onHunkAction: _applyHunk,
+                  onClose: () => setState(() => _popout = false),
+                ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1505,8 +1510,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     // panel takes a larger share of the row (the split cells wrap to fit
     // whatever they get, but ~71% reads far better than 60% for two columns
     // of code). The file list gives the space back the moment split is off.
-    final wideDiff =
-        _diffSplit && !_isMultiSelect && _selectedConflict == null;
+    final wideDiff = _diffSplit && !_isMultiSelect && _selectedConflict == null;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1979,6 +1983,16 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             busy ? null : _stashPush,
           ),
           const SizedBox(width: 2),
+          if (MediaQuery.sizeOf(context).width >= 900) ...[
+            ActivityCenterButton(
+              repositoryPath: repoPath,
+              onRevealOutput: (id) {
+                ref.read(outputLogProvider.notifier).setVisible(true);
+                ref.read(outputRevealProvider.notifier).request(id);
+              },
+            ),
+            const SizedBox(width: 2),
+          ],
           ToolIconButton(
             icon: CupertinoIcons.refresh,
             tooltip: 'Refresh',
@@ -2153,25 +2167,25 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       child: DeselectOnEmptyClick(
         onDeselect: _clearSelection,
         child: Stack(
-        children: [
-          Positioned.fill(
-            child: ListView.builder(
-              controller: _listScroll,
-              itemCount: rows.length,
-              itemBuilder: (context, index) =>
-                  _statusRow(context, rows[index], rows),
+          children: [
+            Positioned.fill(
+              child: ListView.builder(
+                controller: _listScroll,
+                itemCount: rows.length,
+                itemBuilder: (context, index) =>
+                    _statusRow(context, rows[index], rows),
+              ),
             ),
-          ),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: StagingDropBanner(
-              onStage: _stageMany,
-              onUnstage: _unstageMany,
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: StagingDropBanner(
+                onStage: _stageMany,
+                onUnstage: _unstageMany,
+              ),
             ),
-          ),
-        ],
+          ],
         ),
       ),
     );
@@ -2307,7 +2321,10 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   /// common block (copy path/relative path, and — local connections only,
   /// since these need this machine's own Finder/LaunchServices — reveal in
   /// Finder and open file).
-  List<ContextMenuEntry> _buildMenuEntries(_SectionKind kind, List<String> paths) {
+  List<ContextMenuEntry> _buildMenuEntries(
+    _SectionKind kind,
+    List<String> paths,
+  ) {
     final many = paths.length > 1;
     final n = paths.length;
     final entries = <ContextMenuEntry>[];
@@ -2318,8 +2335,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           ContextMenuItem(
             icon: CupertinoIcons.plus_circle,
             label: many ? 'Stage $n Files' : 'Stage',
-            onTap: () =>
-                many ? _stageMany(paths) : _stage(paths.single),
+            onTap: () => many ? _stageMany(paths) : _stage(paths.single),
           ),
           ContextMenuItem(
             icon: CupertinoIcons.eye_slash,
@@ -2341,14 +2357,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           ContextMenuItem(
             icon: CupertinoIcons.plus_circle,
             label: many ? 'Stage $n Files' : 'Stage',
-            onTap: () =>
-                many ? _stageMany(paths) : _stage(paths.single),
+            onTap: () => many ? _stageMany(paths) : _stage(paths.single),
           ),
           ContextMenuItem(
             icon: CupertinoIcons.arrow_uturn_left,
             label: many ? 'Discard Changes in $n Files' : 'Discard Changes',
-            onTap: () =>
-                many ? _discardMany(paths) : _discard(paths.single),
+            onTap: () => many ? _discardMany(paths) : _discard(paths.single),
           ),
           if (!many)
             ContextMenuItem(
@@ -2367,17 +2381,15 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           ContextMenuItem(
             icon: CupertinoIcons.minus_circle,
             label: many ? 'Unstage $n Files' : 'Unstage',
-            onTap: () =>
-                many ? _unstageMany(paths) : _unstage(paths.single),
+            onTap: () => many ? _unstageMany(paths) : _unstage(paths.single),
           ),
           ContextMenuItem(
             icon: CupertinoIcons.arrow_uturn_left,
             label: many
                 ? 'Discard Staged Changes in $n Files'
                 : 'Discard Staged Changes',
-            onTap: () => many
-                ? _discardStagedMany(paths)
-                : _discardStaged(paths.single),
+            onTap: () =>
+                many ? _discardStagedMany(paths) : _discardStaged(paths.single),
           ),
         ]);
       case _SectionKind.conflict:
@@ -2411,8 +2423,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       ContextMenuItem(
         icon: CupertinoIcons.doc_on_clipboard_fill,
         label: many ? 'Copy $n Paths' : 'Copy Path',
-        onTap: () =>
-            copyToClipboard(paths.map(_absolutePath).join('\n')),
+        onTap: () => copyToClipboard(paths.map(_absolutePath).join('\n')),
       ),
     );
     // Reveal/open need this machine's own Finder/LaunchServices — meaningless
@@ -2438,7 +2449,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             openFiles(paths.map(_absolutePath).toList());
           } else {
             for (final path in paths) {
-              ref.read(remoteEditServiceProvider.notifier).openRemoteFile(repoPath, path);
+              ref
+                  .read(remoteEditServiceProvider.notifier)
+                  .openRemoteFile(repoPath, path);
             }
           }
         },
@@ -2474,51 +2487,51 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       return KeyedSubtree(
         key: _rowKeyFor(file.path, _SectionKind.conflict),
         child: Tappable(
-        onTap: () {
-          _listFocus.requestFocus();
-          _handleRowTap(rows, file.path, _SectionKind.conflict);
-        },
-        onSecondaryTapUp: (d) => _handleRowSecondaryTap(
-          rows,
-          file.path,
-          _SectionKind.conflict,
-          d.globalPosition,
-        ),
-        child: Container(
-          color: _isPathSelected(file.path, _SectionKind.conflict)
-              ? MacosColors.systemRedColor.withValues(alpha: 0.12)
-              : const Color(0x00000000),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-          child: Row(
-            children: [
-              const MacosIcon(
-                CupertinoIcons.exclamationmark_triangle,
-                size: 15,
-                color: MacosColors.systemRedColor,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  file.path,
-                  style: typography.body,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-              ToolIconButton(
-                icon: CupertinoIcons.person_crop_circle,
-                tooltip: 'Resolve using ours',
-                size: 16,
-                onPressed: () => _resolve(file.path, useOurs: true),
-              ),
-              ToolIconButton(
-                icon: CupertinoIcons.person_crop_circle_fill,
-                tooltip: 'Resolve using theirs',
-                size: 16,
-                onPressed: () => _resolve(file.path, useOurs: false),
-              ),
-            ],
+          onTap: () {
+            _listFocus.requestFocus();
+            _handleRowTap(rows, file.path, _SectionKind.conflict);
+          },
+          onSecondaryTapUp: (d) => _handleRowSecondaryTap(
+            rows,
+            file.path,
+            _SectionKind.conflict,
+            d.globalPosition,
           ),
-        ),
+          child: Container(
+            color: _isPathSelected(file.path, _SectionKind.conflict)
+                ? MacosColors.systemRedColor.withValues(alpha: 0.12)
+                : const Color(0x00000000),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+            child: Row(
+              children: [
+                const MacosIcon(
+                  CupertinoIcons.exclamationmark_triangle,
+                  size: 15,
+                  color: MacosColors.systemRedColor,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    file.path,
+                    style: typography.body,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                ToolIconButton(
+                  icon: CupertinoIcons.person_crop_circle,
+                  tooltip: 'Resolve using ours',
+                  size: 16,
+                  onPressed: () => _resolve(file.path, useOurs: true),
+                ),
+                ToolIconButton(
+                  icon: CupertinoIcons.person_crop_circle_fill,
+                  tooltip: 'Resolve using theirs',
+                  size: 16,
+                  onPressed: () => _resolve(file.path, useOurs: false),
+                ),
+              ],
+            ),
+          ),
         ),
       );
     }
@@ -2542,68 +2555,69 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       // already in the selection, which the drag is carrying whole.
       onDragSelect: () => _selectForDrag(file.path, kind),
       child: KeyedSubtree(
-      key: _rowKeyFor(file.path, kind),
-      child: GestureDetector(
-      onTap: () {
-        _listFocus.requestFocus();
-        _handleRowTap(rows, file.path, kind);
-      },
-      onSecondaryTapUp: (d) =>
-          _handleRowSecondaryTap(rows, file.path, kind, d.globalPosition),
-      child: Container(
-        color: _isPathSelected(file.path, kind)
-            ? AppTheme.rowSelectionTint
-            : const Color(0x00000000),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
-        child: Row(
-          children: [
-            SizedBox(
-              width: 26,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: GitStatusBadge(file, staged: staged),
-              ),
+        key: _rowKeyFor(file.path, kind),
+        child: GestureDetector(
+          onTap: () {
+            _listFocus.requestFocus();
+            _handleRowTap(rows, file.path, kind);
+          },
+          onSecondaryTapUp: (d) =>
+              _handleRowSecondaryTap(rows, file.path, kind, d.globalPosition),
+          child: Container(
+            color: _isPathSelected(file.path, kind)
+                ? AppTheme.rowSelectionTint
+                : const Color(0x00000000),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 3),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 26,
+                  child: Align(
+                    alignment: Alignment.centerLeft,
+                    child: GitStatusBadge(file, staged: staged),
+                  ),
+                ),
+                Expanded(
+                  child: Text(
+                    file.oldPath != null
+                        ? '${file.oldPath} → ${file.path}'
+                        : file.path,
+                    style: typography.body,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (row.discardable)
+                  ToolIconButton(
+                    // An untracked file has nothing tracked to revert to — delete
+                    // it outright (trash icon) rather than "discard" (revert icon).
+                    icon: file.isUntracked
+                        ? CupertinoIcons.trash
+                        : CupertinoIcons.arrow_uturn_left,
+                    tooltip: file.isUntracked
+                        ? 'Delete untracked file'
+                        : 'Discard changes',
+                    size: 16,
+                    color: MacosColors.systemRedColor,
+                    onPressed: () => file.isUntracked
+                        ? _discardUntracked(file.path)
+                        : _discard(file.path),
+                  ),
+                ToolIconButton(
+                  icon: staged
+                      ? CupertinoIcons.minus_circle
+                      : CupertinoIcons.plus_circle,
+                  tooltip: staged ? 'Unstage' : 'Stage',
+                  size: 17,
+                  color: staged
+                      ? MacosColors.systemOrangeColor
+                      : MacosColors.systemGreenColor,
+                  onPressed: () =>
+                      staged ? _unstage(file.path) : _stage(file.path),
+                ),
+              ],
             ),
-            Expanded(
-              child: Text(
-                file.oldPath != null
-                    ? '${file.oldPath} → ${file.path}'
-                    : file.path,
-                style: typography.body,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            if (row.discardable)
-              ToolIconButton(
-                // An untracked file has nothing tracked to revert to — delete
-                // it outright (trash icon) rather than "discard" (revert icon).
-                icon: file.isUntracked
-                    ? CupertinoIcons.trash
-                    : CupertinoIcons.arrow_uturn_left,
-                tooltip: file.isUntracked
-                    ? 'Delete untracked file'
-                    : 'Discard changes',
-                size: 16,
-                color: MacosColors.systemRedColor,
-                onPressed: () => file.isUntracked
-                    ? _discardUntracked(file.path)
-                    : _discard(file.path),
-              ),
-            ToolIconButton(
-              icon: staged
-                  ? CupertinoIcons.minus_circle
-                  : CupertinoIcons.plus_circle,
-              tooltip: staged ? 'Unstage' : 'Stage',
-              size: 17,
-              color: staged
-                  ? MacosColors.systemOrangeColor
-                  : MacosColors.systemGreenColor,
-              onPressed: () => staged ? _unstage(file.path) : _stage(file.path),
-            ),
-          ],
+          ),
         ),
-      ),
-      ),
       ),
     );
   }

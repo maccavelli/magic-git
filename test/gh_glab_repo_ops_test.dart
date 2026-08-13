@@ -35,6 +35,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     stdins.add(stdin);
@@ -124,12 +126,17 @@ void main() {
     test('glab: records the credential username after login (empty `user` '
         'otherwise breaks HTTPS git)', () async {
       exec.results.add(_ok('')); // auth login
-      exec.results.add(_ok('{"username":"saxsmith","id":255}')); // glab api user
+      exec.results.add(
+        _ok('{"username":"saxsmith","id":255}'),
+      ); // glab api user
       exec.results.add(_ok('')); // glab config set user
       await glab.loginWithTokenHost(host: 'gitlab.corp', token: 'glpat-x');
       // The token that authenticates the API also names the identity to record.
       expect(exec.calls[1], ['glab', 'api', 'user']);
-      expect(exec.envs[1], {'GITLAB_HOST': 'gitlab.corp', 'GITLAB_URI': 'gitlab.corp'});
+      expect(exec.envs[1], {
+        'GITLAB_HOST': 'gitlab.corp',
+        'GITLAB_URI': 'gitlab.corp',
+      });
       // `--host` long form: glab's `-h` is help, not host.
       expect(exec.calls[2], [
         'glab',
@@ -142,19 +149,19 @@ void main() {
       ]);
     });
 
-    test('glab: a failed username probe is non-fatal (login still succeeds)',
-        () async {
-      exec.results.add(_ok('')); // auth login
-      exec.results.add(const SSHCommandResult(
-        exitCode: 1,
-        stdout: '',
-        stderr: 'network',
-      )); // glab api user fails
-      // Must not throw, and must not attempt `glab config set` with no username.
-      await glab.loginWithTokenHost(host: 'gitlab.corp', token: 'glpat-x');
-      expect(exec.calls, hasLength(2));
-      expect(exec.calls[1], ['glab', 'api', 'user']);
-    });
+    test(
+      'glab: a failed username probe is non-fatal (login still succeeds)',
+      () async {
+        exec.results.add(_ok('')); // auth login
+        exec.results.add(
+          const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'network'),
+        ); // glab api user fails
+        // Must not throw, and must not attempt `glab config set` with no username.
+        await glab.loginWithTokenHost(host: 'gitlab.corp', token: 'glpat-x');
+        expect(exec.calls, hasLength(2));
+        expect(exec.calls[1], ['glab', 'api', 'user']);
+      },
+    );
 
     test('both refuse a blank token without touching the network', () async {
       await expectLater(
@@ -168,19 +175,20 @@ void main() {
       expect(exec.calls, isEmpty);
     });
 
-    test('repo-scoped loginWithToken still resolves host then delegates',
-        () async {
-      exec.results.add(_ok('git@github.com:mac/x.git\n'));
-      exec.results.add(_ok(''));
-      await gh.loginWithToken('/srv/repo', 'tok');
-      expect(exec.calls[0], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[1], containsAllInOrder([
-        '--hostname',
-        'github.com',
-        '--with-token',
-      ]));
-      expect(exec.stdins[1], 'tok');
-    });
+    test(
+      'repo-scoped loginWithToken still resolves host then delegates',
+      () async {
+        exec.results.add(_ok('git@github.com:mac/x.git\n'));
+        exec.results.add(_ok(''));
+        await gh.loginWithToken('/srv/repo', 'tok');
+        expect(exec.calls[0], ['git', 'remote', 'get-url', 'origin']);
+        expect(
+          exec.calls[1],
+          containsAllInOrder(['--hostname', 'github.com', '--with-token']),
+        );
+        expect(exec.stdins[1], 'tok');
+      },
+    );
   });
 
   group('gh listRepos', () {
@@ -213,34 +221,38 @@ void main() {
   });
 
   group('glab listRepos', () {
-    test('routes through glab api with -i and maps the projects JSON',
-        () async {
-      exec.next = _ok('$_glabHeaders$_glabProjectsJson');
-      final repos = await glab.listRepos();
-      final argv = exec.calls.single;
-      expect(argv.take(2), ['glab', 'api']);
-      expect(argv[2], contains('projects?membership=true'));
-      expect(argv[2], contains('per_page=100'));
-      expect(argv, containsAllInOrder(['--method', 'GET']));
-      expect(argv, contains('-i'));
-      expect(exec.envs.single, isNull);
+    test(
+      'routes through glab api with -i and maps the projects JSON',
+      () async {
+        exec.next = _ok('$_glabHeaders$_glabProjectsJson');
+        final repos = await glab.listRepos();
+        final argv = exec.calls.single;
+        expect(argv.take(2), ['glab', 'api']);
+        expect(argv[2], contains('projects?membership=true'));
+        expect(argv[2], contains('per_page=100'));
+        expect(argv, containsAllInOrder(['--method', 'GET']));
+        expect(argv, contains('-i'));
+        expect(exec.envs.single, isNull);
 
-      expect(repos, hasLength(2));
-      expect(repos[0].slug, 'group/proj');
-      expect(repos[0].isPrivate, isTrue);
-      expect(repos[1].isPrivate, isFalse);
-      expect(repos[0].forge, Forge.gitlab);
-    });
+        expect(repos, hasLength(2));
+        expect(repos[0].slug, 'group/proj');
+        expect(repos[0].isPrivate, isTrue);
+        expect(repos[1].isPrivate, isFalse);
+        expect(repos[0].forge, Forge.gitlab);
+      },
+    );
 
-    test('a self-hosted instance rides GITLAB_HOST (and legacy GITLAB_URI)',
-        () async {
-      exec.next = _ok('$_glabHeaders[]');
-      await glab.listRepos(host: 'gitlab.corp');
-      expect(exec.envs.single, {
-        'GITLAB_HOST': 'gitlab.corp',
-        'GITLAB_URI': 'gitlab.corp',
-      });
-    });
+    test(
+      'a self-hosted instance rides GITLAB_HOST (and legacy GITLAB_URI)',
+      () async {
+        exec.next = _ok('$_glabHeaders[]');
+        await glab.listRepos(host: 'gitlab.corp');
+        expect(exec.envs.single, {
+          'GITLAB_HOST': 'gitlab.corp',
+          'GITLAB_URI': 'gitlab.corp',
+        });
+      },
+    );
 
     test('an HTTP 401 behind a zero exit code still throws', () async {
       exec.next = _ok('HTTP/2.0 401 Unauthorized\n\n{"message":"401"}');
@@ -249,27 +261,29 @@ void main() {
   });
 
   group('create', () {
-    test('gh createRepoInExisting is API-only (no --source/--remote/--push)',
-        () async {
-      await gh.createRepoInExisting(
-        repoPath: '/srv/code/newrepo',
-        name: 'newrepo',
-        private: true,
-        description: 'my thing',
-        host: 'ghe.corp.example',
-      );
-      expect(exec.calls.single, [
-        'gh',
-        'repo',
-        'create',
-        'newrepo',
-        '--private',
-        '--description',
-        'my thing',
-      ]);
-      expect(exec.repoPaths.single, '/srv/code/newrepo');
-      expect(exec.envs.single, {'GH_HOST': 'ghe.corp.example'});
-    });
+    test(
+      'gh createRepoInExisting is API-only (no --source/--remote/--push)',
+      () async {
+        await gh.createRepoInExisting(
+          repoPath: '/srv/code/newrepo',
+          name: 'newrepo',
+          private: true,
+          description: 'my thing',
+          host: 'ghe.corp.example',
+        );
+        expect(exec.calls.single, [
+          'gh',
+          'repo',
+          'create',
+          'newrepo',
+          '--private',
+          '--description',
+          'my thing',
+        ]);
+        expect(exec.repoPaths.single, '/srv/code/newrepo');
+        expect(exec.envs.single, {'GH_HOST': 'ghe.corp.example'});
+      },
+    );
 
     test('gh createRepoInExisting public minimal', () async {
       await gh.createRepoInExisting(
@@ -277,13 +291,7 @@ void main() {
         name: 'r',
         private: false,
       );
-      expect(exec.calls.single, [
-        'gh',
-        'repo',
-        'create',
-        'r',
-        '--public',
-      ]);
+      expect(exec.calls.single, ['gh', 'repo', 'create', 'r', '--public']);
     });
 
     test('glab createRepoInExisting skips local git setup', () async {
@@ -325,8 +333,7 @@ void main() {
   });
 
   group('resolveOriginUrl (origin wiring)', () {
-    test(
-        'gh: the create output URL is the primary source — no view lookup '
+    test('gh: the create output URL is the primary source — no view lookup '
         'is even issued', () async {
       exec.results.add(_ok('https')); // gh config get git_protocol
       final r = await gh.resolveOriginUrl(
@@ -335,8 +342,11 @@ void main() {
         createOutput: 'https://github.com/mac/r\n',
       );
       expect(r.url, 'https://github.com/mac/r.git');
-      expect(exec.calls, hasLength(1),
-          reason: 'zero API round trips beyond the protocol probe');
+      expect(
+        exec.calls,
+        hasLength(1),
+        reason: 'zero API round trips beyond the protocol probe',
+      );
       expect(exec.calls.single, [
         'gh',
         'config',
@@ -347,12 +357,13 @@ void main() {
       ]);
     });
 
-    test('gh: https protocol returns the web URL with a .git suffix',
-        () async {
+    test('gh: https protocol returns the web URL with a .git suffix', () async {
       exec.results.add(_ok('https')); // gh config get git_protocol
-      exec.results.add(_ok(
-        '{"url":"https://github.com/mac/r","sshUrl":"git@github.com:mac/r.git"}',
-      )); // gh repo view
+      exec.results.add(
+        _ok(
+          '{"url":"https://github.com/mac/r","sshUrl":"git@github.com:mac/r.git"}',
+        ),
+      ); // gh repo view
       final r = await gh.resolveOriginUrl(repoPath: '/x/r', name: 'r');
       expect(r.url, 'https://github.com/mac/r.git');
       expect(exec.calls[0], [
@@ -363,16 +374,24 @@ void main() {
         '-h',
         'github.com',
       ]);
-      expect(exec.calls[1], ['gh', 'repo', 'view', 'r', '--json', 'url,sshUrl']);
+      expect(exec.calls[1], [
+        'gh',
+        'repo',
+        'view',
+        'r',
+        '--json',
+        'url,sshUrl',
+      ]);
     });
 
-    test(
-        'gh: ssh protocol prefers the lookup SSH URL over the create-output '
+    test('gh: ssh protocol prefers the lookup SSH URL over the create-output '
         'https URL', () async {
       exec.results.add(_ok('ssh'));
-      exec.results.add(_ok(
-        '{"url":"https://github.com/mac/r","sshUrl":"git@github.com:mac/r.git"}',
-      ));
+      exec.results.add(
+        _ok(
+          '{"url":"https://github.com/mac/r","sshUrl":"git@github.com:mac/r.git"}',
+        ),
+      );
       final r = await gh.resolveOriginUrl(
         repoPath: '/x/r',
         name: 'r',
@@ -381,8 +400,7 @@ void main() {
       expect(r.url, 'git@github.com:mac/r.git');
     });
 
-    test(
-        'gh: ssh protocol with a dead lookup still falls back to the '
+    test('gh: ssh protocol with a dead lookup still falls back to the '
         'create-output https URL — a working origin beats none', () async {
       exec.results.add(_ok('ssh'));
       exec.next = const SSHCommandResult(
@@ -397,15 +415,20 @@ void main() {
         retries: 0,
       );
       expect(r.url, 'https://github.com/mac/r.git');
-      expect(r.detail, contains('not found'),
-          reason: 'the fallback still reports why the lookup failed');
+      expect(
+        r.detail,
+        contains('not found'),
+        reason: 'the fallback still reports why the lookup failed',
+      );
     });
 
     test('gh: a GHE host rides GH_HOST on both probes', () async {
       exec.results.add(_ok('https'));
-      exec.results.add(_ok(
-        '{"url":"https://ghe.corp/mac/r","sshUrl":"git@ghe.corp:mac/r.git"}',
-      ));
+      exec.results.add(
+        _ok(
+          '{"url":"https://ghe.corp/mac/r","sshUrl":"git@ghe.corp:mac/r.git"}',
+        ),
+      );
       await gh.resolveOriginUrl(
         repoPath: '/x/r',
         name: 'r',
@@ -415,31 +438,43 @@ void main() {
       expect(exec.envs[1], {'GH_HOST': 'ghe.corp.example'});
     });
 
-    test('gh: total failure yields a null URL and a diagnostic trail',
-        () async {
-      exec.next = const SSHCommandResult(
-        exitCode: 1,
-        stdout: '',
-        stderr: 'HTTP 404: Not Found',
-      );
-      final r =
-          await gh.resolveOriginUrl(repoPath: '/x/r', name: 'r', retries: 0);
-      expect(r.url, isNull);
-      expect(r.detail, contains('HTTP 404'),
-          reason: 'a live failure must say WHY, not just that it failed');
-    });
+    test(
+      'gh: total failure yields a null URL and a diagnostic trail',
+      () async {
+        exec.next = const SSHCommandResult(
+          exitCode: 1,
+          stdout: '',
+          stderr: 'HTTP 404: Not Found',
+        );
+        final r = await gh.resolveOriginUrl(
+          repoPath: '/x/r',
+          name: 'r',
+          retries: 0,
+        );
+        expect(r.url, isNull);
+        expect(
+          r.detail,
+          contains('HTTP 404'),
+          reason: 'a live failure must say WHY, not just that it failed',
+        );
+      },
+    );
 
     test('glab: the create output ✓-line is the primary source', () async {
       exec.results.add(_ok('')); // glab config get git_protocol (unset)
       final r = await glab.resolveOriginUrl(
         repoPath: '/x/r',
         name: 'r',
-        createOutput: '✓ Created project on GitLab: Mac / r - '
+        createOutput:
+            '✓ Created project on GitLab: Mac / r - '
             'https://gitlab.corp.example/mac/r\n',
       );
       expect(r.url, 'https://gitlab.corp.example/mac/r.git');
-      expect(exec.calls, hasLength(1),
-          reason: 'zero API round trips beyond the protocol probe');
+      expect(
+        exec.calls,
+        hasLength(1),
+        reason: 'zero API round trips beyond the protocol probe',
+      );
       // The host flag MUST be --host: glab's -h means --help (exits 0
       // printing help text — a silent live trap).
       expect(exec.calls.single, [
@@ -452,59 +487,70 @@ void main() {
       ]);
     });
 
-    test('glab: a bare name resolves the user namespace, then the project URL',
-        () async {
-      exec.results.add(_ok('')); // protocol probe (unset → https)
-      exec.results.add(_ok('$_glabHeaders{"username":"mac"}')); // glab api user
-      exec.results.add(_ok(
-        '$_glabHeaders{"http_url_to_repo":"https://gitlab.com/mac/r.git"}',
-      )); // glab api projects
-      final r = await glab.resolveOriginUrl(repoPath: '/x/r', name: 'r');
-      expect(r.url, 'https://gitlab.com/mac/r.git');
-      expect(exec.calls[1], ['glab', 'api', 'user', '-i']);
-      expect(exec.calls[2], ['glab', 'api', 'projects/mac%2Fr', '-i']);
-    });
+    test(
+      'glab: a bare name resolves the user namespace, then the project URL',
+      () async {
+        exec.results.add(_ok('')); // protocol probe (unset → https)
+        exec.results.add(
+          _ok('$_glabHeaders{"username":"mac"}'),
+        ); // glab api user
+        exec.results.add(
+          _ok(
+            '$_glabHeaders{"http_url_to_repo":"https://gitlab.com/mac/r.git"}',
+          ),
+        ); // glab api projects
+        final r = await glab.resolveOriginUrl(repoPath: '/x/r', name: 'r');
+        expect(r.url, 'https://gitlab.com/mac/r.git');
+        expect(exec.calls[1], ['glab', 'api', 'user', '-i']);
+        expect(exec.calls[2], ['glab', 'api', 'projects/mac%2Fr', '-i']);
+      },
+    );
 
     test('glab: ssh protocol picks ssh_url_to_repo', () async {
       exec.results.add(_ok('ssh'));
       exec.results.add(_ok('$_glabHeaders{"username":"mac"}'));
-      exec.results.add(_ok(
-        '$_glabHeaders{"http_url_to_repo":"https://gitlab.com/mac/r.git",'
-        '"ssh_url_to_repo":"git@gitlab.com:mac/r.git"}',
-      ));
+      exec.results.add(
+        _ok(
+          '$_glabHeaders{"http_url_to_repo":"https://gitlab.com/mac/r.git",'
+          '"ssh_url_to_repo":"git@gitlab.com:mac/r.git"}',
+        ),
+      );
       final r = await glab.resolveOriginUrl(repoPath: '/x/r', name: 'r');
       expect(r.url, 'git@gitlab.com:mac/r.git');
     });
 
-    test('glab: a group path skips the user lookup and is %2F-encoded',
-        () async {
+    test('glab: a group path skips the user lookup and is %2F-encoded', () async {
       exec.results.add(_ok('')); // protocol probe
-      exec.results.add(_ok(
-        '$_glabHeaders{"http_url_to_repo":"https://gitlab.com/grp/sub/r.git"}',
-      ));
-      final r =
-          await glab.resolveOriginUrl(repoPath: '/x/r', name: 'grp/sub/r');
-      expect(exec.calls[1], [
-        'glab',
-        'api',
-        'projects/grp%2Fsub%2Fr',
-        '-i',
-      ]);
+      exec.results.add(
+        _ok(
+          '$_glabHeaders{"http_url_to_repo":"https://gitlab.com/grp/sub/r.git"}',
+        ),
+      );
+      final r = await glab.resolveOriginUrl(
+        repoPath: '/x/r',
+        name: 'grp/sub/r',
+      );
+      expect(exec.calls[1], ['glab', 'api', 'projects/grp%2Fsub%2Fr', '-i']);
       expect(r.url, 'https://gitlab.com/grp/sub/r.git');
     });
 
-    test('glab: total failure yields a null URL and a diagnostic trail',
-        () async {
-      exec.next = const SSHCommandResult(
-        exitCode: 1,
-        stdout: '',
-        stderr: '401 Unauthorized',
-      );
-      final r =
-          await glab.resolveOriginUrl(repoPath: '/x/r', name: 'r', retries: 0);
-      expect(r.url, isNull);
-      expect(r.detail, contains('401'));
-    });
+    test(
+      'glab: total failure yields a null URL and a diagnostic trail',
+      () async {
+        exec.next = const SSHCommandResult(
+          exitCode: 1,
+          stdout: '',
+          stderr: '401 Unauthorized',
+        );
+        final r = await glab.resolveOriginUrl(
+          repoPath: '/x/r',
+          name: 'r',
+          retries: 0,
+        );
+        expect(r.url, isNull);
+        expect(r.detail, contains('401'));
+      },
+    );
   });
 
   group('cloneArgv builders', () {
@@ -522,10 +568,7 @@ void main() {
 
     test('glab', () {
       expect(
-        GlabService.cloneArgv(
-          pathWithNamespace: 'group/proj',
-          dirName: 'proj',
-        ),
+        GlabService.cloneArgv(pathWithNamespace: 'group/proj', dirName: 'proj'),
         ['glab', 'repo', 'clone', 'group/proj', 'proj', '--', '--progress'],
       );
     });

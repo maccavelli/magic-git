@@ -21,7 +21,14 @@ class _RetryCapturingExecutor extends SSHCommandExecutor {
   // (used by every other read/write in this test) doesn't need to itself be
   // shaped like that combined output.
   static const _sep = 'RMGSNAP';
-  static const _emptySnapshot = '$_sep' '0$_sep' '$_sep' '0$_sep' '$_sep' '0$_sep' 'none\n';
+  static const _emptySnapshot =
+      '$_sep'
+      '0$_sep'
+      '$_sep'
+      '0$_sep'
+      '$_sep'
+      '0$_sep'
+      'none\n';
 
   @override
   Future<SSHCommandResult> execute({
@@ -33,6 +40,8 @@ class _RetryCapturingExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     retriesSeen.add(retries);
     if (gitArgs.length == 3 && gitArgs[0] == 'sh' && gitArgs[1] == '-c') {
@@ -50,12 +59,16 @@ void main() {
   group('runWithRetries policy', () {
     test('retries a transient failure, then succeeds', () async {
       var calls = 0;
-      final r = await SSHCommandExecutor.runWithRetries(() async {
-        calls++;
-        // Must be allowlisted as transient (A3) — generic Exception is not.
-        if (calls < 3) throw Exception('connection closed by peer');
-        return const SSHCommandResult(exitCode: 0, stdout: 'ok', stderr: '');
-      }, 3, backoff: Duration.zero);
+      final r = await SSHCommandExecutor.runWithRetries(
+        () async {
+          calls++;
+          // Must be allowlisted as transient (A3) — generic Exception is not.
+          if (calls < 3) throw Exception('connection closed by peer');
+          return const SSHCommandResult(exitCode: 0, stdout: 'ok', stderr: '');
+        },
+        3,
+        backoff: Duration.zero,
+      );
       expect(calls, 3);
       expect(r.stdout, 'ok');
     });
@@ -92,25 +105,22 @@ void main() {
       expect(calls, 1);
     });
 
-    test(
-      'never retries a superseded command (retrying would just fail again '
-      'against the same stale generation)',
-      () async {
-        var calls = 0;
-        await expectLater(
-          SSHCommandExecutor.runWithRetries(
-            () async {
-              calls++;
-              throw const SSHCommandSuperseded('git status');
-            },
-            5,
-            backoff: Duration.zero,
-          ),
-          throwsA(isA<SSHCommandSuperseded>()),
-        );
-        expect(calls, 1);
-      },
-    );
+    test('never retries a superseded command (retrying would just fail again '
+        'against the same stale generation)', () async {
+      var calls = 0;
+      await expectLater(
+        SSHCommandExecutor.runWithRetries(
+          () async {
+            calls++;
+            throw const SSHCommandSuperseded('git status');
+          },
+          5,
+          backoff: Duration.zero,
+        ),
+        throwsA(isA<SSHCommandSuperseded>()),
+      );
+      expect(calls, 1);
+    });
 
     test(
       "a retry's backoff does not head-of-line-block later queued commands",

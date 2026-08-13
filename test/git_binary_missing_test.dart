@@ -20,6 +20,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async => result;
 }
 
@@ -47,8 +49,11 @@ void main() {
     await expectLater(
       () => git.stage('/repo', 'a.dart'),
       throwsA(
-        isA<GitException>()
-            .having((e) => e.message, 'message', contains('git was not found')),
+        isA<GitException>().having(
+          (e) => e.message,
+          'message',
+          contains('git was not found'),
+        ),
       ),
     );
   });

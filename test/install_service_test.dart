@@ -29,6 +29,8 @@ class _RecordingExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     envs.add(extraEnv);
@@ -36,7 +38,11 @@ class _RecordingExecutor extends SSHCommandExecutor {
   }
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes, {String? routingRepo}) async {
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  }) async {
     uploads.add((remotePath, bytes.length));
   }
 }
@@ -85,8 +91,10 @@ void main() {
 
       expect(result.isSuccess, isTrue);
       // Uploaded to <tmpdir>/<basename>.
-      expect(exec.uploads.single.$1,
-          '/tmp/sl.XXidz/glab_1.107.0_linux_arm64.tar.gz');
+      expect(
+        exec.uploads.single.$1,
+        '/tmp/sl.XXidz/glab_1.107.0_linux_arm64.tar.gz',
+      );
       expect(exec.uploads.single.$2, 2048);
       // Second execute ran the sideload script with the three env inputs.
       final env = exec.envs[1]!;
@@ -95,16 +103,19 @@ void main() {
       expect(env['SL_TMP'], '/tmp/sl.XXidz');
     });
 
-    test('a filename with path separators is reduced to its basename', () async {
-      final exec = _RecordingExecutor([_ok('/tmp/d'), _ok('done')]);
-      await InstallService(exec).sideload(
-        repoPath: '/repo',
-        bin: 'gh',
-        bytes: Uint8List(4),
-        filename: 'a/b/../evil name.tar.gz',
-      );
-      expect(exec.uploads.single.$1, '/tmp/d/evil name.tar.gz');
-    });
+    test(
+      'a filename with path separators is reduced to its basename',
+      () async {
+        final exec = _RecordingExecutor([_ok('/tmp/d'), _ok('done')]);
+        await InstallService(exec).sideload(
+          repoPath: '/repo',
+          bin: 'gh',
+          bytes: Uint8List(4),
+          filename: 'a/b/../evil name.tar.gz',
+        );
+        expect(exec.uploads.single.$1, '/tmp/d/evil name.tar.gz');
+      },
+    );
 
     test('aborts (no upload) when the temp dir cannot be made', () async {
       final exec = _RecordingExecutor([_ok('')]); // mktemp printed nothing

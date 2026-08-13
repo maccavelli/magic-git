@@ -61,6 +61,8 @@ class _SpyExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     if (gitArgs.contains('rev-parse')) {
       events.add('validate');
@@ -107,6 +109,8 @@ class _GatedProbeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     if (gitArgs.contains('rev-parse')) {
       return const SSHCommandResult(exitCode: 0, stdout: 'true\n', stderr: '');
@@ -128,66 +132,10 @@ void main() {
   const macProfile = SSHConnectionProfile(host: 'mac', username: 'u');
   const linuxProfile = SSHConnectionProfile(host: 'bastion', username: 'u');
 
-  test('connect resets env before probing, and a switch re-probes the new host', () async {
-    final spy = _SpyExecutor();
-    final container = ProviderContainer(
-      overrides: [
-        sshClientManagerProvider.overrideWithValue(_OkManager()),
-        executorProvider.overrideWithValue(spy),
-        gitServiceProvider.overrideWithValue(GitService(spy)),
-      ],
-    );
-    addTearDown(container.dispose);
-    final controller = container.read(connectionProvider.notifier);
-
-    // Connection A: a macOS host with Homebrew paths.
-    spy.probeOut =
-        'OS=Darwin\nPATH=/opt/homebrew/bin:/usr/bin\n'
-        'BIN=git=/opt/homebrew/bin/git\n';
-    await controller.connect(profile: macProfile, repoPath: '/repo');
-
-    expect(container.read(connectionProvider).phase, ConnectionPhase.connected);
-    // Order matters: reset the old env, probe + configure the new host, THEN
-    // validate — so validateRepoPath's `git` runs against the augmented PATH
-    // (a Homebrew-only or missing git surfaces honestly, not as a misleading
-    // "not a git repository").
-    expect(
-      spy.events.indexOf('reset') < spy.events.indexOf('probe'),
-      isTrue,
-      reason: 'reset must precede the environment probe',
-    );
-    expect(
-      spy.events.indexOf('probe') < spy.events.indexOf('validate'),
-      isTrue,
-      reason: 'the environment must be resolved before validateRepoPath',
-    );
-    expect(
-      spy.events.indexOf('configure') < spy.events.indexOf('validate'),
-      isTrue,
-      reason: 'the executor must be configured before the first git command',
-    );
-    expect(spy.lastConfiguredPath, contains('/opt/homebrew/bin'));
-
-    // Switch to connection B: a Linux bastion — must reset A's env first.
-    spy.events.clear();
-    spy.probeOut = 'OS=Linux\nPATH=/usr/bin:/bin\nBIN=git=/usr/bin/git\n';
-    await controller.connect(profile: linuxProfile, repoPath: '/repo');
-
-    expect(
-      spy.events.first,
-      'reset',
-      reason: 'the new connection must clear the old env before anything runs',
-    );
-    expect(spy.lastConfiguredPath, '/usr/bin:/bin');
-    expect(spy.lastConfiguredPath, isNot(contains('/opt/homebrew')));
-    expect(container.read(binaryEnvironmentProvider).os, 'linux');
-  });
-
   test(
-    "a superseded connect's still-running env probe cannot reconfigure the "
-    'shared executor with the old host\'s PATH',
+    'connect resets env before probing, and a switch re-probes the new host',
     () async {
-      final spy = _GatedProbeExecutor();
+      final spy = _SpyExecutor();
       final container = ProviderContainer(
         overrides: [
           sshClientManagerProvider.overrideWithValue(_OkManager()),
@@ -198,36 +146,96 @@ void main() {
       addTearDown(container.dispose);
       final controller = container.read(connectionProvider.notifier);
 
-      // Connection A (mac): its probe is gated mid-flight, so this connect
-      // stays parked inside _resolveEnvironment.
+      // Connection A: a macOS host with Homebrew paths.
       spy.probeOut =
-          'OS=Darwin\nPATH=/opt/homebrew/bin\nBIN=git=/opt/homebrew/bin/git\n';
-      spy.probeGate = Completer<void>();
-      spy.firstProbeStarted = Completer<void>();
-      final aFuture = controller.connect(profile: macProfile, repoPath: '/repo');
-      await spy.firstProbeStarted!.future; // A is stuck in its probe
+          'OS=Darwin\nPATH=/opt/homebrew/bin:/usr/bin\n'
+          'BIN=git=/opt/homebrew/bin/git\n';
+      await controller.connect(profile: macProfile, repoPath: '/repo');
 
-      // Connection B (linux) supersedes A and completes fully, configuring the
-      // executor with the bastion's PATH.
+      expect(
+        container.read(connectionProvider).phase,
+        ConnectionPhase.connected,
+      );
+      // Order matters: reset the old env, probe + configure the new host, THEN
+      // validate — so validateRepoPath's `git` runs against the augmented PATH
+      // (a Homebrew-only or missing git surfaces honestly, not as a misleading
+      // "not a git repository").
+      expect(
+        spy.events.indexOf('reset') < spy.events.indexOf('probe'),
+        isTrue,
+        reason: 'reset must precede the environment probe',
+      );
+      expect(
+        spy.events.indexOf('probe') < spy.events.indexOf('validate'),
+        isTrue,
+        reason: 'the environment must be resolved before validateRepoPath',
+      );
+      expect(
+        spy.events.indexOf('configure') < spy.events.indexOf('validate'),
+        isTrue,
+        reason: 'the executor must be configured before the first git command',
+      );
+      expect(spy.lastConfiguredPath, contains('/opt/homebrew/bin'));
+
+      // Switch to connection B: a Linux bastion — must reset A's env first.
+      spy.events.clear();
       spy.probeOut = 'OS=Linux\nPATH=/usr/bin:/bin\nBIN=git=/usr/bin/git\n';
       await controller.connect(profile: linuxProfile, repoPath: '/repo');
-      expect(spy.lastConfiguredPath, '/usr/bin:/bin');
-      final configuresAfterB = spy.configures;
 
-      // Release A's gated probe: it resolves late but, being superseded, must
-      // NOT reconfigure the shared executor back to the mac PATH.
-      spy.probeGate!.complete();
-      await aFuture;
       expect(
-        spy.lastConfiguredPath,
-        '/usr/bin:/bin',
-        reason: 'the stale probe must not win over the current connection',
+        spy.events.first,
+        'reset',
+        reason:
+            'the new connection must clear the old env before anything runs',
       );
-      expect(
-        spy.configures,
-        configuresAfterB,
-        reason: 'a superseded probe must skip configureEnvironment entirely',
-      );
+      expect(spy.lastConfiguredPath, '/usr/bin:/bin');
+      expect(spy.lastConfiguredPath, isNot(contains('/opt/homebrew')));
+      expect(container.read(binaryEnvironmentProvider).os, 'linux');
     },
   );
+
+  test("a superseded connect's still-running env probe cannot reconfigure the "
+      'shared executor with the old host\'s PATH', () async {
+    final spy = _GatedProbeExecutor();
+    final container = ProviderContainer(
+      overrides: [
+        sshClientManagerProvider.overrideWithValue(_OkManager()),
+        executorProvider.overrideWithValue(spy),
+        gitServiceProvider.overrideWithValue(GitService(spy)),
+      ],
+    );
+    addTearDown(container.dispose);
+    final controller = container.read(connectionProvider.notifier);
+
+    // Connection A (mac): its probe is gated mid-flight, so this connect
+    // stays parked inside _resolveEnvironment.
+    spy.probeOut =
+        'OS=Darwin\nPATH=/opt/homebrew/bin\nBIN=git=/opt/homebrew/bin/git\n';
+    spy.probeGate = Completer<void>();
+    spy.firstProbeStarted = Completer<void>();
+    final aFuture = controller.connect(profile: macProfile, repoPath: '/repo');
+    await spy.firstProbeStarted!.future; // A is stuck in its probe
+
+    // Connection B (linux) supersedes A and completes fully, configuring the
+    // executor with the bastion's PATH.
+    spy.probeOut = 'OS=Linux\nPATH=/usr/bin:/bin\nBIN=git=/usr/bin/git\n';
+    await controller.connect(profile: linuxProfile, repoPath: '/repo');
+    expect(spy.lastConfiguredPath, '/usr/bin:/bin');
+    final configuresAfterB = spy.configures;
+
+    // Release A's gated probe: it resolves late but, being superseded, must
+    // NOT reconfigure the shared executor back to the mac PATH.
+    spy.probeGate!.complete();
+    await aFuture;
+    expect(
+      spy.lastConfiguredPath,
+      '/usr/bin:/bin',
+      reason: 'the stale probe must not win over the current connection',
+    );
+    expect(
+      spy.configures,
+      configuresAfterB,
+      reason: 'a superseded probe must skip configureEnvironment entirely',
+    );
+  });
 }

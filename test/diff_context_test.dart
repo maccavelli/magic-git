@@ -29,11 +29,16 @@ class _RecordingExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     commands.add(gitArgs);
     // Echo the context back, so two different -U values yield two different
     // patches — that's what makes a key collision visible.
-    final u = gitArgs.firstWhere((a) => a.startsWith('-U'), orElse: () => '-U?');
+    final u = gitArgs.firstWhere(
+      (a) => a.startsWith('-U'),
+      orElse: () => '-U?',
+    );
     return SSHCommandResult(exitCode: 0, stdout: 'patch at $u', stderr: '');
   }
 }

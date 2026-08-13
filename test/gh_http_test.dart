@@ -29,6 +29,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     stdins.add(stdin);
@@ -50,29 +52,32 @@ void main() {
       gh = GhService(exec);
     });
 
-    test('pullRequests requests the right --json fields, open state, limit', () async {
-      exec.next = _ok('[]');
-      await gh.pullRequests('/repo');
-      final argv = exec.calls.single;
-      expect(argv.take(3), ['gh', 'pr', 'list']);
-      expect(argv, containsAllInOrder(['--state', 'open']));
-      expect(argv, containsAllInOrder(['--limit', '600']));
-      final jsonIdx = argv.indexOf('--json');
-      expect(jsonIdx, greaterThanOrEqualTo(0));
-      final fields = argv[jsonIdx + 1];
-      for (final f in [
-        'number',
-        'title',
-        'state',
-        'isDraft',
-        'headRefName',
-        'baseRefName',
-        'author',
-        'url',
-      ]) {
-        expect(fields, contains(f));
-      }
-    });
+    test(
+      'pullRequests requests the right --json fields, open state, limit',
+      () async {
+        exec.next = _ok('[]');
+        await gh.pullRequests('/repo');
+        final argv = exec.calls.single;
+        expect(argv.take(3), ['gh', 'pr', 'list']);
+        expect(argv, containsAllInOrder(['--state', 'open']));
+        expect(argv, containsAllInOrder(['--limit', '600']));
+        final jsonIdx = argv.indexOf('--json');
+        expect(jsonIdx, greaterThanOrEqualTo(0));
+        final fields = argv[jsonIdx + 1];
+        for (final f in [
+          'number',
+          'title',
+          'state',
+          'isDraft',
+          'headRefName',
+          'baseRefName',
+          'author',
+          'url',
+        ]) {
+          expect(fields, contains(f));
+        }
+      },
+    );
 
     test('pullRequests parses rows', () async {
       exec.next = _ok(
@@ -97,22 +102,25 @@ void main() {
       }
     });
 
-    test('runJobs hits the REST jobs endpoint and reads the jobs array', () async {
-      exec.next = _ok(
-        '{"total_count":2,"jobs":['
-        '{"id":1,"name":"build","status":"completed","conclusion":"success"},'
-        '{"id":2,"name":"test","status":"in_progress","conclusion":null}]}',
-      );
-      final jobs = await gh.runJobs('/repo', 42);
-      expect(exec.calls.single, containsAllInOrder(['gh', 'api']));
-      expect(
-        exec.calls.single,
-        contains('repos/{owner}/{repo}/actions/runs/42/jobs'),
-      );
-      expect(jobs, hasLength(2));
-      expect(jobs[0].runState, GhRunState.success);
-      expect(jobs[1].runState, GhRunState.running);
-    });
+    test(
+      'runJobs hits the REST jobs endpoint and reads the jobs array',
+      () async {
+        exec.next = _ok(
+          '{"total_count":2,"jobs":['
+          '{"id":1,"name":"build","status":"completed","conclusion":"success"},'
+          '{"id":2,"name":"test","status":"in_progress","conclusion":null}]}',
+        );
+        final jobs = await gh.runJobs('/repo', 42);
+        expect(exec.calls.single, containsAllInOrder(['gh', 'api']));
+        expect(
+          exec.calls.single,
+          contains('repos/{owner}/{repo}/actions/runs/42/jobs'),
+        );
+        expect(jobs, hasLength(2));
+        expect(jobs[0].runState, GhRunState.success);
+        expect(jobs[1].runState, GhRunState.running);
+      },
+    );
 
     test('runJobsStream polls until all jobs complete, then stops', () async {
       String jobsObj(String status) =>
@@ -162,8 +170,10 @@ void main() {
       exec.results.addAll([
         _ok('{"jobs":[]}'), _ok('{"status":"queued"}'), //
         _ok('{"jobs":[]}'), _ok('{"status":"in_progress"}'), //
-        _ok('{"jobs":[{"id":1,"name":"j","status":"completed",'
-            '"conclusion":"success"}]}'),
+        _ok(
+          '{"jobs":[{"id":1,"name":"j","status":"completed",'
+          '"conclusion":"success"}]}',
+        ),
       ]);
       final emissions = await gh
           .runJobsStream(
@@ -173,8 +183,11 @@ void main() {
             maxEmptyPolls: 2,
           )
           .toList();
-      expect(emissions, hasLength(3),
-          reason: 'the two queued empties did not trip the cap');
+      expect(
+        emissions,
+        hasLength(3),
+        reason: 'the two queued empties did not trip the cap',
+      );
       expect(emissions.first, isEmpty);
       expect(emissions.last.single.runState, GhRunState.success);
     });
@@ -185,8 +198,10 @@ void main() {
       exec.results.addAll([
         const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
         const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
-        _ok('{"jobs":[{"id":1,"name":"j","status":"completed",'
-            '"conclusion":"success"}]}'),
+        _ok(
+          '{"jobs":[{"id":1,"name":"j","status":"completed",'
+          '"conclusion":"success"}]}',
+        ),
       ]);
       final emissions = await gh
           .runJobsStream('/repo', 7, pollInterval: Duration.zero)
@@ -195,25 +210,27 @@ void main() {
       expect(emissions.single.single.runState, GhRunState.success);
     });
 
-    test('runJobsStream ends with the error after a sustained failure streak',
-        () async {
-      exec.results.addAll([
-        const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
-        const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
-        const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
-      ]);
-      expect(
-        gh
-            .runJobsStream(
-              '/repo',
-              7,
-              pollInterval: Duration.zero,
-              maxConsecutiveErrors: 3,
-            )
-            .toList(),
-        throwsA(isA<GhException>()),
-      );
-    });
+    test(
+      'runJobsStream ends with the error after a sustained failure streak',
+      () async {
+        exec.results.addAll([
+          const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
+          const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
+          const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
+        ]);
+        expect(
+          gh
+              .runJobsStream(
+                '/repo',
+                7,
+                pollInterval: Duration.zero,
+                maxConsecutiveErrors: 3,
+              )
+              .toList(),
+          throwsA(isA<GhException>()),
+        );
+      },
+    );
 
     test('the PR list ceiling matches the GitLab paginated ceiling', () async {
       exec.next = _ok('[]');
@@ -242,7 +259,9 @@ void main() {
 
   group('GhService.ownerRepoFromRemote', () {
     test('parses scp-like origin', () {
-      final slug = GhService.ownerRepoFromRemote('git@github.com:owner/repo.git');
+      final slug = GhService.ownerRepoFromRemote(
+        'git@github.com:owner/repo.git',
+      );
       expect(slug?.owner, 'owner');
       expect(slug?.name, 'repo');
     });
@@ -280,19 +299,22 @@ void main() {
       expect(argv, containsAllInOrder(['-f', 'name=n']));
     });
 
-    test('returns partial data and records a warning when errors ride along', () async {
-      // gh may exit non-zero on a partial GraphQL failure; data must still win.
-      exec.next = const SSHCommandResult(
-        exitCode: 1,
-        stdout:
-            '{"data":{"repository":{"issues":{"nodes":[]}}},'
-            '"errors":[{"message":"no access to field x"}]}',
-        stderr: 'gh: graphql error',
-      );
-      final data = await gh.graphql('/repo', 'q');
-      expect(data['repository'], isA<Map<String, dynamic>>());
-      expect(gh.lastGraphqlWarning, contains('no access to field x'));
-    });
+    test(
+      'returns partial data and records a warning when errors ride along',
+      () async {
+        // gh may exit non-zero on a partial GraphQL failure; data must still win.
+        exec.next = const SSHCommandResult(
+          exitCode: 1,
+          stdout:
+              '{"data":{"repository":{"issues":{"nodes":[]}}},'
+              '"errors":[{"message":"no access to field x"}]}',
+          stderr: 'gh: graphql error',
+        );
+        final data = await gh.graphql('/repo', 'q');
+        expect(data['repository'], isA<Map<String, dynamic>>());
+        expect(gh.lastGraphqlWarning, contains('no access to field x'));
+      },
+    );
 
     test('throws when there is no usable data', () async {
       exec.next = const SSHCommandResult(
@@ -335,55 +357,64 @@ void main() {
       gh = GhService(exec);
     });
 
-    test('createPullRequest always passes --body and never opens an editor', () async {
-      await gh.createPullRequest(
-        '/repo',
-        title: 'My PR',
-        head: 'feature',
-        base: 'main',
-      );
-      final argv = exec.calls.single;
-      expect(argv.take(3), ['gh', 'pr', 'create']);
-      expect(argv, containsAllInOrder(['--title', 'My PR']));
-      expect(argv, containsAllInOrder(['--base', 'main']));
-      expect(argv, containsAllInOrder(['--head', 'feature']));
-      expect(argv, contains('--body'));
-    });
+    test(
+      'createPullRequest always passes --body and never opens an editor',
+      () async {
+        await gh.createPullRequest(
+          '/repo',
+          title: 'My PR',
+          head: 'feature',
+          base: 'main',
+        );
+        final argv = exec.calls.single;
+        expect(argv.take(3), ['gh', 'pr', 'create']);
+        expect(argv, containsAllInOrder(['--title', 'My PR']));
+        expect(argv, containsAllInOrder(['--base', 'main']));
+        expect(argv, containsAllInOrder(['--head', 'feature']));
+        expect(argv, contains('--body'));
+      },
+    );
 
-    test('createPullRequest emits repeated flags for reviewers/labels + draft', () async {
-      await gh.createPullRequest(
-        '/repo',
-        title: 't',
-        head: 'h',
-        base: 'b',
-        body: 'desc',
-        draft: true,
-        reviewers: ['alice', 'bob'],
-        labels: ['bug'],
-        milestone: 'v2',
-      );
-      final argv = exec.calls.single;
-      expect(argv, containsAllInOrder(['--body', 'desc']));
-      expect(argv, contains('--draft'));
-      expect(argv.where((a) => a == '--reviewer').length, 2);
-      expect(argv, containsAllInOrder(['--reviewer', 'alice']));
-      expect(argv, containsAllInOrder(['--reviewer', 'bob']));
-      expect(argv, containsAllInOrder(['--label', 'bug']));
-      expect(argv, containsAllInOrder(['--milestone', 'v2']));
-    });
+    test(
+      'createPullRequest emits repeated flags for reviewers/labels + draft',
+      () async {
+        await gh.createPullRequest(
+          '/repo',
+          title: 't',
+          head: 'h',
+          base: 'b',
+          body: 'desc',
+          draft: true,
+          reviewers: ['alice', 'bob'],
+          labels: ['bug'],
+          milestone: 'v2',
+        );
+        final argv = exec.calls.single;
+        expect(argv, containsAllInOrder(['--body', 'desc']));
+        expect(argv, contains('--draft'));
+        expect(argv.where((a) => a == '--reviewer').length, 2);
+        expect(argv, containsAllInOrder(['--reviewer', 'alice']));
+        expect(argv, containsAllInOrder(['--reviewer', 'bob']));
+        expect(argv, containsAllInOrder(['--label', 'bug']));
+        expect(argv, containsAllInOrder(['--milestone', 'v2']));
+      },
+    );
 
     test('approvePullRequest', () async {
       await gh.approvePullRequest('/repo', 5);
       expect(exec.calls.single, ['gh', 'pr', 'review', '5', '--approve']);
     });
 
-    test('mergePullRequest defaults to --merge; honors squash/rebase', () async {
-      await gh.mergePullRequest('/repo', 5);
-      expect(exec.calls.single, ['gh', 'pr', 'merge', '5', '--merge']);
-      exec.calls.clear();
-      await gh.mergePullRequest('/repo', 6, method: 'squash');
-      expect(exec.calls.single, ['gh', 'pr', 'merge', '6', '--squash']);
-    });
+    test(
+      'mergePullRequest defaults to --merge; honors squash/rebase',
+      () async {
+        await gh.mergePullRequest('/repo', 5);
+        expect(exec.calls.single, ['gh', 'pr', 'merge', '5', '--merge']);
+        exec.calls.clear();
+        await gh.mergePullRequest('/repo', 6, method: 'squash');
+        expect(exec.calls.single, ['gh', 'pr', 'merge', '6', '--squash']);
+      },
+    );
 
     test('mergePullRequest adds --delete-branch only when asked', () async {
       await gh.mergePullRequest('/repo', 5, deleteBranch: true);
@@ -396,7 +427,12 @@ void main() {
         '--delete-branch',
       ]);
       exec.calls.clear();
-      await gh.mergePullRequest('/repo', 5, method: 'squash', deleteBranch: true);
+      await gh.mergePullRequest(
+        '/repo',
+        5,
+        method: 'squash',
+        deleteBranch: true,
+      );
       expect(exec.calls.single, [
         'gh',
         'pr',
@@ -415,14 +451,16 @@ void main() {
       expect(exec.calls.single, ['gh', 'pr', 'reopen', '5']);
     });
 
-    test('setPullRequestDraft: --undo converts to draft, else marks ready',
-        () async {
-      await gh.setPullRequestDraft('/repo', 5, draft: false);
-      expect(exec.calls.single, ['gh', 'pr', 'ready', '5']);
-      exec.calls.clear();
-      await gh.setPullRequestDraft('/repo', 5, draft: true);
-      expect(exec.calls.single, ['gh', 'pr', 'ready', '5', '--undo']);
-    });
+    test(
+      'setPullRequestDraft: --undo converts to draft, else marks ready',
+      () async {
+        await gh.setPullRequestDraft('/repo', 5, draft: false);
+        expect(exec.calls.single, ['gh', 'pr', 'ready', '5']);
+        exec.calls.clear();
+        await gh.setPullRequestDraft('/repo', 5, draft: true);
+        expect(exec.calls.single, ['gh', 'pr', 'ready', '5', '--undo']);
+      },
+    );
 
     test('commentOnPullRequest passes the body as a discrete token', () async {
       await gh.commentOnPullRequest('/repo', 5, 'looks good = ship it');
@@ -436,19 +474,21 @@ void main() {
       ]);
     });
 
-    test('requestChangesOnPullRequest sends --request-changes with a body',
-        () async {
-      await gh.requestChangesOnPullRequest('/repo', 5, 'needs tests');
-      expect(exec.calls.single, [
-        'gh',
-        'pr',
-        'review',
-        '5',
-        '--request-changes',
-        '--body',
-        'needs tests',
-      ]);
-    });
+    test(
+      'requestChangesOnPullRequest sends --request-changes with a body',
+      () async {
+        await gh.requestChangesOnPullRequest('/repo', 5, 'needs tests');
+        expect(exec.calls.single, [
+          'gh',
+          'pr',
+          'review',
+          '5',
+          '--request-changes',
+          '--body',
+          'needs tests',
+        ]);
+      },
+    );
 
     test('editPullRequest sends only the provided fields', () async {
       await gh.editPullRequest('/repo', 5, title: 'New title');
@@ -508,32 +548,30 @@ void main() {
 
     test('developIssueBranch checks out a linked branch', () async {
       await gh.developIssueBranch('/repo', 8);
-      expect(exec.calls.single, [
-        'gh',
-        'issue',
-        'develop',
-        '8',
-        '--checkout',
-      ]);
+      expect(exec.calls.single, ['gh', 'issue', 'develop', '8', '--checkout']);
     });
 
-    test('pullRequestFields fetches title + body via pullRequestDetail', () async {
-      exec.next = const SSHCommandResult(
-        exitCode: 0,
-        stdout: '{"title":"A title","body":"A body","number":5,"state":"OPEN"}',
-        stderr: '',
-      );
-      final fields = await gh.pullRequestFields('/repo', 5);
-      expect(exec.calls.single[0], 'gh');
-      expect(exec.calls.single[1], 'pr');
-      expect(exec.calls.single[2], 'view');
-      expect(exec.calls.single[3], '5');
-      expect(exec.calls.single[4], '--json');
-      expect(exec.calls.single[5], contains('body'));
-      expect(exec.calls.single[5], contains('headRefOid'));
-      expect(fields.title, 'A title');
-      expect(fields.body, 'A body');
-    });
+    test(
+      'pullRequestFields fetches title + body via pullRequestDetail',
+      () async {
+        exec.next = const SSHCommandResult(
+          exitCode: 0,
+          stdout:
+              '{"title":"A title","body":"A body","number":5,"state":"OPEN"}',
+          stderr: '',
+        );
+        final fields = await gh.pullRequestFields('/repo', 5);
+        expect(exec.calls.single[0], 'gh');
+        expect(exec.calls.single[1], 'pr');
+        expect(exec.calls.single[2], 'view');
+        expect(exec.calls.single[3], '5');
+        expect(exec.calls.single[4], '--json');
+        expect(exec.calls.single[5], contains('body'));
+        expect(exec.calls.single[5], contains('headRefOid'));
+        expect(fields.title, 'A title');
+        expect(fields.body, 'A body');
+      },
+    );
 
     test('checkoutPullRequest', () async {
       await gh.checkoutPullRequest('/repo', 9);
@@ -560,22 +598,25 @@ void main() {
       gh = GhService(exec);
     });
 
-    test('pipes the token via stdin, never argv, and resolves the host', () async {
-      exec.results.addAll([
-        _ok('git@github.com:owner/repo.git\n'), // git remote get-url origin
-        _ok(''), // gh auth login
-      ]);
-      await gh.loginWithToken('/repo', '  ghp_secret  ');
+    test(
+      'pipes the token via stdin, never argv, and resolves the host',
+      () async {
+        exec.results.addAll([
+          _ok('git@github.com:owner/repo.git\n'), // git remote get-url origin
+          _ok(''), // gh auth login
+        ]);
+        await gh.loginWithToken('/repo', '  ghp_secret  ');
 
-      final loginCall = exec.calls[1];
-      expect(loginCall.take(3), ['gh', 'auth', 'login']);
-      expect(loginCall, containsAllInOrder(['--hostname', 'github.com']));
-      expect(loginCall, contains('--with-token'));
-      // The token must never appear in argv.
-      expect(loginCall.any((a) => a.contains('ghp_secret')), isFalse);
-      // It is piped (trimmed) via stdin.
-      expect(exec.stdins[1], 'ghp_secret');
-    });
+        final loginCall = exec.calls[1];
+        expect(loginCall.take(3), ['gh', 'auth', 'login']);
+        expect(loginCall, containsAllInOrder(['--hostname', 'github.com']));
+        expect(loginCall, contains('--with-token'));
+        // The token must never appear in argv.
+        expect(loginCall.any((a) => a.contains('ghp_secret')), isFalse);
+        // It is piped (trimmed) via stdin.
+        expect(exec.stdins[1], 'ghp_secret');
+      },
+    );
 
     test('refuses a blank token without touching the network', () async {
       expect(gh.loginWithToken('/repo', '   '), throwsA(isA<GhException>()));
@@ -604,10 +645,7 @@ void main() {
         '"name":"GitHub CLI 2.96.0","publishedAt":"2026-07-02T21:31:04Z"}]}}}}';
 
     test('parses a real-shaped payload with totals, no warning', () async {
-      exec.results.addAll([
-        _ok('git@github.com:owner/repo.git'),
-        _ok(payload),
-      ]);
+      exec.results.addAll([_ok('git@github.com:owner/repo.git'), _ok(payload)]);
       final d = await gh.projectDashboard('/repo');
       expect(d.issues.single.id, 13881);
       expect(d.issues.single.labels, ['needs-triage']);
@@ -633,39 +671,34 @@ void main() {
       expect(d.warning, contains('no access to field x'));
     });
 
-    test(
-      'a null repository (NOT_FOUND) throws instead of rendering an '
-      'empty dashboard',
-      () async {
-        // Real shape: data present, repository null, NOT_FOUND in errors[].
-        exec.results.addAll([
-          _ok('git@github.com:owner/repo.git'),
-          const SSHCommandResult(
-            exitCode: 1,
-            stdout:
-                '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND",'
-                '"message":"Could not resolve to a Repository"}]}',
-            stderr: 'gh: Could not resolve to a Repository',
+    test('a null repository (NOT_FOUND) throws instead of rendering an '
+        'empty dashboard', () async {
+      // Real shape: data present, repository null, NOT_FOUND in errors[].
+      exec.results.addAll([
+        _ok('git@github.com:owner/repo.git'),
+        const SSHCommandResult(
+          exitCode: 1,
+          stdout:
+              '{"data":{"repository":null},"errors":[{"type":"NOT_FOUND",'
+              '"message":"Could not resolve to a Repository"}]}',
+          stderr: 'gh: Could not resolve to a Repository',
+        ),
+      ]);
+      await expectLater(
+        gh.projectDashboard('/repo'),
+        throwsA(
+          isA<GhException>().having(
+            (e) => e.message,
+            'message',
+            contains('Could not resolve'),
           ),
-        ]);
-        await expectLater(
-          gh.projectDashboard('/repo'),
-          throwsA(
-            isA<GhException>().having(
-              (e) => e.message,
-              'message',
-              contains('Could not resolve'),
-            ),
-          ),
-        );
-      },
-    );
+        ),
+      );
+    });
 
     test('queries totalCount on every connection', () {
       expect(
-        RegExp('totalCount')
-            .allMatches(GhService.projectDashboardQuery)
-            .length,
+        RegExp('totalCount').allMatches(GhService.projectDashboardQuery).length,
         4,
       );
     });

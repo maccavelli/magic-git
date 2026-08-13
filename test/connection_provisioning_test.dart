@@ -65,11 +65,12 @@ class _RecordingExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
-    final isLogin = gitArgs.length >= 3 &&
-        gitArgs[1] == 'auth' &&
-        gitArgs[2] == 'login';
+    final isLogin =
+        gitArgs.length >= 3 && gitArgs[1] == 'auth' && gitArgs[2] == 'login';
     if (isLogin && failNextLogin) {
       failNextLogin = false;
       return const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'nope');
@@ -160,58 +161,64 @@ void main() {
 
   ConnectionState state() => container.read(connectionProvider);
 
-  test('begin keeps the session in connecting with host/label, no repo',
-      () async {
-    container = build();
-    controller = container.read(connectionProvider.notifier);
+  test(
+    'begin keeps the session in connecting with host/label, no repo',
+    () async {
+      container = build();
+      controller = container.read(connectionProvider.notifier);
 
-    final fut = controller.beginProvisioning(_conn());
-    while (manager.gates.isEmpty) {
-      await Future<void>.delayed(Duration.zero);
-    }
-    expect(state().phase, ConnectionPhase.connecting);
-    expect(state().host, 'h');
-    expect(state().connectionLabel, 'Prod');
-    expect(state().repoPath, isNull);
+      final fut = controller.beginProvisioning(_conn());
+      while (manager.gates.isEmpty) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(state().phase, ConnectionPhase.connecting);
+      expect(state().host, 'h');
+      expect(state().connectionLabel, 'Prod');
+      expect(state().repoPath, isNull);
 
-    manager.gates.last.complete();
-    expect(await fut, isNotNull);
-    // Still provisioning after the env probe — not yet "connected".
-    expect(state().phase, ConnectionPhase.connecting);
-    expect(state().repoPath, isNull);
-  });
+      manager.gates.last.complete();
+      expect(await fut, isNotNull);
+      // Still provisioning after the env probe — not yet "connected".
+      expect(state().phase, ConnectionPhase.connecting);
+      expect(state().repoPath, isNull);
+    },
+  );
 
-  test('finalize promotes to connected, persists the repo, keeps the log',
-      () async {
-    container = build();
-    controller = container.read(connectionProvider.notifier);
-    final token = await begin();
+  test(
+    'finalize promotes to connected, persists the repo, keeps the log',
+    () async {
+      container = build();
+      controller = container.read(connectionProvider.notifier);
+      final token = await begin();
 
-    // Simulate the clone transcript landing in the output log.
-    container.read(outputLogProvider.notifier).logResult(
-      'gh repo clone mac/x',
-      const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
-    );
-    final linesBefore = container.read(outputLogProvider).lines.length;
+      // Simulate the clone transcript landing in the output log.
+      container
+          .read(outputLogProvider.notifier)
+          .logResult(
+            'gh repo clone mac/x',
+            const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+          );
+      final linesBefore = container.read(outputLogProvider).lines.length;
 
-    final ok = await controller.finalizeProvisioned(
-      token: token,
-      conn: _conn(),
-      repoPath: '/existing/newrepo',
-    );
-    expect(ok, isTrue);
-    expect(state().phase, ConnectionPhase.connected);
-    expect(state().repoPath, '/existing/newrepo');
-    expect(state().repoPaths, contains('/existing/newrepo'));
+      final ok = await controller.finalizeProvisioned(
+        token: token,
+        conn: _conn(),
+        repoPath: '/existing/newrepo',
+      );
+      expect(ok, isTrue);
+      expect(state().phase, ConnectionPhase.connected);
+      expect(state().repoPath, '/existing/newrepo');
+      expect(state().repoPaths, contains('/existing/newrepo'));
 
-    expect(store.updated.single.allRepoPaths, contains('/existing/newrepo'));
-    expect(store.touched, contains('c1'));
-    expect(
-      container.read(outputLogProvider).lines.length,
-      linesBefore,
-      reason: 'the clone transcript must survive finalize',
-    );
-  });
+      expect(store.updated.single.allRepoPaths, contains('/existing/newrepo'));
+      expect(store.touched, contains('c1'));
+      expect(
+        container.read(outputLogProvider).lines.length,
+        linesBefore,
+        reason: 'the clone transcript must survive finalize',
+      );
+    },
+  );
 
   test('finalize with fsmonitor persists it into the connection', () async {
     container = build();
@@ -227,24 +234,30 @@ void main() {
     expect(store.updated.single.fsmonitorPaths, contains('/existing/newrepo'));
   });
 
-  test('a disconnect mid-provision makes finalize a no-op that writes nothing',
-      () async {
-    container = build();
-    controller = container.read(connectionProvider.notifier);
-    final token = await begin();
+  test(
+    'a disconnect mid-provision makes finalize a no-op that writes nothing',
+    () async {
+      container = build();
+      controller = container.read(connectionProvider.notifier);
+      final token = await begin();
 
-    await controller.disconnect();
-    expect(state().phase, ConnectionPhase.disconnected);
+      await controller.disconnect();
+      expect(state().phase, ConnectionPhase.disconnected);
 
-    final ok = await controller.finalizeProvisioned(
-      token: token,
-      conn: _conn(),
-      repoPath: '/existing/newrepo',
-    );
-    expect(ok, isFalse, reason: 'superseded token');
-    expect(state().phase, ConnectionPhase.disconnected);
-    expect(store.updated, isEmpty, reason: 'nothing persisted after supersede');
-  });
+      final ok = await controller.finalizeProvisioned(
+        token: token,
+        conn: _conn(),
+        repoPath: '/existing/newrepo',
+      );
+      expect(ok, isFalse, reason: 'superseded token');
+      expect(state().phase, ConnectionPhase.disconnected);
+      expect(
+        store.updated,
+        isEmpty,
+        reason: 'nothing persisted after supersede',
+      );
+    },
+  );
 
   test('abortProvisioning tears the session down to disconnected', () async {
     container = build();
@@ -275,35 +288,37 @@ void main() {
     );
   });
 
-  test('ensureForgeHostLogin logs in once per (forge, host), retries on failure',
-      () async {
-    container = build(ghToken: 'ghp_tok');
-    controller = container.read(connectionProvider.notifier);
-    await begin();
+  test(
+    'ensureForgeHostLogin logs in once per (forge, host), retries on failure',
+    () async {
+      container = build(ghToken: 'ghp_tok');
+      controller = container.read(connectionProvider.notifier);
+      await begin();
 
-    await controller.ensureForgeHostLogin(Forge.github, 'github.com');
-    await controller.ensureForgeHostLogin(Forge.github, 'github.com');
-    expect(executor.loginCallsFor('gh'), 1, reason: 'memoized per host');
+      await controller.ensureForgeHostLogin(Forge.github, 'github.com');
+      await controller.ensureForgeHostLogin(Forge.github, 'github.com');
+      expect(executor.loginCallsFor('gh'), 1, reason: 'memoized per host');
 
-    // A different host is a distinct memo entry.
-    await controller.ensureForgeHostLogin(Forge.github, 'ghe.corp');
-    expect(executor.loginCallsFor('gh'), 2);
+      // A different host is a distinct memo entry.
+      await controller.ensureForgeHostLogin(Forge.github, 'ghe.corp');
+      expect(executor.loginCallsFor('gh'), 2);
 
-    // A failed login evicts its memo so the next call retries rather than
-    // replaying the cached failure.
-    executor.failNextLogin = true;
-    await expectLater(
-      controller.ensureForgeHostLogin(Forge.github, 'fail.host'),
-      throwsA(anything),
-    );
-    final afterFail = executor.loginCallsFor('gh');
-    await controller.ensureForgeHostLogin(Forge.github, 'fail.host');
-    expect(
-      executor.loginCallsFor('gh'),
-      afterFail + 1,
-      reason: 'a failed login must be retryable',
-    );
-  });
+      // A failed login evicts its memo so the next call retries rather than
+      // replaying the cached failure.
+      executor.failNextLogin = true;
+      await expectLater(
+        controller.ensureForgeHostLogin(Forge.github, 'fail.host'),
+        throwsA(anything),
+      );
+      final afterFail = executor.loginCallsFor('gh');
+      await controller.ensureForgeHostLogin(Forge.github, 'fail.host');
+      expect(
+        executor.loginCallsFor('gh'),
+        afterFail + 1,
+        reason: 'a failed login must be retryable',
+      );
+    },
+  );
 
   test('ensureForgeHostLogin without a token is a no-op', () async {
     container = build(); // no gh token

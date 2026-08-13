@@ -36,6 +36,8 @@ class FakeExecutor implements ScopedCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     if (gitArgs.first == 'hash-object') {
       final path = gitArgs.last;
@@ -49,57 +51,66 @@ class FakeExecutor implements ScopedCommandExecutor {
   }
 
   @override
-  Future<void> uploadBytes(String destinationPath, List<int> bytes, {String? routingRepo}) async {
+  Future<void> uploadBytes(
+    String destinationPath,
+    List<int> bytes, {
+    String? routingRepo,
+  }) async {
     uploads[destinationPath] = bytes;
   }
-  
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class FakeGitService implements GitService {
   final Map<String, String> remoteFiles;
-  
+
   FakeGitService(this.remoteFiles);
-  
+
   @override
   Future<String> readFileBase64(String repoPath, String path) async {
     final content = remoteFiles[path] ?? '';
     return base64.encode(utf8.encode(content));
   }
-  
+
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 void main() {
-  test('RemoteEditManager downloads file, saves to temp, and opens it', () async {
-    final mockFileActions = MockFileActions();
-    final fakeExecutor = FakeExecutor({'file.txt': 'hash1'});
-    final fakeGit = FakeGitService({'file.txt': 'hello world'});
-    
-    final container = ProviderContainer(
-      overrides: [
-        fileActionsProvider.overrideWithValue(mockFileActions),
-        activeExecutorProvider.overrideWithValue(fakeExecutor),
-        gitServiceProvider.overrideWithValue(fakeGit),
-      ]
-    );
-    
-    final manager = container.read(remoteEditServiceProvider.notifier);
-    await manager.openRemoteFile('repo1', 'file.txt');
-    
-    expect(mockFileActions.openedPaths, isNotEmpty);
-    final openedPath = mockFileActions.openedPaths.first;
-    expect(openedPath, endsWith('file.txt'));
-    
-    final tempFile = File(openedPath);
-    expect(tempFile.existsSync(), isTrue);
-    expect(tempFile.readAsStringSync(), 'hello world');
-    
-    // Test that the session was saved correctly
-    final session = container.read(remoteEditServiceProvider)['repo1/file.txt'];
-    expect(session, isNotNull);
-    expect(session!.lastKnownHash, 'hash1');
-  });
+  test(
+    'RemoteEditManager downloads file, saves to temp, and opens it',
+    () async {
+      final mockFileActions = MockFileActions();
+      final fakeExecutor = FakeExecutor({'file.txt': 'hash1'});
+      final fakeGit = FakeGitService({'file.txt': 'hello world'});
+
+      final container = ProviderContainer(
+        overrides: [
+          fileActionsProvider.overrideWithValue(mockFileActions),
+          activeExecutorProvider.overrideWithValue(fakeExecutor),
+          gitServiceProvider.overrideWithValue(fakeGit),
+        ],
+      );
+
+      final manager = container.read(remoteEditServiceProvider.notifier);
+      await manager.openRemoteFile('repo1', 'file.txt');
+
+      expect(mockFileActions.openedPaths, isNotEmpty);
+      final openedPath = mockFileActions.openedPaths.first;
+      expect(openedPath, endsWith('file.txt'));
+
+      final tempFile = File(openedPath);
+      expect(tempFile.existsSync(), isTrue);
+      expect(tempFile.readAsStringSync(), 'hello world');
+
+      // Test that the session was saved correctly
+      final session = container.read(
+        remoteEditServiceProvider,
+      )['repo1/file.txt'];
+      expect(session, isNotNull);
+      expect(session!.lastKnownHash, 'hash1');
+    },
+  );
 }

@@ -26,6 +26,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     return results.isNotEmpty ? results.removeAt(0) : next;
@@ -42,7 +44,10 @@ String _jsonRows(int count, int startId, String Function(int id) row) =>
 void main() {
   group('GlabService project dashboard query', () {
     test('filters issues with state, not deprecated states', () {
-      expect(GlabService.projectDashboardQuery, contains('issues(state: opened'));
+      expect(
+        GlabService.projectDashboardQuery,
+        contains('issues(state: opened'),
+      );
       expect(GlabService.projectDashboardQuery, isNot(contains('states:')));
     });
   });
@@ -68,30 +73,27 @@ void main() {
       glab = GlabService(exec);
     });
 
-    test(
-      'paginated calls drop -i (which is incompatible with --paginate); '
-      'non-paginated calls keep it',
-      () async {
-        // `--paginate` + `-i` interleaves a header block per page, so the
-        // leading-header strip + first-status-line read only ever see page 1.
-        // Exercised through api() directly: the issues()/releases() wrappers
-        // that used to cover this were dead code once the Project dashboard
-        // moved to one GraphQL round-trip, and were removed.
-        await glab.api('/repo', 'projects/:id/issues', paginate: true);
-        expect(exec.calls.single, contains('--paginate'));
-        expect(
-          exec.calls.single,
-          isNot(contains('-i')),
-          reason: 'a paginated call must not combine -i with --paginate',
-        );
+    test('paginated calls drop -i (which is incompatible with --paginate); '
+        'non-paginated calls keep it', () async {
+      // `--paginate` + `-i` interleaves a header block per page, so the
+      // leading-header strip + first-status-line read only ever see page 1.
+      // Exercised through api() directly: the issues()/releases() wrappers
+      // that used to cover this were dead code once the Project dashboard
+      // moved to one GraphQL round-trip, and were removed.
+      await glab.api('/repo', 'projects/:id/issues', paginate: true);
+      expect(exec.calls.single, contains('--paginate'));
+      expect(
+        exec.calls.single,
+        isNot(contains('-i')),
+        reason: 'a paginated call must not combine -i with --paginate',
+      );
 
-        // A non-paginated call still uses -i to catch a misleading exit code.
-        exec.calls.clear();
-        await glab.pipelines('/repo');
-        expect(exec.calls.single, isNot(contains('--paginate')));
-        expect(exec.calls.single, contains('-i'));
-      },
-    );
+      // A non-paginated call still uses -i to catch a misleading exit code.
+      exec.calls.clear();
+      await glab.pipelines('/repo');
+      expect(exec.calls.single, isNot(contains('--paginate')));
+      expect(exec.calls.single, contains('-i'));
+    });
 
     test('a non-zero glab exit with an HTTP 200 still returns the body '
         '(exit code is advisory — HTTP status is the authority)', () async {
@@ -114,10 +116,7 @@ void main() {
         stdout: 'HTTP/2.0 404 Not Found\r\n\r\n{"message":"404 Not Found"}',
         stderr: '',
       );
-      expect(
-        glab.api('/repo', 'projects/:id'),
-        throwsA(isA<GlabException>()),
-      );
+      expect(glab.api('/repo', 'projects/:id'), throwsA(isA<GlabException>()));
     });
 
     test('a non-zero glab exit with no HTTP status line still throws '
@@ -127,10 +126,7 @@ void main() {
         stdout: '',
         stderr: 'ssh: connection closed',
       );
-      expect(
-        glab.api('/repo', 'projects/:id'),
-        throwsA(isA<GlabException>()),
-      );
+      expect(glab.api('/repo', 'projects/:id'), throwsA(isA<GlabException>()));
     });
 
     test('graphql returns partial data despite a non-zero exit when HTTP is '
@@ -148,24 +144,31 @@ void main() {
       expect(glab.lastGraphqlWarning, contains('no access to field y'));
     });
 
-    test('jobs walks pages until a short page and accumulates all of them', () async {
-      String jobRow(int id) =>
-          '{"id":$id,"name":"j$id","stage":"build","status":"success"}';
-      // Page 1 is full (100) → keep going; page 2 is short (5) → stop.
-      exec.results.addAll([
-        _ok(_jsonRows(100, 1, jobRow)),
-        _ok(_jsonRows(5, 101, jobRow)),
-      ]);
+    test(
+      'jobs walks pages until a short page and accumulates all of them',
+      () async {
+        String jobRow(int id) =>
+            '{"id":$id,"name":"j$id","stage":"build","status":"success"}';
+        // Page 1 is full (100) → keep going; page 2 is short (5) → stop.
+        exec.results.addAll([
+          _ok(_jsonRows(100, 1, jobRow)),
+          _ok(_jsonRows(5, 101, jobRow)),
+        ]);
 
-      final jobs = await glab.jobs('/repo', 7);
+        final jobs = await glab.jobs('/repo', 7);
 
-      expect(jobs, hasLength(105), reason: 'jobs past #100 must not be dropped');
-      expect(exec.calls, hasLength(2));
-      expect(exec.calls[0], containsAllInOrder(['-f', 'page=1']));
-      expect(exec.calls[1], containsAllInOrder(['-f', 'page=2']));
-      // A manual page walk, never `--paginate` (kept bounded per selection).
-      expect(exec.calls.every((c) => !c.contains('--paginate')), isTrue);
-    });
+        expect(
+          jobs,
+          hasLength(105),
+          reason: 'jobs past #100 must not be dropped',
+        );
+        expect(exec.calls, hasLength(2));
+        expect(exec.calls[0], containsAllInOrder(['-f', 'page=1']));
+        expect(exec.calls[1], containsAllInOrder(['-f', 'page=2']));
+        // A manual page walk, never `--paginate` (kept bounded per selection).
+        expect(exec.calls.every((c) => !c.contains('--paginate')), isTrue);
+      },
+    );
 
     test('jobs stops after a single short page (common case)', () async {
       String jobRow(int id) =>
@@ -217,8 +220,11 @@ void main() {
 
       final pipes = await glab.pipelines('/repo', allHistory: true);
 
-      expect(pipes, hasLength(107),
-          reason: 'history past page 1 must accumulate');
+      expect(
+        pipes,
+        hasLength(107),
+        reason: 'history past page 1 must accumulate',
+      );
       expect(exec.calls, hasLength(2));
       expect(
         exec.calls[0],
@@ -245,13 +251,17 @@ void main() {
       expect(
         args.any((a) => a.startsWith('variables=')),
         isFalse,
-        reason: 'glab binds -f name=value to \$name; a variables={...} blob '
+        reason:
+            'glab binds -f name=value to \$name; a variables={...} blob '
             'leaves declared query variables unbound',
       );
     });
 
     test('emits one -f flag per variable plus the query', () {
-      final args = GlabService.graphqlArgs('q', variables: {'a': '1', 'b': '2'});
+      final args = GlabService.graphqlArgs(
+        'q',
+        variables: {'a': '1', 'b': '2'},
+      );
       expect(args.where((a) => a == '-f').length, 3);
       expect(args, containsAllInOrder(['-f', 'a=1']));
       expect(args, containsAllInOrder(['-f', 'b=2']));
@@ -318,10 +328,7 @@ void main() {
         '"releasedAt":"2026-07-01T17:57:10Z"}]}}}}';
 
     test('parses real String-iid payload (the crash regression)', () async {
-      exec.results.addAll([
-        _ok('git@gitlab.com:group/proj.git'),
-        _ok(payload),
-      ]);
+      exec.results.addAll([_ok('git@gitlab.com:group/proj.git'), _ok(payload)]);
       final d = await glab.projectDashboard('/repo');
       expect(d.issues.single.id, 606072);
       expect(d.milestones.single.id, 2);
@@ -333,26 +340,23 @@ void main() {
       expect(d.warning, isNull);
     });
 
-    test(
-      'a null project (nonexistent OR unauthorized — GitLab sends no error '
-      'for either) throws instead of rendering an empty dashboard',
-      () async {
-        exec.results.addAll([
-          _ok('git@gitlab.com:group/proj.git'),
-          _ok('HTTP/2 200\n\n{"data":{"project":null}}'),
-        ]);
-        await expectLater(
-          glab.projectDashboard('/repo'),
-          throwsA(
-            isA<GlabException>().having(
-              (e) => e.message,
-              'message',
-              contains('group/proj'),
-            ),
+    test('a null project (nonexistent OR unauthorized — GitLab sends no error '
+        'for either) throws instead of rendering an empty dashboard', () async {
+      exec.results.addAll([
+        _ok('git@gitlab.com:group/proj.git'),
+        _ok('HTTP/2 200\n\n{"data":{"project":null}}'),
+      ]);
+      await expectLater(
+        glab.projectDashboard('/repo'),
+        throwsA(
+          isA<GlabException>().having(
+            (e) => e.message,
+            'message',
+            contains('group/proj'),
           ),
-        );
-      },
-    );
+        ),
+      );
+    });
 
     test('an empty graphql body resets a stale warning', () async {
       // First call: partial data + errors → warning set.

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+
 import '../ssh/ssh_command_executor.dart';
 
 /// Kind of a single output line, used for colouring in the output view.
@@ -9,7 +10,8 @@ enum OutputLineKind { command, stdout, stderr, success, error, info }
 class OutputLine {
   final String text;
   final OutputLineKind kind;
-  const OutputLine(this.text, this.kind);
+  final OperationId? operationId;
+  const OutputLine(this.text, this.kind, {this.operationId});
 }
 
 @immutable
@@ -58,8 +60,7 @@ class OutputLogNotifier extends Notifier<OutputLogState> {
   static const int maxLines = 2000;
 
   @override
-  OutputLogState build() =>
-      const OutputLogState(visible: true); // open by default on startup/connect
+  OutputLogState build() => const OutputLogState(visible: true); // open by default on startup/connect
 
   void setVisible(bool value) {
     if (state.visible != value) state = state.copyWith(visible: value);
@@ -90,26 +91,39 @@ class OutputLogNotifier extends Notifier<OutputLogState> {
     state = state.withLines(capped);
   }
 
-  static List<OutputLine> _split(String text, OutputLineKind kind) {
+  static List<OutputLine> _split(
+    String text,
+    OutputLineKind kind, {
+    OperationId? operationId,
+  }) {
     final normalized = text.replaceAll('\r\n', '\n').trimRight();
     if (normalized.isEmpty) return const [];
-    return [for (final l in normalized.split('\n')) OutputLine(l, kind)];
+    return [
+      for (final l in normalized.split('\n'))
+        OutputLine(l, kind, operationId: operationId),
+    ];
   }
 
   /// Logs a command and its result: a `$ <command>` header, then its stdout and
   /// stderr, then a success/failure status line. Handles both successful and
   /// failed [SSHCommandResult]s (a failed command's result is carried on the
   /// thrown [GitException]).
-  void logResult(String command, SSHCommandResult result) {
+  void logResult(
+    String command,
+    SSHCommandResult result, {
+    OperationId? operationId,
+  }) {
+    final anchor = operationId ?? result.operationId;
     _add([
-      OutputLine('\$ $command', OutputLineKind.command),
-      ..._split(result.stdout, OutputLineKind.stdout),
-      ..._split(result.stderr, OutputLineKind.stderr),
+      OutputLine('\$ $command', OutputLineKind.command, operationId: anchor),
+      ..._split(result.stdout, OutputLineKind.stdout, operationId: anchor),
+      ..._split(result.stderr, OutputLineKind.stderr, operationId: anchor),
       OutputLine(
         result.isSuccess
             ? '✓ completed'
             : '✗ exited with code ${result.exitCode}',
         result.isSuccess ? OutputLineKind.success : OutputLineKind.error,
+        operationId: anchor,
       ),
     ]);
   }
@@ -120,10 +134,14 @@ class OutputLogNotifier extends Notifier<OutputLogState> {
 
   /// Logs a command that failed before producing a result (timeout, non-git
   /// error, …).
-  void logError(String command, String message) {
+  void logError(String command, String message, {OperationId? operationId}) {
     _add([
-      OutputLine('\$ $command', OutputLineKind.command),
-      ..._split(message, OutputLineKind.error),
+      OutputLine(
+        '\$ $command',
+        OutputLineKind.command,
+        operationId: operationId,
+      ),
+      ..._split(message, OutputLineKind.error, operationId: operationId),
     ]);
   }
 
@@ -132,9 +150,20 @@ class OutputLogNotifier extends Notifier<OutputLogState> {
   /// header now and returns a session whose [OutputStreamSession.append] feeds
   /// decoded chunks as they arrive. The batch APIs above log only finished
   /// results; this is the streaming counterpart the output view tails live.
-  OutputStreamSession startStream(String command) {
-    _add([OutputLine('\$ $command', OutputLineKind.command)]);
-    return OutputStreamSession._(this);
+  OutputStreamSession startStream(String command, {OperationId? operationId}) {
+    _add([
+      OutputLine(
+        '\$ $command',
+        OutputLineKind.command,
+        operationId: operationId,
+      ),
+    ]);
+    return OutputStreamSession._(this, operationId);
+  }
+
+  int? firstIndexForOperation(OperationId id) {
+    final index = state.lines.indexWhere((line) => line.operationId == id);
+    return index < 0 ? null : index;
   }
 
   /// Removes [transient] if it is still identically the last line (the
@@ -197,9 +226,10 @@ class OutputLogNotifier extends Notifier<OutputLogState> {
 /// line always shows the most recently active one. Finish with exactly one
 /// [close] (or [fail] for a pre-exit error); the session is inert afterwards.
 class OutputStreamSession {
-  OutputStreamSession._(this._notifier);
+  OutputStreamSession._(this._notifier, this._operationId);
 
   final OutputLogNotifier _notifier;
+  final OperationId? _operationId;
 
   /// Un-terminated tail per kind, raw (may still contain `\r` frames).
   final Map<OutputLineKind, String> _partials = {};
@@ -216,16 +246,18 @@ class OutputStreamSession {
     // raw), so a `\r\n` terminator split across two chunks — chunk 1 ending
     // `\r`, chunk 2 starting `\n` — still collapses to one newline instead of
     // the stray `\r` erasing the line's text in _collapseCr.
-    final combined =
-        ((_partials[kind] ?? '') + chunk).replaceAll('\r\n', '\n');
+    final combined = ((_partials[kind] ?? '') + chunk).replaceAll('\r\n', '\n');
     final segments = combined.split('\n');
     _partials[kind] = segments.removeLast();
 
     final finalized = [
-      for (final line in segments) OutputLine(_collapseCr(line), kind),
+      for (final line in segments)
+        OutputLine(_collapseCr(line), kind, operationId: _operationId),
     ];
     final partialText = _collapseCr(_partials[kind]!);
-    final next = partialText.isEmpty ? null : OutputLine(partialText, kind);
+    final next = partialText.isEmpty
+        ? null
+        : OutputLine(partialText, kind, operationId: _operationId);
     _notifier._upsertStream(_transient, [...finalized, ?next]);
     _transient = next;
   }
@@ -245,6 +277,7 @@ class OutputStreamSession {
             ? '✗ terminated'
             : '✗ exited with code $exitCode',
         exitCode == 0 ? OutputLineKind.success : OutputLineKind.error,
+        operationId: _operationId,
       ),
     ]);
     _transient = null;
@@ -257,7 +290,11 @@ class OutputStreamSession {
     _closed = true;
     _notifier._upsertStream(_transient, [
       ..._flushPartials(),
-      ...OutputLogNotifier._split(message, OutputLineKind.error),
+      ...OutputLogNotifier._split(
+        message,
+        OutputLineKind.error,
+        operationId: _operationId,
+      ),
     ]);
     _transient = null;
   }
@@ -266,7 +303,9 @@ class OutputStreamSession {
     final flushed = <OutputLine>[];
     for (final kind in OutputLineKind.values) {
       final text = _collapseCr(_partials[kind] ?? '');
-      if (text.isNotEmpty) flushed.add(OutputLine(text, kind));
+      if (text.isNotEmpty) {
+        flushed.add(OutputLine(text, kind, operationId: _operationId));
+      }
     }
     _partials.clear();
     return flushed;
@@ -291,3 +330,19 @@ class OutputStreamSession {
 final outputLogProvider = NotifierProvider<OutputLogNotifier, OutputLogState>(
   OutputLogNotifier.new,
 );
+
+class OutputRevealNotifier extends Notifier<OperationId?> {
+  @override
+  OperationId? build() => null;
+
+  void request(OperationId id) => state = id;
+
+  void consume(OperationId id) {
+    if (state == id) state = null;
+  }
+}
+
+final outputRevealProvider =
+    NotifierProvider<OutputRevealNotifier, OperationId?>(
+      OutputRevealNotifier.new,
+    );

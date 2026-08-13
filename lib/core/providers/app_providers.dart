@@ -8,8 +8,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod/misc.dart' show ProviderOrFamily;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../features/branches/branch_workspace_prefs.dart';
+import '../exec/activity_command_executor.dart';
 import '../exec/command_telemetry.dart';
 import '../exec/local_command_executor.dart';
+import '../exec/operation_activity.dart';
 import '../exec/scoped_command_executor.dart';
 import '../forge/auth_probe_service.dart';
 import '../forge/auth_status.dart';
@@ -248,8 +250,26 @@ final gitServiceProvider = Provider<GitService>((ref) {
           ),
         ),
       );
-  final service = GitService(
+  final activityExecutor = ActivityCommandExecutor(
     ref.watch(activeExecutorProvider),
+    onOperationEvent: ref.read(operationActivityProvider.notifier).report,
+    resolveDescriptor:
+        ({required repositoryPath, required lane, required argv}) {
+          if (lane == ExecLane.read) return null;
+          return OperationDescriptor(
+            repositoryPath: repositoryPath,
+            label: lane == ExecLane.sync
+                ? 'Synchronize repository'
+                : 'Update repository',
+            kind: lane == ExecLane.sync
+                ? OperationKind.synchronization
+                : OperationKind.gitMutation,
+            lane: lane,
+          );
+        },
+  );
+  final service = GitService(
+    activityExecutor,
     commitTimeout: commitTimeout,
     networkTimeout: networkTimeout,
     committerName: committerName,
@@ -259,6 +279,7 @@ final gitServiceProvider = Provider<GitService>((ref) {
     // not a dependency — its state changing must not rebuild GitService.
     onUndoRecord: (record) =>
         ref.read(undoJournalProvider.notifier).push(record),
+    onOperationEvent: ref.read(operationActivityProvider.notifier).report,
   );
   // Re-apply any scoped (dotfiles) git-dir overrides on rebuild. GitService's
   // scope registry is in-memory, so a settings change that reconstructs it here
@@ -283,11 +304,25 @@ final gitServiceProvider = Provider<GitService>((ref) {
 /// not rebuild — nor form a cycle — on connection-state changes.
 final scopedForgeExecutorProvider = Provider<CommandExecutor>((ref) {
   final inner = ref.watch(activeExecutorProvider);
-  return ScopedCommandExecutor(inner, (repoPath) {
+  final scoped = ScopedCommandExecutor(inner, (repoPath) {
     final gitDir = ref.read(connectionProvider).scopedGitDirs[repoPath];
     if (gitDir == null || gitDir.isEmpty) return null;
     return {'GIT_DIR': gitDir, 'GIT_WORK_TREE': repoPath};
   });
+  return ActivityCommandExecutor(
+    scoped,
+    onOperationEvent: ref.read(operationActivityProvider.notifier).report,
+    resolveDescriptor:
+        ({required repositoryPath, required lane, required argv}) {
+          if (lane == ExecLane.read) return null;
+          return OperationDescriptor(
+            repositoryPath: repositoryPath,
+            label: 'Update forge',
+            kind: OperationKind.forgeMutation,
+            lane: lane,
+          );
+        },
+  );
 });
 
 final glabServiceProvider = Provider<GlabService>((ref) {
@@ -964,6 +999,10 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// unmount timing during the connecting/lost phase — real, but incidental,
   /// not a guarantee.
   void _invalidateRepoState() {
+    // Close the old session's lifecycle before invalidating anything that can
+    // emit late completions. Monotonic terminal records then reject those
+    // completions instead of leaking them into the replacement session.
+    ref.read(operationActivityProvider.notifier).supersedeActive();
     for (final family in repoScopedFetchFamilies) {
       ref.invalidate(family);
     }
@@ -1097,7 +1136,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     // connection is active *now*, not the one this fetch was meant for.
     final attempt = _attempt;
     try {
-      await ref.read(gitServiceProvider).fetch(repoPath);
+      await ref.read(gitServiceProvider).fetch(repoPath, background: true);
       if (attempt != _attempt || !ref.mounted) return;
       ref.read(ownMutationTrackerProvider).mark(repoPath);
       // A fetch moves the remote-tracking refs and can bring commits down with
@@ -2898,7 +2937,7 @@ final autoFetchProvider = Provider.autoDispose<void>((ref) {
 
   final timer = Timer.periodic(Duration(minutes: minutes), (_) async {
     try {
-      await ref.read(gitServiceProvider).fetch(repoPath);
+      await ref.read(gitServiceProvider).fetch(repoPath, background: true);
       // The provider can be disposed mid-fetch (disconnect, repo switch, or the
       // interval set to 0 while this round-trip is outstanding). Touching `ref`
       // after disposal throws; onDispose(timer.cancel) only stops *future* ticks.

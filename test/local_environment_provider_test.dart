@@ -23,6 +23,8 @@ class _ProbeExecutor extends LocalCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     executions++;
     return const SSHCommandResult(

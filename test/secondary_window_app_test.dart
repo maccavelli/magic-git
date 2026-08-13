@@ -50,6 +50,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
@@ -67,8 +69,7 @@ class _FakeGit extends GitService {
   /// enough to prove the history pop-out paints ref chips.
   final bool withRefs;
 
-  static const headHash =
-      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+  static const headHash = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
   static const headCommit = GitCommit(
     hash: headHash,
@@ -123,8 +124,7 @@ class _FakeGit extends GitService {
     String hash, {
     String? path,
     int? context,
-  }) async =>
-      'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
+  }) async => 'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
 }
 
 /// A [_FakeGit] whose status carries a controllable HEAD oid, and which counts
@@ -134,8 +134,10 @@ class _HeadMoveGit extends _FakeGit {
   int logCalls = 0;
 
   @override
-  Future<GitStatus> status(String repoPath) async =>
-      GitStatus(branch: GitBranchInfo(oid: currentOid, head: 'main'), files: const []);
+  Future<GitStatus> status(String repoPath) async => GitStatus(
+    branch: GitBranchInfo(oid: currentOid, head: 'main'),
+    files: const [],
+  );
 
   @override
   Future<List<GitCommit>> log(
@@ -246,8 +248,11 @@ void main() {
     final executor = _FakeExecutor();
     await pump(tester, executor);
 
-    expect(native.map((c) => c.method), contains('ready'),
-        reason: 'reveals the native window');
+    expect(
+      native.map((c) => c.method),
+      contains('ready'),
+      reason: 'reveals the native window',
+    );
     expect(hubOut.map((c) => c.method), contains('requestState'));
     expect(
       native.singleWhere((c) => c.method == 'setWindowTitle').arguments,
@@ -265,8 +270,9 @@ void main() {
     );
   });
 
-  testWidgets('a lost connection shows a banner over the (frozen) history',
-      (tester) async {
+  testWidgets('a lost connection shows a banner over the (frozen) history', (
+    tester,
+  ) async {
     mockChannels(_connected('/srv/repo'));
     await pump(tester, _FakeExecutor());
 
@@ -280,8 +286,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byType(HistoryView), findsOneWidget,
-        reason: 'frozen-but-readable beats a blank window');
+    expect(
+      find.byType(HistoryView),
+      findsOneWidget,
+      reason: 'frozen-but-readable beats a blank window',
+    );
     expect(find.textContaining('Connection lost'), findsOneWidget);
     expect(native.map((c) => c.method), isNot(contains('closeSelf')));
   });
@@ -315,8 +324,11 @@ void main() {
       'History — other (Prod)',
       reason: 'title follows the active repo',
     );
-    expect(executor.calls.length, greaterThan(callsBefore),
-        reason: 'invalidation refetched for the new repo');
+    expect(
+      executor.calls.length,
+      greaterThan(callsBefore),
+      reason: 'invalidation refetched for the new repo',
+    );
     expect(find.byType(HistoryView), findsOneWidget);
   });
 
@@ -389,49 +401,48 @@ void main() {
     expect(executor.calls.length, greaterThan(before));
   });
 
-  testWidgets(
-    'polling ticks catch an external HEAD move in a History window',
-    (tester) async {
-      // In polling mode a tick carries no git-state signal, and the History
-      // shell used to drop it outright — an external (or main-window) commit
-      // never reached the pop-out while the watcher was degraded. The probe
-      // refetches status per polling tick; a HEAD move between two landed
-      // statuses refreshes the families exactly once.
-      mockChannels(_connected('/srv/repo'));
-      final git = _HeadMoveGit();
-      await pump(tester, _FakeExecutor(), gitService: git);
+  testWidgets('polling ticks catch an external HEAD move in a History window', (
+    tester,
+  ) async {
+    // In polling mode a tick carries no git-state signal, and the History
+    // shell used to drop it outright — an external (or main-window) commit
+    // never reached the pop-out while the watcher was degraded. The probe
+    // refetches status per polling tick; a HEAD move between two landed
+    // statuses refreshes the families exactly once.
+    mockChannels(_connected('/srv/repo'));
+    final git = _HeadMoveGit();
+    await pump(tester, _FakeExecutor(), gitService: git);
 
-      Future<void> pollTick() async {
-        await pushHubEvent('repoTick', {
-          'repoPath': '/srv/repo',
-          'mode': 'polling',
-          'atMs': DateTime.now()
-              .add(const Duration(seconds: 10))
-              .millisecondsSinceEpoch,
-        });
-        await tester.pumpAndSettle();
-      }
+    Future<void> pollTick() async {
+      await pushHubEvent('repoTick', {
+        'repoPath': '/srv/repo',
+        'mode': 'polling',
+        'atMs': DateTime.now()
+            .add(const Duration(seconds: 10))
+            .millisecondsSinceEpoch,
+      });
+      await tester.pumpAndSettle();
+    }
 
-      await pollTick(); // arms the probe, lands the baseline status
-      final walksBefore = git.logCalls;
+    await pollTick(); // arms the probe, lands the baseline status
+    final walksBefore = git.logCalls;
 
-      git.currentOid = 'b' * 40; // an external commit moved HEAD
-      await pollTick();
-      expect(
-        git.logCalls,
-        greaterThan(walksBefore),
-        reason: 'the HEAD move refreshed the mutation families',
-      );
+    git.currentOid = 'b' * 40; // an external commit moved HEAD
+    await pollTick();
+    expect(
+      git.logCalls,
+      greaterThan(walksBefore),
+      reason: 'the HEAD move refreshed the mutation families',
+    );
 
-      final walksAfter = git.logCalls;
-      await pollTick(); // same oid again — quiet
-      expect(
-        git.logCalls,
-        walksAfter,
-        reason: 'no move, no refresh — polling must not stampede the walk',
-      );
-    },
-  );
+    final walksAfter = git.logCalls;
+    await pollTick(); // same oid again — quiet
+    expect(
+      git.logCalls,
+      walksAfter,
+      reason: 'no move, no refresh — polling must not stampede the walk',
+    );
+  });
 
   testWidgets(
     'a working-tree-only tick does not re-walk history/refs in a History window',
@@ -462,11 +473,7 @@ void main() {
     tester,
   ) async {
     mockChannels(_connected('/srv/repo'));
-    await pump(
-      tester,
-      _FakeExecutor(),
-      gitService: _FakeGit(withRefs: true),
-    );
+    await pump(tester, _FakeExecutor(), gitService: _FakeGit(withRefs: true));
 
     expect(find.text('head commit'), findsOneWidget);
     expect(find.byType(RefChip), findsNWidgets(2));
@@ -495,62 +502,71 @@ void main() {
   });
 
   testWidgets(
-      'dragging the History divider in the pop-out notifies the main window '
-      'via settingsChanged (debounced)', (tester) async {
-    mockChannels(_connected('/srv/repo'));
-    await pump(tester, _FakeExecutor());
-    hubOut.clear();
+    'dragging the History divider in the pop-out notifies the main window '
+    'via settingsChanged (debounced)',
+    (tester) async {
+      mockChannels(_connected('/srv/repo'));
+      await pump(tester, _FakeExecutor());
+      hubOut.clear();
 
-    // The divider sits at the commit list's right edge (historyList default).
-    final gesture = await tester.startGesture(
-      const Offset(420.5, 300),
-      kind: PointerDeviceKind.mouse,
-    );
-    await tester.pump();
-    await gesture.moveBy(const Offset(15, 0));
-    await tester.pump();
-    await gesture.up();
-    await tester.pump();
-
-    expect(
-      hubOut.map((c) => c.method),
-      isNot(contains('settingsChanged')),
-      reason: 'debounced — nothing before the 600ms window',
-    );
-    await tester.pump(const Duration(milliseconds: 700));
-    expect(hubOut.map((c) => c.method), contains('settingsChanged'),
-        reason: 'the pane width is part of the sync signature');
-  });
-
-  test('the settings-sync signature covers zoom, wrap, and every pane width', () {
-    // The signature is what the pop-out's settings listener selects on — a
-    // locally-editable setting it misses is a setting whose pop-out edits
-    // never reach the main window. Exhaustive over PaneId.values by
-    // construction; this pins that each field actually moves the record.
-    const base = AppSettings();
-    expect(
-      secondarySettingsSyncSignature(base),
-      secondarySettingsSyncSignature(const AppSettings()),
-      reason: 'value-equal settings must produce an equal record (no ping-pong)',
-    );
-    expect(
-      secondarySettingsSyncSignature(base.copyWith(historyZoom: 1.3)),
-      isNot(secondarySettingsSyncSignature(base)),
-    );
-    expect(
-      secondarySettingsSyncSignature(base.copyWith(historyDiffWrap: true)),
-      isNot(secondarySettingsSyncSignature(base)),
-    );
-    for (final id in PaneId.values) {
-      expect(
-        secondarySettingsSyncSignature(
-          base.copyWith(paneWidths: {id: paneSpecs[id]!.min}),
-        ),
-        isNot(secondarySettingsSyncSignature(base)),
-        reason: 'a ${id.name} width change must move the signature',
+      // The divider sits at the commit list's right edge (historyList default).
+      final gesture = await tester.startGesture(
+        const Offset(420.5, 300),
+        kind: PointerDeviceKind.mouse,
       );
-    }
-  });
+      await tester.pump();
+      await gesture.moveBy(const Offset(15, 0));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+
+      expect(
+        hubOut.map((c) => c.method),
+        isNot(contains('settingsChanged')),
+        reason: 'debounced — nothing before the 600ms window',
+      );
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(
+        hubOut.map((c) => c.method),
+        contains('settingsChanged'),
+        reason: 'the pane width is part of the sync signature',
+      );
+    },
+  );
+
+  test(
+    'the settings-sync signature covers zoom, wrap, and every pane width',
+    () {
+      // The signature is what the pop-out's settings listener selects on — a
+      // locally-editable setting it misses is a setting whose pop-out edits
+      // never reach the main window. Exhaustive over PaneId.values by
+      // construction; this pins that each field actually moves the record.
+      const base = AppSettings();
+      expect(
+        secondarySettingsSyncSignature(base),
+        secondarySettingsSyncSignature(const AppSettings()),
+        reason:
+            'value-equal settings must produce an equal record (no ping-pong)',
+      );
+      expect(
+        secondarySettingsSyncSignature(base.copyWith(historyZoom: 1.3)),
+        isNot(secondarySettingsSyncSignature(base)),
+      );
+      expect(
+        secondarySettingsSyncSignature(base.copyWith(historyDiffWrap: true)),
+        isNot(secondarySettingsSyncSignature(base)),
+      );
+      for (final id in PaneId.values) {
+        expect(
+          secondarySettingsSyncSignature(
+            base.copyWith(paneWidths: {id: paneSpecs[id]!.min}),
+          ),
+          isNot(secondarySettingsSyncSignature(base)),
+          reason: 'a ${id.name} width change must move the signature',
+        );
+      }
+    },
+  );
 
   testWidgets('⌘Z asks the main isolate to undo and toasts the outcome', (
     tester,
@@ -558,7 +574,9 @@ void main() {
     mockChannels(_connected('/srv/repo'));
     messenger.setMockMethodCallHandler(_hub, (call) async {
       hubOut.add(call);
-      if (call.method == 'requestState') return _connected('/srv/repo').encode();
+      if (call.method == 'requestState') {
+        return _connected('/srv/repo').encode();
+      }
       if (call.method == 'performUndo') {
         return {'status': 'done', 'description': 'Cherry-pick abc1234'};
       }

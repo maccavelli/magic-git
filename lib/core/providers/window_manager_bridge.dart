@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../exec/exec_proxy_codec.dart';
+import '../exec/operation_activity.dart';
 import '../git/git_service.dart' show GitException;
 import '../git/watch_event.dart';
 import '../output/output_log.dart';
@@ -145,8 +146,7 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
 
   /// Opens (or fronts) the History window for the active tab — mirrors that
   /// tab's session repo. No-op unless the active tab has a repo active.
-  Future<void> openHistory() =>
-      _open(WindowKind.history, null, activeTabId());
+  Future<void> openHistory() => _open(WindowKind.history, null, activeTabId());
 
   /// Opens (or fronts) a detached full-repo window pinned to [repoPath] on the
   /// active tab. Falls back to that tab's active repo when [repoPath] is null.
@@ -217,7 +217,11 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
     }
   }
 
-  WindowHandle? _existingForTab(WindowKind kind, String? repoPath, String? tabId) {
+  WindowHandle? _existingForTab(
+    WindowKind kind,
+    String? repoPath,
+    String? tabId,
+  ) {
     for (final w in state) {
       if (w.kind != kind) continue;
       // A singleton (History) fronts the one existing window regardless of which
@@ -273,7 +277,7 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
             _pendingSubs.remove(w.id)?.close();
             _repinHistory(w.id, pendingTab, pendingContainer, next);
           } else if (next.phase == ConnectionPhase.disconnected ||
-                     next.phase == ConnectionPhase.error) {
+              next.phase == ConnectionPhase.error) {
             // The tab failed to connect — stop waiting and leave the window
             // where it is (its current repo is still valid). If the repo's
             // tab is gone, the next onActiveTabChanged will close it.
@@ -420,9 +424,9 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
   void invalidateAllFor(String repoPath) {
     for (final w in state) {
       if (w.repoPath == repoPath) {
-        _hubs[w.id]?.invokeMethod<void>('invalidateAll', {
-          'repoPath': repoPath,
-        }).catchError((_) {});
+        _hubs[w.id]
+            ?.invokeMethod<void>('invalidateAll', {'repoPath': repoPath})
+            .catchError((_) {});
       }
     }
   }
@@ -440,16 +444,18 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
 
   /// Pushes one watcher tick to window [id].
   void _pushTick(String id, String repoPath, RepoWatchEvent event) {
-    _hubs[id]?.invokeMethod<void>('repoTick', {
-      'repoPath': repoPath,
-      'mode': event.mode.name,
-      'atMs': event.at.millisecondsSinceEpoch,
-      // Carried across the isolate boundary so a pop-out window can scope its
-      // refresh the same way the main one does. An empty list means the tick's
-      // scope is unknown (poll/restart), not that nothing changed — see
-      // [RepoWatchEvent.paths].
-      'paths': event.paths.toList(),
-    }).catchError((_) {});
+    _hubs[id]
+        ?.invokeMethod<void>('repoTick', {
+          'repoPath': repoPath,
+          'mode': event.mode.name,
+          'atMs': event.at.millisecondsSinceEpoch,
+          // Carried across the isolate boundary so a pop-out window can scope its
+          // refresh the same way the main one does. An empty list means the tick's
+          // scope is unknown (poll/restart), not that nothing changed — see
+          // [RepoWatchEvent.paths].
+          'paths': event.paths.toList(),
+        })
+        .catchError((_) {});
   }
 
   Future<Object?> _onControlCall(MethodCall call) async {
@@ -567,9 +573,9 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
           // repo runs unscoped and every read fails ("not a git repository").
           // Merged UNDER the request's own extraEnv so a deliberate caller env
           // still wins (the key sets are disjoint in practice).
-          final scopedGitDir =
-              execContainer.read(connectionProvider).scopedGitDirs[request
-                  .repoPath];
+          final scopedGitDir = execContainer
+              .read(connectionProvider)
+              .scopedGitDirs[request.repoPath];
           final extraEnv = (scopedGitDir != null && scopedGitDir.isNotEmpty)
               ? {
                   'GIT_DIR': scopedGitDir,
@@ -578,16 +584,22 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
                 }
               : request.extraEnv;
           // Read per call so a backend switch mid-session is honored.
-          final result = await execContainer.read(activeExecutorProvider).execute(
-            repoPath: request.repoPath,
-            gitArgs: request.gitArgs,
-            extraEnv: extraEnv,
-            stdin: request.stdin,
-            timeout: request.timeout,
-            retries: request.retries,
-            lane: request.lane,
-            compress: request.compress,
-          );
+          final result = await execContainer
+              .read(activeExecutorProvider)
+              .execute(
+                repoPath: request.repoPath,
+                gitArgs: request.gitArgs,
+                extraEnv: extraEnv,
+                stdin: request.stdin,
+                timeout: request.timeout,
+                retries: request.retries,
+                lane: request.lane,
+                compress: request.compress,
+                operation: request.operation,
+                onOperationEvent: execContainer
+                    .read(operationActivityProvider.notifier)
+                    .report,
+              );
           return encodeExecuteResult(result);
         } catch (e) {
           // Typed executor exceptions keep their identity across the wire;
@@ -610,9 +622,9 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
               .uploadBytes(upload.remotePath, upload.bytes);
           // Mirror exclusive-lane mutation refresh so main-window status
           // tracks a remote-edit save performed in a pop-out.
-          uploadContainer.read(ownMutationTrackerProvider).mark(
-            upload.routingRepo,
-          );
+          uploadContainer
+              .read(ownMutationTrackerProvider)
+              .mark(upload.routingRepo);
           uploadContainer
               .read(worktreeEditsProvider.notifier)
               .noteRepo(upload.routingRepo);

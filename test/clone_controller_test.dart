@@ -67,6 +67,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     repoPaths.add(repoPath);
@@ -82,6 +84,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     streamCalls.add(gitArgs);
     streamEnvs.add(extraEnv);
@@ -122,35 +126,50 @@ void main() {
     for (final l in container.read(outputLogProvider).lines) l.text,
   ];
 
-  test('success: probe → stream with progress → succeeded, no cleanup',
-      () async {
-    exec.results.add(_ok('absent'));
-    final fut = job.run(_req);
-    await pumpEventQueue();
+  test(
+    'success: probe → stream with progress → succeeded, no cleanup',
+    () async {
+      exec.results.add(_ok('absent'));
+      final fut = job.run(_req);
+      await pumpEventQueue();
 
-    expect(exec.streamCalls.single, [
-      'gh', 'repo', 'clone', 'mac/magic-git', 'magic-git', '--', '--progress',
-    ]);
-    expect(exec.streamRepoPaths.single, '/srv/code');
-    expect(exec.streamEnvs.single, isNull, reason: 'github.com needs no GH_HOST');
-    expect(jobState().phase, CloneJobPhase.cloning);
-    expect(jobState().destPath, '/srv/code/magic-git');
+      expect(exec.streamCalls.single, [
+        'gh',
+        'repo',
+        'clone',
+        'mac/magic-git',
+        'magic-git',
+        '--',
+        '--progress',
+      ]);
+      expect(exec.streamRepoPaths.single, '/srv/code');
+      expect(
+        exec.streamEnvs.single,
+        isNull,
+        reason: 'github.com needs no GH_HOST',
+      );
+      expect(jobState().phase, CloneJobPhase.cloning);
+      expect(jobState().destPath, '/srv/code/magic-git');
 
-    exec.handle.emitErr('Receiving objects:  10%\rReceiving objects:  60%');
-    await pumpEventQueue();
-    expect(jobState().progressLine, 'Receiving objects:  60%');
+      exec.handle.emitErr('Receiving objects:  10%\rReceiving objects:  60%');
+      await pumpEventQueue();
+      expect(jobState().progressLine, 'Receiving objects:  60%');
 
-    exec.handle.emitErr('\rReceiving objects: 100%, done.\n');
-    exec.results.add(_ok('https://github.com/mac/magic-git.git\n')); // verify
-    await exec.handle.finish(0);
-    expect(await fut, isTrue);
-    expect(jobState().phase, CloneJobPhase.succeeded);
-    expect(logLines(), contains('✓ completed'));
-    // Probe + the post-clone origin verification — never rm.
-    expect(exec.calls, hasLength(2));
-    expect(exec.calls.last, ['git', 'remote', 'get-url', 'origin'],
-        reason: 'a successful clone validates its origin is in place');
-  });
+      exec.handle.emitErr('\rReceiving objects: 100%, done.\n');
+      exec.results.add(_ok('https://github.com/mac/magic-git.git\n')); // verify
+      await exec.handle.finish(0);
+      expect(await fut, isTrue);
+      expect(jobState().phase, CloneJobPhase.succeeded);
+      expect(logLines(), contains('✓ completed'));
+      // Probe + the post-clone origin verification — never rm.
+      expect(exec.calls, hasLength(2));
+      expect(
+        exec.calls.last,
+        ['git', 'remote', 'get-url', 'origin'],
+        reason: 'a successful clone validates its origin is in place',
+      );
+    },
+  );
 
   test('the Dock mirrors the clone: indeterminate, then transfer fractions, '
       'then hidden', () async {
@@ -163,13 +182,17 @@ void main() {
     exec.results.add(_ok('absent'));
     final fut = job.run(_req);
     await pumpEventQueue();
-    expect(sent, [DockProgress.indeterminate],
-        reason: 'busy but honestly indeterminate until git reports numbers');
+    expect(sent, [
+      DockProgress.indeterminate,
+    ], reason: 'busy but honestly indeterminate until git reports numbers');
 
     exec.handle.emitErr('Receiving objects:  50% (1000/2000)');
     await pumpEventQueue();
-    expect(sent.last, closeTo(0.45, 1e-9),
-        reason: 'the transfer occupies the first 90% of the bar');
+    expect(
+      sent.last,
+      closeTo(0.45, 1e-9),
+      reason: 'the transfer occupies the first 90% of the bar',
+    );
 
     exec.handle.emitErr('\rResolving deltas: 100% (50/50), done.\n');
     await pumpEventQueue();
@@ -179,8 +202,11 @@ void main() {
     await exec.handle.finish(0);
     expect(await fut, isTrue);
     await pumpEventQueue();
-    expect(sent.last, DockProgress.hidden,
-        reason: 'a finished job never leaves a stale bar on the Dock');
+    expect(
+      sent.last,
+      DockProgress.hidden,
+      reason: 'a finished job never leaves a stale bar on the Dock',
+    );
   });
 
   test('an existing destination fails before any stream or delete', () async {
@@ -192,54 +218,63 @@ void main() {
     expect(exec.calls, hasLength(1));
   });
 
-  test('missing parent without the toggle fails; with it, mkdir -p runs',
-      () async {
-    exec.results.add(_ok('noparent'));
-    expect(await job.run(_req), isFalse);
-    expect(jobState().error, contains("parent folder doesn't exist"));
-    expect(exec.calls, hasLength(1), reason: 'no mkdir without the toggle');
+  test(
+    'missing parent without the toggle fails; with it, mkdir -p runs',
+    () async {
+      exec.results.add(_ok('noparent'));
+      expect(await job.run(_req), isFalse);
+      expect(jobState().error, contains("parent folder doesn't exist"));
+      expect(exec.calls, hasLength(1), reason: 'no mkdir without the toggle');
 
-    exec.results.add(_ok('noparent'));
-    exec.results.add(_ok('')); // mkdir
-    exec.handle = _FakeHandle();
-    const withParents = CloneRequest(
-      source: UrlCloneSource('https://example.com/r.git'),
-      parentDir: '/srv/new',
-      name: 'r',
-      createParents: true,
-    );
-    final fut = job.run(withParents);
-    await pumpEventQueue();
-    expect(exec.calls[2], ['sh', '-c', "mkdir -p -- '/srv/new'"]);
-    expect(exec.streamCalls.single, [
-      'git', 'clone', '--progress', '--', 'https://example.com/r.git', 'r',
-    ]);
-    exec.results.add(_ok('https://example.com/r.git\n')); // verify
-    await exec.handle.finish(0);
-    expect(await fut, isTrue);
-  });
+      exec.results.add(_ok('noparent'));
+      exec.results.add(_ok('')); // mkdir
+      exec.handle = _FakeHandle();
+      const withParents = CloneRequest(
+        source: UrlCloneSource('https://example.com/r.git'),
+        parentDir: '/srv/new',
+        name: 'r',
+        createParents: true,
+      );
+      final fut = job.run(withParents);
+      await pumpEventQueue();
+      expect(exec.calls[2], ['sh', '-c', "mkdir -p -- '/srv/new'"]);
+      expect(exec.streamCalls.single, [
+        'git',
+        'clone',
+        '--progress',
+        '--',
+        'https://example.com/r.git',
+        'r',
+      ]);
+      exec.results.add(_ok('https://example.com/r.git\n')); // verify
+      await exec.handle.finish(0);
+      expect(await fut, isTrue);
+    },
+  );
 
-  test('cancel: SIGTERM, then guarded rm of the partial dir, phase cancelled',
-      () async {
-    exec.results.add(_ok('absent')); // pre-check
-    final fut = job.run(_req);
-    await pumpEventQueue();
-    expect(jobState().phase, CloneJobPhase.cloning);
+  test(
+    'cancel: SIGTERM, then guarded rm of the partial dir, phase cancelled',
+    () async {
+      exec.results.add(_ok('absent')); // pre-check
+      final fut = job.run(_req);
+      await pumpEventQueue();
+      expect(jobState().phase, CloneJobPhase.cloning);
 
-    exec.results.add(_ok('exists')); // cleanup probe: partial dir landed
-    exec.results.add(_ok('')); // rm
-    await job.cancel();
-    expect(await fut, isFalse);
+      exec.results.add(_ok('exists')); // cleanup probe: partial dir landed
+      exec.results.add(_ok('')); // rm
+      await job.cancel();
+      expect(await fut, isFalse);
 
-    expect(exec.handle.cancels, 1);
-    expect(jobState().phase, CloneJobPhase.cancelled);
-    expect(
-      exec.calls.last,
-      ['sh', '-c', "rm -rf -- '/srv/code/magic-git'"],
-      reason: 'partial destination cleaned up',
-    );
-    expect(logLines().last, '✗ terminated');
-  });
+      expect(exec.handle.cancels, 1);
+      expect(jobState().phase, CloneJobPhase.cancelled);
+      expect(exec.calls.last, [
+        'sh',
+        '-c',
+        "rm -rf -- '/srv/code/magic-git'",
+      ], reason: 'partial destination cleaned up');
+      expect(logLines().last, '✗ terminated');
+    },
+  );
 
   test('failure: exit 128 cleans up and carries the stderr tail', () async {
     exec.results.add(_ok('absent'));

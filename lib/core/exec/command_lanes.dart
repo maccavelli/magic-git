@@ -74,7 +74,7 @@ class CommandLaneOverrun implements Exception {
 }
 
 class _Job {
-  _Job(this.lane, this.deadline, this.body, this.onOverrun);
+  _Job(this.lane, this.deadline, this.body, this.onOverrun, this.onStarted);
 
   final ExecLane lane;
 
@@ -87,6 +87,11 @@ class _Job {
 
   /// Fails this job's caller when the deadline passes with the body unsettled.
   final void Function() onOverrun;
+
+  /// Runs once, synchronously after the slot is acquired and immediately
+  /// before the body is deferred. Observability only; it cannot affect lane
+  /// ordering or consume the result future.
+  final void Function()? onStarted;
 }
 
 /// Lane-aware command scheduler shared by both executors (SSH and local).
@@ -197,6 +202,7 @@ class CommandLaneScheduler {
     ExecLane lane,
     Future<T> Function() body, {
     required Duration deadline,
+    void Function()? onStarted,
   }) {
     final completer = Completer<T>();
     (lane == ExecLane.isolated ? _isolatedQueue : _queue).add(
@@ -221,6 +227,7 @@ class CommandLaneScheduler {
             );
           }
         },
+        onStarted,
       ),
     );
     _pump();
@@ -230,7 +237,8 @@ class CommandLaneScheduler {
   void _pump() {
     // The isolated queue first, unconditionally: nothing in the main queue can
     // hold these back, by definition of the lane. Plain FIFO under its cap.
-    while (_isolatedQueue.isNotEmpty && _activeIsolated < maxConcurrentIsolated) {
+    while (_isolatedQueue.isNotEmpty &&
+        _activeIsolated < maxConcurrentIsolated) {
       _start(_isolatedQueue.removeAt(0));
     }
 
@@ -283,6 +291,8 @@ class CommandLaneScheduler {
       case ExecLane.isolated:
         _activeIsolated++;
     }
+
+    job.onStarted?.call();
 
     // The slot is given back exactly once, by whichever comes first: the body
     // settling, or the watchdog giving up on it.

@@ -6,6 +6,7 @@ import '../ssh/command_formatter.dart';
 import '../ssh/ssh_command_executor.dart';
 import 'command_lanes.dart';
 import 'command_telemetry.dart';
+import 'operation_activity.dart';
 
 /// [CommandExecutor] backed directly by [Process.start] instead of an SSH
 /// channel — for a repo living on this machine's own filesystem. No shell
@@ -109,22 +110,40 @@ class LocalCommandExecutor implements CommandExecutor {
     // Ignored: compression exists to save SSH wire bytes; a local pipe has no
     // wire, so spending CPU gzipping/gunzipping it would be pure loss.
     bool compress = false,
-  }) {
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+  }) async {
+    final lifecycle = OperationLifecycleEmitter.begin(
+      operation,
+      onOperationEvent,
+    );
     // Each attempt is enqueued separately so the inter-retry backoff wait
     // (taken inside runWithRetries, between enqueues) doesn't head-of-line-block
     // other queued commands — mirrors SSHCommandExecutor.execute.
-    return SSHCommandExecutor.runWithRetries(
-      () => _run(repoPath, gitArgs, extraEnv, stdin, timeout, lane),
-      retries,
-      // See SSHCommandExecutor.execute: the deadline is the attempt's own
-      // timeout plus a margin, a backstop against a body that never settles and
-      // so never gives its lane slot back.
-      enqueue: (attempt) => _scheduler.run(
-        lane,
-        attempt,
-        deadline: timeout + CommandLaneScheduler.watchdogMargin,
-      ),
-    );
+    try {
+      final result = await SSHCommandExecutor.runWithRetries(
+        () => _run(repoPath, gitArgs, extraEnv, stdin, timeout, lane),
+        retries,
+        // See SSHCommandExecutor.execute: the deadline is the attempt's own
+        // timeout plus a margin, a backstop against a body that never settles and
+        // so never gives its lane slot back.
+        enqueue: (attempt) => _scheduler.run(
+          lane,
+          attempt,
+          deadline: timeout + CommandLaneScheduler.watchdogMargin,
+          onStarted: lifecycle?.started,
+        ),
+      );
+      if (result.isSuccess) {
+        lifecycle?.succeeded();
+      } else {
+        lifecycle?.failed('Exited with code ${result.exitCode}');
+      }
+      return result.withOperationId(lifecycle?.id);
+    } catch (_) {
+      lifecycle?.failed();
+      rethrow;
+    }
   }
 
   Future<SSHCommandResult> _run(
@@ -157,6 +176,7 @@ class LocalCommandExecutor implements CommandExecutor {
         ),
       );
     }
+
     // Set when the timeout fires. Checked right after the spawn resolves: a
     // timeout that fired while `Process.start` was still pending found a null
     // process with nothing to kill, and the command would otherwise run on
@@ -309,7 +329,14 @@ class LocalCommandExecutor implements CommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
+    final lifecycle = OperationLifecycleEmitter.begin(
+      operation,
+      onOperationEvent,
+    );
+    lifecycle?.started();
     final argv = _rewriteArgv(gitArgs);
     final attempt = Process.start(
       argv.first,
@@ -319,7 +346,10 @@ class LocalCommandExecutor implements CommandExecutor {
     );
     try {
       final process = await attempt.timeout(openTimeout);
-      return _ProcessStreamHandle(process);
+      return _LocalActivityStreamHandle(
+        _ProcessStreamHandle(process),
+        lifecycle,
+      );
     } on TimeoutException {
       unawaited(
         attempt.then((p) {
@@ -327,7 +357,44 @@ class LocalCommandExecutor implements CommandExecutor {
         }, onError: (_) {}),
       );
       throw SSHCommandTimeout(gitArgs.join(' '));
+    } catch (_) {
+      lifecycle?.failed();
+      rethrow;
     }
+  }
+}
+
+class _LocalActivityStreamHandle implements CommandStreamHandle {
+  _LocalActivityStreamHandle(this._inner, this._lifecycle) {
+    unawaited(
+      _inner.exitCode.then((code) {
+        if (code == 0) {
+          _lifecycle?.succeeded();
+        } else {
+          _lifecycle?.failed(
+            code == null ? 'Stream ended' : 'Exited with code $code',
+          );
+        }
+      }, onError: (_) => _lifecycle?.failed()),
+    );
+  }
+
+  final CommandStreamHandle _inner;
+  final OperationLifecycleEmitter? _lifecycle;
+
+  @override
+  Stream<String> get stdout => _inner.stdout;
+
+  @override
+  Stream<String> get stderr => _inner.stderr;
+
+  @override
+  Future<int?> get exitCode => _inner.exitCode;
+
+  @override
+  Future<void> cancel() async {
+    _lifecycle?.canceled();
+    await _inner.cancel();
   }
 }
 

@@ -38,6 +38,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     repos.add(repoPath);
     return SSHCommandResult(exitCode: 0, stdout: 'served-by-$tag', stderr: '');
@@ -111,7 +113,9 @@ void main() {
     final stubB = _MutableConnection(const ConnectionState()); // connecting
     final containerA = ProviderContainer(
       overrides: [
-        connectionProvider.overrideWith(() => _MutableConnection(_connected('/a'))),
+        connectionProvider.overrideWith(
+          () => _MutableConnection(_connected('/a')),
+        ),
         activeExecutorProvider.overrideWithValue(execA),
       ],
     );
@@ -142,7 +146,11 @@ void main() {
     activeTab = 'B';
     bridge.onActiveTabChanged('B', isBlank: false);
     expect(bridge.state, hasLength(1), reason: 'the window is not closed');
-    expect(bridge.state.single.repoPath, '/a', reason: 'still on A until B connects');
+    expect(
+      bridge.state.single.repoPath,
+      '/a',
+      reason: 'still on A until B connects',
+    );
     expect(hubCalls.where((c) => c.method == 'connectionChanged'), isEmpty);
 
     // B finishes connecting → the window retargets to /b.
@@ -150,10 +158,14 @@ void main() {
     await containerB.pump();
     expect(bridge.state.single.repoPath, '/b');
     expect(bridge.state.single.tabId, 'B');
-    expect(repoOf(hubCalls.singleWhere((c) => c.method == 'connectionChanged')), '/b');
+    expect(
+      repoOf(hubCalls.singleWhere((c) => c.method == 'connectionChanged')),
+      '/b',
+    );
     expect(
       decodeExecuteResponse(
-        (await deliverHubCall('execute', encodeExecuteRequest(_req('/b'))) as Map)
+        (await deliverHubCall('execute', encodeExecuteRequest(_req('/b')))
+                as Map)
             .cast<Object?, Object?>(),
       ).stdout,
       'served-by-B',
@@ -162,10 +174,9 @@ void main() {
     // Opening History again just fronts the one window (singleton).
     controlCalls.clear();
     await bridge.openHistory();
-    expect(
-      controlCalls.map((c) => c.method).where((m) => m != 'debugLog'),
-      ['frontWindow'],
-    );
+    expect(controlCalls.map((c) => c.method).where((m) => m != 'debugLog'), [
+      'frontWindow',
+    ]);
     expect(bridge.state, hasLength(1));
   });
 
@@ -173,13 +184,17 @@ void main() {
       'tab keeps the window, but closing the followed repo closes it', () async {
     final containerA = ProviderContainer(
       overrides: [
-        connectionProvider.overrideWith(() => _MutableConnection(_connected('/a'))),
+        connectionProvider.overrideWith(
+          () => _MutableConnection(_connected('/a')),
+        ),
         activeExecutorProvider.overrideWithValue(_FakeExecutor('A')),
       ],
     );
     final containerB = ProviderContainer(
       overrides: [
-        connectionProvider.overrideWith(() => _MutableConnection(_connected('/b'))),
+        connectionProvider.overrideWith(
+          () => _MutableConnection(_connected('/b')),
+        ),
         activeExecutorProvider.overrideWithValue(_FakeExecutor('B')),
       ],
     );
@@ -198,13 +213,21 @@ void main() {
     await bridge.openHistory();
     activeTab = 'B';
     bridge.onActiveTabChanged('B', isBlank: false);
-    expect(bridge.state.single.repoPath, '/b', reason: 'connected → retarget now');
+    expect(
+      bridge.state.single.repoPath,
+      '/b',
+      reason: 'connected → retarget now',
+    );
 
     // Visit a blank landing tab while B is still open → keep the window (the
     // user is just between repos).
     activeTab = 'landing';
     bridge.onActiveTabChanged('landing', isBlank: true);
-    expect(bridge.state, hasLength(1), reason: 'followed repo (B) is still open');
+    expect(
+      bridge.state,
+      hasLength(1),
+      reason: 'followed repo (B) is still open',
+    );
 
     // Now the followed repo's tab (B) is closed. Its window is detached, and
     // switching to the blank landing tab closes the follower (nothing to show).
@@ -214,62 +237,75 @@ void main() {
     activeTab = 'landing';
     bridge.onActiveTabChanged('landing', isBlank: true);
     expect(
-      controlCalls.where((c) => c.method == 'closeWindow').map(
-        (c) => (c.arguments as Map)['windowId'],
-      ),
+      controlCalls
+          .where((c) => c.method == 'closeWindow')
+          .map((c) => (c.arguments as Map)['windowId']),
       ['1'],
     );
   });
 
-  test('proxied execute routes by the repo in the request, not the pinned tab',
-      () async {
-    final execA = _FakeExecutor('A');
-    final execB = _FakeExecutor('B');
-    final containerA = ProviderContainer(
-      overrides: [
-        connectionProvider.overrideWith(() => _MutableConnection(_connected('/a'))),
-        activeExecutorProvider.overrideWithValue(execA),
-      ],
-    );
-    final containerB = ProviderContainer(
-      overrides: [
-        connectionProvider.overrideWith(() => _MutableConnection(_connected('/b'))),
-        activeExecutorProvider.overrideWithValue(execB),
-      ],
-    );
-    final bridgeContainer = ProviderContainer();
-    addTearDown(containerA.dispose);
-    addTearDown(containerB.dispose);
-    addTearDown(bridgeContainer.dispose);
+  test(
+    'proxied execute routes by the repo in the request, not the pinned tab',
+    () async {
+      final execA = _FakeExecutor('A');
+      final execB = _FakeExecutor('B');
+      final containerA = ProviderContainer(
+        overrides: [
+          connectionProvider.overrideWith(
+            () => _MutableConnection(_connected('/a')),
+          ),
+          activeExecutorProvider.overrideWithValue(execA),
+        ],
+      );
+      final containerB = ProviderContainer(
+        overrides: [
+          connectionProvider.overrideWith(
+            () => _MutableConnection(_connected('/b')),
+          ),
+          activeExecutorProvider.overrideWithValue(execB),
+        ],
+      );
+      final bridgeContainer = ProviderContainer();
+      addTearDown(containerA.dispose);
+      addTearDown(containerB.dispose);
+      addTearDown(bridgeContainer.dispose);
 
-    var activeTab = 'A';
-    final byTab = {'A': containerA, 'B': containerB};
-    final byRepo = {'/a': containerA, '/b': containerB};
-    final bridge = bridgeContainer.read(windowManagerBridgeProvider.notifier)
-      ..sessionContainerFor = ((t) => byTab[t])
-      ..activeTabId = (() => activeTab)
-      ..containerForRepo = ((repo) => byRepo[repo]);
+      var activeTab = 'A';
+      final byTab = {'A': containerA, 'B': containerB};
+      final byRepo = {'/a': containerA, '/b': containerB};
+      final bridge = bridgeContainer.read(windowManagerBridgeProvider.notifier)
+        ..sessionContainerFor = ((t) => byTab[t])
+        ..activeTabId = (() => activeTab)
+        ..containerForRepo = ((repo) => byRepo[repo]);
 
-    await bridge.openHistory(); // pinned to A
-    activeTab = 'B';
-    bridge.onActiveTabChanged('B', isBlank: false);
-    expect(bridge.state.single.tabId, 'B', reason: 'window now follows tab B');
+      await bridge.openHistory(); // pinned to A
+      activeTab = 'B';
+      bridge.onActiveTabChanged('B', isBlank: false);
+      expect(
+        bridge.state.single.tabId,
+        'B',
+        reason: 'window now follows tab B',
+      );
 
-    // A lagging request for the OLD repo (/a) — still open in tab A — must route
-    // to tab A's session, NOT the now-pinned tab B (which would run git -C /a on
-    // the wrong host and fail). This is the switch-time diff bug.
-    final replyA = await deliverHubCall('execute', encodeExecuteRequest(_req('/a')));
-    expect(
-      decodeExecuteResponse((replyA as Map).cast<Object?, Object?>()).stdout,
-      'served-by-A',
-    );
-    expect(execA.repos, ['/a']);
-    expect(execB.repos, isEmpty);
+      // A lagging request for the OLD repo (/a) — still open in tab A — must route
+      // to tab A's session, NOT the now-pinned tab B (which would run git -C /a on
+      // the wrong host and fail). This is the switch-time diff bug.
+      final replyA = await deliverHubCall(
+        'execute',
+        encodeExecuteRequest(_req('/a')),
+      );
+      expect(
+        decodeExecuteResponse((replyA as Map).cast<Object?, Object?>()).stdout,
+        'served-by-A',
+      );
+      expect(execA.repos, ['/a']);
+      expect(execB.repos, isEmpty);
 
-    // A request for the new repo (/b) routes to tab B.
-    await deliverHubCall('execute', encodeExecuteRequest(_req('/b')));
-    expect(execB.repos, ['/b']);
-  });
+      // A request for the new repo (/b) routes to tab B.
+      await deliverHubCall('execute', encodeExecuteRequest(_req('/b')));
+      expect(execB.repos, ['/b']);
+    },
+  );
 
   test('execute prefers the pinned tab when it owns the repo, and never runs '
       'against a session that does not own the repo', () async {
@@ -279,15 +315,17 @@ void main() {
     // two different hosts) — a repo path is not globally unique.
     final containerA = ProviderContainer(
       overrides: [
-        connectionProvider
-            .overrideWith(() => _MutableConnection(_connected('/shared'))),
+        connectionProvider.overrideWith(
+          () => _MutableConnection(_connected('/shared')),
+        ),
         activeExecutorProvider.overrideWithValue(execA),
       ],
     );
     final containerB = ProviderContainer(
       overrides: [
-        connectionProvider
-            .overrideWith(() => _MutableConnection(_connected('/shared'))),
+        connectionProvider.overrideWith(
+          () => _MutableConnection(_connected('/shared')),
+        ),
         activeExecutorProvider.overrideWithValue(execB),
       ],
     );
@@ -324,6 +362,8 @@ void main() {
       // RELAY_DOWN surfaces as a decode error on the reply — expected.
     }
     expect(execA.repos, isEmpty, reason: 'the unowned repo ran nowhere');
-    expect(execB.repos, ['/shared'], reason: 'only the earlier owned request ran');
+    expect(execB.repos, [
+      '/shared',
+    ], reason: 'only the earlier owned request ran');
   });
 }

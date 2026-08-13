@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
+import 'package:remote_magic_git/core/exec/operation_activity.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
 void main() {
@@ -20,6 +21,13 @@ void main() {
         retries: 1,
         lane: ExecLane.read,
         compress: true,
+        operation: OperationDescriptor(
+          id: OperationId('op-1'),
+          repositoryPath: '/srv/repo',
+          label: 'Refresh repository',
+          kind: OperationKind.synchronization,
+          lane: ExecLane.sync,
+        ),
       );
       final decoded = decodeExecuteRequest(encodeExecuteRequest(request));
       expect(decoded.repoPath, '/srv/repo');
@@ -30,6 +38,8 @@ void main() {
       expect(decoded.retries, 1);
       expect(decoded.lane, ExecLane.read);
       expect(decoded.compress, isTrue);
+      expect(decoded.operation?.id, const OperationId('op-1'));
+      expect(decoded.operation?.label, 'Refresh repository');
     });
 
     test('null optionals survive', () {
@@ -44,6 +54,7 @@ void main() {
       final decoded = decodeExecuteRequest(encodeExecuteRequest(request));
       expect(decoded.extraEnv, isNull);
       expect(decoded.stdin, isNull);
+      expect(decoded.operation, isNull);
     });
 
     test('NUL-delimited stdin survives, and travels as bytes on the wire', () {
@@ -89,12 +100,14 @@ void main() {
         exitCode: 3,
         stdout: 'out\n',
         stderr: 'err\n',
+        operationId: OperationId('op-1'),
       );
       final decoded = decodeExecuteResponse(encodeExecuteResult(result));
       expect(decoded.exitCode, 3);
       expect(decoded.stdout, 'out\n');
       expect(decoded.stderr, 'err\n');
       expect(decoded.isSuccess, isFalse);
+      expect(decoded.operationId, const OperationId('op-1'));
     });
 
     test('NUL-bearing stdout survives, and travels as bytes on the wire', () {
@@ -122,7 +135,11 @@ void main() {
           encodeExecuteError(const SSHCommandTimeout('git log')),
         ),
         throwsA(
-          isA<SSHCommandTimeout>().having((e) => e.command, 'command', 'git log'),
+          isA<SSHCommandTimeout>().having(
+            (e) => e.command,
+            'command',
+            'git log',
+          ),
         ),
       );
       expect(
@@ -167,7 +184,10 @@ void main() {
     });
 
     test('uploadBytes success envelope decodes without throw', () {
-      expect(() => decodeUploadBytesResponse(encodeUploadBytesResult()), returnsNormally);
+      expect(
+        () => decodeUploadBytesResponse(encodeUploadBytesResult()),
+        returnsNormally,
+      );
     });
 
     test('uploadBytes error envelope rethrows typed failures', () {
@@ -179,21 +199,23 @@ void main() {
       );
     });
 
-    test('any other error degrades to ProxyExecuteException with the message',
-        () {
-      expect(
-        () => decodeExecuteResponse(
-          encodeExecuteError(StateError('the executor caught fire')),
-        ),
-        throwsA(
-          isA<ProxyExecuteException>().having(
-            (e) => e.toString(),
-            'message',
-            contains('the executor caught fire'),
+    test(
+      'any other error degrades to ProxyExecuteException with the message',
+      () {
+        expect(
+          () => decodeExecuteResponse(
+            encodeExecuteError(StateError('the executor caught fire')),
           ),
-        ),
-      );
-    });
+          throwsA(
+            isA<ProxyExecuteException>().having(
+              (e) => e.toString(),
+              'message',
+              contains('the executor caught fire'),
+            ),
+          ),
+        );
+      },
+    );
   });
 
   test('connection event payload round-trips, including nulls', () {
@@ -211,7 +233,10 @@ void main() {
     expect(decoded.connectionLabel, 'Prod');
     expect(decoded.host, 'bastion');
 
-    const bare = ConnectionEventPayload(phase: 'disconnected', backend: 'local');
+    const bare = ConnectionEventPayload(
+      phase: 'disconnected',
+      backend: 'local',
+    );
     final bareDecoded = ConnectionEventPayload.decode(bare.encode());
     expect(bareDecoded.repoPath, isNull);
     expect(bareDecoded.host, isNull);

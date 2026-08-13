@@ -56,6 +56,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     return results.isNotEmpty
@@ -69,6 +71,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     streamCalls.add(gitArgs);
     return handle;
@@ -188,12 +192,18 @@ void main() {
       'https://example.com/things/my-repo.git',
     );
     await tester.pumpAndSettle();
-    expect(tester.widget<AppPushButton>(_continueButton()).onPressed, isNotNull);
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNotNull,
+    );
     await _next(tester); // Source → Location
 
     // Name was derived from the URL; parent prefilled from the active repo.
     expect(find.text('my-repo'), findsOneWidget);
-    expect(tester.widget<AppPushButton>(_continueButton()).onPressed, isNotNull);
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNotNull,
+    );
     await _next(tester); // Location → Review
 
     expect(tester.widget<AppPushButton>(_cloneButton()).onPressed, isNotNull);
@@ -216,40 +226,39 @@ void main() {
     expect(find.text('Step 3 of 3 — Review'), findsOneWidget);
   });
 
-  testWidgets(
-    'a successful URL clone persists the repo and activates it',
-    (tester) async {
-      final (stub, exec, store) = await _pumpConnected(tester);
-      await _toReviewViaUrl(tester, 'https://example.com/my-repo.git');
+  testWidgets('a successful URL clone persists the repo and activates it', (
+    tester,
+  ) async {
+    final (stub, exec, store) = await _pumpConnected(tester);
+    await _toReviewViaUrl(tester, 'https://example.com/my-repo.git');
 
-      exec.results.add(_ok('absent')); // probe
-      await tester.tap(_cloneButton());
-      await tester.pump();
-      await tester.pump();
+    exec.results.add(_ok('absent')); // probe
+    await tester.tap(_cloneButton());
+    await tester.pump();
+    await tester.pump();
 
-      // Running: Cancel visible, Clone gone.
-      expect(find.widgetWithText(AppPushButton, 'Cancel'), findsOneWidget);
-      expect(_cloneButton(), findsNothing);
+    // Running: Cancel visible, Clone gone.
+    expect(find.widgetWithText(AppPushButton, 'Cancel'), findsOneWidget);
+    expect(_cloneButton(), findsNothing);
 
-      await exec.handle.finish(0);
-      await tester.pumpAndSettle();
+    await exec.handle.finish(0);
+    await tester.pumpAndSettle();
 
-      expect(exec.streamCalls.single, [
-        'git',
-        'clone',
-        '--progress',
-        '--',
-        'https://example.com/my-repo.git',
-        'my-repo',
-      ]);
-      expect(stub.repoPathsSet, ['/srv/my-repo']);
-      expect(
-        store.updated.single.allRepoPaths,
-        containsAll(['/srv/repo', '/srv/my-repo']),
-      );
-      expect(find.byType(CloneRepositorySheet), findsNothing, reason: 'popped');
-    },
-  );
+    expect(exec.streamCalls.single, [
+      'git',
+      'clone',
+      '--progress',
+      '--',
+      'https://example.com/my-repo.git',
+      'my-repo',
+    ]);
+    expect(stub.repoPathsSet, ['/srv/my-repo']);
+    expect(
+      store.updated.single.allRepoPaths,
+      containsAll(['/srv/repo', '/srv/my-repo']),
+    );
+    expect(find.byType(CloneRepositorySheet), findsNothing, reason: 'popped');
+  });
 
   testWidgets('a failed clone keeps the sheet open with the error', (
     tester,
@@ -272,9 +281,8 @@ void main() {
     expect(stub.repoPathsSet, isEmpty, reason: 'no activation on failure');
   });
 
-  testWidgets(
-    'landing mode: switching to GitLab tab auto-populates host from '
-    'forge auth when _hostEdited is false', (tester) async {
+  testWidgets('landing mode: switching to GitLab tab auto-populates host from '
+      'forge auth when _hostEdited is false', (tester) async {
     final stub = _StubConnection(const ConnectionState());
     await tester.pumpWidget(
       ProviderScope(
@@ -314,9 +322,13 @@ void main() {
           w.controller != null &&
           w.controller!.text == 'gitlab.lkqdev.com',
     );
-    expect(hostField, findsOneWidget,
-        reason: 'host field should auto-populate to the forge auth host '
-            'after switching to GitLab tab');
+    expect(
+      hostField,
+      findsOneWidget,
+      reason:
+          'host field should auto-populate to the forge auth host '
+          'after switching to GitLab tab',
+    );
   });
 
   testWidgets('landing mode offers This Mac plus saved connections', (

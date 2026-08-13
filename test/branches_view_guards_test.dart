@@ -77,7 +77,10 @@ class _SpyGit extends GitService {
   }
 
   @override
-  Future<SSHCommandResult> fetch(String repoPath) async {
+  Future<SSHCommandResult> fetch(
+    String repoPath, {
+    bool background = false,
+  }) async {
     fetches++;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
@@ -221,7 +224,7 @@ Future<void> _invokeDeleteHeld(WidgetTester tester) async {
   await tester.pump();
   await tester.pump(const Duration(seconds: 1));
   await _openMoreMenu(tester);
-    await tester.tap(find.text('Delete').last); // confirm the plain delete
+  await tester.tap(find.text('Delete').last); // confirm the plain delete
   await tester.pump();
   await tester.pump(const Duration(seconds: 1));
 }
@@ -279,7 +282,6 @@ Finder _selectedRows() => find.byWidgetPredicate(
 Finder _filterField() => find.byWidgetPredicate(
   (w) => w is MacosTextField && w.placeholder == 'Filter branches and tags',
 );
-
 
 Future<void> _openMoreMenu(WidgetTester tester) async {
   // Delete (and other overflow actions) live under the More pulldown.

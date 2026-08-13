@@ -87,6 +87,8 @@ class _CountingExecutor implements CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     commands.add(gitArgs.join(' '));
     // Return empty success for any command — we're just counting invocations.
@@ -99,12 +101,18 @@ class _CountingExecutor implements CommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     throw UnimplementedError('Stream execution not needed for baseline test');
   }
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes, {String? routingRepo}) async {
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  }) async {
     throw UnimplementedError('Upload not needed for baseline test');
   }
 

@@ -54,6 +54,8 @@ class _RecordingExecutor implements CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(List<String>.from(gitArgs));
     compressFlags.add(compress);
@@ -72,14 +74,22 @@ class _RecordingExecutor implements CommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
-  }) =>
-      throw UnimplementedError();
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+  }) => throw UnimplementedError();
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes, {String? routingRepo}) async {}
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  }) async {}
 
   @override
-  void configureEnvironment({String? path, Map<String, String> binaries = const {}}) {}
+  void configureEnvironment({
+    String? path,
+    Map<String, String> binaries = const {},
+  }) {}
 
   @override
   String? resolvedBinaryPath(String name) => null;
@@ -121,10 +131,7 @@ void main() {
       final present = _present(oid, 'blob', utf8.encode('hi'));
       final missing = utf8.encode('nope missing\n');
       final bytes = _batchBytes([present, missing]);
-      final objects = parseCatFileBatch(
-        bytes,
-        requests: ['rev:a', 'rev:b'],
-      );
+      final objects = parseCatFileBatch(bytes, requests: ['rev:a', 'rev:b']);
       expect(objects, hasLength(2));
       expect(objects[0].missing, isFalse);
       expect(objects[0].request, 'rev:a');
@@ -150,8 +157,9 @@ void main() {
     });
 
     test('rejects oversized object', () {
-      final header =
-          utf8.encode('c' * 40 + ' blob ${maxCatFileObjectBytes + 1}\n');
+      final header = utf8.encode(
+        'c' * 40 + ' blob ${maxCatFileObjectBytes + 1}\n',
+      );
       expect(
         () => parseCatFileBatch(header),
         throwsA(isA<SSHOutputExceeded>()),
@@ -210,23 +218,26 @@ void main() {
       expect(exec.calls, isEmpty);
     });
 
-    test('single key with showOne short-circuits without remote batch', () async {
-      final exec = _RecordingExecutor();
-      final batch = GitCatFileBatch(exec);
-      const key = (rev: 'HEAD', path: 'a.txt');
-      final result = await batch.showBlobsBatch(
-        '/repo',
-        [key],
-        showOne: (repo, rev, path) async {
-          expect(repo, '/repo');
-          expect(rev, 'HEAD');
-          expect(path, 'a.txt');
-          return 'solo';
-        },
-      );
-      expect(exec.calls, isEmpty);
-      expect(utf8.decode(result[key]!), 'solo');
-    });
+    test(
+      'single key with showOne short-circuits without remote batch',
+      () async {
+        final exec = _RecordingExecutor();
+        final batch = GitCatFileBatch(exec);
+        const key = (rev: 'HEAD', path: 'a.txt');
+        final result = await batch.showBlobsBatch(
+          '/repo',
+          [key],
+          showOne: (repo, rev, path) async {
+            expect(repo, '/repo');
+            expect(rev, 'HEAD');
+            expect(path, 'a.txt');
+            return 'solo';
+          },
+        );
+        expect(exec.calls, isEmpty);
+        expect(utf8.decode(result[key]!), 'solo');
+      },
+    );
 
     test('multi-key success parses batch stdout in one execute', () async {
       final oid1 = '1' * 40;
@@ -238,11 +249,8 @@ void main() {
         ]),
       );
       final exec = _RecordingExecutor()
-        ..handler = (_) => SSHCommandResult(
-              exitCode: 0,
-              stdout: stdout,
-              stderr: '',
-            );
+        ..handler = (_) =>
+            SSHCommandResult(exitCode: 0, stdout: stdout, stderr: '');
       final batch = GitCatFileBatch(exec);
       const k1 = (rev: 'HEAD', path: 'a');
       const k2 = (rev: 'HEAD', path: 'b');
@@ -257,19 +265,15 @@ void main() {
 
     test('non-zero exit falls back to showOne', () async {
       final exec = _RecordingExecutor()
-        ..handler = (_) => const SSHCommandResult(
-              exitCode: 128,
-              stdout: '',
-              stderr: 'fatal',
-            );
+        ..handler = (_) =>
+            const SSHCommandResult(exitCode: 128, stdout: '', stderr: 'fatal');
       final batch = GitCatFileBatch(exec);
       const k1 = (rev: 'HEAD', path: 'a');
       const k2 = (rev: 'main', path: 'b');
-      final result = await batch.showBlobsBatch(
-        '/repo',
-        [k1, k2],
-        showOne: (repo, rev, path) async => '$rev:$path-content',
-      );
+      final result = await batch.showBlobsBatch('/repo', [
+        k1,
+        k2,
+      ], showOne: (repo, rev, path) async => '$rev:$path-content');
       expect(utf8.decode(result[k1]!), 'HEAD:a-content');
       expect(utf8.decode(result[k2]!), 'main:b-content');
     });
@@ -283,11 +287,8 @@ void main() {
         ]),
       );
       final exec = _RecordingExecutor()
-        ..handler = (_) => SSHCommandResult(
-              exitCode: 0,
-              stdout: stdout,
-              stderr: '',
-            );
+        ..handler = (_) =>
+            SSHCommandResult(exitCode: 0, stdout: stdout, stderr: '');
       final batch = GitCatFileBatch(exec);
       const k1 = (rev: 'HEAD', path: 'ok');
       const k2 = (rev: 'HEAD', path: 'missing');
@@ -302,11 +303,8 @@ void main() {
 
     test('batch failure without showOne rethrows', () async {
       final exec = _RecordingExecutor()
-        ..handler = (_) => const SSHCommandResult(
-              exitCode: 1,
-              stdout: '',
-              stderr: 'boom',
-            );
+        ..handler = (_) =>
+            const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom');
       final batch = GitCatFileBatch(exec);
       await expectLater(
         batch.showBlobsBatch('/repo', [(rev: 'HEAD', path: 'a')]),
@@ -326,11 +324,8 @@ void main() {
         ]),
       );
       final exec = _RecordingExecutor()
-        ..handler = (_) => SSHCommandResult(
-              exitCode: 0,
-              stdout: stdout,
-              stderr: '',
-            );
+        ..handler = (_) =>
+            SSHCommandResult(exitCode: 0, stdout: stdout, stderr: '');
       final git = GitService(exec);
       final map = await git.showBlobsBatch('/repo', [
         (rev: 'HEAD', path: 'a'),

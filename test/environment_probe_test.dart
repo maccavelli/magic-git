@@ -22,6 +22,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     return SSHCommandResult(exitCode: exitCode, stdout: _out, stderr: '');
@@ -52,7 +54,10 @@ void main() {
   test('connect-time probe script spawns no tool (no --version pass)', () {
     // The versions round trip is deliberately deferred to probeVersions —
     // gh/glab update checks must never sit on the connect critical path.
-    expect(EnvironmentResolver.probeScriptForTest, isNot(contains('--version')));
+    expect(
+      EnvironmentResolver.probeScriptForTest,
+      isNot(contains('--version')),
+    );
   });
 
   test('augmented PATH puts per-user dirs ahead of /usr/local/bin', () {
@@ -95,19 +100,21 @@ void main() {
     expect(script, contains('GLAB_CHECK_UPDATE=false'));
   });
 
-  test('probeVersions: no parseable token → absent; empty input → no probe',
-      () async {
-    const out = 'VER=inotifywait=inotifywait: unrecognized option\n';
-    final exec = _FakeExecutor(out);
-    final versions = await EnvironmentResolver(
-      exec,
-    ).probeVersions({'inotifywait': '/usr/bin/inotifywait'});
-    expect(versions, isEmpty);
+  test(
+    'probeVersions: no parseable token → absent; empty input → no probe',
+    () async {
+      const out = 'VER=inotifywait=inotifywait: unrecognized option\n';
+      final exec = _FakeExecutor(out);
+      final versions = await EnvironmentResolver(
+        exec,
+      ).probeVersions({'inotifywait': '/usr/bin/inotifywait'});
+      expect(versions, isEmpty);
 
-    final idle = _FakeExecutor('');
-    expect(await EnvironmentResolver(idle).probeVersions(const {}), isEmpty);
-    expect(idle.calls, isEmpty, reason: 'no binaries → no round trip');
-  });
+      final idle = _FakeExecutor('');
+      expect(await EnvironmentResolver(idle).probeVersions(const {}), isEmpty);
+      expect(idle.calls, isEmpty, reason: 'no binaries → no round trip');
+    },
+  );
 
   test('withVersions merges only versions for resolved tools', () {
     const env = RemoteEnvironment(

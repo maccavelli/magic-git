@@ -32,7 +32,10 @@ class _FakeGit extends GitService {
   }
 
   @override
-  Future<SSHCommandResult> fetch(String repoPath) async {
+  Future<SSHCommandResult> fetch(
+    String repoPath, {
+    bool background = false,
+  }) async {
     fetchCalls++;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
@@ -174,8 +177,10 @@ void main() {
                 onPressed: () async {
                   result = await showMacosSheet<bool>(
                     context: context,
-                    builder: (_) =>
-                        const CommitDialog(repoPath: '/srv/repo', stagedCount: 2),
+                    builder: (_) => const CommitDialog(
+                      repoPath: '/srv/repo',
+                      stagedCount: 2,
+                    ),
                   );
                 },
               ),
@@ -234,8 +239,11 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400)); // pop transition
-    expect(find.byType(CommitDialog), findsNothing,
-        reason: 'Escape must work first try in a just-opened sheet');
+    expect(
+      find.byType(CommitDialog),
+      findsNothing,
+      reason: 'Escape must work first try in a just-opened sheet',
+    );
     git.release(); // let the orphaned preview future finish cleanly
     await tester.pumpAndSettle();
   });

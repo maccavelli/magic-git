@@ -29,6 +29,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     repoPaths.add(repoPath);
@@ -63,16 +65,19 @@ void main() {
   });
 
   group('listDirectories', () {
-    test('keeps only directory entries, stripping the trailing slash', () async {
-      exec.next = _ok('code/\nnotes.txt\n.config/\nlink-to-dir/\nfile\n');
-      expect(await fs.listDirectories('/home/mac'), [
-        'code',
-        '.config',
-        'link-to-dir',
-      ]);
-      expect(exec.repoPaths.single, '/home/mac');
-      expect(exec.calls.single, ['sh', '-c', 'LC_ALL=C ls -1ALp .']);
-    });
+    test(
+      'keeps only directory entries, stripping the trailing slash',
+      () async {
+        exec.next = _ok('code/\nnotes.txt\n.config/\nlink-to-dir/\nfile\n');
+        expect(await fs.listDirectories('/home/mac'), [
+          'code',
+          '.config',
+          'link-to-dir',
+        ]);
+        expect(exec.repoPaths.single, '/home/mac');
+        expect(exec.calls.single, ['sh', '-c', 'LC_ALL=C ls -1ALp .']);
+      },
+    );
 
     test('permission denied (no output) throws with stderr', () async {
       exec.next = const SSHCommandResult(
@@ -103,17 +108,19 @@ void main() {
   });
 
   group('probePath', () {
-    test('script embeds the path exactly once, single-escaped, run from "."',
-        () async {
-      exec.next = _ok('absent\n');
-      expect(await fs.probePath("/srv/it's here"), PathProbe.absent);
-      expect(exec.repoPaths.single, '.');
-      final script = exec.calls.single[2];
-      expect(exec.calls.single.take(2), ['sh', '-c']);
-      expect(script, contains("p='/srv/it'\\''s here'"));
-      expect(script, contains('test -e "\$p"'));
-      expect(script, contains('dirname'));
-    });
+    test(
+      'script embeds the path exactly once, single-escaped, run from "."',
+      () async {
+        exec.next = _ok('absent\n');
+        expect(await fs.probePath("/srv/it's here"), PathProbe.absent);
+        expect(exec.repoPaths.single, '.');
+        final script = exec.calls.single[2];
+        expect(exec.calls.single.take(2), ['sh', '-c']);
+        expect(script, contains("p='/srv/it'\\''s here'"));
+        expect(script, contains('test -e "\$p"'));
+        expect(script, contains('dirname'));
+      },
+    );
 
     test('maps all three outcomes', () async {
       exec.next = _ok('exists');

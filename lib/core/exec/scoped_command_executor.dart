@@ -49,6 +49,8 @@ class ScopedCommandExecutor implements CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) => _inner.execute(
     repoPath: repoPath,
     gitArgs: gitArgs,
@@ -58,6 +60,8 @@ class ScopedCommandExecutor implements CommandExecutor {
     retries: retries,
     lane: lane,
     compress: compress,
+    operation: operation,
+    onOperationEvent: onOperationEvent,
   );
 
   @override
@@ -66,11 +70,15 @@ class ScopedCommandExecutor implements CommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) => _inner.executeStream(
     repoPath: repoPath,
     gitArgs: gitArgs,
     extraEnv: _merge(repoPath, extraEnv),
     openTimeout: openTimeout,
+    operation: operation,
+    onOperationEvent: onOperationEvent,
   );
 
   @override

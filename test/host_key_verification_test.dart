@@ -67,6 +67,8 @@ class _NoopExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     return const SSHCommandResult(exitCode: 0, stdout: 'true\n', stderr: '');
   }
@@ -100,7 +102,9 @@ void main() {
       expect(state.phase, ConnectionPhase.connected);
       expect(state.hostKeyPrompt, isNull);
 
-      final stored = await container.read(knownHostsStoreProvider).lookup('h', 22);
+      final stored = await container
+          .read(knownHostsStoreProvider)
+          .lookup('h', 22);
       expect(stored!.keyType, 'ssh-ed25519');
       expect(stored.fingerprint, 'SHA256:AAAAAAAAAAAAAAAAAAAA');
     },
@@ -111,14 +115,16 @@ void main() {
     () async {
       final manager = _VerifyingManager();
       final container = containerWith(manager);
-      await container.read(knownHostsStoreProvider).remember(
-        'h',
-        22,
-        const KnownHostEntry(
-          keyType: 'ssh-ed25519',
-          fingerprint: 'SHA256:AAAAAAAAAAAAAAAAAAAA',
-        ),
-      );
+      await container
+          .read(knownHostsStoreProvider)
+          .remember(
+            'h',
+            22,
+            const KnownHostEntry(
+              keyType: 'ssh-ed25519',
+              fingerprint: 'SHA256:AAAAAAAAAAAAAAAAAAAA',
+            ),
+          );
       final controller = container.read(connectionProvider.notifier);
 
       await controller.connect(profile: profile, repoPath: '/repo');
@@ -129,135 +135,137 @@ void main() {
     },
   );
 
-  test(
-    'a changed key pauses on a prompt; acceptHostKeyChange lets the '
-    'connection proceed and remembers the new key',
-    () async {
-      final manager = _VerifyingManager()
-        ..keyType = 'ssh-ed25519'
-        ..fingerprintBytes = utf8.encode('SHA256:NEWNEWNEWNEWNEWNEWNE');
+  test('a changed key pauses on a prompt; acceptHostKeyChange lets the '
+      'connection proceed and remembers the new key', () async {
+    final manager = _VerifyingManager()
+      ..keyType = 'ssh-ed25519'
+      ..fingerprintBytes = utf8.encode('SHA256:NEWNEWNEWNEWNEWNEWNE');
+    final container = containerWith(manager);
+    await container
+        .read(knownHostsStoreProvider)
+        .remember(
+          'h',
+          22,
+          const KnownHostEntry(
+            keyType: 'ssh-ed25519',
+            fingerprint: 'SHA256:OLDOLDOLDOLDOLDOLDOL',
+          ),
+        );
+    final controller = container.read(connectionProvider.notifier);
+
+    final connecting = controller.connect(profile: profile, repoPath: '/repo');
+    await Future<void>.delayed(Duration.zero); // let the prompt land
+
+    final prompt = container.read(connectionProvider).hostKeyPrompt;
+    expect(prompt, isNotNull);
+    expect(prompt!.previousFingerprint, 'SHA256:OLDOLDOLDOLDOLDOLDOL');
+    expect(prompt.newFingerprint, 'SHA256:NEWNEWNEWNEWNEWNEWNE');
+    // Still paused — connect() must not resolve on its own.
+    expect(
+      container.read(connectionProvider).phase,
+      ConnectionPhase.connecting,
+    );
+
+    controller.acceptHostKeyChange();
+    await connecting;
+
+    final state = container.read(connectionProvider);
+    expect(state.phase, ConnectionPhase.connected);
+    expect(state.hostKeyPrompt, isNull);
+    final stored = await container
+        .read(knownHostsStoreProvider)
+        .lookup('h', 22);
+    expect(stored!.fingerprint, 'SHA256:NEWNEWNEWNEWNEWNEWNE');
+  });
+
+  test('a changed key pauses on a prompt; rejectHostKeyChange cancels cleanly '
+      'and leaves the old trusted key untouched', () async {
+    final manager = _VerifyingManager()
+      ..keyType = 'ssh-ed25519'
+      ..fingerprintBytes = utf8.encode('SHA256:NEWNEWNEWNEWNEWNEWNE');
+    final container = containerWith(manager);
+    await container
+        .read(knownHostsStoreProvider)
+        .remember(
+          'h',
+          22,
+          const KnownHostEntry(
+            keyType: 'ssh-ed25519',
+            fingerprint: 'SHA256:OLDOLDOLDOLDOLDOLDOL',
+          ),
+        );
+    final controller = container.read(connectionProvider.notifier);
+
+    final connecting = controller.connect(profile: profile, repoPath: '/repo');
+    await Future<void>.delayed(Duration.zero);
+    expect(container.read(connectionProvider).hostKeyPrompt, isNotNull);
+
+    controller.rejectHostKeyChange();
+    await connecting;
+
+    final state = container.read(connectionProvider);
+    // A clean, quiet cancellation — not a scary generic connection error.
+    expect(state.phase, ConnectionPhase.disconnected);
+    expect(state.error, isNull);
+    expect(state.hostKeyPrompt, isNull);
+
+    final stored = await container
+        .read(knownHostsStoreProvider)
+        .lookup('h', 22);
+    expect(
+      stored!.fingerprint,
+      'SHA256:OLDOLDOLDOLDOLDOLDOL',
+      reason: 'declining the new key must not overwrite the trusted one',
+    );
+  });
+
+  test('a host-key mismatch during an auto-reconnect attempt pauses the retry '
+      'loop instead of retrying forever', () {
+    fakeAsync((async) {
+      final manager = _VerifyingManager();
       final container = containerWith(manager);
-      await container.read(knownHostsStoreProvider).remember(
-        'h',
-        22,
-        const KnownHostEntry(
-          keyType: 'ssh-ed25519',
-          fingerprint: 'SHA256:OLDOLDOLDOLDOLDOLDOL',
-        ),
-      );
       final controller = container.read(connectionProvider.notifier);
 
-      final connecting = controller.connect(profile: profile, repoPath: '/repo');
-      await Future<void>.delayed(Duration.zero); // let the prompt land
+      // Initial connect succeeds and trusts the key via TOFU.
+      controller.connect(profile: profile, repoPath: '/repo');
+      async.flushMicrotasks();
+      expect(
+        container.read(connectionProvider).phase,
+        ConnectionPhase.connected,
+      );
 
+      // The remote's key changes, then the transport drops.
+      manager.fingerprintBytes = utf8.encode('SHA256:CHANGEDCHANGEDCHANG');
+      manager.drop();
+      async.flushMicrotasks();
+      expect(container.read(connectionProvider).phase, ConnectionPhase.lost);
+
+      // Past the first backoff, auto-reconnect fires and hits the mismatch.
+      async.elapse(const Duration(seconds: 1));
+      async.flushMicrotasks();
       final prompt = container.read(connectionProvider).hostKeyPrompt;
       expect(prompt, isNotNull);
-      expect(prompt!.previousFingerprint, 'SHA256:OLDOLDOLDOLDOLDOLDOL');
-      expect(prompt.newFingerprint, 'SHA256:NEWNEWNEWNEWNEWNEWNE');
-      // Still paused — connect() must not resolve on its own.
-      expect(container.read(connectionProvider).phase, ConnectionPhase.connecting);
 
-      controller.acceptHostKeyChange();
-      await connecting;
-
-      final state = container.read(connectionProvider);
-      expect(state.phase, ConnectionPhase.connected);
-      expect(state.hostKeyPrompt, isNull);
-      final stored = await container.read(knownHostsStoreProvider).lookup('h', 22);
-      expect(stored!.fingerprint, 'SHA256:NEWNEWNEWNEWNEWNEWNE');
-    },
-  );
-
-  test(
-    'a changed key pauses on a prompt; rejectHostKeyChange cancels cleanly '
-    'and leaves the old trusted key untouched',
-    () async {
-      final manager = _VerifyingManager()
-        ..keyType = 'ssh-ed25519'
-        ..fingerprintBytes = utf8.encode('SHA256:NEWNEWNEWNEWNEWNEWNE');
-      final container = containerWith(manager);
-      await container.read(knownHostsStoreProvider).remember(
-        'h',
-        22,
-        const KnownHostEntry(
-          keyType: 'ssh-ed25519',
-          fingerprint: 'SHA256:OLDOLDOLDOLDOLDOLDOL',
-        ),
-      );
-      final controller = container.read(connectionProvider.notifier);
-
-      final connecting = controller.connect(profile: profile, repoPath: '/repo');
-      await Future<void>.delayed(Duration.zero);
-      expect(container.read(connectionProvider).hostKeyPrompt, isNotNull);
+      // The loop must not queue another retry while paused on the prompt —
+      // elapsing well past every backoff window changes nothing.
+      async.elapse(const Duration(seconds: 60));
+      async.flushMicrotasks();
+      expect(container.read(connectionProvider).hostKeyPrompt, same(prompt));
 
       controller.rejectHostKeyChange();
-      await connecting;
-
+      async.flushMicrotasks();
       final state = container.read(connectionProvider);
-      // A clean, quiet cancellation — not a scary generic connection error.
       expect(state.phase, ConnectionPhase.disconnected);
-      expect(state.error, isNull);
       expect(state.hostKeyPrompt, isNull);
 
-      final stored = await container.read(knownHostsStoreProvider).lookup('h', 22);
+      // And it stays disconnected — no further retry after a deliberate
+      // cancel.
+      async.elapse(const Duration(seconds: 60));
+      async.flushMicrotasks();
       expect(
-        stored!.fingerprint,
-        'SHA256:OLDOLDOLDOLDOLDOLDOL',
-        reason: 'declining the new key must not overwrite the trusted one',
+        container.read(connectionProvider).phase,
+        ConnectionPhase.disconnected,
       );
-    },
-  );
-
-  test(
-    'a host-key mismatch during an auto-reconnect attempt pauses the retry '
-    'loop instead of retrying forever',
-    () {
-      fakeAsync((async) {
-        final manager = _VerifyingManager();
-        final container = containerWith(manager);
-        final controller = container.read(connectionProvider.notifier);
-
-        // Initial connect succeeds and trusts the key via TOFU.
-        controller.connect(profile: profile, repoPath: '/repo');
-        async.flushMicrotasks();
-        expect(
-          container.read(connectionProvider).phase,
-          ConnectionPhase.connected,
-        );
-
-        // The remote's key changes, then the transport drops.
-        manager.fingerprintBytes = utf8.encode('SHA256:CHANGEDCHANGEDCHANG');
-        manager.drop();
-        async.flushMicrotasks();
-        expect(container.read(connectionProvider).phase, ConnectionPhase.lost);
-
-        // Past the first backoff, auto-reconnect fires and hits the mismatch.
-        async.elapse(const Duration(seconds: 1));
-        async.flushMicrotasks();
-        final prompt = container.read(connectionProvider).hostKeyPrompt;
-        expect(prompt, isNotNull);
-
-        // The loop must not queue another retry while paused on the prompt —
-        // elapsing well past every backoff window changes nothing.
-        async.elapse(const Duration(seconds: 60));
-        async.flushMicrotasks();
-        expect(container.read(connectionProvider).hostKeyPrompt, same(prompt));
-
-        controller.rejectHostKeyChange();
-        async.flushMicrotasks();
-        final state = container.read(connectionProvider);
-        expect(state.phase, ConnectionPhase.disconnected);
-        expect(state.hostKeyPrompt, isNull);
-
-        // And it stays disconnected — no further retry after a deliberate
-        // cancel.
-        async.elapse(const Duration(seconds: 60));
-        async.flushMicrotasks();
-        expect(
-          container.read(connectionProvider).phase,
-          ConnectionPhase.disconnected,
-        );
-      });
-    },
-  );
+    });
+  });
 }

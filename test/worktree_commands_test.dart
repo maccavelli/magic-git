@@ -13,6 +13,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/command_lanes.dart';
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
+import 'package:remote_magic_git/core/exec/operation_activity.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart'
     show SSHCommandExecutor, SSHCommandResult;
@@ -33,6 +34,8 @@ class _LaneCapturingExecutor extends LocalCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     lastLane = lane;
     lastTimeout = timeout;
@@ -49,7 +52,11 @@ void main() {
   late String wtRoot;
 
   Future<String> raw(List<String> args, {String? cwd}) async {
-    final result = await Process.run('git', args, workingDirectory: cwd ?? repo);
+    final result = await Process.run(
+      'git',
+      args,
+      workingDirectory: cwd ?? repo,
+    );
     expect(
       result.exitCode,
       0,
@@ -174,14 +181,17 @@ void main() {
       );
     });
 
-    test('rejects a path starting with "-" rather than misparsing it', () async {
-      // `git worktree add` accepts neither `--end-of-options` nor `--`, so a
-      // leading dash would be read as a flag. Fail loudly instead.
-      await expectLater(
-        git.addWorktree(repo, path: '-oops', newBranch: 'x'),
-        throwsArgumentError,
-      );
-    });
+    test(
+      'rejects a path starting with "-" rather than misparsing it',
+      () async {
+        // `git worktree add` accepts neither `--end-of-options` nor `--`, so a
+        // leading dash would be read as a flag. Fail loudly instead.
+        await expectLater(
+          git.addWorktree(repo, path: '-oops', newBranch: 'x'),
+          throwsArgumentError,
+        );
+      },
+    );
   });
 
   group('remove', () {
@@ -235,38 +245,44 @@ void main() {
   });
 
   group('lock / unlock', () {
-    test('round-trips, and a reasonless lock reports an empty reason', () async {
-      await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
+    test(
+      'round-trips, and a reasonless lock reports an empty reason',
+      () async {
+        await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
 
-      await git.lockWorktree(repo, '$wtRoot/w');
-      var wt = (await git.gitWorktrees(repo))[1];
-      expect(wt.isLocked, isTrue);
-      expect(wt.lockReason, isEmpty);
+        await git.lockWorktree(repo, '$wtRoot/w');
+        var wt = (await git.gitWorktrees(repo))[1];
+        expect(wt.isLocked, isTrue);
+        expect(wt.lockReason, isEmpty);
 
-      await git.unlockWorktree(repo, '$wtRoot/w');
-      wt = (await git.gitWorktrees(repo))[1];
-      expect(wt.isLocked, isFalse);
-    });
+        await git.unlockWorktree(repo, '$wtRoot/w');
+        wt = (await git.gitWorktrees(repo))[1];
+        expect(wt.isLocked, isFalse);
+      },
+    );
   });
 
   group('prune', () {
-    test('a deleted directory becomes prunable, and prune forgets it', () async {
-      await git.addWorktree(repo, path: '$wtRoot/zap', newBranch: 'zap');
-      Directory('$wtRoot/zap').deleteSync(recursive: true);
+    test(
+      'a deleted directory becomes prunable, and prune forgets it',
+      () async {
+        await git.addWorktree(repo, path: '$wtRoot/zap', newBranch: 'zap');
+        Directory('$wtRoot/zap').deleteSync(recursive: true);
 
-      final before = (await git.gitWorktrees(repo))[1];
-      expect(before.isPrunable, isTrue);
-      expect(before.prunableReason, contains('non-existent'));
+        final before = (await git.gitWorktrees(repo))[1];
+        expect(before.isPrunable, isTrue);
+        expect(before.prunableReason, contains('non-existent'));
 
-      // --dry-run reports without forgetting, so the UI can preview.
-      final preview = await git.pruneWorktrees(repo, dryRun: true);
-      expect(preview.join('\n'), contains('zap'));
-      expect(await git.gitWorktrees(repo), hasLength(2));
+        // --dry-run reports without forgetting, so the UI can preview.
+        final preview = await git.pruneWorktrees(repo, dryRun: true);
+        expect(preview.join('\n'), contains('zap'));
+        expect(await git.gitWorktrees(repo), hasLength(2));
 
-      final pruned = await git.pruneWorktrees(repo);
-      expect(pruned.join('\n'), contains('zap'));
-      expect(await git.gitWorktrees(repo), hasLength(1));
-    });
+        final pruned = await git.pruneWorktrees(repo);
+        expect(pruned.join('\n'), contains('zap'));
+        expect(await git.gitWorktrees(repo), hasLength(1));
+      },
+    );
 
     test('a locked worktree is never prunable, even when missing', () async {
       await git.addWorktree(repo, path: '$wtRoot/keep', newBranch: 'keep');
@@ -329,20 +345,22 @@ void main() {
       expect(wt.path, '$wtRoot/r-moved');
     });
 
-    test('ARGLESS repair cannot fix a moved worktree — the path is required',
-        () async {
-      // Why the UI's per-row Repair must ask where the folder went: without an
-      // operand, `git worktree repair` only re-checks the paths already on
-      // record — and a moved folder is precisely what those don't cover. It
-      // exits 0 having fixed nothing, so nothing throws; the entry just stays
-      // prunable.
-      await git.addWorktree(repo, path: '$wtRoot/n', newBranch: 'n');
-      Directory('$wtRoot/n').renameSync('$wtRoot/n-moved');
+    test(
+      'ARGLESS repair cannot fix a moved worktree — the path is required',
+      () async {
+        // Why the UI's per-row Repair must ask where the folder went: without an
+        // operand, `git worktree repair` only re-checks the paths already on
+        // record — and a moved folder is precisely what those don't cover. It
+        // exits 0 having fixed nothing, so nothing throws; the entry just stays
+        // prunable.
+        await git.addWorktree(repo, path: '$wtRoot/n', newBranch: 'n');
+        Directory('$wtRoot/n').renameSync('$wtRoot/n-moved');
 
-      await git.repairWorktrees(repo);
+        await git.repairWorktrees(repo);
 
-      expect((await git.gitWorktrees(repo))[1].isPrunable, isTrue);
-    });
+        expect((await git.gitWorktrees(repo))[1].isPrunable, isTrue);
+      },
+    );
   });
 
   group('copyIgnoredFiles', () {
@@ -362,14 +380,13 @@ void main() {
       // missing .env and the project would fail on first run.
       expect(File('$wtRoot/w/.env').existsSync(), isFalse);
 
-      await git.copyIgnoredFiles(
-        from: repo,
-        to: '$wtRoot/w',
-        globs: ['.env*'],
-      );
+      await git.copyIgnoredFiles(from: repo, to: '$wtRoot/w', globs: ['.env*']);
 
       expect(File('$wtRoot/w/.env').readAsStringSync(), contains('postgres'));
-      expect(File('$wtRoot/w/.env.local').readAsStringSync(), contains('DEBUG'));
+      expect(
+        File('$wtRoot/w/.env.local').readAsStringSync(),
+        contains('DEBUG'),
+      );
     });
 
     test('writes nothing into the SOURCE repo', () async {
@@ -382,11 +399,7 @@ void main() {
       await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
       final before = Directory(repo).listSync().map((e) => e.path).toSet();
 
-      await git.copyIgnoredFiles(
-        from: repo,
-        to: '$wtRoot/w',
-        globs: ['.env*'],
-      );
+      await git.copyIgnoredFiles(from: repo, to: '$wtRoot/w', globs: ['.env*']);
 
       final after = Directory(repo).listSync().map((e) => e.path).toSet();
       expect(
@@ -406,7 +419,10 @@ void main() {
       );
 
       expect(File('$wtRoot/my worktree/.env').existsSync(), isTrue);
-      expect(Directory(repo).listSync().map((e) => e.path), isNot(contains("'")));
+      expect(
+        Directory(repo).listSync().map((e) => e.path),
+        isNot(contains("'")),
+      );
     });
 
     test('a glob matching nothing is not an error', () async {
@@ -438,39 +454,37 @@ void main() {
       expect(result.stdout, contains('copied .env.local'));
     });
 
-    test('a failed copy FAILS the step, even when a later file succeeds',
-        () async {
-      // The bug this pins: the pipeline's exit status was the `while` loop's,
-      // which is its LAST iteration's — so `.env` failing while `.env.local`
-      // then copied fine reported overall success, and the worktree was
-      // silently missing half its config.
-      await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
-      // Make the FIRST file (ls-files output is sorted) uncopyable: cp opens
-      // the destination for writing, and a read-only file refuses that.
-      File('$wtRoot/w/.env').writeAsStringSync('stale\n');
-      await Process.run('chmod', ['444', '$wtRoot/w/.env']);
-      addTearDown(() => Process.run('chmod', ['644', '$wtRoot/w/.env']));
+    test(
+      'a failed copy FAILS the step, even when a later file succeeds',
+      () async {
+        // The bug this pins: the pipeline's exit status was the `while` loop's,
+        // which is its LAST iteration's — so `.env` failing while `.env.local`
+        // then copied fine reported overall success, and the worktree was
+        // silently missing half its config.
+        await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
+        // Make the FIRST file (ls-files output is sorted) uncopyable: cp opens
+        // the destination for writing, and a read-only file refuses that.
+        File('$wtRoot/w/.env').writeAsStringSync('stale\n');
+        await Process.run('chmod', ['444', '$wtRoot/w/.env']);
+        addTearDown(() => Process.run('chmod', ['644', '$wtRoot/w/.env']));
 
-      await expectLater(
-        git.copyIgnoredFiles(
-          from: repo,
-          to: '$wtRoot/w',
-          globs: ['.env*'],
-        ),
-        throwsA(
-          isA<GitException>().having(
-            (e) => e.result.stderr,
-            'stderr',
-            contains('failed .env'),
+        await expectLater(
+          git.copyIgnoredFiles(from: repo, to: '$wtRoot/w', globs: ['.env*']),
+          throwsA(
+            isA<GitException>().having(
+              (e) => e.result.stderr,
+              'stderr',
+              contains('failed .env'),
+            ),
           ),
-        ),
-      );
-      // One bad file must not abandon the rest: the later one still arrived.
-      expect(
-        File('$wtRoot/w/.env.local').readAsStringSync(),
-        contains('DEBUG'),
-      );
-    });
+        );
+        // One bad file must not abandon the rest: the later one still arrived.
+        expect(
+          File('$wtRoot/w/.env.local').readAsStringSync(),
+          contains('DEBUG'),
+        );
+      },
+    );
 
     test('a TRACKED file matching the glob is not copied over', () async {
       // `ls-files --others --ignored` only ever yields files git is deliberately
@@ -482,11 +496,7 @@ void main() {
       await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
       File('$wtRoot/w/.env.example').writeAsStringSync('EDITED LOCALLY\n');
 
-      await git.copyIgnoredFiles(
-        from: repo,
-        to: '$wtRoot/w',
-        globs: ['.env*'],
-      );
+      await git.copyIgnoredFiles(from: repo, to: '$wtRoot/w', globs: ['.env*']);
 
       // The tracked one is untouched; only the ignored ones came across.
       expect(
@@ -496,67 +506,66 @@ void main() {
       expect(File('$wtRoot/w/.env').existsSync(), isTrue);
     });
 
-    test('the copy pipeline is dash-clean (Debian remotes run sh as dash)',
-        () async {
-      // The regression this pins: the loop was once written with bash's
-      // `read -r -d ''`, which dash rejects — the loop body never ran and the
-      // step reported SUCCESS having copied nothing. Debian-family remotes
-      // run `sh -c` as dash, so the exact script the service sends must work
-      // there verbatim.
-      if (!File('/bin/dash').existsSync()) {
-        markTestSkipped('no /bin/dash on this machine');
-        return;
-      }
-      await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
+    test(
+      'the copy pipeline is dash-clean (Debian remotes run sh as dash)',
+      () async {
+        // The regression this pins: the loop was once written with bash's
+        // `read -r -d ''`, which dash rejects — the loop body never ran and the
+        // step reported SUCCESS having copied nothing. Debian-family remotes
+        // run `sh -c` as dash, so the exact script the service sends must work
+        // there verbatim.
+        if (!File('/bin/dash').existsSync()) {
+          markTestSkipped('no /bin/dash on this machine');
+          return;
+        }
+        await git.addWorktree(repo, path: '$wtRoot/w', newBranch: 'w');
 
-      final run = await Process.run(
-        '/bin/dash',
-        ['-c', GitService.copyIgnoredFilesScript(to: '$wtRoot/w', globs: ['.env*'])],
-        workingDirectory: repo,
-      );
-      expect(run.exitCode, 0, reason: 'stderr: ${run.stderr}');
-      expect(run.stdout, contains('copied .env'));
-      expect(File('$wtRoot/w/.env').readAsStringSync(), contains('postgres'));
+        final run = await Process.run('/bin/dash', [
+          '-c',
+          GitService.copyIgnoredFilesScript(to: '$wtRoot/w', globs: ['.env*']),
+        ], workingDirectory: repo);
+        expect(run.exitCode, 0, reason: 'stderr: ${run.stderr}');
+        expect(run.stdout, contains('copied .env'));
+        expect(File('$wtRoot/w/.env').readAsStringSync(), contains('postgres'));
 
-      // And a glob matching nothing is still not an error under dash.
-      final none = await Process.run(
-        '/bin/dash',
-        [
+        // And a glob matching nothing is still not an error under dash.
+        final none = await Process.run('/bin/dash', [
           '-c',
           GitService.copyIgnoredFilesScript(
             to: '$wtRoot/w',
             globs: ['.nothing-matches-this*'],
           ),
-        ],
-        workingDirectory: repo,
-      );
-      expect(none.exitCode, 0, reason: 'stderr: ${none.stderr}');
-    });
+        ], workingDirectory: repo);
+        expect(none.exitCode, 0, reason: 'stderr: ${none.stderr}');
+      },
+    );
   });
 
   group('branch occupancy via %(worktreepath)', () {
-    test('reports which worktree holds each branch, including the current one',
-        () async {
-      await git.addWorktree(repo, path: '$wtRoot/feat', newBranch: 'feat');
-      await raw(['branch', 'idle']);
+    test(
+      'reports which worktree holds each branch, including the current one',
+      () async {
+        await git.addWorktree(repo, path: '$wtRoot/feat', newBranch: 'feat');
+        await raw(['branch', 'idle']);
 
-      final refs = await git.refs(repo);
-      GitRef byName(String n) =>
-          refs.firstWhere((r) => r.name == 'refs/heads/$n');
+        final refs = await git.refs(repo);
+        GitRef byName(String n) =>
+            refs.firstWhere((r) => r.name == 'refs/heads/$n');
 
-      // Checked out in a linked worktree.
-      expect(byName('feat').worktreePath, '$wtRoot/feat');
-      expect(byName('feat').isHead, isFalse);
+        // Checked out in a linked worktree.
+        expect(byName('feat').worktreePath, '$wtRoot/feat');
+        expect(byName('feat').isHead, isFalse);
 
-      // Checked out HERE. git's docs claim worktreepath is only set for linked
-      // worktrees; it is in fact set for this one too, so worktreePath alone
-      // cannot mean "checked out elsewhere" — compare it against the toplevel.
-      expect(byName('main').worktreePath, repo);
-      expect(byName('main').isHead, isTrue);
+        // Checked out HERE. git's docs claim worktreepath is only set for linked
+        // worktrees; it is in fact set for this one too, so worktreePath alone
+        // cannot mean "checked out elsewhere" — compare it against the toplevel.
+        expect(byName('main').worktreePath, repo);
+        expect(byName('main').isHead, isTrue);
 
-      // Not checked out anywhere.
-      expect(byName('idle').worktreePath, isNull);
-    });
+        // Not checked out anywhere.
+        expect(byName('idle').worktreePath, isNull);
+      },
+    );
 
     test('still reports a worktree whose directory was deleted', () async {
       await git.addWorktree(repo, path: '$wtRoot/ghost', newBranch: 'ghost');
@@ -608,20 +617,24 @@ void main() {
   });
 
   group('pruneWorktrees scheduling', () {
-    test('the dry-run preview reads; the real prune takes the barrier', () async {
-      final exec = _LaneCapturingExecutor();
-      final capturing = GitService(exec);
+    test(
+      'the dry-run preview reads; the real prune takes the barrier',
+      () async {
+        final exec = _LaneCapturingExecutor();
+        final capturing = GitService(exec);
 
-      await capturing.pruneWorktrees('/repo', dryRun: true);
-      expect(
-        exec.lastLane,
-        ExecLane.read,
-        reason: 'a read-only preview must not wait behind (or barrier ahead '
-            'of) real mutations just to show a list',
-      );
+        await capturing.pruneWorktrees('/repo', dryRun: true);
+        expect(
+          exec.lastLane,
+          ExecLane.read,
+          reason:
+              'a read-only preview must not wait behind (or barrier ahead '
+              'of) real mutations just to show a list',
+        );
 
-      await capturing.pruneWorktrees('/repo');
-      expect(exec.lastLane, ExecLane.exclusive);
-    });
+        await capturing.pruneWorktrees('/repo');
+        expect(exec.lastLane, ExecLane.exclusive);
+      },
+    );
   });
 }

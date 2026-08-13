@@ -20,6 +20,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     return const SSHCommandResult(exitCode: 0, stdout: 'none\n', stderr: '');
   }
@@ -42,6 +44,8 @@ class _ThrowingStreamExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     return const SSHCommandResult(exitCode: 0, stdout: 'fswatch\n', stderr: '');
   }
@@ -52,6 +56,8 @@ class _ThrowingStreamExecutor extends SSHCommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     throw Exception('cannot open watcher channel');
   }
@@ -95,6 +101,8 @@ class _RecoveringExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     final tool = probes++ == 0 ? 'none' : 'fswatch';
     return SSHCommandResult(exitCode: 0, stdout: '$tool\n', stderr: '');
@@ -106,6 +114,8 @@ class _RecoveringExecutor extends SSHCommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     return _SilentStreamHandle();
   }
@@ -131,65 +141,59 @@ void main() {
     });
   });
 
-  test(
-    'recovering from polling back to event-driven stops the poll ticks '
-    '(regression: the poll timer used to leak and fire forever)',
-    () {
-      fakeAsync((async) {
-        final service = RemoteWatchService(_RecoveringExecutor());
-        final events = <RepoWatchEvent>[];
-        final sub = service
-            .watch(
-              '/repo',
-              pollInterval: const Duration(seconds: 5),
-              recoveryInterval: const Duration(seconds: 30),
-            )
-            .listen(events.add);
+  test('recovering from polling back to event-driven stops the poll ticks '
+      '(regression: the poll timer used to leak and fire forever)', () {
+    fakeAsync((async) {
+      final service = RemoteWatchService(_RecoveringExecutor());
+      final events = <RepoWatchEvent>[];
+      final sub = service
+          .watch(
+            '/repo',
+            pollInterval: const Duration(seconds: 5),
+            recoveryInterval: const Duration(seconds: 30),
+          )
+          .listen(events.add);
 
-        // First probe finds no tool → polling mode, ticking every 5s.
-        async.elapse(Duration.zero);
-        expect(events.last.mode, WatchMode.polling);
-        async.elapse(const Duration(seconds: 29));
-        expect(events.length, greaterThanOrEqualTo(5));
+      // First probe finds no tool → polling mode, ticking every 5s.
+      async.elapse(Duration.zero);
+      expect(events.last.mode, WatchMode.polling);
+      async.elapse(const Duration(seconds: 29));
+      expect(events.length, greaterThanOrEqualTo(5));
 
-        // Recovery probe finds fswatch and the channel opens → event-driven.
-        async.elapse(const Duration(seconds: 2));
-        expect(events.last.mode, WatchMode.eventDriven);
-        final atRecovery = events.length;
+      // Recovery probe finds fswatch and the channel opens → event-driven.
+      async.elapse(const Duration(seconds: 2));
+      expect(events.last.mode, WatchMode.eventDriven);
+      final atRecovery = events.length;
 
-        // No file changes arrive; a leaked poll timer would keep emitting a
-        // tick (each one a status round trip) every 5s regardless.
-        async.elapse(const Duration(seconds: 60));
-        expect(
-          events.length,
-          atRecovery,
-          reason: 'poll timer must be cancelled once event-driven recovers',
-        );
+      // No file changes arrive; a leaked poll timer would keep emitting a
+      // tick (each one a status round trip) every 5s regardless.
+      async.elapse(const Duration(seconds: 60));
+      expect(
+        events.length,
+        atRecovery,
+        reason: 'poll timer must be cancelled once event-driven recovers',
+      );
 
-        sub.cancel();
-      });
-    },
-  );
+      sub.cancel();
+    });
+  });
 
-  test(
-    'a failed watcher start surfaces `stopped` immediately, not silently '
-    'through the whole restart backoff window',
-    () {
-      fakeAsync((async) {
-        final service = RemoteWatchService(_ThrowingStreamExecutor());
-        final events = <RepoWatchEvent>[];
-        final sub = service.watch('/repo').listen(events.add);
+  test('a failed watcher start surfaces `stopped` immediately, not silently '
+      'through the whole restart backoff window', () {
+    fakeAsync((async) {
+      final service = RemoteWatchService(_ThrowingStreamExecutor());
+      final events = <RepoWatchEvent>[];
+      final sub = service.watch('/repo').listen(events.add);
 
-        // The channel-open fails right away; before the fix, nothing was ever
-        // emitted here — subscribers would see no event at all through the
-        // entire restart backoff, previously indistinguishable from "still
-        // fine" (whatever mode a consumer's UI last rendered).
-        async.elapse(Duration.zero);
-        expect(events, isNotEmpty);
-        expect(events.last.mode, WatchMode.stopped);
+      // The channel-open fails right away; before the fix, nothing was ever
+      // emitted here — subscribers would see no event at all through the
+      // entire restart backoff, previously indistinguishable from "still
+      // fine" (whatever mode a consumer's UI last rendered).
+      async.elapse(Duration.zero);
+      expect(events, isNotEmpty);
+      expect(events.last.mode, WatchMode.stopped);
 
-        sub.cancel();
-      });
-    },
-  );
+      sub.cancel();
+    });
+  });
 }

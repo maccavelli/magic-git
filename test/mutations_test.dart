@@ -31,6 +31,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     envs.add(extraEnv);
@@ -72,10 +74,12 @@ void main() {
 
     test('stage', () async {
       await git.stage('/repo', 'lib/main.dart');
-      expect(
-        exec.calls.single,
-        ['git', 'add', '--', ':(literal)lib/main.dart'],
-      );
+      expect(exec.calls.single, [
+        'git',
+        'add',
+        '--',
+        ':(literal)lib/main.dart',
+      ]);
     });
 
     test('unstage uses restore --staged', () async {
@@ -118,10 +122,7 @@ void main() {
       // No --end-of-options before the name: -b consumes its next token
       // verbatim, so the guard itself would become the branch name (a real
       // bug this pin used to enshrine — caught by the real-git undo tests).
-      expectCapturedScript(
-        exec.calls.single,
-        "'git' 'checkout' '-b' 'feat'",
-      );
+      expectCapturedScript(exec.calls.single, "'git' 'checkout' '-b' 'feat'");
     });
 
     test('createBranch without checkout uses git branch', () async {
@@ -172,25 +173,27 @@ void main() {
       expect(exec.calls[1], ['git', 'rebase', '--abort']);
     });
 
-    test('setUpstream uses the = form; unsetUpstream guards the positional',
-        () async {
-      await git.setUpstream('/repo', 'feature', 'origin/feature');
-      await git.unsetUpstream('/repo', 'feature');
-      expect(exec.calls[0], [
-        'git',
-        'branch',
-        '--set-upstream-to=origin/feature',
-        '--end-of-options',
-        'feature',
-      ]);
-      expect(exec.calls[1], [
-        'git',
-        'branch',
-        '--unset-upstream',
-        '--end-of-options',
-        'feature',
-      ]);
-    });
+    test(
+      'setUpstream uses the = form; unsetUpstream guards the positional',
+      () async {
+        await git.setUpstream('/repo', 'feature', 'origin/feature');
+        await git.unsetUpstream('/repo', 'feature');
+        expect(exec.calls[0], [
+          'git',
+          'branch',
+          '--set-upstream-to=origin/feature',
+          '--end-of-options',
+          'feature',
+        ]);
+        expect(exec.calls[1], [
+          'git',
+          'branch',
+          '--unset-upstream',
+          '--end-of-options',
+          'feature',
+        ]);
+      },
+    );
 
     test('deleteRemoteBranch pushes a delete to the named remote', () async {
       await git.deleteRemoteBranch('/repo', 'origin', 'feature');
@@ -216,23 +219,31 @@ void main() {
       expect(script, contains(r'git stash create 2>/dev/null'));
       expect(script, contains("git update-ref 'refs/magic-git/snapshots/"));
       expect(script, contains('GIT_AUTHOR_NAME=magic-git'));
-      expect(script, contains("git for-each-ref 'refs/magic-git/snapshots'"),
-          reason: 'expiry pruning piggybacks on every snapshot');
+      expect(
+        script,
+        contains("git for-each-ref 'refs/magic-git/snapshots'"),
+        reason: 'expiry pruning piggybacks on every snapshot',
+      );
     });
 
-    test('discardHunk reverse-applies from stdin with a flavor-A snapshot',
-        () async {
-      await git.discardHunk('/repo', 'PATCH-TEXT', path: 'a.dart');
-      final script = expectCapturedScript(
-        exec.calls.single,
-        "'git' 'apply' '-R' '--recount' '--whitespace=nowarn' '-'",
-      );
-      // Snapshotted before the reverse-apply destroys the hunk — the same
-      // ⌘Z net every other worktree discard has.
-      expect(script, contains(r'git stash create 2>/dev/null'));
-      expect(exec.stdins.single, 'PATCH-TEXT',
-          reason: 'the patch travels on stdin, never argv');
-    });
+    test(
+      'discardHunk reverse-applies from stdin with a flavor-A snapshot',
+      () async {
+        await git.discardHunk('/repo', 'PATCH-TEXT', path: 'a.dart');
+        final script = expectCapturedScript(
+          exec.calls.single,
+          "'git' 'apply' '-R' '--recount' '--whitespace=nowarn' '-'",
+        );
+        // Snapshotted before the reverse-apply destroys the hunk — the same
+        // ⌘Z net every other worktree discard has.
+        expect(script, contains(r'git stash create 2>/dev/null'));
+        expect(
+          exec.stdins.single,
+          'PATCH-TEXT',
+          reason: 'the patch travels on stdin, never argv',
+        );
+      },
+    );
 
     test('unstageAll uses a bare reset — the one form that also works on an '
         'unborn HEAD', () async {
@@ -252,21 +263,25 @@ void main() {
       // rm destroys content stash create can't see (untracked/ignored), so
       // the snapshot is flavor B: a temp-index plumbing commit of the doomed
       // paths.
-      expect(script, contains('GIT_INDEX_FILE="\$idx" git add -f -- '
-          "':(literal)lib/main.dart' 2>/dev/null"));
+      expect(
+        script,
+        contains(
+          'GIT_INDEX_FILE="\$idx" git add -f -- '
+          "':(literal)lib/main.dart' 2>/dev/null",
+        ),
+      );
       expect(script, contains(r'git write-tree'));
       expect(script, contains(r'git commit-tree "$t" ${pre:+-p "$pre"}'));
       expect(script, contains("git update-ref 'refs/magic-git/snapshots/"));
     });
 
-    test('deleteFile keeps a leading-dash path out of rm option parsing',
-        () async {
-      await git.deleteFile('/repo', '-weird.txt');
-      expectCapturedScript(
-        exec.calls.single,
-        "'rm' '-f' '--' '-weird.txt'",
-      );
-    });
+    test(
+      'deleteFile keeps a leading-dash path out of rm option parsing',
+      () async {
+        await git.deleteFile('/repo', '-weird.txt');
+        expectCapturedScript(exec.calls.single, "'rm' '-f' '--' '-weird.txt'");
+      },
+    );
 
     test('readFile cats the path directly, guarded by --', () async {
       exec.next = const SSHCommandResult(
@@ -320,8 +335,11 @@ void main() {
         exec.calls.single,
         "'git' 'restore' '--staged' '--worktree' '--source=HEAD' '--' ':(literal)a.dart'",
       );
-      expect(script, contains(r'git stash create 2>/dev/null'),
-          reason: 'flavor-A snapshot taken before the destroy');
+      expect(
+        script,
+        contains(r'git stash create 2>/dev/null'),
+        reason: 'flavor-A snapshot taken before the destroy',
+      );
     });
 
     test('addToGitignore appends via a dedup-checked shell script', () async {
@@ -400,32 +418,38 @@ void main() {
       expect(script, contains("grep -qxF -- 'b.dart'"));
     });
 
-    test('diffFile applies hide-whitespace and expand-context options', () async {
-      await git.diffFile(
-        '/repo',
-        path: 'a.dart',
-        staged: true,
-        ignoreWhitespace: true,
-        context: 25,
-      );
+    test(
+      'diffFile applies hide-whitespace and expand-context options',
+      () async {
+        await git.diffFile(
+          '/repo',
+          path: 'a.dart',
+          staged: true,
+          ignoreWhitespace: true,
+          context: 25,
+        );
+        expect(exec.calls.single, [
+          'git',
+          'diff',
+          '--no-color',
+          '--cached',
+          '-w',
+          '-U25',
+          '--',
+          ':(literal)a.dart',
+        ]);
+      },
+    );
+
+    test('diffFile with defaults omits -w and -U', () async {
+      await git.diffFile('/repo', path: 'a.dart', staged: false);
       expect(exec.calls.single, [
         'git',
         'diff',
         '--no-color',
-        '--cached',
-        '-w',
-        '-U25',
         '--',
         ':(literal)a.dart',
       ]);
-    });
-
-    test('diffFile with defaults omits -w and -U', () async {
-      await git.diffFile('/repo', path: 'a.dart', staged: false);
-      expect(
-        exec.calls.single,
-        ['git', 'diff', '--no-color', '--', ':(literal)a.dart'],
-      );
     });
 
     test('diffRange diffs a ref range for the MR preview', () async {
@@ -439,18 +463,21 @@ void main() {
       ]);
     });
 
-    test('applyPatch stages a hunk via git apply --cached (stdin patch)', () async {
-      await git.applyPatch('/repo', 'PATCH', cached: true, reverse: false);
-      expect(exec.calls.single, [
-        'git',
-        'apply',
-        '--cached',
-        '--recount',
-        '--whitespace=nowarn',
-        '-',
-      ]);
-      expect(exec.stdins.single, 'PATCH');
-    });
+    test(
+      'applyPatch stages a hunk via git apply --cached (stdin patch)',
+      () async {
+        await git.applyPatch('/repo', 'PATCH', cached: true, reverse: false);
+        expect(exec.calls.single, [
+          'git',
+          'apply',
+          '--cached',
+          '--recount',
+          '--whitespace=nowarn',
+          '-',
+        ]);
+        expect(exec.stdins.single, 'PATCH');
+      },
+    );
 
     test('applyPatch reverse (unstage / discard) adds -R', () async {
       await git.applyPatch('/repo', 'P', cached: true, reverse: true);
@@ -584,28 +611,31 @@ void main() {
       expect(exec.calls[2], ['git', 'pull', '--ff-only']);
     });
 
-    test('push injects gh credential helper for https github remotes', () async {
-      exec.results.addAll(const [
-        // Upstream probe: no upstream configured → falls back to origin.
-        SSHCommandResult(exitCode: 1, stdout: '', stderr: ''),
-        SSHCommandResult(
-          exitCode: 0,
-          stdout: 'https://github.com/me/r.git\n',
-          stderr: '',
-        ),
-      ]);
-      await git.push('/repo');
-      expect(exec.calls[0], upstreamProbe);
-      expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[2], [
-        'git',
-        '-c',
-        'credential.helper=',
-        '-c',
-        'credential.helper=!gh auth git-credential',
-        'push',
-      ]);
-    });
+    test(
+      'push injects gh credential helper for https github remotes',
+      () async {
+        exec.results.addAll(const [
+          // Upstream probe: no upstream configured → falls back to origin.
+          SSHCommandResult(exitCode: 1, stdout: '', stderr: ''),
+          SSHCommandResult(
+            exitCode: 0,
+            stdout: 'https://github.com/me/r.git\n',
+            stderr: '',
+          ),
+        ]);
+        await git.push('/repo');
+        expect(exec.calls[0], upstreamProbe);
+        expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
+        expect(exec.calls[2], [
+          'git',
+          '-c',
+          'credential.helper=',
+          '-c',
+          'credential.helper=!gh auth git-credential',
+          'push',
+        ]);
+      },
+    );
 
     test('a branch tracking a non-origin remote routes auth through THAT '
         'remote', () async {
@@ -620,8 +650,12 @@ void main() {
       ]);
       await git.push('/repo');
       expect(exec.calls[0], upstreamProbe);
-      expect(exec.calls[1], ['git', 'remote', 'get-url', 'upstream'],
-          reason: 'the auth probe must follow the tracked remote');
+      expect(exec.calls[1], [
+        'git',
+        'remote',
+        'get-url',
+        'upstream',
+      ], reason: 'the auth probe must follow the tracked remote');
       expect(exec.calls[2], [
         'git',
         '-c',
@@ -755,10 +789,7 @@ void main() {
 
     test('pushTags rejects an empty list — the argv would degenerate to a '
         'default branch push', () async {
-      await expectLater(
-        () => git.pushTags('/repo', []),
-        throwsArgumentError,
-      );
+      await expectLater(() => git.pushTags('/repo', []), throwsArgumentError);
       expect(exec.calls, isEmpty, reason: 'nothing may reach the remote');
     });
 
@@ -882,7 +913,10 @@ void main() {
       );
       // The start point is resolved pre-mutation so undo knows the created
       // tip even when the creation doesn't move HEAD.
-      expect(script, contains(r"x0=$(git rev-parse -q --verify 'abc^{commit}')"));
+      expect(
+        script,
+        contains(r"x0=$(git rev-parse -q --verify 'abc^{commit}')"),
+      );
       exec.calls.clear();
       await git.branchFrom('/repo', 'feat', 'abc', checkout: false);
       expectCapturedScript(
@@ -905,24 +939,37 @@ void main() {
       );
     });
 
-    test('pendingOp detects an in-progress operation from the git dir', () async {
-      // pendingOp is bundled with status/refs into one combined `sh -c`
-      // round trip (see GitService._fetchSnapshot) — the operation name is
-      // the last of the sep-delimited sections (sep matches
-      // GitService._snapshotSep: STX-wrapped "RMGSNAP").
-      const sep = 'RMGSNAP';
-      String combined(String op) =>
-          '$sep' '0$sep' '$sep' '0$sep' '$sep' '0$sep' '$op\n';
-      exec.results.add(
-        SSHCommandResult(exitCode: 0, stdout: combined('cherry-pick'), stderr: ''),
-      );
-      expect(await git.pendingOp('/repo'), PendingOp.cherryPick);
+    test(
+      'pendingOp detects an in-progress operation from the git dir',
+      () async {
+        // pendingOp is bundled with status/refs into one combined `sh -c`
+        // round trip (see GitService._fetchSnapshot) — the operation name is
+        // the last of the sep-delimited sections (sep matches
+        // GitService._snapshotSep: STX-wrapped "RMGSNAP").
+        const sep = 'RMGSNAP';
+        String combined(String op) =>
+            '$sep'
+            '0$sep'
+            '$sep'
+            '0$sep'
+            '$sep'
+            '0$sep'
+            '$op\n';
+        exec.results.add(
+          SSHCommandResult(
+            exitCode: 0,
+            stdout: combined('cherry-pick'),
+            stderr: '',
+          ),
+        );
+        expect(await git.pendingOp('/repo'), PendingOp.cherryPick);
 
-      exec.results.add(
-        SSHCommandResult(exitCode: 0, stdout: combined('none'), stderr: ''),
-      );
-      expect(await git.pendingOp('/repo'), PendingOp.none);
-    });
+        exec.results.add(
+          SSHCommandResult(exitCode: 0, stdout: combined('none'), stderr: ''),
+        );
+        expect(await git.pendingOp('/repo'), PendingOp.none);
+      },
+    );
 
     test('remotes parses the configured-remote section of the snapshot — the '
         'config-level truth an empty repo needs (its remote-tracking refs '
@@ -948,9 +995,13 @@ void main() {
         exec.calls.single,
         "'git' 'merge' '--no-edit' '--no-ff' '--end-of-options' 'feature'",
       );
-      expect(script, contains(r'git stash create 2>/dev/null'),
-          reason: "undo is reset --hard back — snapshot the merge's "
-              'uncommitted survivors first');
+      expect(
+        script,
+        contains(r'git stash create 2>/dev/null'),
+        reason:
+            "undo is reset --hard back — snapshot the merge's "
+            'uncommitted survivors first',
+      );
       exec.calls.clear();
       exec.results.add(
         const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
@@ -1003,33 +1054,36 @@ void main() {
       expect(a2, contains('--topo-order'));
     });
 
-    test('log hardening: --no-show-signature, --end-of-options, guarded --follow', () async {
-      exec.results.add(
-        const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
-      );
-      await git.log('/repo');
-      final bare = exec.calls.single;
-      // Suppresses interleaved gpg lines under a remote log.showSignature=true.
-      expect(bare, contains('--no-show-signature'));
-      // A leading-dash ref can't be parsed as an option.
-      expect(bare, containsAllInOrder(['--end-of-options', 'HEAD']));
+    test(
+      'log hardening: --no-show-signature, --end-of-options, guarded --follow',
+      () async {
+        exec.results.add(
+          const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+        );
+        await git.log('/repo');
+        final bare = exec.calls.single;
+        // Suppresses interleaved gpg lines under a remote log.showSignature=true.
+        expect(bare, contains('--no-show-signature'));
+        // A leading-dash ref can't be parsed as an option.
+        expect(bare, containsAllInOrder(['--end-of-options', 'HEAD']));
 
-      // --follow with no pathspec is a fatal git error — it must be omitted.
-      exec.calls.clear();
-      exec.results.add(
-        const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
-      );
-      await git.log('/repo', follow: true);
-      expect(exec.calls.single, isNot(contains('--follow')));
+        // --follow with no pathspec is a fatal git error — it must be omitted.
+        exec.calls.clear();
+        exec.results.add(
+          const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+        );
+        await git.log('/repo', follow: true);
+        expect(exec.calls.single, isNot(contains('--follow')));
 
-      // git also rejects --follow together with --all.
-      exec.calls.clear();
-      exec.results.add(
-        const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
-      );
-      await git.log('/repo', all: true, follow: true, path: 'lib/x.dart');
-      expect(exec.calls.single, isNot(contains('--follow')));
-    });
+        // git also rejects --follow together with --all.
+        exec.calls.clear();
+        exec.results.add(
+          const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+        );
+        await git.log('/repo', all: true, follow: true, path: 'lib/x.dart');
+        expect(exec.calls.single, isNot(contains('--follow')));
+      },
+    );
 
     test('rebaseInteractive pipes the todo and omits dropped steps', () async {
       exec.results.add(
@@ -1095,7 +1149,11 @@ void main() {
 
     test('stashDrop drops behind the stale-OID guard, capturing the subject '
         'first', () async {
-      await git.stashDrop('/repo', 1, expectedOid: 'dddddddddddddddddddddddddddddddddddddddd');
+      await git.stashDrop(
+        '/repo',
+        1,
+        expectedOid: 'dddddddddddddddddddddddddddddddddddddddd',
+      );
       final call = exec.calls.single;
       expect(call.sublist(0, 2), ['sh', '-c']);
       final script = call[2];
@@ -1103,8 +1161,11 @@ void main() {
       // subshell exits 42 and nothing is touched.
       expect(
         script,
-        contains('( [ "\$(git rev-parse -q --verify ' "'stash@{1}')\" = "
-            "'dddddddddddddddddddddddddddddddddddddddd' ] || exit 42; git stash drop 'stash@{1}' )"),
+        contains(
+          '( [ "\$(git rev-parse -q --verify '
+          "'stash@{1}')\" = "
+          "'dddddddddddddddddddddddddddddddddddddddd' ] || exit 42; git stash drop 'stash@{1}' )",
+        ),
       );
       // Subject captured pre-drop so undo can `stash store` it back.
       expect(
@@ -1113,44 +1174,84 @@ void main() {
       );
     });
 
-    test('a stale drop surfaces StashStaleException, not a raw git error',
-        () async {
-      exec.next = const SSHCommandResult(exitCode: 42, stdout: '', stderr: '');
-      await expectLater(
-        git.stashDrop('/repo', 1, expectedOid: 'dddddddddddddddddddddddddddddddddddddddd'),
-        throwsA(isA<StashStaleException>()),
-      );
-    });
+    test(
+      'a stale drop surfaces StashStaleException, not a raw git error',
+      () async {
+        exec.next = const SSHCommandResult(
+          exitCode: 42,
+          stdout: '',
+          stderr: '',
+        );
+        await expectLater(
+          git.stashDrop(
+            '/repo',
+            1,
+            expectedOid: 'dddddddddddddddddddddddddddddddddddddddd',
+          ),
+          throwsA(isA<StashStaleException>()),
+        );
+      },
+    );
 
     test('stashApply adds --index only when asked', () async {
       await git.stashApply('/repo', 'e' * 40);
-      expect(exec.calls.single,
-          ['git', 'stash', 'apply', '--end-of-options', 'e' * 40]);
+      expect(exec.calls.single, [
+        'git',
+        'stash',
+        'apply',
+        '--end-of-options',
+        'e' * 40,
+      ]);
       exec.calls.clear();
       await git.stashApply('/repo', 'e' * 40, restoreIndex: true);
-      expect(exec.calls.single,
-          ['git', 'stash', 'apply', '--index', '--end-of-options', 'e' * 40]);
+      expect(exec.calls.single, [
+        'git',
+        'stash',
+        'apply',
+        '--index',
+        '--end-of-options',
+        'e' * 40,
+      ]);
     });
 
-    test('stashPop --index runs `pop --index` inside the stale guard',
-        () async {
-      await git.stashPop('/repo', 0, expectedOid: 'e' * 40, restoreIndex: true);
-      expect(exec.calls.single[2],
-          contains("git stash pop --index 'stash@{0}' )"));
-    });
+    test(
+      'stashPop --index runs `pop --index` inside the stale guard',
+      () async {
+        await git.stashPop(
+          '/repo',
+          0,
+          expectedOid: 'e' * 40,
+          restoreIndex: true,
+        );
+        expect(
+          exec.calls.single[2],
+          contains("git stash pop --index 'stash@{0}' )"),
+        );
+      },
+    );
 
     test('stashBranch runs `stash branch <name> <sel>` behind the stale guard, '
         'capturing subject + snapshot', () async {
-      await git.stashBranch('/repo', 'feature-x', index: 2, expectedOid: 'e' * 40);
+      await git.stashBranch(
+        '/repo',
+        'feature-x',
+        index: 2,
+        expectedOid: 'e' * 40,
+      );
       final script = exec.calls.single[2];
       expect(
         script,
-        contains('( [ "\$(git rev-parse -q --verify ' "'stash@{2}')\" = "
-            "'${'e' * 40}' ] || exit 42; git stash branch 'feature-x' 'stash@{2}' )"),
+        contains(
+          '( [ "\$(git rev-parse -q --verify '
+          "'stash@{2}')\" = "
+          "'${'e' * 40}' ] || exit 42; git stash branch 'feature-x' 'stash@{2}' )",
+        ),
       );
       // Subject captured pre-op for undo's `stash store` message.
-      expect(script,
-          contains(r"x0=$(git log -1 --format=%s 'stash@{2}' 2>/dev/null); "));
+      expect(
+        script,
+        contains(r"x0=$(git log -1 --format=%s 'stash@{2}' 2>/dev/null); "),
+      );
     });
 
     test('a stale stashBranch surfaces StashStaleException', () async {
@@ -1211,42 +1312,40 @@ void main() {
       ]);
     });
 
-    test(
-      'generateCommitMessage creates its preview file with mktemp, not a '
-      'fixed name',
-      () async {
-        exec.next = const SSHCommandResult(
-          exitCode: 0,
-          stdout: 'generated message\n',
-          stderr: '',
-        );
-        final msg = await git.generateCommitMessage('/repo');
-        final call = exec.calls.single;
-        expect(call[0], 'sh');
-        expect(call[1], '-c');
-        final script = call[2];
-        expect(
-          script,
-          contains('mktemp'),
-          reason:
-              'a fixed preview filename would let another local user (or a '
-              'racing second call) pre-plant a symlink at that path before '
-              'the hook writes to it',
-        );
-        expect(script, isNot(contains(': > "\$tmp"')));
-        expect(msg, 'generated message');
-      },
-    );
+    test('generateCommitMessage creates its preview file with mktemp, not a '
+        'fixed name', () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'generated message\n',
+        stderr: '',
+      );
+      final msg = await git.generateCommitMessage('/repo');
+      final call = exec.calls.single;
+      expect(call[0], 'sh');
+      expect(call[1], '-c');
+      final script = call[2];
+      expect(
+        script,
+        contains('mktemp'),
+        reason:
+            'a fixed preview filename would let another local user (or a '
+            'racing second call) pre-plant a symlink at that path before '
+            'the hook writes to it',
+      );
+      expect(script, isNot(contains(': > "\$tmp"')));
+      expect(msg, 'generated message');
+    });
 
     test('stashPop runs behind the same stale-OID guard and journals the '
         'popped stash', () async {
-      await git.stashPop('/repo', 2, expectedOid: 'dddddddddddddddddddddddddddddddddddddddd');
+      await git.stashPop(
+        '/repo',
+        2,
+        expectedOid: 'dddddddddddddddddddddddddddddddddddddddd',
+      );
       final call = exec.calls.single;
       expect(call.sublist(0, 2), ['sh', '-c']);
-      expect(
-        call[2],
-        contains("|| exit 42; git stash pop 'stash@{2}' )"),
-      );
+      expect(call[2], contains("|| exit 42; git stash pop 'stash@{2}' )"));
     });
 
     test('stashPush --include-untracked', () async {
@@ -1270,7 +1369,8 @@ void main() {
       expect(
         script,
         contains("x0=\$(git log -g --format='%H %gs' refs/stash 2>/dev/null)"),
-        reason: 'every stash OID+subject is captured so undo can re-store '
+        reason:
+            'every stash OID+subject is captured so undo can re-store '
             'them in order',
       );
     });
@@ -1327,11 +1427,10 @@ void main() {
     test(
       'resolveConflictMany resolves every path with 2 invocations total',
       () async {
-        await git.resolveConflictMany(
-          '/repo',
-          ['a.dart', 'b.dart'],
-          useOurs: true,
-        );
+        await git.resolveConflictMany('/repo', [
+          'a.dart',
+          'b.dart',
+        ], useOurs: true);
         expect(exec.calls[0], [
           'git',
           'checkout',
@@ -1496,19 +1595,16 @@ void main() {
       ]);
     });
 
-    test(
-      'api(paginate: true) paginates; the bounded activity feeds '
-      '(pipelines/jobs) do not',
-      () async {
-        await glab.api('/repo', 'projects/:id/issues', paginate: true);
-        expect(exec.calls[0], contains('--paginate'));
+    test('api(paginate: true) paginates; the bounded activity feeds '
+        '(pipelines/jobs) do not', () async {
+      await glab.api('/repo', 'projects/:id/issues', paginate: true);
+      expect(exec.calls[0], contains('--paginate'));
 
-        await glab.pipelines('/repo');
-        expect(exec.calls[1], isNot(contains('--paginate')));
-        await glab.jobs('/repo', 1);
-        expect(exec.calls[2], isNot(contains('--paginate')));
-      },
-    );
+      await glab.pipelines('/repo');
+      expect(exec.calls[1], isNot(contains('--paginate')));
+      await glab.jobs('/repo', 1);
+      expect(exec.calls[2], isNot(contains('--paginate')));
+    });
 
     test('createMergeRequest uses subcommand argv (not -f fields)', () async {
       await glab.createMergeRequest(
@@ -1556,43 +1652,46 @@ void main() {
       },
     );
 
-    test('createMergeRequest maps the enriched authoring fields to flags', () async {
-      await glab.createMergeRequest(
-        '/repo',
-        sourceBranch: 'feat',
-        targetBranch: 'main',
-        title: 'Add feat',
-        draft: true,
-        reviewers: ['alice', 'bob'],
-        assignees: ['carol'],
-        labels: ['backend', 'urgent'],
-        milestone: 'v2',
-        squash: true,
-        removeSourceBranch: true,
-      );
-      expect(exec.calls.single, [
-        'glab',
-        'mr',
-        'create',
-        '--source-branch',
-        'feat',
-        '--target-branch',
-        'main',
-        '--title',
-        'Add feat',
-        '--draft',
-        '--reviewer',
-        'alice,bob',
-        '--assignee',
-        'carol',
-        '--label',
-        'backend,urgent',
-        '--milestone',
-        'v2',
-        '--squash-before-merge',
-        '--remove-source-branch',
-      ]);
-    });
+    test(
+      'createMergeRequest maps the enriched authoring fields to flags',
+      () async {
+        await glab.createMergeRequest(
+          '/repo',
+          sourceBranch: 'feat',
+          targetBranch: 'main',
+          title: 'Add feat',
+          draft: true,
+          reviewers: ['alice', 'bob'],
+          assignees: ['carol'],
+          labels: ['backend', 'urgent'],
+          milestone: 'v2',
+          squash: true,
+          removeSourceBranch: true,
+        );
+        expect(exec.calls.single, [
+          'glab',
+          'mr',
+          'create',
+          '--source-branch',
+          'feat',
+          '--target-branch',
+          'main',
+          '--title',
+          'Add feat',
+          '--draft',
+          '--reviewer',
+          'alice,bob',
+          '--assignee',
+          'carol',
+          '--label',
+          'backend,urgent',
+          '--milestone',
+          'v2',
+          '--squash-before-merge',
+          '--remove-source-branch',
+        ]);
+      },
+    );
 
     test('checkoutMergeRequest runs glab mr checkout <iid>', () async {
       await glab.checkoutMergeRequest('/repo', 42);
@@ -1611,34 +1710,39 @@ void main() {
       ]);
     });
 
-    test('mergeMergeRequest with squash sends the typed squash field', () async {
-      await glab.mergeMergeRequest('/repo', 12, squash: true);
-      expect(exec.calls.single, [
-        'glab',
-        'api',
-        'projects/:id/merge_requests/12/merge',
-        '--method',
-        'PUT',
-        '-f',
-        'squash=true',
-        '-i',
-      ]);
-    });
+    test(
+      'mergeMergeRequest with squash sends the typed squash field',
+      () async {
+        await glab.mergeMergeRequest('/repo', 12, squash: true);
+        expect(exec.calls.single, [
+          'glab',
+          'api',
+          'projects/:id/merge_requests/12/merge',
+          '--method',
+          'PUT',
+          '-f',
+          'squash=true',
+          '-i',
+        ]);
+      },
+    );
 
-    test('mergeMergeRequest sends should_remove_source_branch when asked',
-        () async {
-      await glab.mergeMergeRequest('/repo', 12, removeSourceBranch: true);
-      expect(exec.calls.single, [
-        'glab',
-        'api',
-        'projects/:id/merge_requests/12/merge',
-        '--method',
-        'PUT',
-        '-f',
-        'should_remove_source_branch=true',
-        '-i',
-      ]);
-    });
+    test(
+      'mergeMergeRequest sends should_remove_source_branch when asked',
+      () async {
+        await glab.mergeMergeRequest('/repo', 12, removeSourceBranch: true);
+        expect(exec.calls.single, [
+          'glab',
+          'api',
+          'projects/:id/merge_requests/12/merge',
+          '--method',
+          'PUT',
+          '-f',
+          'should_remove_source_branch=true',
+          '-i',
+        ]);
+      },
+    );
 
     test('mergeMergeRequest sends sha when provided', () async {
       await glab.mergeMergeRequest('/repo', 12, sha: 'deadbeef');
@@ -1680,14 +1784,16 @@ void main() {
       ]);
     });
 
-    test('setMergeRequestDraft toggles --draft / --ready via the subcommand',
-        () async {
-      await glab.setMergeRequestDraft('/repo', 12, draft: true);
-      expect(exec.calls.single, ['glab', 'mr', 'update', '12', '--draft']);
-      exec.calls.clear();
-      await glab.setMergeRequestDraft('/repo', 12, draft: false);
-      expect(exec.calls.single, ['glab', 'mr', 'update', '12', '--ready']);
-    });
+    test(
+      'setMergeRequestDraft toggles --draft / --ready via the subcommand',
+      () async {
+        await glab.setMergeRequestDraft('/repo', 12, draft: true);
+        expect(exec.calls.single, ['glab', 'mr', 'update', '12', '--draft']);
+        exec.calls.clear();
+        await glab.setMergeRequestDraft('/repo', 12, draft: false);
+        expect(exec.calls.single, ['glab', 'mr', 'update', '12', '--ready']);
+      },
+    );
 
     test('commentOnMergeRequest notes the body as a discrete token', () async {
       await glab.commentOnMergeRequest('/repo', 12, 'looks good = ship it');
@@ -1745,25 +1851,27 @@ void main() {
       ]);
     });
 
-    test('mergeRequestFields fetches title + description for the edit form',
-        () async {
-      exec.next = const SSHCommandResult(
-        exitCode: 0,
-        stdout: '{"title":"A title","description":"A body"}',
-        stderr: '',
-      );
-      final fields = await glab.mergeRequestFields('/repo', 12);
-      expect(exec.calls.single, [
-        'glab',
-        'mr',
-        'view',
-        '12',
-        '--output',
-        'json',
-      ]);
-      expect(fields.title, 'A title');
-      expect(fields.description, 'A body');
-    });
+    test(
+      'mergeRequestFields fetches title + description for the edit form',
+      () async {
+        exec.next = const SSHCommandResult(
+          exitCode: 0,
+          stdout: '{"title":"A title","description":"A body"}',
+          stderr: '',
+        );
+        final fields = await glab.mergeRequestFields('/repo', 12);
+        expect(exec.calls.single, [
+          'glab',
+          'mr',
+          'view',
+          '12',
+          '--output',
+          'json',
+        ]);
+        expect(fields.title, 'A title');
+        expect(fields.description, 'A body');
+      },
+    );
 
     test(
       'read endpoints pass an explicit --method GET (never implicit POST)',
@@ -1870,23 +1978,21 @@ void main() {
       },
     );
 
-    test(
-      'loginWithToken rejects a blank token before touching the remote — '
-      '`glab auth login --stdin` does not reject one itself and would hang '
-      'in an interactive OAuth device-flow instead',
-      () async {
-        await expectLater(
-          glab.loginWithToken('/repo', '   '),
-          throwsA(isA<GlabException>()),
-        );
-        expect(exec.calls, isEmpty, reason: 'no remote call was ever made');
-      },
-    );
+    test('loginWithToken rejects a blank token before touching the remote — '
+        '`glab auth login --stdin` does not reject one itself and would hang '
+        'in an interactive OAuth device-flow instead', () async {
+      await expectLater(
+        glab.loginWithToken('/repo', '   '),
+        throwsA(isA<GlabException>()),
+      );
+      expect(exec.calls, isEmpty, reason: 'no remote call was ever made');
+    });
 
     test('graphql requests -i and cross-checks the HTTP status', () async {
       exec.next = const SSHCommandResult(
         exitCode: 0,
-        stdout: 'HTTP/2 200\r\ncontent-type: application/json\r\n\r\n'
+        stdout:
+            'HTTP/2 200\r\ncontent-type: application/json\r\n\r\n'
             '{"data": {"project": {"issues": {"nodes": []}}}}',
         stderr: '',
       );
@@ -1900,7 +2006,8 @@ void main() {
       () async {
         exec.next = const SSHCommandResult(
           exitCode: 0,
-          stdout: 'HTTP/2 401\r\ncontent-type: application/json\r\n\r\n'
+          stdout:
+              'HTTP/2 401\r\ncontent-type: application/json\r\n\r\n'
               '{"message": "401 Unauthorized"}',
           stderr: '',
         );

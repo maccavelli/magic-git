@@ -32,12 +32,32 @@ extension _RunForever on CommandLaneScheduler {
 }
 
 void main() {
+  test('onStarted fires exactly once when the job receives its lane', () async {
+    final scheduler = CommandLaneScheduler(maxConcurrentReads: 1);
+    final blocker = Completer<void>();
+    final order = <String>[];
+    final first = scheduler.run(ExecLane.exclusive, () async {
+      order.add('first body');
+      await blocker.future;
+    }, deadline: const Duration(minutes: 1));
+    final second = scheduler.run(
+      ExecLane.exclusive,
+      () async => order.add('second body'),
+      deadline: const Duration(minutes: 1),
+      onStarted: () => order.add('second started'),
+    );
+
+    await Future<void>.delayed(Duration.zero);
+    expect(order, ['first body']);
+    blocker.complete();
+    await Future.wait([first, second]);
+    expect(order, ['first body', 'second started', 'second body']);
+  });
+
   test('reads run concurrently up to maxConcurrentReads', () async {
     final s = CommandLaneScheduler(maxConcurrentReads: 3);
     final gates = List.generate(5, (_) => _Gate());
-    final futures = [
-      for (final g in gates) s.run0(ExecLane.read, g.body),
-    ];
+    final futures = [for (final g in gates) s.run0(ExecLane.read, g.body)];
     await _tick();
 
     // First three start together; the pool holds the last two back.
@@ -60,9 +80,7 @@ void main() {
   test('setMaxConcurrentReads lowers without cancelling in-flight', () async {
     final s = CommandLaneScheduler(maxConcurrentReads: 3);
     final gates = List.generate(4, (_) => _Gate());
-    final futures = [
-      for (final g in gates) s.run0(ExecLane.read, g.body),
-    ];
+    final futures = [for (final g in gates) s.run0(ExecLane.read, g.body)];
     await _tick();
     expect(s.activeReads, 3);
 
@@ -208,17 +226,19 @@ void main() {
     expect(order, ['a', 'b']);
   });
 
-  test('a failing job propagates to its caller without wedging the queue',
-      () async {
-    final s = CommandLaneScheduler();
-    final failing = s.run0<void>(ExecLane.exclusive, () async {
-      throw StateError('boom');
-    });
-    final next = s.run0(ExecLane.read, () async => 42);
-    await expectLater(failing, throwsStateError);
-    expect(await next, 42);
-    expect(s.queued, 0);
-  });
+  test(
+    'a failing job propagates to its caller without wedging the queue',
+    () async {
+      final s = CommandLaneScheduler();
+      final failing = s.run0<void>(ExecLane.exclusive, () async {
+        throw StateError('boom');
+      });
+      final next = s.run0(ExecLane.read, () async => 42);
+      await expectLater(failing, throwsStateError);
+      expect(await next, 42);
+      expect(s.queued, 0);
+    },
+  );
 
   test('a job never starts synchronously inside the enqueue call', () async {
     final s = CommandLaneScheduler();
@@ -239,34 +259,36 @@ void main() {
     // protect. On the exclusive lane such a command WAS the barrier: every
     // background refresh in the app queued behind a package install.
 
-    test('an isolated job overlaps a running exclusive — both directions',
-        () async {
-      final s = CommandLaneScheduler();
-      final excl = _Gate();
-      final iso = _Gate();
-      final futures = [
-        s.run0(ExecLane.exclusive, excl.body),
-        s.run0(ExecLane.isolated, iso.body),
-      ];
-      await _tick();
+    test(
+      'an isolated job overlaps a running exclusive — both directions',
+      () async {
+        final s = CommandLaneScheduler();
+        final excl = _Gate();
+        final iso = _Gate();
+        final futures = [
+          s.run0(ExecLane.exclusive, excl.body),
+          s.run0(ExecLane.isolated, iso.body),
+        ];
+        await _tick();
 
-      // Nothing overlaps an exclusive — except this.
-      expect(excl.started.isCompleted, isTrue);
-      expect(iso.started.isCompleted, isTrue);
+        // Nothing overlaps an exclusive — except this.
+        expect(excl.started.isCompleted, isTrue);
+        expect(iso.started.isCompleted, isTrue);
 
-      // And the reverse: a still-running isolated job must not delay the next
-      // exclusive, or a 20-minute install re-creates the stall lane-by-lane.
-      final excl2 = _Gate();
-      futures.add(s.run0(ExecLane.exclusive, excl2.body));
-      excl.release.complete();
-      await _tick();
-      expect(iso.release.isCompleted, isFalse, reason: 'install still going');
-      expect(excl2.started.isCompleted, isTrue);
+        // And the reverse: a still-running isolated job must not delay the next
+        // exclusive, or a 20-minute install re-creates the stall lane-by-lane.
+        final excl2 = _Gate();
+        futures.add(s.run0(ExecLane.exclusive, excl2.body));
+        excl.release.complete();
+        await _tick();
+        expect(iso.release.isCompleted, isFalse, reason: 'install still going');
+        expect(excl2.started.isCompleted, isTrue);
 
-      iso.release.complete();
-      excl2.release.complete();
-      await Future.wait(futures);
-    });
+        iso.release.complete();
+        excl2.release.complete();
+        await Future.wait(futures);
+      },
+    );
 
     test('an isolated job passes the barrier that holds reads back', () async {
       final s = CommandLaneScheduler();
@@ -408,20 +430,18 @@ void main() {
       expect(s.activeReads, 0, reason: 'and the slot is not given back twice');
     });
 
-    test('a job that finishes normally is never touched by the watchdog',
-        () async {
-      // The backstop must never be the thing that ends a merely-slow command.
-      final s = CommandLaneScheduler();
-      final result = await s.run<int>(
-        ExecLane.exclusive,
-        () async {
+    test(
+      'a job that finishes normally is never touched by the watchdog',
+      () async {
+        // The backstop must never be the thing that ends a merely-slow command.
+        final s = CommandLaneScheduler();
+        final result = await s.run<int>(ExecLane.exclusive, () async {
           await Future<void>.delayed(const Duration(milliseconds: 60));
           return 1;
-        },
-        deadline: const Duration(seconds: 5),
-      );
-      expect(result, 1);
-      expect(s.activeExclusives, 0);
-    });
+        }, deadline: const Duration(seconds: 5));
+        expect(result, 1);
+        expect(s.activeExclusives, 0);
+      },
+    );
   });
 }

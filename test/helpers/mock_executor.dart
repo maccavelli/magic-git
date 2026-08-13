@@ -55,9 +55,9 @@ class MockStreamHandle extends CommandStreamHandle {
     Stream<String>? stdout,
     Stream<String>? stderr,
     Future<int?>? exitCode,
-  })  : _stdoutCtrl = StreamController<String>.broadcast(),
-        _stderrCtrl = StreamController<String>.broadcast(),
-        _exitCodeCompleter = Completer<int?>() {
+  }) : _stdoutCtrl = StreamController<String>.broadcast(),
+       _stderrCtrl = StreamController<String>.broadcast(),
+       _exitCodeCompleter = Completer<int?>() {
     if (stdout != null) {
       stdout.listen(
         _stdoutCtrl.add,
@@ -128,12 +128,10 @@ class MockExecutor extends CommandExecutor {
   final List<MockExecCall> calls = [];
   final List<MockStreamCall> streamCalls = [];
 
-  MockExecutor({
-    SSHCommandResult? defaultResult,
-    this.onExecute,
-    this.onStream,
-  }) : defaultResult = defaultResult ??
-            const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  MockExecutor({SSHCommandResult? defaultResult, this.onExecute, this.onStream})
+    : defaultResult =
+          defaultResult ??
+          const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
 
   @override
   Future<SSHCommandResult> execute({
@@ -145,6 +143,8 @@ class MockExecutor extends CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     final call = MockExecCall(
       repoPath: repoPath,
@@ -168,6 +168,8 @@ class MockExecutor extends CommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     final call = MockStreamCall(
       repoPath: repoPath,
@@ -182,7 +184,11 @@ class MockExecutor extends CommandExecutor {
   }
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes, {String? routingRepo}) async {}
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  }) async {}
 
   @override
   void configureEnvironment({

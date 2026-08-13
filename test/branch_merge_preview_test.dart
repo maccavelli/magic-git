@@ -20,10 +20,7 @@ const _tree = 'cccccccccccccccccccccccccccccccccccccccc';
 void main() {
   group('parseMergeTreeOutput', () {
     test('clean exit 0 is tree OID only', () {
-      final preview = parseMergeTreeOutput(
-        exitCode: 0,
-        stdout: '$_tree\u0000',
-      );
+      final preview = parseMergeTreeOutput(exitCode: 0, stdout: '$_tree\u0000');
       expect(preview.state, MergePreviewState.clean);
       expect(preview.treeOid, _tree);
       expect(preview.conflictPaths, isEmpty);
@@ -84,11 +81,9 @@ void main() {
           fail('merge-tree must not run for unrelated: $args');
         },
       );
-      final preview = await GitService(exec).mergeTreePreview(
-        _repo,
-        baseOid: _base,
-        branchOid: _branch,
-      );
+      final preview = await GitService(
+        exec,
+      ).mergeTreePreview(_repo, baseOid: _base, branchOid: _branch);
       expect(preview.state, MergePreviewState.unrelated);
       expect(exec.calls, hasLength(1));
     });
@@ -166,11 +161,9 @@ void main() {
         },
       );
       await expectLater(
-        GitService(exec).mergeTreePreview(
-          _repo,
-          baseOid: _base,
-          branchOid: _branch,
-        ),
+        GitService(
+          exec,
+        ).mergeTreePreview(_repo, baseOid: _base, branchOid: _branch),
         throwsA(isA<GitException>()),
       );
     });
@@ -195,11 +188,7 @@ void main() {
         },
       );
       final git = GitService(exec);
-      final a = git.mergeTreePreview(
-        _repo,
-        baseOid: _base,
-        branchOid: _branch,
-      );
+      final a = git.mergeTreePreview(_repo, baseOid: _base, branchOid: _branch);
       final b = git.mergeTreePreview(
         _repo,
         baseOid: _base,
@@ -469,6 +458,8 @@ class _GatedExecutor extends CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     final args = gitArgs.join(' ');
     if (args.contains('merge-base')) {
@@ -490,10 +481,16 @@ class _GatedExecutor extends CommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) => throw UnimplementedError();
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes, {String? routingRepo}) async {}
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  }) async {}
 
   @override
   void configureEnvironment({

@@ -24,6 +24,8 @@ class _RecordingExecutor implements CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     lastEnv = extraEnv;
     lastEnvWasPassed = true;
@@ -36,6 +38,8 @@ class _RecordingExecutor implements CommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) {
     lastEnv = extraEnv;
     lastEnvWasPassed = true;
@@ -43,7 +47,11 @@ class _RecordingExecutor implements CommandExecutor {
   }
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes, {String? routingRepo}) async {}
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  }) async {}
   @override
   void configureEnvironment({
     String? path,

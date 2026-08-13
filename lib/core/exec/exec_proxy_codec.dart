@@ -34,7 +34,9 @@ Uint8List _wireBytes(String text) => Uint8List.fromList(utf8.encode(text));
 /// only matters to hand-built test payloads). Malformed sequences are
 /// replaced rather than thrown — the executor's own decoding posture.
 String _wireText(Object? value) => switch (value) {
-  final Uint8List bytes => const Utf8Decoder(allowMalformed: true).convert(bytes),
+  final Uint8List bytes => const Utf8Decoder(
+    allowMalformed: true,
+  ).convert(bytes),
   final String text => text,
   _ => '',
 };
@@ -98,6 +100,7 @@ class ExecuteRequest {
   final int retries;
   final ExecLane lane;
   final bool compress;
+  final OperationDescriptor? operation;
 
   const ExecuteRequest({
     required this.repoPath,
@@ -108,6 +111,7 @@ class ExecuteRequest {
     required this.retries,
     required this.lane,
     required this.compress,
+    this.operation,
   });
 }
 
@@ -121,6 +125,7 @@ Map<String, Object?> encodeExecuteRequest(ExecuteRequest request) => {
   'retries': request.retries,
   'lane': request.lane.name,
   'compress': request.compress,
+  'operation': request.operation?.toWire(),
 };
 
 ExecuteRequest decodeExecuteRequest(Map<Object?, Object?> map) {
@@ -137,6 +142,7 @@ ExecuteRequest decodeExecuteRequest(Map<Object?, Object?> map) {
     retries: map['retries'] as int? ?? 0,
     lane: lane,
     compress: map['compress'] as bool? ?? false,
+    operation: OperationDescriptor.fromWire(map['operation']),
   );
 }
 
@@ -147,6 +153,7 @@ Map<String, Object?> encodeExecuteResult(SSHCommandResult result) => {
   // (see the library doc; this is what broke the pop-out's snapshot).
   'stdout': _wireBytes(result.stdout),
   'stderr': _wireBytes(result.stderr),
+  'operationId': result.operationId?.value,
 };
 
 /// Encodes a thrown error into the failure envelope. The three typed executor
@@ -183,6 +190,10 @@ SSHCommandResult decodeExecuteResponse(Map<Object?, Object?> map) {
       exitCode: map['exitCode'] as int,
       stdout: _wireText(map['stdout']),
       stderr: _wireText(map['stderr']),
+      operationId: switch (map['operationId']) {
+        final String value when value.isNotEmpty => OperationId(value),
+        _ => null,
+      },
     );
   }
   final command = map['command'] as String? ?? '';

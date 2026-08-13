@@ -47,6 +47,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     return next;
@@ -101,42 +103,46 @@ void main() {
     expect(records, isEmpty);
   });
 
-  test('a failed mutation records nothing and throws the cleaned result',
-      () async {
-    exec.next = SSHCommandResult(
-      exitCode: 1,
-      stdout: captured(
-        pre: 'a' * 40,
-        preref: 'main',
-        mutOut: 'mutation own stdout',
-        post: 'a' * 40,
-        postref: 'main',
-      ),
-      stderr: 'nothing to commit',
-    );
-    await expectLater(
-      () => git.commit('/repo', message: 'x'),
-      throwsA(
-        isA<GitException>().having(
-          (e) => e.result.stdout,
-          'stdout',
-          'mutation own stdout',
+  test(
+    'a failed mutation records nothing and throws the cleaned result',
+    () async {
+      exec.next = SSHCommandResult(
+        exitCode: 1,
+        stdout: captured(
+          pre: 'a' * 40,
+          preref: 'main',
+          mutOut: 'mutation own stdout',
+          post: 'a' * 40,
+          postref: 'main',
         ),
-      ),
-    );
-    expect(records, isEmpty);
-  });
+        stderr: 'nothing to commit',
+      );
+      await expectLater(
+        () => git.commit('/repo', message: 'x'),
+        throwsA(
+          isA<GitException>().having(
+            (e) => e.result.stdout,
+            'stdout',
+            'mutation own stdout',
+          ),
+        ),
+      );
+      expect(records, isEmpty);
+    },
+  );
 
-  test('unparseable stdout (fake/legacy output) degrades to no record',
-      () async {
-    exec.next = const SSHCommandResult(
-      exitCode: 0,
-      stdout: 'no sentinels here',
-      stderr: '',
-    );
-    await git.commit('/repo', message: 'x');
-    expect(records, isEmpty);
-  });
+  test(
+    'unparseable stdout (fake/legacy output) degrades to no record',
+    () async {
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'no sentinels here',
+        stderr: '',
+      );
+      await git.commit('/repo', message: 'x');
+      expect(records, isEmpty);
+    },
+  );
 
   test('deleteBranch maps the extra capture to the deleted tip OID', () async {
     exec.next = SSHCommandResult(
@@ -158,22 +164,24 @@ void main() {
     expect(r.deletedOid, 'd' * 40);
   });
 
-  test('deleteBranch of a ref that vanished pre-delete records nothing',
-      () async {
-    exec.next = SSHCommandResult(
-      exitCode: 0,
-      stdout: captured(
-        pre: 'a' * 40,
-        preref: 'main',
-        extras: [''], // rev-parse found no such branch
-        post: 'a' * 40,
-        postref: 'main',
-      ),
-      stderr: '',
-    );
-    await git.deleteBranch('/repo', 'old');
-    expect(records, isEmpty);
-  });
+  test(
+    'deleteBranch of a ref that vanished pre-delete records nothing',
+    () async {
+      exec.next = SSHCommandResult(
+        exitCode: 0,
+        stdout: captured(
+          pre: 'a' * 40,
+          preref: 'main',
+          extras: [''], // rev-parse found no such branch
+          post: 'a' * 40,
+          postref: 'main',
+        ),
+        stderr: '',
+      );
+      await git.deleteBranch('/repo', 'old');
+      expect(records, isEmpty);
+    },
+  );
 
   test('stashDrop maps OID and subject extras, and callers still get the '
       "mutation's own stdout", () async {
@@ -189,10 +197,12 @@ void main() {
       ),
       stderr: '',
     );
-    final result =
-        await git.stashDrop('/repo', 1, expectedOid: 'c' * 40);
-    expect(result.stdout, 'Dropped stash@{1}\n',
-        reason: 'capture fields must be stripped from the surfaced result');
+    final result = await git.stashDrop('/repo', 1, expectedOid: 'c' * 40);
+    expect(
+      result.stdout,
+      'Dropped stash@{1}\n',
+      reason: 'capture fields must be stripped from the surfaced result',
+    );
     final r = records.single;
     expect(r.kind, UndoOpKind.stashDrop);
     expect(r.deletedOid, 'c' * 40);
@@ -204,19 +214,16 @@ void main() {
       exitCode: 0,
       // pop carries two pre-mutation extras (subject, snapshot S) and one
       // postCapture (the post-pop worktree tree Pt), which lands after postref.
-      stdout: '${captured(
-        pre: 'a' * 40,
-        preref: 'main',
-        extras: ['On main: wip thing', 's' * 40],
-        mutOut: 'Dropped refs/stash@{0}\n',
-        post: 'a' * 40,
-        postref: 'main',
-      )}${'9' * 40}$sep',
+      stdout:
+          '${captured(pre: 'a' * 40, preref: 'main', extras: ['On main: wip thing', 's' * 40], mutOut: 'Dropped refs/stash@{0}\n', post: 'a' * 40, postref: 'main')}${'9' * 40}$sep',
       stderr: '',
     );
     final result = await git.stashPop('/repo', 0, expectedOid: 'c' * 40);
-    expect(result.stdout, 'Dropped refs/stash@{0}\n',
-        reason: 'capture fields must be stripped from the surfaced result');
+    expect(
+      result.stdout,
+      'Dropped refs/stash@{0}\n',
+      reason: 'capture fields must be stripped from the surfaced result',
+    );
     final r = records.single;
     expect(r.kind, UndoOpKind.stashPop);
     expect(r.deletedOid, 'c' * 40);
@@ -254,8 +261,11 @@ void main() {
       stderr: '',
     );
     await git.reset('/repo', 'abc', mode: ResetMode.mixed);
-    expect(records.single.preIndexTree, '',
-        reason: 'undo degrades to soft-only, but the record still exists');
+    expect(
+      records.single.preIndexTree,
+      '',
+      reason: 'undo degrades to soft-only, but the record still exists',
+    );
   });
 
   test('a detached-HEAD checkout capture keeps preRef empty', () async {

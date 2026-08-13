@@ -31,6 +31,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     return results.isNotEmpty ? results.removeAt(0) : next;
@@ -75,12 +77,14 @@ void main() {
       expect(issue.body, 'Steps to repro');
     });
 
-    test('ForgeIssue.fromGlabCli: a list row without description has null body',
-        () {
-      final issue = ForgeIssue.fromGlabCli(const {'iid': 5, 'title': 'x'});
-      expect(issue.body, isNull);
-      expect(issue.labels, isEmpty);
-    });
+    test(
+      'ForgeIssue.fromGlabCli: a list row without description has null body',
+      () {
+        final issue = ForgeIssue.fromGlabCli(const {'iid': 5, 'title': 'x'});
+        expect(issue.body, isNull);
+        expect(issue.labels, isEmpty);
+      },
+    );
 
     test('ForgeIssue.fromGhCli: number, {name} labels, login, body', () {
       final issue = ForgeIssue.fromGhCli(const {
@@ -156,61 +160,65 @@ void main() {
       ]);
     });
 
-    test('glab: an empty description is omitted (no interactive editor)',
-        () async {
-      await glab.createIssue(_repo, title: 'T');
-      expect(exec.calls.single, ['glab', 'issue', 'create', '--title', 'T']);
-    });
+    test(
+      'glab: an empty description is omitted (no interactive editor)',
+      () async {
+        await glab.createIssue(_repo, title: 'T');
+        expect(exec.calls.single, ['glab', 'issue', 'create', '--title', 'T']);
+      },
+    );
 
-    test('gh: full field set, --body always present, per-item label/assignee',
-        () async {
-      await gh.createIssue(
-        _repo,
-        title: 'T',
-        body: 'B',
-        labels: ['bug', 'ui'],
-        assignees: ['sam'],
-        milestone: 'v2',
-      );
-      expect(exec.calls.single, [
-        'gh',
-        'issue',
-        'create',
-        '--title',
-        'T',
-        '--body',
-        'B',
-        '--label',
-        'bug',
-        '--label',
-        'ui',
-        '--assignee',
-        'sam',
-        '--milestone',
-        'v2',
-      ]);
-    });
+    test(
+      'gh: full field set, --body always present, per-item label/assignee',
+      () async {
+        await gh.createIssue(
+          _repo,
+          title: 'T',
+          body: 'B',
+          labels: ['bug', 'ui'],
+          assignees: ['sam'],
+          milestone: 'v2',
+        );
+        expect(exec.calls.single, [
+          'gh',
+          'issue',
+          'create',
+          '--title',
+          'T',
+          '--body',
+          'B',
+          '--label',
+          'bug',
+          '--label',
+          'ui',
+          '--assignee',
+          'sam',
+          '--milestone',
+          'v2',
+        ]);
+      },
+    );
 
-    test('gh: an empty body is still passed (never drops to an editor)',
-        () async {
-      await gh.createIssue(_repo, title: 'T');
-      expect(exec.calls.single, [
-        'gh',
-        'issue',
-        'create',
-        '--title',
-        'T',
-        '--body',
-        '',
-      ]);
-    });
+    test(
+      'gh: an empty body is still passed (never drops to an editor)',
+      () async {
+        await gh.createIssue(_repo, title: 'T');
+        expect(exec.calls.single, [
+          'gh',
+          'issue',
+          'create',
+          '--title',
+          'T',
+          '--body',
+          '',
+        ]);
+      },
+    );
   });
 
   group('list issues', () {
     test('glab: collapsed fetches one page only', () async {
-      exec.results.add(
-        _ok('[{"iid":1,"title":"a"},{"iid":2,"title":"b"}]'),
-      );
+      exec.results.add(_ok('[{"iid":1,"title":"a"},{"iid":2,"title":"b"}]'));
       final issues = await glab.listIssues(_repo, perPage: 2);
       expect(issues.map((i) => i.id), [1, 2]);
       expect(exec.calls.single, [
@@ -291,30 +299,32 @@ void main() {
   });
 
   group('list milestones', () {
-    test('glab: REST passthrough with state/per_page/page, -i headers',
-        () async {
-      exec.results.add(
-        _ok('$_glabHeaders[{"id":3,"title":"v1","due_date":"2026-08-01"}]'),
-      );
-      final ms = await glab.listMilestones(_repo, perPage: 30);
-      expect(ms.single.title, 'v1');
-      expect(exec.calls.single, [
-        'glab',
-        'api',
-        'projects/:id/milestones',
-        '--method',
-        'GET',
-        '-f',
-        'state=active',
-        '-f',
-        'include_ancestors=true',
-        '-f',
-        'per_page=30',
-        '-f',
-        'page=1',
-        '-i',
-      ]);
-    });
+    test(
+      'glab: REST passthrough with state/per_page/page, -i headers',
+      () async {
+        exec.results.add(
+          _ok('$_glabHeaders[{"id":3,"title":"v1","due_date":"2026-08-01"}]'),
+        );
+        final ms = await glab.listMilestones(_repo, perPage: 30);
+        expect(ms.single.title, 'v1');
+        expect(exec.calls.single, [
+          'glab',
+          'api',
+          'projects/:id/milestones',
+          '--method',
+          'GET',
+          '-f',
+          'state=active',
+          '-f',
+          'include_ancestors=true',
+          '-f',
+          'per_page=30',
+          '-f',
+          'page=1',
+          '-i',
+        ]);
+      },
+    );
 
     test('gh: REST passthrough, collapsed fetches one page only', () async {
       exec.results.add(_ok('[{"number":2,"title":"v2"}]'));

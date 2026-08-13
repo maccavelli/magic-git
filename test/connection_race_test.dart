@@ -56,6 +56,8 @@ class _NoopExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     return const SSHCommandResult(exitCode: 0, stdout: 'true\n', stderr: '');
   }
@@ -230,7 +232,10 @@ void main() {
       controller.connect(profile: profile, repoPath: '/repo');
       manager.gates[0].complete();
       async.flushMicrotasks();
-      expect(container.read(connectionProvider).phase, ConnectionPhase.connected);
+      expect(
+        container.read(connectionProvider).phase,
+        ConnectionPhase.connected,
+      );
 
       // Transport drops → auto-reconnect engages (attempt 1) while still `lost`.
       manager.doneCompleter.complete();
@@ -355,49 +360,46 @@ void main() {
     },
   );
 
-  test(
-    'a disconnect racing the (batched) fsmonitor step drops the connect '
-    'instead of proceeding with a superseded session',
-    () async {
-      final manager = _GatedManager();
-      final git = _FsmonitorTrackingGit()..gateFirst = Completer<void>();
-      final container = ProviderContainer(
-        overrides: [
-          sshClientManagerProvider.overrideWithValue(manager),
-          gitServiceProvider.overrideWithValue(git),
-        ],
-      );
-      addTearDown(container.dispose);
-      final controller = container.read(connectionProvider.notifier);
+  test('a disconnect racing the (batched) fsmonitor step drops the connect '
+      'instead of proceeding with a superseded session', () async {
+    final manager = _GatedManager();
+    final git = _FsmonitorTrackingGit()..gateFirst = Completer<void>();
+    final container = ProviderContainer(
+      overrides: [
+        sshClientManagerProvider.overrideWithValue(manager),
+        gitServiceProvider.overrideWithValue(git),
+      ],
+    );
+    addTearDown(container.dispose);
+    final controller = container.read(connectionProvider.notifier);
 
-      final connecting = controller.connect(
-        profile: profile,
-        repoPath: '/repo',
-        fsmonitorPaths: const ['/repo/a', '/repo/b'],
-      );
-      manager.gates.first.complete(); // let the SSH connect step finish
-      await Future<void>.delayed(Duration.zero); // reach the fsmonitor step
-      expect(
-        git.calls,
-        [
-          ['/repo/a', '/repo/b'],
-        ],
-        reason: 'all opted-in repos are applied in ONE batched round trip',
-      );
+    final connecting = controller.connect(
+      profile: profile,
+      repoPath: '/repo',
+      fsmonitorPaths: const ['/repo/a', '/repo/b'],
+    );
+    manager.gates.first.complete(); // let the SSH connect step finish
+    await Future<void>.delayed(Duration.zero); // reach the fsmonitor step
+    expect(
+      git.calls,
+      [
+        ['/repo/a', '/repo/b'],
+      ],
+      reason: 'all opted-in repos are applied in ONE batched round trip',
+    );
 
-      await controller.disconnect(); // supersedes this connect attempt
+    await controller.disconnect(); // supersedes this connect attempt
 
-      git.gateFirst!.complete(); // release the stuck fsmonitor call
-      await connecting;
+    git.gateFirst!.complete(); // release the stuck fsmonitor call
+    await connecting;
 
-      expect(git.calls.length, 1, reason: 'no further fsmonitor work');
-      expect(
-        container.read(connectionProvider).phase,
-        ConnectionPhase.disconnected,
-        reason: 'the superseded connect must not clobber the disconnect',
-      );
-    },
-  );
+    expect(git.calls.length, 1, reason: 'no further fsmonitor work');
+    expect(
+      container.read(connectionProvider).phase,
+      ConnectionPhase.disconnected,
+      reason: 'the superseded connect must not clobber the disconnect',
+    );
+  });
 
   ProviderContainer containerWithGh(_GatedManager manager, _GatedGh gh) {
     final container = ProviderContainer(
@@ -411,102 +413,12 @@ void main() {
     return container;
   }
 
-  test(
-    'connect publishes `connected` without waiting for the forge login; a '
-    'failed login surfaces as a warning afterwards',
-    () async {
-      final manager = _GatedManager();
-      final gh = _GatedGh()
-        ..gate = Completer<void>()
-        ..fail = true;
-      final container = containerWithGh(manager, gh);
-      final controller = container.read(connectionProvider.notifier);
-
-      final connecting = controller.connect(
-        profile: profile,
-        repoPath: '/repo',
-        githubToken: 'tok',
-      );
-      manager.gates.first.complete();
-      await connecting;
-
-      // The session is usable while the login is still held open — this is
-      // the whole point of moving the login off the connect critical path.
-      final state = container.read(connectionProvider);
-      expect(state.phase, ConnectionPhase.connected);
-      expect(state.warning, isNull);
-      expect(gh.logins, 1, reason: 'login started in the background');
-      expect(
-        container
-            .read(outputLogProvider)
-            .lines
-            .any((l) => l.text.startsWith('connected to h in ')),
-        isTrue,
-        reason: 'per-stage timing line logged at connected',
-      );
-
-      final settled = controller.forgeAuthSettled;
-      gh.gate!.complete();
-      await settled;
-      expect(
-        container.read(connectionProvider).warning,
-        contains('GitHub token login failed'),
-        reason: 'the failure still surfaces, just without blocking connect',
-      );
-      expect(
-        container.read(connectionProvider).phase,
-        ConnectionPhase.connected,
-        reason: 'a login failure is a warning, never a failed session',
-      );
-    },
-  );
-
-  test(
-    'a disconnect during the background login releases forgeAuthSettled and '
-    'suppresses the stale warning',
-    () async {
-      final manager = _GatedManager();
-      final gh = _GatedGh()
-        ..gate = Completer<void>()
-        ..fail = true;
-      final container = containerWithGh(manager, gh);
-      final controller = container.read(connectionProvider.notifier);
-
-      // Before any connect the gate is already open — nothing to wait for.
-      await controller.forgeAuthSettled;
-
-      final connecting = controller.connect(
-        profile: profile,
-        repoPath: '/repo',
-        githubToken: 'tok',
-      );
-      manager.gates.first.complete();
-      await connecting;
-      expect(
-        container.read(connectionProvider).phase,
-        ConnectionPhase.connected,
-      );
-
-      await controller.disconnect();
-      // disconnect() must release awaiters immediately — no connect will ever
-      // complete the departing session's gate.
-      await controller.forgeAuthSettled;
-
-      gh.gate!.complete(); // the stale login settles after supersession
-      await Future<void>.delayed(Duration.zero);
-      final state = container.read(connectionProvider);
-      expect(state.phase, ConnectionPhase.disconnected);
-      expect(
-        state.warning,
-        isNull,
-        reason: 'a superseded attempt must not write onto the new state',
-      );
-    },
-  );
-
-  test('forge data providers hold their fetch until the login settles', () async {
+  test('connect publishes `connected` without waiting for the forge login; a '
+      'failed login surfaces as a warning afterwards', () async {
     final manager = _GatedManager();
-    final gh = _GatedGh()..gate = Completer<void>();
+    final gh = _GatedGh()
+      ..gate = Completer<void>()
+      ..fail = true;
     final container = containerWithGh(manager, gh);
     final controller = container.read(connectionProvider.notifier);
 
@@ -518,18 +430,102 @@ void main() {
     manager.gates.first.complete();
     await connecting;
 
-    // A panel visible right at connect starts its fetch immediately…
-    final prs = container.read(pullRequestsProvider('/repo').future);
-    await Future<void>.delayed(Duration.zero);
+    // The session is usable while the login is still held open — this is
+    // the whole point of moving the login off the connect critical path.
+    final state = container.read(connectionProvider);
+    expect(state.phase, ConnectionPhase.connected);
+    expect(state.warning, isNull);
+    expect(gh.logins, 1, reason: 'login started in the background');
     expect(
-      gh.prCalls,
-      0,
-      reason: 'the fetch must wait for the background login, not race it',
+      container
+          .read(outputLogProvider)
+          .lines
+          .any((l) => l.text.startsWith('connected to h in ')),
+      isTrue,
+      reason: 'per-stage timing line logged at connected',
     );
 
-    // …and proceeds the moment the login lands.
+    final settled = controller.forgeAuthSettled;
     gh.gate!.complete();
-    expect(await prs, isEmpty);
-    expect(gh.prCalls, 1);
+    await settled;
+    expect(
+      container.read(connectionProvider).warning,
+      contains('GitHub token login failed'),
+      reason: 'the failure still surfaces, just without blocking connect',
+    );
+    expect(
+      container.read(connectionProvider).phase,
+      ConnectionPhase.connected,
+      reason: 'a login failure is a warning, never a failed session',
+    );
   });
+
+  test('a disconnect during the background login releases forgeAuthSettled and '
+      'suppresses the stale warning', () async {
+    final manager = _GatedManager();
+    final gh = _GatedGh()
+      ..gate = Completer<void>()
+      ..fail = true;
+    final container = containerWithGh(manager, gh);
+    final controller = container.read(connectionProvider.notifier);
+
+    // Before any connect the gate is already open — nothing to wait for.
+    await controller.forgeAuthSettled;
+
+    final connecting = controller.connect(
+      profile: profile,
+      repoPath: '/repo',
+      githubToken: 'tok',
+    );
+    manager.gates.first.complete();
+    await connecting;
+    expect(container.read(connectionProvider).phase, ConnectionPhase.connected);
+
+    await controller.disconnect();
+    // disconnect() must release awaiters immediately — no connect will ever
+    // complete the departing session's gate.
+    await controller.forgeAuthSettled;
+
+    gh.gate!.complete(); // the stale login settles after supersession
+    await Future<void>.delayed(Duration.zero);
+    final state = container.read(connectionProvider);
+    expect(state.phase, ConnectionPhase.disconnected);
+    expect(
+      state.warning,
+      isNull,
+      reason: 'a superseded attempt must not write onto the new state',
+    );
+  });
+
+  test(
+    'forge data providers hold their fetch until the login settles',
+    () async {
+      final manager = _GatedManager();
+      final gh = _GatedGh()..gate = Completer<void>();
+      final container = containerWithGh(manager, gh);
+      final controller = container.read(connectionProvider.notifier);
+
+      final connecting = controller.connect(
+        profile: profile,
+        repoPath: '/repo',
+        githubToken: 'tok',
+      );
+      manager.gates.first.complete();
+      await connecting;
+
+      // A panel visible right at connect starts its fetch immediately…
+      final prs = container.read(pullRequestsProvider('/repo').future);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        gh.prCalls,
+        0,
+        reason: 'the fetch must wait for the background login, not race it',
+      );
+
+      // …and proceeds the moment the login lands.
+      gh.gate!.complete();
+      expect(await prs, isEmpty);
+      expect(gh.prCalls, 1);
+    },
+  );
 }

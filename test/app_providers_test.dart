@@ -24,6 +24,8 @@ class _RecordingLocalExecutor extends LocalCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     executeCalled = true;
     return const SSHCommandResult(
@@ -51,16 +53,13 @@ class _RecordingLocalExecutor extends LocalCommandExecutor {
 
 void main() {
   group('LocalEnvironmentGuard', () {
-    test(
-        'ensure() runs a probe that configures the executor and calls '
+    test('ensure() runs a probe that configures the executor and calls '
         'setForgeTokenNeutralization', () async {
       final fakeExecutor = _RecordingLocalExecutor();
       final container = ProviderContainer(
         overrides: [
           localExecutorProvider.overrideWithValue(fakeExecutor),
-          appSettingsProvider.overrideWith(
-            () => AppSettingsNotifier(),
-          ),
+          appSettingsProvider.overrideWith(() => AppSettingsNotifier()),
         ],
       );
       addTearDown(container.dispose);
@@ -80,34 +79,34 @@ void main() {
       expect(fakeExecutor.neutralizeCalls, hasLength(1));
     });
 
-    test('ensure() is idempotent when the executor is already configured',
-        () async {
-      final fakeExecutor = _RecordingLocalExecutor();
-      final container = ProviderContainer(
-        overrides: [
-          localExecutorProvider.overrideWithValue(fakeExecutor),
-          appSettingsProvider.overrideWith(
-            () => AppSettingsNotifier(),
-          ),
-        ],
-      );
-      addTearDown(container.dispose);
+    test(
+      'ensure() is idempotent when the executor is already configured',
+      () async {
+        final fakeExecutor = _RecordingLocalExecutor();
+        final container = ProviderContainer(
+          overrides: [
+            localExecutorProvider.overrideWithValue(fakeExecutor),
+            appSettingsProvider.overrideWith(() => AppSettingsNotifier()),
+          ],
+        );
+        addTearDown(container.dispose);
 
-      final guard = container.read(localEnvironmentProvider);
-      await guard.ensure();
-      expect(fakeExecutor.neutralizeCalls, hasLength(1));
+        final guard = container.read(localEnvironmentProvider);
+        await guard.ensure();
+        expect(fakeExecutor.neutralizeCalls, hasLength(1));
 
-      final executeCount = fakeExecutor.executeCalled;
-      final configCount = fakeExecutor.configureEnvironmentCalled;
-      final neutralizeCount = fakeExecutor.neutralizeCalls.length;
+        final executeCount = fakeExecutor.executeCalled;
+        final configCount = fakeExecutor.configureEnvironmentCalled;
+        final neutralizeCount = fakeExecutor.neutralizeCalls.length;
 
-      await guard.ensure();
+        await guard.ensure();
 
-      // Second call must not re-probe.
-      expect(fakeExecutor.executeCalled, executeCount);
-      expect(fakeExecutor.configureEnvironmentCalled, configCount);
-      expect(fakeExecutor.neutralizeCalls, hasLength(neutralizeCount));
-    });
+        // Second call must not re-probe.
+        expect(fakeExecutor.executeCalled, executeCount);
+        expect(fakeExecutor.configureEnvironmentCalled, configCount);
+        expect(fakeExecutor.neutralizeCalls, hasLength(neutralizeCount));
+      },
+    );
   });
 
   group('WindowBoundsStore', () {
@@ -183,14 +182,22 @@ void main() {
     test('mark records the repo path', () {
       final tracker = OwnMutationTracker();
       tracker.mark('path/a');
-      expect(tracker.isRecent('path/a', DateTime.now(), const Duration(seconds: 5)),
-          isTrue);
+      expect(
+        tracker.isRecent('path/a', DateTime.now(), const Duration(seconds: 5)),
+        isTrue,
+      );
     });
 
     test('isRecent returns false for unknown repo', () {
       final tracker = OwnMutationTracker();
-      expect(tracker.isRecent('never-marked', DateTime.now(), const Duration(seconds: 5)),
-          isFalse);
+      expect(
+        tracker.isRecent(
+          'never-marked',
+          DateTime.now(),
+          const Duration(seconds: 5),
+        ),
+        isFalse,
+      );
     });
 
     test('isRecent returns false when outside the time window', () {
@@ -198,8 +205,9 @@ void main() {
       tracker.mark('path/b');
       final later = DateTime.now().add(const Duration(milliseconds: 2));
       expect(
-          tracker.isRecent('path/b', later, const Duration(milliseconds: 1)),
-          isFalse);
+        tracker.isRecent('path/b', later, const Duration(milliseconds: 1)),
+        isFalse,
+      );
     });
 
     test('isRecent respects the within duration', () {
@@ -207,9 +215,13 @@ void main() {
       tracker.mark('path/c');
       final slightlyLater = DateTime.now().add(const Duration(milliseconds: 1));
       expect(
-          tracker.isRecent(
-              'path/c', slightlyLater, const Duration(milliseconds: 5)),
-          isTrue);
+        tracker.isRecent(
+          'path/c',
+          slightlyLater,
+          const Duration(milliseconds: 5),
+        ),
+        isTrue,
+      );
     });
 
     test('clear removes all entries', () {
@@ -218,11 +230,13 @@ void main() {
       tracker.mark('path/e');
       tracker.clear();
       expect(
-          tracker.isRecent('path/d', DateTime.now(), const Duration(seconds: 5)),
-          isFalse);
+        tracker.isRecent('path/d', DateTime.now(), const Duration(seconds: 5)),
+        isFalse,
+      );
       expect(
-          tracker.isRecent('path/e', DateTime.now(), const Duration(seconds: 5)),
-          isFalse);
+        tracker.isRecent('path/e', DateTime.now(), const Duration(seconds: 5)),
+        isFalse,
+      );
     });
   });
 }

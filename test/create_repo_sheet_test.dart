@@ -29,7 +29,11 @@ class _FakeExecutor extends SSHCommandExecutor {
   _FakeExecutor() : super(SSHClientManager());
 
   @override
-  Future<void> uploadBytes(String remotePath, Uint8List bytes, {String? routingRepo}) async {
+  Future<void> uploadBytes(
+    String remotePath,
+    Uint8List bytes, {
+    String? routingRepo,
+  }) async {
     uploads[remotePath] = utf8.decode(bytes);
   }
 
@@ -43,6 +47,8 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     return results.isNotEmpty
@@ -164,7 +170,10 @@ void main() {
 
     await tester.enterText(_nameField(), 'new-proj');
     await tester.pumpAndSettle();
-    expect(tester.widget<AppPushButton>(_continueButton()).onPressed, isNotNull);
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNotNull,
+    );
 
     await tester.enterText(_nameField(), '../evil');
     await tester.pumpAndSettle();
@@ -213,8 +222,11 @@ void main() {
       Finder hostField() => find.byWidgetPredicate(
         (w) => w is MacosTextField && w.controller?.text != '',
       );
-      expect(find.text('gitlab.lkqdev.com'), findsOneWidget,
-          reason: 'stock default replaced by the CLI sign-in host');
+      expect(
+        find.text('gitlab.lkqdev.com'),
+        findsOneWidget,
+        reason: 'stock default replaced by the CLI sign-in host',
+      );
       expect(hostField(), findsWidgets);
 
       // A user-typed host survives switching forges and re-resolution.
@@ -227,8 +239,11 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('gitlab.other.example'), findsOneWidget);
-      expect(find.text('gitlab.lkqdev.com'), findsNothing,
-          reason: 'typed host was not overwritten by the prefill');
+      expect(
+        find.text('gitlab.lkqdev.com'),
+        findsNothing,
+        reason: 'typed host was not overwritten by the prefill',
+      );
     },
   );
 
@@ -354,8 +369,11 @@ void main() {
           (w) => w is MacosTextField && w.placeholder == 'main',
         ),
       );
-      expect(branchField.enabled, isNot(isFalse),
-          reason: 'init-first: the user branch is authoritative');
+      expect(
+        branchField.enabled,
+        isNot(isFalse),
+        reason: 'init-first: the user branch is authoritative',
+      );
       await _next(tester); // Details → Review
 
       exec.results.add(_ok('absent')); // probe
@@ -440,8 +458,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(
         find.byWidgetPredicate(
-          (w) =>
-              w is MacosTooltip && w.message.startsWith('Add a README'),
+          (w) => w is MacosTooltip && w.message.startsWith('Add a README'),
         ),
       );
       await tester.pumpAndSettle();
@@ -508,14 +525,15 @@ void main() {
         contains('git remote get-url origin'),
         reason: 'ensure always runs even after create failure',
       );
-      expect(stub.repoPathsSet, ['/srv/new-proj'],
-          reason: 'local repo registered despite forge failure');
-      expect(find.byType(CreateRepositorySheet), findsOneWidget,
-          reason: 'stays open to show the warning');
+      expect(stub.repoPathsSet, [
+        '/srv/new-proj',
+      ], reason: 'local repo registered despite forge failure');
       expect(
-        find.textContaining('publishing to GitLab failed'),
-        findsWidgets,
+        find.byType(CreateRepositorySheet),
+        findsOneWidget,
+        reason: 'stays open to show the warning',
       );
+      expect(find.textContaining('publishing to GitLab failed'), findsWidgets);
 
       await tester.tap(find.widgetWithText(AppPushButton, 'Close'));
       await tester.pumpAndSettle();
@@ -535,8 +553,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(
         find.byWidgetPredicate(
-          (w) =>
-              w is MacosTooltip && w.message.startsWith('Add a README'),
+          (w) => w is MacosTooltip && w.message.startsWith('Add a README'),
         ),
       );
       await tester.pumpAndSettle();
@@ -615,71 +632,71 @@ void main() {
     },
   );
 
-  testWidgets(
-    'partial forge create (non-zero exit) still wires origin when the '
-    'project exists and is discoverable',
-    (tester) async {
-      final (stub, exec, _) = await _pumpConnected(tester);
-      await _next(tester); // Source
-      await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
-      await tester.pumpAndSettle();
-      await _next(tester); // Remote → Details
-      await tester.enterText(_nameField(), 'new-proj');
-      await tester.pumpAndSettle();
-      await tester.tap(
-        find.byWidgetPredicate(
-          (w) => w is MacosTooltip && w.message.startsWith('Add a README'),
-        ),
-      );
-      await tester.pumpAndSettle();
-      await _next(tester); // Details → Review
+  testWidgets('partial forge create (non-zero exit) still wires origin when the '
+      'project exists and is discoverable', (tester) async {
+    final (stub, exec, _) = await _pumpConnected(tester);
+    await _next(tester); // Source
+    await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
+    await tester.pumpAndSettle();
+    await _next(tester); // Remote → Details
+    await tester.enterText(_nameField(), 'new-proj');
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) => w is MacosTooltip && w.message.startsWith('Add a README'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _next(tester); // Details → Review
 
-      exec.results.add(_ok('absent')); // probe
-      exec.results.add(_ok('')); // git init
-      exec.results.add(_ok('')); // git add
-      exec.results.add(_ok('')); // git commit
-      // Create exits non-zero after the API project already exists (classic
-      // nested-git failure under --source path — or any post-create error).
-      exec.results.add(
-        const SSHCommandResult(
-          exitCode: 1,
-          stdout: '',
-          stderr: 'failed to add remote: git not found',
-        ),
-      );
-      exec.results.add(noOrigin); // ensure: missing
-      exec.results.add(_ok('https')); // git_protocol (probed first)
-      exec.results.add(
-        _ok(
-          '{"url":"https://github.com/me/new-proj","sshUrl":'
-          '"git@github.com:me/new-proj.git"}',
-        ),
-      ); // view still finds the project
-      exec.results.add(_ok('')); // remote add
-      exec.results.add(_ok('')); // push
-      // verify after ensure (downgrade create failure) + step-4 verify
-      exec.results.add(_ok('https://github.com/me/new-proj.git\n'));
-      exec.results.add(_ok('https://github.com/me/new-proj.git\n'));
-      await tester.tap(_createButton());
-      await tester.pumpAndSettle();
+    exec.results.add(_ok('absent')); // probe
+    exec.results.add(_ok('')); // git init
+    exec.results.add(_ok('')); // git add
+    exec.results.add(_ok('')); // git commit
+    // Create exits non-zero after the API project already exists (classic
+    // nested-git failure under --source path — or any post-create error).
+    exec.results.add(
+      const SSHCommandResult(
+        exitCode: 1,
+        stdout: '',
+        stderr: 'failed to add remote: git not found',
+      ),
+    );
+    exec.results.add(noOrigin); // ensure: missing
+    exec.results.add(_ok('https')); // git_protocol (probed first)
+    exec.results.add(
+      _ok(
+        '{"url":"https://github.com/me/new-proj","sshUrl":'
+        '"git@github.com:me/new-proj.git"}',
+      ),
+    ); // view still finds the project
+    exec.results.add(_ok('')); // remote add
+    exec.results.add(_ok('')); // push
+    // verify after ensure (downgrade create failure) + step-4 verify
+    exec.results.add(_ok('https://github.com/me/new-proj.git\n'));
+    exec.results.add(_ok('https://github.com/me/new-proj.git\n'));
+    await tester.tap(_createButton());
+    await tester.pumpAndSettle();
 
-      expect(
-        exec.calls.map((c) => c.join(' ')),
-        containsAllInOrder([
-          'gh repo create new-proj --private',
-          'git remote get-url origin',
-          'gh repo view new-proj --json url,sshUrl',
-          'git remote add origin https://github.com/me/new-proj.git',
-          'git -c credential.helper= -c credential.helper=!gh auth git-credential '
-              'push -u origin main',
-        ]),
-        reason: 'ensure runs after failed create; origin still wired',
-      );
-      expect(stub.repoPathsSet, ['/srv/new-proj']);
-      expect(find.byType(CreateRepositorySheet), findsNothing,
-          reason: 'origin ok → create failure downgraded, sheet pops');
-    },
-  );
+    expect(
+      exec.calls.map((c) => c.join(' ')),
+      containsAllInOrder([
+        'gh repo create new-proj --private',
+        'git remote get-url origin',
+        'gh repo view new-proj --json url,sshUrl',
+        'git remote add origin https://github.com/me/new-proj.git',
+        'git -c credential.helper= -c credential.helper=!gh auth git-credential '
+            'push -u origin main',
+      ]),
+      reason: 'ensure runs after failed create; origin still wired',
+    );
+    expect(stub.repoPathsSet, ['/srv/new-proj']);
+    expect(
+      find.byType(CreateRepositorySheet),
+      findsNothing,
+      reason: 'origin ok → create failure downgraded, sheet pops',
+    );
+  });
 
   testWidgets(
     'gh create succeeds but clone URL is unresolvable: the repo is kept '
@@ -704,14 +721,15 @@ void main() {
       );
       await _pumpCreate(tester);
 
-      expect(stub.repoPathsSet, ['/srv/new-proj'],
-          reason: 'repo is kept and registered');
-      expect(find.byType(CreateRepositorySheet), findsOneWidget,
-          reason: 'stays open to show the warning');
+      expect(stub.repoPathsSet, [
+        '/srv/new-proj',
+      ], reason: 'repo is kept and registered');
       expect(
-        find.textContaining('clone URL could not be'),
-        findsWidgets,
+        find.byType(CreateRepositorySheet),
+        findsOneWidget,
+        reason: 'stays open to show the warning',
       );
+      expect(find.textContaining('clone URL could not be'), findsWidgets);
     },
   );
 
@@ -732,7 +750,8 @@ void main() {
   const notARepo = SSHCommandResult(
     exitCode: 128,
     stdout: '',
-    stderr: 'fatal: not a git repository (or any of the parent '
+    stderr:
+        'fatal: not a git repository (or any of the parent '
         'directories): .git',
   );
   const unbornHead = SSHCommandResult(exitCode: 1, stdout: '', stderr: '');
@@ -768,51 +787,49 @@ void main() {
           'git remote add origin https://github.com/me/app-repo.git',
         ]),
       );
-      expect(stub.repoPathsSet, ['/srv/app'],
-          reason: 'the folder itself becomes the workspace');
+      expect(stub.repoPathsSet, [
+        '/srv/app',
+      ], reason: 'the folder itself becomes the workspace');
       expect(find.byType(CreateRepositorySheet), findsNothing);
     },
   );
 
-  testWidgets(
-    'existing repo with history: init skipped, origin wired, commits '
-    'pushed with git push -u',
-    (tester) async {
-      final (stub, exec, _) = await _pumpConnected(tester);
-      await toExistingFolder(tester, '/srv/app');
-      await _next(tester); // Source
-      await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
-      await tester.pumpAndSettle();
-      await _next(tester); // Remote → Details
-      await tester.enterText(_nameField(), 'app-repo');
-      await tester.pumpAndSettle();
-      await _next(tester); // Details → Review
+  testWidgets('existing repo with history: init skipped, origin wired, commits '
+      'pushed with git push -u', (tester) async {
+    final (stub, exec, _) = await _pumpConnected(tester);
+    await toExistingFolder(tester, '/srv/app');
+    await _next(tester); // Source
+    await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
+    await tester.pumpAndSettle();
+    await _next(tester); // Remote → Details
+    await tester.enterText(_nameField(), 'app-repo');
+    await tester.pumpAndSettle();
+    await _next(tester); // Details → Review
 
-      exec.results.add(_ok('/srv/app\n')); // classify: repo root
-      exec.results.add(noOrigin); // origin guard: nothing wired yet
-      exec.results.add(_ok('abc123\n')); // HEAD resolves — history exists
-      queueGithubOriginWire(exec, name: 'app-repo', push: true);
-      await tester.tap(_createButton());
-      await tester.pumpAndSettle();
+    exec.results.add(_ok('/srv/app\n')); // classify: repo root
+    exec.results.add(noOrigin); // origin guard: nothing wired yet
+    exec.results.add(_ok('abc123\n')); // HEAD resolves — history exists
+    queueGithubOriginWire(exec, name: 'app-repo', push: true);
+    await tester.tap(_createButton());
+    await tester.pumpAndSettle();
 
-      expect(
-        exec.calls.map((c) => c.join(' ')),
-        containsAllInOrder([
-          'gh repo create app-repo --private',
-          'git remote add origin https://github.com/me/app-repo.git',
-          'git -c credential.helper= -c credential.helper=!gh auth git-credential '
-              'push -u origin HEAD',
-        ]),
-      );
-      expect(
-        exec.calls.map((c) => c.take(2).join(' ')),
-        isNot(contains('git init')),
-        reason: 'already a repository — never re-inited',
-      );
-      expect(stub.repoPathsSet, ['/srv/app']);
-      expect(find.byType(CreateRepositorySheet), findsNothing);
-    },
-  );
+    expect(
+      exec.calls.map((c) => c.join(' ')),
+      containsAllInOrder([
+        'gh repo create app-repo --private',
+        'git remote add origin https://github.com/me/app-repo.git',
+        'git -c credential.helper= -c credential.helper=!gh auth git-credential '
+            'push -u origin HEAD',
+      ]),
+    );
+    expect(
+      exec.calls.map((c) => c.take(2).join(' ')),
+      isNot(contains('git init')),
+      reason: 'already a repository — never re-inited',
+    );
+    expect(stub.repoPathsSet, ['/srv/app']);
+    expect(find.byType(CreateRepositorySheet), findsNothing);
+  });
 
   testWidgets(
     'an existing origin blocks the publish until "Replace existing origin" '
@@ -878,9 +895,7 @@ void main() {
     },
   );
 
-  testWidgets('a folder nested inside another repo is refused', (
-    tester,
-  ) async {
+  testWidgets('a folder nested inside another repo is refused', (tester) async {
     final (stub, exec, _) = await _pumpConnected(tester);
     await toExistingFolder(tester, '/srv/app');
     await _next(tester); // Source

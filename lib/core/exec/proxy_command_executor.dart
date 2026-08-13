@@ -110,6 +110,8 @@ class ProxyCommandExecutor implements CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     final request = ExecuteRequest(
       repoPath: repoPath,
@@ -120,6 +122,7 @@ class ProxyCommandExecutor implements CommandExecutor {
       retries: retries,
       lane: lane,
       compress: compress,
+      operation: operation,
     );
 
     final abandoned = Completer<Never>();
@@ -223,6 +226,8 @@ class ProxyCommandExecutor implements CommandExecutor {
     required List<String> gitArgs,
     Map<String, String>? extraEnv,
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) => throw UnsupportedError(
     'executeStream is not proxied to a secondary window',
   );
@@ -288,7 +293,10 @@ class ProxyCommandExecutor implements CommandExecutor {
   /// controller in this isolate never runs (the calls simply must not throw
   /// if something incidental invokes them).
   @override
-  void configureEnvironment({String? path, Map<String, String> binaries = const {}}) {}
+  void configureEnvironment({
+    String? path,
+    Map<String, String> binaries = const {},
+  }) {}
 
   /// Null: this proxy holds no resolved environment (it lives in a pop-out
   /// window and relays exec calls to the main isolate, whose real executor

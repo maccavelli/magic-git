@@ -40,6 +40,8 @@ class _ArgvCapture extends LocalCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
@@ -48,8 +50,10 @@ class _ArgvCapture extends LocalCommandExecutor {
 
 void main() {
   final sshProbe = Process.runSync('ssh', [
-    '-o', 'BatchMode=yes',
-    '-o', 'ConnectTimeout=3',
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'ConnectTimeout=3',
     'localhost',
     'true',
   ]);
@@ -97,12 +101,9 @@ void main() {
     String? pathQuery,
   }) async {
     final capture = _ArgvCapture();
-    await GitService(capture).log(
-      repo,
-      grep: grep,
-      author: author,
-      pathQuery: pathQuery,
-    );
+    await GitService(
+      capture,
+    ).log(repo, grep: grep, author: author, pathQuery: pathQuery);
     expect(capture.calls, hasLength(1));
     return capture.calls.single;
   }
@@ -112,6 +113,8 @@ void main() {
   Future<List<GitCommit>> overSsh(
     List<String> argv, {
     bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
   }) async {
     final script = CommandFormatter.format(
       repoPath: repo,
@@ -123,11 +126,10 @@ void main() {
       expect(result.exitCode, 0, reason: 'stderr: ${result.stderr}');
       return parseGitLog(result.stdout as String);
     }
-    final result = await Process.run(
-      'ssh',
-      ['localhost', script],
-      stdoutEncoding: null,
-    );
+    final result = await Process.run('ssh', [
+      'localhost',
+      script,
+    ], stdoutEncoding: null);
     expect(result.exitCode, 0, reason: 'stderr: ${result.stderr}');
     final inflated = String.fromCharCodes(
       gzip.decode(result.stdout as List<int>),
@@ -137,43 +139,53 @@ void main() {
     return parseGitLog(body);
   }
 
-  List<String> subjects(List<GitCommit> commits) =>
-      [for (final c in commits) c.subject];
+  List<String> subjects(List<GitCommit> commits) => [
+    for (final c in commits) c.subject,
+  ];
 
-  group('search argv survives ShellEscaper + a real login shell', () {
-    test('ERE-escaped metacharacters ([WIP])', () async {
-      final hits = await overSsh(await argvFor(grep: '[WIP]'));
-      expect(subjects(hits), ['fix [WIP] patch collapse']);
-    });
+  group(
+    'search argv survives ShellEscaper + a real login shell',
+    () {
+      test('ERE-escaped metacharacters ([WIP])', () async {
+        final hits = await overSsh(await argvFor(grep: '[WIP]'));
+        expect(subjects(hits), ['fix [WIP] patch collapse']);
+      });
 
-    test('multi-word AND with --all-match', () async {
-      final hits = await overSsh(await argvFor(grep: 'collapse patch'));
-      expect(subjects(hits), ['fix [WIP] patch collapse']);
-    });
+      test('multi-word AND with --all-match', () async {
+        final hits = await overSsh(await argvFor(grep: 'collapse patch'));
+        expect(subjects(hits), ['fix [WIP] patch collapse']);
+      });
 
-    test("an author term with an apostrophe (O'Brien) — the single-quote "
-        'escaping worst case', () async {
-      final hits = await overSsh(await argvFor(grep: "O'Brien's"));
-      expect(subjects(hits), ["docs: O'Brien's user guide"]);
-    });
+      test("an author term with an apostrophe (O'Brien) — the single-quote "
+          'escaping worst case', () async {
+        final hits = await overSsh(await argvFor(grep: "O'Brien's"));
+        expect(subjects(hits), ["docs: O'Brien's user guide"]);
+      });
 
-    test('glob pathspecs (:(icase,glob)**/*…*)', () async {
-      final hits = await overSsh(await argvFor(pathQuery: 'B.DART'));
-      expect(subjects(hits), ['fix [WIP] patch collapse']);
-    });
+      test('glob pathspecs (:(icase,glob)**/*…*)', () async {
+        final hits = await overSsh(await argvFor(pathQuery: 'B.DART'));
+        expect(subjects(hits), ['fix [WIP] patch collapse']);
+      });
 
-    test('the \\x1f/\\x1e pretty-format separators survive the wire',
+      test(
+        'the \\x1f/\\x1e pretty-format separators survive the wire',
         () async {
-      final hits = await overSsh(await argvFor());
-      expect(hits, hasLength(3));
-      expect(hits.first.authorName, 'Mac Smith');
-      expect(hits.first.authorEmail, 'mac@example.com');
-      expect(hits.first.parents, hasLength(1));
-    });
+          final hits = await overSsh(await argvFor());
+          expect(hits, hasLength(3));
+          expect(hits.first.authorName, 'Mac Smith');
+          expect(hits.first.authorEmail, 'mac@example.com');
+          expect(hits.first.parents, hasLength(1));
+        },
+      );
 
-    test('the gzip pipe + exit trailer (compress path)', () async {
-      final hits = await overSsh(await argvFor(grep: '[WIP]'), compress: true);
-      expect(subjects(hits), ['fix [WIP] patch collapse']);
-    });
-  }, skip: sshAvailable ? false : 'ssh localhost unavailable (Remote Login off)');
+      test('the gzip pipe + exit trailer (compress path)', () async {
+        final hits = await overSsh(
+          await argvFor(grep: '[WIP]'),
+          compress: true,
+        );
+        expect(subjects(hits), ['fix [WIP] patch collapse']);
+      });
+    },
+    skip: sshAvailable ? false : 'ssh localhost unavailable (Remote Login off)',
+  );
 }
