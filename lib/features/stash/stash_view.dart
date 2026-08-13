@@ -5,21 +5,28 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/settings/pane_layout.dart';
+import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/theme/app_theme.dart';
 import '../common/actions.dart';
-import '../common/async_views.dart';
+import '../common/adaptive_workspace_layout.dart';
 import '../common/busy_action.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
+import '../common/field_styles.dart';
 import '../common/label_chip.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/ref_name_validation.dart';
-import '../common/resizable_master_detail.dart';
+import '../common/repository_context.dart';
+import '../common/repository_context_bar.dart';
+import '../common/repository_workspace_scaffold.dart';
 import '../common/tool_icon_button.dart';
+import '../common/workspace_focus.dart';
+import '../common/workspace_navigation.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 
@@ -45,8 +52,7 @@ class StashView extends ConsumerStatefulWidget {
   ConsumerState<StashView> createState() => _StashViewState();
 }
 
-class _StashViewState extends ConsumerState<StashView>
-    with BusyActionState {
+class _StashViewState extends ConsumerState<StashView> with BusyActionState {
   /// The selected stash's OID — its STABLE identity. Selecting by position
   /// (`stash@{n}`) broke whenever the list shifted (a drop, a pop, an
   /// auto-stash from a branch switch): the highlight and preview silently
@@ -60,6 +66,7 @@ class _StashViewState extends ConsumerState<StashView>
   // then ↑/↓ walk _selected through the stashes (⌥⌘A/⌥⌘P/⌘⌫ then act on it).
   final FocusNode _stashFocus = FocusNode(debugLabel: 'stash-list');
   final ScrollController _stashScroll = ScrollController();
+  final TextEditingController _filterController = TextEditingController();
   final Map<String, GlobalKey> _stashRowKeys = {};
 
   /// Per-card right-click menu — the discoverable home for the less-common
@@ -74,6 +81,7 @@ class _StashViewState extends ConsumerState<StashView>
     _cardMenu.dispose();
     _stashFocus.dispose();
     _stashScroll.dispose();
+    _filterController.dispose();
     super.dispose();
   }
 
@@ -81,7 +89,9 @@ class _StashViewState extends ConsumerState<StashView>
       _stashRowKeys.putIfAbsent(oid, GlobalKey.new);
 
   void _moveStashSelection(int dir) {
-    final stashes = ref.read(stashesProvider(repoPath)).value ?? const [];
+    final stashes = _visibleStashes(
+      ref.read(stashesProvider(repoPath)).value ?? const [],
+    );
     if (stashes.isEmpty) return;
     var current = -1;
     if (_selected != null) {
@@ -95,6 +105,19 @@ class _StashViewState extends ConsumerState<StashView>
     final next = stepSelection(current, dir, stashes.length);
     setState(() => _selected = stashes[next].oid);
     ensureRowVisible(_stashRowKeyFor(stashes[next].oid));
+  }
+
+  List<GitStash> _visibleStashes(List<GitStash> stashes) {
+    final query = _filterController.text.trim().toLowerCase();
+    if (query.isEmpty) return stashes;
+    return [
+      for (final stash in stashes)
+        if (stash.subject.toLowerCase().contains(query) ||
+            stash.branch.toLowerCase().contains(query) ||
+            stash.oid.toLowerCase().contains(query) ||
+            stash.ref.toLowerCase().contains(query))
+          stash,
+    ];
   }
 
   KeyEventResult _onStashKey(FocusNode node, KeyEvent event) {
@@ -138,6 +161,7 @@ class _StashViewState extends ConsumerState<StashView>
       // (a slow GlobalKey leak) and the new repo's list opens scrolled to
       // the previous one's position. Mirrors BranchesView.didUpdateWidget.
       _stashRowKeys.clear();
+      _filterController.clear();
       if (_stashScroll.hasClients) _stashScroll.jumpTo(0);
     }
   }
@@ -223,6 +247,17 @@ class _StashViewState extends ConsumerState<StashView>
     final git = ref.read(gitServiceProvider);
     final count = stashesAsync.value?.length ?? 0;
     final keymap = ref.watch(keymapProvider);
+    final connection = ref.watch(connectionProvider);
+    final refs = refsProvider(repoPath);
+    final landedRefs = ref.exists(refs)
+        ? ref.read(refs).value ?? const <GitRef>[]
+        : const <GitRef>[];
+    final head = landedRefs.where((item) => item.isHead).firstOrNull;
+    final stashListWidth = ref.watch(
+      appSettingsProvider.select(
+        (settings) => settings.paneWidth(PaneId.stashList),
+      ),
+    );
 
     // The selected stash (if any) in the current list — apply/pop/drop act on it.
     GitStash? selEntry;
@@ -245,86 +280,209 @@ class _StashViewState extends ConsumerState<StashView>
           : () => _dropStash(context, git, selEntry!),
     };
     final live = widget.isActive && !busy;
+    final supplementKey = connection.sessionEpoch > 0
+        ? RepositoryContextSupplementKey(
+            repositoryIdentity: repositoryContextIdentityKey(
+              backend: connection.backend.name,
+              connectionId: connection.connectionId,
+              repositoryPath: repoPath,
+            ),
+            sessionEpoch: connection.sessionEpoch,
+          )
+        : null;
+    if (supplementKey != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ref
+            .read(repositoryContextSupplementCacheProvider.notifier)
+            .publish(
+              supplementKey,
+              RepositoryContextSupplement(
+                selectionLabel: selEntry == null
+                    ? '$count stashes'
+                    : 'Stash: ${selEntry.ref} · ${selEntry.subject}',
+              ),
+            );
+        if (selEntry != null) {
+          ref
+              .read(
+                workspaceNavigationProvider(
+                  WorkspaceSessionKey(repoPath, connection.sessionEpoch),
+                ).notifier,
+              )
+              .visit(
+                WorkspaceFocus(
+                  repositoryPath: repoPath,
+                  sessionEpoch: connection.sessionEpoch,
+                  kind: WorkspaceFocusKind.stash,
+                  identity: selEntry.oid,
+                  panelIndex: 3,
+                ),
+              );
+        }
+      });
+    }
+    final pathParts = repoPath.split('/').where((part) => part.isNotEmpty);
+    final snapshot = RepositoryContextSnapshot(
+      repositoryPath: repoPath,
+      repositoryName:
+          'Repository: ${pathParts.isEmpty ? repoPath : pathParts.last}',
+      connectionLabel: connection.connectionLabel,
+      hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
+      branchLabel: head == null ? 'Repository' : 'Branch: ${head.shortName}',
+      upstreamLabel: head?.upstream,
+      ahead: head?.ahead ?? 0,
+      behind: head?.behind ?? 0,
+      hasUpstream: head?.upstream != null,
+      hasConfiguredRemote: landedRefs.any((item) => item.isRemote),
+      connected: connection.isConnected,
+      busy: busy,
+      refCount: landedRefs.length,
+      supplement: supplementKey == null
+          ? null
+          : ref.watch(
+              repositoryContextSupplementCacheProvider.select(
+                (cache) => cache[supplementKey],
+              ),
+            ),
+    );
     return PanelShortcuts(
       bindings: live
           ? resolveShortcuts(keymap, handlers)
           : const <ShortcutActivator, VoidCallback>{},
       handlers: live ? handlers : const {},
-      child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _header(context, git, count),
-        Container(height: 1, color: MacosColors.separatorColor),
-        Expanded(
-          child: stashesAsync.when(
-            loading: () => const Center(child: ProgressCircle()),
-            error: (err, _) => SectionError(err),
-            data: (stashes) {
-              if (stashes.isEmpty) return _empty(context);
-              // A selection is valid only while its stash still exists — an
-              // OID match, never a position-vs-count comparison.
-              final selected =
-                  stashes.any((s) => s.oid == _selected) ? _selected : null;
-              return ResizableMasterDetail(
-                paneId: PaneId.stashList,
-                master: Focus(
-                  focusNode: _stashFocus,
-                  onKeyEvent: _onStashKey,
-                  child: DeselectOnEmptyClick(
-                    onDeselect: () => setState(() => _selected = null),
-                    child: ListView.builder(
-                      controller: _stashScroll,
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      itemCount: stashes.length,
-                      itemBuilder: (context, i) => _stashCard(
-                        context,
-                        git,
-                        stashes[i],
-                        stashes[i].oid == selected,
-                      ),
-                    ),
-                  ),
-                ),
-                detail: _preview(context, selected),
-              );
-            },
-          ),
+      child: stashesAsync.when(
+        loading: () => RepositoryWorkspaceScaffold(
+          repositoryContext: _contextBar(snapshot, git),
+          canvas: const SizedBox.shrink(),
+          loading: true,
         ),
-      ],
+        error: (err, _) => RepositoryWorkspaceScaffold(
+          repositoryContext: _contextBar(snapshot, git),
+          canvas: const SizedBox.shrink(),
+          error: err,
+          onRetry: _refresh,
+        ),
+        data: (stashes) {
+          final visible = _visibleStashes(stashes);
+          final selected = stashes.any((stash) => stash.oid == _selected)
+              ? _selected
+              : null;
+          return RepositoryWorkspaceScaffold(
+            repositoryContext: _contextBar(snapshot, git),
+            navigator: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _filterBar(context, git, count, visible.length),
+                Container(height: 1, color: MacosColors.separatorColor),
+                Expanded(
+                  child: visible.isEmpty
+                      ? stashes.isEmpty
+                            ? const SizedBox.shrink()
+                            : const Center(child: Text('No matching stashes'))
+                      : Focus(
+                          focusNode: _stashFocus,
+                          onKeyEvent: _onStashKey,
+                          child: DeselectOnEmptyClick(
+                            onDeselect: () => setState(() => _selected = null),
+                            child: ListView.builder(
+                              controller: _stashScroll,
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              itemCount: visible.length,
+                              itemBuilder: (context, i) => _stashCard(
+                                context,
+                                git,
+                                visible[i],
+                                visible[i].oid == selected,
+                              ),
+                            ),
+                          ),
+                        ),
+                ),
+              ],
+            ),
+            canvas: stashes.isEmpty
+                ? _empty(context)
+                : _preview(context, selected),
+            activePage: selected == null
+                ? CompactWorkspacePage.navigator
+                : CompactWorkspacePage.canvas,
+            preferences: RepositoryWorkspacePrefs(
+              navigatorWidth: stashListWidth,
+            ),
+            onPreferencesChanged: (next) {
+              ref
+                  .read(appSettingsProvider.notifier)
+                  .setPaneWidth(PaneId.stashList, next.navigatorWidth)
+                  .ignore();
+            },
+          );
+        },
       ),
     );
   }
 
-  Widget _header(BuildContext context, GitService git, int count) {
-    final typography = MacosTheme.of(context).typography;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 10, 12, 10),
-      child: Row(
-        children: [
-          const MacosIcon(CupertinoIcons.tray_2, size: 18),
-          const SizedBox(width: 8),
-          Text(
-            'Stashes',
-            style: typography.title3.copyWith(fontWeight: FontWeight.bold),
+  Widget _contextBar(RepositoryContextSnapshot snapshot, GitService git) =>
+      RepositoryContextBar(
+        snapshot: snapshot,
+        primaryAction: RepositoryPrimaryAction(
+          kind: RepositoryPrimaryActionKind.fetch,
+          label: 'Stash Changes',
+          disabledReason: busy ? 'Another stash operation is running' : null,
+        ),
+        onPrimaryAction: (_) => _runLogged(
+          'git stash push',
+          (log) async =>
+              log.logResult('git stash push', await git.stashPush(repoPath)),
+        ),
+      );
+
+  Widget _filterBar(
+    BuildContext context,
+    GitService git,
+    int count,
+    int visibleCount,
+  ) => Padding(
+    padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+    child: Column(
+      children: [
+        Row(
+          children: [
+            Text(
+              'Stashes',
+              style: MacosTheme.of(
+                context,
+              ).typography.headline.copyWith(fontWeight: FontWeight.w600),
+            ),
+            const Spacer(),
+            Text(
+              visibleCount == count ? '$count' : '$visibleCount of $count',
+              style: MacosTheme.of(context).typography.caption1,
+            ),
+            ToolIconButton(
+              icon: CupertinoIcons.refresh,
+              tooltip: 'Refresh',
+              size: 16,
+              onPressed: _refresh,
+            ),
+            _menu(context, git, count),
+          ],
+        ),
+        const SizedBox(height: 6),
+        MacosTextField(
+          controller: _filterController,
+          placeholder: 'Filter stashes',
+          decoration: kAppTextFieldDecoration,
+          focusedDecoration: kAppTextFieldFocusedDecoration,
+          prefix: const Padding(
+            padding: EdgeInsets.only(left: 6),
+            child: MacosIcon(CupertinoIcons.search, size: 13),
           ),
-          const SizedBox(width: 6),
-          Text(
-            '$count',
-            style: typography.body.copyWith(color: MacosColors.systemGrayColor),
-          ),
-          const Spacer(),
-          ToolIconButton(
-            icon: CupertinoIcons.refresh,
-            tooltip: 'Refresh',
-            size: 16,
-            onPressed: _refresh,
-          ),
-          const SizedBox(width: 4),
-          _menu(context, git, count),
-        ],
-      ),
-    );
-  }
+          onChanged: (_) => setState(() {}),
+        ),
+      ],
+    ),
+  );
 
   /// Hamburger menu of stash-wide actions.
   Widget _menu(BuildContext context, GitService git, int count) {
@@ -430,11 +588,7 @@ class _StashViewState extends ConsumerState<StashView>
       'git stash push -m',
       (log) async => log.logResult(
         'git stash push -m "$message"',
-        await git.stashPush(
-          repoPath,
-          message: message,
-          includeUntracked: true,
-        ),
+        await git.stashPush(repoPath, message: message, includeUntracked: true),
       ),
     );
   }
@@ -483,97 +637,98 @@ class _StashViewState extends ConsumerState<StashView>
         setState(() => _selected = stash.oid);
       },
       child: GestureDetector(
-      key: _stashRowKeyFor(stash.oid),
-      onTap: () {
-        _stashFocus.requestFocus();
-        setState(() => _selected = stash.oid);
-      },
-      onSecondaryTapUp: (d) =>
-          _showCardMenu(context, git, stash, d.globalPosition),
-      child: Container(
-        color: selected
-            ? AppTheme.rowSelectionTint
-            : const Color(0x00000000),
-        padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Padding(
-              padding: EdgeInsets.only(top: 2),
-              child: MacosIcon(
-                CupertinoIcons.tray,
+        key: _stashRowKeyFor(stash.oid),
+        onTap: () {
+          _stashFocus.requestFocus();
+          setState(() => _selected = stash.oid);
+        },
+        onSecondaryTapUp: (d) =>
+            _showCardMenu(context, git, stash, d.globalPosition),
+        child: Container(
+          color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
+          padding: const EdgeInsets.fromLTRB(14, 8, 8, 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.only(top: 2),
+                child: MacosIcon(
+                  CupertinoIcons.tray,
+                  size: 15,
+                  color: MacosColors.systemTealColor,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      stash.subject,
+                      style: typography.body,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        LabelChip(
+                          'stash@{${stash.index}}',
+                          color: MacosColors.systemBlueColor,
+                        ),
+                        if (stash.branch.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              stash.branch,
+                              style: typography.caption1.copyWith(
+                                color: MacosColors.systemGrayColor,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                        if (stash.relativeDate.isNotEmpty) ...[
+                          const SizedBox(width: 6),
+                          Flexible(
+                            child: Text(
+                              '· ${stash.relativeDate}',
+                              style: typography.caption1.copyWith(
+                                color: MacosColors.systemGrayColor,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              ToolIconButton(
+                icon: CupertinoIcons.tray_arrow_up,
+                tooltip: 'Apply stash (keep in list)',
                 size: 15,
-                color: MacosColors.systemTealColor,
+                onPressed: busy ? null : () => _apply(git, stash),
               ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    stash.subject,
-                    style: typography.body,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  const SizedBox(height: 3),
-                  Row(
-                    children: [
-                      LabelChip('stash@{${stash.index}}', color: MacosColors.systemBlueColor),
-                      if (stash.branch.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            stash.branch,
-                            style: typography.caption1.copyWith(
-                              color: MacosColors.systemGrayColor,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                      if (stash.relativeDate.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        Flexible(
-                          child: Text(
-                            '· ${stash.relativeDate}',
-                            style: typography.caption1.copyWith(
-                              color: MacosColors.systemGrayColor,
-                            ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
+              ToolIconButton(
+                icon: CupertinoIcons.arrow_up_bin,
+                tooltip: 'Pop stash (apply & remove)',
+                size: 15,
+                onPressed: busy ? null : () => _pop(git, stash),
               ),
-            ),
-            ToolIconButton(
-              icon: CupertinoIcons.tray_arrow_up,
-              tooltip: 'Apply stash (keep in list)',
-              size: 15,
-              onPressed: busy ? null : () => _apply(git, stash),
-            ),
-            ToolIconButton(
-              icon: CupertinoIcons.arrow_up_bin,
-              tooltip: 'Pop stash (apply & remove)',
-              size: 15,
-              onPressed: busy ? null : () => _pop(git, stash),
-            ),
-            ToolIconButton(
-              icon: CupertinoIcons.trash,
-              tooltip: 'Drop stash',
-              size: 14,
-              color: MacosColors.systemRedColor,
-              onPressed: busy ? null : () => _dropStash(context, git, stash),
-            ),
-          ],
+              ToolIconButton(
+                icon: CupertinoIcons.trash,
+                tooltip: 'Drop stash',
+                size: 14,
+                color: MacosColors.systemRedColor,
+                onPressed: busy ? null : () => _dropStash(context, git, stash),
+              ),
+            ],
+          ),
         ),
-      ),
       ),
     );
   }
@@ -725,5 +880,4 @@ class _StashViewState extends ConsumerState<StashView>
       ),
     );
   }
-
 }

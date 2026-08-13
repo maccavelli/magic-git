@@ -209,6 +209,23 @@ void main() {
     expect(prefs.getDouble('paneWidth_stashList'), 380);
   });
 
+  testWidgets('filters locally by subject, branch, ref, and OID', (
+    tester,
+  ) async {
+    await _pump(tester, stashes: _stashes);
+    final field = find.byType(MacosTextField);
+
+    await tester.enterText(field, 'manual');
+    await tester.pump();
+    expect(find.text('manual note'), findsOneWidget);
+    expect(find.text('tweak the parser'), findsNothing);
+    expect(find.text('1 of 2'), findsOneWidget);
+
+    await tester.enterText(field, _oidA.substring(0, 8));
+    await tester.pump();
+    expect(find.text('tweak the parser'), findsOneWidget);
+  });
+
   testWidgets('shows the empty state when there are no stashes', (
     tester,
   ) async {
