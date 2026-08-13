@@ -21,6 +21,7 @@ import 'common/command_palette.dart';
 import 'common/diff_view.dart' show kDiffMono;
 import 'common/escape_dismissible.dart';
 import 'common/palette_intents.dart';
+import 'common/repository_context.dart';
 import 'common/session_exit_guard.dart';
 import 'common/sidebar_branding.dart';
 import 'common/undo_toast.dart';
@@ -209,6 +210,14 @@ class _ReconnectingOverlayState extends State<_ReconnectingOverlay> {
 }
 
 class _AppShellState extends ConsumerState<AppShell> {
+  BuildContext? _windowScopeContext;
+
+  void _toggleSidebar() {
+    final scopeContext = _windowScopeContext;
+    if (scopeContext == null) return;
+    MacosWindowScope.maybeOf(scopeContext)?.toggleSidebar();
+  }
+
   /// Whether the host-key mismatch dialog is currently on screen. The
   /// dialog's non-dismissible full-window barrier already blocks every UI
   /// path that could otherwise clear the prompt out from under it, but this
@@ -582,6 +591,7 @@ class _AppShellState extends ConsumerState<AppShell> {
     // the next time it's opened.
     ref.listen(connectionProvider.select((c) => c.repoPath), (previous, next) {
       if (next != previous) {
+        ref.read(repositoryContextSupplementCacheProvider.notifier).clear();
         // Open file-viewer windows belong to the repo that was active when
         // they were opened — drop them all when the active repo changes (or
         // disconnects) rather than leaving them pointed at a gone repo.
@@ -599,6 +609,9 @@ class _AppShellState extends ConsumerState<AppShell> {
             .read(visitedPagesProvider.notifier)
             .reset(ref.read(pageIndexProvider));
       }
+    });
+    ref.listen(sidebarToggleRequestProvider, (previous, next) {
+      if (next != previous) _toggleSidebar();
     });
     // A changed host key pauses the in-progress connect/reconnect on an
     // explicit decision — surfaced as a non-dismissible modal regardless of
@@ -640,6 +653,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       'global.panel6': connected ? () => _selectPage(5) : null,
       'global.toggleOutput': () =>
           ref.read(outputLogProvider.notifier).toggle(),
+      'global.toggleSidebar': _toggleSidebar,
       'global.toggleFileView': () =>
           ref.read(fileViewVisibleProvider.notifier).toggle(),
       'global.toggleDashboard': () =>
@@ -713,6 +727,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       sidebar: Sidebar(
         minWidth: 240,
         maxWidth: 380,
+        windowBreakpoint: 760,
         top: const SidebarBranding(),
         // The connections switcher only makes sense once connected — hide it on
         // the landing page.
@@ -778,6 +793,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       ),
       child: ContentArea(
         builder: (context, scrollController) {
+          _windowScopeContext = context;
           // A dropped connection auto-reconnects behind a small popup; Cancel
           // stops the retries and returns to the connection card.
           if (connection.reconnecting) {

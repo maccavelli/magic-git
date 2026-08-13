@@ -1,0 +1,205 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+/// Optional context that another panel has already loaded for its own screen.
+///
+/// The repository bar never starts a command for these fields. Publishers may
+/// replace individual values as their own provider data lands.
+@immutable
+class RepositoryContextSupplement {
+  final String? worktreeLabel;
+  final String? recentCommitLabel;
+  final String? forgeLabel;
+
+  const RepositoryContextSupplement({
+    this.worktreeLabel,
+    this.recentCommitLabel,
+    this.forgeLabel,
+  });
+
+  RepositoryContextSupplement merge(RepositoryContextSupplement next) =>
+      RepositoryContextSupplement(
+        worktreeLabel: next.worktreeLabel ?? worktreeLabel,
+        recentCommitLabel: next.recentCommitLabel ?? recentCommitLabel,
+        forgeLabel: next.forgeLabel ?? forgeLabel,
+      );
+
+  bool contentEquals(RepositoryContextSupplement other) =>
+      worktreeLabel == other.worktreeLabel &&
+      recentCommitLabel == other.recentCommitLabel &&
+      forgeLabel == other.forgeLabel;
+}
+
+/// A cache address contains both stable repository identity and connection
+/// generation. Even durable identities must not leak old landed values into a
+/// newly connected session.
+@immutable
+class RepositoryContextSupplementKey {
+  final String repositoryIdentity;
+  final int sessionEpoch;
+
+  const RepositoryContextSupplementKey({
+    required this.repositoryIdentity,
+    required this.sessionEpoch,
+  }) : assert(repositoryIdentity != ''),
+       assert(sessionEpoch > 0);
+
+  @override
+  bool operator ==(Object other) =>
+      other is RepositoryContextSupplementKey &&
+      other.repositoryIdentity == repositoryIdentity &&
+      other.sessionEpoch == sessionEpoch;
+
+  @override
+  int get hashCode => Object.hash(repositoryIdentity, sessionEpoch);
+}
+
+class RepositoryContextSupplementCache
+    extends
+        Notifier<
+          Map<RepositoryContextSupplementKey, RepositoryContextSupplement>
+        > {
+  @override
+  Map<RepositoryContextSupplementKey, RepositoryContextSupplement> build() =>
+      const {};
+
+  void publish(
+    RepositoryContextSupplementKey key,
+    RepositoryContextSupplement supplement,
+  ) {
+    final previous = state[key];
+    final next = previous?.merge(supplement) ?? supplement;
+    if (previous?.contentEquals(next) ?? false) return;
+    state = {...state, key: next};
+  }
+
+  void clear() => state = const {};
+
+  void clearSession(int sessionEpoch) {
+    final next =
+        Map<RepositoryContextSupplementKey, RepositoryContextSupplement>.of(
+          state,
+        )..removeWhere((key, _) => key.sessionEpoch == sessionEpoch);
+    state = Map.unmodifiable(next);
+  }
+}
+
+String repositoryContextIdentityKey({
+  required String backend,
+  required String? connectionId,
+  required String repositoryPath,
+}) =>
+    '${connectionId == null ? 'adhoc:$backend' : '$backend:$connectionId'}'
+    '\u0000$repositoryPath';
+
+final repositoryContextSupplementCacheProvider =
+    NotifierProvider<
+      RepositoryContextSupplementCache,
+      Map<RepositoryContextSupplementKey, RepositoryContextSupplement>
+    >(RepositoryContextSupplementCache.new);
+
+/// Immutable, render-ready repository context derived from already-landed
+/// connection/status/ref/remote state.
+@immutable
+class RepositoryContextSnapshot {
+  final String repositoryPath;
+  final String repositoryName;
+  final String? connectionLabel;
+  final String? hostLabel;
+  final String branchLabel;
+  final String? upstreamLabel;
+  final int ahead;
+  final int behind;
+  final int changedCount;
+  final int conflictCount;
+  final bool hasPendingOperation;
+  final bool hasUpstream;
+  final bool hasConfiguredRemote;
+  final bool connected;
+  final bool busy;
+  final bool incomplete;
+  final int refCount;
+  final RepositoryContextSupplement? supplement;
+
+  const RepositoryContextSnapshot({
+    required this.repositoryPath,
+    required this.repositoryName,
+    this.connectionLabel,
+    this.hostLabel,
+    required this.branchLabel,
+    this.upstreamLabel,
+    this.ahead = 0,
+    this.behind = 0,
+    this.changedCount = 0,
+    this.conflictCount = 0,
+    this.hasPendingOperation = false,
+    this.hasUpstream = false,
+    this.hasConfiguredRemote = false,
+    this.connected = true,
+    this.busy = false,
+    this.incomplete = false,
+    this.refCount = 0,
+    this.supplement,
+  });
+
+  bool get isDirty => changedCount > 0;
+}
+
+enum RepositoryPrimaryActionKind {
+  resolve,
+  continueOperation,
+  sync,
+  pull,
+  push,
+  publish,
+  fetch,
+}
+
+@immutable
+class RepositoryPrimaryAction {
+  final RepositoryPrimaryActionKind kind;
+  final String label;
+  final String? disabledReason;
+
+  const RepositoryPrimaryAction({
+    required this.kind,
+    required this.label,
+    this.disabledReason,
+  });
+
+  bool get enabled => disabledReason == null;
+}
+
+/// Chooses one high-confidence next action without performing any work.
+RepositoryPrimaryAction resolvePrimaryRepositoryAction(
+  RepositoryContextSnapshot snapshot,
+) {
+  final (kind, label) = snapshot.hasPendingOperation
+      ? snapshot.conflictCount > 0
+            ? (RepositoryPrimaryActionKind.resolve, 'Resolve')
+            : (RepositoryPrimaryActionKind.continueOperation, 'Continue')
+      : snapshot.conflictCount > 0
+      ? (RepositoryPrimaryActionKind.resolve, 'Resolve')
+      : snapshot.ahead > 0 && snapshot.behind > 0
+      ? (RepositoryPrimaryActionKind.sync, 'Sync')
+      : snapshot.behind > 0
+      ? (RepositoryPrimaryActionKind.pull, 'Pull')
+      : snapshot.ahead > 0 && snapshot.hasUpstream
+      ? (RepositoryPrimaryActionKind.push, 'Push')
+      : !snapshot.hasUpstream && snapshot.hasConfiguredRemote
+      ? (RepositoryPrimaryActionKind.publish, 'Publish')
+      : (RepositoryPrimaryActionKind.fetch, 'Fetch');
+
+  final disabledReason = !snapshot.connected
+      ? 'Repository is disconnected'
+      : snapshot.incomplete
+      ? 'Repository context is still loading'
+      : snapshot.busy
+      ? 'Another repository operation is running'
+      : null;
+  return RepositoryPrimaryAction(
+    kind: kind,
+    label: label,
+    disabledReason: disabledReason,
+  );
+}

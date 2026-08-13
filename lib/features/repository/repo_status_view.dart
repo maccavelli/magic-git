@@ -10,6 +10,7 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
@@ -25,6 +26,9 @@ import '../common/inline_action_button.dart';
 import '../common/link_status_chip.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/repository_context.dart';
+import '../common/repository_context_bar.dart';
+import '../common/repository_workspace_scaffold.dart';
 import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
 import '../common/tappable.dart';
@@ -1286,6 +1290,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     // remote") so the header doesn't flash the "No remote detected" label
     // before the first fetch resolves.
     final refs = ref.watch(refsProvider(repoPath)).value;
+    final remotes = ref.watch(remotesProvider(repoPath)).value;
+    final identity = ref.watch(repositoryUiIdentityProvider(repoPath)).value;
+    final workspacePreferences =
+        ref.watch(repositoryWorkspacePrefsProvider(repoPath)).value ??
+        const RepositoryWorkspacePrefs();
     final typography = MacosTheme.of(context).typography;
     final sessionWarning = ref.watch(
       connectionProvider.select((c) => c.warning),
@@ -1294,6 +1303,52 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     final fileVisible = ref.watch(fileViewVisibleProvider);
 
     final status = statusAsync.value;
+    final connection = ref.watch(connectionProvider);
+    final identityKey = repositoryContextIdentityKey(
+      backend: connection.backend.name,
+      connectionId: connection.connectionId,
+      repositoryPath: repoPath,
+    );
+    final supplementKey = connection.sessionEpoch > 0
+        ? RepositoryContextSupplementKey(
+            repositoryIdentity: identityKey,
+            sessionEpoch: connection.sessionEpoch,
+          )
+        : null;
+    final supplement = supplementKey == null
+        ? null
+        : ref.watch(
+            repositoryContextSupplementCacheProvider.select(
+              (cache) => cache[supplementKey],
+            ),
+          );
+    final branch = status?.branch;
+    final pathSegments = repoPath.split('/').where((part) => part.isNotEmpty);
+    final snapshot = RepositoryContextSnapshot(
+      repositoryPath: repoPath,
+      repositoryName: pathSegments.isEmpty ? repoPath : pathSegments.last,
+      connectionLabel: connection.connectionLabel,
+      hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
+      branchLabel: branch == null
+          ? 'Loading branch…'
+          : branch.isDetached
+          ? 'Detached HEAD'
+          : branch.head ?? 'Unborn branch',
+      upstreamLabel: branch?.upstream,
+      ahead: branch?.ahead ?? 0,
+      behind: branch?.behind ?? 0,
+      changedCount: status?.files.length ?? 0,
+      conflictCount: status?.conflicted.length ?? 0,
+      hasPendingOperation: pending != null && pending != PendingOp.none,
+      hasUpstream: branch?.hasUpstream ?? false,
+      hasConfiguredRemote: remotes?.isNotEmpty ?? false,
+      connected: connection.isConnected,
+      busy: busy,
+      incomplete: status == null || remotes == null || pending == null,
+      refCount: refs?.length ?? 0,
+      supplement: supplement,
+    );
+    final primaryAction = resolvePrimaryRepositoryAction(snapshot);
     final selected = _selected;
     final keymap = ref.watch(keymapProvider);
     // One handler map for both consumers: the keyboard shortcuts and the
@@ -1387,38 +1442,116 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               if (outputVisible) OutputView(maxHeight: constraints.maxHeight),
             ],
           );
-          return Stack(
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Expanded(child: centerColumn),
-                  if (fileVisible)
-                    FileView(
-                      maxWidth: constraints.maxWidth,
-                      repoPath: repoPath,
-                      onOpenFile: _openFileFromTree,
-                    ),
-                ],
-              ),
-              if (_popout && selected != null)
-                DiffPopoutWindow(
-                  repoPath: repoPath,
-                  path: selected.path,
-                  staged: selected.staged,
-                  untracked: selected.untracked,
-                  initialSplit: _diffSplit,
-                  initialIgnoreWs: _diffIgnoreWs,
-                  contextLines: _diffCtx,
-                  bounds: Size(constraints.maxWidth, constraints.maxHeight),
-                  onHunkAction: _applyHunk,
-                  onClose: () => setState(() => _popout = false),
+          final canvas = LayoutBuilder(
+            builder: (context, canvasConstraints) => Stack(
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: centerColumn),
+                    if (fileVisible)
+                      FileView(
+                        maxWidth: canvasConstraints.maxWidth,
+                        repoPath: repoPath,
+                        onOpenFile: _openFileFromTree,
+                      ),
+                  ],
                 ),
-            ],
+                if (_popout && selected != null)
+                  DiffPopoutWindow(
+                    repoPath: repoPath,
+                    path: selected.path,
+                    staged: selected.staged,
+                    untracked: selected.untracked,
+                    initialSplit: _diffSplit,
+                    initialIgnoreWs: _diffIgnoreWs,
+                    contextLines: _diffCtx,
+                    bounds: Size(
+                      canvasConstraints.maxWidth,
+                      canvasConstraints.maxHeight,
+                    ),
+                    onHunkAction: _applyHunk,
+                    onClose: () => setState(() => _popout = false),
+                  ),
+              ],
+            ),
+          );
+          return RepositoryWorkspaceScaffold(
+            repositoryContext: RepositoryContextBar(
+              snapshot: snapshot,
+              primaryAction: primaryAction,
+              onToggleSidebar: () =>
+                  MacosWindowScope.maybeOf(context)?.toggleSidebar(),
+              onPrimaryAction: (kind) => _invokePrimaryRepositoryAction(
+                kind,
+                status: status,
+                pending: pending,
+              ),
+            ),
+            canvas: canvas,
+            preferences: workspacePreferences,
+            onPreferencesChanged: identity == null
+                ? null
+                : (next) {
+                    saveRepositoryWorkspacePrefs(
+                      identity: identity,
+                      next: next,
+                    ).then((_) {
+                      if (mounted) {
+                        ref.invalidate(
+                          repositoryWorkspacePrefsProvider(repoPath),
+                        );
+                      }
+                    }).ignore();
+                  },
           );
         },
       ),
     );
+  }
+
+  void _invokePrimaryRepositoryAction(
+    RepositoryPrimaryActionKind kind, {
+    required GitStatus? status,
+    required PendingOp? pending,
+  }) {
+    switch (kind) {
+      case RepositoryPrimaryActionKind.resolve:
+        final conflicts = status?.conflicted;
+        if (conflicts == null || conflicts.isEmpty) return;
+        final path = conflicts.first.path;
+        setState(() {
+          _selectionKind = _SectionKind.conflict;
+          _selectedPaths = {path};
+          _selectionAnchor = path;
+        });
+        return;
+      case RepositoryPrimaryActionKind.continueOperation:
+        if (pending == PendingOp.rebase) {
+          _continueRebase().ignore();
+          return;
+        }
+        final stagedCount = status?.staged.length ?? 0;
+        if (stagedCount > 0) _openCommitDialog(stagedCount);
+        return;
+      case RepositoryPrimaryActionKind.sync:
+        _sync(ref.read(appSettingsProvider).defaultPullMode).ignore();
+        return;
+      case RepositoryPrimaryActionKind.pull:
+        _pull(ref.read(appSettingsProvider).defaultPullMode).ignore();
+        return;
+      case RepositoryPrimaryActionKind.push:
+        _push(
+          followTags: ref.read(appSettingsProvider).pushFollowTags,
+        ).ignore();
+        return;
+      case RepositoryPrimaryActionKind.publish:
+        _push(setUpstream: true).ignore();
+        return;
+      case RepositoryPrimaryActionKind.fetch:
+        _fetch().ignore();
+        return;
+    }
   }
 
   /// Opens a tree-selected file's diff in the existing diff panel.

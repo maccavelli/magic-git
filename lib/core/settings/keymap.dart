@@ -50,7 +50,8 @@ class KeyBinding {
 
   /// Compact persisted form: modifier flags then the key id, e.g. `"1010:70"`.
   String encode() {
-    final flags = '${meta ? 1 : 0}${shift ? 1 : 0}${alt ? 1 : 0}${control ? 1 : 0}';
+    final flags =
+        '${meta ? 1 : 0}${shift ? 1 : 0}${alt ? 1 : 0}${control ? 1 : 0}';
     return '$flags:$keyId';
   }
 
@@ -81,7 +82,8 @@ class KeyBinding {
   }
 
   static String _keyLabel(LogicalKeyboardKey key) {
-    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
       return '↩';
     }
     if (key == LogicalKeyboardKey.backspace) return '⌫';
@@ -183,37 +185,49 @@ final List<KeymapAction> kKeymapActions = [
     id: 'global.panel1',
     label: 'Switch to Repository',
     category: KeymapCategory.global,
-    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.digit1, meta: true)],
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.digit1, meta: true),
+    ],
   ),
   KeymapAction(
     id: 'global.panel2',
     label: 'Switch to History',
     category: KeymapCategory.global,
-    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.digit2, meta: true)],
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.digit2, meta: true),
+    ],
   ),
   KeymapAction(
     id: 'global.panel3',
     label: 'Switch to Branches',
     category: KeymapCategory.global,
-    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.digit3, meta: true)],
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.digit3, meta: true),
+    ],
   ),
   KeymapAction(
     id: 'global.panel4',
     label: 'Switch to Stashes',
     category: KeymapCategory.global,
-    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.digit4, meta: true)],
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.digit4, meta: true),
+    ],
   ),
   KeymapAction(
     id: 'global.panel5',
     label: 'Switch to Forge',
     category: KeymapCategory.global,
-    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.digit5, meta: true)],
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.digit5, meta: true),
+    ],
   ),
   KeymapAction(
     id: 'global.panel6',
     label: 'Switch to Worktrees',
     category: KeymapCategory.global,
-    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.digit6, meta: true)],
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.digit6, meta: true),
+    ],
   ),
   // View toggles — defaults match MainFlutterWindow ⇧⌘ chords (G-M1=A).
   KeymapAction(
@@ -223,6 +237,12 @@ final List<KeymapAction> kKeymapActions = [
     defaultBindings: [
       KeyBinding.fromKey(LogicalKeyboardKey.keyO, meta: true, shift: true),
     ],
+  ),
+  const KeymapAction(
+    id: 'global.toggleSidebar',
+    label: 'Toggle Sidebar',
+    category: KeymapCategory.global,
+    defaultBindings: [],
   ),
   KeymapAction(
     id: 'global.toggleFileView',
@@ -497,17 +517,13 @@ final List<KeymapAction> kKeymapActions = [
     id: 'history.zoomIn',
     label: 'Zoom commit list in',
     category: KeymapCategory.history,
-    defaultBindings: [
-      KeyBinding.fromKey(LogicalKeyboardKey.equal, meta: true),
-    ],
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.equal, meta: true)],
   ),
   KeymapAction(
     id: 'history.zoomOut',
     label: 'Zoom commit list out',
     category: KeymapCategory.history,
-    defaultBindings: [
-      KeyBinding.fromKey(LogicalKeyboardKey.minus, meta: true),
-    ],
+    defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.minus, meta: true)],
   ),
   KeymapAction(
     id: 'history.zoomReset',

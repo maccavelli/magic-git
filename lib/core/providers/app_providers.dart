@@ -3033,6 +3033,19 @@ final fileViewVisibleProvider = NotifierProvider<FileViewVisibility, bool>(
   FileViewVisibility.new,
 );
 
+/// Monotonic request token for toggling the main window sidebar. The native
+/// menu lives above per-tab widget state, so it increments the active tab's
+/// token and [AppShell] performs the actual MacosWindowScope interaction.
+class SidebarToggleRequests extends Notifier<int> {
+  @override
+  int build() => 0;
+
+  void request() => state++;
+}
+
+final sidebarToggleRequestProvider =
+    NotifierProvider<SidebarToggleRequests, int>(SidebarToggleRequests.new);
+
 /// Whether the Dashboard sheet is open. Driven from three directions — the
 /// native "View → Dashboard View" menu checkbox, the sheet's own X button,
 /// and Esc — all routed through this one notifier so the checkmark and the

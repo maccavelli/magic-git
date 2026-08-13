@@ -213,6 +213,8 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     switch (call.method) {
       case 'toggleOutputView':
         c.read(outputLogProvider.notifier).toggle();
+      case 'toggleSidebar':
+        c.read(sidebarToggleRequestProvider.notifier).request();
       case 'toggleFileView':
         c.read(fileViewVisibleProvider.notifier).toggle();
       case 'toggleDashboard':
@@ -313,8 +315,8 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     // re-setting the closures each build is a cheap no-op.
     ref.watch(windowManagerBridgeProvider);
     WindowManagerBridge.current
-      ?..sessionContainerFor =
-          ((tabId) => tabId == null ? null : _controller.containerFor(tabId))
+      ?..sessionContainerFor = ((tabId) =>
+          tabId == null ? null : _controller.containerFor(tabId))
       ..activeTabId = (() => _controller.activeId)
       ..containerForRepo = _controller.containerForRepo;
     return MacosApp(

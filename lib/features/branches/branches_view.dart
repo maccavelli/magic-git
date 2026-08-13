@@ -21,6 +21,7 @@ import '../common/inline_action_button.dart';
 import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/ref_name_validation.dart';
+import '../common/repository_context.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/section_collapse.dart';
 import '../forge/forge_create_coordinator.dart';
@@ -195,7 +196,33 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     final git = ref.read(gitServiceProvider);
 
     // Lazy forge + merged + pins — never block the list.
-    final forge = ref.watch(branchForgeProvider(repoPath)).value ?? const {};
+    final forgeAsync = ref.watch(branchForgeProvider(repoPath));
+    final forge = forgeAsync.value ?? const {};
+    if (forgeAsync.value != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final connection = ref.read(connectionProvider);
+        if (connection.sessionEpoch <= 0) return;
+        ref
+            .read(repositoryContextSupplementCacheProvider.notifier)
+            .publish(
+              RepositoryContextSupplementKey(
+                repositoryIdentity: repositoryContextIdentityKey(
+                  backend: connection.backend.name,
+                  connectionId: connection.connectionId,
+                  repositoryPath: repoPath,
+                ),
+                sessionEpoch: connection.sessionEpoch,
+              ),
+              RepositoryContextSupplement(
+                forgeLabel: forge.isEmpty
+                    ? 'No branch reviews'
+                    : '${forge.length} branch review'
+                          '${forge.length == 1 ? '' : 's'}',
+              ),
+            );
+      });
+    }
     final merged =
         ref.watch(mergedBranchesProvider(repoPath)).value ?? const <String>{};
     final pinned =
@@ -484,7 +511,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   Future<void> _batchPin(BranchViewModel vm, {required bool pin}) async {
     final names = <String>{
       for (final full in _multiSel.ordered)
-        if (full.startsWith('refs/heads/')) full.substring('refs/heads/'.length),
+        if (full.startsWith('refs/heads/'))
+          full.substring('refs/heads/'.length),
     };
     await _updateWorkspacePrefs((prefs) {
       final pins = prefs.pinnedBranchNames.toSet();
@@ -500,12 +528,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   Future<void> _batchHide(BranchViewModel vm) async {
     // Skip current/default/pinned/worktree-held — report as skipped by omitting.
     final baseName = ref
-        .read(
-          branchBaseProvider((
-            repoPath: repoPath,
-            allowForgeFetch: false,
-          )),
-        )
+        .read(branchBaseProvider((repoPath: repoPath, allowForgeFetch: false)))
         .value
         ?.base
         ?.displayName;
@@ -863,9 +886,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     final remotes =
         ref.read(remotesProvider(repoPath)).value ?? const <String>[];
     if (remotes.isEmpty) return;
-    final remote = remotes.length == 1
-        ? remotes.first
-        : defaultRemote(remotes);
+    final remote = remotes.length == 1 ? remotes.first : defaultRemote(remotes);
     final ok = await confirmAction(
       context,
       title: 'Publish branch',
@@ -889,12 +910,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   Future<void> _createRequest(GitRef branch) async {
     if (busy) return;
     final base = ref
-        .read(
-          branchBaseProvider((
-            repoPath: repoPath,
-            allowForgeFetch: false,
-          )),
-        )
+        .read(branchBaseProvider((repoPath: repoPath, allowForgeFetch: false)))
         .value
         ?.base;
     await openCreateChangeRequest(

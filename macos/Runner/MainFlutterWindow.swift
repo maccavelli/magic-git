@@ -291,6 +291,15 @@ class MainFlutterWindow: NSWindow {
     self.showOutputItem = addToggleItem(
       to: viewMenu, title: "Show Output View", key: "o",
       action: #selector(toggleOutputView(_:)), separatorBefore: true)
+    if viewMenu.items.first(where: {
+      $0.action == #selector(toggleSidebar(_:))
+    }) == nil {
+      let item = NSMenuItem(
+        title: "Toggle Sidebar", action: #selector(toggleSidebar(_:)),
+        keyEquivalent: "")
+      item.target = self
+      viewMenu.addItem(item)
+    }
     self.showFileItem = addToggleItem(
       to: viewMenu, title: "Show File View", key: "e",
       action: #selector(toggleFileView(_:)), separatorBefore: false)
@@ -370,6 +379,10 @@ class MainFlutterWindow: NSWindow {
 
   @objc private func toggleOutputView(_ sender: Any?) {
     menuChannel?.invokeMethod("toggleOutputView", arguments: nil)
+  }
+
+  @objc private func toggleSidebar(_ sender: Any?) {
+    menuChannel?.invokeMethod("toggleSidebar", arguments: nil)
   }
 
   @objc private func toggleFileView(_ sender: Any?) {

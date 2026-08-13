@@ -4,6 +4,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/forge/forge.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/async_views.dart';
+import '../common/repository_context.dart';
 import '../github/github_panel.dart';
 import '../gitlab/gitlab_panel.dart';
 
@@ -19,6 +20,31 @@ class ForgePanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final forge = ref.watch(forgeProvider(repoPath));
+    ref.listen(forgeProvider(repoPath), (previous, next) {
+      final landed = next.value;
+      if (landed == null) return;
+      final connection = ref.read(connectionProvider);
+      if (connection.sessionEpoch <= 0) return;
+      final label = switch (landed) {
+        Forge.github => 'GitHub',
+        Forge.gitlab => 'GitLab',
+        Forge.none => 'No forge remote',
+        Forge.unknown => 'Unsupported forge',
+      };
+      ref
+          .read(repositoryContextSupplementCacheProvider.notifier)
+          .publish(
+            RepositoryContextSupplementKey(
+              repositoryIdentity: repositoryContextIdentityKey(
+                backend: connection.backend.name,
+                connectionId: connection.connectionId,
+                repositoryPath: repoPath,
+              ),
+              sessionEpoch: connection.sessionEpoch,
+            ),
+            RepositoryContextSupplement(forgeLabel: label),
+          );
+    });
     return forge.when(
       loading: () => const Center(child: ProgressCircle()),
       error: (err, _) => SectionError(err),

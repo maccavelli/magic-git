@@ -18,6 +18,7 @@ import '../common/buttons.dart';
 import '../common/context_menu.dart';
 import '../common/label_chip.dart';
 import '../common/prompt_text_sheet.dart';
+import '../common/repository_context.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../history/history_view.dart';
@@ -183,7 +184,9 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
         if (!mounted) rethrow;
         final force = await confirmAction(
           context,
-          title: dirty ? 'Worktree has uncommitted changes' : 'Worktree is locked',
+          title: dirty
+              ? 'Worktree has uncommitted changes'
+              : 'Worktree is locked',
           message: dirty
               ? 'This worktree has modified or untracked files. Removing it '
                     'deletes them permanently.'
@@ -417,7 +420,9 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
     try {
       await Process.run('open', ['-a', 'Terminal', path]);
     } catch (e) {
-      if (mounted) await showErrorDialog(context, 'Could not open Terminal: $e');
+      if (mounted) {
+        await showErrorDialog(context, 'Could not open Terminal: $e');
+      }
     }
   }
 
@@ -519,6 +524,28 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
     // pointing at a dead path where every git call would fail.
     final live = worktreesAsync.value;
     if (live != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final connection = ref.read(connectionProvider);
+        if (connection.sessionEpoch <= 0) return;
+        final selected = tabs.selected;
+        final label = selected == null
+            ? '${live.length} worktree${live.length == 1 ? '' : 's'}'
+            : selected.split('/').where((part) => part.isNotEmpty).last;
+        ref
+            .read(repositoryContextSupplementCacheProvider.notifier)
+            .publish(
+              RepositoryContextSupplementKey(
+                repositoryIdentity: repositoryContextIdentityKey(
+                  backend: connection.backend.name,
+                  connectionId: connection.connectionId,
+                  repositoryPath: repoPath,
+                ),
+                sessionEpoch: connection.sessionEpoch,
+              ),
+              RepositoryContextSupplement(worktreeLabel: label),
+            );
+      });
       final paths = live.map((w) => w.path).toSet();
       final dead = tabs.open.where((p) => !paths.contains(p)).toList();
       if (dead.isNotEmpty) {
@@ -553,7 +580,11 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
   }
 
   /// The tab strip: Overview, then one tab per open worktree, then the toolbar.
-  Widget _strip(BuildContext context, WorktreeTabs tabs, List<GitWorktree> all) {
+  Widget _strip(
+    BuildContext context,
+    WorktreeTabs tabs,
+    List<GitWorktree> all,
+  ) {
     return Container(
       height: 36,
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -684,9 +715,8 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
             onTap: busy
                 ? null
                 : () => runGuarded(
-                    () => ref
-                        .read(gitServiceProvider)
-                        .repairWorktrees(repoPath),
+                    () =>
+                        ref.read(gitServiceProvider).repairWorktrees(repoPath),
                   ),
           ),
         ],
@@ -696,10 +726,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
 
   // --------------------------------------------------------------- overview
 
-  Widget _overview(
-    BuildContext context,
-    AsyncValue<List<GitWorktree>> async,
-  ) {
+  Widget _overview(BuildContext context, AsyncValue<List<GitWorktree>> async) {
     return async.when(
       loading: () => const Center(child: ProgressCircle()),
       error: (err, _) => SectionError(err),
@@ -733,8 +760,12 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
 
     return GestureDetector(
       onDoubleTap: () => _openWorktree(wt),
-      onSecondaryTapUp: (d) =>
-          _contextMenu.show(context, d.globalPosition, _rowMenu(wt), width: 280),
+      onSecondaryTapUp: (d) => _contextMenu.show(
+        context,
+        d.globalPosition,
+        _rowMenu(wt),
+        width: 280,
+      ),
       child: Container(
         color: open
             ? MacosColors.systemBlueColor.withValues(alpha: 0.08)
@@ -757,10 +788,16 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
                         ),
                       ),
                       const SizedBox(width: 6),
-                      LabelChip(wt.branchLabel, color: MacosColors.systemBlueColor),
+                      LabelChip(
+                        wt.branchLabel,
+                        color: MacosColors.systemBlueColor,
+                      ),
                       if (wt.isMain) ...[
                         const SizedBox(width: 4),
-                        const LabelChip('main worktree', color: MacosColors.systemGreenColor),
+                        const LabelChip(
+                          'main worktree',
+                          color: MacosColors.systemGreenColor,
+                        ),
                       ],
                       if (wt.isLocked) ...[
                         const SizedBox(width: 4),
@@ -773,7 +810,10 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
                       ],
                       if (wt.isPrunable) ...[
                         const SizedBox(width: 4),
-                        const LabelChip('missing', color: MacosColors.systemRedColor),
+                        const LabelChip(
+                          'missing',
+                          color: MacosColors.systemRedColor,
+                        ),
                       ],
                     ],
                   ),

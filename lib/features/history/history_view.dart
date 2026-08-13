@@ -28,6 +28,7 @@ import '../common/inline_action_button.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
+import '../common/repository_context.dart';
 import '../common/resizable_master_detail.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
@@ -181,6 +182,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   // key (initState-only capture froze the AppSettings default of `true`).
   bool _filtersExpanded = false;
   Timer? _searchDebounce;
+
   /// Branch/tag revision scope from Branches handoff; null = ordinary HEAD/`--all`.
   String? _revisionScope;
 
@@ -242,7 +244,8 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     path: _effPath,
     sha: _effSha,
     noMerges: _hideMerges,
-    all: _revisionScope == null &&
+    all:
+        _revisionScope == null &&
         ref.read(appSettingsProvider).historyAllBranches,
     revision: _revisionScope,
   );
@@ -1212,8 +1215,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         }
       });
     }
-    final filtering =
-        _hasQueryFilters || allBranches || _revisionScope != null;
+    final filtering = _hasQueryFilters || allBranches || _revisionScope != null;
     final query = (
       repoPath: widget.repoPath,
       grep: _effGrep,
@@ -1266,10 +1268,12 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               if (!mounted) return;
               setState(() {
                 _selectedHashes = pruned;
-                if (_selectionAnchor != null && !pruned.contains(_selectionAnchor)) {
+                if (_selectionAnchor != null &&
+                    !pruned.contains(_selectionAnchor)) {
                   _selectionAnchor = pruned.isNotEmpty ? pruned.first : null;
                 }
-                if (_selectionCursor != null && !pruned.contains(_selectionCursor)) {
+                if (_selectionCursor != null &&
+                    !pruned.contains(_selectionCursor)) {
                   _selectionCursor = pruned.isNotEmpty ? pruned.last : null;
                 }
               });
@@ -1290,6 +1294,28 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     // change is still a new key, and so still blanks to a spinner — rows the new
     // filter was never applied to must never linger.
     final commits = logAsync.value;
+    if (commits != null && commits.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final connection = ref.read(connectionProvider);
+        if (connection.sessionEpoch <= 0) return;
+        ref
+            .read(repositoryContextSupplementCacheProvider.notifier)
+            .publish(
+              RepositoryContextSupplementKey(
+                repositoryIdentity: repositoryContextIdentityKey(
+                  backend: connection.backend.name,
+                  connectionId: connection.connectionId,
+                  repositoryPath: widget.repoPath,
+                ),
+                sessionEpoch: connection.sessionEpoch,
+              ),
+              RepositoryContextSupplement(
+                recentCommitLabel: commits.first.subject,
+              ),
+            );
+      });
+    }
     // The walk ran out — there is no next page, so the load-more sentinel is not
     // built at all. Decided by git's own row count (every criterion is applied
     // by git, so a short page means "no more matches", not "the client filtered
@@ -1874,147 +1900,147 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         child: DeselectOnEmptyClick(
           onDeselect: () => setState(_clearSelection),
           child: MediaQuery(
-          // Scale the list's text in lockstep with its geometry. Replaces
-          // (rather than multiplies) the ambient scaler: the app is
-          // desktop-only with no OS text scaling in play.
-          data: MediaQuery.of(
-            context,
-          ).copyWith(textScaler: TextScaler.linear(zoom)),
-          child: ListView.builder(
-            controller: _commitScroll,
-            itemExtent: rowHeight,
-            physics: _metaDown ? const NeverScrollableScrollPhysics() : null,
-            itemCount: graph.rows.length + (exhausted ? 0 : 1),
-            itemBuilder: (context, index) {
-              if (index >= graph.rows.length) {
-                return _loadMoreRow(rowHeight, canLoadMore);
-              }
-              final row = graph.rows[index];
-              final commit = row.commit;
-              final selected = _selectedHashes.contains(commit.hash);
-              return DragTarget<DragItem>(
-                // A branch chip dropped anywhere on a commit row opens the integrate
-                // menu; the row it lands on is just the drop affordance. Only a
-                // dragged branch (DragRef) is meaningful here — a dragged commit
-                // is bound for the nav rail, not another commit.
-                onWillAcceptWithDetails: (details) {
-                  final data = details.data;
-                  return data is DragRef && _canDropBranch(data.ref);
-                },
-                onAcceptWithDetails: (details) {
-                  // ESC-cancelled drags release as a no-op (see DragStateNotifier).
-                  if (ref.read(dragStateProvider) == null) return;
-                  final data = details.data;
-                  if (data is DragRef) {
-                    _onBranchDropped(data.ref, details.offset);
-                  }
-                },
-                builder: (context, candidate, rejected) {
-                  final dropHover = candidate.isNotEmpty;
-                  // The row is itself draggable (immediate: mouse-first — see
-                  // DragItemDraggable) — drop a commit on the Branches tab to
-                  // fork a branch, on Worktrees for a worktree, etc.
-                  return DragItemDraggable(
-                    item: DragCommit(commit),
-                    immediate: true,
-                    // Picking a row up selects it — the canonical engine
-                    // contract, so the drag operand is never ambiguous.
-                    onDragSelect: () => _selectForDrag(commit.hash),
-                    child: GestureDetector(
-                      key: _commitRowKeyFor(commit.hash),
-                      onTap: () => _handleRowTap(commit.hash),
-                      onSecondaryTapUp: (d) =>
-                          _handleRowSecondaryTap(commit, d.globalPosition),
-                      child: Container(
-                        color: dropHover
-                            ? MacosColors.systemGreenColor.withValues(
-                                alpha: 0.20,
-                              )
-                            : selected
-                            ? MacosColors.systemBlueColor.withValues(
-                                alpha: 0.32,
-                              )
-                            : const Color(0x00000000),
-                        height: rowHeight,
-                        child: Row(
-                          children: [
-                            // Clip to the fixed band so rounding in the compressed-lane
-                            // math can never paint a hair over the ref chips, subject, or
-                            // author text to the right — every lane itself is still drawn
-                            // (compressed via `laneWidth` above once the count exceeds
-                            // the cap), never dropped.
-                            ClipRect(
-                              child: CustomPaint(
-                                size: Size(graphWidth, rowHeight),
-                                painter: CommitRowPainter(
-                                  row,
-                                  laneWidth: laneWidth,
-                                  scale: zoom,
+            // Scale the list's text in lockstep with its geometry. Replaces
+            // (rather than multiplies) the ambient scaler: the app is
+            // desktop-only with no OS text scaling in play.
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: TextScaler.linear(zoom)),
+            child: ListView.builder(
+              controller: _commitScroll,
+              itemExtent: rowHeight,
+              physics: _metaDown ? const NeverScrollableScrollPhysics() : null,
+              itemCount: graph.rows.length + (exhausted ? 0 : 1),
+              itemBuilder: (context, index) {
+                if (index >= graph.rows.length) {
+                  return _loadMoreRow(rowHeight, canLoadMore);
+                }
+                final row = graph.rows[index];
+                final commit = row.commit;
+                final selected = _selectedHashes.contains(commit.hash);
+                return DragTarget<DragItem>(
+                  // A branch chip dropped anywhere on a commit row opens the integrate
+                  // menu; the row it lands on is just the drop affordance. Only a
+                  // dragged branch (DragRef) is meaningful here — a dragged commit
+                  // is bound for the nav rail, not another commit.
+                  onWillAcceptWithDetails: (details) {
+                    final data = details.data;
+                    return data is DragRef && _canDropBranch(data.ref);
+                  },
+                  onAcceptWithDetails: (details) {
+                    // ESC-cancelled drags release as a no-op (see DragStateNotifier).
+                    if (ref.read(dragStateProvider) == null) return;
+                    final data = details.data;
+                    if (data is DragRef) {
+                      _onBranchDropped(data.ref, details.offset);
+                    }
+                  },
+                  builder: (context, candidate, rejected) {
+                    final dropHover = candidate.isNotEmpty;
+                    // The row is itself draggable (immediate: mouse-first — see
+                    // DragItemDraggable) — drop a commit on the Branches tab to
+                    // fork a branch, on Worktrees for a worktree, etc.
+                    return DragItemDraggable(
+                      item: DragCommit(commit),
+                      immediate: true,
+                      // Picking a row up selects it — the canonical engine
+                      // contract, so the drag operand is never ambiguous.
+                      onDragSelect: () => _selectForDrag(commit.hash),
+                      child: GestureDetector(
+                        key: _commitRowKeyFor(commit.hash),
+                        onTap: () => _handleRowTap(commit.hash),
+                        onSecondaryTapUp: (d) =>
+                            _handleRowSecondaryTap(commit, d.globalPosition),
+                        child: Container(
+                          color: dropHover
+                              ? MacosColors.systemGreenColor.withValues(
+                                  alpha: 0.20,
+                                )
+                              : selected
+                              ? MacosColors.systemBlueColor.withValues(
+                                  alpha: 0.32,
+                                )
+                              : const Color(0x00000000),
+                          height: rowHeight,
+                          child: Row(
+                            children: [
+                              // Clip to the fixed band so rounding in the compressed-lane
+                              // math can never paint a hair over the ref chips, subject, or
+                              // author text to the right — every lane itself is still drawn
+                              // (compressed via `laneWidth` above once the count exceeds
+                              // the cap), never dropped.
+                              ClipRect(
+                                child: CustomPaint(
+                                  size: Size(graphWidth, rowHeight),
+                                  painter: CommitRowPainter(
+                                    row,
+                                    laneWidth: laneWidth,
+                                    scale: zoom,
+                                  ),
                                 ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    children: [
-                                      if (commit.isMerge) ...[
-                                        MacosIcon(
-                                          CupertinoIcons.arrow_merge,
-                                          size: 13 * zoom,
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      children: [
+                                        if (commit.isMerge) ...[
+                                          MacosIcon(
+                                            CupertinoIcons.arrow_merge,
+                                            size: 13 * zoom,
+                                          ),
+                                          const SizedBox(width: 4),
+                                        ],
+                                        // Subject first (Tower / Fork / GitHub Desktop): the
+                                        // message is primary. Chips are intrinsically sized
+                                        // (capped per chip + maxVisible) so they never compete
+                                        // with the subject for flex space and collapse to
+                                        // zero width — the pop-out bug that hid every badge.
+                                        Expanded(
+                                          child: Text(
+                                            commit.subject,
+                                            style: typography.body,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
                                         ),
-                                        const SizedBox(width: 4),
+                                        if ((decorations[commit.hash] ??
+                                                const <GitRef>[])
+                                            .isNotEmpty) ...[
+                                          const SizedBox(width: 6),
+                                          RefChipStrip(
+                                            refs: decorations[commit.hash]!,
+                                            enableDrag: true,
+                                          ),
+                                        ],
                                       ],
-                                      // Subject first (Tower / Fork / GitHub Desktop): the
-                                      // message is primary. Chips are intrinsically sized
-                                      // (capped per chip + maxVisible) so they never compete
-                                      // with the subject for flex space and collapse to
-                                      // zero width — the pop-out bug that hid every badge.
-                                      Expanded(
-                                        child: Text(
-                                          commit.subject,
-                                          style: typography.body,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                        ),
-                                      ),
-                                      if ((decorations[commit.hash] ??
-                                              const <GitRef>[])
-                                          .isNotEmpty) ...[
-                                        const SizedBox(width: 6),
-                                        RefChipStrip(
-                                          refs: decorations[commit.hash]!,
-                                          enableDrag: true,
-                                        ),
-                                      ],
-                                    ],
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '${commit.shortHash}  ·  ${commit.authorName}  ·  '
-                                    '${_shortDate(commit.date)}',
-                                    style: typography.caption1.copyWith(
-                                      color: MacosColors.systemGrayColor,
                                     ),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ],
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '${commit.shortHash}  ·  ${commit.authorName}  ·  '
+                                      '${_shortDate(commit.date)}',
+                                      style: typography.caption1.copyWith(
+                                        color: MacosColors.systemGrayColor,
+                                      ),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ],
+                                ),
                               ),
-                            ),
-                            const SizedBox(width: 8),
-                          ],
+                              const SizedBox(width: 8),
+                            ],
+                          ),
                         ),
                       ),
-                    ),
-                  );
-                },
-              );
-            },
-          ),
+                    );
+                  },
+                );
+              },
+            ),
           ),
         ),
       ),
