@@ -39,7 +39,7 @@ void main() {
     test('subject containing fieldSep (0x1F) is not truncated (M3)', () {
       // A subject that contains the unit separator byte — split() would
       // produce 8 fields, and f[6] would only capture the prefix.
-      final subjectWithSep = 'part1${GitService.fieldSep}part2';
+      const subjectWithSep = 'part1${GitService.fieldSep}part2';
       final raw = record('bbbbbbbb', subjectWithSep);
       final commits = parseGitLog(raw);
       expect(commits.length, 1);
@@ -49,8 +49,8 @@ void main() {
     });
 
     test('subject with multiple fieldSep bytes recovers full text', () {
-      final sep = GitService.fieldSep;
-      final subjectWithMultipleSeps = 'a${sep}b${sep}c${sep}d';
+      const sep = GitService.fieldSep;
+      const subjectWithMultipleSeps = 'a${sep}b${sep}c${sep}d';
       final raw = record('cccccccc', subjectWithMultipleSeps);
       final commits = parseGitLog(raw);
       expect(commits.length, 1);

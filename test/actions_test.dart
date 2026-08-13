@@ -62,9 +62,9 @@ void main() {
       tester,
     ) async {
       await tester.pumpWidget(
-        MacosApp(
+        const MacosApp(
           debugShowCheckedModeBanner: false,
-          home: const _Host(throwOnAction: true, errorMessage: 'something broke'),
+          home: _Host(throwOnAction: true, errorMessage: 'something broke'),
         ),
       );
       await tester.tap(find.text('Run'));

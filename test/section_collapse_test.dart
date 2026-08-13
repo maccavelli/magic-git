@@ -2,9 +2,9 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:remote_magic_git/features/common/section_collapse.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   setUp(() async {
@@ -73,8 +73,8 @@ void main() {
   group('CollapseChevron', () {
     testWidgets('shows right chevron when collapsed', (tester) async {
       await tester.pumpWidget(
-        MacosApp(
-          home: const CollapseChevron(true),
+        const MacosApp(
+          home: CollapseChevron(true),
         ),
       );
 
@@ -83,8 +83,8 @@ void main() {
 
     testWidgets('shows down chevron when not collapsed', (tester) async {
       await tester.pumpWidget(
-        MacosApp(
-          home: const CollapseChevron(false),
+        const MacosApp(
+          home: CollapseChevron(false),
         ),
       );
 
@@ -95,8 +95,8 @@ void main() {
   group('CollapsibleSectionHeader', () {
     testWidgets('renders title', (tester) async {
       await tester.pumpWidget(
-        MacosApp(
-          home: const CollapsibleSectionHeader('Branches'),
+        const MacosApp(
+          home: CollapsibleSectionHeader('Branches'),
         ),
       );
 
@@ -105,8 +105,8 @@ void main() {
 
     testWidgets('shows count when provided', (tester) async {
       await tester.pumpWidget(
-        MacosApp(
-          home: const CollapsibleSectionHeader('Branches', count: '12'),
+        const MacosApp(
+          home: CollapsibleSectionHeader('Branches', count: '12'),
         ),
       );
 
@@ -115,8 +115,8 @@ void main() {
 
     testWidgets('shows trailing widgets', (tester) async {
       await tester.pumpWidget(
-        MacosApp(
-          home: const CollapsibleSectionHeader(
+        const MacosApp(
+          home: CollapsibleSectionHeader(
             'Branches',
             trailing: [Text('action')],
           ),

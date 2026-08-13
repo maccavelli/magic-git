@@ -1,3 +1,6 @@
+// Test-local fixture names intentionally mirror their command-line concepts.
+// ignore_for_file: no_leading_underscores_for_local_identifiers
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/github/gh_service.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';

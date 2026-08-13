@@ -2,7 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/forge/forge_urls.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
-import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
 import 'helpers/mock_executor.dart';

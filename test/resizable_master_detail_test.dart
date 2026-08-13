@@ -24,13 +24,16 @@ Future<ProviderContainer> _pump(
   double width = 1100,
   double detailFloor = 280,
   Map<String, Object> prefs = const {},
+  bool resetPrefs = true,
 }) async {
   // The default 800x600 surface would silently constrain any wider SizedBox —
   // the layout-ceiling tests need the window to actually BE this wide.
   tester.view.physicalSize = Size(width, 720);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
-  SharedPreferences.setMockInitialValues(prefs);
+  if (resetPrefs) {
+    SharedPreferences.setMockInitialValues(prefs);
+  }
   final container = ProviderContainer();
   addTearDown(container.dispose);
   // Let the notifier's async load fold stored prefs in before first layout.
@@ -154,6 +157,21 @@ void main() {
       780.0,
       reason: 'rendering must never write back',
     );
+  });
+
+  testWidgets(
+      'a temporary narrow window preserves the stored width for a later wide '
+      'window', (tester) async {
+    const storedWidth = 780.0;
+    await _pump(
+      tester,
+      width: 900,
+      prefs: {'paneWidth_historyList': storedWidth},
+    );
+    expect(_masterWidth(tester), 619, reason: 'narrow display clamp');
+
+    await _pump(tester, width: 1100, resetPrefs: false);
+    expect(_masterWidth(tester), storedWidth, reason: 'stored width restored');
   });
 
   testWidgets('double-click on the divider resets to the spec default and '

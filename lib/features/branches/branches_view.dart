@@ -794,7 +794,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       'New branch',
       confirmLabel: 'Create',
       fields: [
-        PromptField(
+        const PromptField(
           key: 'name',
           label: 'Name',
           placeholder: 'feature/my-work',

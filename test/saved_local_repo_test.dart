@@ -4,7 +4,7 @@ import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 void main() {
   group('constructor defaults', () {
     test('defaults bookmark/fsmonitor/worktree fields', () {
-      final r = SavedLocalRepo(id: 'a', label: 'My Repo', repoPath: '/home/x/p');
+      const r = SavedLocalRepo(id: 'a', label: 'My Repo', repoPath: '/home/x/p');
       expect(r.bookmarkData, '');
       expect(r.mainRepoPath, '');
       expect(r.mainRepoBookmarkData, '');
@@ -40,7 +40,7 @@ void main() {
 
   group('isLinkedWorktree', () {
     test('true when mainRepoPath is non-empty', () {
-      final r = SavedLocalRepo(
+      const r = SavedLocalRepo(
         id: 'a', label: '', repoPath: '/w',
         mainRepoPath: '/main',
       );
@@ -48,14 +48,14 @@ void main() {
     });
 
     test('false when mainRepoPath is empty', () {
-      final r = SavedLocalRepo(id: 'a', label: '', repoPath: '/w');
+      const r = SavedLocalRepo(id: 'a', label: '', repoPath: '/w');
       expect(r.isLinkedWorktree, isFalse);
     });
   });
 
   group('isScoped', () {
     test('true when gitDir is non-empty', () {
-      final r = SavedLocalRepo(
+      const r = SavedLocalRepo(
         id: 'a', label: '', repoPath: '/home/x',
         gitDir: '/home/x/.home.git',
       );
@@ -63,7 +63,7 @@ void main() {
     });
 
     test('false when gitDir is empty', () {
-      final r = SavedLocalRepo(id: 'a', label: '', repoPath: '/home/x');
+      const r = SavedLocalRepo(id: 'a', label: '', repoPath: '/home/x');
       expect(r.isScoped, isFalse);
     });
   });
@@ -73,7 +73,7 @@ void main() {
         SavedLocalRepo.fromJson(r.toJson());
 
     test('basic repo survives round-trip', () {
-      final r = SavedLocalRepo(id: '1', label: 'Work', repoPath: '/code/proj');
+      const r = SavedLocalRepo(id: '1', label: 'Work', repoPath: '/code/proj');
       final restored = roundTrip(r);
       expect(restored.id, r.id);
       expect(restored.label, r.label);
@@ -106,7 +106,7 @@ void main() {
     });
 
     test('null lastConnectedAt is omitted from JSON and stays null', () {
-      final r = SavedLocalRepo(id: '3', label: '', repoPath: '/p');
+      const r = SavedLocalRepo(id: '3', label: '', repoPath: '/p');
       final json = r.toJson();
       expect(json.containsKey('lastConnectedAt'), isFalse);
       final restored = roundTrip(r);
@@ -159,7 +159,7 @@ void main() {
 
   group('copyWith', () {
     test('partial update keeps unchanged fields', () {
-      final r = SavedLocalRepo(
+      const r = SavedLocalRepo(
         id: 'a', label: 'L', repoPath: '/p',
         fsmonitorEnabled: true, gitDir: '/p/.git',
       );
@@ -172,7 +172,7 @@ void main() {
     });
 
     test('no args copies all fields identically', () {
-      final r = SavedLocalRepo(id: 'a', label: 'L', repoPath: '/p');
+      const r = SavedLocalRepo(id: 'a', label: 'L', repoPath: '/p');
       final c = r.copyWith();
       expect(c.id, r.id);
       expect(c.label, r.label);
@@ -183,12 +183,12 @@ void main() {
 
   group('displayName', () {
     test('uses label when non-empty', () {
-      final r = SavedLocalRepo(id: 'a', label: 'My Repo', repoPath: '/some/long/path');
+      const r = SavedLocalRepo(id: 'a', label: 'My Repo', repoPath: '/some/long/path');
       expect(r.displayName, 'My Repo');
     });
 
     test('falls back to basename of repoPath when label is empty', () {
-      final r = SavedLocalRepo(id: 'a', label: '', repoPath: '/home/user/project');
+      const r = SavedLocalRepo(id: 'a', label: '', repoPath: '/home/user/project');
       expect(r.displayName, 'project');
     });
   });
@@ -196,22 +196,22 @@ void main() {
   group('_basename', () {
     test('returns last path component', () {
       // Accessible through displayName
-      final r = SavedLocalRepo(id: 'a', label: '', repoPath: '/a/b/c');
+      const r = SavedLocalRepo(id: 'a', label: '', repoPath: '/a/b/c');
       expect(r.displayName, 'c');
     });
 
     test('handles trailing slash', () {
-      final r = SavedLocalRepo(id: 'a', label: '', repoPath: '/a/b/c/');
+      const r = SavedLocalRepo(id: 'a', label: '', repoPath: '/a/b/c/');
       expect(r.displayName, 'c');
     });
 
     test('returns path itself when no slashes', () {
-      final r = SavedLocalRepo(id: 'a', label: '', repoPath: 'justadir');
+      const r = SavedLocalRepo(id: 'a', label: '', repoPath: 'justadir');
       expect(r.displayName, 'justadir');
     });
 
     test('root path returns the root itself', () {
-      final r = SavedLocalRepo(id: 'a', label: '', repoPath: '/');
+      const r = SavedLocalRepo(id: 'a', label: '', repoPath: '/');
       expect(r.displayName, '/');
     });
   });

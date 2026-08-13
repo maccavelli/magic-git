@@ -54,14 +54,14 @@ void main() {
     final git = _LogGit();
     git.handler = ({required skip, required maxCount}) => [
       for (var i = skip; i < skip + maxCount; i++)
-        _c('${i.toRadixString(16).padLeft(40, '0')}', 'c$i'),
+        _c(i.toRadixString(16).padLeft(40, '0'), 'c$i'),
     ];
     final container = ProviderContainer(
       overrides: [gitServiceProvider.overrideWithValue(git)],
     );
     addTearDown(container.dispose);
 
-    final key = (repoPath: _repo, baseOid: _base, branchOid: _branch);
+    const key = (repoPath: _repo, baseOid: _base, branchOid: _branch);
     final first = await container.read(branchUniqueCommitsProvider(key).future);
     expect(first, hasLength(kBranchUniqueCommitsPageSize));
     expect(git.calls.single.revision, '$_base..$_branch');
@@ -88,7 +88,7 @@ void main() {
       if (page == 1) {
         return [
           for (var i = 0; i < maxCount; i++)
-            _c('${i.toString().padLeft(40, 'f')}', 'p$i'),
+            _c(i.toString().padLeft(40, 'f'), 'p$i'),
         ];
       }
       throw StateError('network');
@@ -98,7 +98,7 @@ void main() {
     );
     addTearDown(container.dispose);
 
-    final key = (repoPath: _repo, baseOid: _base, branchOid: _branch);
+    const key = (repoPath: _repo, baseOid: _base, branchOid: _branch);
     final first = await container.read(branchUniqueCommitsProvider(key).future);
     expect(first, hasLength(kBranchUniqueCommitsPageSize));
     final notifier = container.read(branchUniqueCommitsProvider(key).notifier);

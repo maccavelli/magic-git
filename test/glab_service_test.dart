@@ -1,4 +1,5 @@
-import 'dart:async';
+// Test-local fixture names intentionally mirror their command-line concepts.
+// ignore_for_file: no_leading_underscores_for_local_identifiers
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/gitlab/glab_service.dart';
@@ -197,8 +198,9 @@ void main() {
     test('throws on login failure', () async {
       final executor = MockExecutor(
         onExecute: (call) {
-          if (call.gitArgs.contains('login'))
+          if (call.gitArgs.contains('login')) {
             return _fail(stderr: 'auth error');
+          }
           return _ok();
         },
       );
@@ -508,8 +510,9 @@ void main() {
     test('from create output when protocol is https', () async {
       final executor = MockExecutor(
         onExecute: (call) {
-          if (call.gitArgs.any((a) => a.contains('config')))
+          if (call.gitArgs.any((a) => a.contains('config'))) {
             return _ok(stdout: 'https');
+          }
           return _ok();
         },
       );
@@ -530,8 +533,9 @@ void main() {
       var callCount = 0;
       final executor = MockExecutor(
         onExecute: (call) {
-          if (call.gitArgs.any((a) => a.contains('config')))
+          if (call.gitArgs.any((a) => a.contains('config'))) {
             return _ok(stdout: 'ssh');
+          }
           if (call.gitArgs.length > 2 && call.gitArgs[2] == 'user') {
             return _ok(stdout: _withHeaders('{"username": "myuser"}'));
           }
@@ -566,16 +570,18 @@ void main() {
       var callCount = 0;
       final executor = MockExecutor(
         onExecute: (call) {
-          if (call.gitArgs.any((a) => a.contains('config')))
+          if (call.gitArgs.any((a) => a.contains('config'))) {
             return _ok(stdout: 'https');
+          }
           if (call.gitArgs.length > 2 && call.gitArgs[2] == 'user') {
             return _ok(stdout: _withHeaders('{"username": "myuser"}'));
           }
           if (call.gitArgs.length > 2 &&
               call.gitArgs[2].startsWith('projects/')) {
             callCount++;
-            if (callCount < 2)
+            if (callCount < 2) {
               return _ok(stdout: _withHeaders('{}', status: 500));
+            }
             return _ok(
               stdout: _withHeaders(
                 '{"http_url_to_repo": "https://example.com/p"}',
@@ -597,8 +603,9 @@ void main() {
     test('returns null URL when all sources fail', () async {
       final executor = MockExecutor(
         onExecute: (call) {
-          if (call.gitArgs.any((a) => a.contains('config')))
+          if (call.gitArgs.any((a) => a.contains('config'))) {
             return _ok(stdout: 'https');
+          }
           if (call.gitArgs.length > 2 && call.gitArgs[2] == 'user') {
             return _ok(stdout: _withHeaders('{}'));
           }
@@ -617,8 +624,9 @@ void main() {
     test('group path (contains /) skips user lookup', () async {
       final executor = MockExecutor(
         onExecute: (call) {
-          if (call.gitArgs.any((a) => a.contains('config')))
+          if (call.gitArgs.any((a) => a.contains('config'))) {
             return _ok(stdout: 'https');
+          }
           if (call.gitArgs.length > 2 &&
               call.gitArgs[2].startsWith('projects/')) {
             return _ok(

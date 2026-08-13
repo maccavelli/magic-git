@@ -4,16 +4,16 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:remote_magic_git/core/exec/scoped_command_executor.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/file_actions.dart';
 import 'package:remote_magic_git/features/viewer/remote_edit_service.dart';
-import 'package:remote_magic_git/core/exec/scoped_command_executor.dart';
-import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
 class MockFileActions extends FileActions {
   final List<String> openedPaths = [];
-  
+
   @override
   Future<void> openFiles(List<String> absolutePaths) async {
     openedPaths.addAll(absolutePaths);

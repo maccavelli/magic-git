@@ -29,6 +29,11 @@ const _refs = [
 
 const _worktrees = [
   GitWorktree(path: _repo, headOid: 'aaa', branch: 'refs/heads/main', isMain: true),
+  GitWorktree(
+    path: '/repo-feature',
+    headOid: 'bbb',
+    branch: 'refs/heads/feature-x',
+  ),
 ];
 
 class _Recorder {
@@ -186,6 +191,21 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(rec.checkedOut, 'feature-x');
+  });
+
+  testWidgets('running a worktree target opens its stable path', (tester) async {
+    final rec = _Recorder();
+    await _open(tester, rec);
+
+    await tester.enterText(
+      find.byType(MacosTextField),
+      'open worktree repo-feature',
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open worktree repo-feature'));
+    await tester.pumpAndSettle();
+
+    expect(rec.openedWorktree, '/repo-feature');
   });
 
   testWidgets('Escape closes the palette even with nothing focused', (

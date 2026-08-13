@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart' hide ConnectionState;
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
@@ -232,14 +232,14 @@ void main() {
   });
 
   group('registerAndActivateSshActive', () {
-    final _savedConn = SavedConnection(
+    const savedConn = SavedConnection(
       id: _connId,
       label: 'my server',
       host: 'example.com',
       port: 22,
       username: 'user',
       repoPath: '/home/user/project',
-      repoPaths: const [],
+      repoPaths: [],
     );
 
     testWidgets('updates connection metadata and sets repoPath', (
@@ -251,7 +251,7 @@ void main() {
         connectionProvider.overrideWith(() => conn),
         connectionStoreProvider.overrideWithValue(store),
         savedConnectionsProvider.overrideWith(
-          (ref) async => [_savedConn],
+          (ref) async => [savedConn],
         ),
         gitServiceProvider.overrideWithValue(_RecordingGitService()),
       ]);
@@ -278,7 +278,7 @@ void main() {
         connectionProvider.overrideWith(() => conn),
         connectionStoreProvider.overrideWithValue(_FakeConnectionStore()),
         savedConnectionsProvider.overrideWith(
-          (ref) async => [_savedConn],
+          (ref) async => [savedConn],
         ),
         gitServiceProvider.overrideWithValue(git),
       ]);
@@ -307,7 +307,7 @@ void main() {
         connectionProvider.overrideWith(() => conn),
         connectionStoreProvider.overrideWithValue(store),
         savedConnectionsProvider.overrideWith(
-          (ref) async => [_savedConn],
+          (ref) async => [savedConn],
         ),
         gitServiceProvider.overrideWithValue(_RecordingGitService()),
       ]);
@@ -340,7 +340,7 @@ void main() {
         connectionProvider.overrideWith(() => conn),
         connectionStoreProvider.overrideWithValue(store),
         savedConnectionsProvider.overrideWith(
-          (ref) async => [_savedConn],
+          (ref) async => [savedConn],
         ),
         gitServiceProvider.overrideWithValue(_RecordingGitService()),
       ]);
