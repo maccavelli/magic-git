@@ -88,33 +88,39 @@ void main() {
       expect(patch.files.every((f) => f.canExpand), isTrue);
     });
 
-    test('a merge commit (preamble, no diff) parses as complete, not failed', () {
-      final patch = parseCommitPatch(
-        'commit abc\nMerge: 111 222\n\n    Merge branch x\n',
-      );
-      expect(patch.files, isEmpty);
-      expect(patch.preamble, isNotEmpty);
-    });
+    test(
+      'a merge commit (preamble, no diff) parses as complete, not failed',
+      () {
+        final patch = parseCommitPatch(
+          'commit abc\nMerge: 111 222\n\n    Merge branch x\n',
+        );
+        expect(patch.files, isEmpty);
+        expect(patch.preamble, isNotEmpty);
+      },
+    );
   });
 
   group('change classification decides what can expand', () {
     DiffFile only(String raw) => parseCommitPatch(raw).files.single;
 
-    test('an added file has no pre-image, and still expands from the new blob', () {
-      final f = only(
-        'diff --git a/n.dart b/n.dart\n'
-        'new file mode 100644\n'
-        '--- /dev/null\n'
-        '+++ b/n.dart\n'
-        '@@ -0,0 +1,2 @@\n'
-        '+a\n'
-        '+b\n',
-      );
-      expect(f.change, DiffFileChange.added);
-      expect(f.oldPath, isNull);
-      expect(f.newPath, 'n.dart');
-      expect(f.canExpand, isTrue);
-    });
+    test(
+      'an added file has no pre-image, and still expands from the new blob',
+      () {
+        final f = only(
+          'diff --git a/n.dart b/n.dart\n'
+          'new file mode 100644\n'
+          '--- /dev/null\n'
+          '+++ b/n.dart\n'
+          '@@ -0,0 +1,2 @@\n'
+          '+a\n'
+          '+b\n',
+        );
+        expect(f.change, DiffFileChange.added);
+        expect(f.oldPath, isNull);
+        expect(f.newPath, 'n.dart');
+        expect(f.canExpand, isTrue);
+      },
+    );
 
     test('a deleted file cannot expand — there is no post-image blob', () {
       final f = only(
@@ -157,8 +163,20 @@ void main() {
         'Binary files a/i.png and b/i.png differ\n',
       );
       expect(f.change, DiffFileChange.binary);
+      expect(f.oldPath, 'i.png');
+      expect(f.newPath, 'i.png');
       expect(f.hunks, isEmpty);
       expect(f.canExpand, isFalse);
+    });
+
+    test('a binary path containing spaces and "and" remains exact', () {
+      final f = only(
+        'diff --git a/a and b x.png b/a and b x.png\n'
+        'index 111..222 100644\n'
+        'Binary files a/a and b x.png and b/a and b x.png differ\n',
+      );
+      expect(f.oldPath, 'a and b x.png');
+      expect(f.newPath, 'a and b x.png');
     });
 
     test('a combined merge diff parses but refuses to expand', () {
@@ -172,7 +190,11 @@ void main() {
         '++merged\n',
       );
       expect(f.hunks.single.range, isNull);
-      expect(f.canExpand, isFalse, reason: 'three-sided arithmetic is not ours');
+      expect(
+        f.canExpand,
+        isFalse,
+        reason: 'three-sided arithmetic is not ours',
+      );
     });
   });
 }

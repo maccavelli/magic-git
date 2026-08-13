@@ -2341,6 +2341,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                 : CommitPatchView(
                     repoPath: widget.repoPath,
                     hash: newer.hash,
+                    beforeRevision: older.hash,
                     diff: diff,
                     wrap: wrap,
                   ),

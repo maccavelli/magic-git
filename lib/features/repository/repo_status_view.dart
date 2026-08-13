@@ -22,6 +22,7 @@ import '../common/buttons.dart';
 import '../common/context_menu.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
+import '../common/image_diff_view.dart';
 import '../common/inline_action_button.dart';
 import '../common/link_status_chip.dart';
 import '../common/list_keyboard_nav.dart';
@@ -38,6 +39,7 @@ import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/staging_drop_banner.dart';
 import '../settings/settings_sheet.dart';
+import '../viewer/file_type.dart';
 import '../viewer/remote_edit_service.dart';
 import 'blame_sheet.dart';
 import 'commit_composer.dart';
@@ -1851,6 +1853,20 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             // diff of a tracked file. Split view is read-only, and a `-w` diff
             // isn't a valid apply patch — both fall back to a read-only render.
             data: (diff) {
+              if (viewerFileTypeFor(path).preview == PreviewKind.image) {
+                final file = parseUnifiedDiff(diff);
+                final added = untracked || file?.change == DiffFileChange.added;
+                final deleted = file?.change == DiffFileChange.deleted;
+                return ImageDiffView(
+                  repoPath: repoPath,
+                  displayPath: path,
+                  beforePath: added ? null : file?.oldPath ?? path,
+                  beforeRevision: staged ? 'HEAD' : ':0',
+                  afterPath: deleted ? null : file?.newPath ?? path,
+                  afterRevision: staged ? ':0' : null,
+                  canOpenExternally: !deleted,
+                );
+              }
               if (_diffSplit) {
                 return Column(
                   children: [

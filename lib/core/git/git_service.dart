@@ -2835,6 +2835,39 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     return result.stdout;
   }
 
+  /// Binary-safe, size-bounded sibling of [showBlob] for image review.
+  ///
+  /// The blob size is checked on the host before base64 encoding begins, so an
+  /// oversized object never crosses SSH or enters the executor's output
+  /// buffer. The object spec is shell-escaped as one value and bytes travel on
+  /// stdout, never argv.
+  Future<String> showBlobBase64(
+    String repoPath,
+    String revision,
+    String path, {
+    int maxBytes = 12 * 1024 * 1024,
+  }) async {
+    final spec = ShellEscaper.escape('$revision:$path');
+    final script =
+        'size=\$(git cat-file -s -- $spec) || exit \$?; '
+        'case "\$size" in ""|*[!0-9]*) exit 66;; esac; '
+        '[ "\$size" -le $maxBytes ] || { '
+        'echo "image exceeds review byte budget" >&2; exit 75; }; '
+        'git cat-file blob -- $spec | base64 | tr -d \'\\r\\n\'';
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: ['sh', '-c', script],
+      retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
+    );
+    if (!result.isSuccess) {
+      throw GitException('reading image blob failed', result);
+    }
+    return result.stdout;
+  }
+
   /// Many [showBlob]s in one remote round-trip via `git cat-file --batch`.
   ///
   /// On batch failure, falls back to sequential [showBlob] (fail-open on perf).
@@ -2896,6 +2929,35 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     );
     if (!result.isSuccess) {
       throw GitException('reading file bytes failed', result);
+    }
+    return result.stdout;
+  }
+
+  /// Bounded worktree byte read for two-sided image review. Unlike the general
+  /// viewer endpoint, this checks size before encoding so holding both sides is
+  /// predictably bounded.
+  Future<String> readFileBase64Bounded(
+    String repoPath,
+    String path, {
+    int maxBytes = 12 * 1024 * 1024,
+  }) async {
+    final q = ShellEscaper.escape(path);
+    final script =
+        'test -r $q || { echo "cannot read (missing or unreadable):" $q >&2; '
+        'exit 66; }; size=\$(wc -c < $q) || exit \$?; '
+        'case "\$size" in ""|*[!0-9]*) exit 66;; esac; '
+        '[ "\$size" -le $maxBytes ] || { '
+        'echo "image exceeds review byte budget" >&2; exit 75; }; '
+        'base64 < $q | tr -d \'\\r\\n\'';
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['sh', '-c', script],
+      retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
+    );
+    if (!result.isSuccess) {
+      throw GitException('reading image bytes failed', result);
     }
     return result.stdout;
   }

@@ -220,18 +220,58 @@ DiffFile? _parseFileAt(List<String> lines, int from, int to) {
   var binary = false;
 
   for (final line in header) {
-    if (line.startsWith('--- ')) {
+    if (line.startsWith('diff --git ') && oldPath == null && newPath == null) {
+      // For an ordinary (non-rename) binary diff Git omits ---/+++. Its
+      // `diff --git a/X b/X` header still identifies the path. Locate the
+      // separator by equality of the two sides rather than splitting on a
+      // space, which remains correct for a path such as "a and b.png".
+      final payload = line.substring('diff --git '.length);
+      if (payload.startsWith('a/')) {
+        var split = payload.indexOf(' b/');
+        while (split >= 0) {
+          final oldCandidate = payload.substring(2, split);
+          final newCandidate = payload.substring(split + 3);
+          if (oldCandidate == newCandidate) {
+            oldPath = oldCandidate;
+            newPath = newCandidate;
+            break;
+          }
+          split = payload.indexOf(' b/', split + 1);
+        }
+      }
+    } else if (line.startsWith('--- ')) {
       final p = line.substring(4);
       oldPath = p == '/dev/null' ? null : _stripPathPrefix(p);
     } else if (line.startsWith('+++ ')) {
       final p = line.substring(4);
       newPath = p == '/dev/null' ? null : _stripPathPrefix(p);
-    } else if (line.startsWith('rename from ') ||
-        line.startsWith('rename to ')) {
+    } else if (line.startsWith('rename from ')) {
       renamed = true;
+      oldPath = line.substring('rename from '.length);
+    } else if (line.startsWith('rename to ')) {
+      renamed = true;
+      newPath = line.substring('rename to '.length);
     } else if (line.startsWith('Binary files ') ||
         line.startsWith('GIT binary patch')) {
       binary = true;
+      // Added/deleted binary notices carry /dev/null. Ordinary and renamed
+      // paths were recovered from structural headers above; inspect only the
+      // null-side shapes here rather than guessing an ambiguous path split.
+      if (line.startsWith('Binary files ') && line.endsWith(' differ')) {
+        final sides = line.substring(
+          'Binary files '.length,
+          line.length - ' differ'.length,
+        );
+        if (sides.startsWith('/dev/null and ')) {
+          oldPath = null;
+          newPath = _stripPathPrefix(sides.substring('/dev/null and '.length));
+        } else if (sides.endsWith(' and /dev/null')) {
+          oldPath = _stripPathPrefix(
+            sides.substring(0, sides.length - ' and /dev/null'.length),
+          );
+          newPath = null;
+        }
+      }
     }
   }
 

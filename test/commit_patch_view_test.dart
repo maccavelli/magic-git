@@ -2,6 +2,8 @@
 // lines, an expander, a click, and the real surrounding code appearing — read
 // from the file's blob at that commit.
 
+import 'dart:convert';
+
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +15,7 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/common/commit_patch_view.dart';
+import 'package:remote_magic_git/features/common/image_diff_view.dart';
 
 const _repo = '/repo';
 const _hash = 'abc1234';
@@ -41,15 +44,44 @@ const _patch =
     ' line 22\n'
     ' line 23\n';
 
+const _binaryPatch =
+    'commit abc1234\n'
+    'Author: Dev <d@e>\n'
+    '\n'
+    '    update logo\n'
+    '\n'
+    'diff --git a/logo.png b/logo.png\n'
+    'index 111..222 100644\n'
+    'Binary files a/logo.png and b/logo.png differ\n';
+
+final _pngBase64 = base64.encode(
+  base64.decode(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8'
+    'AAAAASUVORK5CYII=',
+  ),
+);
+
 class _BlobGit extends GitService {
   _BlobGit() : super(SSHCommandExecutor(SSHClientManager()));
 
   int blobFetches = 0;
+  final List<String> imageFetches = [];
 
   @override
   Future<String> showBlob(String repoPath, String rev, String path) async {
     blobFetches++;
     return _blob;
+  }
+
+  @override
+  Future<String> showBlobBase64(
+    String repoPath,
+    String revision,
+    String path, {
+    int maxBytes = kImageDiffMaxEncodedBytes,
+  }) async {
+    imageFetches.add('$revision:$path');
+    return _pngBase64;
   }
 }
 
@@ -58,7 +90,7 @@ class _BlobGit extends GitService {
 Finder _chevron(IconData icon) =>
     find.byWidgetPredicate((w) => w is MacosIcon && w.icon == icon);
 
-Future<_BlobGit> _pump(WidgetTester tester) async {
+Future<_BlobGit> _pump(WidgetTester tester, {String diff = _patch}) async {
   final git = _BlobGit();
   final container = ProviderContainer(
     overrides: [gitServiceProvider.overrideWithValue(git)],
@@ -68,15 +100,11 @@ Future<_BlobGit> _pump(WidgetTester tester) async {
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
-      child: const MacosApp(
+      child: MacosApp(
         debugShowCheckedModeBanner: false,
         home: SizedBox(
           height: 700,
-          child: CommitPatchView(
-            repoPath: _repo,
-            hash: _hash,
-            diff: _patch,
-          ),
+          child: CommitPatchView(repoPath: _repo, hash: _hash, diff: diff),
         ),
       ),
     ),
@@ -86,6 +114,23 @@ Future<_BlobGit> _pump(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('binary image commit offers lazy bounded visual comparison', (
+    tester,
+  ) async {
+    final git = await _pump(tester, diff: _binaryPatch);
+    expect(find.text('Review logo.png'), findsOneWidget);
+    expect(git.imageFetches, isEmpty);
+
+    await tester.tap(find.text('Review logo.png'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ImageDiffView), findsOneWidget);
+    expect(git.imageFetches, ['$_hash^:logo.png', '$_hash:logo.png']);
+    await tester.tap(find.text('Text patch'));
+    await tester.pump();
+    expect(find.textContaining('Binary files'), findsOneWidget);
+  });
+
   testWidgets('the gaps git left are shown as expanders, and cost nothing', (
     tester,
   ) async {
@@ -188,11 +233,7 @@ void main() {
           debugShowCheckedModeBanner: false,
           home: SizedBox(
             height: 700,
-            child: CommitPatchView(
-              repoPath: _repo,
-              hash: _hash,
-              diff: _patch,
-            ),
+            child: CommitPatchView(repoPath: _repo, hash: _hash, diff: _patch),
           ),
         ),
       ),

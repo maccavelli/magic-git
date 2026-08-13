@@ -6,8 +6,11 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/unified_diff.dart';
 import '../../core/providers/app_providers.dart';
 import '../viewer/code_view.dart' show CodeTheme, codeThemeFor;
+import '../viewer/file_type.dart';
 import 'diff_highlight.dart';
 import 'diff_view.dart';
+import 'image_diff_view.dart';
+import 'inline_action_button.dart';
 import 'patch_model.dart';
 import 'tappable.dart';
 
@@ -36,12 +39,17 @@ class CommitPatchView extends ConsumerStatefulWidget {
 
   final bool wrap;
 
+  /// The pre-image revision. A single-commit view defaults to the first
+  /// parent; a range comparison supplies its explicitly selected older commit.
+  final String? beforeRevision;
+
   const CommitPatchView({
     super.key,
     required this.repoPath,
     required this.hash,
     required this.diff,
     this.wrap = false,
+    this.beforeRevision,
   });
 
   @override
@@ -61,6 +69,7 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
 
   CommitPatch? _patch;
   bool _loading = false;
+  int? _imageFileIndex;
 
   /// How far each gap has been opened. Keyed by (file, gap) so it survives the
   /// rebuild an expansion itself triggers; cleared when the patch changes.
@@ -173,6 +182,7 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
       _expansions = {};
       _wanted = {};
       _blobFailed = {};
+      _imageFileIndex = null;
       _startParse(widget.diff, initial: false);
     }
   }
@@ -289,13 +299,90 @@ class _CommitPatchViewState extends ConsumerState<CommitPatchView> {
         macosTheme.typography.body.color ?? MacosColors.textColor;
     final codeTheme = codeThemeFor(macosTheme.brightness);
 
-    if (widget.wrap) return _list(defaultColor, codeTheme, null);
-    return DiffPan(
-      vertical: _vertical,
-      horizontal: _horizontal,
-      maxLineWidth: _maxLineWidth,
-      builder: (context, _, viewportWidth) =>
-          _list(defaultColor, codeTheme, viewportWidth),
+    final patchBody = widget.wrap
+        ? _list(defaultColor, codeTheme, null)
+        : DiffPan(
+            vertical: _vertical,
+            horizontal: _horizontal,
+            maxLineWidth: _maxLineWidth,
+            builder: (context, _, viewportWidth) =>
+                _list(defaultColor, codeTheme, viewportWidth),
+          );
+    final imageFiles = <int>[
+      for (var index = 0; index < patch.files.length; index++)
+        if (_isReviewableImage(patch.files[index])) index,
+    ];
+    if (imageFiles.isEmpty) return patchBody;
+
+    final selected = _imageFileIndex;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _imageReviewBar(context, patch, imageFiles),
+        Container(height: 1, color: MacosColors.separatorColor),
+        Expanded(
+          child: selected == null
+              ? patchBody
+              : _commitImageDiff(patch.files[selected]),
+        ),
+      ],
+    );
+  }
+
+  bool _isReviewableImage(DiffFile file) {
+    final path = file.newPath ?? file.oldPath;
+    return path != null &&
+        file.change == DiffFileChange.binary &&
+        viewerFileTypeFor(path).preview == PreviewKind.image;
+  }
+
+  Widget _imageReviewBar(
+    BuildContext context,
+    CommitPatch patch,
+    List<int> imageFiles,
+  ) {
+    return SizedBox(
+      height: 38,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        child: Row(
+          children: [
+            InlineActionButton(
+              label: 'Text patch',
+              icon: _imageFileIndex == null
+                  ? CupertinoIcons.check_mark
+                  : CupertinoIcons.doc_text,
+              onPressed: () => setState(() => _imageFileIndex = null),
+            ),
+            for (final index in imageFiles) ...[
+              const SizedBox(width: 5),
+              InlineActionButton(
+                label:
+                    'Review ${patch.files[index].newPath ?? patch.files[index].oldPath}',
+                icon: _imageFileIndex == index
+                    ? CupertinoIcons.check_mark
+                    : CupertinoIcons.photo,
+                onPressed: () => setState(() => _imageFileIndex = index),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _commitImageDiff(DiffFile file) {
+    final added = file.change == DiffFileChange.added;
+    final deleted = file.change == DiffFileChange.deleted;
+    final displayPath = file.newPath ?? file.oldPath!;
+    return ImageDiffView(
+      repoPath: widget.repoPath,
+      displayPath: displayPath,
+      beforePath: added ? null : file.oldPath,
+      beforeRevision: widget.beforeRevision ?? '${widget.hash}^',
+      afterPath: deleted ? null : file.newPath,
+      afterRevision: widget.hash,
     );
   }
 

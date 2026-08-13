@@ -317,6 +317,45 @@ void main() {
       expect(b64, 'aGVsbG8=');
     });
 
+    test(
+      'bounded image reads reject before encoding and preserve literal path',
+      () async {
+        await git.readFileBase64Bounded(
+          '/repo',
+          "assets/a'b.png",
+          maxBytes: 4096,
+        );
+        final script = exec.calls.single[2];
+        expect(script, contains('wc -c'));
+        expect(script, contains('-le 4096'));
+        expect(script, contains('exit 75'));
+        expect(script, contains("'assets/a'\\''b.png'"));
+        expect(script, endsWith("| tr -d '\\r\\n'"));
+      },
+    );
+
+    test(
+      'showBlobBase64 checks object size before binary-safe transfer',
+      () async {
+        await git.showBlobBase64(
+          '/repo',
+          'abc123',
+          'assets/logo.png',
+          maxBytes: 8192,
+        );
+        final call = exec.calls.single;
+        expect(call.sublist(0, 2), ['sh', '-c']);
+        final script = call[2];
+        expect(script, contains("git cat-file -s -- 'abc123:assets/logo.png'"));
+        expect(script, contains('-le 8192'));
+        expect(script, contains('exit 75'));
+        expect(
+          script,
+          contains("git cat-file blob -- 'abc123:assets/logo.png' | base64"),
+        );
+      },
+    );
+
     test('readFile throws GitException on a failed read', () async {
       exec.next = const SSHCommandResult(
         exitCode: 1,
