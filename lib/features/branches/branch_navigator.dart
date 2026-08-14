@@ -219,8 +219,10 @@ class BranchNavigator extends ConsumerStatefulWidget {
   final AsyncValue<BranchReviewBatchResult>? review;
   final BranchReviewQuickFilter reviewFilter;
   final BranchReviewSort reviewSort;
+
   /// Full ref names known to conflict after an explicit Review scan.
   final Set<String> conflictRefNames;
+
   /// Ordered multi-selection (Review primarily; harmless in Browse).
   final BranchMultiSelection multiSelection;
   final ValueChanged<BranchMultiSelection>? onMultiSelect;
@@ -261,6 +263,12 @@ class BranchNavigator extends ConsumerStatefulWidget {
     required GitRef current,
   })
   onDropOnCurrent;
+  final void Function(
+    GitService, {
+    required GitCommit commit,
+    required GitRef branch,
+  })
+  onDropCommitOnBranch;
 
   /// Publish / create-request / open CI / compare — same actions as the detail
   /// pane, so keymap + palette handlers stay in lockstep with the buttons.
@@ -274,6 +282,7 @@ class BranchNavigator extends ConsumerStatefulWidget {
   final void Function(String) onFilterChanged;
   final ValueChanged<BranchWorkspaceMode> onModeChanged;
   final ValueChanged<String?> onBaseChanged;
+
   /// Clears a persisted user base (e.g. when the saved ref is unavailable).
   final VoidCallback onBaseReset;
   final ValueChanged<BranchReviewSort> onReviewSortChanged;
@@ -326,6 +335,7 @@ class BranchNavigator extends ConsumerStatefulWidget {
     required this.onPushTag,
     required this.onPushAllLocalOnly,
     required this.onDropOnCurrent,
+    required this.onDropCommitOnBranch,
     this.onPublish,
     this.onCreateRequest,
     this.onOpenUrl,
@@ -404,9 +414,7 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
     widget.focusNode.requestFocus();
     final onMulti = widget.onMultiSelect;
     if (onMulti != null && widget.mode == BranchWorkspaceMode.review) {
-      final visible = [
-        for (final r in _visibleLocalFullRefs()) r,
-      ];
+      final visible = [for (final r in _visibleLocalFullRefs()) r];
       final current = widget.multiSelection;
       if (shift) {
         onMulti(current.rangeTo(refEntry.name, visible));
@@ -512,8 +520,7 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
         }
         return KeyEventResult.handled;
       case LogicalKeyboardKey.contextMenu:
-      case LogicalKeyboardKey.f10
-          when shift:
+      case LogicalKeyboardKey.f10 when shift:
         _openContextMenuForSelection();
         return KeyEventResult.handled;
       case LogicalKeyboardKey.escape:
@@ -720,13 +727,15 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
     final unpublished = local != null && local.upstream == null;
     final bf = local == null ? null : widget.vm.forge[local.shortName];
     final hasRequest = bf != null && bf.hasRequest;
-    final canPublish = local != null &&
+    final canPublish =
+        local != null &&
         !local.isHead &&
         unpublished &&
         remotes.isNotEmpty &&
         widget.onPublish != null &&
         !widget.busy;
-    final canCreateRequest = local != null &&
+    final canCreateRequest =
+        local != null &&
         !local.isHead &&
         !unpublished &&
         !hasRequest &&
@@ -744,10 +753,12 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
       'branches.delete': _canActOnSelection
           ? () => widget.onDeleteBranch(git, _selectedLocal!.shortName)
           : null,
-      'branches.publish':
-          canPublish ? () => widget.onPublish!(git, local) : null,
-      'branches.createRequest':
-          canCreateRequest ? () => widget.onCreateRequest!(local) : null,
+      'branches.publish': canPublish
+          ? () => widget.onPublish!(git, local)
+          : null,
+      'branches.createRequest': canCreateRequest
+          ? () => widget.onCreateRequest!(local)
+          : null,
       'branches.openCi': ciUrl != null && widget.onOpenUrl != null
           ? () => widget.onOpenUrl!(ciUrl)
           : null,
@@ -1298,19 +1309,32 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
         : branch.shortName;
     return KeyedSubtree(
       key: _rowKeyFor(branch.name),
-      // The current branch is a drop target: dropping another branch on it
-      // offers merge-into / rebase-onto (see [_dropOnCurrent]). Only HEAD
-      // accepts, so both operations act on the checked-out branch.
+      // Local branches accept a dragged commit (E2 cherry-pick onto that
+      // branch). HEAD also still accepts another local branch for
+      // merge-into / rebase-onto (see [_dropOnCurrent]).
       child: DragTarget<DragItem>(
-        onWillAcceptWithDetails: (d) =>
-            branch.isHead &&
-            d.data is DragRef &&
-            (d.data as DragRef).ref.name != branch.name,
-        onAcceptWithDetails: (d) => widget.onDropOnCurrent(
-          git,
-          source: (d.data as DragRef).ref,
-          current: branch,
-        ),
+        onWillAcceptWithDetails: (d) {
+          if (d.data is DragCommit) {
+            return branch.isLocalBranch && !branch.isCheckedOutElsewhere;
+          }
+          return branch.isHead &&
+              d.data is DragRef &&
+              (d.data as DragRef).ref.name != branch.name;
+        },
+        onAcceptWithDetails: (d) {
+          final data = d.data;
+          if (data is DragCommit) {
+            widget.onDropCommitOnBranch(
+              git,
+              commit: data.commit,
+              branch: branch,
+            );
+            return;
+          }
+          if (data is DragRef) {
+            widget.onDropOnCurrent(git, source: data.ref, current: branch);
+          }
+        },
         builder: (context, candidate, rejected) {
           final hovering = candidate.isNotEmpty;
           final row = _localRowBody(context, git, branch, depth, label);
@@ -1347,8 +1371,7 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
     final elsewhere = branch.elsewhereWorktreePath;
     final navigable = widget.vm.navigable;
     final pos = navigable.indexWhere((r) => r.name == branch.name);
-    final reviewSummary =
-        widget.review?.value?.summariesByRefName[branch.name];
+    final reviewSummary = widget.review?.value?.summariesByRefName[branch.name];
     final isReview = widget.mode == BranchWorkspaceMode.review;
     final isMerged = isReview
         ? reviewSummary?.mergedIntoBase ?? false
@@ -1614,39 +1637,41 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
         count: navigable.isEmpty ? null : navigable.length,
       ),
       child: KeyedSubtree(
-      key: _rowKeyFor(branch.name),
-      child: Tappable(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => _select(branch),
-        onSecondaryTapUp: (d) => _menu.show(
-          context,
-          d.globalPosition,
-          _remoteMenu(git, branch),
-          width: 250,
-        ),
-        child: Container(
-          color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-          child: Row(
-            children: [
-              const MacosIcon(
-                CupertinoIcons.cloud,
-                size: 15,
-                color: MacosColors.systemGrayColor,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  branch.shortName,
-                  style: typography.body,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+        key: _rowKeyFor(branch.name),
+        child: Tappable(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => _select(branch),
+          onSecondaryTapUp: (d) => _menu.show(
+            context,
+            d.globalPosition,
+            _remoteMenu(git, branch),
+            width: 250,
+          ),
+          child: Container(
+            color: selected
+                ? AppTheme.rowSelectionTint
+                : const Color(0x00000000),
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+            child: Row(
+              children: [
+                const MacosIcon(
+                  CupertinoIcons.cloud,
+                  size: 15,
+                  color: MacosColors.systemGrayColor,
                 ),
-              ),
-            ],
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    branch.shortName,
+                    style: typography.body,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
-      ),
       ),
     );
   }

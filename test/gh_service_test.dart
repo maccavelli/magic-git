@@ -841,6 +841,29 @@ void main() {
       expect(executor.calls.first.gitArgs, isNot(contains('--undo')));
     });
 
+    test(
+      'listPullRequestComments uses the issue conversation endpoint',
+      () async {
+        final executor = MockExecutor(
+          onExecute: (_) => _ok(
+            stdout:
+                '[{"id":11,"user":{"login":"bob"},"body":"Looks good",'
+                '"created_at":"2026-08-01T00:00:00Z"}]',
+          ),
+        );
+        final service = GhService(executor);
+        final comments = await service.listPullRequestComments(_repo, 7);
+
+        expect(
+        executor.calls.first.gitArgs,
+        contains('repos/{owner}/{repo}/issues/7/comments'),
+      );
+        expect(comments, hasLength(1));
+        expect(comments.single.author, 'bob');
+        expect(comments.single.body, 'Looks good');
+      },
+    );
+
     test('commentOnPullRequest sends body', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
       final service = GhService(executor);

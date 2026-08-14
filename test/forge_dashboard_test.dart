@@ -123,10 +123,14 @@ void main() {
         'tagName': 'v19.0.2',
         'name': 'v19.0.2',
         'releasedAt': '2026-07-01T17:57:10Z',
+        'description': 'Security fixes',
+        'author': {'username': 'release-bot'},
       });
       expect(r.tagName, 'v19.0.2');
       expect(r.publishedAt, '2026-07-01T17:57:10Z');
       expect(r.publishedDate, '2026-07-01');
+      expect(r.description, 'Security fixes');
+      expect(r.author, 'release-bot');
     });
   });
 
@@ -176,9 +180,13 @@ void main() {
         'tagName': 'v2.96.0',
         'name': 'GitHub CLI 2.96.0',
         'publishedAt': '2026-07-02T21:31:04Z',
+        'description': 'CLI improvements',
+        'author': {'login': 'cli'},
       });
       expect(r.name, 'GitHub CLI 2.96.0');
       expect(r.publishedDate, '2026-07-02');
+      expect(r.description, 'CLI improvements');
+      expect(r.author, 'cli');
     });
   });
 

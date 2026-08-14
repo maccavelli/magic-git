@@ -808,6 +808,13 @@ class GhService {
     return _parseIssueComments(result.stdout);
   }
 
+  /// Conversation comments on a pull request. GitHub stores these on the
+  /// shared issue-comments API (`/issues/{n}/comments`), not review threads.
+  Future<List<ForgeComment>> listPullRequestComments(
+    String repoPath,
+    int number,
+  ) => listIssueComments(repoPath, number);
+
   List<ForgeComment> _parseIssueComments(String stdout) {
     final raw = stdout.trim();
     if (raw.isEmpty) return const [];
@@ -1136,7 +1143,7 @@ query($owner: String!, $name: String!) {
     }
     labels(first: 100) { totalCount nodes { name color description } }
     milestones(states: OPEN, first: 50) { totalCount nodes { number title state dueOn } }
-    releases(first: 20, orderBy: {field: CREATED_AT, direction: DESC}) { totalCount nodes { tagName name publishedAt } }
+    releases(first: 20, orderBy: {field: CREATED_AT, direction: DESC}) { totalCount nodes { tagName name publishedAt description author { login } } }
   }
 }
 ''';

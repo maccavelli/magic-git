@@ -1,13 +1,16 @@
 import 'dart:async' show unawaited;
 
 import 'package:flutter/cupertino.dart' hide OverlayVisibilityMode;
+import 'package:flutter/material.dart' show SelectableText;
 import 'package:flutter/services.dart' show Clipboard, ClipboardData;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:url_launcher/url_launcher.dart' show launchUrl;
 
 import '../../core/forge/forge_dashboard.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/display_error.dart';
+import '../common/async_views.dart';
 import '../common/buttons.dart';
 import '../common/field_styles.dart';
 import '../common/label_colors.dart';
@@ -646,3 +649,83 @@ const kJobLogStyle = TextStyle(
 
 /// Muted grey used inside the dark log panes (placeholders, "No log output.").
 const kLogMutedColor = Color(0xFF9E9E9E);
+
+/// Conversation comments for an issue or change request. Caps the list at
+/// the last 50 entries and says so when the thread is longer.
+class ForgeCommentsSection extends StatelessWidget {
+  final AsyncValue<List<ForgeComment>> comments;
+  final double height;
+
+  const ForgeCommentsSection({
+    super.key,
+    required this.comments,
+    this.height = 160,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(height: 1, color: MacosColors.separatorColor),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: Text(
+            'Comments',
+            style: MacosThemeData.dark().typography.headline,
+          ),
+        ),
+        SizedBox(
+          height: height,
+          child: comments.when(
+            loading: () => const Center(child: ProgressCircle()),
+            error: (err, _) => SectionError(err),
+            data: (list) {
+              if (list.isEmpty) {
+                return const CenteredHint('No comments yet');
+              }
+              final truncated = list.length > 50;
+              final shown = truncated ? list.sublist(list.length - 50) : list;
+              return ListView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                itemCount: shown.length + (truncated ? 1 : 0),
+                itemBuilder: (context, i) {
+                  if (truncated && i == 0) {
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Text(
+                        'Showing the last 50 of ${list.length} comments. '
+                        'Open on the forge for the full thread.',
+                        style: const TextStyle(
+                          color: MacosColors.systemGrayColor,
+                          fontSize: 11,
+                        ),
+                      ),
+                    );
+                  }
+                  final c = shown[truncated ? i - 1 : i];
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '@${c.author}${c.createdAt != null ? ' · ${c.createdAt!.split('T').first}' : ''}',
+                          style: const TextStyle(
+                            color: MacosColors.systemGrayColor,
+                            fontSize: 11,
+                          ),
+                        ),
+                        SelectableText(c.body),
+                      ],
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}

@@ -31,6 +31,7 @@ void main() {
       diffContextLines: 12,
       grouping: RepositoryChangeGrouping.directory,
       showToolbarLabels: true,
+      visibleToolbarSlots: {WorkspaceToolbarSlot.back},
     );
 
     final decoded = RepositoryWorkspacePrefs.decode(original.encode());
@@ -48,6 +49,7 @@ void main() {
     expect(decoded.diffContextLines, 12);
     expect(decoded.grouping, RepositoryChangeGrouping.directory);
     expect(decoded.showToolbarLabels, isTrue);
+    expect(decoded.visibleToolbarSlots, {WorkspaceToolbarSlot.back});
   });
 
   test('transient workspace state is absent from the durable schema', () {
@@ -81,6 +83,7 @@ void main() {
       expect(applied.diffContextLines, original.diffContextLines);
       expect(applied.grouping, original.grouping);
       expect(applied.showToolbarLabels, original.showToolbarLabels);
+      expect(applied.visibleToolbarSlots, original.visibleToolbarSlots);
       expect(applied.filesPinned, original.filesPinned);
     }
   });

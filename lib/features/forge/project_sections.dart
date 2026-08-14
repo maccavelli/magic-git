@@ -207,8 +207,7 @@ List<Widget> projectSectionChildren({
             ? const SectionEmpty('No releases')
             : Column(
                 children: [
-                  for (final r in visible)
-                    _releaseRow(r, sel, onSelect),
+                  for (final r in visible) _releaseRow(r, sel, onSelect),
                 ],
               );
       }),
@@ -427,33 +426,28 @@ Widget? projectDetailFor({
   }
 }
 
-Widget _releaseDetail(
-  ForgeRelease release,
-  Forge forge,
-  String? remoteUrl,
-) {
+Widget _releaseDetail(ForgeRelease release, Forge forge, String? remoteUrl) {
   final title = release.name.isEmpty ? release.tagName : release.name;
+  final notes = release.description?.trim() ?? '';
   final url = remoteUrl == null || release.tagName.isEmpty
       ? null
       : forgeReleaseWebUrl(remoteUrl, forge, release.tagName);
   return ForgeDetailScaffold(
     leading: StatusBadge(release.tagName, MacosColors.systemOrangeColor),
     title: title,
-    headerActions: [
-      if (url != null) OpenInBrowserButton(url),
-    ],
+    headerActions: [if (url != null) OpenInBrowserButton(url)],
     lines: [
       DetailLine('Tag', release.tagName),
       if (release.publishedDate != null)
         DetailLine('Published', release.publishedDate!),
+      if (release.author != null && release.author!.isNotEmpty)
+        DetailLine('Author', '@${release.author}'),
     ],
-    body: const Padding(
-      padding: EdgeInsets.all(16),
-      child: Text(
-        'Release notes are not loaded in this build — open on the forge for '
-        'the full description and assets.',
-        style: TextStyle(color: MacosColors.systemGrayColor),
-      ),
+    body: Padding(
+      padding: const EdgeInsets.all(16),
+      child: notes.isEmpty
+          ? const CenteredHint('No release notes')
+          : _detailBody(notes),
     ),
   );
 }
@@ -498,54 +492,7 @@ Widget _issueDetail(
               ? const CenteredHint('No description')
               : _detailBody(body),
         ),
-        if (comments != null) ...[
-          Container(height: 1, color: MacosColors.separatorColor),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            child: Text(
-              'Comments',
-              style: MacosThemeData.dark().typography.headline,
-            ),
-          ),
-          SizedBox(
-            height: 160,
-            child: comments.when(
-              loading: () => const Center(child: ProgressCircle()),
-              error: (err, _) => SectionError(err),
-              data: (list) {
-                if (list.isEmpty) {
-                  return const CenteredHint('No comments yet');
-                }
-                final shown = list.length > 50
-                    ? list.sublist(list.length - 50)
-                    : list;
-                return ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                  itemCount: shown.length,
-                  itemBuilder: (context, i) {
-                    final c = shown[i];
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '@${c.author}${c.createdAt != null ? ' · ${c.createdAt!.split('T').first}' : ''}',
-                            style: const TextStyle(
-                              color: MacosColors.systemGrayColor,
-                              fontSize: 11,
-                            ),
-                          ),
-                          SelectableText(c.body),
-                        ],
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
-        ],
+        if (comments != null) ForgeCommentsSection(comments: comments),
       ],
     ),
     // Issues become actionable here (they were view-only before): the same

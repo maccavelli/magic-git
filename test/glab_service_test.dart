@@ -1096,6 +1096,27 @@ void main() {
       );
     });
 
+    test('listMergeRequestNotes skips system notes', () async {
+      final executor = MockExecutor(
+        onExecute: (_) => _ok(
+          stdout:
+              '[{"id":1,"system":true,"body":"joined","author":{"username":"bot"}},'
+              '{"id":2,"system":false,"body":"Please rebase",'
+              '"author":{"username":"sam"},"created_at":"2026-08-02T00:00:00Z"}]',
+        ),
+      );
+      final service = GlabService(executor);
+      final comments = await service.listMergeRequestNotes(_repo, 7);
+
+      expect(
+        executor.calls.first.gitArgs,
+        contains('projects/:fullpath/merge_requests/7/notes'),
+      );
+      expect(comments, hasLength(1));
+      expect(comments.single.author, 'sam');
+      expect(comments.single.body, 'Please rebase');
+    });
+
     test('commentOnMergeRequest sends message', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
       final service = GlabService(executor);

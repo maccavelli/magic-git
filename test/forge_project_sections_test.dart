@@ -54,6 +54,8 @@ const _dashboard = ForgeProjectDashboard(
       tagName: 'v0.9',
       name: 'Beta',
       publishedAt: '2026-07-01T00:00:00Z',
+      description: 'First public beta notes',
+      author: 'mac',
     ),
   ],
 );
@@ -74,9 +76,7 @@ class _BrowseMode extends ForgeInboxMode {
   bool build() => false;
 }
 
-List<Override> _overrides({
-  AsyncValue<ForgeProjectDashboard>? dashboard,
-}) => [
+List<Override> _overrides({AsyncValue<ForgeProjectDashboard>? dashboard}) => [
   forgeInboxModeProvider.overrideWith(_BrowseMode.new),
   remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
   pullRequestsProvider(_repo).overrideWith((ref) async => const []),
@@ -180,6 +180,17 @@ void main() {
     expect(find.text('First release'), findsOneWidget); // description body
   });
 
+  testWidgets('selecting a release opens its notes', (tester) async {
+    await _pump(tester, overrides: _overrides());
+
+    await tester.tap(find.text('Beta'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('First public beta notes'), findsOneWidget);
+    expect(find.text('@mac'), findsWidgets);
+    expect(find.textContaining('not loaded in this build'), findsNothing);
+  });
+
   testWidgets('the Issues "+" opens the inline create form in the right pane', (
     tester,
   ) async {
@@ -223,9 +234,7 @@ void main() {
     expect(find.text('Steps to reproduce the bug'), findsOneWidget);
   });
 
-  testWidgets('a clean create form opens a row without asking', (
-    tester,
-  ) async {
+  testWidgets('a clean create form opens a row without asking', (tester) async {
     await _pump(tester, overrides: _overrides());
 
     await tester.tap(_newIssueButton());

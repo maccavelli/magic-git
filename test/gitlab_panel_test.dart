@@ -135,13 +135,19 @@ class _Connected extends ConnectionController {
 /// providers so no section is left spinning (pumpAndSettle would hang).
 /// (The Browse-mode override lives at each container, not here — this helper
 /// is spread once per repo and a container may cover two repos.)
-List<Override> _projectOverrides(String repo) => [
+List<Override> _projectOverrides(
+  String repo, {
+  List<ForgeComment> comments = const [],
+}) => [
   projectIssuesProvider(repo).overrideWith((ref) async => const []),
   projectMilestonesProvider(repo).overrideWith((ref) async => const []),
   projectDashboardProvider(
     repo,
   ).overrideWith((ref) async => const ForgeProjectDashboard()),
   originRemoteUrlProvider(repo).overrideWith((ref) async => null),
+  changeRequestCommentsProvider(
+    (repo, 7),
+  ).overrideWith((ref) async => comments),
 ];
 
 Future<ProviderContainer> _pump(
@@ -294,6 +300,63 @@ void main() {
     // Detail lines.
     expect(find.text('Source'), findsOneWidget);
     expect(find.text('Target'), findsOneWidget);
+  });
+
+  testWidgets('MR detail shows conversation comments', (tester) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final container = ProviderContainer(
+      overrides: [
+        connectionProvider.overrideWith(_Connected.new),
+        forgeInboxModeProvider.overrideWith(_BrowseMode.new),
+        refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+        remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+        mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
+        mergeRequestDetailProvider((
+          _repo,
+          7,
+        )).overrideWith((ref) async => _readyMr),
+        repoMergePolicyProvider(
+          _repo,
+        ).overrideWith((ref) async => const GlRepoMergePolicy()),
+        pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
+        jobsProvider((_repo, 100)).overrideWith((ref) async => _jobs),
+        jobsProvider((_repo, 101)).overrideWith((ref) async => _jobs),
+        ..._projectOverrides(
+          _repo,
+          comments: const [
+            ForgeComment(
+              id: '9',
+              author: 'sam',
+              body: 'Please rebase first',
+              createdAt: '2026-08-02T08:00:00Z',
+            ),
+          ],
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: SizedBox(
+            width: 1100,
+            height: 720,
+            child: GitLabPanel(repoPath: _repo),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add the parser'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Comments'), findsOneWidget);
+    expect(find.text('Please rebase first'), findsOneWidget);
+    expect(find.textContaining('@sam'), findsOneWidget);
   });
 
   testWidgets('the merge pulldown offers squash, confirmed via options sheet', (

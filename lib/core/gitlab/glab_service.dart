@@ -567,7 +567,7 @@ query($path: ID!) {
     }
     labels(first: 100) { count nodes { title color description } }
     milestones(state: active, first: 50) { nodes { iid title state dueDate } }
-    releases(first: 20) { count nodes { tagName name releasedAt } }
+    releases(first: 20) { count nodes { tagName name releasedAt description author { username name } } }
   }
 }
 ''';
@@ -1227,17 +1227,10 @@ query($path: ID!) {
   }
 
   /// Lists issue notes (conversation comments) via REST; skips system notes.
-  Future<List<ForgeComment>> listIssueComments(
-    String repoPath,
-    int iid,
-  ) async {
+  Future<List<ForgeComment>> listIssueComments(String repoPath, int iid) async {
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: [
-        'glab',
-        'api',
-        'projects/:fullpath/issues/$iid/notes',
-      ],
+      gitArgs: ['glab', 'api', 'projects/:fullpath/issues/$iid/notes'],
       lane: ExecLane.read,
     );
     if (!result.isSuccess) {
@@ -1247,6 +1240,30 @@ query($path: ID!) {
     if (raw.isEmpty) return const [];
     final decoded = jsonDecode(raw);
     if (decoded is! List) return const [];
+    return _parseNotes(decoded);
+  }
+
+  /// Conversation notes on a merge request; skips system notes.
+  Future<List<ForgeComment>> listMergeRequestNotes(
+    String repoPath,
+    int iid,
+  ) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['glab', 'api', 'projects/:fullpath/merge_requests/$iid/notes'],
+      lane: ExecLane.read,
+    );
+    if (!result.isSuccess) {
+      throw GlabException('glab api merge request notes failed', result);
+    }
+    final raw = result.stdout.trim();
+    if (raw.isEmpty) return const [];
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return const [];
+    return _parseNotes(decoded);
+  }
+
+  List<ForgeComment> _parseNotes(List<dynamic> decoded) {
     return [
       for (final item in decoded)
         if (item is Map && item['system'] != true)

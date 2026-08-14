@@ -116,4 +116,53 @@ void main() {
     expect(changed?.showToolbarLabels, isTrue);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('hidden secondary slots stay off the context bar', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1100, 300);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MacosApp(
+          home: SizedBox(
+            width: 1100,
+            height: 300,
+            child: RepositoryWorkspaceScaffold(
+              repositoryContext: RepositoryContextBar(
+                snapshot: _snapshot,
+                primaryAction: resolvePrimaryRepositoryAction(_snapshot),
+                onBack: () {},
+                onForward: () {},
+                onPrimaryAction: (_) {},
+              ),
+              canvas: const SizedBox.shrink(),
+              preferences: const RepositoryWorkspacePrefs(
+                visibleToolbarSlots: {WorkspaceToolbarSlot.forward},
+              ),
+              onPreferencesChanged: (_) {},
+              workspaceOptionsEnabled: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Back'), findsNothing);
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is ToolIconButton && widget.tooltip == 'Back',
+      ),
+      findsNothing,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is ToolIconButton && widget.tooltip == 'Forward',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Push'), findsOneWidget);
+  });
 }

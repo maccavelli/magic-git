@@ -10,6 +10,17 @@ enum RepositoryNavigatorMode { changes, files }
 
 enum WorkspacePreset { review, commit, investigate, minimal }
 
+/// Optional secondary context-bar slots. The contextual primary action is
+/// never hidden by this set.
+enum WorkspaceToolbarSlot { back, forward }
+
+extension WorkspaceToolbarSlotPresentation on WorkspaceToolbarSlot {
+  String get label => switch (this) {
+    WorkspaceToolbarSlot.back => 'Back',
+    WorkspaceToolbarSlot.forward => 'Forward',
+  };
+}
+
 extension WorkspacePresetPresentation on WorkspacePreset {
   String get label => switch (this) {
     WorkspacePreset.review => 'Review',
@@ -95,6 +106,7 @@ class RepositoryWorkspacePrefs {
   final int diffContextLines;
   final RepositoryChangeGrouping grouping;
   final bool showToolbarLabels;
+  final Set<WorkspaceToolbarSlot> visibleToolbarSlots;
 
   const RepositoryWorkspacePrefs({
     this.version = currentVersion,
@@ -113,6 +125,10 @@ class RepositoryWorkspacePrefs {
     this.diffContextLines = 3,
     this.grouping = RepositoryChangeGrouping.status,
     this.showToolbarLabels = false,
+    this.visibleToolbarSlots = const {
+      WorkspaceToolbarSlot.back,
+      WorkspaceToolbarSlot.forward,
+    },
   });
 
   RepositoryWorkspacePrefs get normalized => copyWith(
@@ -149,6 +165,7 @@ class RepositoryWorkspacePrefs {
     int? diffContextLines,
     RepositoryChangeGrouping? grouping,
     bool? showToolbarLabels,
+    Set<WorkspaceToolbarSlot>? visibleToolbarSlots,
   }) => RepositoryWorkspacePrefs(
     version: version ?? this.version,
     navigatorMode: navigatorMode ?? this.navigatorMode,
@@ -166,6 +183,7 @@ class RepositoryWorkspacePrefs {
     diffContextLines: diffContextLines ?? this.diffContextLines,
     grouping: grouping ?? this.grouping,
     showToolbarLabels: showToolbarLabels ?? this.showToolbarLabels,
+    visibleToolbarSlots: visibleToolbarSlots ?? this.visibleToolbarSlots,
   );
 
   Map<String, Object> toJson() {
@@ -187,6 +205,10 @@ class RepositoryWorkspacePrefs {
       'diffContextLines': value.diffContextLines,
       'grouping': value.grouping.name,
       'showToolbarLabels': value.showToolbarLabels,
+      'visibleToolbarSlots': [
+        for (final slot in WorkspaceToolbarSlot.values)
+          if (value.visibleToolbarSlots.contains(slot)) slot.name,
+      ],
     };
   }
 
@@ -241,6 +263,7 @@ class RepositoryWorkspacePrefs {
           RepositoryChangeGrouping.status,
         ),
         showToolbarLabels: json['showToolbarLabels'] as bool? ?? false,
+        visibleToolbarSlots: _decodeToolbarSlots(json['visibleToolbarSlots']),
       ).normalized;
     } on FormatException {
       return const RepositoryWorkspacePrefs();
@@ -251,6 +274,20 @@ class RepositoryWorkspacePrefs {
 
   static String storageKeyFor(RepositoryUiIdentity identity) =>
       'repositoryWorkspacePrefs_v1_${identity.preferenceKey}';
+}
+
+Set<WorkspaceToolbarSlot> _decodeToolbarSlots(Object? raw) {
+  if (raw == null) {
+    return const {WorkspaceToolbarSlot.back, WorkspaceToolbarSlot.forward};
+  }
+  if (raw is! List) {
+    return const {WorkspaceToolbarSlot.back, WorkspaceToolbarSlot.forward};
+  }
+  return {
+    for (final item in raw)
+      if (item is String)
+        ...WorkspaceToolbarSlot.values.where((slot) => slot.name == item),
+  };
 }
 
 final Map<String, RepositoryWorkspacePrefs> _sessionPrefs = {};

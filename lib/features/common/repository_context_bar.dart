@@ -3,6 +3,7 @@ import 'package:flutter/widgets.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/settings/app_settings.dart';
+import '../../core/settings/repository_workspace_prefs.dart';
 import 'activity_center.dart';
 import 'buttons.dart';
 import 'repository_context.dart';
@@ -76,26 +77,34 @@ class RepositoryContextBar extends StatelessWidget {
                   ),
                   const SizedBox(width: 2),
                 ],
-                _SecondaryActionButton(
-                  icon: CupertinoIcons.chevron_back,
-                  label: 'Back',
-                  tooltip: onBack == null
-                      ? 'Back (no earlier location)'
-                      : 'Back',
-                  onPressed: onBack,
-                  showLabel:
-                      !compact && (preferences?.showToolbarLabels ?? false),
-                ),
-                _SecondaryActionButton(
-                  icon: CupertinoIcons.chevron_forward,
-                  label: 'Forward',
-                  tooltip: onForward == null
-                      ? 'Forward (no later location)'
-                      : 'Forward',
-                  onPressed: onForward,
-                  showLabel:
-                      !compact && (preferences?.showToolbarLabels ?? false),
-                ),
+                if (preferences == null ||
+                    preferences.visibleToolbarSlots.contains(
+                      WorkspaceToolbarSlot.back,
+                    ))
+                  _SecondaryActionButton(
+                    icon: CupertinoIcons.chevron_back,
+                    label: 'Back',
+                    tooltip: onBack == null
+                        ? 'Back (no earlier location)'
+                        : 'Back',
+                    onPressed: onBack,
+                    showLabel:
+                        !compact && (preferences?.showToolbarLabels ?? false),
+                  ),
+                if (preferences == null ||
+                    preferences.visibleToolbarSlots.contains(
+                      WorkspaceToolbarSlot.forward,
+                    ))
+                  _SecondaryActionButton(
+                    icon: CupertinoIcons.chevron_forward,
+                    label: 'Forward',
+                    tooltip: onForward == null
+                        ? 'Forward (no later location)'
+                        : 'Forward',
+                    onPressed: onForward,
+                    showLabel:
+                        !compact && (preferences?.showToolbarLabels ?? false),
+                  ),
                 const SizedBox(width: 6),
                 Expanded(child: _RepositoryIdentity(snapshot: snapshot)),
                 if (!compact) ...[

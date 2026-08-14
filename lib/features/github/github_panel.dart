@@ -749,6 +749,11 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
             ),
           ),
           Expanded(child: _prChecks(headRun)),
+          ForgeCommentsSection(
+            comments: ref.watch(
+              changeRequestCommentsProvider((repoPath, pr.number)),
+            ),
+          ),
         ],
       ),
       actions: [
@@ -1225,13 +1230,15 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     if (body == null || !mounted) return;
     setState(() => _busyPrs.add(number));
     final gh = ref.read(ghServiceProvider);
-    await runAction(
+    final success = await runAction(
       context,
       () => gh.commentOnPullRequest(repoPath, number, body),
     );
     if (!mounted) return;
     setState(() => _busyPrs.remove(number));
-    // A comment changes no list-visible field — nothing to invalidate.
+    if (success) {
+      ref.invalidate(changeRequestCommentsProvider((repoPath, number)));
+    }
   }
 
   Future<void> _requestChangesPr(int number) async {

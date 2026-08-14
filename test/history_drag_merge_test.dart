@@ -21,6 +21,7 @@ class _DragFakeGit extends GitService {
 
   final mergedBranches = <(String, MergeMode)>[];
   final rebasedOnto = <String>[];
+  final movedBranches = <(String, String)>[];
 
   @override
   Future<List<GitCommit>> log(
@@ -59,6 +60,15 @@ class _DragFakeGit extends GitService {
     rebasedOnto.add(upstream);
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
+
+  @override
+  Future<void> moveBranch(
+    String repoPath,
+    String name,
+    String targetOid,
+  ) async {
+    movedBranches.add((name, targetOid));
+  }
 }
 
 GitCommit _c(String hash, String subject) => GitCommit(
@@ -80,7 +90,12 @@ Future<_DragFakeGit> _pump(WidgetTester tester) async {
   final git = _DragFakeGit(
     [head, older],
     [
-      GitRef(name: 'refs/heads/main', oid: head.hash, isHead: true, subject: 's'),
+      GitRef(
+        name: 'refs/heads/main',
+        oid: head.hash,
+        isHead: true,
+        subject: 's',
+      ),
       GitRef(
         name: 'refs/heads/feature',
         oid: older.hash,
@@ -126,16 +141,15 @@ Future<void> _dragOnto(WidgetTester tester, Finder chip, Finder target) async {
 }
 
 void main() {
-  testWidgets('dropping a branch chip opens the integrate menu', (tester) async {
+  testWidgets('dropping a branch chip opens the integrate menu', (
+    tester,
+  ) async {
     await _pump(tester);
-    await _dragOnto(
-      tester,
-      find.text('feature'),
-      find.text('head commit'),
-    );
+    await _dragOnto(tester, find.text('feature'), find.text('head commit'));
     expect(find.text('Merge feature into main'), findsOneWidget);
     expect(find.text('Merge feature into main (squash)'), findsOneWidget);
     expect(find.text('Rebase main onto feature'), findsOneWidget);
+    expect(find.text('Move feature here'), findsOneWidget);
   });
 
   testWidgets('choosing Merge runs git merge of the dragged branch', (
@@ -158,5 +172,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(git.rebasedOnto, ['feature']);
     expect(git.mergedBranches, isEmpty);
+  });
+
+  testWidgets('choosing Move branch here confirms then moves the tip', (
+    tester,
+  ) async {
+    final git = await _pump(tester);
+    await _dragOnto(tester, find.text('feature'), find.text('head commit'));
+    await tester.tap(find.text('Move feature here'));
+    await tester.pumpAndSettle();
+    expect(find.text('Move branch feature'), findsOneWidget);
+    await tester.tap(find.text('Move branch'));
+    await tester.pumpAndSettle();
+    expect(git.movedBranches, [('feature', 'aaaaaaa1111111')]);
+    expect(git.mergedBranches, isEmpty);
+    expect(git.rebasedOnto, isEmpty);
   });
 }

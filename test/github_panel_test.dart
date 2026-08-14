@@ -1,6 +1,8 @@
 // Verifies the GitHub (Forge) panel's left-pane / main-panel layout: PRs and
 // workflow runs list on the left; selecting one opens its detail on the right.
 
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/gestures.dart' show PointerDeviceKind;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -143,6 +145,10 @@ Future<void> _pump(WidgetTester tester, {GhService? gh}) async {
         _repo,
       ).overrideWith((ref) async => const ForgeProjectDashboard()),
       originRemoteUrlProvider(_repo).overrideWith((ref) async => null),
+      changeRequestCommentsProvider((
+        _repo,
+        7,
+      )).overrideWith((ref) async => const <ForgeComment>[]),
     ],
   );
   addTearDown(container.dispose);
@@ -248,6 +254,73 @@ void main() {
     );
     expect(find.text('Head'), findsOneWidget);
     expect(find.text('Base'), findsOneWidget);
+  });
+
+  testWidgets('PR detail shows conversation comments', (tester) async {
+    tester.view.physicalSize = const Size(1200, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final container = ProviderContainer(
+      overrides: [
+        forgeInboxModeProvider.overrideWith(_BrowseMode.new),
+        refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+        remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+        pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
+        pullRequestDetailProvider((
+          _repo,
+          7,
+        )).overrideWith((ref) async => _readyPr),
+        repoMergePolicyProvider(
+          _repo,
+        ).overrideWith((ref) async => const GhRepoMergePolicy()),
+        workflowRunsProvider(_repo).overrideWith((ref) async => _runs),
+        runJobsProvider((
+          _repo,
+          200,
+        )).overrideWith((ref) => Stream.value(_jobs)),
+        runJobsProvider((
+          _repo,
+          201,
+        )).overrideWith((ref) => Stream.value(_jobs)),
+        projectIssuesProvider(_repo).overrideWith((ref) async => const []),
+        projectMilestonesProvider(_repo).overrideWith((ref) async => const []),
+        githubProjectDashboardProvider(
+          _repo,
+        ).overrideWith((ref) async => const ForgeProjectDashboard()),
+        originRemoteUrlProvider(_repo).overrideWith((ref) async => null),
+        changeRequestCommentsProvider((_repo, 7)).overrideWith(
+          (ref) async => const [
+            ForgeComment(
+              id: '1',
+              author: 'bob',
+              body: 'Looks good to merge',
+              createdAt: '2026-08-01T12:00:00Z',
+            ),
+          ],
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: SizedBox(
+            width: 1100,
+            height: 720,
+            child: GitHubPanel(repoPath: _repo),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Add the parser'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Comments'), findsOneWidget);
+    expect(find.text('Looks good to merge'), findsOneWidget);
+    expect(find.textContaining('@bob'), findsOneWidget);
   });
   testWidgets('merge options sheet confirms squash path with SHA pin', (
     tester,

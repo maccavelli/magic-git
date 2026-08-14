@@ -2631,6 +2631,8 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   projectIssuesProvider,
   projectMilestonesProvider,
   issueDetailProvider,
+  issueCommentsProvider,
+  changeRequestCommentsProvider,
   pullRequestDetailProvider,
   mergeRequestDetailProvider,
   repoMergePolicyProvider,
@@ -5093,6 +5095,24 @@ final issueCommentsProvider = FutureProvider.autoDispose
           return gh.listIssueComments(repoPath, id);
         case Forge.gitlab:
           return glab.listIssueComments(repoPath, id);
+        case Forge.none:
+        case Forge.unknown:
+          return const <ForgeComment>[];
+      }
+    });
+
+/// Conversation comments on a PR/MR (not review threads). Keyed by
+/// (repoPath, change-request id).
+final changeRequestCommentsProvider = FutureProvider.autoDispose
+    .family<List<ForgeComment>, (String, int)>((ref, key) async {
+      final (repoPath, id) = key;
+      final gh = ref.watch(ghServiceProvider);
+      final glab = ref.watch(glabServiceProvider);
+      switch (await ref.watch(forgeProvider(repoPath).future)) {
+        case Forge.github:
+          return gh.listPullRequestComments(repoPath, id);
+        case Forge.gitlab:
+          return glab.listMergeRequestNotes(repoPath, id);
         case Forge.none:
         case Forge.unknown:
           return const <ForgeComment>[];

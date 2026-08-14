@@ -431,6 +431,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       onPushTag: _pushTag,
       onPushAllLocalOnly: _pushAllLocalOnly,
       onDropOnCurrent: _dropOnCurrent,
+      onDropCommitOnBranch: _dropCommitOnBranch,
       onPublish: _publishBranch,
       onCreateRequest: _createRequest,
       onOpenUrl: _open,
@@ -1219,6 +1220,57 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     } else {
       await _runRebaseOnto(g, source.shortName);
     }
+  }
+
+  Future<void> _dropCommitOnBranch(
+    GitService git, {
+    required GitCommit commit,
+    required GitRef branch,
+  }) async {
+    if (busy || !branch.isLocalBranch || branch.isCheckedOutElsewhere) return;
+    final ok = await confirmAction(
+      context,
+      title: 'Cherry-pick onto ${branch.shortName}',
+      message:
+          'Apply ${commit.shortHash} onto "${branch.shortName}"?'
+          '${branch.isHead ? '' : ' This checks out the branch first.'}',
+      confirmLabel: 'Cherry-pick',
+    );
+    if (!ok || !mounted) return;
+
+    int? mainline;
+    if (commit.isMerge) {
+      final v = await promptText(
+        context,
+        'Mainline parent',
+        placeholder: '1',
+        initial: '1',
+        description:
+            'This is a merge commit — pick which parent counts as the '
+            'mainline (1 = the branch that was merged into).',
+      );
+      if (v == null || !mounted) return;
+      mainline = int.tryParse(v) ?? 1;
+    }
+
+    final label = 'git cherry-pick ${commit.shortHash}';
+    if (!branch.isHead) {
+      final switched = await runGuarded(
+        () => guardedBranchSwitch(
+          context,
+          ref,
+          repoPath,
+          () => git.checkout(repoPath, branch.shortName),
+        ),
+      );
+      if (!switched || !mounted) return;
+    }
+    await runLogged(label, (log) async {
+      log.logResult(
+        label,
+        await git.cherryPick(repoPath, commit.hash, mainline: mainline),
+      );
+    });
   }
 
   Future<void> _openCreateTagSheet() async {

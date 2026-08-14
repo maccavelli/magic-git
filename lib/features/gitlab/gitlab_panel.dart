@@ -796,6 +796,11 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
             ),
           ),
           Expanded(child: _mrChecks(pipeline)),
+          ForgeCommentsSection(
+            comments: ref.watch(
+              changeRequestCommentsProvider((repoPath, mr.iid)),
+            ),
+          ),
         ],
       ),
       actions: [
@@ -1230,13 +1235,15 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     if (body == null || !mounted) return;
     setState(() => _busyMrs.add(iid));
     final glab = ref.read(glabServiceProvider);
-    await runAction(
+    final success = await runAction(
       context,
       () => glab.commentOnMergeRequest(repoPath, iid, body),
     );
     if (!mounted) return;
     setState(() => _busyMrs.remove(iid));
-    // A comment changes no list-visible field — nothing to invalidate.
+    if (success) {
+      ref.invalidate(changeRequestCommentsProvider((repoPath, iid)));
+    }
   }
 
   /// Full title + description edit. Fetches the current fields first (the list

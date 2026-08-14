@@ -57,6 +57,20 @@ class _WorkspaceViewOptionsButtonState
           ),
         ),
       ),
+      for (final slot in WorkspaceToolbarSlot.values)
+        ContextMenuItem(
+          icon: preferences.visibleToolbarSlots.contains(slot)
+              ? CupertinoIcons.check_mark
+              : CupertinoIcons.square,
+          label: 'Show ${slot.label}',
+          onTap: () {
+            final next = Set<WorkspaceToolbarSlot>.from(
+              preferences.visibleToolbarSlots,
+            );
+            if (!next.remove(slot)) next.add(slot);
+            scope.onChanged!(preferences.copyWith(visibleToolbarSlots: next));
+          },
+        ),
       const ContextMenuDivider(),
       for (final preset in WorkspacePreset.values)
         ContextMenuItem(

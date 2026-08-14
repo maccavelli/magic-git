@@ -1,9 +1,8 @@
 # Drag-and-Drop Engine — Feasibility & Design Report
 
-**Status:** **A–D shipped**; History nav navigational drops + `GitService.moveBranch`
-(E1 service) landed with audit plan 0004 Phase 7. Remaining: in-panel E1
-disambiguation menu on commit rows and full E2 cherry-pick-onto-branch row
-targets (see §5 and `docs/0004-PLAN-ui-ux-deep-debug-audit.md`).
+**Status:** **A–E shipped**; History nav navigational drops, in-panel E1
+(`git branch -f` via “Move branch here” on a commit row), and E2
+(cherry-pick a dragged commit onto a branch row) landed with audit plan 0004.
 **Scope:** a canonical, reusable drag-and-drop (DnD) engine for Magic Git, with the
 signature interaction being **drag an item out of a tab panel and drop it onto a
 nav-rail tab** to trigger a git/forge workflow (e.g. commit → *Branches* = new
@@ -392,8 +391,9 @@ Stashes partial stash via `DragFiles` + draggable status rows +
 `stashPush(paths:)`), **C1** drag-to-stage (`StagingDropBanner` +
 `DragFiles.fromStaged`), and **D1** drag-to-reorder / drag-to-squash in the
 interactive-rebase sheet (self-contained `LongPressDraggable<int>` + gap/row
-`DragTarget`s, no engine dependency). Remaining: **E1/E2** (move-pointer /
-cherry-pick-to-branch), plus the cross-cutting hardening below.
+`DragTarget`s, no engine dependency), and **E1/E2** (move-pointer on a History
+commit row, cherry-pick onto a Branches row). Remaining: the cross-cutting
+hardening below.
 
 **The lift-cell visual language (canonical, July 2026).** Every drag surface
 gets the same three-phase interaction automatically from `DragItemDraggable` +
@@ -551,8 +551,8 @@ Legend: **payload** = new `DragItem` subtype; **source** = make a row/chip
 | B2 | **files → Stashes** = partial stash | **`DragFiles`** | file rows (`repo_status_view.dart`) | reuse `stashes` | **`stashPush(paths:)`** (pathspec) | **M** | ✅ shipped |
 | C1 | **drag-to-stage** (unstaged ⇄ staged) | `DragFiles.fromStaged` | reuse (B2) | `StagingDropBanner` (in-panel) | reuse `stageMany`/`unstageMany` | **M** | ✅ shipped |
 | D1 | **drag-reorder / squash commits** (interactive rebase) | — | rows in `RebaseSheet` | — (self-contained) | reuse `rebaseInteractive` | **M** | ✅ shipped |
-| E1 | **branch label → commit** = move pointer ⚠ | reuse `DragRef` | reuse | extend `commitRow` (disambiguation menu) | **`moveBranch` = `git branch -f`** | **L** | next |
-| E2 | **commit → a specific branch** = cherry-pick there | reuse `DragCommit` | reuse | branch rows as targets | reuse `cherryPick` (after checkout guard) | **L** |
+| E1 | **branch label → commit** = move pointer ⚠ | reuse `DragRef` | reuse | extend `commitRow` (disambiguation menu) | **`moveBranch` = `git branch -f`** | **L** | ✅ shipped |
+| E2 | **commit → a specific branch** = cherry-pick there | reuse `DragCommit` | reuse | branch rows as targets | reuse `cherryPick` (after checkout guard) | **L** | ✅ shipped |
 
 ⚠ = destructive → routes through the registry's confirm-by-default menu path
 (already implemented in `runDrop`/`_confirmAndRun`).

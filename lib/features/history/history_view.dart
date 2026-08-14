@@ -2063,7 +2063,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                     if (ref.read(dragStateProvider) == null) return;
                     final data = details.data;
                     if (data is DragRef) {
-                      _onBranchDropped(data.ref, details.offset);
+                      _onBranchDropped(data.ref, commit, details.offset);
                     }
                   },
                   builder: (context, candidate, rejected) {
@@ -2197,11 +2197,20 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   }
 
   /// Opens the integrate menu at the drop point: merge [dragged] into the
-  /// current branch (three modes), or rebase the current branch onto it.
-  void _onBranchDropped(GitRef dragged, Offset globalPosition) {
+  /// current branch (three modes), rebase the current branch onto it, or
+  /// move the dragged branch tip to [target] (E1).
+  void _onBranchDropped(
+    GitRef dragged,
+    GitCommit target,
+    Offset globalPosition,
+  ) {
     final current = _currentBranchName();
     if (current == null || dragged.shortName == current) return;
     final name = dragged.shortName;
+    final canMove =
+        dragged.isLocalBranch &&
+        !dragged.isHead &&
+        !dragged.isCheckedOutElsewhere;
     _contextMenu.show(context, globalPosition, [
       ContextMenuItem(
         icon: CupertinoIcons.arrow_merge,
@@ -2224,7 +2233,33 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         label: 'Rebase $current onto $name',
         onTap: () => _actRebaseOnto(dragged),
       ),
-    ], width: 260);
+      if (canMove) ...[
+        const ContextMenuDivider(),
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_right_to_line,
+          label: 'Move $name here',
+          onTap: () => _actMoveBranchHere(dragged, target),
+        ),
+      ],
+    ], width: 280);
+  }
+
+  Future<void> _actMoveBranchHere(GitRef branch, GitCommit target) async {
+    final ok = await confirmAction(
+      context,
+      title: 'Move branch ${branch.shortName}',
+      message:
+          'Point ${branch.shortName} at ${target.shortHash}? The previous '
+          'tip can be restored with Undo.',
+      confirmLabel: 'Move branch',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    final label = 'git branch -f ${branch.shortName} ${target.shortHash}';
+    await runLogged(label, (log) async {
+      await _git.moveBranch(repoPath, branch.shortName, target.hash);
+      log.logInfo(label);
+    });
   }
 
   Future<void> _actMergeInto(GitRef branch, MergeMode mode) async {

@@ -264,10 +264,18 @@ class ForgeRelease {
   /// ISO-8601 publish timestamp: GitHub `publishedAt`, GitLab `releasedAt`.
   final String? publishedAt;
 
+  /// Release notes / description from the dashboard GraphQL payload.
+  final String? description;
+
+  /// Forge login that published the release, when the query returned one.
+  final String? author;
+
   const ForgeRelease({
     required this.tagName,
     required this.name,
     this.publishedAt,
+    this.description,
+    this.author,
   });
 
   /// From a GitHub GraphQL `Release` node.
@@ -275,6 +283,10 @@ class ForgeRelease {
     tagName: n['tagName'] as String? ?? '',
     name: n['name'] as String? ?? '',
     publishedAt: n['publishedAt'] as String?,
+    description: (n['description'] as String?)?.trim(),
+    author: n['author'] is Map
+        ? (n['author'] as Map)['login'] as String?
+        : null,
   );
 
   /// From a GitLab GraphQL `Release` node.
@@ -282,6 +294,11 @@ class ForgeRelease {
     tagName: n['tagName'] as String? ?? '',
     name: n['name'] as String? ?? '',
     publishedAt: n['releasedAt'] as String?,
+    description: (n['description'] as String?)?.trim(),
+    author: n['author'] is Map
+        ? (n['author'] as Map)['username'] as String? ??
+              (n['author'] as Map)['name'] as String?
+        : null,
   );
 
   /// The publish date as `YYYY-MM-DD`, for compact display.
