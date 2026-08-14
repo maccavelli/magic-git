@@ -1163,6 +1163,43 @@ query($path: ID!) {
     return all;
   }
 
+  /// Protected branch *patterns* via `projects/:id/protected_branches`.
+  ///
+  /// GitLab returns wildcard patterns (`release/*`), not literal names — match
+  /// them with `gitlabProtectedBranchMatches`.
+  ///
+  /// Hand-walked with `per_page`/`page` rather than `paginate: true`: the
+  /// paginated path has to drop `-i`, and with it the HTTP-status cross-check
+  /// that exists because glab's exit codes are advisory. A 4xx here must not
+  /// read as "no protected branches".
+  Future<List<String>> protectedBranchPatterns(
+    String repoPath, {
+    int perPage = 100,
+  }) async {
+    final all = <String>[];
+    for (var page = 1; page <= _maxListPages; page++) {
+      final decoded = await api(
+        repoPath,
+        'projects/:id/protected_branches',
+        fields: ['per_page=$perPage', 'page=$page'],
+      );
+      if (decoded is! List) {
+        throw GlabException(
+          'projects/:id/protected_branches: expected a JSON array, got '
+          '${decoded.runtimeType}',
+          const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+        );
+      }
+      final batch = <String>[
+        for (final e in decoded.whereType<Map<String, dynamic>>())
+          if (e['name'] case final String n) n,
+      ];
+      all.addAll(batch);
+      if (decoded.length < perPage) break; // last (short) page reached
+    }
+    return all;
+  }
+
   /// Creates an issue via `glab issue create`. Mirrors [createMergeRequest]'s
   /// argv convention (no `--end-of-options`: glab's pflag parser binds the
   /// token after a value-taking flag as that flag's literal value). Like it,

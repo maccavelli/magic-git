@@ -768,6 +768,20 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     BranchBase base,
     Map<String, BranchReviewSummary> summaries,
   ) async {
+    // Protection is fetched lazily, only when a bulk delete is actually
+    // attempted — it is a forge round trip and Browse must stay free of them.
+    // An unavailable answer yields `unknown` for every branch, which the sheet
+    // surfaces as a warning rather than as clearance.
+    var rules = BranchProtectionRules.unavailable;
+    try {
+      rules = await ref.read(protectedBranchRulesProvider(repoPath).future);
+    } catch (_) {
+      // Already the unavailable default.
+    }
+    final forgeKnowledge = ref
+        .read(branchForgeKnowledgeProvider(repoPath))
+        .value;
+
     final candidates = <BulkDeleteCandidate>[];
     for (final full in _multiSel.ordered) {
       if (!full.startsWith('refs/heads/')) continue;
@@ -843,11 +857,32 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         );
         continue;
       }
+      final protection = rules.protectionFor(short);
+      if (protection.isProtected) {
+        // The server would refuse this anyway; skipping it here explains why
+        // rather than letting the batch report a bare failure.
+        candidates.add(
+          BulkDeleteCandidate(
+            branchName: short,
+            fullRef: full,
+            expectedOid: refEntry.commitOid,
+            skipReason: 'protected on the forge',
+            protection: protection,
+          ),
+        );
+        continue;
+      }
+      final forge = forgeKnowledge?.known == true
+          ? forgeKnowledge!.byShortName[short]
+          : null;
       candidates.add(
         BulkDeleteCandidate(
           branchName: short,
           fullRef: full,
           expectedOid: refEntry.commitOid,
+          aheadOfBase: summary?.aheadOfBase,
+          protection: protection,
+          requestLabel: forge?.hasRequest == true ? forge!.requestLabel : null,
         ),
       );
     }

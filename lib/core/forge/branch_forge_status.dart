@@ -10,6 +10,7 @@ library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../git/branch_review_query.dart';
 import '../github/models.dart';
 import '../gitlab/models.dart';
 import '../providers/app_providers.dart';
@@ -162,6 +163,7 @@ Map<String, BranchForge> _merge(
 /// is never true. That is fine for painting a badge (absent signal → no
 /// badge) and wrong for anything that reasons about *absence*. Use
 /// [branchForgeKnowledgeProvider] for that.
+///
 /// Kept independent of [branchForgeKnowledgeProvider] rather than delegating
 /// to it: this is the provider ~14 widget-test harnesses override to keep
 /// Browse offline, and delegating would route straight past those overrides.
@@ -187,6 +189,52 @@ final branchForgeProvider = FutureProvider.autoDispose
       } catch (_) {
         // Forge unreachable / unauthenticated / no remote — no signal, no error.
         return const {};
+      }
+    });
+
+/// Protected-branch rules for [repoPath], or an explicit "unknown".
+///
+/// Fails soft in the same shape as [branchForgeKnowledgeProvider]: any error
+/// yields `known: false`, which every lookup reports as
+/// [ProtectionKnowledge.unknown] rather than as "unprotected". The bulk-delete
+/// preflight surfaces that as a warning instead of a silent green light.
+///
+/// Not registered in `repoScopedFetchFamilies` for the same reason as its
+/// sibling: this file imports `app_providers.dart`, and its upstreams are
+/// already registered.
+final protectedBranchRulesProvider = FutureProvider.autoDispose
+    .family<BranchProtectionRules, String>((ref, repoPath) async {
+      final Forge forge;
+      try {
+        forge = await ref.watch(forgeProvider(repoPath).future);
+      } catch (_) {
+        return BranchProtectionRules.unavailable;
+      }
+
+      switch (forge) {
+        case Forge.github:
+          try {
+            final names = await ref
+                .watch(ghServiceProvider)
+                .protectedBranchNames(repoPath);
+            return BranchProtectionRules(names: names.toSet(), known: true);
+          } catch (_) {
+            return BranchProtectionRules.unavailable;
+          }
+        case Forge.gitlab:
+          try {
+            final patterns = await ref
+                .watch(glabServiceProvider)
+                .protectedBranchPatterns(repoPath);
+            return BranchProtectionRules(patterns: patterns, known: true);
+          } catch (_) {
+            return BranchProtectionRules.unavailable;
+          }
+        case Forge.none:
+          // No forge, so nothing can be forge-protected. A real answer.
+          return const BranchProtectionRules(known: true);
+        case Forge.unknown:
+          return BranchProtectionRules.unavailable;
       }
     });
 

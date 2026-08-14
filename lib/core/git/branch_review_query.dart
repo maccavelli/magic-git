@@ -529,12 +529,89 @@ class BranchMultiSelection {
   }
 }
 
-/// GitLab-style protected-branch `*` matcher: `*` matches any run of
-/// characters within a single path segment when used as `feature/*`, or any
-/// suffix/prefix as written. `*` alone matches everything.
+/// GitLab-style protected-branch `*` matcher.
+///
+/// `*` alone matches everything; a pattern with no `*` is an exact match;
+/// otherwise `*` expands to `.*`, which — matching GitLab — **does cross `/`**,
+/// so `release/*` covers `release/1.0` and `release/1.0/hotfix` alike. (This
+/// doc previously claimed segment-scoped matching, which the implementation
+/// never did.)
 bool gitlabProtectedBranchMatches(String pattern, String branchName) {
   if (pattern == '*') return true;
   if (!pattern.contains('*')) return pattern == branchName;
   final escaped = RegExp.escape(pattern).replaceAll(r'\*', '.*');
   return RegExp('^$escaped\$').hasMatch(branchName);
+}
+
+/// Whether a branch is protected on the forge — including the case where we
+/// simply do not know.
+///
+/// The third state is the point. Branch protection is the difference between
+/// "this delete will fail" and "this delete will succeed", and forges expose
+/// it unevenly: GitHub rulesets are invisible to the branches API, GitLab
+/// needs a separate call, and either can fail. Reporting unknown as
+/// "unprotected" would turn a missing answer into a green light.
+sealed class ProtectionKnowledge {
+  const ProtectionKnowledge();
+
+  /// The forge answered and named this branch protected.
+  const factory ProtectionKnowledge.protected() = ProtectionProtected;
+
+  /// The forge answered and did not name this branch.
+  const factory ProtectionKnowledge.unprotected() = ProtectionUnprotected;
+
+  /// No usable answer: the call failed, the forge is unknown, or the repo has
+  /// no forge remote.
+  const factory ProtectionKnowledge.unknown() = ProtectionUnknown;
+
+  bool get isProtected => this is ProtectionProtected;
+  bool get isUnknown => this is ProtectionUnknown;
+}
+
+class ProtectionProtected extends ProtectionKnowledge {
+  const ProtectionProtected();
+}
+
+class ProtectionUnprotected extends ProtectionKnowledge {
+  const ProtectionUnprotected();
+}
+
+class ProtectionUnknown extends ProtectionKnowledge {
+  const ProtectionUnknown();
+}
+
+/// A repo's protected-branch rules, or the absence of an answer.
+///
+/// GitHub returns literal branch names; GitLab returns wildcard patterns. Both
+/// land here, and [protectionFor] applies the right matching for each.
+class BranchProtectionRules {
+  /// Literal branch names (GitHub).
+  final Set<String> names;
+
+  /// Wildcard patterns (GitLab), matched with [gitlabProtectedBranchMatches].
+  final List<String> patterns;
+
+  /// False when nothing could be fetched — every lookup is then `unknown`.
+  final bool known;
+
+  const BranchProtectionRules({
+    this.names = const {},
+    this.patterns = const [],
+    this.known = false,
+  });
+
+  static const unavailable = BranchProtectionRules();
+
+  ProtectionKnowledge protectionFor(String shortName) {
+    if (!known) return const ProtectionKnowledge.unknown();
+    if (names.contains(shortName)) {
+      return const ProtectionKnowledge.protected();
+    }
+    for (final p in patterns) {
+      if (gitlabProtectedBranchMatches(p, shortName)) {
+        return const ProtectionKnowledge.protected();
+      }
+    }
+    return const ProtectionKnowledge.unprotected();
+  }
 }

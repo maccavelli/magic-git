@@ -726,6 +726,45 @@ class GhService {
     return all;
   }
 
+  /// Protected branch names via `repos/{owner}/{repo}/branches?protected=true`.
+  ///
+  /// The LIST endpoint, deliberately — not per-branch `/protection`, which is
+  /// one round trip per branch and 403s for non-admins, so ordinary
+  /// collaborators would see "unknown" on a repo whose protection is plainly
+  /// visible. This one needs only read access.
+  ///
+  /// Caveat worth keeping in mind: the `protected` flag covers classic branch
+  /// protection and the rulesets GitHub surfaces through it, but a repo
+  /// *ruleset* the branches API cannot represent stays invisible here. That is
+  /// why the caller reports unknown-protection rather than implying certainty.
+  Future<List<String>> protectedBranchNames(
+    String repoPath, {
+    int perPage = 100,
+  }) async {
+    final all = <String>[];
+    for (var page = 1; page <= _maxListPages; page++) {
+      final decoded = await api(
+        repoPath,
+        'repos/{owner}/{repo}/branches',
+        fields: ['protected=true', 'per_page=$perPage', 'page=$page'],
+      );
+      if (decoded is! List) {
+        throw GhException(
+          'repos/{owner}/{repo}/branches: expected a JSON array, got '
+          '${decoded.runtimeType}',
+          const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+        );
+      }
+      final batch = <String>[
+        for (final e in decoded.whereType<Map<String, dynamic>>())
+          if (e['name'] case final String n) n,
+      ];
+      all.addAll(batch);
+      if (decoded.length < perPage) break; // last (short) page reached
+    }
+    return all;
+  }
+
   /// Creates an issue via `gh issue create`. Like [createPullRequest], `--body`
   /// is always passed (empty when none) so `gh` never drops into an interactive
   /// editor, and no `--end-of-options` guard is added (cobra/pflag binds the
