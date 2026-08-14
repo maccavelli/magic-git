@@ -2,6 +2,11 @@
 
 Associated MADR: [0007-MADR-docs-completion-audit.md](0007-MADR-docs-completion-audit.md)
 
+- Status: **Phases 0–6 executed** (2026-08-14). Phase 7 is open by nature —
+  it needs a new MADR or the maintainer, not an engineer. Two deliberate
+  deviations and one newly-surfaced finding are recorded in the MADR's
+  Remediation log rather than edited into the steps below.
+
 ## Goal
 
 Close every gap the 2026-08-14 audit verified as open, in an order that fixes

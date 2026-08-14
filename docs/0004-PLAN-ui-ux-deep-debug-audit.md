@@ -2,7 +2,9 @@
 
 Associated MADR: [0004-MADR-ui-ux-deep-debug-audit.md](0004-MADR-ui-ux-deep-debug-audit.md)
 
-- Status: **implemented** (Phases 0–10 landed 2026-08-06; Phase 10 LOW L1–L5 closed 2026-08-14; L9 chrome deferred to a 0006 plan)
+- Status: **implemented** (Phases 0–10 landed 2026-08-06; Phase 10 LOW L1–L5
+  closed 2026-08-14; L9 chrome now planned in
+  [0006-PLAN-hybrid-native-title-bar-context-bar.md](0006-PLAN-hybrid-native-title-bar-context-bar.md))
 - Date: 2026-08-06
 - MADR decision: Option B — treat the audit as the prioritized remediation backlog
 - Owner: implementation agent + maintainer review
@@ -995,7 +997,8 @@ Skip L4, L6, L7, L9 unless product demands. L9’s chrome *model* is locked in
 * [x] Docs consistent with shipped behavior.
 
 **Checkpoint K (maintainer):** Residual backlog accepted. Closed: L1–L5.
-Skipped per plan: L4, L6, L7, L8. Deferred: L9 (wait for 0006 plan).
+Skipped per plan: L4, L6, L7, L8. L9 now planned in
+[0006-PLAN-hybrid-native-title-bar-context-bar.md](0006-PLAN-hybrid-native-title-bar-context-bar.md).
 Capacity residuals: optional M10/M11.
 
 > **2026-08-14 correction (0007 audit).** The in-panel E1 disambiguation menu

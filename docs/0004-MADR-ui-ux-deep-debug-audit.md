@@ -1,6 +1,8 @@
 # Treat the 2026-08 UI/UX deep-debug audit as the prioritized remediation backlog
 
-- Status: accepted (HIGH + locked MED delivered; Phase 10 LOW L1–L5 closed; L9 chrome waits for a 0006 plan)
+- Status: accepted (HIGH + locked MED delivered; Phase 10 LOW L1–L5 closed;
+  L9 chrome now has its plan — [0006-PLAN-hybrid-native-title-bar-context-bar.md](0006-PLAN-hybrid-native-title-bar-context-bar.md)
+  — gated on live macOS verification)
 - Date: 2026-08-06
 - Deciders: Mac Smith
 - Tags: ui, ux, flutter, macos, debugging, accessibility, shortcuts, multi-window, forge, wiring

@@ -447,6 +447,34 @@ backlog, not merely its detail:
   dashboard query has the identical `labels(first: 100)` /
   `releases(first: 20)` caps at `gh_service.dart:1140-1146`.
 
+### Remediation log
+
+| Date | Change |
+| --- | --- |
+| 2026-08-14 | Audit recorded; companion [0007-PLAN-docs-completion-audit.md](0007-PLAN-docs-completion-audit.md) written from six verification passes plus per-item implementation dossiers. |
+| 2026-08-14 | **Backlog executed, Phases 0–6.** Phase 0 corrected every document listed above. Phase 1 fixed the four correctness defects, each with a test that fails without the fix. Phase 2 closed the false-complete claims (zoomReset glyph, Labels caption, palette semantics, detached title prefix, the missing `confirmSessionExit` tests). Phase 3 fixed the squash-policy enum and enforcement, added list-row chips and a description preview, and shipped the Inbox "No blockers" filter. Phase 4 completed the 0003 discovery layer: duplicate stale helpers collapsed, Hide made reversible, a typed forge-knowledge provider built, and the review-query layer wired into the UI. Phase 5 delivered protection enrichment + the §4.8 preflight table, labels/releases pagination, curated forge activity labels, the shared file-selection seam, live-sshd transport tests, and the GitHub detail-field expansion. Phase 6 produced [0006-PLAN-hybrid-native-title-bar-context-bar.md](0006-PLAN-hybrid-native-title-bar-context-bar.md). Suite grew 2836 → 2955 tests, analyzer clean throughout. Phase 7 remains open by nature (see below). |
+
+Two deviations from the plan, both deliberate and recorded here rather than
+silently absorbed:
+
+* **Curated forge activity labels (5.4)** were implemented as one tested argv
+  mapper (`lib/core/forge/forge_operation_labels.dart`) instead of curating at
+  each of ~41 service call sites. Forge argv is rigidly structured, so a single
+  table covers the CLI and REST paths alike — including the ten mutations that
+  route through `api()` and would otherwise need a label threaded through two
+  more layers. Unrecognized commands still fall back to 'Update forge'.
+* **The typed forge-knowledge and protection providers are not in
+  `repoScopedFetchFamilies`**, which the plan called for. `branch_forge_status.dart`
+  imports `app_providers.dart`, so registering there would be a circular import
+  — and it is unnecessary: every upstream is registered and both providers are
+  `autoDispose`, so they recompute when those are invalidated.
+
+One finding surfaced during execution and is worth carrying forward: sharing
+the file selection (5.5) required distinguishing a *tree-origin* selection from
+a stale Changes-list entry, because a clean file legitimately appears in no
+status section. `RepoChangeSelection.fromTree` now carries that origin, and
+`reconcile` spares tree-origin selections.
+
 ### Cross-cutting observation
 
 The recurring failure mode is not fabrication but **blanket status lines**:

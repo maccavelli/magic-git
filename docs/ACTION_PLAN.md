@@ -49,7 +49,9 @@ under `test/`):**
 **Deferred (P3 — need on-Mac verification or are speculative):**
 - **Native `ToolBar`/`MacosScaffold`** — superseded as a product choice by
   0006 (hybrid native title bar + existing context bar). Implementation still
-  needs a live macOS preview and a 0006 plan; do not revive a permanent
+  needs a live macOS preview; the plan now exists
+  ([0006-PLAN-hybrid-native-title-bar-context-bar.md](0006-PLAN-hybrid-native-title-bar-context-bar.md)).
+  Do not revive a permanent
   Fetch/Pull/Push icon toolbar.
 - **`core.fsmonitor` opt-in** — ✅ done as a **per-repo** toggle in the connections
   management panel (`SavedConnection.fsmonitorPaths`, default off). Applied on
