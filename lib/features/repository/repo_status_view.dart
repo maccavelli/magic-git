@@ -54,6 +54,7 @@ import 'output_view.dart';
 import 'repo_change_filter.dart';
 import 'repo_change_model.dart';
 import 'repo_change_navigator.dart';
+import 'repo_file_selection.dart';
 import 'repo_review_state.dart';
 import 'repository_clean_state.dart';
 
@@ -98,9 +99,13 @@ class RepoStatusView extends ConsumerStatefulWidget {
 
 class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     with BusyActionState {
-  // Which status section the current selection belongs to; null means
-  // nothing is selected.
-  final _selectionController = RepoChangeSelectionController();
+  // The selection lives in a repo-keyed provider so the Changes list and BOTH
+  // FileView instances (docked pane + navigator tab) read the same value —
+  // switching Changes↔Files used to lose the highlight entirely.
+  RepoChangeSelection get _selection =>
+      ref.read(repoFileSelectionProvider(repoPath));
+  RepoFileSelection get _selectionNotifier =>
+      ref.read(repoFileSelectionProvider(repoPath).notifier);
   final _changeFilterController = TextEditingController();
   RepoChangeFilter _changeFilter = const RepoChangeFilter();
   RepositoryNavigatorMode? _navigatorModeOverride;
@@ -108,32 +113,30 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   final _reviewController = RepoReviewController();
   bool _reviewOpen = false;
 
-  _SectionKind? get _selectionKind => _selectionController.value.section;
+  _SectionKind? get _selectionKind => _selection.section;
   set _selectionKind(_SectionKind? value) {
-    _selectionController.value = _selectionController.value.copyWith(
-      section: value,
-      clearSection: value == null,
+    _selectionNotifier.set(
+      _selection.copyWith(section: value, clearSection: value == null),
     );
   }
 
   // Paths currently selected within _selectionKind's section. A lone path is
   // the common case and drives the diff/conflict panel; 2+ show the
   // multi-select summary panel instead.
-  Set<String> get _selectedPaths => _selectionController.value.paths;
+  Set<String> get _selectedPaths => _selection.paths;
   set _selectedPaths(Set<String> value) {
-    _selectionController.value = _selectionController.value.copyWith(
-      paths: Set.unmodifiable(value),
+    _selectionNotifier.set(
+      _selection.copyWith(paths: Set.unmodifiable(value)),
     );
   }
 
   // Anchor for shift-click range selection: the fixed end a range extends
   // from, so repeated shift-clicks extend/contract from the same point
   // rather than the last-clicked row.
-  String? get _selectionAnchor => _selectionController.value.anchor;
+  String? get _selectionAnchor => _selection.anchor;
   set _selectionAnchor(String? value) {
-    _selectionController.value = _selectionController.value.copyWith(
-      anchor: value,
-      clearAnchor: value == null,
+    _selectionNotifier.set(
+      _selection.copyWith(anchor: value, clearAnchor: value == null),
     );
   }
 
@@ -296,7 +299,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     _contextMenu.dispose();
     _listFocus.dispose();
     _listScroll.dispose();
-    _selectionController.dispose();
     _changeFilterController.dispose();
     _reviewController.dispose();
     super.dispose();
@@ -579,11 +581,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   /// key. When only *some* members left, the leavers are pruned and the rest
   /// stay — multi-select never spans sections.
   void _syncSelectionToStatus(GitStatus status) {
-    final before = _selectionController.value;
+    final before = _selection;
     final after = before.reconcile(status);
     if (identical(after, before)) return;
     setState(() {
-      _selectionController.value = after;
+      _selectionNotifier.set(after);
       if (after.count != 1 || after.section == _SectionKind.conflict) {
         _popout = false;
       }
@@ -1153,6 +1155,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
 
   @override
   Widget build(BuildContext context) {
+    // The selection now lives in a provider shared with the file trees, so a
+    // tree-driven change has to rebuild this view. `setState` used to cover
+    // that for free when the selection was local state.
+    ref.watch(repoFileSelectionProvider(repoPath));
+
     // Event-driven refresh: each coalesced remote-change tick re-fetches status.
     // Subscribing here also keeps the remote watcher alive while this view is
     // shown (it is auto-disposed when we stop listening).
@@ -2468,7 +2475,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     final meta = keys.isMetaPressed;
     final shift = keys.isShiftPressed;
     setState(() {
-      _selectionController.select(rows, path, kind, toggle: meta, range: shift);
+      _selectionNotifier.select(rows, path, kind, toggle: meta, range: shift);
       // Popout only ever shows a single non-conflict file's diff; drop it
       // once the selection no longer looks like that (a conflict, none, or
       // several files) rather than leaving it showing a stale file.

@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod/misc.dart' show ProviderOrFamily;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../features/branches/branch_workspace_prefs.dart';
+import '../../features/repository/repo_file_selection.dart';
 import '../exec/activity_command_executor.dart';
 import '../exec/command_telemetry.dart';
 import '../exec/local_command_executor.dart';
@@ -1052,6 +1053,11 @@ class ConnectionController extends Notifier<ConnectionState> {
     // suppressed refresh.
     ref.read(undoJournalProvider.notifier).clear();
     ref.read(redoJournalProvider.notifier).clear();
+    // The repository pane's shared file selection is UI state, not a fetch, so
+    // it is not in `repoScopedFetchFamilies` — but it is keyed by bare repo
+    // path like the caches above, and a selection from the previous connection
+    // must not answer for the next one.
+    ref.invalidate(repoFileSelectionProvider);
   }
 
   /// The executor for [state]'s current backend, read directly off `state`

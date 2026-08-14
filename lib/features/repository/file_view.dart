@@ -22,6 +22,7 @@ import '../history/file_history_sheet.dart';
 import '../viewer/remote_edit_service.dart';
 import '../viewer/viewer_providers.dart';
 import 'blame_sheet.dart';
+import 'repo_file_selection.dart';
 
 /// Called when a file is chosen in the tree so the host panel can show its diff.
 /// [staged]/[untracked] mirror the `_selected` tuple used by the status list.
@@ -76,7 +77,18 @@ class _FileViewState extends ConsumerState<FileView> {
   // Lazily-loaded children of collapsed ignored dirs, keyed by dir path.
   final Map<String, List<RepoNode>> _lazyChildren = {};
   final Set<String> _lazyLoading = {};
-  String? _selectedPath;
+  /// The selection is SHARED with the Changes list and the other FileView
+  /// instance (this widget is built twice — docked pane and navigator tab).
+  /// It used to be private state here, which is why switching Changes↔Files
+  /// lost the highlight and the two trees could disagree.
+  Set<String> get _selectedPaths =>
+      ref.read(repoFileSelectionProvider(repoPath)).paths;
+
+  /// A tree click is always a single selection; the multi-select vocabulary
+  /// belongs to the Changes list. Section resolution stays with the host's
+  /// `onOpenFile` so exactly one place decides it.
+  void _selectOnly(String path) =>
+      ref.read(repoFileSelectionProvider(repoPath).notifier).selectOnly(path);
   // Auto-expand the ancestors of changed files once per repo, so work is
   // visible without hunting; further refreshes preserve the user's expansions.
   bool _autoExpanded = false;
@@ -137,7 +149,6 @@ class _FileViewState extends ConsumerState<FileView> {
       _expanded.clear();
       _lazyChildren.clear();
       _lazyLoading.clear();
-      _selectedPath = null;
       _autoExpanded = false;
       _touchExpansion();
       _rowsRoot = null;
@@ -182,7 +193,7 @@ class _FileViewState extends ConsumerState<FileView> {
       });
       return;
     }
-    setState(() => _selectedPath = node.path);
+    _selectOnly(node.path);
     final s = ref.read(repoStatusOverlayProvider(repoPath)).statusFor(node.path);
     // Fire unconditionally — a clean file (s == null) still opens, showing an
     // empty/no-changes diff, rather than silently leaving the tree highlight
@@ -208,7 +219,7 @@ class _FileViewState extends ConsumerState<FileView> {
   void _showContextMenu(RepoNode node, Offset globalPos) {
     // Highlight the right-clicked file (like a left-click, and like Finder) so
     // it's clear which file the menu's actions will target.
-    setState(() => _selectedPath = node.path);
+    _selectOnly(node.path);
     final s = ref.read(repoStatusOverlayProvider(repoPath)).statusFor(node.path);
     // Only a genuinely partially-staged file needs the explicit staged/
     // unstaged toggle — a plain click already shows the only relevant half
@@ -337,8 +348,8 @@ class _FileViewState extends ConsumerState<FileView> {
     if (!ok || !mounted) return;
     // Drop a stale selection highlight if the file being removed is the one
     // currently open in the diff panel.
-    if (_selectedPath == node.path) {
-      setState(() => _selectedPath = null);
+    if (_selectedPaths.contains(node.path)) {
+      ref.read(repoFileSelectionProvider(repoPath).notifier).clear();
     }
     await _runMutation(
       () => ref.read(gitServiceProvider).deleteFile(repoPath, node.path),
@@ -625,20 +636,31 @@ class _FileViewState extends ConsumerState<FileView> {
             ),
           );
         }
+        // Watched once here rather than per row: a selection made in the
+        // Changes list (or the other tree) must repaint this one.
+        final selectedPaths = ref
+            .watch(repoFileSelectionProvider(repoPath))
+            .paths;
         return ListView.builder(
           padding: const EdgeInsets.symmetric(vertical: 4),
           itemCount: rows.length,
-          itemBuilder: (context, i) => _tile(context, rows[i], overlay),
+          itemBuilder: (context, i) =>
+              _tile(context, rows[i], overlay, selectedPaths),
         );
       },
     );
   }
 
-  Widget _tile(BuildContext context, _Row row, RepoStatusOverlay overlay) {
+  Widget _tile(
+    BuildContext context,
+    _Row row,
+    RepoStatusOverlay overlay,
+    Set<String> selectedPaths,
+  ) {
     final node = row.node;
     final typography = MacosTheme.of(context).typography;
     final expanded = _expanded.contains(node.path);
-    final selected = _selectedPath == node.path;
+    final selected = selectedPaths.contains(node.path);
     final status = node.isDir ? null : overlay.statusFor(node.path);
 
     return Tappable(

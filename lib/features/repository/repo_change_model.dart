@@ -82,12 +82,28 @@ class RepoChangeSelection {
   final Set<String> paths;
   final String? anchor;
 
-  const RepoChangeSelection({this.section, this.paths = const {}, this.anchor});
+  /// True when this selection came from the FILE TREE rather than the Changes
+  /// list.
+  ///
+  /// The tree can select a clean file — one that appears in no status section
+  /// at all — which is indistinguishable, after the fact, from a Changes-list
+  /// entry whose file has just left the working tree. The first must survive
+  /// [reconcile] (or the tree highlight flickers away on every `git status`
+  /// tick); the second must be dropped. Only the origin separates them.
+  final bool fromTree;
+
+  const RepoChangeSelection({
+    this.section,
+    this.paths = const {},
+    this.anchor,
+    this.fromTree = false,
+  });
 
   const RepoChangeSelection.empty()
     : section = null,
       paths = const {},
-      anchor = null;
+      anchor = null,
+      fromTree = false;
 
   bool get isEmpty => paths.isEmpty;
   int get count => paths.length;
@@ -145,6 +161,10 @@ class RepoChangeSelection {
   RepoChangeSelection reconcile(GitStatus status) {
     final currentSection = section;
     if (currentSection == null || paths.isEmpty) return this;
+    // A tree-origin selection is not a Changes-list entry, so reconciling it
+    // against the Changes list is a category error — a clean file legitimately
+    // appears in no section.
+    if (fromTree) return this;
     final inSection = pathsInRepoChangeSection(status, currentSection);
     final retained = paths.intersection(inSection);
     if (retained.length == paths.length) return this;
@@ -187,10 +207,12 @@ class RepoChangeSelection {
     String? anchor,
     bool clearSection = false,
     bool clearAnchor = false,
+    bool? fromTree,
   }) => RepoChangeSelection(
     section: clearSection ? null : (section ?? this.section),
     paths: paths ?? this.paths,
     anchor: clearAnchor ? null : (anchor ?? this.anchor),
+    fromTree: fromTree ?? this.fromTree,
   );
 }
 
