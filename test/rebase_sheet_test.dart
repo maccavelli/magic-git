@@ -108,30 +108,35 @@ void main() {
     expect(find.text('Reword'), findsNothing);
   });
 
-  testWidgets(
-    'Rebase confirms before running, and cancelling does not call '
-    'rebaseInteractive',
-    (tester) async {
-      final git = await _pump(tester);
+  testWidgets('the sheet footnotes that Reword is unavailable', (tester) async {
+    await _pump(tester);
 
-      await tester.tap(find.text('Rebase'));
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
+    expect(
+      find.text(
+        'Reword is unavailable — rebase runs without an editor, so '
+        'it cannot prompt for a new message.',
+      ),
+      findsOneWidget,
+    );
+  });
 
-      expect(find.text('Rebase'), findsWidgets); // dialog title/button
-      expect(
-        git.calls,
-        isEmpty,
-        reason: 'must not run before the user confirms',
-      );
+  testWidgets('Rebase confirms before running, and cancelling does not call '
+      'rebaseInteractive', (tester) async {
+    final git = await _pump(tester);
 
-      await tester.tap(find.text('Cancel').last);
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
+    await tester.tap(find.text('Rebase'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
 
-      expect(git.calls, isEmpty, reason: 'cancelling must not run the rebase');
-    },
-  );
+    expect(find.text('Rebase'), findsWidgets); // dialog title/button
+    expect(git.calls, isEmpty, reason: 'must not run before the user confirms');
+
+    await tester.tap(find.text('Cancel').last);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+
+    expect(git.calls, isEmpty, reason: 'cancelling must not run the rebase');
+  });
 
   testWidgets('confirming runs rebaseInteractive with the picked steps', (
     tester,
@@ -167,10 +172,7 @@ void main() {
 
     final steps = await _confirmAndCapture(tester, git);
     expect(steps.map((s) => s.hash), ['bbb2222222', 'aaa1111111']);
-    expect(steps.map((s) => s.action), [
-      RebaseAction.pick,
-      RebaseAction.pick,
-    ]);
+    expect(steps.map((s) => s.action), [RebaseAction.pick, RebaseAction.pick]);
   });
 
   testWidgets('dropping a commit onto another squashes it in', (tester) async {

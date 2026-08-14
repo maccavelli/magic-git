@@ -15,6 +15,12 @@ Priority tiers: **P0** (correctness/security, ship first) → **P1** (lifecycle)
 
 ## Implementation status
 
+Open UI/UX work after this document lives in
+[0004-PLAN-ui-ux-deep-debug-audit.md](0004-PLAN-ui-ux-deep-debug-audit.md)
+(HIGH + locked MED + Phase 10 LOW L1–L5 closed). Window chrome is decided in
+[0006-MADR-hybrid-native-title-bar-context-bar.md](0006-MADR-hybrid-native-title-bar-context-bar.md);
+do not implement it from the deferred `ToolBar` bullet below.
+
 **Done (analyze-clean, 75 tests green):**
 - **Phase 0** — POSIX collapse across escaper/formatter/executor/client-manager;
   `ShellType`/shell-probe removed.
@@ -38,9 +44,10 @@ Priority tiers: **P0** (correctness/security, ship first) → **P1** (lifecycle)
   memoized (`late final`); stale docs updated (`app_shell`, ARCHITECTURE §4.3).
 
 **Deferred (P3 — need on-Mac verification or are speculative):**
-- **Native `ToolBar`/`MacosScaffold`** — restructures window chrome; visually
-  load-bearing and unverifiable on Linux. The current functional toolbar works;
-  do this with a live macOS preview.
+- **Native `ToolBar`/`MacosScaffold`** — superseded as a product choice by
+  0006 (hybrid native title bar + existing context bar). Implementation still
+  needs a live macOS preview and a 0006 plan; do not revive a permanent
+  Fetch/Pull/Push icon toolbar.
 - **`core.fsmonitor` opt-in** — ✅ done as a **per-repo** toggle in the connections
   management panel (`SavedConnection.fsmonitorPaths`, default off). Applied on
   connect for every opted-in repo and live when toggled on the active host; the

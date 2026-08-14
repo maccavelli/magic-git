@@ -256,14 +256,33 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
                       loading: () => const DiffPending(),
                       error: (err, _) => DiffFailure(err),
                       data: (diff) {
-                        if (_split) return SplitDiffView(diff: diff);
-                        if (widget.untracked || _ignoreWs) {
-                          return DiffView(diff: diff);
+                        final String? banner = _split
+                            ? 'Line actions require Unified view because '
+                                  'split rows do not map one-to-one to the '
+                                  'patch.'
+                            : _ignoreWs
+                            ? 'Line actions require whitespace-exact '
+                                  'diff mode.'
+                            : null;
+                        final Widget body;
+                        if (_split) {
+                          body = SplitDiffView(diff: diff);
+                        } else if (widget.untracked || _ignoreWs) {
+                          body = DiffView(diff: diff);
+                        } else {
+                          body = HunkDiffView(
+                            diff: diff,
+                            staged: widget.staged,
+                            onAction: widget.onHunkAction,
+                          );
                         }
-                        return HunkDiffView(
-                          diff: diff,
-                          staged: widget.staged,
-                          onAction: widget.onHunkAction,
+                        if (banner == null) return body;
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _readOnlyBanner(context, banner),
+                            Expanded(child: body),
+                          ],
                         );
                       },
                     ),
@@ -293,6 +312,30 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _readOnlyBanner(BuildContext context, String message) {
+    return Container(
+      width: double.infinity,
+      color: MacosColors.systemOrangeColor.withValues(alpha: 0.15),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        children: [
+          const MacosIcon(
+            CupertinoIcons.exclamationmark_triangle,
+            size: 14,
+            color: MacosColors.systemOrangeColor,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              message,
+              style: MacosTheme.of(context).typography.caption1,
+            ),
+          ),
+        ],
       ),
     );
   }

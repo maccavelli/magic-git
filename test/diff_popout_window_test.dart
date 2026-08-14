@@ -86,6 +86,13 @@ Future<void> _pump(WidgetTester tester) async {
         false,
         3,
       )).overrideWith((ref) async => _diff),
+      fileDiffProvider((
+        _repo,
+        'lib/a.dart',
+        false,
+        true,
+        3,
+      )).overrideWith((ref) async => _diff),
     ],
   );
   addTearDown(container.dispose);
@@ -157,6 +164,38 @@ void main() {
 
       expect(find.byType(SplitDiffView), findsOneWidget);
       expect(find.byType(HunkDiffView), findsNothing);
+      expect(
+        find.text(
+          'Line actions require Unified view because split rows do not '
+          'map one-to-one to the patch.',
+        ),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'ignore-whitespace in the pop-out explains why line actions are gone',
+    (tester) async {
+      await _pump(tester);
+      await tester.tap(find.text('lib/a.dart'));
+      await tester.pumpAndSettle();
+      await _openPopout(tester);
+
+      expect(find.byType(HunkDiffView), findsOneWidget);
+      expect(
+        find.text('Line actions require whitespace-exact diff mode.'),
+        findsNothing,
+      );
+
+      await tester.tap(_byMacosTooltip('Ignore whitespace'));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(HunkDiffView), findsNothing);
+      expect(
+        find.text('Line actions require whitespace-exact diff mode.'),
+        findsOneWidget,
+      );
     },
   );
 

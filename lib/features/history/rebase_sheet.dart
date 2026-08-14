@@ -243,13 +243,26 @@ class _RebaseSheetState extends ConsumerState<RebaseSheet> {
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
-              child: Text(
-                'Drag a commit to reorder it, or drop it onto another to squash '
-                'them together (top = oldest). Squash/Fixup fold a commit into '
-                'the one above it.',
-                style: typography.caption1.copyWith(
-                  color: MacosColors.systemGrayColor,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Drag a commit to reorder it, or drop it onto another to '
+                    'squash them together (top = oldest). Squash/Fixup fold a '
+                    'commit into the one above it.',
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Reword is unavailable — rebase runs without an editor, so '
+                    'it cannot prompt for a new message.',
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
+                    ),
+                  ),
+                ],
               ),
             ),
             Container(height: 1, color: MacosColors.separatorColor),

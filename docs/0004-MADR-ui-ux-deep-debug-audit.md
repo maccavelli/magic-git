@@ -1,6 +1,6 @@
 # Treat the 2026-08 UI/UX deep-debug audit as the prioritized remediation backlog
 
-- Status: accepted (HIGH track + core MED delivered; residual MED/LOW tracked in PLAN)
+- Status: accepted (HIGH + locked MED delivered; Phase 10 LOW L1–L5 closed; L9 chrome waits for a 0006 plan)
 - Date: 2026-08-06
 - Deciders: Mac Smith
 - Tags: ui, ux, flutter, macos, debugging, accessibility, shortcuts, multi-window, forge, wiring
@@ -355,15 +355,15 @@ Chosen option: **"B. Accept this audit as the authoritative prioritized backlog"
 
 | ID | Item | Notes |
 | --- | --- | --- |
-| L1 | Undo empty journal silent | Soft toast “Nothing to undo” (landed with 0006) |
-| L2 | Tab strip: no middle-click close, no dirty badge | Middle-click close + dirty/conflict dot (landed with 0006) |
-| L3 | Interactive rebase: no reword | Intentional (`GIT_EDITOR=true`); optional menu hint |
+| L1 | Undo empty journal silent | Soft toast “Nothing to undo” (landed) |
+| L2 | Tab strip: no middle-click close, no dirty badge | Middle-click close + dirty/conflict dot (landed) |
+| L3 | Interactive rebase: no reword | Intentional (`GIT_EDITOR=true`); RebaseSheet footnotes that reword is unavailable (landed) |
 | L4 | Submodule open rejected; no management UI | Documented deferral |
-| L5 | Split / `-w` diffs drop hunk staging | Documented; banner if missing |
+| L5 | Split / `-w` diffs drop hunk staging | Banner on inline pane and pop-out; parse-fail / no-hunk fallback in `HunkDiffView` (landed) |
 | L6 | Diff pop-out is in-window float, not native window | OK unless multi-monitor demand |
 | L7 | Viewer residuals | Trailing-newline phantom line; fixed itemExtent clips tall glyphs; one overlong line disables whole-file highlight; SelectionArea only realized lines — see `viewer_engine_findings.md` |
-| L8 | No worktrees panel-scoped keymap category | Create/open via UI + palette targets only |
-| L9 | Native `ToolBar` / `MacosScaffold` chrome | Locked as hybrid title bar + context bar in [0006-MADR-hybrid-native-title-bar-context-bar.md](0006-MADR-hybrid-native-title-bar-context-bar.md); chrome slice still pending live Mac preview |
+| L8 | No worktrees panel-scoped keymap category | Create/open via UI + palette targets only; keymap not required |
+| L9 | Native `ToolBar` / `MacosScaffold` chrome | Locked as hybrid title bar + context bar in [0006-MADR-hybrid-native-title-bar-context-bar.md](0006-MADR-hybrid-native-title-bar-context-bar.md); implementation plan deferred |
 | L10 | Window default size already 1080×720 | `window_sizing_proposal` default applied; min 640×480 applied |
 
 ---
@@ -406,10 +406,11 @@ Chosen option: **"B. Accept this audit as the authoritative prioritized backlog"
 * `docs/viewer_engine_findings.md` — viewer residuals (L7).
 * `docs/window_sizing_proposal.md` — min/default sizes largely implemented.
 * `docs/memory_audit.md` — Tier 1–2 memory fixes done.
-* `docs/DRAG_AND_DROP_ENGINE.md` — A–D shipped; E1/E2 and status header stale (M5).
+* `docs/DRAG_AND_DROP_ENGINE.md` — A–E shipped; remaining residual is the
+  in-panel E1 disambiguation menu on commit rows.
 * `docs/0001-MADR-native-git-libgit2.md` — GPG/signing architecture context (H7).
 * `docs/0002-MADR-forge-change-request-merge-and-models.md` — forge merge depth;
-  comment/review threads still product-scoped (M8).
+  conversation comments landed (M8); inline review threads remain out of scope.
 * `docs/0003-MADR-base-relative-branches-workspace.md` — branches workspace;
   inert Compare CTA (M3) lives in that surface.
 
@@ -423,3 +424,4 @@ Chosen option: **"B. Accept this audit as the authoritative prioritized backlog"
 | 2026-08-06 | **H1 fixed (Phase 0):** `kWorktreesPageIndex = 5`; dead `global.panel7` removed; page-index invariant tests. |
 | 2026-08-06 | Phases 0–10 implemented on master (commits per phase): H1–H8 core fixes; remappable View globals; History DnD navigational + `moveBranch`; release detail + issue comments; secondary ⌘R + a11y chrome. Residual: full in-panel E1 disambiguation menu, PR/MR comment timelines, GH live logs. |
 | 2026-08-13 | L9 chrome model locked in 0006 (hybrid native title bar + context bar). L1 empty-undo toast and L2 tab middle-click/dirty badge implemented. |
+| 2026-08-14 | Phase 10 LOW close-out: L3 RebaseSheet reword footnote; L5 hunk-staging banners on the inline pane (already present) and the in-window pop-out. Issue/PR/MR conversation comments already shipped (M8). Residual backlog accepted: L4/L6/L7/L8 skipped per plan; L9 waits for a 0006 implementation plan; optional M10/M11 and in-panel E1 menu remain capacity items. |

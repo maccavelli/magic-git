@@ -2,7 +2,7 @@
 
 Associated MADR: [0004-MADR-ui-ux-deep-debug-audit.md](0004-MADR-ui-ux-deep-debug-audit.md)
 
-- Status: **implemented** (Phases 0–10 landed 2026-08-06; residual notes in change log)
+- Status: **implemented** (Phases 0–10 landed 2026-08-06; Phase 10 LOW L1–L5 closed 2026-08-14; L9 chrome deferred to a 0006 plan)
 - Date: 2026-08-06
 - MADR decision: Option B — treat the audit as the prioritized remediation backlog
 - Owner: implementation agent + maintainer review
@@ -962,20 +962,23 @@ diff comments — those remain `0002` non-goals).
 
 | ID | Action |
 | --- | --- |
-| L1 | Soft toast “Nothing to undo” on empty journal |
-| L2 | Middle-click close tab; dirty badge optional |
-| L3 | Rebase sheet footnote: reword unavailable |
-| L5 | Banner when hunk staging unavailable (split/`-w`/parse fail) |
+| L1 | Soft toast “Nothing to undo” on empty journal — **done** |
+| L2 | Middle-click close tab; dirty badge optional — **done** |
+| L3 | Rebase sheet footnote: reword unavailable — **done** |
+| L5 | Banner when hunk staging unavailable (split/`-w`/parse fail) — **done** (inline + pop-out; `HunkDiffView` parse-fail notice) |
 | L8 | Optional `worktrees.new` keymap later — not required |
 
-Skip L4, L6, L7, L9 unless product demands.
+Skip L4, L6, L7, L9 unless product demands. L9’s chrome *model* is locked in
+0006; its implementation plan is a separate later slice.
 
 #### Exit criteria
 
-* [ ] MADR HIGH section marked fixed or linked to residual issues.
-* [ ] Docs consistent with shipped behavior.
+* [x] MADR HIGH section marked fixed or linked to residual issues.
+* [x] Docs consistent with shipped behavior.
 
-**Checkpoint K (maintainer):** Initiative complete or residual backlog accepted.
+**Checkpoint K (maintainer):** Residual backlog accepted. Closed: L1–L5.
+Skipped per plan: L4, L6, L7, L8. Deferred: L9 (wait for 0006 plan).
+Capacity residuals: in-panel E1 disambiguation menu, optional M10/M11.
 
 ---
 
@@ -1139,3 +1142,4 @@ Gates G-H5/M1/M5/M6/M8 are **locked**. Still open:
 | 2026-08-06 | Product gates locked: **G-H5=B**, **G-M1=A**, **G-M5=A**, **G-M6=A**, **G-M8=A**. Phases 3/7/8 expanded for full paths; non-goals clarify review-threads vs conversation comments. |
 | 2026-08-06 | **Phase 0 done:** `kWorktreesPageIndex = 5`, remove `global.panel7`, six-panel contract docs, `drop_registry_test` invariants. |
 | 2026-08-06 | **Phases 1–10 done** (per-phase commits, not pushed): H3 rebase errors; H2 branch keymap; H4/H5 remote-edit + uploadBytes proxy; H6 displayError; H8 session exit; H7 GPG disclosure; M1/M4/M5 View keys + History nav DnD + moveBranch; M6/M8/M9 releases/comments/binary conflict; M12–M14 secondary refresh + Semantics; docs. Residual: in-panel E1 menu on commit rows, PR/MR comment lists, optional M10/M11. |
+| 2026-08-14 | **Phase 10 LOW close-out:** L1/L2 already on master; L3 RebaseSheet reword footnote; L5 pop-out banners (inline banners and parse-fail notice already existed). PR/MR conversation comments already shipped (M8). Residual accepted: L4/L6/L7/L8 skipped; L9 waits for a 0006 plan; in-panel E1 menu and optional M10/M11 remain capacity items. |
