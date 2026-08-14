@@ -21,7 +21,8 @@ Open UI/UX work after this document lives in
 [0006-MADR-hybrid-native-title-bar-context-bar.md](0006-MADR-hybrid-native-title-bar-context-bar.md);
 do not implement it from the deferred `ToolBar` bullet below.
 
-**Done (analyze-clean, 75 tests green):**
+**Done (analyze-clean; 75 tests green when written — the suite is now 321 files
+under `test/`):**
 - **Phase 0** — POSIX collapse across escaper/formatter/executor/client-manager;
   `ShellType`/shell-probe removed.
 - **Phase 1** — #1 wrong-host race (generation token in `SSHClientManager`);
@@ -36,7 +37,9 @@ do not implement it from the deferred `ToolBar` bullet below.
   O(n²)); #10 commit-graph `ClipRect`; graph/refs memoized out of `build`.
 - **Phase 4 (done)** — reconnect-on-drop (`lost` phase + one-click reconnect);
   ⌘R refresh; dark-only theme made explicit (dead light theme removed); dead
-  code removed (GPG scaffolding, `graphql`, `GitStatusType`); `stashApply` wired
+  code removed (GPG scaffolding, `GitStatusType` — but **not** `graphql`, which
+  was later reintroduced and is live at `glab_service.dart:622`, called by
+  `projectDashboard`); `stashApply` wired
   (Apply button); DRY (`_mapList`, `Section*`/`asyncListSection`,
   `LabeledTextField`, `ConnectionState.copyWith`, `ConnectionStore._writeMetadata`,
   `SavedConnection.dedupePaths`); error-swallowing routed through `runAction`;
@@ -52,9 +55,11 @@ do not implement it from the deferred `ToolBar` bullet below.
   management panel (`SavedConnection.fsmonitorPaths`, default off). Applied on
   connect for every opted-in repo and live when toggled on the active host; the
   git-config mutation itself still wants verification against a real large remote.
-- **Second dedicated SSH stream client (MaxSessions)** — speculative; real channel
-  use (watcher + one trace + serialized commands ≈ 3) is well under OpenSSH's
-  default `MaxSessions 10`. Revisit only if `SSHChannelOpenError` is seen.
+- ~~**Second dedicated SSH stream client (MaxSessions)**~~ — **shipped since
+  this was written** (0007 audit). `SSHClientManager` runs a dual handshake with
+  a dedicated `_streamClient` and degrades to a single shared client on failure
+  (`ssh_client_manager.dart:132-331`); CLAUDE.md documents it as current
+  architecture.
 - **Sealed `ConnectionState` union** — revisited during the second review cycle
   below: the generation token alone wasn't sufficient (it structurally allowed
   the reconnect popup to lose its own host and the fsmonitor-enable loop to
@@ -117,10 +122,13 @@ policy normalized across reads).
 
 **Phase 3 — GitLab safety:** Approve/Merge/Retry allowing double-submit and
 missing a `mounted` check after the actual network call (only after the
-confirm dialog); catalog-style lists (issues/labels/milestones/releases, not
-the bounded pipelines/jobs feeds) silently truncating past one page; three
+confirm dialog); catalog-style lists (issues/milestones — **labels and releases
+were not fixed and still use fixed GraphQL `first:` caps with truncation merely
+surfaced; see 0007-PLAN step 5.3**, and the same defect exists on the GitHub
+side at `gh_service.dart:1140-1146`) silently truncating past one page; three
 mutation paths trusting glab's exit code where `-i` + HTTP-status checking was
-available (`graphql`) or, where it genuinely isn't (CLI subcommands with no
+available (mutations go through REST `glab api -i`, **not** `graphql`, which is
+a read helper) or, where it genuinely isn't (CLI subcommands with no
 REST equivalent), now documented as such instead of silently inconsistent; a
 blank token hanging in an interactive OAuth flow instead of being rejected;
 ambient `GITLAB_TOKEN`-family env vars able to silently override the stored
@@ -372,10 +380,9 @@ Robustness, idioms, and macOS fit-and-finish beyond the capped findings:
 - **Reconnect on drop:** detect `SSHClient.done`/channel close; surface a
   "connection lost" state with a one-click reconnect (reusing the active
   profile), instead of silent failures on the next command.
-- **`MaxSessions` awareness:** the long-lived watcher + trace channels plus
-  request/response commands can approach OpenSSH's default `MaxSessions 10`;
-  consider a second dedicated `SSHClient` for streams (per the transport
-  research) if users hit `SSHChannelOpenError`.
+- ~~**`MaxSessions` awareness**~~ — **done.** The second dedicated `SSHClient`
+  for streams shipped (`ssh_client_manager.dart:132-331`, with
+  `streamClientDegraded` when the second handshake fails).
 - **`core.fsmonitor` opt-in** on large remote repos (research §5) to keep status
   fast; expose as a per-connection toggle.
 
@@ -396,14 +403,16 @@ Robustness, idioms, and macOS fit-and-finish beyond the capped findings:
   corrected here. Revisit only if system-appearance support becomes a real
   ask — as of the second review cycle, dark-only literals throughout the diff/
   log/graph views assume this and would need auditing too.
-- Keyboard shortcuts: ⌘R refresh, ⌘K/⌘⇧P command actions, ⌘, settings.
+- Keyboard shortcuts: ⌘R refresh, ⌘K command palette, ⌘, settings. (⌘⇧P was
+  listed here as a palette chord; it is bound to Push — `keymap.dart:344`.)
 - Consistent empty/loading/error states; subtle hover/press affordances.
 
 **Cleanup, DRY & dead code**  _(from the capped-out review findings)_
 - **Dead code:** GPG-forwarding scaffolding in `SSHConnectionProfile`/`connect()`/
   `_forwardGpgSocket` (no code path sets `enableGpgForwarding`), `GlabService.graphql`
-  (uncalled), `GitStatusType` enum (unreferenced). Either wire or delete — delete
-  is recommended.
+  (uncalled *at the time*; it was subsequently wired and is live —
+  `glab_service.dart:622`, called by `projectDashboard`), `GitStatusType` enum
+  (unreferenced). Either wire or delete — delete is recommended.
 - **Unwired feature:** `GitService.stashApply` exists but `BranchesView` wires
   only `stashPop`/`stashDrop` — add an "Apply" affordance or drop the method.
 - **DRY:** extract a shared `AsyncValue` loading/error/empty widget (currently

@@ -1,8 +1,13 @@
 # Evolve the Branches tab into a base-relative branch workspace
 
-- Status: **accepted; implementation complete through companion plan Phase 7**
-  (performance command-budget gates and scale fixtures landed; Checkpoint E
-  maintainer product/UX sign-off still recommended before wide rollout)
+- Status: **accepted; implemented through companion plan Phase 7 except Phase
+  4's discovery layer** (performance command-budget gates and scale fixtures
+  landed; Checkpoint E maintainer product/UX sign-off still recommended before
+  wide rollout). Confirmation criterion 4 below — Review offering at least
+  Merged/Stale/Request/CI/Upstream filters — is **not met in the UI**: only
+  Merged/Stale/Conflicts quick filters exist, and §3.7 protection enrichment
+  was never built. See
+  [0007-MADR-docs-completion-audit.md](0007-MADR-docs-completion-audit.md).
 - Date: 2026-08-03
 - Deciders: Mac Smith
 - Tags: branches, git, github, gitlab, forge, worktrees, comparison, ui, ux, accessibility

@@ -1,6 +1,11 @@
 # Implementation plan: forge change-request models and merge UX
 
-- Status: implemented
+- Status: implemented **for Phases 0–5**. Phase 6 (labelled "opportunistic")
+  is partial — admin bypass, the merge keyboard shortcut and the post-merge
+  refs refresh shipped, but list-row chips, the Inbox ready filter and the
+  description preview did not. Verified 2026-08-14 by
+  [0007-MADR-docs-completion-audit.md](0007-MADR-docs-completion-audit.md);
+  remediation in its companion plan, steps 3.1–3.4.
 - Date: 2026-08-02
 - MADR: `docs/0002-MADR-forge-change-request-merge-and-models.md` (Option C)
 - Owner: implementation agent + maintainer review

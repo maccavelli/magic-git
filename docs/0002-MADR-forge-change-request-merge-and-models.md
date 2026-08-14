@@ -1,6 +1,8 @@
 # Expand forge change-request (PR/MR) models and merge UX
 
-- Status: accepted (phases 1–2 shipped; 3–6 follow-ons landed in same initiative)
+- Status: accepted (phases 1–2 shipped; 3–5 follow-ons landed in the same
+  initiative; phase 6 polish only partly landed — see the companion plan's
+  status line and 0007-MADR)
 - Date: 2026-08-02
 - Deciders: Mac Smith
 - Tags: forge, github, gitlab, merge, pull-request, merge-request, models, ui

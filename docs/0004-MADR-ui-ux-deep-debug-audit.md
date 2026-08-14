@@ -406,8 +406,8 @@ Chosen option: **"B. Accept this audit as the authoritative prioritized backlog"
 * `docs/viewer_engine_findings.md` — viewer residuals (L7).
 * `docs/window_sizing_proposal.md` — min/default sizes largely implemented.
 * `docs/memory_audit.md` — Tier 1–2 memory fixes done.
-* `docs/DRAG_AND_DROP_ENGINE.md` — A–E shipped; remaining residual is the
-  in-panel E1 disambiguation menu on commit rows.
+* `docs/DRAG_AND_DROP_ENGINE.md` — A–E shipped, including the in-panel E1
+  disambiguation menu on commit rows (`history_view.dart:2201-2260`).
 * `docs/0001-MADR-native-git-libgit2.md` — GPG/signing architecture context (H7).
 * `docs/0002-MADR-forge-change-request-merge-and-models.md` — forge merge depth;
   conversation comments landed (M8); inline review threads remain out of scope.
@@ -425,3 +425,4 @@ Chosen option: **"B. Accept this audit as the authoritative prioritized backlog"
 | 2026-08-06 | Phases 0–10 implemented on master (commits per phase): H1–H8 core fixes; remappable View globals; History DnD navigational + `moveBranch`; release detail + issue comments; secondary ⌘R + a11y chrome. Residual: full in-panel E1 disambiguation menu, PR/MR comment timelines, GH live logs. |
 | 2026-08-13 | L9 chrome model locked in 0006 (hybrid native title bar + context bar). L1 empty-undo toast and L2 tab middle-click/dirty badge implemented. |
 | 2026-08-14 | Phase 10 LOW close-out: L3 RebaseSheet reword footnote; L5 hunk-staging banners on the inline pane (already present) and the in-window pop-out. Issue/PR/MR conversation comments already shipped (M8). Residual backlog accepted: L4/L6/L7/L8 skipped per plan; L9 waits for a 0006 implementation plan; optional M10/M11 and in-panel E1 menu remain capacity items. |
+| 2026-08-14 | Audited against the codebase by [0007-MADR-docs-completion-audit.md](0007-MADR-docs-completion-audit.md). Corrections: the **in-panel E1 disambiguation menu shipped** (`history_view.dart:2201-2260`) and is struck from the residual lists above. **M7** (Labels "(view only)" caption) and **M13** (shared file-selection seam) were recorded complete but were never implemented — see 0007-PLAN steps 2.2 and 5.5. **M2** (zoomReset glyph), **M12** (detached-window title), **M14** (palette-row semantics), **M15** (host-key dismiss reject) landed partially; **H8** shipped without its required tests. Open question 2 (ship bar) is moot now that Phases 0–10 have landed. |

@@ -9,6 +9,16 @@
   patch and merge-tree caches. Maintainer Checkpoint E / product sign-off still
   recommended before wide rollout; wall-clock/CPU release measurements are
   optional evidence outside ordinary CI.
+- **2026-08-14 correction ([0007-MADR-docs-completion-audit.md](0007-MADR-docs-completion-audit.md)):**
+  "complete through Phase 7" overstates **Phase 4**. Its destructive-safety core
+  shipped (OID-pinned base-safe bulk delete, multi-selection), but its
+  *discovery* layer exists only below the UI: `parseBranchSearchQuery`, the full
+  `BranchReviewFacets` set, the smart/ahead/behind sorts and `shapeReviewBranches`
+  are unit-tested but unreferenced dead code in
+  `lib/core/git/branch_review_query.dart`; Hide writes prefs that nothing reads
+  and offers no un-hide; and the typed forge-knowledge provider plus the whole
+  of §3.7 protection enrichment were never built. MADR Confirmation criterion 4
+  is therefore not met in the UI. Remediation: 0007-PLAN Phase 4 and step 5.1.
 - Date: 2026-08-05
 - MADR: `docs/0003-MADR-base-relative-branches-workspace.md` (Option C)
 - Owner: implementation agent + maintainer review

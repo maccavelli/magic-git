@@ -3,7 +3,17 @@
 Associated MADR:
 [0005-MADR-task-centered-adaptive-repository-workspace.md](0005-MADR-task-centered-adaptive-repository-workspace.md)
 
-- Plan status: **completed** (Phases 0–11; Phase 12 remains separately decided)
+- Plan status: **completed for code artifacts** (Phases 0–11; Phase 12 remains
+  separately decided). The observational half of **Phase 9** has never been
+  run — the measured 25% interaction reduction, keyboard/VoiceOver task
+  completion, SSH runs and profile frame timings required by this plan's own
+  Product Acceptance Criteria are all recorded `unavailable` in the UX baseline,
+  and maintainer golden acceptance is still pending. Two Phase 2 deviations:
+  the curated forge operation descriptors named in the file table were never
+  written (every forge mutation is labelled 'Update forge' by a generic
+  wrapper), and `test/repo_change_filter_test.dart:23-37` contains a vacuous
+  command-count assertion. Verified 2026-08-14 by
+  [0007-MADR-docs-completion-audit.md](0007-MADR-docs-completion-audit.md).
 - Codebase assessment date: 2026-08-13
 - Delivery completion date: 2026-08-13
 - Decision prerequisite: MADR 0005 was accepted when the maintainer explicitly

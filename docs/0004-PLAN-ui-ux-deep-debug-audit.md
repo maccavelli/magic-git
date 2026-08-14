@@ -371,9 +371,9 @@ detail buttons, or is removed from `kKeymapActions`. Prefer **wiring**.
 
 #### Exit criteria
 
-* [ ] Binding any of the four ids in Keyboard Mappings runs the detail-equivalent action when preconditions hold.
-* [ ] Palette lists the four actions under Branches panel index 2.
-* [ ] No orphan branch keymap ids remain.
+* [x] Binding any of the four ids in Keyboard Mappings runs the detail-equivalent action when preconditions hold.
+* [x] Palette lists the four actions under Branches panel index 2.
+* [x] No orphan branch keymap ids remain.
 
 **Checkpoint C:** Keymap contract restored for Branches.
 
@@ -485,10 +485,10 @@ state; implement the proxy.
 
 #### Exit criteria
 
-* [ ] Conflict or sync failure is visible without opening Output (H4).
-* [ ] Secondary-window remote-edit sync succeeds against main isolate executor (H5=B).
-* [ ] No production path throws `UnsupportedError('uploadBytes is not proxied…')`.
-* [ ] Analyzer + tests green.
+* [x] Conflict or sync failure is visible without opening Output (H4).
+* [x] Secondary-window remote-edit sync succeeds against main isolate executor (H5=B).
+* [x] No production path throws `UnsupportedError('uploadBytes is not proxied…')`.
+* [x] Analyzer + tests green.
 
 **Checkpoint D:** Remote-edit honesty + secondary upload proxy.
 
@@ -536,8 +536,8 @@ state; implement the proxy.
 
 #### Exit criteria
 
-* [ ] Grep for `'$err'` / `'$e'` in user-visible `Text`/`_error` assignments under `lib/features` is empty or justified (non-UI).
-* [ ] Analyzer + tests green.
+* [x] Grep for `'$err'` / `'$e'` in user-visible `Text`/`_error` assignments under `lib/features` is empty or justified (non-UI).
+* [x] Analyzer + tests green.
 
 **Checkpoint E:** Error-text contract restored.
 
@@ -613,9 +613,10 @@ Reuse concepts from `guardedBranchSwitch` / `GitStatus`:
 
 #### Exit criteria
 
-* [ ] Logout with dirty tree prompts; cancel leaves session.
-* [ ] User close of dirty tab prompts; quit path still terminates (3s backstop unchanged).
-* [ ] Analyzer + tests green.
+* [x] Logout with dirty tree prompts; cancel leaves session.
+* [x] User close of dirty tab prompts; quit path still terminates (3s backstop unchanged).
+* [x] Analyzer + tests green — but the phase's own "Required tests" were never
+  written; no test exercises `confirmSessionExit`. Closed by 0007-PLAN step 2.5.
 
 **Checkpoint F:** Session exit safety.
 
@@ -659,8 +660,8 @@ signing stack in this plan.
 
 #### Exit criteria
 
-* [ ] User with `commit.gpgsign=true` sees disclosure before/at commit.
-* [ ] Still no signed commits from the app (unchanged args).
+* [x] User with `commit.gpgsign=true` sees disclosure before/at commit.
+* [x] Still no signed commits from the app (unchanged args).
 
 **Checkpoint G:** Policy honesty without signing project.
 
@@ -781,12 +782,16 @@ Register in `drop_registry.dart` under `DropZoneId.history` (currently
 
 #### Exit criteria
 
-* [ ] Palette can open Dashboard; shortcuts sheet lists View chords as remappable.
-* [ ] ⌘T / ⌘W work when connected/on strip.
-* [ ] E1 move-pointer and E2 cherry-pick-onto-branch ship with confirm + undo.
-* [ ] History nav zone accepts at least navigational drops.
-* [ ] DnD doc status matches code.
-* [ ] Analyzer + tests green.
+* [x] Palette can open Dashboard; shortcuts sheet lists View chords as remappable.
+      (The paired `history.zoomReset` icon fix in step 2 of this phase did *not*
+      land — it still uses `zoom_out`. Closed by 0007-PLAN step 2.1.)
+* [~] ⌘T works. `global.closeTab` ships **unbound** by design — ⌘W is owned by
+      `viewer.close` (`keymap.dart:294-297`) — a deliberate deviation from the
+      ⌘W specified above, not recorded here until the 0007 audit.
+* [x] E1 move-pointer and E2 cherry-pick-onto-branch ship with confirm + undo.
+* [x] History nav zone accepts at least navigational drops.
+* [x] DnD doc status matches code.
+* [x] Analyzer + tests green.
 
 **Checkpoint H:** Discoverability + DnD E-tier coherent.
 
@@ -892,10 +897,16 @@ diff comments — those remain `0002` non-goals).
 
 #### Exit criteria
 
-* [ ] No disabled-looking primary “Compare Changes”.
-* [ ] Binary conflict text matches available actions.
-* [ ] Releases selectable with a real detail pane (G-M6=A).
-* [ ] Issue and PR/MR details show fetched comments; post refreshes list (G-M8=A).
+* [x] No disabled-looking primary “Compare Changes”.
+* [x] Binary conflict text matches available actions.
+* [x] Releases selectable with a real detail pane (G-M6=A).
+* [x] Issue and PR/MR details show fetched comments; post refreshes list (G-M8=A).
+* [ ] **M7 — Labels “(view only)” caption never landed.** It had no exit
+      criterion of its own, which is how it passed unnoticed. Closed by
+      0007-PLAN step 2.2.
+* [~] **M15 — host-key reject** ships as an explicit Cancel button, not the
+      specified reject-on-unexpected-dismiss. The gap is a silent permanent
+      hang; closed by 0007-PLAN step 1.1.
 
 **Checkpoint I:** Chrome honesty.
 
@@ -940,10 +951,17 @@ diff comments — those remain `0002` non-goals).
 
 #### Exit criteria
 
-* [ ] ⌘R works with focus in History pop-out.
-* [ ] Detached title does not claim full workspace.
-* [ ] Nav rail + tabs have Semantics labels.
-* [ ] Analyzer + tests green.
+* [x] ⌘R works with focus in History pop-out.
+* [x] Detached title does not claim full workspace — the child pushes
+      `Status — <repo>` (`secondary_window_main.dart:594-604`). The *open-time*
+      title still says “Repo”; closed by 0007-PLAN step 2.4.
+* [x] Nav rail + tabs have Semantics labels. (Command-palette rows, also listed
+      under M14, did not get them — closed by 0007-PLAN step 2.3.)
+* [ ] **M13 — shared file-selection seam never landed.** Like M7 it had no exit
+      criterion. `FileView` keeps a private `_selectedPath` and is in fact
+      constructed twice, so there are three independent selections. Closed by
+      0007-PLAN step 5.5.
+* [x] Analyzer + tests green.
 
 **Checkpoint J:** Secondary + a11y baseline.
 
@@ -978,7 +996,16 @@ Skip L4, L6, L7, L9 unless product demands. L9’s chrome *model* is locked in
 
 **Checkpoint K (maintainer):** Residual backlog accepted. Closed: L1–L5.
 Skipped per plan: L4, L6, L7, L8. Deferred: L9 (wait for 0006 plan).
-Capacity residuals: in-panel E1 disambiguation menu, optional M10/M11.
+Capacity residuals: optional M10/M11.
+
+> **2026-08-14 correction (0007 audit).** The in-panel E1 disambiguation menu
+> was listed here as a capacity residual but is implemented
+> (`history_view.dart:2201-2260`) — struck above. Conversely **M7** and **M13**
+> were folded into the "Phases 1–10 done" changelog entry and were never
+> implemented; **M2**, **M12**, **M14**, **M15** landed partially, and **H8**
+> shipped without its required tests. See
+> [0007-MADR-docs-completion-audit.md](0007-MADR-docs-completion-audit.md) and
+> its companion plan for the remediation.
 
 ---
 

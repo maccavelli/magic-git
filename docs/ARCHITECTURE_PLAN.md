@@ -226,9 +226,12 @@ Add an `execStream({repoPath, argv}) → Stream<List<int>>` alongside the existi
 - Add `GIT_OPTIONAL_LOCKS=0` (or `git --no-optional-locks`) to the env prelude for
   **all read/status refreshes**, so background polling can't corrupt the user's
   concurrent remote git work via `index.lock` contention [8].
-- Inject the GitLab token via env (`GITLAB_TOKEN`) on the exec channel, or pipe
-  through `--stdin` — **never** as a positional arg (avoids leaking into remote
-  `ps`/shell history). See §4.3.
+- Pipe the GitLab token through **stdin** (`glab auth login --stdin`), once, at
+  sign-in — **never** as a positional arg and **never** via env (avoids leaking
+  into remote `ps`/shell history, and env vars are readable from
+  `/proc/<pid>/environ`). Afterwards glab uses the host's own credential store.
+  Ambient forge-token env vars are actively neutralized per connection (§0.1).
+  See §4.3.
 
 ---
 
@@ -536,8 +539,10 @@ call:**
 3. **Real-time.** Remote `fswatch -0` streaming channel → debounce → status
    refresh via `StreamProvider`. ✅
 4. **GitLab read.** `glab api` service; MR/pipeline/jobs panels; live `ci trace`
-   stream. ✅ (GITLAB_TOKEN injection helper + GraphQL dashboard query deferred —
-   glab inherits remote auth today.)
+   stream. ✅ (The GraphQL dashboard query shipped —
+   `GlabService.projectDashboard`. The `GITLAB_TOKEN` injection helper was
+   deliberately never built: tokens go over stdin at sign-in instead, and
+   ambient token env vars are neutralized.)
 5. **Mutations.** Stage/unstage/discard/commit; branch create/checkout/delete;
    fetch/pull/push; stash push/pop/apply/drop; MR create/approve/merge; pipeline
    retry — with confirm dialogs on outward actions + refresh. ✅
@@ -604,8 +609,9 @@ the referenced sections.
 3. **macOS Keychain + token injection (§6.4 / §4.3).** ✅ `flutter_secure_storage`
    (Keychain) for secrets, `shared_preferences` for metadata; `keychain-access-groups`
    entitlement in **both** entitlement files; stable signing identity. Inject the
-   PAT via **stdin** (`glab auth login --stdin`), fallback inline `VAR=$X cmd`,
-   never argv; don't rely on `AcceptEnv`.
+   PAT via **stdin** (`glab auth login --stdin`) — never argv, and never env
+   (the inline `VAR=$X cmd` fallback sketched here was not built; ambient forge
+   token vars are neutralized instead); don't rely on `AcceptEnv`.
 4. **Debounce + fsmonitor (§5).** ✅ Two-stage coalescing: remote
    `fswatch -0 --latency 0.5 --batch-marker` + curated `.git` ignore set; client
    trailing debounce ~150 ms / maxWait ~1 s / hard floor 1–2 s / drop
