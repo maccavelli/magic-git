@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart' hide ConnectionState;
+import 'package:flutter/gestures.dart' show kMiddleMouseButton;
 import 'package:flutter/material.dart'
     show ReorderableDragStartListener, ReorderableListView;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -76,11 +77,18 @@ class TabStrip extends ConsumerWidget {
                 return ReorderableDragStartListener(
                   key: ValueKey(tab.id),
                   index: i,
-                  child: _TabChip(
-                    tab: tab,
-                    active: tab.id == controller.activeId,
-                    onTap: () => controller.activate(tab.id),
-                    onClose: () => _closeTab(context, controller, tab),
+                  child: Listener(
+                    onPointerDown: (event) {
+                      if (event.buttons == kMiddleMouseButton) {
+                        _closeTab(context, controller, tab);
+                      }
+                    },
+                    child: _TabChip(
+                      tab: tab,
+                      active: tab.id == controller.activeId,
+                      onTap: () => controller.activate(tab.id),
+                      onClose: () => _closeTab(context, controller, tab),
+                    ),
                   ),
                 );
               },
@@ -124,7 +132,6 @@ class _TabChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final typography = MacosTheme.of(context).typography;
     // The tab's live session (non-autoDispose, always present). Reactive rebuild
     // is driven by TabsController.notifyListeners on connection change, watched
     // via TabsScope.of above — so this synchronous read is always current.
@@ -137,10 +144,56 @@ class _TabChip extends StatelessWidget {
                   ? _basename(tab.repoPath!)
                   : 'Connecting…'));
 
+    return UncontrolledProviderScope(
+      container: tab.container,
+      child: _TabChipBody(
+        tab: tab,
+        active: active,
+        isLocal: isLocal,
+        label: label,
+        onTap: onTap,
+        onClose: onClose,
+      ),
+    );
+  }
+}
+
+class _TabChipBody extends ConsumerWidget {
+  const _TabChipBody({
+    required this.tab,
+    required this.active,
+    required this.isLocal,
+    required this.label,
+    required this.onTap,
+    required this.onClose,
+  });
+
+  final RepoTab tab;
+  final bool active;
+  final bool isLocal;
+  final String label;
+  final VoidCallback onTap;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final typography = MacosTheme.of(context).typography;
+    final repoPath = tab.repoPath;
+    final status = repoPath == null
+        ? null
+        : ref.watch(statusProvider(repoPath)).asData?.value;
+    final dirty = status != null && !status.isClean;
+    final conflicts = status?.hasConflicts ?? false;
+    final semanticLabel = [
+      label,
+      if (conflicts) 'conflicts',
+      if (dirty && !conflicts) 'uncommitted changes',
+    ].join(', ');
+
     return Semantics(
       button: true,
       selected: active,
-      label: label,
+      label: semanticLabel,
       child: Tappable(
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
@@ -178,10 +231,36 @@ class _TabChip extends StatelessWidget {
                   ),
                 ),
               ),
+              if (conflicts || dirty) ...[
+                _DirtyDot(
+                  key: ValueKey('tab-dirty-${tab.repoPath}'),
+                  color: conflicts
+                      ? MacosColors.systemRedColor
+                      : MacosColors.systemOrangeColor,
+                ),
+                const SizedBox(width: 4),
+              ],
               _CloseButton(onClose: onClose),
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _DirtyDot extends StatelessWidget {
+  const _DirtyDot({super.key, required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return ExcludeSemantics(
+      child: Container(
+        width: 7,
+        height: 7,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
       ),
     );
   }

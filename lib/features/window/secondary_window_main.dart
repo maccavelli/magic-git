@@ -673,8 +673,13 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
           context,
           reply['message'] as String? ?? 'Undo failed.',
         );
+      case 'nothingToUndo':
+        ref
+            .read(undoToastProvider.notifier)
+            .show(const UndoToast('Nothing to undo'));
       default:
-        // nothingToUndo / blockedByPendingOp — silent, matching AppShell.
+        // blockedByPendingOp stays silent — the pending-op banner already
+        // explains abort/continue.
         break;
     }
   }

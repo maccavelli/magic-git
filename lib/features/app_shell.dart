@@ -555,11 +555,13 @@ class _AppShellState extends ConsumerState<AppShell> {
             '— this undo is no longer safe and has been discarded.',
           );
         case UndoStatus.nothingToUndo:
+          ref
+              .read(undoToastProvider.notifier)
+              .show(const UndoToast('Nothing to undo'));
         case UndoStatus.blockedByPendingOp:
         case UndoStatus.dirty:
-          // Nothing actionable: an empty journal is silent, a pending
-          // merge/rebase already shows its own banner with abort/continue,
-          // and a declined dirty-overwrite was handled above.
+          // A pending merge/rebase already shows its own banner with
+          // abort/continue, and a declined dirty-overwrite was handled above.
           break;
       }
     } on GitException catch (e) {

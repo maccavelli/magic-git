@@ -162,6 +162,24 @@ void main() {
     await tester.pumpAndSettle(); // let the fade-out finish
   });
 
+  testWidgets('an empty-journal announcement has no undo hint', (tester) async {
+    await pump(tester);
+    container
+        .read(undoToastProvider.notifier)
+        .show(const UndoToast('Nothing to undo'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Nothing to undo'), findsOneWidget);
+    expect(find.text('to undo'), findsNothing);
+    expect(find.text('to redo'), findsNothing);
+
+    await tester.tap(find.text('Nothing to undo'));
+    await tester.pumpAndSettle();
+    expect(undoCalls, 0);
+    expect(redoCalls, 0);
+    expect(container.read(undoToastProvider), isNull);
+  });
+
   testWidgets('a direct announcement shows without the undo hint', (
     tester,
   ) async {

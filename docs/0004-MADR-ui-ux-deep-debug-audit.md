@@ -355,15 +355,15 @@ Chosen option: **"B. Accept this audit as the authoritative prioritized backlog"
 
 | ID | Item | Notes |
 | --- | --- | --- |
-| L1 | Undo empty journal silent | Optional soft toast "Nothing to undo" |
-| L2 | Tab strip: no middle-click close, no dirty badge | Polish |
+| L1 | Undo empty journal silent | Soft toast “Nothing to undo” (landed with 0006) |
+| L2 | Tab strip: no middle-click close, no dirty badge | Middle-click close + dirty/conflict dot (landed with 0006) |
 | L3 | Interactive rebase: no reword | Intentional (`GIT_EDITOR=true`); optional menu hint |
 | L4 | Submodule open rejected; no management UI | Documented deferral |
 | L5 | Split / `-w` diffs drop hunk staging | Documented; banner if missing |
 | L6 | Diff pop-out is in-window float, not native window | OK unless multi-monitor demand |
 | L7 | Viewer residuals | Trailing-newline phantom line; fixed itemExtent clips tall glyphs; one overlong line disables whole-file highlight; SelectionArea only realized lines — see `viewer_engine_findings.md` |
 | L8 | No worktrees panel-scoped keymap category | Create/open via UI + palette targets only |
-| L9 | Native `ToolBar` / `MacosScaffold` chrome | ACTION_PLAN deferred; needs live Mac preview |
+| L9 | Native `ToolBar` / `MacosScaffold` chrome | Locked as hybrid title bar + context bar in [0006-MADR-hybrid-native-title-bar-context-bar.md](0006-MADR-hybrid-native-title-bar-context-bar.md); chrome slice still pending live Mac preview |
 | L10 | Window default size already 1080×720 | `window_sizing_proposal` default applied; min 640×480 applied |
 
 ---
@@ -422,3 +422,4 @@ Chosen option: **"B. Accept this audit as the authoritative prioritized backlog"
 | 2026-08-06 | Product gates locked for the companion PLAN: **H5=B** (proxy `uploadBytes`), **M1=A** (remappable View globals), **M5=A** (DnD E1/E2), **M6=A** (release detail), **M8=A** (in-app comment timelines). |
 | 2026-08-06 | **H1 fixed (Phase 0):** `kWorktreesPageIndex = 5`; dead `global.panel7` removed; page-index invariant tests. |
 | 2026-08-06 | Phases 0–10 implemented on master (commits per phase): H1–H8 core fixes; remappable View globals; History DnD navigational + `moveBranch`; release detail + issue comments; secondary ⌘R + a11y chrome. Residual: full in-panel E1 disambiguation menu, PR/MR comment timelines, GH live logs. |
+| 2026-08-13 | L9 chrome model locked in 0006 (hybrid native title bar + context bar). L1 empty-undo toast and L2 tab middle-click/dirty badge implemented. |

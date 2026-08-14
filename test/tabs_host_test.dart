@@ -10,6 +10,7 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart' hide ConnectionState;
+import 'package:flutter/gestures.dart' show kMiddleMouseButton;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -145,6 +146,68 @@ void main() {
     expect(find.text('repo-beta'), findsOneWidget);
     // The "+" (new-tab) affordance is present with a multi-tab strip.
     expect(_findMacosIcon(CupertinoIcons.add), findsOneWidget);
+    await _teardownHost(tester);
+  });
+
+  testWidgets('middle-clicking a tab chip closes that tab', (tester) async {
+    final c = TabsController(containerFactory: _tabContainer);
+    addTearDown(c.dispose);
+    c.ensureInitialTab();
+    c.openOrFocus(connectionId: 'a', repoPath: '/repo-alpha', connect: (_) {});
+    c.openOrFocus(connectionId: 'b', repoPath: '/repo-beta', connect: (_) {});
+    c.openOrFocus(connectionId: 'c', repoPath: '/repo-gamma', connect: (_) {});
+    await _pumpHost(tester, c);
+
+    expect(c.tabs, hasLength(3));
+    await tester.tap(find.text('repo-alpha'), buttons: kMiddleMouseButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('repo-alpha'), findsNothing);
+    expect(find.text('repo-beta'), findsOneWidget);
+    expect(find.text('repo-gamma'), findsOneWidget);
+    expect(c.tabs.map((tab) => tab.repoPath), ['/repo-beta', '/repo-gamma']);
+    await _teardownHost(tester);
+  });
+
+  testWidgets('a dirty tab shows an uncommitted-changes badge', (tester) async {
+    final handle = tester.ensureSemantics();
+    final c = TabsController(
+      containerFactory: (overrides) => _tabContainer([
+        statusProvider('/repo-alpha').overrideWith(
+          (ref) async => GitStatus(
+            branch: const GitBranchInfo(head: 'main'),
+            files: const [
+              GitFileStatus(path: 'a.txt', statusX: 'M', statusY: '.'),
+            ],
+          ),
+        ),
+        statusProvider('/repo-beta').overrideWith(
+          (ref) async => GitStatus(
+            branch: const GitBranchInfo(head: 'main'),
+            files: const [],
+          ),
+        ),
+        ...overrides,
+      ]),
+    );
+    addTearDown(c.dispose);
+    c.ensureInitialTab();
+    c.openOrFocus(connectionId: 'a', repoPath: '/repo-alpha', connect: (_) {});
+    c.openOrFocus(connectionId: 'b', repoPath: '/repo-beta', connect: (_) {});
+    await _pumpHost(tester, c);
+
+    final alpha = c.tabs.firstWhere((tab) => tab.repoPath == '/repo-alpha');
+    expect(
+      alpha.container.read(statusProvider('/repo-alpha')).asData!.value.isClean,
+      isFalse,
+    );
+    expect(find.byKey(const ValueKey('tab-dirty-/repo-alpha')), findsOneWidget);
+    expect(find.byKey(const ValueKey('tab-dirty-/repo-beta')), findsNothing);
+    expect(
+      tester.getSemantics(find.text('repo-alpha')).label,
+      contains('uncommitted changes'),
+    );
+    handle.dispose();
     await _teardownHost(tester);
   });
 
