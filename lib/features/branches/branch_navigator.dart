@@ -222,8 +222,21 @@ class BranchNavigator extends ConsumerStatefulWidget {
   final BranchWorkspaceMode mode;
   final AsyncValue<BranchBaseResolution>? baseState;
   final AsyncValue<BranchReviewBatchResult>? review;
-  final BranchReviewQuickFilter reviewFilter;
-  final BranchReviewSort reviewSort;
+  final BranchReviewFacets facets;
+  final BranchReviewSortMode reviewSort;
+
+  /// Parsed `author:` / `status:` / plain tokens from the search field. Only
+  /// meaningful in Review — Browse keeps the plain substring filter.
+  final List<BranchSearchToken> searchTokens;
+
+  /// Whether forge data can be trusted. Facets that reason about ABSENCE
+  /// ("no request") must not fire on an empty-because-it-failed map.
+  final bool forgeKnown;
+
+  /// Committer identity for the "Mine" facet; null when unconfigured, which
+  /// is why the facet is offered only when one of these is set.
+  final String? committerEmail;
+  final String? committerName;
 
   /// Full ref names known to conflict after an explicit Review scan.
   final Set<String> conflictRefNames;
@@ -246,6 +259,7 @@ class BranchNavigator extends ConsumerStatefulWidget {
   final void Function() onToggleGrouped;
   final void Function() onToggleShowStale;
   final void Function() onToggleShowHidden;
+  final ValueChanged<BranchReviewFacets> onFacetsChanged;
 
   /// Short names currently hidden — drives the per-row Unhide entry.
   final Set<String> hiddenNames;
@@ -295,7 +309,7 @@ class BranchNavigator extends ConsumerStatefulWidget {
 
   /// Clears a persisted user base (e.g. when the saved ref is unavailable).
   final VoidCallback onBaseReset;
-  final ValueChanged<BranchReviewSort> onReviewSortChanged;
+  final ValueChanged<BranchReviewSortMode> onReviewSortChanged;
 
   const BranchNavigator({
     super.key,
@@ -310,8 +324,12 @@ class BranchNavigator extends ConsumerStatefulWidget {
     required this.mode,
     required this.baseState,
     required this.review,
-    required this.reviewFilter,
+    required this.facets,
     required this.reviewSort,
+    this.searchTokens = const [],
+    this.forgeKnown = false,
+    this.committerEmail,
+    this.committerName,
     this.conflictRefNames = const {},
     this.multiSelection = BranchMultiSelection.empty,
     this.onMultiSelect,
@@ -328,6 +346,7 @@ class BranchNavigator extends ConsumerStatefulWidget {
     required this.onToggleGrouped,
     required this.onToggleShowStale,
     required this.onToggleShowHidden,
+    required this.onFacetsChanged,
     required this.onUnhide,
     this.showHidden = false,
     this.hiddenNames = const {},
@@ -445,16 +464,32 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
     );
   }
 
+  /// The Review list as last shaped during build.
+  ///
+  /// Shift-range selection has to see EXACTLY the rows on screen. This used to
+  /// be re-derived independently from the row builder, so any divergence
+  /// between the two silently selected offscreen branches; now both read this.
+  List<GitRef> _shapedReview = const [];
+
+  /// Shapes the Review list: facets and search tokens filter, the sort mode
+  /// orders. Browse is untouched (and stays free of forge/summary reads).
+  List<GitRef> _shapeReview(BranchViewModel vm) => shapeReviewBranches(
+    branches: vm.filteredLocals,
+    summaries: widget.review?.value?.summariesByRefName ?? const {},
+    forge: widget.forgeKnown ? vm.forge : const {},
+    forgeKnown: widget.forgeKnown,
+    pinnedNames: vm.pinned,
+    conflictRefNames: widget.conflictRefNames,
+    facets: widget.facets,
+    sort: widget.reviewSort,
+    search: widget.searchTokens,
+    committerEmail: widget.committerEmail,
+    committerName: widget.committerName,
+  );
+
   List<String> _visibleLocalFullRefs() {
     if (widget.mode == BranchWorkspaceMode.review) {
-      final branches = shapePhase1ReviewBranches(
-        branches: widget.vm.filteredLocals,
-        summaries: widget.review?.value?.summariesByRefName ?? const {},
-        filter: widget.reviewFilter,
-        sort: widget.reviewSort,
-        conflictRefNames: widget.conflictRefNames,
-      );
-      return [for (final b in branches) b.name];
+      return [for (final b in _shapedReview) b.name];
     }
     return [for (final b in widget.vm.localsOnScreen) b.name];
   }
@@ -658,13 +693,8 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
 
   List<_Row> _buildRows(BranchViewModel vm) {
     if (widget.mode == BranchWorkspaceMode.review) {
-      final branches = shapePhase1ReviewBranches(
-        branches: vm.filteredLocals,
-        summaries: widget.review?.value?.summariesByRefName ?? const {},
-        filter: widget.reviewFilter,
-        sort: widget.reviewSort,
-        conflictRefNames: widget.conflictRefNames,
-      );
+      final branches = _shapeReview(vm);
+      _shapedReview = branches;
       return <_Row>[
         _LocalHeaderRow(
           vm.sectionTitle('Local Branches', branches.length, vm.totalLocals),
@@ -909,16 +939,33 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
                 const Text('Sort'),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: MacosPopupButton<BranchReviewSort>(
+                  child: MacosPopupButton<BranchReviewSortMode>(
                     value: widget.reviewSort,
                     items: const [
+                      // Smart is the design's attention order: broken first,
+                      // then requests, then unpublished/ahead, then merged.
+                      // It reads forge state, so the list re-orders once when
+                      // that data lands — the trade for surfacing what needs
+                      // attention without the user choosing a lens.
                       MacosPopupMenuItem(
-                        value: BranchReviewSort.activity,
+                        value: BranchReviewSortMode.smart,
+                        child: Text('Smart'),
+                      ),
+                      MacosPopupMenuItem(
+                        value: BranchReviewSortMode.activity,
                         child: Text('Activity'),
                       ),
                       MacosPopupMenuItem(
-                        value: BranchReviewSort.name,
+                        value: BranchReviewSortMode.name,
                         child: Text('Name'),
+                      ),
+                      MacosPopupMenuItem(
+                        value: BranchReviewSortMode.ahead,
+                        child: Text('Ahead'),
+                      ),
+                      MacosPopupMenuItem(
+                        value: BranchReviewSortMode.behind,
+                        child: Text('Behind'),
                       ),
                     ],
                     onChanged: (value) {
@@ -928,6 +975,10 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
                 ),
               ],
             ),
+            // Its own row: the sort popup already takes the full width at the
+            // navigator's narrowest, and squeezing both in overflowed.
+            const SizedBox(height: 6),
+            Row(children: [Expanded(child: _facetMenu())]),
             if (_reviewStatusLabel() case final status?) ...[
               const SizedBox(height: 6),
               Text(
@@ -1003,6 +1054,92 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
   }
 
   /// Loading / error / partial-failure caption for the Review summary load.
+  /// The facet menu: the composable filters that have no dashboard chip.
+  ///
+  /// Facets that reason about ABSENCE — "No request" — are offered only when
+  /// forge data is actually known, because an empty-because-it-failed map
+  /// would otherwise match every branch in the repo. "Mine" is offered only
+  /// when a committer identity is configured, or it would silently match
+  /// nothing.
+  Widget _facetMenu() {
+    final f = widget.facets;
+    final hasIdentity =
+        (widget.committerEmail?.isNotEmpty ?? false) ||
+        (widget.committerName?.isNotEmpty ?? false);
+    final active = f.activeCount;
+
+    MacosPulldownMenuItem item(
+      String label,
+      bool selected,
+      BranchReviewFacets next,
+    ) => MacosPulldownMenuItem(
+      title: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 16,
+            child: selected
+                ? const MacosIcon(CupertinoIcons.checkmark, size: 11)
+                : null,
+          ),
+          Text(label),
+        ],
+      ),
+      onTap: () => widget.onFacetsChanged(next),
+    );
+
+    return MacosPulldownButton(
+      key: const ValueKey('branch-facet-menu'),
+      title: active == 0 ? 'Filter' : 'Filter ($active)',
+      items: [
+        item(
+          'Unpublished',
+          f.unpublished,
+          f.copyWith(unpublished: !f.unpublished),
+        ),
+        item(
+          'Upstream gone',
+          f.upstreamGone,
+          f.copyWith(upstreamGone: !f.upstreamGone),
+        ),
+        item(
+          'In a worktree',
+          f.worktree,
+          f.copyWith(worktree: !f.worktree),
+        ),
+        if (widget.forgeKnown) ...[
+          const MacosPulldownMenuDivider(),
+          item(
+            'Has a request',
+            f.hasRequest == true,
+            f.hasRequest == true
+                ? f.copyWith(clearHasRequest: true)
+                : f.copyWith(hasRequest: true),
+          ),
+          item(
+            'No request',
+            f.hasRequest == false,
+            f.hasRequest == false
+                ? f.copyWith(clearHasRequest: true)
+                : f.copyWith(hasRequest: false),
+          ),
+          item('Failing CI', f.failingCi, f.copyWith(failingCi: !f.failingCi)),
+        ],
+        if (hasIdentity) ...[
+          const MacosPulldownMenuDivider(),
+          item('Mine', f.mine, f.copyWith(mine: !f.mine)),
+        ],
+        if (active > 0) ...[
+          const MacosPulldownMenuDivider(),
+          MacosPulldownMenuItem(
+            title: const Text('Clear filters'),
+            onTap: () => widget.onFacetsChanged(const BranchReviewFacets()),
+          ),
+        ],
+      ],
+    );
+  }
+
   String? _reviewStatusLabel() {
     final review = widget.review;
     if (review == null) {

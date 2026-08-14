@@ -9,6 +9,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/forge/branch_forge_status.dart';
 import '../../core/git/branch_comparison.dart';
+import '../../core/git/branch_review_query.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/utils/display_error.dart';
@@ -96,8 +97,11 @@ class BranchDetail extends ConsumerWidget {
   final BranchWorkspaceMode mode;
   final AsyncValue<BranchBaseResolution>? baseState;
   final AsyncValue<BranchReviewBatchResult>? review;
-  final BranchReviewQuickFilter reviewFilter;
-  final ValueChanged<BranchReviewQuickFilter> onReviewFilterChanged;
+  /// Active Review facets. The three interactive stat chips below are the
+  /// chip-shaped face of three of them; the navigator's facet menu owns the
+  /// rest. One state, two surfaces — they cannot disagree.
+  final BranchReviewFacets facets;
+  final ValueChanged<BranchReviewFacets> onFacetsChanged;
 
   // Callbacks for actions the detail pane triggers
   final void Function(GitService, String) onCheckout;
@@ -133,8 +137,8 @@ class BranchDetail extends ConsumerWidget {
     required this.mode,
     required this.baseState,
     required this.review,
-    required this.reviewFilter,
-    required this.onReviewFilterChanged,
+    required this.facets,
+    required this.onFacetsChanged,
     required this.onCheckout,
     required this.onSwitchToWorktree,
     required this.onCheckoutInNewWorktree,
@@ -240,12 +244,12 @@ class BranchDetail extends ConsumerWidget {
                 'Stale',
                 s.stale,
                 MacosColors.systemOrangeColor,
-                selected: reviewFilter == BranchReviewQuickFilter.stale,
+                selected: facets.stale == true,
                 onTap: mode == BranchWorkspaceMode.review
-                    ? () => onReviewFilterChanged(
-                        reviewFilter == BranchReviewQuickFilter.stale
-                            ? BranchReviewQuickFilter.all
-                            : BranchReviewQuickFilter.stale,
+                    ? () => onFacetsChanged(
+                        facets.stale == true
+                            ? facets.copyWith(clearStale: true)
+                            : facets.copyWith(stale: true),
                       )
                     : null,
               ),
@@ -270,12 +274,12 @@ class BranchDetail extends ConsumerWidget {
                       'Merged',
                       mergedLabel,
                       MacosColors.systemGrayColor,
-                      selected: reviewFilter == BranchReviewQuickFilter.merged,
+                      selected: facets.mergedIntoBase == true,
                       onTap: canFilter
-                          ? () => onReviewFilterChanged(
-                              reviewFilter == BranchReviewQuickFilter.merged
-                                  ? BranchReviewQuickFilter.all
-                                  : BranchReviewQuickFilter.merged,
+                          ? () => onFacetsChanged(
+                              facets.mergedIntoBase == true
+                                  ? facets.copyWith(clearMerged: true)
+                                  : facets.copyWith(mergedIntoBase: true),
                             )
                           : null,
                     );
@@ -288,13 +292,11 @@ class BranchDetail extends ConsumerWidget {
                       ? '—'
                       : '${scan.conflictRefNames.length}',
                   MacosColors.systemRedColor,
-                  selected: reviewFilter == BranchReviewQuickFilter.conflicts,
+                  selected: facets.conflict,
                   onTap: scan.conflictRefNames.isEmpty
                       ? null
-                      : () => onReviewFilterChanged(
-                          reviewFilter == BranchReviewQuickFilter.conflicts
-                              ? BranchReviewQuickFilter.all
-                              : BranchReviewQuickFilter.conflicts,
+                      : () => onFacetsChanged(
+                          facets.copyWith(conflict: !facets.conflict),
                         ),
                 ),
             ],

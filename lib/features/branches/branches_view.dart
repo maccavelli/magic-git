@@ -12,6 +12,7 @@ import '../../core/git/branch_comparison.dart';
 import '../../core/git/branch_review_query.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/app_settings.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
@@ -112,8 +113,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   bool _showAllRemotes = false;
 
   BranchWorkspaceMode? _modeOverride;
-  BranchReviewQuickFilter _reviewFilter = BranchReviewQuickFilter.all;
-  BranchReviewSort _reviewSort = BranchReviewSort.activity;
+  /// Review facets compose by AND. The detail pane's Stale/Merged/Conflicts
+  /// chips and the navigator's facet menu are two faces of this one value.
+  BranchReviewFacets _facets = const BranchReviewFacets();
+  BranchReviewSortMode _reviewSort = BranchReviewSortMode.smart;
   BranchMultiSelection _multiSel = BranchMultiSelection.empty;
 
   final _filterCtl = TextEditingController();
@@ -133,8 +136,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         _showHiddenOverride = null;
         _selectedRef = null;
         _modeOverride = null;
-        _reviewFilter = BranchReviewQuickFilter.all;
-        _reviewSort = BranchReviewSort.activity;
+        _facets = const BranchReviewFacets();
+        _reviewSort = BranchReviewSortMode.smart;
         _multiSel = BranchMultiSelection.empty;
         _groupedOverride = null;
         _collapsedFoldersOverride = null;
@@ -292,13 +295,36 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       review = null;
     }
 
+    final reviewMode = mode == BranchWorkspaceMode.review;
+    // Review-only knowledge. Browse must not watch these: its command budget
+    // is asserted at zero comparison/forge work on first paint.
+    final forgeKnown =
+        reviewMode &&
+        (ref.watch(branchForgeKnowledgeProvider(repoPath)).value?.known ??
+            false);
+    // The "Mine" facet matches against the configured committer identity.
+    // Empty is the common case (the host's own git config is used instead),
+    // and the facet is hidden rather than silently matching nothing.
+    final settings = ref.watch(appSettingsProvider);
+    final committerEmail = settings.committerEmail.trim().toLowerCase();
+    final committerName = settings.committerName.trim().toLowerCase();
+
+    final searchText = _filterCtl.text.trim();
+    // In Review the search box speaks the token grammar (`author:`,
+    // `status:`), which the shaper evaluates. Leaving the plain substring
+    // pre-filter on would first match `status:stale` against branch NAMES and
+    // eliminate everything before the shaper ever ran.
+    final searchTokens = reviewMode
+        ? parseBranchSearchQuery(searchText)
+        : const <BranchSearchToken>[];
+
     final vm = BranchViewModel.fromRefs(
       refs: refs,
       forge: forge,
       merged: merged,
       pinned: pinned,
       collapsedSections: effectiveCollapsedSections,
-      filterLower: _filterCtl.text.trim().toLowerCase(),
+      filterLower: reviewMode ? '' : searchText.toLowerCase(),
       showStale: _showStale,
       hidden: hidden,
       showHidden: showHidden,
@@ -394,8 +420,13 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       mode: mode,
       baseState: baseState,
       review: review,
-      reviewFilter: _reviewFilter,
+      facets: _facets,
       reviewSort: _reviewSort,
+      searchTokens: searchTokens,
+      forgeKnown: forgeKnown,
+      committerEmail: committerEmail.isEmpty ? null : committerEmail,
+      committerName: committerName.isEmpty ? null : committerName,
+      onFacetsChanged: (next) => setState(() => _facets = next),
       conflictRefNames: conflictScan.conflictRefNames,
       filterController: _filterCtl,
       focusNode: _branchFocus,
@@ -492,9 +523,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
             mode: mode,
             baseState: baseState,
             review: review,
-            reviewFilter: _reviewFilter,
-            onReviewFilterChanged: (filter) =>
-                setState(() => _reviewFilter = filter),
+            facets: _facets,
+            onFacetsChanged: (next) => setState(() => _facets = next),
             onCheckout: _checkout,
             onSwitchToWorktree: _switchToWorktree,
             onCheckoutInNewWorktree: _checkoutInNewWorktree,
@@ -694,10 +724,22 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       return prefs.copyWith(hiddenBranchNames: next);
     });
     ref.invalidate(hiddenBranchesProvider(repoPath));
-    // Collapse multi-selection to surviving visible primary.
+    // Keep whatever the user selected that did NOT just disappear — a mixed
+    // selection where only some rows were eligible should not be wiped
+    // wholesale. `preserveAfterRefresh` also re-anchors to the nearest
+    // survivor so shift-range still works afterwards.
+    final survivors = [
+      for (final full in _multiSel.ordered)
+        if (!hide.contains(
+          full.startsWith('refs/heads/')
+              ? full.substring('refs/heads/'.length)
+              : full,
+        ))
+          full,
+    ];
     setState(() {
-      _multiSel = BranchMultiSelection.empty;
-      _selectedRef = null;
+      _multiSel = _multiSel.preserveAfterRefresh(survivors);
+      _selectedRef = _multiSel.primary;
     });
     if (skipped.isNotEmpty && mounted) {
       await showErrorDialog(

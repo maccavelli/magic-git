@@ -55,6 +55,12 @@ void main() {
         remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
         remoteTagsProvider(_repo).overrideWith((ref) async => null),
         branchForgeProvider(_repo).overrideWith((ref) async => const {}),
+        // Review reads the typed knowledge provider (badge painting reads the
+        // plain map above). Left unstubbed it would reach forgeProvider and,
+        // through it, a real executor.
+        branchForgeKnowledgeProvider(
+          _repo,
+        ).overrideWith((ref) async => BranchForgeKnowledge.unavailable),
         mergedBranchesProvider(_repo).overrideWith((ref) async => const {}),
         branchBaseProvider.overrideWith((ref, key) async {
           baseReads++;
@@ -126,7 +132,11 @@ void main() {
     expect(find.text('origin/feature'), findsNothing);
     expect(find.text('v1'), findsNothing);
     expect(find.text('↑2 ↓1'), findsOneWidget);
-    expect(find.text('Activity'), findsOneWidget);
+    // Review now opens on the design's attention order rather than Activity;
+    // Activity remains available in the expanded sort menu.
+    expect(find.text('Smart'), findsOneWidget);
+    // The composable facets that have no dashboard chip live behind this.
+    expect(find.text('Filter'), findsOneWidget);
 
     await tester.tap(find.text('Merged'));
     await tester.pumpAndSettle();
@@ -154,6 +164,12 @@ void main() {
         remotesProvider(_repo).overrideWith((ref) async => const []),
         remoteTagsProvider(_repo).overrideWith((ref) async => null),
         branchForgeProvider(_repo).overrideWith((ref) async => const {}),
+        // Review reads the typed knowledge provider (badge painting reads the
+        // plain map above). Left unstubbed it would reach forgeProvider and,
+        // through it, a real executor.
+        branchForgeKnowledgeProvider(
+          _repo,
+        ).overrideWith((ref) async => BranchForgeKnowledge.unavailable),
         mergedBranchesProvider(_repo).overrideWith((ref) async => const {}),
         branchBaseProvider.overrideWith(
           (ref, key) async => const BranchBaseResolution(),

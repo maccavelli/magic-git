@@ -162,12 +162,32 @@ Map<String, BranchForge> _merge(
 /// is never true. That is fine for painting a badge (absent signal → no
 /// badge) and wrong for anything that reasons about *absence*. Use
 /// [branchForgeKnowledgeProvider] for that.
+/// Kept independent of [branchForgeKnowledgeProvider] rather than delegating
+/// to it: this is the provider ~14 widget-test harnesses override to keep
+/// Browse offline, and delegating would route straight past those overrides.
+/// Both read the same upstream list providers, so the duplication costs no
+/// extra commands — only the `try` differs.
 final branchForgeProvider = FutureProvider.autoDispose
     .family<Map<String, BranchForge>, String>((ref, repoPath) async {
-      final knowledge = await ref.watch(
-        branchForgeKnowledgeProvider(repoPath).future,
-      );
-      return knowledge.byShortName;
+      try {
+        final forge = await ref.watch(forgeProvider(repoPath).future);
+        switch (forge) {
+          case Forge.github:
+            final prs = await ref.watch(pullRequestsProvider(repoPath).future);
+            final runs = await ref.watch(workflowRunsProvider(repoPath).future);
+            return _combineGithub(prs, runs);
+          case Forge.gitlab:
+            final mrs = await ref.watch(mergeRequestsProvider(repoPath).future);
+            final pipes = await ref.watch(pipelinesProvider(repoPath).future);
+            return _combineGitlab(mrs, pipes);
+          case Forge.none:
+          case Forge.unknown:
+            return const {};
+        }
+      } catch (_) {
+        // Forge unreachable / unauthenticated / no remote — no signal, no error.
+        return const {};
+      }
     });
 
 /// What we know about a repo's forge state — and whether we know it at all.
