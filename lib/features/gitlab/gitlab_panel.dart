@@ -97,6 +97,10 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   /// itself is persisted via [forgeInboxModeProvider]).
   ForgeInboxKind? _inboxType;
 
+  /// Inbox: show only change requests with no known blocker. Session-local
+  /// like [_inboxType] — a triage lens, not a saved preference.
+  bool _inboxUnblockedOnly = false;
+
   // In-flight guards for the outward-facing mutations, keyed by MR iid /
   // pipeline id: without these, the confirm-dialog-to-network-call window is
   // tappable the whole time, so a fast double-tap (or a mis-click during the
@@ -306,6 +310,9 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     mr.sourceBranch,
     mr.targetBranch,
     mr.authorUsername,
+    // Labels are on the row now, so they must be filterable — issues have
+    // always matched theirs.
+    ...mr.labels,
   ]);
 
   bool _pipelineFilterMatches(Pipeline p) =>
@@ -464,6 +471,11 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
               _headPipelineFor(mr, pipeByRef),
               trailingExtras: extras,
             ),
+            // The app's own canonical answer, evaluated on the list row: no
+            // detail fetch, so no N+1. On a list row GitLab often reports
+            // `detailed_merge_status: unchecked`, so this is optimistic —
+            // hence "No blockers" rather than "Ready to merge".
+            noBlockers: mergePlanForGitLab(mr: mr).canMergeNow,
           ),
       for (final p in pipelines.value ?? const <Pipeline>[])
         if (needsAttention(p) && _pipelineFilterMatches(p))
@@ -495,6 +507,8 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         entries: entries,
         typeFilter: _inboxType,
         onTypeFilter: (k) => setState(() => _inboxType = k),
+        unblockedOnly: _inboxUnblockedOnly,
+        onUnblockedOnly: (v) => setState(() => _inboxUnblockedOnly = v),
         changeRequestLabel: 'MRs',
         listsReady: settled(mrs) && settled(pipelines) && settled(issues),
       ),
@@ -536,6 +550,15 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       captionDotColor: headPipeline == null
           ? null
           : ciStatusColor(headPipeline.ciStatus),
+      // GitLab exposes no approval summary on the list tier — `glab mr list`
+      // takes no field selector, and MergeRequest carries no approvals data.
+      // The one honest signal is `detailed_merge_status: not_approved`, so
+      // this says "review needed" and never claims the converse.
+      chips: [
+        if (mr.detailedMergeStatus == 'not_approved')
+          const ForgeReviewChip.awaiting(),
+        for (final name in mr.labels) MiniLabelChip(name, _labelPalette[name]),
+      ],
       trailing: forgeCombineTrailing(null, trailingExtras),
       selected: selected,
       onTap: () => _select(ForgeChangeRequestSel(mr.iid)),
@@ -543,6 +566,17 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
           _menu.show(context, d.globalPosition, _mrMenu(mr), width: 240),
     );
   }
+
+  /// Project labels by name, for coloring MR row chips. GitLab's MR payload
+  /// carries only label *names*, so unlike GitHub the color has to come from
+  /// the project palette; an unfetched palette yields neutral gray chips
+  /// rather than none.
+  Map<String, ForgeLabel> get _labelPalette => {
+    for (final l
+        in ref.watch(projectDashboardProvider(repoPath)).value?.labels ??
+            const <ForgeLabel>[])
+      l.name: l,
+  };
 
   /// The MR row's right-click menu — grouped navigate → local → collaborate →
   /// state-change, ending in destructive Close. Merge greys out for a draft
@@ -554,6 +588,10 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   List<ContextMenuEntry> _mrMenu(MergeRequest mr) {
     const draftTip =
         "Draft merge requests can't be merged — mark it ready first.";
+    final policy = ref.read(repoMergePolicyProvider(repoPath)).asData?.value;
+    final glPolicy = policy is GlRepoMergePolicy ? policy : null;
+    final squashAlways = glPolicy?.squashAlways ?? false;
+    final squashNever = glPolicy?.squashNever ?? false;
     return [
       ContextMenuItem(
         icon: CupertinoIcons.arrow_up_right_square,
@@ -603,20 +641,27 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         onTap: () => _editMr(mr),
       ),
       const ContextMenuDivider(),
-      ContextMenuItem(
-        icon: CupertinoIcons.arrow_merge,
-        label: 'Merge',
-        enabled: !mr.draft,
-        disabledTooltip: draftTip,
-        onTap: () => _merge(mr.iid, listMr: mr),
-      ),
-      ContextMenuItem(
-        icon: CupertinoIcons.arrow_merge,
-        label: 'Squash and merge',
-        enabled: !mr.draft,
-        disabledTooltip: draftTip,
-        onTap: () => _merge(mr.iid, squash: true, listMr: mr),
-      ),
+      // Only offer what the project policy permits: `squash_option: never`
+      // forbids squashing and `always` forces it, and _merge's options sheet
+      // clamps the choice either way — so a forbidden entry here would be
+      // silently rewritten rather than honored. The policy is read (not
+      // watched): a menu is a momentary snapshot.
+      if (!squashAlways)
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_merge,
+          label: 'Merge',
+          enabled: !mr.draft,
+          disabledTooltip: draftTip,
+          onTap: () => _merge(mr.iid, listMr: mr),
+        ),
+      if (!squashNever)
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_merge,
+          label: 'Squash and merge',
+          enabled: !mr.draft,
+          disabledTooltip: draftTip,
+          onTap: () => _merge(mr.iid, squash: true, listMr: mr),
+        ),
       ContextMenuItem(
         icon: CupertinoIcons.xmark_circle,
         label: 'Close',
@@ -795,6 +840,14 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
               ),
             ),
           ),
+          // Already in the detail payload — fetched and dropped until now.
+          // Bounded like the comments band so the checks pane keeps the
+          // flexible space.
+          if ((effective.description ?? '').trim().isNotEmpty)
+            SizedBox(
+              height: 120,
+              child: ForgeBodyText(effective.description!.trim()),
+            ),
           Expanded(child: _mrChecks(pipeline)),
           ForgeCommentsSection(
             comments: ref.watch(
@@ -906,13 +959,19 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   /// The "Merge" action, disabled (greyed out, `onPressed: null`) with an
   /// explanatory tooltip when [mr] is a draft — GitLab's API rejects merging
   /// a draft MR outright, so this catches it client-side instead of letting
-  /// the user hit a raw remote error. The pulldown beside it offers the
-  /// squash merge the API always supported but the UI never exposed
-  /// (mirroring the GitHub panel's merge pulldown; GitLab has no per-merge
-  /// rebase — that's a project setting — so squash is the only entry).
+  /// the user hit a raw remote error.
+  ///
+  /// The alternate method only appears when the project policy actually allows
+  /// it. `squash_option: always` or `never` removes a method from
+  /// [MergePlan.allowedMethods] entirely, and offering the removed one made
+  /// the app lie: the options sheet clamps the choice back, so picking "Merge"
+  /// on a squash-always project silently squashed.
   Widget _mergeButton(MergeRequest mr, MergePlan plan) {
     final enabled = plan.canMergeNow;
     final allowSquash = plan.allowedMethods.contains(MergeMethod.squash);
+    final allowMergeCommit = plan.allowedMethods.contains(
+      MergeMethod.mergeCommit,
+    );
     final primarySquash = plan.defaultMethod == MergeMethod.squash;
     final row = Row(
       mainAxisSize: MainAxisSize.min,
@@ -936,7 +995,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
             ],
           ),
         ],
-        if (enabled && allowSquash && primarySquash) ...[
+        if (enabled && allowMergeCommit && primarySquash) ...[
           const SizedBox(width: 4),
           MacosPulldownButton(
             icon: CupertinoIcons.chevron_down,

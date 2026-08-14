@@ -28,6 +28,19 @@ final _prs = [
     baseRefName: 'main',
     url: '',
   ),
+  // A draft is blocked on the list tier alone — no detail fetch needed to
+  // know GitHub will refuse to merge it.
+  const PullRequest(
+    number: 8,
+    title: 'Still drafting',
+    state: 'open',
+    merged: false,
+    draft: true,
+    authorLogin: 'bob',
+    headRefName: 'wip',
+    baseRefName: 'main',
+    url: '',
+  ),
 ];
 
 final _runs = [
@@ -173,5 +186,66 @@ void main() {
 
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getBool('forgeInboxMode'), false);
+  });
+
+  testWidgets('"No blockers" hides change requests with a known blocker', (
+    tester,
+  ) async {
+    await _pump(tester);
+
+    // Both PRs are in the Inbox to begin with.
+    expect(find.text('Add the parser'), findsOneWidget);
+    expect(find.text('Still drafting'), findsOneWidget);
+
+    await tester.tap(find.text('No blockers'));
+    await tester.pumpAndSettle();
+
+    // The draft is blocked; the clean PR survives. Evaluated from list-tier
+    // data only — no detail provider is overridden in this harness, so a
+    // per-row detail fetch would have thrown rather than filtered.
+    expect(find.text('Add the parser'), findsOneWidget);
+    expect(find.text('Still drafting'), findsNothing);
+  });
+
+  testWidgets('"No blockers" also drops CI and issue rows, which have nothing '
+      'to merge', (tester) async {
+    await _pump(tester);
+
+    expect(find.text('Test'), findsOneWidget);
+    expect(find.text('Fix login'), findsOneWidget);
+
+    await tester.tap(find.text('No blockers'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Test'), findsNothing);
+    expect(find.text('Fix login'), findsNothing);
+  });
+
+  testWidgets('"No blockers" is a toggle, not a radio — it can be switched '
+      'back off', (tester) async {
+    await _pump(tester);
+
+    await tester.tap(find.text('No blockers'));
+    await tester.pumpAndSettle();
+    expect(find.text('Still drafting'), findsNothing);
+
+    await tester.tap(find.text('No blockers'));
+    await tester.pumpAndSettle();
+    expect(find.text('Still drafting'), findsOneWidget);
+  });
+
+  testWidgets('it composes with the kind chips rather than replacing them', (
+    tester,
+  ) async {
+    await _pump(tester);
+
+    await tester.tap(find.text('No blockers'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Issues'));
+    await tester.pumpAndSettle();
+
+    // Issues kind AND unblocked-only leaves nothing, and the empty state must
+    // explain which lens emptied it.
+    expect(find.text('Nothing is unblocked right now'), findsOneWidget);
   });
 }

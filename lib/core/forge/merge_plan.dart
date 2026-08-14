@@ -107,7 +107,13 @@ class GlRepoMergePolicy {
   /// `merge` | `rebase_merge` | `ff`
   final String mergeMethod;
 
-  /// `never` | `allowed` | `encouraged` | `always`
+  /// GitLab's project squash policy, verbatim from the API. The enum is
+  /// exactly `never | always | default_on | default_off` — `default_on` and
+  /// `default_off` only pre-check or pre-clear the squash box, while `never`
+  /// and `always` are binding.
+  ///
+  /// The default here is `default_off`, GitLab's own default for a new
+  /// project: squash offered, not pre-selected.
   final String squashOption;
   final bool removeSourceBranchAfterMerge;
   final bool autoMergeEnabled;
@@ -115,7 +121,7 @@ class GlRepoMergePolicy {
   const GlRepoMergePolicy({
     this.defaultBranch,
     this.mergeMethod = 'merge',
-    this.squashOption = 'allowed',
+    this.squashOption = 'default_off',
     this.removeSourceBranchAfterMerge = false,
     this.autoMergeEnabled = true,
   });
@@ -124,7 +130,7 @@ class GlRepoMergePolicy {
       GlRepoMergePolicy(
         defaultBranch: json['default_branch'] as String?,
         mergeMethod: json['merge_method'] as String? ?? 'merge',
-        squashOption: json['squash_option'] as String? ?? 'allowed',
+        squashOption: json['squash_option'] as String? ?? 'default_off',
         removeSourceBranchAfterMerge:
             (json['remove_source_branch_after_merge'] as bool?) ?? false,
         autoMergeEnabled: (json['auto_merge_enabled'] as bool?) ?? true,
@@ -132,8 +138,15 @@ class GlRepoMergePolicy {
 
   bool get squashNever => squashOption == 'never';
   bool get squashAlways => squashOption == 'always';
+
+  /// Squash pre-selected but still optional. Matches `default_on`; the older
+  /// `encourage`/`encouraged` spellings are accepted defensively but GitLab
+  /// does not send them — this predicate silently never fired before that was
+  /// noticed.
   bool get squashEncouraged =>
-      squashOption == 'encourage' || squashOption == 'encouraged';
+      squashOption == 'default_on' ||
+      squashOption == 'encourage' ||
+      squashOption == 'encouraged';
 }
 
 /// Build a [MergePlan] for a GitHub pull request.
@@ -437,14 +450,20 @@ MergePlan mergePlanForGitLab({
       break;
   }
 
-  // Methods: GitLab UI offers merge (+ squash when policy allows). Rebase is
-  // not a per-MR method in Magic Git (project-level).
-  final methods = <MergeMethod>[MergeMethod.mergeCommit];
+  // Methods: GitLab offers merge and/or squash as the project policy allows.
+  // Rebase is not a per-MR method in Magic Git (it is project-level).
+  //
+  // Both binding policies REMOVE a method rather than merely re-defaulting:
+  // `never` forbids squashing, `always` forces it (GitLab ignores squash=false
+  // on such a project). Leaving the forbidden method in `allowedMethods` made
+  // the UI lie — the options sheet clamps to this list, so picking "Merge" on
+  // a squash-always project silently performed a squash.
   final squashNever = policy?.squashNever ?? false;
   final squashAlways = policy?.squashAlways ?? false;
-  if (!squashNever) {
-    methods.add(MergeMethod.squash);
-  }
+  final methods = <MergeMethod>[
+    if (!squashAlways) MergeMethod.mergeCommit,
+    if (!squashNever) MergeMethod.squash,
+  ];
 
   final defaultMethod = squashAlways || (policy?.squashEncouraged ?? false)
       ? (methods.contains(MergeMethod.squash)

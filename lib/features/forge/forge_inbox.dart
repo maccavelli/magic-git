@@ -24,10 +24,21 @@ class ForgeInboxEntry {
   final ForgeInboxKind kind;
   final Widget Function(List<Widget> trailingExtras) build;
 
+  /// Whether this change request has no *known* blocker — evaluated by the
+  /// panel, where the domain object is still in scope (this type is otherwise
+  /// opaque: a key, a kind, and a closure).
+  ///
+  /// List-tier truth only, hence "no blockers" rather than "ready to merge":
+  /// conflicts and branch protection are invisible until a detail fetch, and
+  /// fetching per row would be an N+1 against a list that is built eagerly.
+  /// Always false for CI and issue rows, which have nothing to merge.
+  final bool noBlockers;
+
   const ForgeInboxEntry({
     required this.itemKey,
     required this.kind,
     required this.build,
+    this.noBlockers = false,
   });
 }
 
@@ -104,18 +115,24 @@ class _TypeChip extends StatelessWidget {
   final bool active;
   final VoidCallback onTap;
 
+  /// A radio chip goes inert once selected (re-picking it is a no-op); a
+  /// toggle chip stays tappable so it can be switched back off.
+  final bool toggle;
+
   const _TypeChip({
     required this.label,
     required this.active,
     required this.onTap,
+    this.toggle = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
+    final inert = active && !toggle;
     return Tappable(
-      onTap: active ? null : onTap,
-      cursor: active ? SystemMouseCursors.basic : SystemMouseCursors.click,
+      onTap: inert ? null : onTap,
+      cursor: inert ? SystemMouseCursors.basic : SystemMouseCursors.click,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         decoration: BoxDecoration(
@@ -145,18 +162,23 @@ List<Widget> forgeInboxChildren({
   required List<ForgeInboxEntry> entries,
   required ForgeInboxKind? typeFilter,
   required ValueChanged<ForgeInboxKind?> onTypeFilter,
+  required bool unblockedOnly,
+  required ValueChanged<bool> onUnblockedOnly,
   required String changeRequestLabel,
   required bool listsReady,
 }) {
   final marks = ref.watch(forgeInboxMarksProvider(repoPath));
   final marksNotifier = ref.read(forgeInboxMarksProvider(repoPath).notifier);
 
-  final visible = typeFilter == null
-      ? entries
-      : [
-          for (final e in entries)
-            if (e.kind == typeFilter) e,
-        ];
+  // The kind chips are a radio; "No blockers" is orthogonal to them (it only
+  // means anything for change requests), so it composes by AND rather than
+  // being a fifth kind.
+  final visible = [
+    for (final e in entries)
+      if ((typeFilter == null || e.kind == typeFilter) &&
+          (!unblockedOnly || e.noBlockers))
+        e,
+  ];
   final pinned = [
     for (final e in visible)
       if (marks.pinned.contains(e.itemKey)) e,
@@ -229,13 +251,26 @@ List<Widget> forgeInboxChildren({
             active: typeFilter == ForgeInboxKind.issue,
             onTap: () => onTypeFilter(ForgeInboxKind.issue),
           ),
+          // Set apart from the kind radio above: this one toggles, and stacks
+          // with whichever kind is selected.
+          const SizedBox(width: 6),
+          _TypeChip(
+            label: 'No blockers',
+            active: unblockedOnly,
+            onTap: () => onUnblockedOnly(!unblockedOnly),
+            toggle: true,
+          ),
         ],
       ),
     ),
     if (!listsReady)
       const SectionLoading()
     else if (visible.isEmpty)
-      const SectionEmpty('Inbox zero — nothing needs attention')
+      SectionEmpty(
+        unblockedOnly
+            ? 'Nothing is unblocked right now'
+            : 'Inbox zero — nothing needs attention',
+      )
     else ...[
       if (pinned.isNotEmpty) ...[
         groupLabel('Pinned'),

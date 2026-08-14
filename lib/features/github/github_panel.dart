@@ -78,6 +78,10 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   /// itself is persisted via [forgeInboxModeProvider]).
   ForgeInboxKind? _inboxType;
 
+  /// Inbox: show only change requests with no known blocker. Session-local
+  /// like [_inboxType] — a triage lens, not a saved preference.
+  bool _inboxUnblockedOnly = false;
+
   // In-flight guards for the mutations, keyed by PR number / run id.
   final Set<int> _approvingPrs = {};
   final Set<int> _mergingPrs = {};
@@ -253,6 +257,9 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     pr.headRefName,
     pr.baseRefName,
     pr.authorLogin,
+    // Labels are on the row now, so they must be filterable — issues have
+    // always matched theirs.
+    ...pr.labels,
   ]);
 
   bool _runFilterMatches(WorkflowRun r) => forgeFilterMatch(_filterQuery, [
@@ -410,6 +417,11 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
               _headRunFor(pr, runByBranch),
               trailingExtras: extras,
             ),
+            // The app's own canonical answer, evaluated on the list row: no
+            // detail fetch, so no N+1. It cannot see conflicts or branch
+            // protection, which is exactly why the chip says "No blockers"
+            // rather than "Ready to merge".
+            noBlockers: mergePlanForGitHub(pr: pr).canMergeNow,
           ),
       for (final r in runs.value ?? const <WorkflowRun>[])
         if (needsAttention(r) && _runFilterMatches(r))
@@ -441,6 +453,8 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         entries: entries,
         typeFilter: _inboxType,
         onTypeFilter: (k) => setState(() => _inboxType = k),
+        unblockedOnly: _inboxUnblockedOnly,
+        onUnblockedOnly: (v) => setState(() => _inboxUnblockedOnly = v),
         changeRequestLabel: 'PRs',
         listsReady: settled(prs) && settled(runs) && settled(issues),
       ),
@@ -482,6 +496,23 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       captionDotColor: headRun == null
           ? null
           : ghRunStateColor(headRun.runState),
+      // Both signals ride the LIST response already (`gh pr list --json`
+      // requests labels and reviewDecision), so these chips add no request.
+      // Colors come from the PR's own label payload rather than the project
+      // palette — same source GitHub renders from.
+      chips: [
+        ?ForgeReviewChip.forGitHub(pr.reviewDecision),
+        for (var i = 0; i < pr.labels.length; i++)
+          MiniLabelChip(
+            pr.labels[i],
+            ForgeLabel(
+              name: pr.labels[i],
+              color: normalizeLabelColor(
+                i < pr.labelColors.length ? pr.labelColors[i] : null,
+              ),
+            ),
+          ),
+      ],
       trailing: forgeCombineTrailing(null, trailingExtras),
       selected: selected,
       onTap: () => _select(ForgeChangeRequestSel(pr.number)),
@@ -748,6 +779,14 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
               ),
             ),
           ),
+          // The description is already in the detail payload — it was fetched
+          // and dropped. Bounded like the comments band so the checks pane
+          // keeps the flexible space.
+          if ((effective.body ?? '').trim().isNotEmpty)
+            SizedBox(
+              height: 120,
+              child: ForgeBodyText(effective.body!.trim()),
+            ),
           Expanded(child: _prChecks(headRun)),
           ForgeCommentsSection(
             comments: ref.watch(

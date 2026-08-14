@@ -17,6 +17,7 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/forge/forge_prefs.dart';
+import 'package:remote_magic_git/features/forge/forge_widgets.dart';
 import 'package:remote_magic_git/features/github/github_panel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -62,6 +63,22 @@ const _readyPr = PullRequest(
   mergeable: GhMergeable.mergeable,
   mergeStateStatus: 'CLEAN',
   reviewDecision: 'APPROVED',
+  labels: ['enhancement'],
+  labelColors: ['a2eeef'],
+);
+
+/// A PR on a repo with no review policy at all: `reviewDecision` comes back
+/// null/empty, which must NOT be rendered as approval.
+const _unreviewedPr = PullRequest(
+  number: 8,
+  title: 'Needs a review',
+  state: 'open',
+  merged: false,
+  draft: false,
+  authorLogin: 'bob',
+  headRefName: 'chore',
+  baseRefName: 'main',
+  url: '',
 );
 
 final _prs = [_readyPr];
@@ -112,7 +129,11 @@ class _BrowseMode extends ForgeInboxMode {
   bool build() => false;
 }
 
-Future<void> _pump(WidgetTester tester, {GhService? gh}) async {
+Future<void> _pump(
+  WidgetTester tester, {
+  GhService? gh,
+  List<PullRequest>? prs,
+}) async {
   tester.view.physicalSize = const Size(1200, 800);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
@@ -124,7 +145,7 @@ Future<void> _pump(WidgetTester tester, {GhService? gh}) async {
       // Sibling of the refs override: the views now read CONFIGURED
       // remotes (remotesProvider), not remote-tracking refs.
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
-      pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
+      pullRequestsProvider(_repo).overrideWith((ref) async => prs ?? _prs),
       pullRequestDetailProvider((
         _repo,
         7,
@@ -348,5 +369,40 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gh.merges, [(7, 'squash', _readyPr.headOid)]);
+  });
+
+  testWidgets('PR rows carry their review state and labels as chips', (
+    tester,
+  ) async {
+    await _pump(tester);
+
+    // Both ride the list response `gh pr list --json` already requests, so
+    // these cost no extra round trip — they were simply parsed and dropped.
+    expect(find.byType(ForgeReviewChip), findsOneWidget);
+    expect(find.text('approved'), findsOneWidget);
+    expect(find.byType(MiniLabelChip), findsOneWidget);
+    expect(find.text('enhancement'), findsWidgets);
+  });
+
+  testWidgets('a repo with no review policy shows no review chip — absent is '
+      'not the same as approved', (tester) async {
+    await _pump(tester, prs: [_unreviewedPr]);
+
+    expect(find.text('Needs a review'), findsOneWidget);
+    expect(find.byType(ForgeReviewChip), findsNothing);
+  });
+
+  testWidgets('the filter matches a label now that rows display them', (
+    tester,
+  ) async {
+    await _pump(tester);
+
+    await tester.enterText(find.byType(ForgeFilterField), 'enhancement');
+    await tester.pumpAndSettle();
+    expect(find.text('Add the parser'), findsOneWidget);
+
+    await tester.enterText(find.byType(ForgeFilterField), 'nonesuch');
+    await tester.pumpAndSettle();
+    expect(find.text('Add the parser'), findsNothing);
   });
 }

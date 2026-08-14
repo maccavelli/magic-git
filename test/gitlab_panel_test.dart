@@ -153,6 +153,7 @@ List<Override> _projectOverrides(
 Future<ProviderContainer> _pump(
   WidgetTester tester, {
   GlabService? glab,
+  GlRepoMergePolicy policy = const GlRepoMergePolicy(),
 }) async {
   tester.view.physicalSize = const Size(1200, 800);
   tester.view.devicePixelRatio = 1;
@@ -171,9 +172,7 @@ Future<ProviderContainer> _pump(
         _repo,
         7,
       )).overrideWith((ref) async => _readyMr),
-      repoMergePolicyProvider(
-        _repo,
-      ).overrideWith((ref) async => const GlRepoMergePolicy()),
+      repoMergePolicyProvider(_repo).overrideWith((ref) async => policy),
       pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
       jobsProvider((_repo, 100)).overrideWith((ref) async => _jobs),
       // The MR detail's inline Checks body mounts the head pipeline's jobs
@@ -383,6 +382,49 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(glab.merges, [(7, true, _readyMr.sha)]);
+  });
+
+  testWidgets('squash_option: always offers no plain-merge alternative', (
+    tester,
+  ) async {
+    final glab = _MergeCapturingGlab();
+    await _pump(
+      tester,
+      glab: glab,
+      policy: const GlRepoMergePolicy(squashOption: 'always'),
+    );
+
+    await tester.tap(find.text('Add the parser'));
+    await tester.pumpAndSettle();
+
+    // The primary button becomes the squash, and the alternate pulldown must
+    // be gone: GitLab ignores squash=false on such a project, and the options
+    // sheet clamps the method — so a "Merge" entry here would have been
+    // silently rewritten into a squash.
+    expect(find.text('Squash and merge'), findsOneWidget);
+
+    await tester.tap(find.text('Squash and merge'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Merge').last);
+    await tester.pumpAndSettle();
+
+    expect(glab.merges, [(7, true, _readyMr.sha)]);
+  });
+
+  testWidgets('squash_option: never offers no squash alternative', (
+    tester,
+  ) async {
+    final glab = _MergeCapturingGlab();
+    await _pump(
+      tester,
+      glab: glab,
+      policy: const GlRepoMergePolicy(squashOption: 'never'),
+    );
+
+    await tester.tap(find.text('Add the parser'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Squash and merge'), findsNothing);
   });
 
   testWidgets(

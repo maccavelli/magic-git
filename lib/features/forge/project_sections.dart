@@ -1,5 +1,4 @@
 import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart' show SelectableText;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
@@ -451,7 +450,7 @@ Widget _releaseDetail(ForgeRelease release, Forge forge, String? remoteUrl) {
       padding: const EdgeInsets.all(16),
       child: notes.isEmpty
           ? const CenteredHint('No release notes')
-          : _detailBody(notes),
+          : ForgeBodyText(notes),
     ),
   );
 }
@@ -494,7 +493,7 @@ Widget _issueDetail(
         Expanded(
           child: body.isEmpty
               ? const CenteredHint('No description')
-              : _detailBody(body),
+              : ForgeBodyText(body),
         ),
         if (comments != null) ForgeCommentsSection(comments: comments),
       ],
@@ -551,13 +550,7 @@ Widget _milestoneDetail(
     ],
     body: description.isEmpty
         ? const CenteredHint('No description')
-        : _detailBody(description),
+        : ForgeBodyText(description),
   );
 }
 
-Widget _detailBody(String text) => Builder(
-  builder: (context) => SingleChildScrollView(
-    padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
-    child: SelectableText(text, style: MacosTheme.of(context).typography.body),
-  ),
-);

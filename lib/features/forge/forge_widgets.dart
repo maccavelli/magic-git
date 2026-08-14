@@ -612,6 +612,91 @@ class ForgeLabelChip extends StatelessWidget {
   }
 }
 
+/// Scrollable, selectable body text for a forge detail pane — an issue body,
+/// release notes, a milestone description, a PR/MR description.
+///
+/// Deliberately the single rendering point for every one of those: forge
+/// bodies are Markdown, and the day this renders it (the app already ships a
+/// hardened `MarkdownPreview` with inert links and placeholder images) all
+/// five surfaces should upgrade together rather than drift apart.
+class ForgeBodyText extends StatelessWidget {
+  final String text;
+
+  const ForgeBodyText(this.text, {super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
+      child: SelectableText(
+        text,
+        style: MacosTheme.of(context).typography.body,
+      ),
+    );
+  }
+}
+
+/// The review state of a change request, as a compact row chip.
+///
+/// GitHub reports this on the LIST tier (`reviewDecision`), so a chip costs no
+/// extra request. GitLab has no list-tier equivalent — its only signal is
+/// `detailed_merge_status == 'not_approved'` — hence [ForgeReviewChip.blocked]
+/// / [ForgeReviewChip.awaiting] rather than a shared enum: the two forges can
+/// honestly say different amounts.
+class ForgeReviewChip extends StatelessWidget {
+  final String text;
+  final Color color;
+
+  /// GitHub `APPROVED`.
+  const ForgeReviewChip.approved({super.key})
+    : text = 'approved',
+      color = MacosColors.systemGreenColor;
+
+  /// GitHub `CHANGES_REQUESTED` — someone actively blocked it.
+  const ForgeReviewChip.blocked({super.key})
+    : text = 'changes requested',
+      color = MacosColors.systemRedColor;
+
+  /// GitHub `REVIEW_REQUIRED`, or GitLab's `not_approved`.
+  const ForgeReviewChip.awaiting({super.key})
+    : text = 'review needed',
+      color = MacosColors.systemOrangeColor;
+
+  /// Maps GitHub's `reviewDecision` string, or null when it says nothing.
+  /// Empty/absent means the repo has no review policy — NOT "approved".
+  static ForgeReviewChip? forGitHub(String? reviewDecision) {
+    switch (reviewDecision?.toUpperCase()) {
+      case 'APPROVED':
+        return const ForgeReviewChip.approved();
+      case 'CHANGES_REQUESTED':
+        return const ForgeReviewChip.blocked();
+      case 'REVIEW_REQUIRED':
+        return const ForgeReviewChip.awaiting();
+      default:
+        return null;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Text(
+        text,
+        style: TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+  }
+}
+
 /// A compact chip for a label attached to an issue row/detail, colored from
 /// the project palette when the label is among the fetched ones (else neutral
 /// gray).

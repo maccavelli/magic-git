@@ -223,6 +223,36 @@ void main() {
       );
       expect(plan.allowedMethods, [MergeMethod.mergeCommit]);
     });
+
+    test('squash always hides the plain merge method, not just re-defaults', () {
+      final plan = mergePlanForGitLab(
+        mr: _mr(detailedMergeStatus: 'mergeable', sha: 'x'),
+        policy: const GlRepoMergePolicy(squashOption: 'always'),
+      );
+      // GitLab ignores squash=false on such a project, and the options sheet
+      // clamps to allowedMethods — so leaving mergeCommit here meant the UI
+      // offered a "Merge" that silently performed a squash.
+      expect(plan.allowedMethods, [MergeMethod.squash]);
+      expect(plan.defaultMethod, MergeMethod.squash);
+    });
+
+    test('default_on pre-selects squash but keeps merge available', () {
+      final plan = mergePlanForGitLab(
+        mr: _mr(detailedMergeStatus: 'mergeable', sha: 'x'),
+        policy: const GlRepoMergePolicy(squashOption: 'default_on'),
+      );
+      expect(plan.allowedMethods, [MergeMethod.mergeCommit, MergeMethod.squash]);
+      expect(plan.defaultMethod, MergeMethod.squash);
+    });
+
+    test('default_off offers both and defaults to a merge commit', () {
+      final plan = mergePlanForGitLab(
+        mr: _mr(detailedMergeStatus: 'mergeable', sha: 'x'),
+        policy: const GlRepoMergePolicy(squashOption: 'default_off'),
+      );
+      expect(plan.allowedMethods, [MergeMethod.mergeCommit, MergeMethod.squash]);
+      expect(plan.defaultMethod, MergeMethod.mergeCommit);
+    });
   });
 
   group('policy parsers', () {
@@ -253,6 +283,31 @@ void main() {
       expect(p.defaultBranch, 'develop');
       expect(p.squashAlways, isTrue);
       expect(p.removeSourceBranchAfterMerge, isTrue);
+    });
+
+    test('GlRepoMergePolicy reads GitLab\'s real squash_option enum', () {
+      // The enum is never | always | default_on | default_off. The code used
+      // to test for 'encourage'/'encouraged' and default to 'allowed' —
+      // neither of which GitLab sends, so squashEncouraged never once fired.
+      expect(
+        const GlRepoMergePolicy(squashOption: 'default_on').squashEncouraged,
+        isTrue,
+      );
+      expect(
+        const GlRepoMergePolicy(squashOption: 'default_off').squashEncouraged,
+        isFalse,
+      );
+      expect(
+        const GlRepoMergePolicy(squashOption: 'default_off').squashNever,
+        isFalse,
+      );
+      expect(
+        const GlRepoMergePolicy(squashOption: 'default_off').squashAlways,
+        isFalse,
+      );
+      // An unset policy must offer both methods, not silently forbid one.
+      expect(const GlRepoMergePolicy().squashNever, isFalse);
+      expect(const GlRepoMergePolicy().squashAlways, isFalse);
     });
   });
 }
