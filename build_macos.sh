@@ -2,9 +2,14 @@
 #
 # build_macos.sh — build Magic Git into a distributable macOS .app.
 #
-# Run this ON A MAC. It vendors a throwaway Flutter SDK into ./.flutter-sdk
-# (never added to your PATH permanently, safe to delete afterward), builds a
-# release .app, and zips it. Flutter/Dart are NOT installed system-wide.
+# Run this ON A MAC. It builds a release .app and zips it.
+#
+# Flutter comes from whichever source already matches $FLUTTER_VERSION: a
+# system install on your PATH if it is that exact version, otherwise a
+# throwaway clone into ./.flutter-sdk (never added to your PATH permanently,
+# safe to delete afterward). So a machine with no Flutter at all still works,
+# and a machine that already has the pinned version does not carry a second
+# ~1.7 GB copy of it.
 #
 # Prerequisites that CANNOT be avoided for any macOS app build:
 #   - Xcode        (the macOS compiler + signer; install from the App Store)
@@ -33,7 +38,7 @@
 
 set -euo pipefail
 
-FLUTTER_VERSION="3.44.6"
+FLUTTER_VERSION="3.44.8"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SDK_DIR="$SCRIPT_DIR/.flutter-sdk"
 OUT_ZIP="$SCRIPT_DIR/RemoteMagicGit-macos.zip"
@@ -131,15 +136,53 @@ command -v pod >/dev/null 2>&1 || die \
 PRODUCT_NAME="$(read_product_name)"
 APP_NAME="${PRODUCT_NAME}.app"
 
-# --- Vendor a throwaway Flutter SDK -----------------------------------------
-if [[ ! -x "$SDK_DIR/bin/flutter" ]]; then
-  log "Fetching Flutter $FLUTTER_VERSION into $SDK_DIR (one-time; delete anytime) ..."
-  git clone --depth 1 --branch "$FLUTTER_VERSION" \
-    https://github.com/flutter/flutter.git "$SDK_DIR"
-else
-  log "Reusing vendored Flutter at $SDK_DIR"
+# --- Resolve a Flutter SDK at exactly $FLUTTER_VERSION ----------------------
+#
+# Prefer one already on PATH when it matches the pin, so a machine that has
+# Flutter installed does not also carry a second ~1.7 GB copy. Otherwise
+# vendor a throwaway clone — that is what keeps this script working on a bare
+# Mac with no system Flutter, which is the whole point of the vendoring.
+#
+# The version is CHECKED rather than assumed. The previous guard only tested
+# that `$SDK_DIR/bin/flutter` existed, so bumping FLUTTER_VERSION silently
+# kept building against whatever had been cloned first — the pin looked
+# authoritative while doing nothing.
+
+# Echoes an SDK's tag (e.g. "3.44.8"), or nothing if it can't be determined.
+sdk_version() {
+  git -C "$1" describe --tags 2>/dev/null | head -1
+}
+
+FLUTTER_ROOT_DIR=""
+
+if command -v flutter >/dev/null 2>&1; then
+  path_flutter="$(readlink -f "$(command -v flutter)" 2>/dev/null || true)"
+  if [[ -n "$path_flutter" ]]; then
+    path_root="$(cd "$(dirname "$path_flutter")/.." 2>/dev/null && pwd || true)"
+    if [[ -n "$path_root" && "$(sdk_version "$path_root")" == "$FLUTTER_VERSION" ]]; then
+      log "Using the Flutter $FLUTTER_VERSION already on PATH ($path_root)"
+      FLUTTER_ROOT_DIR="$path_root"
+    fi
+  fi
 fi
-export PATH="$SDK_DIR/bin:$PATH"
+
+if [[ -z "$FLUTTER_ROOT_DIR" ]]; then
+  vendored_version="$(sdk_version "$SDK_DIR")"
+  if [[ -x "$SDK_DIR/bin/flutter" && "$vendored_version" != "$FLUTTER_VERSION" ]]; then
+    log "Vendored Flutter is ${vendored_version:-unknown}, but the pin is $FLUTTER_VERSION — re-fetching."
+    rm -rf "$SDK_DIR"
+  fi
+  if [[ ! -x "$SDK_DIR/bin/flutter" ]]; then
+    log "Fetching Flutter $FLUTTER_VERSION into $SDK_DIR (one-time; delete anytime) ..."
+    git clone --depth 1 --branch "$FLUTTER_VERSION" \
+      https://github.com/flutter/flutter.git "$SDK_DIR"
+  else
+    log "Reusing vendored Flutter $FLUTTER_VERSION at $SDK_DIR"
+  fi
+  FLUTTER_ROOT_DIR="$SDK_DIR"
+fi
+
+export PATH="$FLUTTER_ROOT_DIR/bin:$PATH"
 
 log "Flutter version:"
 flutter --version
