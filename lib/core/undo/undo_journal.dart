@@ -22,7 +22,10 @@ class UndoJournal extends Notifier<Map<String, List<UndoRecord>>> {
   @override
   Map<String, List<UndoRecord>> build() => const {};
 
-  void push(UndoRecord record) {
+  void push(UndoRecord record, {bool preserveRedo = false}) {
+    if (!preserveRedo) {
+      ref.read(redoJournalProvider.notifier).clearRepo(record.repoPath);
+    }
     final stack = [...?state[record.repoPath], record];
     if (stack.length > maxPerRepo) stack.removeAt(0);
     state = {...state, record.repoPath: stack};
@@ -46,6 +49,44 @@ class UndoJournal extends Notifier<Map<String, List<UndoRecord>>> {
 final undoJournalProvider =
     NotifierProvider<UndoJournal, Map<String, List<UndoRecord>>>(
       UndoJournal.new,
+    );
+
+/// Per-repository replay stacks. Only [RedoRecord]s that passed the feasibility
+/// gate enter this journal. A fresh mutation clears its repository's stack via
+/// [UndoJournal.push], preserving the usual linear undo/redo history.
+class RedoJournal extends Notifier<Map<String, List<RedoRecord>>> {
+  @override
+  Map<String, List<RedoRecord>> build() => const {};
+
+  void push(RedoRecord record) {
+    final stack = [...?state[record.repoPath], record];
+    if (stack.length > UndoJournal.maxPerRepo) stack.removeAt(0);
+    state = {...state, record.repoPath: stack};
+  }
+
+  RedoRecord? peek(String repoPath) {
+    final stack = state[repoPath];
+    return (stack == null || stack.isEmpty) ? null : stack.last;
+  }
+
+  void pop(String repoPath) {
+    final stack = state[repoPath];
+    if (stack == null || stack.isEmpty) return;
+    state = {...state, repoPath: stack.sublist(0, stack.length - 1)};
+  }
+
+  void clearRepo(String repoPath) {
+    if (!state.containsKey(repoPath)) return;
+    final next = {...state}..remove(repoPath);
+    state = next;
+  }
+
+  void clear() => state = const {};
+}
+
+final redoJournalProvider =
+    NotifierProvider<RedoJournal, Map<String, List<RedoRecord>>>(
+      RedoJournal.new,
     );
 
 /// Undo records raised by a mutation performed in the *History* window.

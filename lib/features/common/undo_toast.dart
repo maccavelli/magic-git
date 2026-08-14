@@ -7,6 +7,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/undo/undo_journal.dart';
+import '../../core/undo/undo_types.dart';
 import 'tappable.dart';
 
 /// One transient toast: what happened, and whether ⌘Z applies to it.
@@ -18,7 +19,15 @@ class UndoToast {
   /// undo capture degraded.
   final bool showUndoHint;
 
-  const UndoToast(this.message, {this.showUndoHint = false});
+  /// True only when the completed undo generated an atomic [RedoRecord].
+  /// Unsupported operation kinds never expose a best-effort action.
+  final bool showRedoHint;
+
+  const UndoToast(
+    this.message, {
+    this.showUndoHint = false,
+    this.showRedoHint = false,
+  }) : assert(!showUndoHint || !showRedoHint);
 }
 
 /// Owns the toast's visibility window: [show] replaces whatever is up and
@@ -72,8 +81,9 @@ final undoToastProvider = NotifierProvider<UndoToastNotifier, UndoToast?>(
 /// invokes.
 class UndoToastOverlay extends ConsumerStatefulWidget {
   final Future<void> Function() onUndo;
+  final Future<void> Function()? onRedo;
 
-  const UndoToastOverlay({super.key, required this.onUndo});
+  const UndoToastOverlay({super.key, required this.onUndo, this.onRedo});
 
   @override
   ConsumerState<UndoToastOverlay> createState() => _UndoToastOverlayState();
@@ -137,7 +147,8 @@ class _UndoToastOverlayState extends ConsumerState<UndoToastOverlay> {
     final notifier = ref.read(undoToastProvider.notifier);
     // Render the *live* binding, not a hardcoded ⌘Z — the keymap is
     // user-remappable.
-    final bindings = ref.watch(keymapProvider)['global.undo'];
+    final actionId = toast.showRedoHint ? 'global.redo' : 'global.undo';
+    final bindings = ref.watch(keymapProvider)[actionId];
     final hintLabel = (bindings != null && bindings.isNotEmpty)
         ? bindings.first.label
         : null;
@@ -147,12 +158,17 @@ class _UndoToastOverlayState extends ConsumerState<UndoToastOverlay> {
       onExit: (_) => notifier.resume(),
       // Defer (not arrow) while the hint is hidden: the toast is dismissable
       // but not advertising an action yet.
-      cursor: toast.showUndoHint ? SystemMouseCursors.click : MouseCursor.defer,
+      cursor: toast.showUndoHint || toast.showRedoHint
+          ? SystemMouseCursors.click
+          : MouseCursor.defer,
       behavior: HitTestBehavior.opaque,
       onTap: () {
         if (toast.showUndoHint) {
           notifier.dismiss();
           widget.onUndo();
+        } else if (toast.showRedoHint && widget.onRedo != null) {
+          notifier.dismiss();
+          widget.onRedo!();
         } else {
           notifier.dismiss();
         }
@@ -178,7 +194,8 @@ class _UndoToastOverlayState extends ConsumerState<UndoToastOverlay> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(toast.message, style: typography.body),
-            if (toast.showUndoHint && hintLabel != null) ...[
+            if ((toast.showUndoHint || toast.showRedoHint) &&
+                hintLabel != null) ...[
               const SizedBox(width: 10),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -190,7 +207,7 @@ class _UndoToastOverlayState extends ConsumerState<UndoToastOverlay> {
               ),
               const SizedBox(width: 6),
               Text(
-                'to undo',
+                toast.showRedoHint ? 'to redo' : 'to undo',
                 style: typography.caption1.copyWith(
                   color: MacosColors.systemGrayColor,
                 ),

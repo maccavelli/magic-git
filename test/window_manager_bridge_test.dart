@@ -400,7 +400,7 @@ void main() {
           'repoPath': '/srv/repo',
           'force': false,
         }),
-        {'status': 'nothingToUndo'},
+        {'status': 'nothingToUndo', 'canRedo': false},
       );
 
       await deliverHubCall('undoRecord', _record().toJson());
@@ -415,6 +415,35 @@ void main() {
         container.read(undoJournalProvider.notifier).peek('/srv/repo'),
         isNull,
         reason: 'the executed record was popped',
+      );
+    },
+  );
+
+  test(
+    'performRedo replays a safe tag record and restores undo history',
+    () async {
+      container = makeContainer(_connected);
+      await openHistory();
+      await deliverHubCall('undoRecord', _tagRecord().toJson());
+      final undoReply = await deliverHubCall('performUndo', {
+        'repoPath': '/srv/repo',
+        'force': false,
+      });
+      expect((undoReply as Map)['canRedo'], isTrue);
+
+      final redoReply = await deliverHubCall('performRedo', {
+        'repoPath': '/srv/repo',
+      });
+
+      expect((redoReply as Map)['status'], 'done');
+      expect(redoReply['description'], 'Create tag v1');
+      expect(
+        container.read(redoJournalProvider.notifier).peek('/srv/repo'),
+        isNull,
+      );
+      expect(
+        container.read(undoJournalProvider.notifier).peek('/srv/repo')?.kind,
+        UndoOpKind.createTag,
       );
     },
   );
@@ -606,4 +635,16 @@ UndoRecord _record() => UndoRecord(
   preRef: 'main',
   postHead: 'b' * 40,
   postRef: 'main',
+);
+
+UndoRecord _tagRecord() => UndoRecord(
+  repoPath: '/srv/repo',
+  kind: UndoOpKind.createTag,
+  description: 'Create tag v1',
+  preHead: 'a' * 40,
+  preRef: 'main',
+  postHead: 'a' * 40,
+  postRef: 'main',
+  refName: 'v1',
+  deletedOid: 'b' * 40,
 );

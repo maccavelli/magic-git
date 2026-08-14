@@ -1047,6 +1047,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     // from a previous connection into a colliding path would be worse than a
     // suppressed refresh.
     ref.read(undoJournalProvider.notifier).clear();
+    ref.read(redoJournalProvider.notifier).clear();
   }
 
   /// The executor for [state]'s current backend, read directly off `state`

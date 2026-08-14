@@ -539,7 +539,12 @@ class _AppShellState extends ConsumerState<AppShell> {
         case UndoStatus.done:
           ref
               .read(undoToastProvider.notifier)
-              .show(UndoToast('Undid: ${attempt.record!.description}'));
+              .show(
+                UndoToast(
+                  'Undid: ${attempt.record!.description}',
+                  showRedoHint: attempt.redoRecord != null,
+                ),
+              );
           ref
               .read(outputLogProvider.notifier)
               .logInfo('Undid: ${attempt.record!.description}');
@@ -555,6 +560,50 @@ class _AppShellState extends ConsumerState<AppShell> {
           // Nothing actionable: an empty journal is silent, a pending
           // merge/rebase already shows its own banner with abort/continue,
           // and a declined dirty-overwrite was handled above.
+          break;
+      }
+    } on GitException catch (e) {
+      if (!mounted) return;
+      await showErrorDialog(context, displayError(e));
+    }
+  }
+
+  /// ⇧⌘Z replays only records admitted by the atomic tag-ref feasibility
+  /// gate. Unsupported undos never enter the redo journal.
+  Future<void> _redoGitOperation() async {
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused != null &&
+        (focused.widget is EditableText ||
+            focused.findAncestorStateOfType<EditableTextState>() != null)) {
+      return;
+    }
+    final repoPath = ref.read(connectionProvider).repoPath;
+    if (repoPath == null) return;
+
+    try {
+      final attempt = await ref.read(undoControllerProvider).redo(repoPath);
+      if (!mounted) return;
+      switch (attempt.status) {
+        case RedoStatus.done:
+          ref
+              .read(undoToastProvider.notifier)
+              .show(
+                UndoToast(
+                  'Redid: ${attempt.record!.description}',
+                  showUndoHint: true,
+                ),
+              );
+          ref
+              .read(outputLogProvider.notifier)
+              .logInfo('Redid: ${attempt.record!.description}');
+        case RedoStatus.stale:
+          await showErrorDialog(
+            context,
+            'The tag changed after "${attempt.record!.description}" was '
+            'undone — this redo is no longer safe and has been discarded.',
+          );
+        case RedoStatus.nothingToRedo:
+        case RedoStatus.blockedByPendingOp:
           break;
       }
     } on GitException catch (e) {
@@ -767,6 +816,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       'global.showShortcuts': () => _openShortcuts(context),
       'global.commandPalette': connected ? () => _openPalette(context) : null,
       'global.undo': connected ? _undoGitOperation : null,
+      'global.redo': connected ? _redoGitOperation : null,
       // Six panels: Repository…Worktrees (indices 0–5). No panel7 — the old
       // Project tab was folded into Forge; a seventh entry would select an
       // out-of-range IndexedStack index.
@@ -859,7 +909,10 @@ class _AppShellState extends ConsumerState<AppShell> {
               visitedPages,
             ),
             const Positioned.fill(child: ViewerHost()),
-            UndoToastOverlay(onUndo: _undoGitOperation),
+            UndoToastOverlay(
+              onUndo: _undoGitOperation,
+              onRedo: _redoGitOperation,
+            ),
           ],
         ),
       ),

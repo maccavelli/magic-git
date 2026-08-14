@@ -31,7 +31,16 @@ enum UndoStatus {
 class UndoAttempt {
   final UndoStatus status;
   final UndoRecord? record;
-  const UndoAttempt(this.status, [this.record]);
+  final RedoRecord? redoRecord;
+  const UndoAttempt(this.status, [this.record, this.redoRecord]);
+}
+
+enum RedoStatus { done, nothingToRedo, blockedByPendingOp, stale }
+
+class RedoAttempt {
+  final RedoStatus status;
+  final RedoRecord? record;
+  const RedoAttempt(this.status, [this.record]);
 }
 
 /// Orchestrates ⌘Z: peeks the journal, guards against in-flight git
@@ -54,11 +63,13 @@ class UndoController {
   /// second failing, e.g. "branch already exists") and `pop` twice, silently
   /// discarding the next-older record's undo-ability. While one undo is in
   /// flight, a second is a no-op.
-  bool _undoInFlight = false;
+  bool _historyOperationInFlight = false;
 
   Future<UndoAttempt> undo(String repoPath, {bool force = false}) async {
-    if (_undoInFlight) return const UndoAttempt(UndoStatus.nothingToUndo);
-    _undoInFlight = true;
+    if (_historyOperationInFlight) {
+      return const UndoAttempt(UndoStatus.nothingToUndo);
+    }
+    _historyOperationInFlight = true;
     try {
       final journal = _ref.read(undoJournalProvider.notifier);
       final record = journal.peek(repoPath);
@@ -76,16 +87,62 @@ class UndoController {
         await _ref.read(gitServiceProvider).undoExecute(record, force: force);
       } on UndoStaleException {
         journal.pop(repoPath);
+        _ref.read(redoJournalProvider.notifier).clearRepo(repoPath);
         return UndoAttempt(UndoStatus.stale, record);
       } on UndoDirtyException {
         return UndoAttempt(UndoStatus.dirty, record);
       }
 
       journal.pop(repoPath);
+      final redoRecord = RedoRecord.afterSuccessfulUndo(record);
+      final redoJournal = _ref.read(redoJournalProvider.notifier);
+      if (redoRecord == null) {
+        // An unsupported step cannot be skipped without replaying operations
+        // out of order, so it terminates the redo chain.
+        redoJournal.clearRepo(repoPath);
+      } else {
+        redoJournal.push(redoRecord);
+      }
       _refresh(repoPath);
-      return UndoAttempt(UndoStatus.done, record);
+      return UndoAttempt(UndoStatus.done, record, redoRecord);
     } finally {
-      _undoInFlight = false;
+      _historyOperationInFlight = false;
+    }
+  }
+
+  Future<RedoAttempt> redo(String repoPath) async {
+    if (_historyOperationInFlight) {
+      return const RedoAttempt(RedoStatus.nothingToRedo);
+    }
+    _historyOperationInFlight = true;
+    try {
+      final redoJournal = _ref.read(redoJournalProvider.notifier);
+      final record = redoJournal.peek(repoPath);
+      if (record == null) {
+        return const RedoAttempt(RedoStatus.nothingToRedo);
+      }
+
+      final pending =
+          _ref.read(pendingOpProvider(repoPath)).value ?? PendingOp.none;
+      if (pending != PendingOp.none) {
+        return RedoAttempt(RedoStatus.blockedByPendingOp, record);
+      }
+
+      try {
+        await _ref.read(gitServiceProvider).redoExecute(record);
+      } on RedoStaleException {
+        redoJournal.clearRepo(repoPath);
+        return RedoAttempt(RedoStatus.stale, record);
+      }
+
+      redoJournal.pop(repoPath);
+      _ref
+          .read(undoJournalProvider.notifier)
+          .push(record.undoRecord, preserveRedo: true);
+      _refresh(repoPath);
+      return RedoAttempt(RedoStatus.done, record);
+    } finally {
+      _historyOperationInFlight = false;
     }
   }
 

@@ -182,6 +182,14 @@ final List<KeymapAction> kKeymapActions = [
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyZ, meta: true)],
   ),
   KeymapAction(
+    id: 'global.redo',
+    label: 'Redo Git Operation',
+    category: KeymapCategory.global,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyZ, meta: true, shift: true),
+    ],
+  ),
+  KeymapAction(
     id: 'global.panel1',
     label: 'Switch to Repository',
     category: KeymapCategory.global,

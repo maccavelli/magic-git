@@ -140,17 +140,11 @@ void main() {
         preRef: 'ref',
         postHead: 'post',
         postRef: 'ref',
-        stashEntries: [
-          'aaa WIP on main',
-          'bbb Fix bug',
-        ],
+        stashEntries: ['aaa WIP on main', 'bbb Fix bug'],
       );
       final json = record.toJson();
       final restored = UndoRecord.fromJson(json)!;
-      expect(restored.stashEntries, [
-        'aaa WIP on main',
-        'bbb Fix bug',
-      ]);
+      expect(restored.stashEntries, ['aaa WIP on main', 'bbb Fix bug']);
     });
   });
 
@@ -230,6 +224,98 @@ void main() {
       final ex = UndoDirtyException(record);
       expect(ex.record, record);
       expect(ex.toString(), contains('Commit dirty'));
+    });
+  });
+
+  group('Redo feasibility', () {
+    test('every UndoOpKind is explicitly admitted or excluded', () {
+      final assessed = <UndoOpKind, RedoFeasibility>{
+        for (final kind in UndoOpKind.values) kind: kind.redoFeasibility,
+      };
+
+      expect(assessed.keys, containsAll(UndoOpKind.values));
+      expect(
+        assessed.entries
+            .where((entry) => entry.key.supportsSafeRedo)
+            .map((entry) => entry.key),
+        {UndoOpKind.createTag, UndoOpKind.deleteTag},
+      );
+      expect(
+        assessed[UndoOpKind.deleteBranch],
+        RedoFeasibility.branchOrCheckout,
+        reason: 'another worktree can check out a branch outside a ref CAS',
+      );
+      expect(assessed[UndoOpKind.stashClear], RedoFeasibility.stashReflog);
+      expect(
+        assessed[UndoOpKind.removeFilePaths],
+        RedoFeasibility.snapshotPaths,
+      );
+      expect(assessed[UndoOpKind.commit], RedoFeasibility.headIndexWorktree);
+    });
+
+    test(
+      'a successful tag-create undo yields an absent-to-exact-OID replay',
+      () {
+        final undo = UndoRecord(
+          repoPath: '/r',
+          kind: UndoOpKind.createTag,
+          description: 'Create tag v1',
+          preHead: 'a',
+          preRef: 'main',
+          postHead: 'a',
+          postRef: 'main',
+          refName: 'v1',
+          deletedOid: 'b' * 40,
+        );
+
+        final redo = RedoRecord.afterSuccessfulUndo(undo)!;
+        expect(redo.refName, 'refs/tags/v1');
+        expect(redo.expectedOid, '');
+        expect(redo.replayOid, 'b' * 40);
+        expect(redo.undoRecord, same(undo));
+      },
+    );
+
+    test(
+      'a successful tag-delete undo yields an exact-OID-to-absent replay',
+      () {
+        final undo = UndoRecord(
+          repoPath: '/r',
+          kind: UndoOpKind.deleteTag,
+          description: 'Delete tag v1',
+          preHead: 'a',
+          preRef: 'main',
+          postHead: 'a',
+          postRef: 'main',
+          refName: 'v1',
+          deletedOid: 'b' * 40,
+        );
+
+        final redo = RedoRecord.afterSuccessfulUndo(undo)!;
+        expect(redo.expectedOid, 'b' * 40);
+        expect(redo.replayOid, '');
+      },
+    );
+
+    test('unsupported operations generate no RedoRecord', () {
+      for (final kind in UndoOpKind.values.where(
+        (candidate) => !candidate.supportsSafeRedo,
+      )) {
+        final undo = UndoRecord(
+          repoPath: '/r',
+          kind: kind,
+          description: kind.name,
+          preHead: 'a',
+          preRef: 'main',
+          postHead: 'b',
+          postRef: 'main',
+        );
+        expect(
+          RedoRecord.afterSuccessfulUndo(undo),
+          isNull,
+          reason: '${kind.name} must stay out of the Redo UI',
+        );
+      }
     });
   });
 }

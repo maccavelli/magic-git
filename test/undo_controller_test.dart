@@ -28,6 +28,25 @@ class _BlockingGit extends GitService {
   }
 }
 
+class _RecordingGit extends GitService {
+  _RecordingGit() : super(SSHCommandExecutor(SSHClientManager()));
+
+  int undoCalls = 0;
+  int redoCalls = 0;
+  bool staleRedo = false;
+
+  @override
+  Future<void> undoExecute(UndoRecord record, {bool force = false}) async {
+    undoCalls++;
+  }
+
+  @override
+  Future<void> redoExecute(RedoRecord record) async {
+    redoCalls++;
+    if (staleRedo) throw RedoStaleException(record);
+  }
+}
+
 void main() {
   final record = UndoRecord(
     repoPath: '/repo',
@@ -75,5 +94,116 @@ void main() {
     // With the journal now empty, a fresh (non-overlapping) undo still works —
     // the guard only blocks concurrency, never a later sequential undo.
     expect((await controller.undo('/repo')).status, UndoStatus.nothingToUndo);
+  });
+
+  test(
+    'a successful safe undo records redo; redo restores undo history',
+    () async {
+      final git = _RecordingGit();
+      final container = ProviderContainer(
+        overrides: [
+          gitServiceProvider.overrideWithValue(git),
+          pendingOpProvider.overrideWith((ref, repoPath) => PendingOp.none),
+        ],
+      );
+      addTearDown(container.dispose);
+      final tagRecord = UndoRecord(
+        repoPath: '/repo',
+        kind: UndoOpKind.deleteTag,
+        description: 'Delete tag v1',
+        preHead: 'a' * 40,
+        preRef: 'main',
+        postHead: 'a' * 40,
+        postRef: 'main',
+        refName: 'v1',
+        deletedOid: 'b' * 40,
+      );
+      container.read(undoJournalProvider.notifier).push(tagRecord);
+      final controller = container.read(undoControllerProvider);
+
+      final undo = await controller.undo('/repo');
+      expect(undo.status, UndoStatus.done);
+      expect(undo.redoRecord, isNotNull);
+      expect(
+        container.read(redoJournalProvider.notifier).peek('/repo'),
+        isNotNull,
+      );
+
+      final redo = await controller.redo('/repo');
+      expect(redo.status, RedoStatus.done);
+      expect(git.redoCalls, 1);
+      expect(
+        container.read(redoJournalProvider.notifier).peek('/repo'),
+        isNull,
+      );
+      expect(
+        container.read(undoJournalProvider.notifier).peek('/repo'),
+        same(tagRecord),
+      );
+    },
+  );
+
+  test(
+    'an unsupported undo explicitly produces no redo and ends the chain',
+    () async {
+      final git = _RecordingGit();
+      final container = ProviderContainer(
+        overrides: [
+          gitServiceProvider.overrideWithValue(git),
+          pendingOpProvider.overrideWith((ref, repoPath) => PendingOp.none),
+        ],
+      );
+      addTearDown(container.dispose);
+      final redoJournal = container.read(redoJournalProvider.notifier);
+      redoJournal.push(
+        RedoRecord(
+          undoRecord: record,
+          refName: 'refs/tags/older',
+          expectedOid: 'c' * 40,
+          replayOid: '',
+        ),
+      );
+      container
+          .read(undoJournalProvider.notifier)
+          .push(record, preserveRedo: true);
+
+      final attempt = await container
+          .read(undoControllerProvider)
+          .undo('/repo');
+
+      expect(attempt.status, UndoStatus.done);
+      expect(attempt.redoRecord, isNull);
+      expect(redoJournal.peek('/repo'), isNull);
+    },
+  );
+
+  test('a stale redo is discarded without restoring an undo entry', () async {
+    final git = _RecordingGit()..staleRedo = true;
+    final container = ProviderContainer(
+      overrides: [
+        gitServiceProvider.overrideWithValue(git),
+        pendingOpProvider.overrideWith((ref, repoPath) => PendingOp.none),
+      ],
+    );
+    addTearDown(container.dispose);
+    final tagRecord = UndoRecord(
+      repoPath: '/repo',
+      kind: UndoOpKind.createTag,
+      description: 'Create tag v1',
+      preHead: 'a' * 40,
+      preRef: 'main',
+      postHead: 'a' * 40,
+      postRef: 'main',
+      refName: 'v1',
+      deletedOid: 'b' * 40,
+    );
+    final redoJournal = container.read(redoJournalProvider.notifier);
+    redoJournal.push(RedoRecord.afterSuccessfulUndo(tagRecord)!);
+
+    final attempt = await container.read(undoControllerProvider).redo('/repo');
+
+    expect(attempt.status, RedoStatus.stale);
+    expect(redoJournal.peek('/repo'), isNull);
+    expect(container.read(undoJournalProvider.notifier).peek('/repo'), isNull);
   });
 }

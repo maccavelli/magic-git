@@ -35,10 +35,12 @@ UndoRecord _record(String description) => UndoRecord(
 void main() {
   late ProviderContainer container;
   late int undoCalls;
+  late int redoCalls;
 
   Future<void> pump(WidgetTester tester) async {
     SharedPreferences.setMockInitialValues({});
     undoCalls = 0;
+    redoCalls = 0;
     container = ProviderContainer(
       overrides: [
         connectionProvider.overrideWith(
@@ -63,6 +65,9 @@ void main() {
               UndoToastOverlay(
                 onUndo: () async {
                   undoCalls++;
+                },
+                onRedo: () async {
+                  redoCalls++;
                 },
               ),
             ],
@@ -121,8 +126,11 @@ void main() {
 
     journal.pop('/repo');
     await tester.pumpAndSettle();
-    expect(container.read(undoToastProvider), isNull,
-        reason: 'an executed/discarded undo is not a new operation');
+    expect(
+      container.read(undoToastProvider),
+      isNull,
+      reason: 'an executed/discarded undo is not a new operation',
+    );
   });
 
   testWidgets('clicking a hinted toast runs the undo and dismisses', (
@@ -170,7 +178,43 @@ void main() {
     await tester.tap(find.text('Undid: Commit'));
     await tester.pumpAndSettle();
     expect(undoCalls, 0);
+    expect(redoCalls, 0);
     expect(container.read(undoToastProvider), isNull);
+  });
+
+  testWidgets('a safe redo announcement shows ⇧⌘Z and invokes redo', (
+    tester,
+  ) async {
+    await pump(tester);
+    container
+        .read(undoToastProvider.notifier)
+        .show(const UndoToast('Undid: Delete tag v1', showRedoHint: true));
+    await tester.pumpAndSettle();
+
+    expect(find.text('⇧⌘Z'), findsOneWidget);
+    expect(find.text('to redo'), findsOneWidget);
+    expect(find.text('to undo'), findsNothing);
+
+    await tester.tap(find.text('Undid: Delete tag v1'));
+    await tester.pumpAndSettle();
+    expect(redoCalls, 1);
+    expect(undoCalls, 0);
+  });
+
+  testWidgets('an unsupported undo announcement exposes no redo affordance', (
+    tester,
+  ) async {
+    await pump(tester);
+    container
+        .read(undoToastProvider.notifier)
+        .show(const UndoToast('Undid: Commit'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('to redo'), findsNothing);
+    expect(find.text('⇧⌘Z'), findsNothing);
+    await tester.tap(find.text('Undid: Commit'));
+    await tester.pumpAndSettle();
+    expect(redoCalls, 0);
   });
 
   testWidgets('the hint renders the live (remapped) binding', (tester) async {

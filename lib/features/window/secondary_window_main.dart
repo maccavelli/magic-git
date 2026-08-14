@@ -106,7 +106,7 @@ final class _ProviderFailureLogObserver extends ProviderObserver {
     _native(
       'debugLog',
       'provider failed: ${provider.name ?? provider.runtimeType}'
-      '(${provider.argument ?? ''}): $error\n$stackTrace',
+          '(${provider.argument ?? ''}): $error\n$stackTrace',
     );
   }
 }
@@ -237,8 +237,9 @@ Future<void> _bootSecondaryWindow() async {
 Future<WindowDescriptor> _fetchDescriptor() async {
   for (var attempt = 0; attempt < 20; attempt++) {
     try {
-      final reply =
-          await _bootstrap.invokeMethod<Map<Object?, Object?>>('descriptor');
+      final reply = await _bootstrap.invokeMethod<Map<Object?, Object?>>(
+        'descriptor',
+      );
       if (reply != null) return WindowDescriptor.decode(reply);
     } on PlatformException {
       // Handler present but errored — retry.
@@ -264,7 +265,9 @@ void _installLifecycle(String windowId) {
     if (call.method == 'setLifecycleState' && call.arguments is String) {
       ServicesBinding.instance.channelBuffers.push(
         'flutter/lifecycle',
-        const StringCodec().encodeMessage('AppLifecycleState.${call.arguments}'),
+        const StringCodec().encodeMessage(
+          'AppLifecycleState.${call.arguments}',
+        ),
         (_) {},
       );
     }
@@ -299,9 +302,11 @@ class WindowSessionNotifier extends Notifier<WindowSession> {
 
   void apply(ConnectionEventPayload payload) {
     state = WindowSession(
-      phase: ConnectionPhase.values.asNameMap()[payload.phase] ??
+      phase:
+          ConnectionPhase.values.asNameMap()[payload.phase] ??
           ConnectionPhase.disconnected,
-      backend: ConnectionBackend.values.asNameMap()[payload.backend] ??
+      backend:
+          ConnectionBackend.values.asNameMap()[payload.backend] ??
           ConnectionBackend.ssh,
       repoPath: payload.repoPath,
       connectionLabel: payload.connectionLabel,
@@ -311,8 +316,8 @@ class WindowSessionNotifier extends Notifier<WindowSession> {
 
 final windowSessionProvider =
     NotifierProvider<WindowSessionNotifier, WindowSession>(
-  WindowSessionNotifier.new,
-);
+      WindowSessionNotifier.new,
+    );
 
 /// Diagnostics (gated by [kWindowDiagnostics]): route-level breadcrumbs so
 /// hw-debug.log shows whether a tapped control's menu/sheet route actually
@@ -341,7 +346,8 @@ class SecondaryWindowApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final title = descriptor.title ??
+    final title =
+        descriptor.title ??
         (WindowKind.fromName(descriptor.kind) == WindowKind.history
             ? 'History — Magic Git'
             : 'Magic Git');
@@ -474,8 +480,8 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
         _native(
           'debugLog',
           'frame timings[$_timingsSeen]: ${timings.length} frames, '
-          'vsyncStart=${t.timestampInMicroseconds(FramePhase.vsyncStart)}µs '
-          'rasterFinish=${t.timestampInMicroseconds(FramePhase.rasterFinish)}µs',
+              'vsyncStart=${t.timestampInMicroseconds(FramePhase.vsyncStart)}µs '
+              'rasterFinish=${t.timestampInMicroseconds(FramePhase.rasterFinish)}µs',
         );
       };
       SchedulerBinding.instance.addTimingsCallback(_timingsProbe!);
@@ -485,7 +491,7 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
         _native(
           'debugLog',
           'vsync probe: ${probe.status.name} value=${probe.value} '
-          'mouseConnected=${RendererBinding.instance.mouseTracker.mouseIsConnected}',
+              'mouseConnected=${RendererBinding.instance.mouseTracker.mouseIsConnected}',
         );
       });
     }
@@ -496,8 +502,9 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       // Pull the initial snapshot rather than waiting for a push — pushes sent
       // before this handler existed were dropped by design.
       try {
-        final reply =
-            await _hub.invokeMethod<Map<Object?, Object?>>('requestState');
+        final reply = await _hub.invokeMethod<Map<Object?, Object?>>(
+          'requestState',
+        );
         if (reply != null && mounted) {
           _applySession(ConnectionEventPayload.decode(reply));
         }
@@ -592,7 +599,7 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       repoName == null
           ? prefix
           : '$prefix — $repoName'
-              '${session.connectionLabel == null ? '' : ' (${session.connectionLabel})'}',
+                '${session.connectionLabel == null ? '' : ' (${session.connectionLabel})'}',
     );
   }
 
@@ -635,13 +642,19 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       case 'done':
         ref
             .read(undoToastProvider.notifier)
-            .show(UndoToast('Undid: $description'));
+            .show(
+              UndoToast(
+                'Undid: $description',
+                showRedoHint: reply['canRedo'] == true,
+              ),
+            );
         _refreshAfterUndo(repoPath);
       case 'dirty':
         final overwrite = await confirmAction(
           context,
           title: 'Files Changed Since',
-          message: 'Undoing "$description" would overwrite files that changed '
+          message:
+              'Undoing "$description" would overwrite files that changed '
               'after the operation ran. Overwrite them?',
           confirmLabel: 'Overwrite',
           destructive: true,
@@ -662,6 +675,50 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
         );
       default:
         // nothingToUndo / blockedByPendingOp — silent, matching AppShell.
+        break;
+    }
+  }
+
+  Future<void> _redoGitOperation() async {
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused != null &&
+        (focused.widget is EditableText ||
+            focused.findAncestorStateOfType<EditableTextState>() != null)) {
+      return;
+    }
+    final repoPath = ref.read(windowSessionProvider).repoPath;
+    if (repoPath == null) return;
+    Map<Object?, Object?>? reply;
+    try {
+      reply = await _hub.invokeMethod<Map<Object?, Object?>>('performRedo', {
+        'repoPath': repoPath,
+      });
+    } on PlatformException catch (e) {
+      if (e.code == 'RELAY_DOWN' || !mounted) return;
+      await showErrorDialog(context, e.message ?? 'Redo failed.');
+      return;
+    }
+    if (reply == null || !mounted) return;
+    final status = reply['status'] as String?;
+    final description = reply['description'] as String? ?? 'operation';
+    switch (status) {
+      case 'done':
+        ref
+            .read(undoToastProvider.notifier)
+            .show(UndoToast('Redid: $description', showUndoHint: true));
+        _refreshAfterUndo(repoPath);
+      case 'stale':
+        await showErrorDialog(
+          context,
+          'The tag changed after "$description" was undone — this redo is no '
+          'longer safe and has been discarded.',
+        );
+      case 'error':
+        await showErrorDialog(
+          context,
+          reply['message'] as String? ?? 'Redo failed.',
+        );
+      default:
         break;
     }
   }
@@ -700,17 +757,11 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       return;
     }
     final modeName = args['mode'] as String? ?? '';
-    final mode =
-        WatchMode.values.asNameMap()[modeName] ?? WatchMode.stopped;
+    final mode = WatchMode.values.asNameMap()[modeName] ?? WatchMode.stopped;
     // The main window forwards which paths moved; an empty list means it
     // couldn't say, and every path must be assumed edited.
-    final paths =
-        (args['paths'] as List?)?.cast<String>() ?? const <String>[];
-    final tick = RepoWatchEvent(
-      at: at,
-      mode: mode,
-      paths: paths.toSet(),
-    );
+    final paths = (args['paths'] as List?)?.cast<String>() ?? const <String>[];
+    final tick = RepoWatchEvent(at: at, mode: mode, paths: paths.toSet());
     if (mode == WatchMode.eventDriven) {
       final edits = ref.read(worktreeEditsProvider.notifier);
       if (tick.isScoped && !tick.touchesGitState) {
@@ -812,27 +863,29 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
     // window's settingsChanged push (whose reload re-lands the same values
     // here) can't ping-pong back. The record is built by
     // [secondarySettingsSyncSignature]; new locally-editable settings go THERE.
-    ref.listen(
-      appSettingsProvider.select(secondarySettingsSyncSignature),
-      (_, _) {
-        _settingsSyncDebounce?.cancel();
-        _settingsSyncDebounce = Timer(const Duration(milliseconds: 600), () {
-          _hub.invokeMethod<void>('settingsChanged').catchError((_) {});
-        });
-      },
-    );
+    ref.listen(appSettingsProvider.select(secondarySettingsSyncSignature), (
+      _,
+      _,
+    ) {
+      _settingsSyncDebounce?.cancel();
+      _settingsSyncDebounce = Timer(const Duration(milliseconds: 600), () {
+        _hub.invokeMethod<void>('settingsChanged').catchError((_) {});
+      });
+    });
     final session = ref.watch(windowSessionProvider);
     final typography = MacosTheme.of(context).typography;
     // During a drop (`lost`) keep the content visible under a banner —
     // frozen-but-readable beats a blank window while auto-reconnect runs;
     // proxied commands fail fast with the dialogs users already know.
-    final showBody = session.repoPath != null &&
+    final showBody =
+        session.repoPath != null &&
         (session.isConnected || session.phase == ConnectionPhase.lost);
     // Only the keymap actions that mean something in this window; the rest
     // (panels, palette) belong to the main shell. ⌘R invalidates repo families
     // (M12) the same way the main shell's refresh does for open pop-outs.
     final shortcuts = resolveShortcuts(ref.watch(keymapProvider), {
       'global.undo': showBody ? _undoGitOperation : null,
+      'global.redo': showBody ? _redoGitOperation : null,
       'global.refresh': showBody && session.repoPath != null
           ? () {
               final repo = session.repoPath!;
@@ -840,9 +893,9 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
                 ref.invalidate(family);
               }
               // Also ask main to refresh shared state for this repo.
-              _hub.invokeMethod<void>('invalidateAll', {
-                'repoPath': repo,
-              }).catchError((_) {});
+              _hub
+                  .invokeMethod<void>('invalidateAll', {'repoPath': repo})
+                  .catchError((_) {});
             }
           : null,
     });
@@ -856,10 +909,10 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
         child: Listener(
           onPointerDown: kWindowDiagnostics
               ? (event) => _native(
-                    'debugLog',
-                    'pointerDown ${event.position.dx.round()},'
-                        '${event.position.dy.round()}',
-                  )
+                  'debugLog',
+                  'pointerDown ${event.position.dx.round()},'
+                      '${event.position.dy.round()}',
+                )
               : null,
           child: MacosWindow(
             child: ContentArea(
@@ -900,7 +953,10 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
                     ),
                   // Same top layer as AppShell's Stack: "<op> — ⌘Z to undo"
                   // after this window's own mutations, "Undid: …" after ⌘Z.
-                  UndoToastOverlay(onUndo: _undoGitOperation),
+                  UndoToastOverlay(
+                    onUndo: _undoGitOperation,
+                    onRedo: _redoGitOperation,
+                  ),
                 ],
               ),
             ),

@@ -593,4 +593,33 @@ void main() {
     expect((undoCall.arguments as Map)['repoPath'], '/srv/repo');
     expect(find.text('Undid: Cherry-pick abc1234'), findsOneWidget);
   });
+
+  testWidgets('⇧⌘Z asks the main isolate to redo and restores the undo hint', (
+    tester,
+  ) async {
+    mockChannels(_connected('/srv/repo'));
+    messenger.setMockMethodCallHandler(_hub, (call) async {
+      hubOut.add(call);
+      if (call.method == 'requestState') {
+        return _connected('/srv/repo').encode();
+      }
+      if (call.method == 'performRedo') {
+        return {'status': 'done', 'description': 'Create tag v1'};
+      }
+      return null;
+    });
+    await pump(tester, _FakeExecutor());
+
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyEvent(LogicalKeyboardKey.keyZ);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+
+    final redoCall = hubOut.singleWhere((c) => c.method == 'performRedo');
+    expect((redoCall.arguments as Map)['repoPath'], '/srv/repo');
+    expect(find.text('Redid: Create tag v1'), findsOneWidget);
+    expect(find.text('to undo'), findsOneWidget);
+  });
 }

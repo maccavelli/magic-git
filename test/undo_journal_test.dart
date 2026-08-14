@@ -59,4 +59,51 @@ void main() {
     expect(journal.peek('/b'), isNull);
     expect(container.read(undoJournalProvider), isEmpty);
   });
+
+  test('a fresh mutation clears redo for only its repository', () {
+    final redo = container.read(redoJournalProvider.notifier);
+    final tagA = record('/a', 'Delete tag');
+    final redoA = RedoRecord(
+      undoRecord: tagA,
+      refName: 'refs/tags/a',
+      expectedOid: 'a' * 40,
+      replayOid: '',
+    );
+    final redoB = RedoRecord(
+      undoRecord: record('/b', 'Delete tag'),
+      refName: 'refs/tags/b',
+      expectedOid: 'b' * 40,
+      replayOid: '',
+    );
+    redo.push(redoA);
+    redo.push(redoB);
+
+    journal.push(record('/a', 'new mutation'));
+
+    expect(redo.peek('/a'), isNull);
+    expect(redo.peek('/b'), same(redoB));
+  });
+
+  test(
+    'redo is LIFO and capped, while replay can preserve the remaining stack',
+    () {
+      final redo = container.read(redoJournalProvider.notifier);
+      for (var i = 0; i < UndoJournal.maxPerRepo + 2; i++) {
+        redo.push(
+          RedoRecord(
+            undoRecord: record('/a', 'tag $i'),
+            refName: 'refs/tags/t$i',
+            expectedOid: 'a' * 40,
+            replayOid: '',
+          ),
+        );
+      }
+      expect(container.read(redoJournalProvider)['/a'], hasLength(20));
+      final latest = redo.peek('/a')!;
+      redo.pop('/a');
+      journal.push(latest.undoRecord, preserveRedo: true);
+      expect(redo.peek('/a')!.description, 'tag 20');
+      expect(journal.peek('/a'), same(latest.undoRecord));
+    },
+  );
 }

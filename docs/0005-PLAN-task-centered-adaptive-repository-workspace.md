@@ -3,8 +3,9 @@
 Associated MADR:
 [0005-MADR-task-centered-adaptive-repository-workspace.md](0005-MADR-task-centered-adaptive-repository-workspace.md)
 
-- Plan status: **active**
+- Plan status: **completed** (Phases 0–11; Phase 12 remains separately decided)
 - Codebase assessment date: 2026-08-13
+- Delivery completion date: 2026-08-13
 - Decision prerequisite: MADR 0005 was accepted when the maintainer explicitly
   authorized implementation of all phases on 2026-08-13.
 - Delivery model: incremental, analyzer-clean work slices with tests in the
@@ -949,6 +950,36 @@ blocking the workspace.
    reflog/output, cannot atomically validate state, or can overwrite unrelated
    work, stop and write a separate MADR. Do not ship a best-effort Redo button.
 
+**Gate outcome (2026-08-13): qualified go for tag refs only.** The prototype
+found that `createTag` and `deleteTag` have a complete post-undo precondition
+expressible as one tag ref's exact OID (or required absence). Redo uses
+`git update-ref` with that expected old value, so validation and replay are one
+compare-and-swap ref transaction. Intervening HEAD, branch, index, worktree,
+stash-list, and unrelated-ref changes remain untouched; an external change to
+the target tag makes the record stale without modifying it.
+
+Every other current `UndoOpKind` is explicitly excluded from Redo:
+
+| Undo kinds | Failed gate |
+| --- | --- |
+| `commit`, `amend`, `resetSoft`, `resetMixed`, `resetHard` | HEAD, index, and worktree are independently mutable; Git has no atomic precondition spanning them. `resetHard` also collapses reset, merge, cherry-pick, revert, and rebase intent into one undo shape. |
+| `checkout`, `createBranch`, `deleteBranch` | Branch refs and per-worktree HEADs cannot be validated and changed in one compare-and-swap; an external checkout can race branch deletion. |
+| `stashDrop`, `stashPop`, `stashClear`, `stashBranch` | The stash ref and positional reflog have no expected-list transaction; replay would depend on mutable list position or reconstructed intent. |
+| `discardPaths`, `discardStagedPaths`, `removeFilePaths` | Snapshot replay writes the index/worktree; an external process can change a guarded path between shell validation and restore/removal. |
+
+Unsupported kinds generate no `RedoRecord` and expose no Redo toast or
+shortcut affordance. A fresh mutation clears the per-repository redo chain;
+stale replay clears it without restoring an undo entry. Supported replay is
+available through remappable `⇧⌘Z` in the main and secondary windows, and a
+successful replay returns the original record to the undo journal.
+
+Evidence is pinned by exhaustive enum classification, journal/controller/widget
+tests, and real-Git integration tests in `test/redo_scripts_test.dart`. The
+integration fixture changes HEAD, a branch ref, index, worktree, and stash list
+after undo, then verifies tag redo leaves all of them byte-for-byte/state-for-
+state intact; separate external-process tests move/create the target tag and
+verify atomic stale refusal.
+
 ### Phase 12 — Separately decided specialist capabilities
 
 Before implementing any item below, write or approve a separate MADR and paired
@@ -1178,16 +1209,16 @@ remain sequential to keep regressions attributable and rollback small.
 
 Before approving this plan, confirm:
 
-* [ ] MADR 0005's task-centered adaptive workspace decision is accepted.
-* [ ] The clarified no-eager-fetch context/palette policy matches product
+* [x] MADR 0005's task-centered adaptive workspace decision is accepted.
+* [x] The clarified no-eager-fetch context/palette policy matches product
       expectations.
-* [ ] Repository-specific layout persistence, with old global widths as a
+* [x] Repository-specific layout persistence, with old global widths as a
       migration seed, is the desired behavior.
-* [ ] The inline composer should generate hook previews on first user focus,
+* [x] The inline composer should generate hook previews on first user focus,
       not automatically when staging occurs.
-* [ ] The Activity Center should list user-meaningful operations only, with
+* [x] The Activity Center should list user-meaningful operations only, with
       background work surfaced only when actionable.
-* [ ] Built-in presets are sufficient for the first release.
-* [ ] Phase 10 and Phase 11 remain post-core gates rather than blockers.
-* [ ] Code Owners, submodules, LFS, and stacked branches remain separate
+* [x] Built-in presets are sufficient for the first release.
+* [x] Phase 10 and Phase 11 remain post-core gates rather than blockers.
+* [x] Code Owners, submodules, LFS, and stacked branches remain separate
       decisions.

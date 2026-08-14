@@ -5803,6 +5803,31 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     }
   }
 
+  /// Replays the only mutation class that passes the Redo feasibility gate: a
+  /// tag ref create/delete. `update-ref` validates [RedoRecord.expectedOid] and
+  /// applies [RedoRecord.replayOid] in one ref transaction, so an external
+  /// process that changes the tag wins cleanly and this attempt becomes stale.
+  Future<void> redoExecute(RedoRecord record) async {
+    const esc = ShellEscaper.escape;
+    final command = record.replayOid.isEmpty
+        ? 'git update-ref -d ${esc(record.refName)} '
+              '${esc(record.expectedOid)}'
+        : 'git update-ref ${esc(record.refName)} ${esc(record.replayOid)} '
+              '${esc(record.expectedOid)}';
+    final result = await _executor.execute(
+      repoPath: record.repoPath,
+      extraEnv: _scopeEnvFor(record.repoPath),
+      gitArgs: ['sh', '-c', '$command || exit 42'],
+    );
+    if (result.exitCode == 42) throw RedoStaleException(record);
+    if (!result.isSuccess) {
+      if (result.exitCode == 127) {
+        throw GitException(_gitNotFoundMessage, result);
+      }
+      throw GitException('redoing ${record.description} failed', result);
+    }
+  }
+
   /// The validate+execute script for one journal entry. Every captured value
   /// is shell-escaped on embedding even though it came from git's own output —
   /// defense in depth, and it makes empty-string comparisons well-formed.

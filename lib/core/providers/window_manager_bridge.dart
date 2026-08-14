@@ -676,11 +676,51 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
                 .read(outputLogProvider.notifier)
                 .logInfo('Undid: $description');
           }
-          return {'status': attempt.status.name, 'description': ?description};
+          return {
+            'status': attempt.status.name,
+            'description': ?description,
+            'canRedo': attempt.redoRecord != null,
+          };
         } on GitException catch (e) {
           return {'status': 'error', 'message': '$e'};
         } catch (e) {
           return {'status': 'error', 'message': 'Undo failed: $e'};
+        }
+      case 'performRedo':
+        if (container == null) throw _relayDown();
+        final args = call.arguments as Map<Object?, Object?>;
+        final repoPath = args['repoPath'] as String?;
+        if (repoPath == null) return {'status': RedoStatus.nothingToRedo.name};
+        final redo = container
+            .read(redoJournalProvider.notifier)
+            .peek(repoPath);
+        if (redo != null) {
+          // The originating secondary window will render the redo/undo toast.
+          // Suppress the duplicate main-window journal-growth toast.
+          container
+              .read(historyOriginUndoProvider.notifier)
+              .mark(redo.undoRecord);
+        }
+        try {
+          final attempt = await container
+              .read(undoControllerProvider)
+              .redo(repoPath);
+          if (redo != null && attempt.status != RedoStatus.done) {
+            container
+                .read(historyOriginUndoProvider.notifier)
+                .take(redo.undoRecord);
+          }
+          final description = attempt.record?.description;
+          if (attempt.status == RedoStatus.done) {
+            container
+                .read(outputLogProvider.notifier)
+                .logInfo('Redid: $description');
+          }
+          return {'status': attempt.status.name, 'description': ?description};
+        } on GitException catch (e) {
+          return {'status': 'error', 'message': '$e'};
+        } catch (e) {
+          return {'status': 'error', 'message': 'Redo failed: $e'};
         }
       case 'settingsChanged':
         // A window persisted a settings edit; adopt it here (each isolate

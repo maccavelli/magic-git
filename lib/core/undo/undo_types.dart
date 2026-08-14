@@ -100,6 +100,59 @@ enum UndoOpKind {
   removeFilePaths,
 }
 
+/// Why an undo kind is or is not eligible for the deliberately narrow Redo
+/// surface. Redo is a safety capability, not a promise to re-run an arbitrary
+/// command: only operations whose complete effect is one compare-and-swap ref
+/// update are admitted.
+enum RedoFeasibility {
+  /// A tag ref can be created/deleted with `git update-ref`'s expected-old-OID
+  /// argument. Validation and replay are therefore one atomic ref transaction.
+  atomicTagRef,
+
+  /// Moving HEAD while preserving the index/worktree needs a precondition over
+  /// multiple independently mutable stores that Git cannot validate atomically.
+  headIndexWorktree,
+
+  /// Checkout and branch creation/deletion interact with per-worktree HEADs;
+  /// no single compare-and-swap covers the ref and every worktree checkout.
+  branchOrCheckout,
+
+  /// The stash is a ref plus a reflog. Its positional mutation commands do not
+  /// expose an expected-list compare-and-swap transaction.
+  stashReflog,
+
+  /// Snapshot-backed operations write index/worktree paths. A shell guard can
+  /// classify dirtiness, but an external process can change a path between the
+  /// guard and replay.
+  snapshotPaths,
+}
+
+extension UndoOpKindRedoFeasibility on UndoOpKind {
+  /// Exhaustive by construction: adding an undo kind is an analyzer error here
+  /// until its redo safety has been assessed explicitly.
+  RedoFeasibility get redoFeasibility => switch (this) {
+    UndoOpKind.createTag ||
+    UndoOpKind.deleteTag => RedoFeasibility.atomicTagRef,
+    UndoOpKind.commit ||
+    UndoOpKind.amend ||
+    UndoOpKind.resetSoft ||
+    UndoOpKind.resetMixed ||
+    UndoOpKind.resetHard => RedoFeasibility.headIndexWorktree,
+    UndoOpKind.checkout ||
+    UndoOpKind.deleteBranch ||
+    UndoOpKind.createBranch => RedoFeasibility.branchOrCheckout,
+    UndoOpKind.stashDrop ||
+    UndoOpKind.stashPop ||
+    UndoOpKind.stashClear ||
+    UndoOpKind.stashBranch => RedoFeasibility.stashReflog,
+    UndoOpKind.discardPaths ||
+    UndoOpKind.discardStagedPaths ||
+    UndoOpKind.removeFilePaths => RedoFeasibility.snapshotPaths,
+  };
+
+  bool get supportsSafeRedo => redoFeasibility == RedoFeasibility.atomicTagRef;
+}
+
 /// The pre/post state one mutation captured, atomically in the same shell
 /// invocation as the mutation itself. All OIDs are full hashes; empty string
 /// means "not applicable" (unborn HEAD, detached HEAD, failed side-capture) —
@@ -231,6 +284,64 @@ class UndoRecord {
   }
 }
 
+/// A replay record created only after [undoRecord] was successfully undone.
+///
+/// Its complete post-undo precondition is the state of one tag ref:
+/// [expectedOid] is either the exact object name currently stored there or the
+/// empty string when the ref must not exist. [replayOid] is the desired state,
+/// with the same empty-string convention for deletion. HEAD, index, worktree,
+/// branches, and the stash list are intentionally absent: tag ref updates do
+/// not read or write them, so changes there are unrelated rather than stale.
+class RedoRecord {
+  final UndoRecord undoRecord;
+  final String refName;
+  final String expectedOid;
+  final String replayOid;
+
+  const RedoRecord({
+    required this.undoRecord,
+    required this.refName,
+    required this.expectedOid,
+    required this.replayOid,
+  });
+
+  String get repoPath => undoRecord.repoPath;
+  String get description => undoRecord.description;
+
+  /// Builds the safe replay for a completed undo, or null when the operation
+  /// is explicitly outside Redo's UI and controller surface.
+  static RedoRecord? afterSuccessfulUndo(UndoRecord record) =>
+      switch (record.kind) {
+        UndoOpKind.createTag => RedoRecord(
+          undoRecord: record,
+          refName: 'refs/tags/${record.refName}',
+          expectedOid: '',
+          replayOid: record.deletedOid,
+        ),
+        UndoOpKind.deleteTag => RedoRecord(
+          undoRecord: record,
+          refName: 'refs/tags/${record.refName}',
+          expectedOid: record.deletedOid,
+          replayOid: '',
+        ),
+        UndoOpKind.commit ||
+        UndoOpKind.amend ||
+        UndoOpKind.resetSoft ||
+        UndoOpKind.resetMixed ||
+        UndoOpKind.checkout ||
+        UndoOpKind.deleteBranch ||
+        UndoOpKind.stashDrop ||
+        UndoOpKind.stashPop ||
+        UndoOpKind.resetHard ||
+        UndoOpKind.createBranch ||
+        UndoOpKind.stashClear ||
+        UndoOpKind.stashBranch ||
+        UndoOpKind.discardPaths ||
+        UndoOpKind.discardStagedPaths ||
+        UndoOpKind.removeFilePaths => null,
+      };
+}
+
 /// The raw pre/post state one `_runCaptured` invocation observed, handed to
 /// the per-mutation `record` builder. Same empty-string conventions as
 /// [UndoRecord]; [extras] holds the op-specific side captures (deleted-ref
@@ -310,4 +421,16 @@ class UndoDirtyException implements Exception {
   @override
   String toString() =>
       'UndoDirtyException: files changed since "${record.description}"';
+}
+
+/// The tag ref no longer matches the exact post-undo state carried by the redo
+/// record. The record must be discarded; replay did not modify the ref.
+class RedoStaleException implements Exception {
+  final RedoRecord record;
+  RedoStaleException(this.record);
+
+  @override
+  String toString() =>
+      'RedoStaleException: repository changed since undoing '
+      '"${record.description}"';
 }
