@@ -39,10 +39,14 @@ enum WindowKind: String {
   case history
   case detachedRepo
 
+  /// Only reached if Dart opens a window without a title — it always sends one
+  /// (`WindowManagerBridge._titleFor`), and the child pushes a refined one via
+  /// `setWindowTitle` once its session lands. Kept in sync with both anyway: a
+  /// detached repo window is status-only, not a full workspace.
   var defaultTitle: String {
     switch self {
     case .history: return "History"
-    case .detachedRepo: return "Repository"
+    case .detachedRepo: return "Status"
     }
   }
 

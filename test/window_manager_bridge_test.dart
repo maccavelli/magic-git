@@ -625,6 +625,61 @@ void main() {
     await deliverControlCall('windowClosed', {'windowId': _id});
     expect(container.read(windowManagerBridgeProvider), isEmpty);
   });
+
+  // Titles. The open-time title is Swift's only source until the child's engine
+  // boots and pushes its own over the bootstrap channel; the two must agree or
+  // the window visibly retitles moments after opening — and keeps the wrong
+  // title for good if the session never lands.
+  test('the open-time title matches what the child will settle on', () async {
+    container = makeContainer(_connected);
+    await openHistory();
+    final open = controlCalls.singleWhere((c) => c.method == 'openWindow');
+    expect((open.arguments as Map)['title'], 'History — repo (Prod)');
+  });
+
+  test('a detached repo window opens as "Status", not "Repo"', () async {
+    container = makeContainer(_connected);
+    await container
+        .read(windowManagerBridgeProvider.notifier)
+        .openDetachedRepo();
+    final open = controlCalls.singleWhere((c) => c.method == 'openWindow');
+    expect((open.arguments as Map)['kind'], WindowKind.detachedRepo.name);
+    expect(
+      (open.arguments as Map)['title'],
+      'Status — repo (Prod)',
+      reason: 'secondary_window_main pushes "Status — …" once its session '
+          'lands; opening as "Repo — …" made the window retitle itself',
+    );
+  });
+
+  test('re-pinning a window retitles it over the hub, never the control '
+      'channel', () async {
+    container = makeContainer(_connected);
+    await openHistory();
+    controlCalls.clear();
+    hubCalls.clear();
+
+    // Move the pinned tab to a different repo — the path that used to also
+    // fire a control-channel `setWindowTitle`.
+    stub.set(
+      const ConnectionState(
+        phase: ConnectionPhase.connected,
+        repoPath: '/srv/other',
+        connectionLabel: 'Prod',
+        host: 'bastion',
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      controlCalls.map((c) => c.method),
+      isNot(contains('setWindowTitle')),
+      reason: 'the control channel has no setWindowTitle case — such a call '
+          'only ever threw MissingPluginException into a swallowing '
+          'catchError. The child retitles itself off connectionChanged.',
+    );
+    expect(hubCalls.map((c) => c.method), contains('connectionChanged'));
+  });
 }
 
 UndoRecord _record() => UndoRecord(

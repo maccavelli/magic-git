@@ -118,4 +118,59 @@ void main() {
     expect(host.busy, isFalse);
     expect(host.refreshes, 0, reason: 'modal flows own their own refreshing');
   });
+
+  // The mirror of 'disposal mid-op': disposal *before* the call. Nearly every
+  // call site reaches these methods straight out of an awaited confirm dialog,
+  // so the view can already be gone on entry — and the first statement of each
+  // is a setState (plus context/ref). Before these guards landed, a discard
+  // confirmed on a tab that closed underneath it threw.
+  testWidgets('runGuarded on a disposed view does not run and does not throw', (
+    tester,
+  ) async {
+    final host = await pumpHost(tester);
+    await tester.pumpWidget(const SizedBox());
+
+    var ran = false;
+    final ok = await host.runGuarded(() async => ran = true);
+
+    expect(ok, isFalse, reason: 'false already means "did not run"');
+    expect(ran, isFalse);
+    expect(host.refreshes, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('runLogged on a disposed view does not run and does not throw', (
+    tester,
+  ) async {
+    final host = await pumpHost(tester);
+    await tester.pumpWidget(const SizedBox());
+
+    var ran = false;
+    final ok = await host.runLogged('git merge', (log) async => ran = true);
+
+    expect(ok, isFalse);
+    expect(ran, isFalse);
+    expect(host.refreshes, 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('holdBusyWhile on a disposed view still runs its body', (
+    tester,
+  ) async {
+    final host = await pumpHost(tester);
+    await tester.pumpWidget(const SizedBox());
+
+    // Unlike the other two it has no "did not run" sentinel — R is the
+    // caller's type. The sheet it wraps is the caller's to cancel, so the body
+    // still runs; only the setState pair is skipped.
+    var ran = false;
+    final result = await host.holdBusyWhile(() async {
+      ran = true;
+      return 7;
+    });
+
+    expect(ran, isTrue);
+    expect(result, 7);
+    expect(tester.takeException(), isNull);
+  });
 }

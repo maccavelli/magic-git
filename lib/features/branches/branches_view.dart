@@ -29,6 +29,7 @@ import '../common/section_collapse.dart';
 import '../common/workspace_focus.dart';
 import '../common/workspace_navigation.dart';
 import '../common/workspace_preferences_binding.dart';
+import '../dnd/drop_registry.dart' show DropZoneId, DropZonePage;
 import '../forge/forge_create_coordinator.dart';
 import '../forge/forge_prefs.dart';
 import '../tabs/tab_ui_providers.dart';
@@ -1014,12 +1015,26 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     );
   }
 
-  void _openHistory(GitRef branch) {
+  /// Hands the branch off to History as a one-shot revision scope.
+  ///
+  /// Seeds the **main shell's** mount, not [repoPath] — this view is also
+  /// embedded per-worktree (`worktrees_view.dart`), and `select`/`visit` below
+  /// always drive the main shell's page stack. Seeding the worktree path from
+  /// there left an intent the main `HistoryView` rejects on its mount check
+  /// *without clearing it*, so the click looked inert and the stale intent was
+  /// later silently consumed by that worktree's own History sub-page. Mirrors
+  /// [openCreateChangeRequest]'s `forgeMountRepoPath` resolution.
+  Future<void> _openHistory(GitRef branch) async {
+    final mountRepoPath = ref.read(connectionProvider).repoPath;
+    if (mountRepoPath == null || mountRepoPath.isEmpty) {
+      await showErrorDialog(context, 'No repository is connected.');
+      return;
+    }
     ref
         .read(historyNavigationIntentProvider.notifier)
-        .set(repoPath, branch.shortName);
-    ref.read(pageIndexProvider.notifier).select(1);
-    ref.read(visitedPagesProvider.notifier).visit(1);
+        .set(mountRepoPath, branch.shortName);
+    ref.read(pageIndexProvider.notifier).select(DropZoneId.history.pageIndex);
+    ref.read(visitedPagesProvider.notifier).visit(DropZoneId.history.pageIndex);
   }
 
   Future<void> _openOnForge(GitRef branch) async {

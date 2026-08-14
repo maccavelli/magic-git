@@ -219,6 +219,110 @@ void main() {
     );
   });
 
+  test('a redundant rejectHostKeyChange is a no-op, so the dialog dismissal '
+      'handler can always fail closed without racing the buttons', () async {
+    final manager = _VerifyingManager()
+      ..keyType = 'ssh-ed25519'
+      ..fingerprintBytes = utf8.encode('SHA256:NEWNEWNEWNEWNEWNEWNE');
+    final container = containerWith(manager);
+    await container
+        .read(knownHostsStoreProvider)
+        .remember(
+          'h',
+          22,
+          const KnownHostEntry(
+            keyType: 'ssh-ed25519',
+            fingerprint: 'SHA256:OLDOLDOLDOLDOLDOLDOL',
+          ),
+        );
+    final controller = container.read(connectionProvider.notifier);
+
+    final connecting = controller.connect(profile: profile, repoPath: '/repo');
+    await Future<void>.delayed(Duration.zero);
+
+    // AppShell's `.then` fires after the button handler already decided; the
+    // isCompleted guard must absorb the second call rather than throwing on an
+    // already-completed Completer.
+    controller.rejectHostKeyChange();
+    controller.rejectHostKeyChange();
+    await connecting;
+
+    expect(container.read(connectionProvider).phase,
+        ConnectionPhase.disconnected);
+    expect(container.read(connectionProvider).error, isNull);
+  });
+
+  test('accepting then a stray reject does not flip the decision — the first '
+      'completion wins', () async {
+    final manager = _VerifyingManager()
+      ..keyType = 'ssh-ed25519'
+      ..fingerprintBytes = utf8.encode('SHA256:NEWNEWNEWNEWNEWNEWNE');
+    final container = containerWith(manager);
+    await container
+        .read(knownHostsStoreProvider)
+        .remember(
+          'h',
+          22,
+          const KnownHostEntry(
+            keyType: 'ssh-ed25519',
+            fingerprint: 'SHA256:OLDOLDOLDOLDOLDOLDOL',
+          ),
+        );
+    final controller = container.read(connectionProvider.notifier);
+
+    final connecting = controller.connect(profile: profile, repoPath: '/repo');
+    await Future<void>.delayed(Duration.zero);
+
+    controller.acceptHostKeyChange();
+    // The dismissal handler's unconditional reject must not undo the accept.
+    controller.rejectHostKeyChange();
+    await connecting;
+
+    final stored = await container
+        .read(knownHostsStoreProvider)
+        .lookup('h', 22);
+    expect(
+      stored!.fingerprint,
+      'SHA256:NEWNEWNEWNEWNEWNEWNE',
+      reason: 'the accepted key must still have been remembered',
+    );
+  });
+
+  test('a dismissal with no decision still resolves the connect — the verify '
+      'future must never be left parked forever', () async {
+    final manager = _VerifyingManager()
+      ..keyType = 'ssh-ed25519'
+      ..fingerprintBytes = utf8.encode('SHA256:NEWNEWNEWNEWNEWNEWNE');
+    final container = containerWith(manager);
+    await container
+        .read(knownHostsStoreProvider)
+        .remember(
+          'h',
+          22,
+          const KnownHostEntry(
+            keyType: 'ssh-ed25519',
+            fingerprint: 'SHA256:OLDOLDOLDOLDOLDOLDOL',
+          ),
+        );
+    final controller = container.read(connectionProvider.notifier);
+
+    final connecting = controller.connect(profile: profile, repoPath: '/repo');
+    await Future<void>.delayed(Duration.zero);
+    expect(container.read(connectionProvider).hostKeyPrompt, isNotNull);
+
+    // Exactly what AppShell's `.then` does when the route was popped without a
+    // button press. Before this shipped, nothing ran here and `connecting`
+    // never completed — the bug was a silent permanent hang, so assert on
+    // resolution rather than on a thrown error.
+    controller.rejectHostKeyChange();
+
+    await connecting.timeout(
+      const Duration(seconds: 5),
+      onTimeout: () => fail('connect() never resolved after dialog dismissal'),
+    );
+    expect(container.read(connectionProvider).hostKeyPrompt, isNull);
+  });
+
   test('a host-key mismatch during an auto-reconnect attempt pauses the retry '
       'loop instead of retrying forever', () {
     fakeAsync((async) {

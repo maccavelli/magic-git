@@ -30,7 +30,11 @@ import 'actions.dart';
 ///    in-progress state now, not on some later unrelated refresh.
 ///  * **Nothing after disposal.** The refresh and the busy reset both touch
 ///    `ref`/`setState`, so the whole finally block is mounted-guarded — a
-///    view can be torn down while a slow operation is in flight.
+///    view can be torn down while a slow operation is in flight. The *entry*
+///    is guarded for the same reason: nearly every call site arrives straight
+///    out of an awaited confirm dialog, by which point the view may already be
+///    gone, and the first thing each method does is `setState` (plus `context`
+///    or `ref`).
 mixin BusyActionState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
   bool _busy = false;
 
@@ -50,7 +54,13 @@ mixin BusyActionState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
     Future<void> Function() op, {
     void Function()? onSuccess,
   }) async {
-    if (_busy) return false;
+    // `!mounted` shares the `_busy` early-out: both mean "did not run", which
+    // is what the bool already communicates, so no caller changes. Most call
+    // sites reach this straight out of an awaited confirm dialog — the view
+    // can be gone by then, and both `setState` and `context` below would
+    // throw. Roughly half the call sites remember their own `if (!mounted)`;
+    // guarding here covers the rest for good.
+    if (_busy || !mounted) return false;
     setState(() => _busy = true);
     try {
       final ok = await runAction(context, op);
@@ -68,7 +78,13 @@ mixin BusyActionState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
   /// contract — for modal flows (e.g. History's rebase sheet) where a sheet
   /// owns the interaction and its own refreshing, but the panel underneath
   /// must stay inert (shortcuts and buttons disabled) until it closes.
+  /// Unlike [runGuarded]/[runLogged] this cannot report "did not run" — `R` is
+  /// caller-chosen and has no sentinel. So a disposed view still runs [body]
+  /// (the sheet or flow it wraps is the caller's, not ours, to cancel) and
+  /// only the two `setState` calls are skipped: there is no gate left to hold
+  /// once the panel is gone.
   Future<R> holdBusyWhile<R>(Future<R> Function() body) async {
+    if (!mounted) return body();
     setState(() => _busy = true);
     try {
       return await body();
@@ -94,7 +110,9 @@ mixin BusyActionState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
     String? Function(Object error)? describeError,
     bool dock = false,
   }) async {
-    if (_busy) return false;
+    // See [runGuarded]: `ref.read` below is as unsafe post-dispose as
+    // `setState`, and most callers arrive here from an awaited dialog.
+    if (_busy || !mounted) return false;
     setState(() => _busy = true);
     final log = ref.read(outputLogProvider.notifier);
     var success = false;

@@ -623,6 +623,10 @@ class _AppShellState extends ConsumerState<AppShell> {
     _hostKeyDialogOpen = true;
     showMacosAlertDialog<void>(
       context: context,
+      // Stated explicitly rather than inherited from the macos_ui default: the
+      // fail-closed reject below is the safety net, but a decision this
+      // consequential should not be dismissible by a stray barrier tap at all.
+      barrierDismissible: false,
       builder: (dialogContext) {
         // Capture this dialog's own route so the listener can target it
         // precisely rather than blindly popping the navigator.
@@ -656,6 +660,16 @@ class _AppShellState extends ConsumerState<AppShell> {
         );
       },
     ).then((_) {
+      // Fail closed on ANY dismissal. `_verifyHostKey` is parked on a
+      // Completer that only accept/reject completes; a pop that isn't a button
+      // press (the listener's own pop when the prompt clears elsewhere, a
+      // route teardown, a future disconnect path) would otherwise leave that
+      // future unresolved forever — the connect neither succeeds nor fails,
+      // and because `hostKeyPrompt` stays non-null the listener's
+      // `previous == null` guard stops the dialog ever being shown again.
+      // Both decisions guard on `isCompleted`, so this is a no-op when a
+      // button already decided, and rejecting is the safe default otherwise.
+      ref.read(connectionProvider.notifier).rejectHostKeyChange();
       _hostKeyDialogOpen = false;
       _hostKeyDialogRoute = null;
     });

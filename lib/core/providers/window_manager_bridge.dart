@@ -316,16 +316,18 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
       (_, next) => _onWindowConnectionChanged(windowId, next),
     );
     _subscribeTick(windowId, container, conn.repoPath);
+    // The child retitles itself: `connectionChanged` runs its `_applySession`,
+    // which ends by pushing `setWindowTitle` over its own bootstrap channel.
+    // There is deliberately no title call from here — the `magicgit/windows`
+    // control channel has no `setWindowTitle` case (MainFlutterWindow.swift
+    // ends in FlutterMethodNotImplemented), so one used to throw a
+    // MissingPluginException into a swallowing `.catchError`.
     _hubs[windowId]
         ?.invokeMethod<void>(
           'connectionChanged',
           _snapshotFor(updated, conn).encode(),
         )
         .catchError((_) {});
-    _invokeControl('setWindowTitle', {
-      'windowId': windowId,
-      'title': _titleFor(updated, conn),
-    }).catchError((_) {});
   }
 
   /// Subscribes a freshly-opened window to its pinned tab's connection + file
@@ -517,9 +519,17 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
         host: c.host,
       );
 
+  /// The window's title at open time, before its engine has booted far enough
+  /// to push one itself.
+  ///
+  /// Must use the SAME prefixes the child settles on (`secondary_window_main`'s
+  /// `_applySession`), or the window visibly retitles a frame or two after
+  /// opening — and keeps the wrong title for good if the session never lands.
+  /// A detached repo window is status-only, not a full workspace, hence
+  /// "Status" rather than "Repo".
   String _titleFor(WindowHandle handle, ConnectionState c) {
     final repoName = handle.repoPath?.split('/').last;
-    final prefix = handle.kind == WindowKind.history ? 'History' : 'Repo';
+    final prefix = handle.kind == WindowKind.history ? 'History' : 'Status';
     if (repoName == null) return prefix;
     final label = c.connectionLabel == null ? '' : ' (${c.connectionLabel})';
     return '$prefix — $repoName$label';
