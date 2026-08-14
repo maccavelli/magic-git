@@ -155,25 +155,101 @@ Map<String, BranchForge> _merge(
 /// (or while auth/data is still resolving, or on any error). Watches the same
 /// PR/MR + CI providers the Forge tab uses, so it shares their cache and
 /// refresh rather than issuing its own calls.
+///
+/// **Decorative use only.** Every failure mode collapses to `const {}` — no
+/// forge, unknown forge, network down, auth expired, rate limited, and a repo
+/// that genuinely has no open requests are indistinguishable, and `hasError`
+/// is never true. That is fine for painting a badge (absent signal → no
+/// badge) and wrong for anything that reasons about *absence*. Use
+/// [branchForgeKnowledgeProvider] for that.
 final branchForgeProvider = FutureProvider.autoDispose
     .family<Map<String, BranchForge>, String>((ref, repoPath) async {
+      final knowledge = await ref.watch(
+        branchForgeKnowledgeProvider(repoPath).future,
+      );
+      return knowledge.byShortName;
+    });
+
+/// What we know about a repo's forge state — and whether we know it at all.
+///
+/// The distinction [branchForgeProvider] cannot express: "this branch has no
+/// open request" is only true when the forge actually answered. A facet like
+/// "No request" built on an empty-on-error map would list every branch in the
+/// repo the moment the network blipped.
+class BranchForgeKnowledge {
+  final Map<String, BranchForge> byShortName;
+
+  /// True only when a forge was identified AND both its request list and its
+  /// CI list came back without throwing. An empty map with [known] true means
+  /// "genuinely nothing open"; with [known] false it means "we have no idea".
+  final bool known;
+
+  final Forge forge;
+
+  const BranchForgeKnowledge({
+    this.byShortName = const {},
+    this.known = false,
+    this.forge = Forge.unknown,
+  });
+
+  /// Nothing was reachable.
+  static const unavailable = BranchForgeKnowledge();
+}
+
+/// The typed sibling of [branchForgeProvider]: the same data, plus whether it
+/// can be trusted.
+///
+/// `Forge.none` counts as **known**: a repo with no forge remote definitively
+/// has no open requests, which is a real answer rather than a gap. Only a
+/// detection failure, an unknown host, or a throwing list is `known: false`.
+///
+/// Deliberately absent from `repoScopedFetchFamilies`, like
+/// [branchForgeProvider]: this file imports `app_providers.dart`, so
+/// registering there would be a circular import — and it is unnecessary.
+/// Every upstream (`forgeProvider`, the PR/MR lists, the CI lists) is
+/// registered, and an autoDispose provider that watches them recomputes when
+/// they are invalidated.
+final branchForgeKnowledgeProvider = FutureProvider.autoDispose
+    .family<BranchForgeKnowledge, String>((ref, repoPath) async {
+      final Forge forge;
       try {
-        final forge = await ref.watch(forgeProvider(repoPath).future);
-        switch (forge) {
-          case Forge.github:
-            final prs = await ref.watch(pullRequestsProvider(repoPath).future);
-            final runs = await ref.watch(workflowRunsProvider(repoPath).future);
-            return _combineGithub(prs, runs);
-          case Forge.gitlab:
-            final mrs = await ref.watch(mergeRequestsProvider(repoPath).future);
-            final pipes = await ref.watch(pipelinesProvider(repoPath).future);
-            return _combineGitlab(mrs, pipes);
-          case Forge.none:
-          case Forge.unknown:
-            return const {};
-        }
+        forge = await ref.watch(forgeProvider(repoPath).future);
       } catch (_) {
-        // Forge unreachable / unauthenticated / no remote — no signal, no error.
-        return const {};
+        return BranchForgeKnowledge.unavailable;
+      }
+
+      switch (forge) {
+        case Forge.github:
+          try {
+            final prs = await ref.watch(pullRequestsProvider(repoPath).future);
+            final runs = await ref.watch(
+              workflowRunsProvider(repoPath).future,
+            );
+            return BranchForgeKnowledge(
+              byShortName: _combineGithub(prs, runs),
+              known: true,
+              forge: forge,
+            );
+          } catch (_) {
+            return BranchForgeKnowledge(forge: forge);
+          }
+        case Forge.gitlab:
+          try {
+            final mrs = await ref.watch(
+              mergeRequestsProvider(repoPath).future,
+            );
+            final pipes = await ref.watch(pipelinesProvider(repoPath).future);
+            return BranchForgeKnowledge(
+              byShortName: _combineGitlab(mrs, pipes),
+              known: true,
+              forge: forge,
+            );
+          } catch (_) {
+            return BranchForgeKnowledge(forge: forge);
+          }
+        case Forge.none:
+          return const BranchForgeKnowledge(known: true, forge: Forge.none);
+        case Forge.unknown:
+          return const BranchForgeKnowledge(forge: Forge.unknown);
       }
     });

@@ -214,6 +214,11 @@ class BranchNavigator extends ConsumerStatefulWidget {
   final bool grouped;
   final Set<String> collapsedFolders;
   final bool showStale;
+
+  /// Whether hidden branches are currently revealed. Paired with
+  /// [onToggleShowHidden]; the toggle is only offered when it can do
+  /// something (something is hidden, or hidden rows are on screen).
+  final bool showHidden;
   final BranchWorkspaceMode mode;
   final AsyncValue<BranchBaseResolution>? baseState;
   final AsyncValue<BranchReviewBatchResult>? review;
@@ -240,6 +245,11 @@ class BranchNavigator extends ConsumerStatefulWidget {
   final void Function(String) onToggleFolder;
   final void Function() onToggleGrouped;
   final void Function() onToggleShowStale;
+  final void Function() onToggleShowHidden;
+
+  /// Short names currently hidden — drives the per-row Unhide entry.
+  final Set<String> hiddenNames;
+  final void Function(String shortName) onUnhide;
   final void Function() onShowAllTags;
   final void Function() onShowAllRemotes;
   final void Function(GitService, GitRef) onCheckout;
@@ -317,6 +327,10 @@ class BranchNavigator extends ConsumerStatefulWidget {
     required this.onToggleFolder,
     required this.onToggleGrouped,
     required this.onToggleShowStale,
+    required this.onToggleShowHidden,
+    required this.onUnhide,
+    this.showHidden = false,
+    this.hiddenNames = const {},
     required this.onShowAllTags,
     required this.onShowAllRemotes,
     required this.onCheckout,
@@ -953,6 +967,27 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
                 color: widget.grouped ? MacosColors.systemBlueColor : null,
                 onPressed: widget.onToggleGrouped,
               ),
+              // Offered in BOTH modes: hiding is reachable from Review, so
+              // revealing must not be Review-only or a hidden branch would be
+              // unrecoverable from Browse.
+              if (widget.showHidden || widget.vm.hiddenLocalCount > 0) ...[
+                const SizedBox(width: 2),
+                ToolIconButton(
+                  icon: widget.showHidden
+                      ? CupertinoIcons.eye
+                      : CupertinoIcons.eye_slash,
+                  tooltip: widget.showHidden
+                      ? 'Showing hidden branches (click to hide them again)'
+                      : '${widget.vm.hiddenLocalCount} hidden '
+                            '${widget.vm.hiddenLocalCount == 1 ? 'branch' : 'branches'}'
+                            ' (click to show)',
+                  size: 15,
+                  color: widget.showHidden
+                      ? MacosColors.systemBlueColor
+                      : null,
+                  onPressed: widget.onToggleShowHidden,
+                ),
+              ],
               const SizedBox(width: 2),
               ToolIconButton(
                 icon: CupertinoIcons.arrow_2_circlepath,
@@ -1806,6 +1841,15 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
         label: isPinned ? 'Unpin' : 'Pin to top',
         onTap: () => widget.onTogglePin(b.shortName),
       ),
+      // Only while hidden rows are revealed — that is the one moment a hidden
+      // branch is on screen to right-click, and without it hiding would be a
+      // one-way door.
+      if (widget.showHidden && widget.hiddenNames.contains(b.shortName))
+        ContextMenuItem(
+          icon: CupertinoIcons.eye,
+          label: 'Unhide',
+          onTap: () => widget.onUnhide(b.shortName),
+        ),
       ContextMenuItem(
         icon: CupertinoIcons.doc_on_doc,
         label: 'Copy name',

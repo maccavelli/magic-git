@@ -12,7 +12,14 @@ import 'git_service.dart';
 const int kBranchStaleDays = 90;
 
 /// Whether [branch] is stale relative to [now] using [GitRef.creatorDate].
-bool isBranchStaleForReview(
+///
+/// Current HEAD is never stale. Missing creator dates are not stale.
+///
+/// The single definition: `branch_dashboard_stats.dart` re-exports this rather
+/// than keeping its own copy. Two byte-identical copies used to exist, which
+/// compiled only because no library imported both — the moment one did, the
+/// name became an ambiguous import.
+bool isBranchStale(
   GitRef branch, {
   DateTime? now,
   int staleDays = kBranchStaleDays,
@@ -234,17 +241,20 @@ class BranchReviewRowContext {
   });
 }
 
+/// [now] is threaded so staleness is testable against a pinned clock rather
+/// than the wall clock.
 bool matchesBranchReviewFacets(
   BranchReviewRowContext ctx,
-  BranchReviewFacets facets,
-) {
+  BranchReviewFacets facets, {
+  DateTime? now,
+}) {
   final b = ctx.branch;
   if (facets.mergedIntoBase != null) {
     final merged = ctx.summary?.mergedIntoBase ?? false;
     if (merged != facets.mergedIntoBase) return false;
   }
   if (facets.stale != null) {
-    if (isBranchStaleForReview(b) != facets.stale) return false;
+    if (isBranchStale(b, now: now) != facets.stale) return false;
   }
   if (facets.hasRequest != null) {
     // Negative "no request" requires known forge data.
@@ -293,8 +303,9 @@ bool _matchesMine(BranchReviewRowContext ctx) {
 
 bool matchesBranchSearchTokens(
   BranchReviewRowContext ctx,
-  List<BranchSearchToken> tokens,
-) {
+  List<BranchSearchToken> tokens, {
+  DateTime? now,
+}) {
   if (tokens.isEmpty) return true;
   for (final t in tokens) {
     switch (t) {
@@ -306,7 +317,7 @@ bool matchesBranchSearchTokens(
         final name = (ctx.branch.authorName ?? '').toLowerCase();
         if (!email.contains(q) && !name.contains(q)) return false;
       case StatusSearchToken(:final status):
-        if (!_matchesStatus(ctx, status)) return false;
+        if (!_matchesStatus(ctx, status, now: now)) return false;
     }
   }
   return true;
@@ -326,12 +337,12 @@ bool _matchesPlain(BranchReviewRowContext ctx, String q) {
   return false;
 }
 
-bool _matchesStatus(BranchReviewRowContext ctx, String status) {
+bool _matchesStatus(BranchReviewRowContext ctx, String status, {DateTime? now}) {
   final b = ctx.branch;
   return switch (status) {
     'current' => b.isHead,
     'pinned' => ctx.pinned,
-    'stale' => isBranchStaleForReview(b),
+    'stale' => isBranchStale(b, now: now),
     'merged' => ctx.summary?.mergedIntoBase ?? false,
     'conflict' => ctx.conflictKnown,
     'unpublished' => b.upstream == null || b.upstreamGone,

@@ -100,6 +100,11 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   /// Stale local branches collapse behind a summary row.
   bool _showStale = false;
 
+  /// Session-local override for the persisted `showHidden` preference, so the
+  /// toggle responds immediately rather than waiting on the prefs round trip.
+  /// Mirrors [_groupedOverride]; cleared on repo switch.
+  bool? _showHiddenOverride;
+
   static const int _collapsedTagCount = 10;
   bool _showAllTags = false;
 
@@ -125,6 +130,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         _showAllTags = false;
         _showAllRemotes = false;
         _showStale = false;
+        _showHiddenOverride = null;
         _selectedRef = null;
         _modeOverride = null;
         _reviewFilter = BranchReviewQuickFilter.all;
@@ -214,6 +220,12 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         ref.watch(mergedBranchesProvider(repoPath)).value ?? const <String>{};
     final pinned =
         ref.watch(pinnedBranchesProvider(repoPath)).value ?? const <String>{};
+    final hidden =
+        ref.watch(hiddenBranchesProvider(repoPath)).value ?? const <String>{};
+    final showHidden =
+        _showHiddenOverride ??
+        ref.watch(showHiddenBranchesProvider(repoPath)).value ??
+        false;
     final collapsedSections = ref.watch(collapsedSectionsProvider);
     final remoteTags = ref.watch(remoteTagsProvider(repoPath)).value;
     final remotesList = ref.watch(remotesProvider(repoPath)).value;
@@ -288,6 +300,8 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       collapsedSections: effectiveCollapsedSections,
       filterLower: _filterCtl.text.trim().toLowerCase(),
       showStale: _showStale,
+      hidden: hidden,
+      showHidden: showHidden,
       showAllTags: _showAllTags,
       showAllRemotes: _showAllRemotes,
       grouped: grouped,
@@ -414,6 +428,16 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         );
       },
       onToggleShowStale: () => setState(() => _showStale = !_showStale),
+      showHidden: showHidden,
+      hiddenNames: hidden,
+      onUnhide: (name) => unawaited(_unhideBranch(name)),
+      onToggleShowHidden: () {
+        final next = !showHidden;
+        setState(() => _showHiddenOverride = next);
+        unawaited(
+          _updateWorkspacePrefs((prefs) => prefs.copyWith(showHidden: next)),
+        );
+      },
       onShowAllTags: () => setState(() => _showAllTags = true),
       onShowAllRemotes: () => setState(() => _showAllRemotes = true),
       onCheckout: (g, r) => _checkout(g, r.shortName),
@@ -620,13 +644,15 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   }
 
   Future<void> _batchHide(BranchViewModel vm) async {
-    // Skip current/default/pinned/worktree-held — report as skipped by omitting.
     final baseName = ref
         .read(branchBaseProvider((repoPath: repoPath, allowForgeFetch: false)))
         .value
         ?.base
         ?.displayName;
     final hide = <String>{};
+    // Skipping silently reads as "the button did nothing" when the whole
+    // selection is ineligible, so collect reasons and say so.
+    final skipped = <String, String>{};
     for (final full in _multiSel.ordered) {
       if (!full.startsWith('refs/heads/')) continue;
       final short = full.substring('refs/heads/'.length);
@@ -634,25 +660,64 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           .where((r) => r.shortName == short)
           .firstOrNull;
       if (refEntry == null) continue;
-      if (refEntry.isHead) continue;
-      if (refEntry.worktreePath != null ||
-          refEntry.elsewhereWorktreePath != null) {
+      if (refEntry.isHead) {
+        skipped[short] = 'current branch';
         continue;
       }
-      if (vm.pinned.contains(short)) continue;
-      if (baseName != null && short == baseName) continue;
+      if (refEntry.worktreePath != null ||
+          refEntry.elsewhereWorktreePath != null) {
+        skipped[short] = 'checked out in a worktree';
+        continue;
+      }
+      if (vm.pinned.contains(short)) {
+        skipped[short] = 'pinned';
+        continue;
+      }
+      if (baseName != null && short == baseName) {
+        skipped[short] = 'comparison base';
+        continue;
+      }
       hide.add(short);
     }
-    if (hide.isEmpty) return;
+    if (hide.isEmpty) {
+      if (skipped.isNotEmpty && mounted) {
+        await showErrorDialog(
+          context,
+          'Nothing was hidden.\n\n'
+          '${skipped.entries.map((e) => '${e.key} — ${e.value}').join('\n')}',
+        );
+      }
+      return;
+    }
     await _updateWorkspacePrefs((prefs) {
       final next = {...prefs.hiddenBranchNames, ...hide}.toList()..sort();
       return prefs.copyWith(hiddenBranchNames: next);
     });
+    ref.invalidate(hiddenBranchesProvider(repoPath));
     // Collapse multi-selection to surviving visible primary.
     setState(() {
       _multiSel = BranchMultiSelection.empty;
       _selectedRef = null;
     });
+    if (skipped.isNotEmpty && mounted) {
+      await showErrorDialog(
+        context,
+        'Hid ${hide.length} '
+        '${hide.length == 1 ? 'branch' : 'branches'}. Skipped:\n\n'
+        '${skipped.entries.map((e) => '${e.key} — ${e.value}').join('\n')}',
+      );
+    }
+  }
+
+  /// Restores a hidden branch. Reachable only while hidden rows are shown,
+  /// which is what keeps hiding reversible.
+  Future<void> _unhideBranch(String shortName) async {
+    await _updateWorkspacePrefs((prefs) {
+      final next = prefs.hiddenBranchNames.where((n) => n != shortName).toList()
+        ..sort();
+      return prefs.copyWith(hiddenBranchNames: next);
+    });
+    ref.invalidate(hiddenBranchesProvider(repoPath));
   }
 
   Future<void> _bulkDeleteSelected(

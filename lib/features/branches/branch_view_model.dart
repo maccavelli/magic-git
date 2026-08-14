@@ -80,6 +80,11 @@ class BranchViewModel {
   final int hiddenTags;
   final int hiddenRemotes;
 
+  /// Local branches withheld by the user's hide list right now. Non-zero only
+  /// while hidden branches are NOT being shown — the count the navigator
+  /// offers as a reveal affordance, so a hidden branch is never unrecoverable.
+  final int hiddenLocalCount;
+
   final bool pinnedCollapsed;
   final bool localCollapsed;
   final bool remoteCollapsed;
@@ -116,6 +121,7 @@ class BranchViewModel {
     required this.visibleTags,
     required this.visibleRemotes,
     required this.totalLocals,
+    this.hiddenLocalCount = 0,
     required this.totalRemotes,
     required this.hiddenTags,
     required this.hiddenRemotes,
@@ -189,6 +195,11 @@ class BranchViewModel {
     required Set<String> collapsedSections,
     required String filterLower,
     required bool showStale,
+    /// Short names the user has hidden. Filtered out of every derived list
+    /// unless [showHidden]; see [hiddenLocalCount] for the count to offer as
+    /// a reveal affordance.
+    Set<String> hidden = const {},
+    bool showHidden = false,
     required bool showAllTags,
     required bool showAllRemotes,
     required bool grouped,
@@ -211,13 +222,32 @@ class BranchViewModel {
     final remoteCollapsed = sectionCollapsed(remoteSectionKey);
     final tagsCollapsed = sectionCollapsed(tagsSectionKey);
 
-    final totalLocals = refs.where((r) => r.isLocalBranch).length;
     final totalRemotes = refs.where((r) => r.isRemote).length;
     final allLocalBranches = refs.where((r) => r.isLocalBranch).toList();
     final allRemoteBranches = refs.where((r) => r.isRemote).toList();
     final localBranchNames = {for (final r in allLocalBranches) r.shortName};
 
-    final filteredLocals = allLocalBranches
+    // The ONE seam every local-branch list flows through: the pinned/active/
+    // stale partition, localsOnScreen, navigable, both row builders, and
+    // range-select visibility all derive from this. Hiding here keeps the
+    // navigator and the shift-range list in lockstep for free.
+    //
+    // `allLocalBranches` stays unfiltered on purpose — Hide, bulk delete, the
+    // conflict scan and the base selector all operate on the true set.
+    final hiddenLocals = showHidden
+        ? const <GitRef>[]
+        : allLocalBranches.where((r) => hidden.contains(r.shortName)).toList();
+    final visibleLocals = hiddenLocals.isEmpty
+        ? allLocalBranches
+        : allLocalBranches
+              .where((r) => !hidden.contains(r.shortName))
+              .toList();
+    // The section header's denominator counts what is *showable*, not what
+    // exists — otherwise "Local Branches (10 of 12)" would render ten rows
+    // with no filter applied and no explanation for the missing two.
+    // `hiddenLocalCount` reports those separately.
+    final totalLocals = visibleLocals.length;
+    final filteredLocals = visibleLocals
         .where((r) => branchNameMatchesFilter(r, filterLower))
         .toList();
     final filteredRemotes = refs
@@ -284,6 +314,7 @@ class BranchViewModel {
       refs: refs,
       pinnedShortNames: pinned,
       mergedShortNames: merged,
+      hiddenShortNames: showHidden ? const {} : hidden,
       filterLower: filterLower,
       now: now,
     );
@@ -306,6 +337,7 @@ class BranchViewModel {
       visibleTags: visibleTags,
       visibleRemotes: visibleRemotes,
       totalLocals: totalLocals,
+      hiddenLocalCount: hiddenLocals.length,
       totalRemotes: totalRemotes,
       hiddenTags: hiddenTags,
       hiddenRemotes: hiddenRemotes,

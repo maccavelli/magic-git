@@ -1,4 +1,13 @@
+import '../../core/git/branch_review_query.dart';
 import '../../core/git/git_service.dart';
+
+/// The staleness policy lives in `branch_review_query.dart` (core) and is
+/// re-exported so this file stays the single import Branches UI code needs.
+/// It used to be duplicated verbatim in both places, which compiled only for
+/// as long as no library imported both — the moment one did, the name became
+/// an ambiguous import.
+export '../../core/git/branch_review_query.dart'
+    show kBranchStaleDays, isBranchStale;
 
 /// Pure dashboard counts for the Branches empty-state (and later Review chips).
 ///
@@ -26,27 +35,6 @@ class BranchDashboardStats {
     required this.tags,
     required this.mergedDeletable,
   });
-}
-
-/// Policy: local branches with no commit activity for this many days are
-/// "stale" (current HEAD is never stale). Matches the existing UI copy
-/// ("no commit in 3 months").
-const int kBranchStaleDays = 90;
-
-/// Whether [branch] is stale relative to [now] using [GitRef.creatorDate].
-///
-/// Current HEAD is never stale. Missing creator dates are not stale.
-bool isBranchStale(
-  GitRef branch, {
-  DateTime? now,
-  int staleDays = kBranchStaleDays,
-}) {
-  if (branch.isHead) return false;
-  final c = branch.creatorDate;
-  if (c == null) return false;
-  final then = DateTime.fromMillisecondsSinceEpoch(c * 1000);
-  final age = (now ?? DateTime.now()).difference(then);
-  return age.inDays > staleDays;
 }
 
 /// Substring filter on [GitRef.shortName] (case-insensitive). Empty filter
@@ -98,13 +86,23 @@ String relativeIsoLabel(String iso, {DateTime? now}) {
 /// [filterLower] is applied to short names the same way the navigator does.
 /// [pinnedShortNames] are local short names in the pin set.
 /// [mergedShortNames] is the HEAD-relative merged set (may be empty on error).
+/// [hiddenShortNames] are local branches the user has hidden — excluded from
+/// every count here too, or the dashboard would keep counting rows the
+/// navigator no longer shows.
 BranchDashboardStats buildBranchDashboardStats({
   required List<GitRef> refs,
   required Set<String> pinnedShortNames,
   required Set<String> mergedShortNames,
+  Set<String> hiddenShortNames = const {},
   String filterLower = '',
   DateTime? now,
 }) {
+  bool visible(GitRef r) =>
+      !r.isLocalBranch || !hiddenShortNames.contains(r.shortName);
+  refs = [
+    for (final r in refs)
+      if (visible(r)) r,
+  ];
   final totalLocals = refs.where((r) => r.isLocalBranch).length;
   final totalRemotes = refs.where((r) => r.isRemote).length;
   final allTags = refs.where((r) => r.isTag).toList();

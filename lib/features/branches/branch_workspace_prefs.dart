@@ -262,23 +262,28 @@ Future<BranchWorkspacePrefs> updateBranchWorkspacePrefs({
 }
 
 /// Merge [incoming] into [current], preserving fields the user has already
-/// touched this session (mode, base, pins when [touched] is set).
+/// touched this session (mode, base, pins, hides when [touched] is set).
 ///
-/// [touchedMode], [touchedBase], [touchedPins] mark fields that must not be
-/// clobbered by a late prefs load.
+/// [touchedMode], [touchedBase], [touchedPins], [touchedHidden] mark fields
+/// that must not be clobbered by a late prefs load.
 BranchWorkspacePrefs mergeLateLoadedPrefs({
   required BranchWorkspacePrefs current,
   required BranchWorkspacePrefs incoming,
   bool touchedMode = false,
   bool touchedBase = false,
   bool touchedPins = false,
+  bool touchedHidden = false,
 }) {
   return BranchWorkspacePrefs(
     version: incoming.version,
     pinnedBranchNames: touchedPins
         ? current.pinnedBranchNames
         : incoming.pinnedBranchNames,
-    hiddenBranchNames: incoming.hiddenBranchNames,
+    // Protected like pins: hiding is a deliberate act, and losing it to a
+    // slow prefs load would silently resurrect rows the user just dismissed.
+    hiddenBranchNames: touchedHidden
+        ? current.hiddenBranchNames
+        : incoming.hiddenBranchNames,
     grouped: incoming.grouped,
     collapsedSections: incoming.collapsedSections,
     collapsedFolderPrefixes: incoming.collapsedFolderPrefixes,
@@ -288,6 +293,6 @@ BranchWorkspacePrefs mergeLateLoadedPrefs({
     selectedBaseRefName: touchedBase
         ? current.selectedBaseRefName
         : incoming.selectedBaseRefName,
-    showHidden: incoming.showHidden,
+    showHidden: touchedHidden ? current.showHidden : incoming.showHidden,
   );
 }

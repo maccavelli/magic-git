@@ -36,6 +36,39 @@ final pinnedBranchesProvider = FutureProvider.autoDispose
       }
     });
 
+/// The set of hidden branch short-names for [repoPath]. Empty on any error.
+///
+/// Twin of [pinnedBranchesProvider] — same shape, same failure posture. There
+/// is no legacy fallback because hiding never had a path-keyed predecessor.
+final hiddenBranchesProvider = FutureProvider.autoDispose
+    .family<Set<String>, String>((ref, repoPath) async {
+      try {
+        if (ref.watch(connectionProvider).sessionEpoch <= 0) {
+          return <String>{};
+        }
+        final prefs = await ref.watch(
+          branchWorkspacePrefsProvider(repoPath).future,
+        );
+        return prefs.hiddenBranchNames.toSet();
+      } catch (_) {
+        return <String>{};
+      }
+    });
+
+/// Whether hidden branches are currently revealed for [repoPath].
+final showHiddenBranchesProvider = FutureProvider.autoDispose
+    .family<bool, String>((ref, repoPath) async {
+      try {
+        if (ref.watch(connectionProvider).sessionEpoch <= 0) return false;
+        final prefs = await ref.watch(
+          branchWorkspacePrefsProvider(repoPath).future,
+        );
+        return prefs.showHidden;
+      } catch (_) {
+        return false;
+      }
+    });
+
 /// Pins or unpins [branch] in the identity-keyed workspace record.
 Future<void> setPinnedBranch(
   WidgetRef ref,
