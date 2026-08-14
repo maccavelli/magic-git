@@ -10,6 +10,9 @@ PullRequest _pr({
   String? reviewDecision,
   String? headOid,
   bool autoMergeEnabled = false,
+  List<String> reviewRequests = const [],
+  List<({String login, String state})> latestReviews = const [],
+  List<String> failingChecks = const [],
 }) => PullRequest(
   number: 1,
   title: 't',
@@ -24,6 +27,9 @@ PullRequest _pr({
   reviewDecision: reviewDecision,
   headOid: headOid,
   autoMergeEnabled: autoMergeEnabled,
+  reviewRequests: reviewRequests,
+  latestReviews: latestReviews,
+  failingChecks: failingChecks,
 );
 
 MergeRequest _mr({
@@ -308,6 +314,83 @@ void main() {
       // An unset policy must offer both methods, not silently forbid one.
       expect(const GlRepoMergePolicy().squashNever, isFalse);
       expect(const GlRepoMergePolicy().squashAlways, isFalse);
+    });
+  });
+
+  group('detail fields name the blocker instead of describing it', () {
+    test('a failing check is named', () {
+      final plan = mergePlanForGitHub(
+        pr: _pr(
+          mergeStateStatus: 'BLOCKED',
+          headOid: 'x',
+          failingChecks: ['build (macos)'],
+        ),
+      );
+
+      expect(plan.blockedSummary, contains('build (macos)'));
+    });
+
+    test('without the detail field it falls back to the generic wording', () {
+      final plan = mergePlanForGitHub(
+        pr: _pr(mergeStateStatus: 'BLOCKED', headOid: 'x'),
+      );
+
+      // A list-tier row has no rollup; saying nothing specific beats guessing.
+      expect(
+        plan.blockedSummary,
+        contains('branch protection or required checks'),
+      );
+    });
+
+    test('more than three failing checks are elided, not dumped', () {
+      final plan = mergePlanForGitHub(
+        pr: _pr(
+          mergeStateStatus: 'BLOCKED',
+          headOid: 'x',
+          failingChecks: ['lint', 'unit', 'e2e', 'nightly'],
+        ),
+      );
+
+      expect(plan.blockedSummary, contains('lint, unit, e2e…'));
+      expect(plan.blockedSummary, isNot(contains('nightly')));
+    });
+
+    test('the reviewer who requested changes is named', () {
+      final plan = mergePlanForGitHub(
+        pr: _pr(
+          reviewDecision: 'CHANGES_REQUESTED',
+          latestReviews: [(login: 'robin', state: 'CHANGES_REQUESTED')],
+        ),
+      );
+
+      expect(plan.blockedSummary, contains('@robin'));
+    });
+
+    test('an approving review is not reported as a blocker', () {
+      final plan = mergePlanForGitHub(
+        pr: _pr(
+          reviewDecision: 'CHANGES_REQUESTED',
+          latestReviews: [
+            (login: 'robin', state: 'CHANGES_REQUESTED'),
+            (login: 'sam', state: 'APPROVED'),
+          ],
+        ),
+      );
+
+      expect(plan.blockedSummary, contains('@robin'));
+      expect(plan.blockedSummary, isNot(contains('@sam')));
+    });
+
+    test('outstanding reviewers are named', () {
+      final plan = mergePlanForGitHub(
+        pr: _pr(
+          reviewDecision: 'REVIEW_REQUIRED',
+          reviewRequests: ['robin', 'platform-team'],
+        ),
+      );
+
+      expect(plan.blockedSummary, contains('@robin'));
+      expect(plan.blockedSummary, contains('@platform-team'));
     });
   });
 }

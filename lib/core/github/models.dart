@@ -102,20 +102,24 @@ class PullRequest {
   // ---- List enrichment (cheap) ---------------------------------------------
   /// Label names (colors available via [labelColors] when the wire sent them).
   final List<String> labels;
+
   /// Parallel to [labels] when `gh` sent `{name,color}` objects; empty strings
   /// when only a name is known. Same length as [labels] when non-empty.
   final List<String> labelColors;
   final List<String> assigneeLogins;
+
   /// `APPROVED` / `CHANGES_REQUESTED` / `REVIEW_REQUIRED` / empty / null.
   final String? reviewDecision;
   final String? milestoneTitle;
 
   // ---- Detail tier (nullable on list rows) ---------------------------------
   final String? body;
+
   /// Head commit OID (`headRefOid` from `gh`). Required for SHA-pinned merge.
   final String? headOid;
   final String? baseOid;
   final GhMergeable mergeable;
+
   /// e.g. CLEAN / DIRTY / BLOCKED / BEHIND / UNSTABLE / …
   final String? mergeStateStatus;
   final bool autoMergeEnabled;
@@ -123,6 +127,19 @@ class PullRequest {
   final int? additions;
   final int? deletions;
   final int? changedFiles;
+
+  /// Logins/teams a review has been requested from but not yet given.
+  /// Detail tier — empty on a list row, which is NOT the same as "nobody".
+  final List<String> reviewRequests;
+
+  /// The latest review per reviewer, as `login: STATE` pairs (STATE is
+  /// `APPROVED` / `CHANGES_REQUESTED` / `COMMENTED`). Lets the readiness strip
+  /// name WHO is blocking instead of only that someone is.
+  final List<({String login, String state})> latestReviews;
+
+  /// Failing/pending check names from the head commit's status rollup, so a
+  /// blocked merge can name the check instead of saying "required checks".
+  final List<String> failingChecks;
 
   const PullRequest({
     required this.number,
@@ -149,6 +166,9 @@ class PullRequest {
     this.additions,
     this.deletions,
     this.changedFiles,
+    this.reviewRequests = const [],
+    this.latestReviews = const [],
+    this.failingChecks = const [],
   });
 
   String get shortHeadOid => shortShaOf(headOid);
@@ -184,10 +204,12 @@ class PullRequest {
       merged: (json['merged'] as bool?) ?? (state == 'merged'),
       draft: (json['isDraft'] as bool?) ?? (json['draft'] as bool?) ?? false,
       authorLogin: author is Map ? author['login'] as String? : null,
-      headRefName: json['headRefName'] as String? ??
+      headRefName:
+          json['headRefName'] as String? ??
           (head is Map ? head['ref'] as String? : null) ??
           '',
-      baseRefName: json['baseRefName'] as String? ??
+      baseRefName:
+          json['baseRefName'] as String? ??
           (base is Map ? base['ref'] as String? : null) ??
           '',
       url: json['url'] as String? ?? json['html_url'] as String? ?? '',
@@ -214,13 +236,16 @@ class PullRequest {
       autoMergeMethod: autoMethod,
       additions: (json['additions'] as num?)?.toInt(),
       deletions: (json['deletions'] as num?)?.toInt(),
-      changedFiles: (json['changedFiles'] as num?)?.toInt() ??
+      changedFiles:
+          (json['changedFiles'] as num?)?.toInt() ??
           (json['changed_files'] as num?)?.toInt(),
+      reviewRequests: _parseReviewRequests(json['reviewRequests']),
+      latestReviews: _parseLatestReviews(json['latestReviews']),
+      failingChecks: _parseFailingChecks(json['statusCheckRollup']),
     );
   }
 
-  static String? _emptyToNull(String? s) =>
-      (s == null || s.isEmpty) ? null : s;
+  static String? _emptyToNull(String? s) => (s == null || s.isEmpty) ? null : s;
 
   static (List<String>, List<String>) _parseGhLabels(dynamic raw) {
     if (raw is! List) return (const [], const []);
@@ -239,6 +264,62 @@ class PullRequest {
       }
     }
     return (names, colors);
+  }
+
+  /// `reviewRequests` entries are `{login}` for users and `{name}` for teams.
+  static List<String> _parseReviewRequests(dynamic raw) {
+    if (raw is! List) return const [];
+    return [
+      for (final e in raw.whereType<Map<String, dynamic>>())
+        if (e['login'] case final String l)
+          l
+        else if (e['name'] case final String n)
+          n,
+    ];
+  }
+
+  /// `latestReviews` entries carry `{author: {login}, state}`.
+  static List<({String login, String state})> _parseLatestReviews(dynamic raw) {
+    if (raw is! List) return const [];
+    final out = <({String login, String state})>[];
+    for (final e in raw.whereType<Map<String, dynamic>>()) {
+      final author = e['author'];
+      final login = author is Map ? author['login'] as String? : null;
+      final state = e['state'] as String?;
+      if (login != null && state != null) {
+        out.add((login: login, state: state.toUpperCase()));
+      }
+    }
+    return out;
+  }
+
+  /// Names of checks in the head commit's rollup that are failing. A
+  /// SUCCESS/NEUTRAL/SKIPPED entry is not a blocker and is dropped, so an
+  /// empty list means "nothing known to be failing" — not "not checked".
+  static List<String> _parseFailingChecks(dynamic raw) {
+    if (raw is! List) return const [];
+    const blocking = {
+      'FAILURE',
+      'ERROR',
+      'TIMED_OUT',
+      'CANCELLED',
+      'ACTION_REQUIRED',
+    };
+    final out = <String>[];
+    for (final e in raw.whereType<Map<String, dynamic>>()) {
+      // Check runs use conclusion+name; legacy status contexts use state+context.
+      final conclusion = (e['conclusion'] as String?)?.toUpperCase();
+      final state = (e['state'] as String?)?.toUpperCase();
+      final name =
+          e['name'] as String? ??
+          e['context'] as String? ??
+          e['workflowName'] as String?;
+      if (name == null) continue;
+      if (blocking.contains(conclusion) || blocking.contains(state)) {
+        out.add(name);
+      }
+    }
+    return out;
   }
 
   static List<String> _parseLogins(dynamic raw) {

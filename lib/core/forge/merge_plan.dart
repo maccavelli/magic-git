@@ -208,11 +208,20 @@ MergePlan mergePlanForGitHub({
         );
       }
     case 'BLOCKED':
+      // Name the failing check when the detail fetch supplied one — "required
+      // checks" alone leaves the user to go hunting on the web.
       reasons.add(
-        const MergeBlockedReason(
-          'blocked',
-          'Merge is blocked by branch protection or required checks.',
-        ),
+        pr.failingChecks.isEmpty
+            ? const MergeBlockedReason(
+                'blocked',
+                'Merge is blocked by branch protection or required checks.',
+              )
+            : MergeBlockedReason(
+                'blocked',
+                'Merge is blocked — failing: '
+                    '${pr.failingChecks.take(3).join(', ')}'
+                    '${pr.failingChecks.length > 3 ? '…' : ''}.',
+              ),
       );
       // Pending checks often mean auto-merge is the right path.
       canAuto = !pr.draft && pr.mergeable != GhMergeable.conflicting;
@@ -239,18 +248,32 @@ MergePlan mergePlanForGitHub({
   final review = (pr.reviewDecision ?? '').toUpperCase();
   switch (review) {
     case 'CHANGES_REQUESTED':
+      // Name who, when the detail fetch supplied reviews.
+      final blockers = [
+        for (final r in pr.latestReviews)
+          if (r.state == 'CHANGES_REQUESTED') '@${r.login}',
+      ];
       reasons.add(
-        const MergeBlockedReason(
-          'review',
-          'Changes have been requested on this pull request.',
-        ),
+        blockers.isEmpty
+            ? const MergeBlockedReason(
+                'review',
+                'Changes have been requested on this pull request.',
+              )
+            : MergeBlockedReason(
+                'review',
+                '${blockers.join(', ')} requested changes.',
+              ),
       );
     case 'REVIEW_REQUIRED':
+      final waitingOn = pr.reviewRequests.take(3).map((r) => '@$r').join(', ');
+      final more = pr.reviewRequests.length > 3 ? '…' : '';
       reasons.add(
-        const MergeBlockedReason(
-          'review',
-          'Required reviews are still outstanding.',
-        ),
+        pr.reviewRequests.isEmpty
+            ? const MergeBlockedReason(
+                'review',
+                'Required reviews are still outstanding.',
+              )
+            : MergeBlockedReason('review', 'Waiting on $waitingOn$more.'),
       );
     case 'APPROVED':
     case '':

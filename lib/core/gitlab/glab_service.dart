@@ -1163,6 +1163,60 @@ query($path: ID!) {
     return all;
   }
 
+  /// Project labels via REST, page-walked.
+  ///
+  /// The dashboard's GraphQL query caps labels at 100 and only *reports* the
+  /// overflow; this is the path that can actually fetch past it. `with_counts`
+  /// is deliberately left off — it is a per-label aggregation that slows the
+  /// endpoint on large projects, and nothing here displays those counts.
+  Future<List<ForgeLabel>> listLabels(
+    String repoPath, {
+    int perPage = 100,
+    bool allPages = true,
+  }) async {
+    final all = <ForgeLabel>[];
+    for (var page = 1; page <= _maxListPages; page++) {
+      final decoded = await api(
+        repoPath,
+        'projects/:id/labels',
+        fields: ['per_page=$perPage', 'page=$page'],
+      );
+      final batch = _mapList(
+        decoded,
+        ForgeLabel.fromGlabRest,
+        label: 'projects/:id/labels',
+      );
+      all.addAll(batch);
+      if (!allPages || batch.length < perPage) break;
+    }
+    return all;
+  }
+
+  /// Project releases via REST, page-walked. Default order is
+  /// `released_at desc`, matching the dashboard query's implicit ordering.
+  Future<List<ForgeRelease>> listReleases(
+    String repoPath, {
+    int perPage = 100,
+    bool allPages = true,
+  }) async {
+    final all = <ForgeRelease>[];
+    for (var page = 1; page <= _maxListPages; page++) {
+      final decoded = await api(
+        repoPath,
+        'projects/:id/releases',
+        fields: ['per_page=$perPage', 'page=$page'],
+      );
+      final batch = _mapList(
+        decoded,
+        ForgeRelease.fromGlabRest,
+        label: 'projects/:id/releases',
+      );
+      all.addAll(batch);
+      if (!allPages || batch.length < perPage) break;
+    }
+    return all;
+  }
+
   /// Protected branch *patterns* via `projects/:id/protected_branches`.
   ///
   /// GitLab returns wildcard patterns (`release/*`), not literal names — match

@@ -364,4 +364,85 @@ void main() {
       );
     });
   });
+
+  group('labels and releases page past the dashboard cap', () {
+    // The GraphQL dashboard query caps labels at 100 and releases at 20, and
+    // only REPORTS the overflow ("100 of 240"). These REST walks are what make
+    // "Show all" a real affordance instead of a dead end.
+    test('glab: labels walk pages until a short page', () async {
+      exec.results.addAll([
+        _ok('$_glabHeaders[{"name":"bug","color":"#f00"},{"name":"ux","color":"#0f0"}]'),
+        _ok('$_glabHeaders[{"name":"docs","color":"#00f"}]'),
+      ]);
+
+      final labels = await glab.listLabels(_repo, perPage: 2);
+
+      expect(labels.map((l) => l.name), ['bug', 'ux', 'docs']);
+      expect(exec.calls.length, 2);
+      expect(exec.calls[1], contains('page=2'));
+      expect(
+        exec.calls.every((c) => c.contains('-i')),
+        isTrue,
+        reason: "glab's exit codes are advisory — the -i HTTP status is the "
+            'authority, and --paginate would force dropping it',
+      );
+    });
+
+    test('glab: REST calls the field `name` where GraphQL calls it `title`',
+        () async {
+      exec.results.add(_ok('$_glabHeaders[{"name":"bug","color":"#ff0000"}]'));
+
+      final labels = await glab.listLabels(_repo, perPage: 100);
+
+      expect(labels.single.name, 'bug');
+      expect(labels.single.color, '#ff0000');
+    });
+
+    test('glab: releases map snake_case fields', () async {
+      exec.results.add(
+        _ok(
+          '$_glabHeaders[{"tag_name":"v1.0","name":"First",'
+          '"released_at":"2026-01-01","author":{"username":"mac"}}]',
+        ),
+      );
+
+      final releases = await glab.listReleases(_repo, perPage: 100);
+
+      expect(releases.single.tagName, 'v1.0');
+      expect(releases.single.name, 'First');
+      expect(releases.single.publishedDate, '2026-01-01');
+      expect(releases.single.author, 'mac');
+    });
+
+    test('gh: labels walk pages by hand, never --paginate', () async {
+      exec.results.addAll([
+        _ok('[{"name":"bug","color":"d73a4a"},{"name":"ux","color":"a2eeef"}]'),
+        _ok('[{"name":"docs","color":"0075ca"}]'),
+      ]);
+
+      final labels = await gh.listLabels(_repo, perPage: 2);
+
+      expect(labels.map((l) => l.name), ['bug', 'ux', 'docs']);
+      // gh sends bare hex; the model normalizes it to #-prefixed.
+      expect(labels.first.color, '#d73a4a');
+      expect(
+        exec.calls.every((c) => !c.contains('--paginate')),
+        isTrue,
+        reason: 'gh --paginate emits one array per page — invalid JSON to a '
+            'single decode',
+      );
+    });
+
+    test('gh: a release with no name falls back to its tag', () async {
+      exec.results.add(
+        _ok('[{"tag_name":"v2.0","name":"","published_at":"2026-02-02",'
+            '"author":{"login":"mac"}}]'),
+      );
+
+      final releases = await gh.listReleases(_repo, perPage: 100);
+
+      expect(releases.single.name, 'v2.0');
+      expect(releases.single.author, 'mac');
+    });
+  });
 }

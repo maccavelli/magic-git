@@ -149,6 +149,21 @@ class ForgeLabel {
     color: normalizeLabelColor(n['color'] as String?),
     description: n['description'] as String?,
   );
+
+  /// From a GitLab REST `/labels` entry. Differs from the GraphQL node in one
+  /// place only: REST calls the field `name`, GraphQL calls it `title`.
+  factory ForgeLabel.fromGlabRest(Map<String, dynamic> j) => ForgeLabel(
+    name: j['name'] as String? ?? '',
+    color: normalizeLabelColor(j['color'] as String?),
+    description: j['description'] as String?,
+  );
+
+  /// From a GitHub REST `/labels` entry. GitHub sends bare hex (`a2eeef`).
+  factory ForgeLabel.fromGhRest(Map<String, dynamic> j) => ForgeLabel(
+    name: j['name'] as String? ?? '',
+    color: normalizeLabelColor(j['color'] as String?),
+    description: j['description'] as String?,
+  );
 }
 
 /// An open/active milestone.
@@ -298,6 +313,32 @@ class ForgeRelease {
     author: n['author'] is Map
         ? (n['author'] as Map)['username'] as String? ??
               (n['author'] as Map)['name'] as String?
+        : null,
+  );
+
+  /// From a GitLab REST `/releases` entry — snake_case where GraphQL is
+  /// camelCase (`tag_name`/`released_at` vs `tagName`/`releasedAt`).
+  factory ForgeRelease.fromGlabRest(Map<String, dynamic> j) => ForgeRelease(
+    tagName: j['tag_name'] as String? ?? '',
+    name: j['name'] as String? ?? '',
+    publishedAt: j['released_at'] as String?,
+    description: (j['description'] as String?)?.trim(),
+    author: j['author'] is Map
+        ? (j['author'] as Map)['username'] as String? ??
+              (j['author'] as Map)['name'] as String?
+        : null,
+  );
+
+  /// From a GitHub REST `/releases` entry.
+  factory ForgeRelease.fromGhRest(Map<String, dynamic> j) => ForgeRelease(
+    tagName: j['tag_name'] as String? ?? '',
+    name: (j['name'] as String?)?.isNotEmpty == true
+        ? j['name'] as String
+        : j['tag_name'] as String? ?? '',
+    publishedAt: j['published_at'] as String?,
+    description: (j['body'] as String?)?.trim(),
+    author: j['author'] is Map
+        ? (j['author'] as Map)['login'] as String?
         : null,
   );
 

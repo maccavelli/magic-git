@@ -81,6 +81,12 @@ List<Widget> projectSectionChildren({
   final issues = ref.watch(projectIssuesProvider(repoPath));
   final milestones = ref.watch(projectMilestonesProvider(repoPath));
   final issuesFull = ref.watch(projectIssuesScopeProvider(repoPath));
+  // Labels and releases are capped by the dashboard's GraphQL query; these
+  // page-walking providers stay idle until their "Show all" is tapped.
+  final labelsFull = ref.watch(projectLabelsScopeProvider(repoPath));
+  final labels = ref.watch(projectLabelsProvider(repoPath));
+  final releasesFull = ref.watch(projectReleasesScopeProvider(repoPath));
+  final releases = ref.watch(projectReleasesProvider(repoPath));
   final milestonesFull = ref.watch(projectMilestonesScopeProvider(repoPath));
   final data = dashboard.value;
   final palette = {
@@ -152,18 +158,33 @@ List<Widget> projectSectionChildren({
       onToggleCollapsed: () => onToggleCollapsed(ForgeSections.labels),
       onRefresh: refreshDashboard,
     ),
-    if (!labelsCollapsed)
+    if (!labelsCollapsed) ...[
       // A plain Wrap bounded by this (resizable) master pane: chips flow to
       // the next row at the divider and re-lay-out as the divider is dragged.
-      _dashboardSection(
-        dashboard,
-        (d) => _LabelsWrap(
+      //
+      // The dashboard query caps labels at 100. Once "Show all" is tapped the
+      // REST page-walk takes over and supplies the full set.
+      _dashboardSection(dashboard, (d) {
+        final source = labelsFull && labels.hasValue && labels.value!.isNotEmpty
+            ? labels.value!
+            : d.labels;
+        return _LabelsWrap(
           labels: [
-            for (final l in d.labels)
+            for (final l in source)
               if (forgeFilterMatch(filter, [l.name])) l,
           ],
+        );
+      }),
+      if (!labelsFull && (data?.labelsTotal ?? 0) > (data?.labels.length ?? 0))
+        ShowMoreRow(
+          label: 'Show all labels',
+          onTap: () =>
+              ref.read(projectLabelsScopeProvider(repoPath).notifier).expand(),
         ),
-      ),
+      if (labelsFull && labels.isLoading)
+        const ShowMoreRow(label: 'Loading labels…', busy: true),
+      if (labels.hasError) SectionError(labels.error!),
+    ],
     const SizedBox(height: 16),
     // 4. Milestones.
     ForgeSectionHeader(
@@ -200,10 +221,16 @@ List<Widget> projectSectionChildren({
       onToggleCollapsed: () => onToggleCollapsed(ForgeSections.releases),
       onRefresh: refreshDashboard,
     ),
-    if (!releasesCollapsed)
+    if (!releasesCollapsed) ...[
+      // The dashboard query caps releases at 20; "Show all" swaps in the REST
+      // page-walk rather than leaving the overflow merely reported.
       _dashboardSection(dashboard, (d) {
+        final source =
+            releasesFull && releases.hasValue && releases.value!.isNotEmpty
+            ? releases.value!
+            : d.releases;
         final visible = [
-          for (final r in d.releases)
+          for (final r in source)
             if (forgeFilterMatch(filter, [r.name, r.tagName])) r,
         ];
         return visible.isEmpty
@@ -214,6 +241,18 @@ List<Widget> projectSectionChildren({
                 ],
               );
       }),
+      if (!releasesFull &&
+          (data?.releasesTotal ?? 0) > (data?.releases.length ?? 0))
+        ShowMoreRow(
+          label: 'Show all releases',
+          onTap: () => ref
+              .read(projectReleasesScopeProvider(repoPath).notifier)
+              .expand(),
+        ),
+      if (releasesFull && releases.isLoading)
+        const ShowMoreRow(label: 'Loading releases…', busy: true),
+      if (releases.hasError) SectionError(releases.error!),
+    ],
     const SizedBox(height: 16),
     // 6. CI (Workflow Runs / Pipelines) — forge-specific, built by the caller.
     ...ci,
@@ -553,4 +592,3 @@ Widget _milestoneDetail(
         : ForgeBodyText(description),
   );
 }
-

@@ -51,6 +51,13 @@ class ActivityCommandExecutor implements CommandExecutor {
     onOperationEvent: onOperationEvent ?? this.onOperationEvent,
   );
 
+  /// Note the asymmetry with [execute]: no [resolveDescriptor] call.
+  ///
+  /// Deliberate. Streams here are long-lived *reads* — the file watcher and
+  /// the CI log trace — so a resolved descriptor would post an activity entry
+  /// for background watching, which is exactly the noise
+  /// `OperationVisibility.background` exists to suppress. A caller that does
+  /// want one still passes `operation:` explicitly.
   @override
   Future<SSHStreamHandle> executeStream({
     required String repoPath,

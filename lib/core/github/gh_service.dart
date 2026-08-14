@@ -386,11 +386,16 @@ class GhService {
 
   /// JSON fields requested for [pullRequestDetail] / edit form. Includes list
   /// identity plus mergeability, head SHA, body, and auto-merge state.
+  /// `commits` is deliberately absent: it returns the PR's FULL commit list
+  /// (megabytes on a long-lived branch) and buys nothing over the
+  /// additions/deletions/changedFiles already here. The 50 MiB output budget
+  /// is not the constraint — latency on the detail-pane path is.
   static const String _prDetailJsonFields =
       'number,title,state,isDraft,headRefName,baseRefName,author,url,'
       'labels,assignees,reviewDecision,milestone,body,headRefOid,baseRefOid,'
       'mergeable,mergeStateStatus,autoMergeRequest,additions,deletions,'
-      'changedFiles,maintainerCanModify,isCrossRepository';
+      'changedFiles,maintainerCanModify,isCrossRepository,'
+      'reviewRequests,latestReviews,statusCheckRollup';
 
   /// A single open/closed PR including mergeability and head SHA, via
   /// `gh pr view <number> --json …`. Powers the detail pane and merge plan;
@@ -722,6 +727,58 @@ class GhService {
       );
       all.addAll(batch);
       if (!allHistory || batch.length < perPage) break;
+    }
+    return all;
+  }
+
+  /// Repository labels via REST, page-walked.
+  ///
+  /// The dashboard's GraphQL query caps labels at 100 and only *reports* the
+  /// overflow — the same defect as the GitLab side. This is the path that can
+  /// fetch past it.
+  Future<List<ForgeLabel>> listLabels(
+    String repoPath, {
+    int perPage = 100,
+    bool allPages = true,
+  }) async {
+    final all = <ForgeLabel>[];
+    for (var page = 1; page <= _maxListPages; page++) {
+      final decoded = await api(
+        repoPath,
+        'repos/{owner}/{repo}/labels',
+        fields: ['per_page=$perPage', 'page=$page'],
+      );
+      final batch = _mapList(
+        decoded,
+        ForgeLabel.fromGhRest,
+        label: 'repos/{owner}/{repo}/labels',
+      );
+      all.addAll(batch);
+      if (!allPages || batch.length < perPage) break;
+    }
+    return all;
+  }
+
+  /// Repository releases via REST, page-walked (newest first).
+  Future<List<ForgeRelease>> listReleases(
+    String repoPath, {
+    int perPage = 100,
+    bool allPages = true,
+  }) async {
+    final all = <ForgeRelease>[];
+    for (var page = 1; page <= _maxListPages; page++) {
+      final decoded = await api(
+        repoPath,
+        'repos/{owner}/{repo}/releases',
+        fields: ['per_page=$perPage', 'page=$page'],
+      );
+      final batch = _mapList(
+        decoded,
+        ForgeRelease.fromGhRest,
+        label: 'repos/{owner}/{repo}/releases',
+      );
+      all.addAll(batch);
+      if (!allPages || batch.length < perPage) break;
     }
     return all;
   }

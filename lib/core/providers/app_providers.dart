@@ -17,6 +17,7 @@ import '../forge/auth_probe_service.dart';
 import '../forge/auth_status.dart';
 import '../forge/forge.dart';
 import '../forge/forge_dashboard.dart';
+import '../forge/forge_operation_labels.dart';
 import '../forge/forge_repo_summary.dart';
 import '../forge/merge_plan.dart';
 import '../git/bounded_watch.dart';
@@ -319,7 +320,10 @@ final scopedForgeExecutorProvider = Provider<CommandExecutor>((ref) {
           if (lane == ExecLane.read) return null;
           return OperationDescriptor(
             repositoryPath: repositoryPath,
-            label: 'Update forge',
+            // Curated per command; 'Update forge' is only the fallback for an
+            // unrecognized one, so a stalled merge and a stalled comment are
+            // no longer the same entry in the activity list.
+            label: forgeOperationLabel(argv) ?? 'Update forge',
             kind: OperationKind.forgeMutation,
             lane: lane,
           );
@@ -2630,6 +2634,8 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
   projectDashboardProvider,
   projectIssuesProvider,
   projectMilestonesProvider,
+  projectLabelsProvider,
+  projectReleasesProvider,
   issueDetailProvider,
   issueCommentsProvider,
   changeRequestCommentsProvider,
@@ -5063,6 +5069,59 @@ final projectMilestonesProvider = FutureProvider.autoDispose
         case Forge.none:
         case Forge.unknown:
           return const <ForgeMilestone>[];
+      }
+    });
+
+/// "Show all" scope for the Project tab's label list.
+final projectLabelsScopeProvider = NotifierProvider.autoDispose
+    .family<CiHistoryScope, bool, String>(CiHistoryScope.new);
+
+/// Project labels beyond the dashboard's first page.
+///
+/// The dashboard's GraphQL query caps labels at 100 and only *reports* the
+/// overflow ("100 of 240"); this is the path that can fetch past the cap, so
+/// "Show all" is a real affordance rather than a dead end. Watched only once
+/// the scope is set — the dashboard still supplies the first page and the
+/// total, exactly as it does for issues.
+final projectLabelsProvider = FutureProvider.autoDispose
+    .family<List<ForgeLabel>, String>((ref, repoPath) async {
+      if (!ref.watch(projectLabelsScopeProvider(repoPath))) {
+        return const <ForgeLabel>[];
+      }
+      final gh = ref.watch(ghServiceProvider);
+      final glab = ref.watch(glabServiceProvider);
+      switch (await ref.watch(forgeProvider(repoPath).future)) {
+        case Forge.github:
+          return gh.listLabels(repoPath);
+        case Forge.gitlab:
+          return glab.listLabels(repoPath);
+        case Forge.none:
+        case Forge.unknown:
+          return const <ForgeLabel>[];
+      }
+    });
+
+/// "Show all" scope for the Project tab's release list.
+final projectReleasesScopeProvider = NotifierProvider.autoDispose
+    .family<CiHistoryScope, bool, String>(CiHistoryScope.new);
+
+/// Project releases beyond the dashboard's first page (cap 20 there).
+/// See [projectLabelsProvider] for why this is a separate fetch.
+final projectReleasesProvider = FutureProvider.autoDispose
+    .family<List<ForgeRelease>, String>((ref, repoPath) async {
+      if (!ref.watch(projectReleasesScopeProvider(repoPath))) {
+        return const <ForgeRelease>[];
+      }
+      final gh = ref.watch(ghServiceProvider);
+      final glab = ref.watch(glabServiceProvider);
+      switch (await ref.watch(forgeProvider(repoPath).future)) {
+        case Forge.github:
+          return gh.listReleases(repoPath);
+        case Forge.gitlab:
+          return glab.listReleases(repoPath);
+        case Forge.none:
+        case Forge.unknown:
+          return const <ForgeRelease>[];
       }
     });
 
