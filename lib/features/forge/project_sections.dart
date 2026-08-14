@@ -145,6 +145,10 @@ List<Widget> projectSectionChildren({
     ForgeSectionHeader(
       'Labels',
       count: forgeCountLabel(data?.labels.length, data?.labelsTotal),
+      // Alone among the forge sections, label chips are wholly inert: no
+      // selection, no detail pane, no create/edit. Say so rather than leaving
+      // the user to discover it by clicking.
+      caption: 'view only',
       collapsed: labelsCollapsed,
       onToggleCollapsed: () => onToggleCollapsed(ForgeSections.labels),
       onRefresh: refreshDashboard,

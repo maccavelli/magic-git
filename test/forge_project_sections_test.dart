@@ -154,6 +154,15 @@ void main() {
     expect(find.text('Select an item on the left'), findsOneWidget);
   });
 
+  testWidgets('the Labels header says it is view only', (tester) async {
+    await _pump(tester, overrides: _overrides());
+
+    // Every other forge section either selects into a detail pane or offers a
+    // create action; label chips do neither, so the header has to say so.
+    expect(find.text('Labels'), findsOneWidget);
+    expect(find.text('view only'), findsOneWidget);
+  });
+
   testWidgets('selecting an issue opens its detail with the fetched body', (
     tester,
   ) async {

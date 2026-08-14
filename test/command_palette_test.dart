@@ -2,6 +2,7 @@
 // checkout targets, filters as you type, and arrow-key + Enter runs the
 // highlighted command (proving keyboard nav works from inside its search field).
 
+import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -341,6 +342,52 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     expect(find.byType(CommandPalette), findsNothing);
+  });
+
+  testWidgets('rows expose one merged semantic label, not three fragments', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    final rec = _Recorder();
+    await _open(tester, rec);
+
+    await tester.enterText(find.byType(MacosTextField), 'fetch');
+    await tester.pumpAndSettle();
+
+    final node = tester.getSemantics(find.text('Fetch'));
+    expect(node.label, contains('Fetch'));
+    expect(
+      node.label,
+      contains('git'),
+      reason: 'the category chip is a bare word on screen — VoiceOver needs '
+          'it attached to the command, not read adrift',
+    );
+    expect(node.label, contains('item 1 of'));
+    handle.dispose();
+  });
+
+  testWidgets('the three zoom rows are visually distinguishable', (
+    tester,
+  ) async {
+    final rec = _Recorder();
+    await _open(tester, rec);
+
+    await tester.enterText(find.byType(MacosTextField), 'zoom');
+    await tester.pumpAndSettle();
+
+    // The palette row is the ONLY visual affordance for these — History has no
+    // zoom toolbar — so three rows sharing two glyphs made Reset unfindable.
+    final icons = tester
+        .widgetList<MacosIcon>(find.byType(MacosIcon))
+        .map((i) => i.icon)
+        .toSet();
+    expect(icons, contains(CupertinoIcons.zoom_in));
+    expect(icons, contains(CupertinoIcons.zoom_out));
+    expect(
+      icons,
+      contains(CupertinoIcons.fullscreen_exit),
+      reason: 'Reset commit list zoom must not reuse the Zoom Out glyph',
+    );
   });
 
   testWidgets('offers the full keymap catalog and dispatches panel actions '

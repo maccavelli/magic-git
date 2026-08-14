@@ -125,5 +125,22 @@ void main() {
 
       expect(find.text('action'), findsOneWidget);
     });
+
+    testWidgets('shows caption alongside count', (tester) async {
+      await tester.pumpWidget(
+        const MacosApp(
+          home: CollapsibleSectionHeader(
+            'Labels',
+            count: '12',
+            caption: 'view only',
+          ),
+        ),
+      );
+
+      // Deliberately separate slots: folding the note into `count` would make
+      // every count assertion in the forge tests brittle.
+      expect(find.text('12'), findsOneWidget);
+      expect(find.text('view only'), findsOneWidget);
+    });
   });
 }

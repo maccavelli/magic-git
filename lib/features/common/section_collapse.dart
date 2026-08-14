@@ -86,6 +86,11 @@ class CollapsibleSectionHeader extends StatelessWidget {
   /// whose fetch is capped says so instead of silently truncating.
   final String? count;
 
+  /// Optional grey note after [count], for a standing fact about the section
+  /// rather than a number — e.g. `"view only"` where the rows are inert. Kept
+  /// separate from [count] so a count assertion stays a count assertion.
+  final String? caption;
+
   /// Non-null → the title becomes a disclosure toggle. [collapsed] drives the
   /// chevron glyph; [onToggle] flips the stored state.
   final bool? collapsed;
@@ -103,6 +108,7 @@ class CollapsibleSectionHeader extends StatelessWidget {
     this.title, {
     super.key,
     this.count,
+    this.caption,
     this.collapsed,
     this.onToggle,
     this.leading,
@@ -130,6 +136,16 @@ class CollapsibleSectionHeader extends StatelessWidget {
             padding: const EdgeInsets.only(left: 6),
             child: Text(
               count!,
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemGrayColor,
+              ),
+            ),
+          ),
+        if (caption != null)
+          Padding(
+            padding: const EdgeInsets.only(left: 6),
+            child: Text(
+              caption!,
               style: typography.caption1.copyWith(
                 color: MacosColors.systemGrayColor,
               ),

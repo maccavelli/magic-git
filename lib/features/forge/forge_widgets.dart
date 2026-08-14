@@ -70,6 +70,10 @@ class ForgeSectionHeader extends StatelessWidget {
   /// whose fetch is capped says so instead of silently truncating.
   final String? count;
 
+  /// Optional grey note after [count] — a standing fact rather than a number,
+  /// e.g. `"view only"` on a section whose rows carry no actions.
+  final String? caption;
+
   /// When non-null the title becomes a disclosure toggle (chevron + click to
   /// collapse/expand); the caller owns the collapsed state and hides the
   /// section body itself.
@@ -85,6 +89,7 @@ class ForgeSectionHeader extends StatelessWidget {
     this.refreshTooltip = 'Refresh',
     this.padding = const EdgeInsets.fromLTRB(16, 8, 8, 4),
     this.count,
+    this.caption,
     this.collapsed,
     this.onToggleCollapsed,
   });
@@ -94,6 +99,7 @@ class ForgeSectionHeader extends StatelessWidget {
     return CollapsibleSectionHeader(
       title,
       count: count,
+      caption: caption,
       collapsed: collapsed,
       onToggle: onToggleCollapsed,
       padding: padding,

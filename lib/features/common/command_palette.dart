@@ -15,6 +15,7 @@ import '../tabs/tabs_controller.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'field_styles.dart';
 import 'palette_models.dart';
+import 'palette_row_semantics.dart';
 import 'sized_sheet.dart';
 import 'tappable.dart';
 
@@ -335,13 +336,15 @@ const List<_ActionSpec> _panelActions = [
     1,
     CupertinoIcons.zoom_out,
   ),
+  // Reset is an absolute jump back to 100%, not another decrement — so it gets
+  // a glyph that reads as "actual size" rather than a third magnifier, which
+  // is what made it indistinguishable from Zoom Out in the list.
   _ActionSpec(
     'history.zoomReset',
     PaletteCategory.app,
     1,
-    CupertinoIcons.zoom_out,
+    CupertinoIcons.fullscreen_exit,
   ),
-  // zoomReset uses a distinct glyph from zoomOut for discoverability.
 ];
 
 /// A ⌘K quick-action launcher, in the style of VSCode / Linear / Tower's Quick
@@ -1059,8 +1062,13 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
                           controller: _scroll,
                           itemExtent: _rowHeight,
                           itemCount: commands.length,
-                          itemBuilder: (context, i) =>
-                              _row(context, commands[i], i == _highlighted),
+                          itemBuilder: (context, i) => _row(
+                            context,
+                            commands[i],
+                            i == _highlighted,
+                            position: i + 1,
+                            count: commands.length,
+                          ),
                         ),
                 ),
               ],
@@ -1071,42 +1079,66 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
     );
   }
 
-  Widget _row(BuildContext context, PaletteCommand command, bool highlighted) {
+  Widget _row(
+    BuildContext context,
+    PaletteCommand command,
+    bool highlighted, {
+    required int position,
+    required int count,
+  }) {
     final typography = MacosTheme.of(context).typography;
-    return Tappable(
-      onTap: () => _run(command),
-      child: Container(
-        height: _rowHeight,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          color: highlighted
-              ? MacosColors.systemBlueColor.withValues(alpha: 0.22)
-              : const Color(0x00000000),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Row(
-          children: [
-            MacosIcon(command.icon, size: 15),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                command.label,
-                style: typography.body,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+    // Tappable carries no semantics of its own, so without this a row reads as
+    // three unrelated fragments — name, shortcut, and a naked category word.
+    // `selected` mirrors the arrow-key cursor, matching NavRail and TabStrip.
+    return Semantics(
+      button: true,
+      selected: highlighted,
+      label: paletteRowSemanticsLabel(
+        label: command.label,
+        categoryPrefix: command.category.prefix,
+        shortcut: command.shortcut,
+        position: position,
+        count: count,
+      ),
+      child: Tappable(
+        onTap: () => _run(command),
+        // The label above already speaks every piece below; without this the
+        // screen reader repeats the name, the shortcut and the chip word.
+        child: ExcludeSemantics(
+          child: Container(
+            height: _rowHeight,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: highlighted
+                  ? MacosColors.systemBlueColor.withValues(alpha: 0.22)
+                  : const Color(0x00000000),
+              borderRadius: BorderRadius.circular(6),
             ),
-            if (command.shortcut != null) ...[
-              Text(
-                command.shortcut!,
-                style: typography.caption1.copyWith(
-                  color: MacosColors.systemGrayColor,
+            child: Row(
+              children: [
+                MacosIcon(command.icon, size: 15),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    command.label,
+                    style: typography.body,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-            ],
-            _categoryChip(command.category),
-          ],
+                if (command.shortcut != null) ...[
+                  Text(
+                    command.shortcut!,
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                ],
+                _categoryChip(command.category),
+              ],
+            ),
+          ),
         ),
       ),
     );

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/features/common/palette_models.dart';
+import 'package:remote_magic_git/features/common/palette_row_semantics.dart';
 
 void main() {
   test('parser recognizes category and every entity prefix', () {
@@ -82,5 +83,51 @@ void main() {
       ranked.where((entry) => entry.kind == PaletteEntryKind.branch).length,
       lessThanOrEqualTo(50),
     );
+  });
+
+  group('paletteRowSemanticsLabel', () {
+    test('speaks the name, the category and the shortcut as one utterance', () {
+      // A row renders these as three unrelated leaf nodes; the chip in
+      // particular would otherwise be read as a bare word like "app".
+      final label = paletteRowSemanticsLabel(
+        label: 'Fetch',
+        categoryPrefix: 'git',
+        shortcut: '\u2318R',
+        position: 2,
+        count: 9,
+      );
+      expect(label, 'Fetch, git, shortcut \u2318R, item 2 of 9');
+    });
+
+    test('omits the shortcut clause when a command has no binding', () {
+      final label = paletteRowSemanticsLabel(
+        label: 'Toggle Dashboard',
+        categoryPrefix: 'app',
+        position: 1,
+        count: 3,
+      );
+      expect(label, 'Toggle Dashboard, app, item 1 of 3');
+    });
+
+    test('treats an empty shortcut as absent, not as an empty clause', () {
+      final label = paletteRowSemanticsLabel(
+        label: 'Push',
+        categoryPrefix: 'git',
+        shortcut: '',
+      );
+      expect(label, 'Push, git');
+    });
+
+    test('omits the position clause unless both position and count are known',
+        () {
+      expect(
+        paletteRowSemanticsLabel(
+          label: 'Push',
+          categoryPrefix: 'git',
+          position: 3,
+        ),
+        'Push, git',
+      );
+    });
   });
 }
