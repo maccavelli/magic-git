@@ -284,6 +284,12 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       'gitlab.approve': mrIid == null ? null : () => _approve(mrIid),
       'gitlab.merge': mrIid == null ? null : () => _merge(mrIid),
       'gitlab.retry': pipelineId == null ? null : () => _retry(pipelineId),
+      // Forge-agnostic ids: the same verb regardless of which host this repo
+      // uses, so one menu item covers both panels.
+      'forge.newIssue': _createIssue,
+      'forge.cancelAutoMerge': mrIid == null
+          ? null
+          : () => _cancelAutoMerge(mrIid),
     };
     return PanelShortcuts(
       bindings: widget.isActive
@@ -368,7 +374,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
             filter: _filterQuery,
             collapsed: collapsed,
             onToggleCollapsed: toggle,
-            onCreateIssue: () => _select(const ForgeCreatingIssue()),
+            onCreateIssue: _createIssue,
             onIssueContextMenu: _showIssueMenu,
             changeRequests: [
               ForgeSectionHeader(
@@ -1017,6 +1023,8 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   }
 
   // ---- Actions -------------------------------------------------------------
+
+  void _createIssue() => _select(const ForgeCreatingIssue()).ignore();
 
   void _createMr() {
     _select(const ForgeCreatingChangeRequest());

@@ -16,6 +16,7 @@ import '../worktrees/worktree_tabs.dart';
 import 'field_styles.dart';
 import 'palette_models.dart';
 import 'palette_row_semantics.dart';
+import 'panel_actions.dart';
 import 'sized_sheet.dart';
 import 'tappable.dart';
 
@@ -96,9 +97,13 @@ void _noopWorkspaceSet(SavedWorkspaceSet _) {}
 class _ActionSpec {
   final String id;
   final PaletteCategory category;
-  final int panelIndex;
   final IconData icon;
-  const _ActionSpec(this.id, this.category, this.panelIndex, this.icon);
+  const _ActionSpec(this.id, this.category, this.icon);
+
+  /// Where the action lives, from the one routing table the menu bar also
+  /// reads — so the palette and a native menu item can never disagree about
+  /// which panel owns a command.
+  int? get panelIndex => panelOwnerOf(id);
 }
 
 /// Every panel-scoped keymap action the palette offers, in display order.
@@ -112,237 +117,233 @@ const List<_ActionSpec> _panelActions = [
   _ActionSpec(
     'repository.fetch',
     PaletteCategory.git,
-    0,
     CupertinoIcons.cloud_download,
   ),
   _ActionSpec(
     'repository.pull',
     PaletteCategory.git,
-    0,
     CupertinoIcons.arrow_down_circle,
   ),
   _ActionSpec(
     'repository.push',
     PaletteCategory.git,
-    0,
     CupertinoIcons.arrow_up_circle,
   ),
   _ActionSpec(
     'repository.sync',
     PaletteCategory.git,
-    0,
     CupertinoIcons.arrow_2_circlepath,
   ),
   _ActionSpec(
     'repository.forcePush',
     PaletteCategory.git,
-    0,
     CupertinoIcons.arrow_up_circle_fill,
   ),
   _ActionSpec(
     'repository.stageAll',
     PaletteCategory.git,
-    0,
     CupertinoIcons.tray_arrow_down,
   ),
   _ActionSpec(
     'repository.toggleStage',
     PaletteCategory.git,
-    0,
     CupertinoIcons.tray_arrow_down_fill,
   ),
-  _ActionSpec(
-    'repository.discard',
-    PaletteCategory.git,
-    0,
-    CupertinoIcons.trash,
-  ),
+  _ActionSpec('repository.discard', PaletteCategory.git, CupertinoIcons.trash),
   _ActionSpec(
     'repository.focusCommit',
     PaletteCategory.git,
-    0,
     CupertinoIcons.checkmark_seal,
   ),
-  _ActionSpec(
-    'repository.stash',
-    PaletteCategory.git,
-    0,
-    CupertinoIcons.tray_2,
-  ),
+  _ActionSpec('repository.stash', PaletteCategory.git, CupertinoIcons.tray_2),
   // History (panel 1) — commit-level operations.
-  _ActionSpec('history.filter', PaletteCategory.git, 1, CupertinoIcons.search),
+  _ActionSpec('history.filter', PaletteCategory.git, CupertinoIcons.search),
   _ActionSpec(
     'history.copySha',
     PaletteCategory.git,
-    1,
     CupertinoIcons.doc_on_clipboard,
   ),
   _ActionSpec(
     'history.checkout',
     PaletteCategory.git,
-    1,
     CupertinoIcons.arrow_branch,
   ),
   _ActionSpec(
     'history.branchFrom',
     PaletteCategory.git,
-    1,
     CupertinoIcons.arrow_branch,
   ),
   _ActionSpec(
     'history.cherryPick',
     PaletteCategory.git,
-    1,
     CupertinoIcons.arrow_merge,
   ),
   _ActionSpec(
     'history.rebaseFrom',
     PaletteCategory.git,
-    1,
     CupertinoIcons.arrow_swap,
   ),
   _ActionSpec(
     'history.amend',
     PaletteCategory.git,
-    1,
     CupertinoIcons.pencil_circle,
   ),
   // Branches (panel 2).
   _ActionSpec(
     'branches.newBranch',
     PaletteCategory.git,
-    2,
     CupertinoIcons.plus_circle,
   ),
-  _ActionSpec('branches.createTag', PaletteCategory.git, 2, CupertinoIcons.tag),
+  _ActionSpec('branches.createTag', PaletteCategory.git, CupertinoIcons.tag),
   _ActionSpec(
     'branches.merge',
     PaletteCategory.git,
-    2,
     CupertinoIcons.arrow_merge,
   ),
-  _ActionSpec('branches.delete', PaletteCategory.git, 2, CupertinoIcons.trash),
+  _ActionSpec('branches.delete', PaletteCategory.git, CupertinoIcons.trash),
   _ActionSpec(
     'branches.publish',
     PaletteCategory.git,
-    2,
     CupertinoIcons.cloud_upload,
   ),
   _ActionSpec(
     'branches.createRequest',
     PaletteCategory.forge,
-    2,
     CupertinoIcons.plus_rectangle_on_rectangle,
   ),
-  _ActionSpec(
-    'branches.openCi',
-    PaletteCategory.forge,
-    2,
-    CupertinoIcons.gauge,
-  ),
-  _ActionSpec(
-    'branches.compare',
-    PaletteCategory.git,
-    2,
-    CupertinoIcons.doc_text,
-  ),
+  _ActionSpec('branches.openCi', PaletteCategory.forge, CupertinoIcons.gauge),
+  _ActionSpec('branches.compare', PaletteCategory.git, CupertinoIcons.doc_text),
   // Stashes (panel 3).
   _ActionSpec(
     'stashes.apply',
     PaletteCategory.git,
-    3,
     CupertinoIcons.tray_arrow_up,
   ),
   _ActionSpec(
     'stashes.pop',
     PaletteCategory.git,
-    3,
     CupertinoIcons.tray_arrow_up_fill,
   ),
-  _ActionSpec('stashes.drop', PaletteCategory.git, 3, CupertinoIcons.trash),
+  _ActionSpec('stashes.drop', PaletteCategory.git, CupertinoIcons.trash),
+  _ActionSpec(
+    'stashes.stashWithMessage',
+    PaletteCategory.git,
+    CupertinoIcons.tray_arrow_down,
+  ),
+  _ActionSpec(
+    'stashes.applyLatest',
+    PaletteCategory.git,
+    CupertinoIcons.tray_arrow_up,
+  ),
+  _ActionSpec(
+    'stashes.popLatest',
+    PaletteCategory.git,
+    CupertinoIcons.tray_arrow_up_fill,
+  ),
+  _ActionSpec('stashes.clearAll', PaletteCategory.git, CupertinoIcons.trash),
   // Forge (panel 4) — gated by the detected forge below.
   _ActionSpec(
     'github.newPr',
     PaletteCategory.forge,
-    4,
     CupertinoIcons.plus_rectangle,
   ),
   _ActionSpec(
     'github.approve',
     PaletteCategory.forge,
-    4,
     CupertinoIcons.checkmark_circle,
   ),
   _ActionSpec(
     'github.merge',
     PaletteCategory.forge,
-    4,
     CupertinoIcons.arrow_merge,
   ),
   _ActionSpec(
     'github.rerun',
     PaletteCategory.forge,
-    4,
     CupertinoIcons.refresh_thick,
   ),
   _ActionSpec(
     'gitlab.newMr',
     PaletteCategory.forge,
-    4,
     CupertinoIcons.plus_rectangle,
   ),
   _ActionSpec(
     'gitlab.approve',
     PaletteCategory.forge,
-    4,
     CupertinoIcons.checkmark_circle,
   ),
   _ActionSpec(
     'gitlab.merge',
     PaletteCategory.forge,
-    4,
     CupertinoIcons.arrow_merge,
   ),
   _ActionSpec(
     'gitlab.retry',
     PaletteCategory.forge,
-    4,
     CupertinoIcons.refresh_thick,
   ),
+  // Forge-agnostic — offered whichever host this repo uses.
+  _ActionSpec(
+    'forge.newIssue',
+    PaletteCategory.forge,
+    CupertinoIcons.exclamationmark_circle,
+  ),
+  _ActionSpec(
+    'forge.cancelAutoMerge',
+    PaletteCategory.forge,
+    CupertinoIcons.clear_circled,
+  ),
+  // Worktrees (panel 5).
+  _ActionSpec(
+    'worktrees.add',
+    PaletteCategory.git,
+    CupertinoIcons.plus_rectangle_on_rectangle,
+  ),
+  _ActionSpec(
+    'worktrees.open',
+    PaletteCategory.git,
+    CupertinoIcons.folder_open,
+  ),
+  _ActionSpec('worktrees.lock', PaletteCategory.git, CupertinoIcons.lock),
+  _ActionSpec(
+    'worktrees.unlock',
+    PaletteCategory.git,
+    CupertinoIcons.lock_open,
+  ),
+  _ActionSpec('worktrees.move', PaletteCategory.git, CupertinoIcons.arrow_swap),
+  _ActionSpec('worktrees.repair', PaletteCategory.git, CupertinoIcons.wrench),
+  _ActionSpec(
+    'worktrees.repairAll',
+    PaletteCategory.git,
+    CupertinoIcons.wrench_fill,
+  ),
+  _ActionSpec('worktrees.prune', PaletteCategory.git, CupertinoIcons.scissors),
+  _ActionSpec('worktrees.remove', PaletteCategory.git, CupertinoIcons.trash),
   // View/appearance toggles live with the app, not the repo, in the user's
   // mental model — they change what is SHOWN, not the repository.
   _ActionSpec(
     'repository.toggleSplitDiff',
     PaletteCategory.app,
-    0,
     CupertinoIcons.square_split_2x1,
   ),
   _ActionSpec(
     'repository.toggleIgnoreWhitespace',
     PaletteCategory.app,
-    0,
     CupertinoIcons.paintbrush,
   ),
   _ActionSpec(
     'repository.toggleExpandContext',
     PaletteCategory.app,
-    0,
     CupertinoIcons.arrow_up_arrow_down,
   ),
-  _ActionSpec('history.zoomIn', PaletteCategory.app, 1, CupertinoIcons.zoom_in),
-  _ActionSpec(
-    'history.zoomOut',
-    PaletteCategory.app,
-    1,
-    CupertinoIcons.zoom_out,
-  ),
+  _ActionSpec('history.zoomIn', PaletteCategory.app, CupertinoIcons.zoom_in),
+  _ActionSpec('history.zoomOut', PaletteCategory.app, CupertinoIcons.zoom_out),
   // Reset is an absolute jump back to 100%, not another decrement — so it gets
   // a glyph that reads as "actual size" rather than a third magnifier, which
   // is what made it indistinguishable from Zoom Out in the list.
   _ActionSpec(
     'history.zoomReset',
     PaletteCategory.app,
-    1,
     CupertinoIcons.fullscreen_exit,
   ),
 ];
@@ -520,13 +521,15 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
       if (!forgeAllows(spec.id)) continue;
       final action = kKeymapActionsById[spec.id];
       if (action == null) continue; // an id retired from the keymap
+      final panelIndex = spec.panelIndex;
+      if (panelIndex == null) continue; // no panel owns it any more
       commands.add(
         PaletteCommand(
           icon: spec.icon,
           label: action.label,
           category: spec.category,
           shortcut: _shortcutFor(keymap, spec.id),
-          run: () => widget.onDispatchAction(spec.id, spec.panelIndex),
+          run: () => widget.onDispatchAction(spec.id, panelIndex),
         ),
       );
     }

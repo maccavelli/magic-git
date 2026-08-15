@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'menu_bar_bridge.dart';
 import 'palette_intents.dart';
 
 /// A [CallbackShortcuts] stand-in for panel-scoped bindings that yields to
@@ -55,6 +56,48 @@ class PanelShortcuts extends ConsumerStatefulWidget {
 
 class _PanelShortcutsState extends ConsumerState<PanelShortcuts> {
   bool _consumeScheduled = false;
+  bool _publishScheduled = false;
+
+  /// Held rather than re-read in [dispose]: `ref` is tied to the element's
+  /// BuildContext and is unsafe once the widget is being unmounted, which is
+  /// exactly when the release has to happen.
+  AvailableActions? _availability;
+
+  /// Republishes what this panel can run to [availableActionsProvider], which
+  /// is what dims the matching native menu items. Derived from the handler map
+  /// itself, so a menu item is enabled on exactly the condition its keyboard
+  /// shortcut is — no second copy of the guards to drift.
+  void _schedulePublish() {
+    if (_publishScheduled) return;
+    _publishScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _publishScheduled = false;
+      if (!mounted) return;
+      final AvailableActions availability =
+          _availability ?? ref.read(availableActionsProvider.notifier);
+      _availability = availability;
+      availability.publish(this, {
+        for (final MapEntry(key: id, value: handler) in widget.handlers.entries)
+          if (handler != null) id,
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    // A disposed panel must not leave its ids enabled in the menu bar, but
+    // Riverpod forbids mutating a provider inside a widget life-cycle — so the
+    // release runs after this frame. `release` is keyed on identity and no-ops
+    // once another panel has taken over, or once the provider itself is gone.
+    final availability = _availability;
+    if (availability != null) {
+      final owner = this;
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => availability.release(owner),
+      );
+    }
+    super.dispose();
+  }
 
   /// Consumption always runs post-frame: from build it must not mutate the
   /// intent provider mid-build, and the handler itself may setState/navigate.
@@ -75,6 +118,7 @@ class _PanelShortcutsState extends ConsumerState<PanelShortcuts> {
 
   @override
   Widget build(BuildContext context) {
+    _schedulePublish();
     // Dispatched while this panel is already active and built.
     ref.listen(paletteIntentProvider, (_, intent) {
       if (intent != null) _scheduleConsume();

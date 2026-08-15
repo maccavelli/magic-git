@@ -122,8 +122,10 @@ enum KeymapCategory {
   commit('Commit Message'),
   history('History'),
   stashes('Stashes'),
+  worktrees('Worktrees'),
   gitlab('GitLab'),
   github('GitHub'),
+  forge('Forge'),
   viewer('File Viewer');
 
   final String label;
@@ -688,6 +690,152 @@ final List<KeymapAction> kKeymapActions = [
     label: 'Find in file',
     category: KeymapCategory.viewer,
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyF, meta: true)],
+  ),
+  // Menu-bar and palette reachable, unbound by default: these are variants and
+  // rarely-used verbs that had exactly one route (a toolbar overflow menu)
+  // before the menu bar existed. They take no default chord — the point is
+  // addressability, not another shortcut to memorize.
+  const KeymapAction(
+    id: 'repository.pullRebase',
+    label: 'Pull (rebase)',
+    category: KeymapCategory.repository,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'repository.pullMerge',
+    label: 'Pull (merge)',
+    category: KeymapCategory.repository,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'repository.pushSetUpstream',
+    label: 'Push and set upstream',
+    category: KeymapCategory.repository,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'repository.pushTags',
+    label: 'Push tags',
+    category: KeymapCategory.repository,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'repository.forcePushHard',
+    label: 'Force push (no lease)',
+    category: KeymapCategory.repository,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'repository.unstageAll',
+    label: 'Unstage all',
+    category: KeymapCategory.repository,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'repository.amend',
+    label: 'Amend last commit (working tree)',
+    category: KeymapCategory.repository,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'repository.abortPending',
+    label: 'Abort pending operation',
+    category: KeymapCategory.repository,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'stashes.stashWithMessage',
+    label: 'Stash with message',
+    category: KeymapCategory.stashes,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'stashes.applyLatest',
+    label: 'Apply latest stash',
+    category: KeymapCategory.stashes,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'stashes.popLatest',
+    label: 'Pop latest stash',
+    category: KeymapCategory.stashes,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'stashes.clearAll',
+    label: 'Clear all stashes',
+    category: KeymapCategory.stashes,
+    defaultBindings: [],
+  ),
+  // Worktrees — the panel had no keymap ids at all, so every one of its verbs
+  // was reachable only by clicking a row. All but add/repair-all/prune need a
+  // selected worktree.
+  const KeymapAction(
+    id: 'worktrees.add',
+    label: 'Add worktree',
+    category: KeymapCategory.worktrees,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'worktrees.open',
+    label: 'Open selected worktree',
+    category: KeymapCategory.worktrees,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'worktrees.lock',
+    label: 'Lock selected worktree',
+    category: KeymapCategory.worktrees,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'worktrees.unlock',
+    label: 'Unlock selected worktree',
+    category: KeymapCategory.worktrees,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'worktrees.move',
+    label: 'Move selected worktree',
+    category: KeymapCategory.worktrees,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'worktrees.repair',
+    label: 'Repair selected worktree',
+    category: KeymapCategory.worktrees,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'worktrees.repairAll',
+    label: 'Repair all worktree links',
+    category: KeymapCategory.worktrees,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'worktrees.prune',
+    label: 'Prune stale worktrees',
+    category: KeymapCategory.worktrees,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'worktrees.remove',
+    label: 'Remove selected worktree',
+    category: KeymapCategory.worktrees,
+    defaultBindings: [],
+  ),
+  // Forge-agnostic: the same verb on whichever host this repo uses.
+  const KeymapAction(
+    id: 'forge.newIssue',
+    label: 'New issue',
+    category: KeymapCategory.forge,
+    defaultBindings: [],
+  ),
+  const KeymapAction(
+    id: 'forge.cancelAutoMerge',
+    label: 'Cancel auto-merge',
+    category: KeymapCategory.forge,
+    defaultBindings: [],
   ),
 ];
 

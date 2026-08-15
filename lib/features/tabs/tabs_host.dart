@@ -12,6 +12,8 @@ import '../../core/providers/app_providers.dart';
 import '../../core/providers/window_manager_bridge.dart';
 import '../../core/theme/app_theme.dart';
 import '../app_shell.dart';
+import '../common/menu_bar_bridge.dart';
+import '../common/menu_bar_spec.dart';
 import 'tab_strip.dart';
 import 'tab_ui_providers.dart';
 import 'tabs_controller.dart';
@@ -108,6 +110,12 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     windowManager.addListener(this);
     windowManager.setPreventClose(true);
 
+    // The repository menus are declared in Dart (menu_bar_spec.dart) and built
+    // natively from this one payload, so a command exists in exactly one place.
+    _menuChannel
+        .invokeMethod<void>('installMenus', menuBarChannelPayload())
+        .catchError((_) {});
+
     _wireActive();
     // Push the initial panel/menu state so the native checkmarks and title are
     // correct from the first frame (channel listens only fire on later changes).
@@ -190,6 +198,13 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
         _syncMenuState('setRecoveryChecked', v);
       }),
     );
+    // What the active tab's active panel can run right now — the native side
+    // dims every other command rather than hiding it.
+    _activeSubs.add(
+      c.listen<Set<String>>(availableActionsProvider, (_, ids) {
+        _syncEnabledActions(ids);
+      }),
+    );
   }
 
   /// Pushes the active tab's current panel states + title to native — used on
@@ -202,11 +217,18 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     _syncMenuState('setFileViewChecked', c.read(fileViewVisibleProvider));
     _syncMenuState('setDashboardChecked', c.read(dashboardVisibleProvider));
     _syncMenuState('setRecoveryChecked', c.read(recoveryVisibleProvider));
+    _syncEnabledActions(c.read(availableActionsProvider));
     unawaited(windowManager.setTitle(c.read(windowTitleProvider)));
   }
 
   void _syncMenuState(String method, bool visible) {
     _menuChannel.invokeMethod<void>(method, visible).catchError((_) {});
+  }
+
+  void _syncEnabledActions(Set<String> ids) {
+    _menuChannel
+        .invokeMethod<void>('setEnabledActions', ids.toList())
+        .catchError((_) {});
   }
 
   Future<dynamic> _handleMenuCall(MethodCall call) async {
@@ -223,6 +245,13 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
         c.read(dashboardVisibleProvider.notifier).toggle();
       case 'toggleRecovery':
         c.read(recoveryVisibleProvider.notifier).toggle();
+      case 'dispatchAction':
+        // Parked for AppShell, which is the only thing that can switch to the
+        // owning panel before the intent is consumed.
+        final actionId = call.arguments;
+        if (actionId is String) {
+          c.read(menuActionRequestProvider.notifier).request(actionId);
+        }
       case 'openHistoryWindow':
         await WindowManagerBridge.current?.openHistory();
       case 'prepareToTerminate':

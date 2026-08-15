@@ -231,6 +231,12 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       'github.approve': prNumber == null ? null : () => _approve(prNumber),
       'github.merge': prNumber == null ? null : () => _merge(prNumber),
       'github.rerun': runId == null ? null : () => _rerun(runId),
+      // Forge-agnostic ids: the same verb regardless of which host this repo
+      // uses, so one menu item covers both panels.
+      'forge.newIssue': _createIssue,
+      'forge.cancelAutoMerge': prNumber == null
+          ? null
+          : () => _cancelAutoMerge(prNumber),
     };
     return PanelShortcuts(
       bindings: widget.isActive
@@ -318,7 +324,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
             filter: _filterQuery,
             collapsed: collapsed,
             onToggleCollapsed: toggle,
-            onCreateIssue: () => _select(const ForgeCreatingIssue()),
+            onCreateIssue: _createIssue,
             onIssueContextMenu: _showIssueMenu,
             changeRequests: [
               ForgeSectionHeader(
@@ -963,6 +969,8 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   }
 
   // ---- Actions -------------------------------------------------------------
+
+  void _createIssue() => _select(const ForgeCreatingIssue()).ignore();
 
   void _createPr() {
     _select(const ForgeCreatingChangeRequest());

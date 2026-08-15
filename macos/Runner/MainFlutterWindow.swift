@@ -20,6 +20,15 @@ class MainFlutterWindow: NSWindow {
   private var dashboardItem: NSMenuItem?
   private var recoveryItem: NSMenuItem?
 
+  /// The repository menus Dart installs at startup, kept so a re-install
+  /// replaces rather than duplicates them.
+  private var dynamicMenuItems: [NSMenuItem] = []
+
+  /// Keymap action ids the active panel can run right now. `validateMenuItem`
+  /// dims everything else — per the HIG, an unavailable command stays visible
+  /// so people can still discover it.
+  private var enabledActionIds: Set<String> = []
+
   /// Whether a quit-initiated Flutter cleanup round trip is already running,
   /// so a second terminate request while the first is in flight doesn't spawn
   /// another one (AppKit needs exactly one reply).
@@ -106,6 +115,18 @@ class MainFlutterWindow: NSWindow {
       case "setRecoveryChecked":
         if let checked = call.arguments as? Bool {
           self?.recoveryItem?.state = checked ? .on : .off
+        }
+        result(nil)
+      case "installMenus":
+        // Dart owns the menu structure (see menu_bar_spec.dart); this side is
+        // a generic builder, so adding a command never needs a native change.
+        if let spec = call.arguments as? [[String: Any]] {
+          self?.installDynamicMenus(spec)
+        }
+        result(nil)
+      case "setEnabledActions":
+        if let ids = call.arguments as? [String] {
+          self?.enabledActionIds = Set(ids)
         }
         result(nil)
       default:
@@ -352,6 +373,107 @@ class MainFlutterWindow: NSWindow {
     item.state = .off
     menu.addItem(item)
     return item
+  }
+
+  /// Installs (or replaces) the repository menus Dart declared, inserting them
+  /// just before the Window menu. Every command item carries its keymap action
+  /// id as `representedObject` and shares one selector, which forwards the id
+  /// to Dart — so this side never knows what any individual command does.
+  private func installDynamicMenus(_ spec: [[String: Any]]) {
+    guard let mainMenu = NSApp.mainMenu else { return }
+
+    for item in dynamicMenuItems {
+      if let index = mainMenu.items.firstIndex(of: item) {
+        mainMenu.removeItem(at: index)
+      }
+    }
+    dynamicMenuItems.removeAll()
+
+    // Same Window-menu anchor as installViewMenuItems: NSApp.windowsMenu is
+    // the role-based lookup, the title match only a fallback.
+    let anchor =
+      mainMenu.items.firstIndex(where: {
+        ($0.submenu != nil && $0.submenu === NSApp.windowsMenu)
+          || $0.title == "Window" || $0.submenu?.title == "Window"
+      }) ?? mainMenu.items.count
+
+    var insertAt = anchor
+    for menuSpec in spec {
+      guard let title = menuSpec["title"] as? String,
+        let items = menuSpec["items"] as? [[String: Any]]
+      else { continue }
+      let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+      let submenu = NSMenu(title: title)
+      // AppKit's own enable/disable pass would grey out items whose target is
+      // nil; ours are validated by validateMenuItem instead.
+      submenu.autoenablesItems = true
+      populate(menu: submenu, from: items)
+      parent.submenu = submenu
+      mainMenu.insertItem(parent, at: insertAt)
+      dynamicMenuItems.append(parent)
+      insertAt += 1
+    }
+  }
+
+  private func populate(menu: NSMenu, from items: [[String: Any]]) {
+    for spec in items {
+      if spec["separator"] as? Bool == true {
+        menu.addItem(NSMenuItem.separator())
+        continue
+      }
+      guard let title = spec["title"] as? String else { continue }
+
+      if let children = spec["items"] as? [[String: Any]], !children.isEmpty {
+        let parent = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: title)
+        submenu.autoenablesItems = true
+        populate(menu: submenu, from: children)
+        parent.submenu = submenu
+        menu.addItem(parent)
+        continue
+      }
+
+      let item = NSMenuItem(
+        title: title, action: #selector(dynamicMenuActionFired(_:)),
+        keyEquivalent: spec["key"] as? String ?? "")
+      if let modifiers = spec["modifiers"] as? [String], !modifiers.isEmpty {
+        var mask: NSEvent.ModifierFlags = []
+        for modifier in modifiers {
+          switch modifier {
+          case "command": mask.insert(.command)
+          case "shift": mask.insert(.shift)
+          case "option": mask.insert(.option)
+          case "control": mask.insert(.control)
+          default: break
+          }
+        }
+        item.keyEquivalentModifierMask = mask
+      }
+      item.representedObject = spec["actionId"]
+      item.target = self
+      menu.addItem(item)
+    }
+  }
+
+  /// Dims any command whose action id the active panel cannot currently run.
+  /// The item stays in place: "If all of a menu's items are unavailable, the
+  /// menu itself needs to remain available so people can open it and learn
+  /// about the commands it contains."
+  override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    guard menuItem.action == #selector(dynamicMenuActionFired(_:)) else {
+      return super.validateMenuItem(menuItem)
+    }
+    guard let actionId = menuItem.representedObject as? String else {
+      return false
+    }
+    return enabledActionIds.contains(actionId)
+  }
+
+  @objc private func dynamicMenuActionFired(_ sender: Any?) {
+    guard let item = sender as? NSMenuItem,
+      let actionId = item.representedObject as? String
+    else { return }
+    menuChannel?.invokeMethod("dispatchAction", arguments: actionId)
   }
 
   /// Repoints the standard "About Magic Git" menu item (wired in MainMenu.xib to

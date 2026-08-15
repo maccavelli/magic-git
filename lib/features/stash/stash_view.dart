@@ -292,6 +292,18 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
       'stashes.drop': selEntry == null
           ? null
           : () => _dropStash(context, git, selEntry!),
+      // Stash-wide verbs. These need no selection, only a non-empty stash
+      // list — the same gate the hamburger menu applies.
+      'stashes.stashWithMessage': () => _stashWithMessage(git),
+      'stashes.applyLatest': (stashesAsync.value ?? const <GitStash>[]).isEmpty
+          ? null
+          : () => _actOnLatest(git, pop: false),
+      'stashes.popLatest': (stashesAsync.value ?? const <GitStash>[]).isEmpty
+          ? null
+          : () => _actOnLatest(git, pop: true),
+      'stashes.clearAll': (stashesAsync.value ?? const <GitStash>[]).isEmpty
+          ? null
+          : () => _clearAll(context, git),
     };
     final live = widget.isActive && !busy;
     final supplementKey = connection.sessionEpoch > 0

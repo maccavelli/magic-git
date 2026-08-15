@@ -1451,10 +1451,24 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       'repository.stash': _stashPush,
       'repository.sync': _sync,
       'repository.forcePush': () => _push(force: PushForce.withLease),
+      // The variants that used to live only in the toolbar's overflow menu.
+      // Each is the same call the menu made, so nothing forks.
+      'repository.pullRebase': () => _pull(PullMode.rebase),
+      'repository.pullMerge': () => _pull(PullMode.merge),
+      'repository.pushSetUpstream': () => _push(setUpstream: true),
+      'repository.pushTags': () => _push(followTags: true),
+      'repository.forcePushHard': () => _push(force: PushForce.force),
+      'repository.amend': _amend,
+      'repository.abortPending': pending == null || pending == PendingOp.none
+          ? null
+          : () => _abortPending(pending),
       'repository.stageAll':
           status != null &&
               (status.unstaged.isNotEmpty || status.untracked.isNotEmpty)
           ? _stageAll
+          : null,
+      'repository.unstageAll': status != null && status.staged.isNotEmpty
+          ? _unstageAll
           : null,
       // Diff-view toggles: only meaningful while a file's diff is showing,
       // so they fall through (null) when nothing is selected.

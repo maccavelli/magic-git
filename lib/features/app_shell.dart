@@ -21,8 +21,10 @@ import 'common/buttons.dart';
 import 'common/command_palette.dart';
 import 'common/diff_view.dart' show kDiffMono;
 import 'common/escape_dismissible.dart';
+import 'common/menu_bar_bridge.dart';
 import 'common/palette_intents.dart';
 import 'common/palette_models.dart';
+import 'common/panel_actions.dart';
 import 'common/repository_context.dart';
 import 'common/repository_workspace_models.dart';
 import 'common/session_exit_guard.dart';
@@ -802,6 +804,15 @@ class _AppShellState extends ConsumerState<AppShell> {
     });
     ref.listen(sidebarToggleRequestProvider, (previous, next) {
       if (next != previous) _toggleSidebar();
+    });
+    // A native menu-bar choice. It travels the same road as the palette's:
+    // switch to the owning panel, park the id, let that panel's own handler
+    // run it. The shell never reimplements a panel command.
+    ref.listen(menuActionRequestProvider, (previous, next) {
+      if (next == null || next.token == previous?.token) return;
+      final panel = panelOwnerOf(next.actionId);
+      if (panel == null) return;
+      _dispatchPaletteAction(next.actionId, panel);
     });
     // A changed host key pauses the in-progress connect/reconnect on an
     // explicit decision — surfaced as a non-dismissible modal regardless of

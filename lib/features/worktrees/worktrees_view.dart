@@ -10,6 +10,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/providers/window_manager_bridge.dart';
+import '../../core/settings/keymap.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/utils/display_error.dart';
 import '../branches/branches_view.dart';
@@ -19,6 +20,7 @@ import '../common/busy_action.dart';
 import '../common/buttons.dart';
 import '../common/context_menu.dart';
 import '../common/label_chip.dart';
+import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/repository_context.dart';
 import '../common/repository_context_bar.dart';
@@ -651,35 +653,75 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
               ),
             ),
     );
-    return RepositoryWorkspaceScaffold(
-      repositoryContext: Column(
-        children: [
-          RepositoryContextBar(
-            snapshot: snapshot,
-            primaryAction: RepositoryPrimaryAction(
-              kind: RepositoryPrimaryActionKind.fetch,
-              label: 'Add Worktree',
-              disabledReason: busy
-                  ? 'Another worktree operation is running'
-                  : null,
-            ),
-            onPrimaryAction: (_) => _add(),
-          ),
-          _strip(context, tabs, worktrees),
-          Container(height: 1, color: MacosColors.separatorColor),
-        ],
-      ),
-      navigator: worktrees.length <= 1
+    // One handler map for the keyboard shortcuts, the command palette and the
+    // native Worktree menu. Everything except add / repair-all / prune acts on
+    // the selected worktree, so those fall through (null) with none selected —
+    // which is also what dims the matching menu items.
+    final handlers = <String, VoidCallback?>{
+      'worktrees.add': _add,
+      'worktrees.repairAll': _repairAll,
+      'worktrees.prune': _prune,
+      'worktrees.open': selectedWorktree == null
           ? null
-          : _overview(context, worktreesAsync),
-      canvas: selectedWorktree == null
-          ? _overviewPlaceholder(context, worktrees)
-          : _worktreeDetail(context, selectedWorktree),
-      preferences: workspace.preferences,
-      onPreferencesChanged: workspace.onChanged,
-      workspaceOptionsEnabled: true,
+          : () => _openWorktree(selectedWorktree),
+      'worktrees.lock': selectedWorktree == null || selectedWorktree.isLocked
+          ? null
+          : () => _toggleLock(selectedWorktree),
+      'worktrees.unlock': selectedWorktree == null || !selectedWorktree.isLocked
+          ? null
+          : () => _toggleLock(selectedWorktree),
+      'worktrees.move': selectedWorktree == null
+          ? null
+          : () => _move(selectedWorktree),
+      'worktrees.repair': selectedWorktree == null
+          ? null
+          : () => _repair(selectedWorktree),
+      'worktrees.remove': selectedWorktree == null || selectedWorktree.isMain
+          ? null
+          : () => _remove(selectedWorktree, alsoDeleteBranch: false),
+    };
+    final shortcutsLive = widget.isActive && !busy;
+    return PanelShortcuts(
+      bindings: shortcutsLive
+          ? resolveShortcuts(ref.watch(keymapProvider), handlers)
+          : const <ShortcutActivator, VoidCallback>{},
+      handlers: shortcutsLive ? handlers : const {},
+      child: RepositoryWorkspaceScaffold(
+        repositoryContext: Column(
+          children: [
+            RepositoryContextBar(
+              snapshot: snapshot,
+              primaryAction: RepositoryPrimaryAction(
+                kind: RepositoryPrimaryActionKind.fetch,
+                label: 'Add Worktree',
+                disabledReason: busy
+                    ? 'Another worktree operation is running'
+                    : null,
+              ),
+              onPrimaryAction: (_) => _add(),
+            ),
+            _strip(context, tabs, worktrees),
+            Container(height: 1, color: MacosColors.separatorColor),
+          ],
+        ),
+        navigator: worktrees.length <= 1
+            ? null
+            : _overview(context, worktreesAsync),
+        canvas: selectedWorktree == null
+            ? _overviewPlaceholder(context, worktrees)
+            : _worktreeDetail(context, selectedWorktree),
+        preferences: workspace.preferences,
+        onPreferencesChanged: workspace.onChanged,
+        workspaceOptionsEnabled: true,
+      ),
     );
   }
+
+  /// `git worktree repair` with no path argument repairs every registered
+  /// worktree's links at once. Named rather than inline so the hamburger item
+  /// and the Worktree menu run the identical call.
+  Future<void> _repairAll() =>
+      runGuarded(() => ref.read(gitServiceProvider).repairWorktrees(repoPath));
 
   /// The tab strip: Overview, then one tab per open worktree, then the toolbar.
   Widget _strip(
@@ -814,12 +856,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
           ),
           MacosPulldownMenuItem(
             title: const Text('Repair all worktree links'),
-            onTap: busy
-                ? null
-                : () => runGuarded(
-                    () =>
-                        ref.read(gitServiceProvider).repairWorktrees(repoPath),
-                  ),
+            onTap: busy ? null : _repairAll,
           ),
         ],
       ),
