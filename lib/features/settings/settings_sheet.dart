@@ -169,7 +169,8 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
                 'App-wide preferences: command timeouts, who commits are '
                 'authored as, default pull/push behavior, background '
                 'fetching, trusted SSH hosts, and keyboard shortcuts. '
-                'Changes apply after Save.',
+                'Changes apply after Save. Keyboard Mappings and Forget '
+                'Host save immediately.',
               ),
               const SizedBox(height: 18),
 
@@ -307,7 +308,7 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
                 context,
                 'Keyboard Mappings',
                 'Shortcuts for common actions across the app. Customize to '
-                    'replace or add bindings.',
+                    'replace or add bindings. Changes save immediately.',
               ),
               _keymapSummaryRow(context),
 
@@ -386,7 +387,8 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
           'SSH host keys this app has trusted for previously-connected '
               'servers. Forget an entry if a host\'s key has legitimately '
               'changed (e.g. a server rebuild) — the next connection will '
-              'trust whatever key it presents, with no warning.',
+              'trust whatever key it presents, with no warning. Forget '
+              'saves immediately.',
         ),
         if (hosts == null)
           const Padding(

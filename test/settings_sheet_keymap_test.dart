@@ -44,6 +44,36 @@ void main() {
     expect(find.byType(KeyboardMappingsSheet), findsOneWidget);
   });
 
+  // 0009 L17: keymap edits and Forget Host persist on the spot — the
+  // sheet's "apply after Save" blurb must not imply they wait too.
+  testWidgets(
+    'Settings discloses that Keyboard Mappings and Forget Host save immediately',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      await tester.pumpWidget(
+        const ProviderScope(
+          child: MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: SettingsSheet(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.textContaining(
+          'Keyboard Mappings and Forget Host save immediately',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Changes save immediately'), findsOneWidget);
+      final forget = find.text('Known Hosts');
+      await tester.ensureVisible(forget);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Forget saves immediately'), findsOneWidget);
+    },
+  );
+
   testWidgets('workspace appearance controls are visible in Settings', (
     tester,
   ) async {
