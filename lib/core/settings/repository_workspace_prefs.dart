@@ -101,6 +101,13 @@ class RepositoryWorkspacePrefs {
   final bool taskDockCollapsed;
   final bool inspectorPinned;
   final bool filesPinned;
+  // NOTE: `inspectorWidth`, `inspectorPinned` and `inspectorCollapsed` — and
+  // therefore the Investigate preset — are currently INERT. No screen passes
+  // an `inspector:` to `RepositoryWorkspaceScaffold`, so nothing consumes
+  // them. They round-trip correctly and are kept deliberately: populating an
+  // inspector is product work (see MADR 0008 §out of scope), not a bug to fix
+  // here. Do not "clean them up" without first checking whether an inspector
+  // has since been built.
   final RepositoryDiffLayout diffLayout;
   final bool ignoreWhitespace;
   final int diffContextLines;
@@ -117,7 +124,12 @@ class RepositoryWorkspacePrefs {
     this.taskDockHeight = defaultTaskDockHeight,
     this.navigatorCollapsed = false,
     this.inspectorCollapsed = false,
-    this.taskDockCollapsed = false,
+    // Matches `applyWorkspacePreset(review)`, which is the default [preset].
+    // These disagreed: the record claimed the Review preset while carrying
+    // Commit's dock state, so a fresh workspace matched no preset at all.
+    // The docked commit bar is unaffected — it renders whenever the tree is
+    // dirty, independent of the task dock — and ⌘G now un-collapses the dock.
+    this.taskDockCollapsed = true,
     this.inspectorPinned = false,
     this.filesPinned = false,
     this.diffLayout = RepositoryDiffLayout.unified,

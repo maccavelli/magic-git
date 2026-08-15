@@ -355,22 +355,34 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('"Stash current changes" pushes with no message, tracked only', (
+  testWidgets('"Stash changes" always includes untracked files', (
     tester,
   ) async {
     final git = _ActionGit();
     await _pump(tester, stashes: _stashes, git: git);
-    await openMenu(tester, 'Stash current changes');
-    expect(git.pushes, [(null, false)]);
+    await openMenu(tester, 'Stash changes');
+    // Was `(null, false)`: plain `git stash push` ignores untracked files and
+    // then "succeeds" having created nothing, silently leaving the work in
+    // place. Every other entry point in the app already passed true.
+    expect(git.pushes, [(null, true)]);
   });
 
-  testWidgets('"Stash including untracked" pushes with untracked included', (
+  testWidgets('the primary Stash button matches the menu item exactly', (
     tester,
   ) async {
     final git = _ActionGit();
     await _pump(tester, stashes: _stashes, git: git);
-    await openMenu(tester, 'Stash including untracked');
+    await tester.tap(find.text('Stash Changes'));
+    await tester.pumpAndSettle();
     expect(git.pushes, [(null, true)]);
+  });
+
+  testWidgets('there is no separate "including untracked" item — it would '
+      'offer a distinction that no longer exists', (tester) async {
+    await _pump(tester, stashes: _stashes);
+    await tester.tap(find.byType(MacosPulldownButton));
+    await tester.pumpAndSettle();
+    expect(find.text('Stash including untracked'), findsNothing);
   });
 
   testWidgets('"Apply latest stash" applies the top entry by OID', (
@@ -422,8 +434,7 @@ void main() {
     expect(itemFor('Pop latest stash').onTap, isNull);
     expect(itemFor('Clear all stashes…').onTap, isNull);
     // Stashing the current tree doesn't require an existing stash.
-    expect(itemFor('Stash current changes').onTap, isNotNull);
-    expect(itemFor('Stash including untracked').onTap, isNotNull);
+    expect(itemFor('Stash changes').onTap, isNotNull);
   });
 
   // ---- Card right-click menu (--index variants + create-branch) -----------

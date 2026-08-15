@@ -160,14 +160,16 @@ void main() {
         sessionEpoch: 3,
         gitCommonDir: '/tmp/repo/.git',
       );
+      // The witness is a field whose default is `false`, so "reverted to the
+      // default" is distinguishable from "still holding the stored value".
       await saveRepositoryWorkspacePrefs(
         identity: identity,
-        next: const RepositoryWorkspacePrefs(taskDockCollapsed: true),
+        next: const RepositoryWorkspacePrefs(navigatorCollapsed: true),
       );
       expect(
         (await loadRepositoryWorkspacePrefs(
           identity: identity,
-        )).taskDockCollapsed,
+        )).navigatorCollapsed,
         isTrue,
       );
       expect((await SharedPreferences.getInstance()).getKeys(), isEmpty);
@@ -176,7 +178,7 @@ void main() {
       expect(
         (await loadRepositoryWorkspacePrefs(
           identity: identity,
-        )).taskDockCollapsed,
+        )).navigatorCollapsed,
         isFalse,
       );
     },

@@ -15,16 +15,21 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/settings/repository_workspace_prefs.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/storage/repository_ui_identity.dart';
 import 'package:remote_magic_git/core/theme/app_theme.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
+import 'package:remote_magic_git/features/common/palette_intents.dart';
 import 'package:remote_magic_git/features/dnd/deselect.dart';
+import 'package:remote_magic_git/features/repository/commit_composer.dart';
 import 'package:remote_magic_git/features/repository/diff_popout_window.dart';
 import 'package:remote_magic_git/features/repository/diff_view_controls.dart';
 import 'package:remote_magic_git/features/repository/repo_status_view.dart';
 import 'package:riverpod/misc.dart' show Override;
+import 'package:shared_preferences/shared_preferences.dart';
 
 const _repo = '/srv/repo';
 
@@ -391,6 +396,67 @@ void main() {
     expect(git.unstageAllCalled, isFalse);
   });
 
+  testWidgets('the commit shortcut opens the composer even when the preset '
+      'has the task dock collapsed — setting _composerExpanded alone left it '
+      'a silent no-op under three of the four presets', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    addTearDown(() => SharedPreferences.setMockInitialValues({}));
+    clearSessionRepositoryWorkspacePrefs();
+
+    // The expanded composer needs more height than the 800x600 default.
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final identity = RepositoryUiIdentity.local(
+      localRepoId: 'focus-commit',
+      gitCommonDir: '$_repo/.git',
+    );
+    // The Review preset's dock state, which is also the default.
+    await saveRepositoryWorkspacePrefs(
+      identity: identity,
+      next: const RepositoryWorkspacePrefs(taskDockCollapsed: true),
+    );
+
+    await _pump(
+      tester,
+      status: _statusWith(
+        staged: const [
+          GitFileStatus(path: 'lib/a.dart', statusX: 'M', statusY: '.'),
+        ],
+      ),
+      extraOverrides: [
+        repositoryUiIdentityProvider(
+          _repo,
+        ).overrideWith((ref) async => identity),
+      ],
+    );
+
+    // The docked bar is always there while the tree is dirty; the shortcut is
+    // about the EXPANDED composer, which lives in the task dock.
+    final expanded = find.byWidgetPredicate(
+      (w) =>
+          w is CommitComposer &&
+          w.presentation == CommitComposerPresentation.expanded,
+    );
+    expect(expanded, findsNothing);
+
+    // Dispatched on the intent bus rather than as a raw key event: that is the
+    // path both the ⌘G binding and the command palette resolve to, and it does
+    // not depend on which descendant happens to hold focus.
+    ProviderScope.containerOf(tester.element(find.byType(RepoStatusView)))
+        .read(paletteIntentProvider.notifier)
+        .dispatch('repository.focusCommit');
+    await tester.pumpAndSettle();
+
+    expect(expanded, findsOneWidget);
+    expect(
+      (await loadRepositoryWorkspacePrefs(identity: identity)).taskDockCollapsed,
+      isFalse,
+      reason: 'the dock the composer lives in must actually be open',
+    );
+  });
+
   testWidgets('Amend last commit confirms, then amends', (tester) async {
     final git = await _pump(
       tester,
@@ -401,10 +467,13 @@ void main() {
       ),
     );
 
-    // In the header's pulldown menu.
+    // In the header's pulldown menu. The label is qualified — History offers a
+    // plain "Amend last commit" that rewrites the selected commit, and the two
+    // menus can be a keystroke apart, so this one names what it operates on.
     await tester.tap(find.byType(MacosPulldownButton).first);
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Amend last commit'));
+    expect(find.text('Amend last commit'), findsNothing);
+    await tester.tap(find.text('Amend last commit (working tree)'));
     await tester.pumpAndSettle();
 
     // Nothing runs until the rewrite is confirmed.

@@ -190,6 +190,27 @@ void main() {
     );
   });
 
+  testWidgets("the overflow menu's repair says it acts on every worktree", (
+    tester,
+  ) async {
+    await pump(tester);
+
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) =>
+            w is MacosPulldownButton &&
+            w.icon == CupertinoIcons.line_horizontal_3,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // `git worktree repair` with no argument repairs ALL of them. Sitting a few
+    // pixels from a selected row, the old bare "Repair worktree links" read as
+    // the row's repair — the same words the inline wrench does for one worktree.
+    expect(find.text('Repair worktree links'), findsNothing);
+    expect(find.text('Repair all worktree links'), findsOneWidget);
+  });
+
   // The tab strip's own behaviour is tested on the notifier rather than through
   // the widget, deliberately: opening a tab mounts the real Changes / History /
   // Branches / Stashes panels, and stubbing four panels' worth of providers to

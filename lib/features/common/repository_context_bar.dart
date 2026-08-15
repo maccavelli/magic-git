@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/widgets.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../../core/exec/operation_activity.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
 import 'activity_center.dart';
@@ -22,7 +23,7 @@ class RepositoryContextBar extends StatelessWidget {
   final VoidCallback? onToggleSidebar;
   final VoidCallback? onBack;
   final VoidCallback? onForward;
-  final ValueChanged<Object>? onRevealOutput;
+  final ValueChanged<OperationId>? onRevealOutput;
 
   const RepositoryContextBar({
     super.key,
@@ -126,6 +127,10 @@ class RepositoryContextBar extends StatelessWidget {
                   role: WorkspacePaneRole.activity,
                   child: ActivityCenterButton(
                     repositoryPath: snapshot.repositoryPath,
+                    // Forwarded so this instance is a full replacement for the
+                    // second copy the Repository toolbar used to render: the
+                    // reveal-in-Output affordance lived only on that copy.
+                    onRevealOutput: onRevealOutput,
                   ),
                 ),
                 const SizedBox(width: 6),
@@ -323,17 +328,27 @@ class _CompactMetadata extends StatelessWidget {
       if (snapshot.supplement?.selectionLabel != null)
         snapshot.supplement!.selectionLabel!,
     ];
+    // This is metadata, not commands. It used to render as a pull-down whose
+    // every item had `onTap: () {}` — an affordance that looked actionable,
+    // highlighted on hover, and did nothing. A tooltip says the same thing
+    // honestly, and carries the full detail for VoiceOver in one utterance.
     return Semantics(
-      button: true,
+      // `container: true` because the child is now a plain icon with no
+      // semantics of its own — without it this label merges into the bar's
+      // node instead of being its own announceable element.
+      container: true,
       label: 'Repository details',
-      child: MacosTooltip(
-        message: 'Repository details',
-        child: MacosPulldownButton(
-          icon: CupertinoIcons.ellipsis_circle,
-          items: [
-            for (final detail in details)
-              MacosPulldownMenuItem(title: Text(detail), onTap: () {}),
-          ],
+      value: details.join(', '),
+      // The tooltip's own message would otherwise merge into the label, so the
+      // node would announce as "Repository details" plus the whole multi-line
+      // block. The detail is carried once, as the node's value.
+      child: ExcludeSemantics(
+        child: MacosTooltip(
+          message: details.join('\n'),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 4),
+            child: MacosIcon(CupertinoIcons.ellipsis_circle, size: 15),
+          ),
         ),
       ),
     );

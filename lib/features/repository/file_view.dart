@@ -8,6 +8,7 @@ import '../../core/git/repo_tree.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/pane_layout.dart';
+import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
@@ -584,6 +585,29 @@ class _FileViewState extends ConsumerState<FileView> {
               _touchExpansion();
             }),
           ),
+          // `filesPinned` round-tripped to disk with no way to set it; this is
+          // its writer. Pinned keeps the tree docked even when the visibility
+          // toggle is off, which is what the read site at repo_status_view
+          // already expected.
+          Consumer(
+            builder: (context, ref, _) {
+              final prefs = ref
+                  .watch(repositoryWorkspacePrefsProvider(repoPath))
+                  .value;
+              final pinned = prefs?.filesPinned ?? false;
+              return ToolIconButton(
+                icon: pinned ? CupertinoIcons.pin_fill : CupertinoIcons.pin,
+                tooltip: pinned
+                    ? 'Unpin file view (currently kept open)'
+                    : 'Pin file view open',
+                size: 14,
+                color: pinned ? MacosColors.systemBlueColor : null,
+                onPressed: prefs == null
+                    ? null
+                    : () => _setFilesPinned(ref, next: !pinned),
+              );
+            },
+          ),
           ToolIconButton(
             icon: CupertinoIcons.xmark,
             tooltip: 'Hide file view',
@@ -594,6 +618,17 @@ class _FileViewState extends ConsumerState<FileView> {
         ],
       ),
     );
+  }
+
+  Future<void> _setFilesPinned(WidgetRef ref, {required bool next}) async {
+    final identity = ref.read(repositoryUiIdentityProvider(repoPath)).value;
+    final prefs = ref.read(repositoryWorkspacePrefsProvider(repoPath)).value;
+    if (identity == null || prefs == null) return;
+    await saveRepositoryWorkspacePrefs(
+      identity: identity,
+      next: prefs.copyWith(filesPinned: next),
+    );
+    if (mounted) ref.invalidate(repositoryWorkspacePrefsProvider(repoPath));
   }
 
   Widget _body(

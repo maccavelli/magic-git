@@ -15,11 +15,15 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/git/repo_tree.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/settings/repository_workspace_prefs.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/storage/repository_ui_identity.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'package:remote_magic_git/features/common/tool_icon_button.dart';
 import 'package:remote_magic_git/features/repository/file_view.dart';
 import 'package:remote_magic_git/features/viewer/viewer_providers.dart';
+import 'package:riverpod/misc.dart' show Override;
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _repo = '/srv/repo';
@@ -112,10 +116,12 @@ Future<void> _pump(
   WidgetTester tester, {
   required OpenFileCallback onOpenFile,
   bool dynamicOverlay = false,
+  List<Override> extraOverrides = const [],
 }) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        ...extraOverrides,
         repoStructureProvider(_repo).overrideWith((ref) async => _fixture()),
         if (dynamicOverlay)
           repoStatusOverlayProvider(
@@ -182,7 +188,10 @@ void main() {
   ) async {
     SharedPreferences.setMockInitialValues({});
     addTearDown(() => SharedPreferences.setMockInitialValues({}));
-    await _pump(tester, onOpenFile: (_, {required staged, required untracked}) {});
+    await _pump(
+      tester,
+      onOpenFile: (_, {required staged, required untracked}) {},
+    );
 
     // Default width: maxWidth / 4 = 225 (nothing stored).
     expect(tester.getSize(find.byType(FileView)).width, 225);
@@ -206,14 +215,65 @@ void main() {
     // Remount (blank frame, then re-pump): the width used to reset to
     // maxWidth/4 here — now it re-applies from the persisted setting.
     await tester.pumpWidget(const SizedBox());
-    await _pump(tester, onOpenFile: (_, {required staged, required untracked}) {});
+    await _pump(
+      tester,
+      onOpenFile: (_, {required staged, required untracked}) {},
+    );
     expect(tester.getSize(find.byType(FileView)).width, 280);
+  });
+
+  testWidgets('the pin button is filesPinned\'s writer — it was persisted, '
+      'read back, and honoured, but nothing could ever set it', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    addTearDown(() => SharedPreferences.setMockInitialValues({}));
+    clearSessionRepositoryWorkspacePrefs();
+
+    final identity = RepositoryUiIdentity.local(
+      localRepoId: 'test-repo',
+      gitCommonDir: '$_repo/.git',
+    );
+    await _pump(
+      tester,
+      onOpenFile: (_, {required staged, required untracked}) {},
+      extraOverrides: [
+        repositoryUiIdentityProvider(
+          _repo,
+        ).overrideWith((ref) async => identity),
+      ],
+    );
+
+    Finder pin(IconData icon) =>
+        find.byWidgetPredicate((w) => w is ToolIconButton && w.icon == icon);
+
+    expect(pin(CupertinoIcons.pin), findsOneWidget);
+    expect(pin(CupertinoIcons.pin_fill), findsNothing);
+
+    await tester.tap(pin(CupertinoIcons.pin));
+    await tester.pumpAndSettle();
+
+    // The state the read site at repo_status_view already consumed — it keeps
+    // the tree docked even when the visibility toggle is off.
+    expect(
+      (await loadRepositoryWorkspacePrefs(identity: identity)).filesPinned,
+      isTrue,
+    );
+    expect(pin(CupertinoIcons.pin_fill), findsOneWidget);
+
+    await tester.tap(pin(CupertinoIcons.pin_fill));
+    await tester.pumpAndSettle();
+    expect(
+      (await loadRepositoryWorkspacePrefs(identity: identity)).filesPinned,
+      isFalse,
+    );
   });
 
   testWidgets('dirty folder green, clean folder blue, names white', (
     tester,
   ) async {
-    await _pump(tester, onOpenFile: (_, {required staged, required untracked}) {});
+    await _pump(
+      tester,
+      onOpenFile: (_, {required staged, required untracked}) {},
+    );
 
     expect(find.text('lib'), findsOneWidget);
     expect(find.text('docs'), findsOneWidget);
@@ -229,14 +289,20 @@ void main() {
   testWidgets('dirty directory auto-expands to reveal its changed file', (
     tester,
   ) async {
-    await _pump(tester, onOpenFile: (_, {required staged, required untracked}) {});
+    await _pump(
+      tester,
+      onOpenFile: (_, {required staged, required untracked}) {},
+    );
     // 'lib' is dirty → auto-expanded; 'docs' is clean → collapsed.
     expect(find.text('main.dart'), findsOneWidget);
     expect(find.text('readme.md'), findsNothing);
   });
 
   testWidgets('changed file shows a colored status letter', (tester) async {
-    await _pump(tester, onOpenFile: (_, {required staged, required untracked}) {});
+    await _pump(
+      tester,
+      onOpenFile: (_, {required staged, required untracked}) {},
+    );
     // lib/main.dart is modified (.M) → a yellow 'M' letter (colored text).
     expect(find.text('M'), findsOneWidget);
     final letter = tester.widget<Text>(find.text('M'));
@@ -247,7 +313,8 @@ void main() {
     String? opened;
     await _pump(
       tester,
-      onOpenFile: (path, {required staged, required untracked}) => opened = path,
+      onOpenFile: (path, {required staged, required untracked}) =>
+          opened = path,
     );
 
     await tester.tap(find.text('main.dart'));
@@ -276,7 +343,10 @@ void main() {
   testWidgets('expanding a clean directory toggles its children', (
     tester,
   ) async {
-    await _pump(tester, onOpenFile: (_, {required staged, required untracked}) {});
+    await _pump(
+      tester,
+      onOpenFile: (_, {required staged, required untracked}) {},
+    );
 
     expect(find.text('readme.md'), findsNothing);
     await tester.tap(find.text('docs'));
@@ -324,9 +394,7 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           repoStructureProvider(_repo).overrideWith((ref) async => _fixture()),
-          repoStatusOverlayProvider(
-            _repo,
-          ).overrideWith((ref) => _overlayMixed),
+          repoStatusOverlayProvider(_repo).overrideWith((ref) => _overlayMixed),
         ],
       );
       addTearDown(container.dispose);
@@ -399,8 +467,12 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [
-            repoStructureProvider(_repo).overrideWith((ref) async => _fixture()),
-            repoStatusOverlayProvider(_repo).overrideWith((ref) => _overlayMixed),
+            repoStructureProvider(
+              _repo,
+            ).overrideWith((ref) async => _fixture()),
+            repoStatusOverlayProvider(
+              _repo,
+            ).overrideWith((ref) => _overlayMixed),
           ],
           child: MacosApp(
             debugShowCheckedModeBanner: false,
@@ -422,10 +494,7 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.tap(
-        find.text('main.dart'),
-        buttons: kSecondaryMouseButton,
-      );
+      await tester.tap(find.text('main.dart'), buttons: kSecondaryMouseButton);
       await tester.pumpAndSettle();
 
       // Every row must actually be reachable, not just present in the tree —
@@ -565,10 +634,7 @@ void main() {
 
       // Right-clicking selects it (like a left-click, like Finder) while the
       // menu is open.
-      await tester.tap(
-        find.text('main.dart'),
-        buttons: kSecondaryMouseButton,
-      );
+      await tester.tap(find.text('main.dart'), buttons: kSecondaryMouseButton);
       await tester.pumpAndSettle();
 
       expect(find.text('View file'), findsOneWidget); // menu is open
@@ -738,9 +804,9 @@ void main() {
 
       // The trash icon shares its row with the "Delete File" label; find the
       // MacosIcon that is the trash can and assert its red tint.
-      final trash = tester.widgetList<MacosIcon>(find.byType(MacosIcon)).where(
-        (i) => i.icon == CupertinoIcons.trash,
-      );
+      final trash = tester
+          .widgetList<MacosIcon>(find.byType(MacosIcon))
+          .where((i) => i.icon == CupertinoIcons.trash);
       expect(trash, isNotEmpty);
       expect(trash.every((i) => i.color == MacosColors.systemRedColor), isTrue);
     });

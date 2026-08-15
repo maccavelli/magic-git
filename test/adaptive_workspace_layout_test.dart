@@ -8,7 +8,13 @@ import 'package:remote_magic_git/features/common/resizable_master_detail.dart';
 
 void main() {
   test('adaptive arrangement pins the documented defaults', () {
-    const prefs = RepositoryWorkspacePrefs(inspectorPinned: true);
+    // The dock state is stated rather than inherited: the default is now
+    // `taskDockCollapsed: true` (matching the default Review preset), and this
+    // case is about the arrangement rules, not about that default.
+    const prefs = RepositoryWorkspacePrefs(
+      inspectorPinned: true,
+      taskDockCollapsed: false,
+    );
     final compact = resolveAdaptiveWorkspaceArrangement(
       width: 640,
       preferences: prefs,

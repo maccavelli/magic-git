@@ -436,6 +436,22 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
     );
   }
 
+  /// THE stash-everything path. Every entry point routes here.
+  ///
+  /// `--include-untracked` is not optional: plain `git stash push` ignores
+  /// untracked files and then "succeeds" with an empty "No local changes to
+  /// save" — creating no stash while reporting success, and leaving the work
+  /// in place (the same hazard `branch_switch.dart` documents for auto-stash).
+  /// Two entry points here used to omit it, so the identically-labelled button
+  /// on this screen and the one on Repository did different things.
+  Future<void> _stashAll(GitService git) => _runLogged(
+    'git stash push --include-untracked',
+    (log) async => log.logResult(
+      'git stash push --include-untracked',
+      await git.stashPush(repoPath, includeUntracked: true),
+    ),
+  );
+
   Widget _contextBar(RepositoryContextSnapshot snapshot, GitService git) =>
       RepositoryContextBar(
         snapshot: snapshot,
@@ -444,11 +460,7 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
           label: 'Stash Changes',
           disabledReason: busy ? 'Another stash operation is running' : null,
         ),
-        onPrimaryAction: (_) => _runLogged(
-          'git stash push',
-          (log) async =>
-              log.logResult('git stash push', await git.stashPush(repoPath)),
-        ),
+        onPrimaryAction: (_) => _stashAll(git),
       );
 
   Widget _filterBar(
@@ -512,35 +524,14 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
         // Convention: toolbar menus use the "hamburger" (three horizontal lines).
         icon: CupertinoIcons.line_horizontal_3,
         items: [
+          // One item, not two: "including untracked" IS the behaviour now, so
+          // a separate entry would offer a distinction that no longer exists.
           MacosPulldownMenuItem(
             title: Text(
-              'Stash current changes',
+              'Stash changes',
               style: busy ? _disabledStyle(context) : null,
             ),
-            onTap: busy
-                ? null
-                : () => _runLogged(
-                    'git stash push',
-                    (log) async => log.logResult(
-                      'git stash push',
-                      await git.stashPush(repoPath),
-                    ),
-                  ),
-          ),
-          MacosPulldownMenuItem(
-            title: Text(
-              'Stash including untracked',
-              style: busy ? _disabledStyle(context) : null,
-            ),
-            onTap: busy
-                ? null
-                : () => _runLogged(
-                    'git stash push --include-untracked',
-                    (log) async => log.logResult(
-                      'git stash push --include-untracked',
-                      await git.stashPush(repoPath, includeUntracked: true),
-                    ),
-                  ),
+            onTap: busy ? null : () => _stashAll(git),
           ),
           MacosPulldownMenuItem(
             title: Text(
@@ -548,6 +539,13 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
               style: busy ? _disabledStyle(context) : null,
             ),
             onTap: busy ? null : () => _stashWithMessage(git),
+          ),
+          // These act on the LATEST stash, whereas the row buttons and
+          // ⌥⌘A/⌥⌘P act on the SELECTED one. Same verbs, different operand —
+          // so the operand is named in the label rather than left implicit.
+          const MacosPulldownMenuItem(
+            title: Text('\u2014'),
+            enabled: false,
           ),
           MacosPulldownMenuItem(
             title: Text(

@@ -813,7 +813,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
             onTap: busy ? null : _prune,
           ),
           MacosPulldownMenuItem(
-            title: const Text('Repair worktree links'),
+            title: const Text('Repair all worktree links'),
             onTap: busy
                 ? null
                 : () => runGuarded(

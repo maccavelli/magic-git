@@ -41,7 +41,13 @@ Widget _workspace({bool disableAnimations = false}) => MacosApp(
         taskDock: _region('task dock content'),
         inspectorVisible: true,
         taskDockFocused: true,
-        preferences: const RepositoryWorkspacePrefs(inspectorPinned: true),
+        // The dock is opted into explicitly: the default record now carries the
+        // Review preset's `taskDockCollapsed: true`, and this harness is about
+        // every pane region being reachable, not about that default.
+        preferences: const RepositoryWorkspacePrefs(
+          inspectorPinned: true,
+          taskDockCollapsed: false,
+        ),
       ),
     ),
   ),

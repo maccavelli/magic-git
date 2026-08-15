@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,7 +17,6 @@ import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
-import '../common/activity_center.dart';
 import '../common/busy_action.dart';
 import '../common/buttons.dart';
 import '../common/context_menu.dart';
@@ -174,6 +174,57 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   bool _diffSplit = false;
   bool _diffIgnoreWs = false;
   bool _diffExpandContext = false;
+
+  /// Whether the three diff toggles above have been seeded from the persisted
+  /// workspace record yet. They were pure session state, so `diffLayout`,
+  /// `ignoreWhitespace` and `diffContextLines` round-tripped to disk and were
+  /// never read — the user's diff mode silently reset on every remount.
+  bool _diffPrefsHydrated = false;
+
+  /// Seeds the diff toggles from [prefs] exactly once per mount.
+  void _hydrateDiffPrefs(RepositoryWorkspacePrefs prefs) {
+    if (_diffPrefsHydrated) return;
+    _diffPrefsHydrated = true;
+    final split = prefs.diffLayout == RepositoryDiffLayout.split;
+    final ignoreWs = prefs.ignoreWhitespace;
+    final expand = prefs.diffContextLines > _defaultCtx;
+    if (split == _diffSplit &&
+        ignoreWs == _diffIgnoreWs &&
+        expand == _diffExpandContext) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      setState(() {
+        _diffSplit = split;
+        _diffIgnoreWs = ignoreWs;
+        _diffExpandContext = expand;
+      });
+    });
+  }
+
+  /// Persists the current diff toggles so they survive a remount.
+  void _persistDiffPrefs() {
+    final identity = ref.read(repositoryUiIdentityProvider(repoPath)).value;
+    final prefs = ref.read(repositoryWorkspacePrefsProvider(repoPath)).value;
+    if (identity == null || prefs == null) return;
+    unawaited(
+      saveRepositoryWorkspacePrefs(
+        identity: identity,
+        next: prefs.copyWith(
+          diffLayout: _diffSplit
+              ? RepositoryDiffLayout.split
+              : RepositoryDiffLayout.unified,
+          ignoreWhitespace: _diffIgnoreWs,
+          diffContextLines: _diffCtx,
+        ),
+      ).then((_) {
+        if (mounted) {
+          ref.invalidate(repositoryWorkspacePrefsProvider(repoPath));
+        }
+      }),
+    );
+  }
 
   /// Show the inline blame gutter in the unified diff. Off by default — blame is
   /// an SSH round trip, fetched only when turned on, and only for the tracked
@@ -673,8 +724,26 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     return parts.join('\u001e');
   }
 
+  /// Opens the expanded composer, un-collapsing the task dock if needed.
+  ///
+  /// Setting `_composerExpanded` alone was not enough: `AdaptiveWorkspaceLayout`
+  /// hides the dock entirely when `taskDockCollapsed`, and the Review,
+  /// Investigate and Minimal presets all set that — so ⌘G was a silent no-op
+  /// under three of the four presets.
   void _expandCommitComposer() {
     if (!_composerExpanded) setState(() => _composerExpanded = true);
+    final prefs = ref.read(repositoryWorkspacePrefsProvider(repoPath)).value;
+    final identity = ref.read(repositoryUiIdentityProvider(repoPath)).value;
+    if (prefs != null && identity != null && prefs.taskDockCollapsed) {
+      unawaited(
+        saveRepositoryWorkspacePrefs(
+          identity: identity,
+          next: prefs.copyWith(taskDockCollapsed: false),
+        ).then((_) {
+          if (mounted) ref.invalidate(repositoryWorkspacePrefsProvider(repoPath));
+        }),
+      );
+    }
   }
 
   Future<void> _acceptCommitComposer(
@@ -1292,6 +1361,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     final workspacePreferences =
         ref.watch(repositoryWorkspacePrefsProvider(repoPath)).value ??
         const RepositoryWorkspacePrefs();
+    _hydrateDiffPrefs(workspacePreferences);
     final typography = MacosTheme.of(context).typography;
     final sessionWarning = ref.watch(
       connectionProvider.select((c) => c.warning),
@@ -1390,13 +1460,22 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       // so they fall through (null) when nothing is selected.
       'repository.toggleSplitDiff': selected == null
           ? null
-          : () => setState(() => _diffSplit = !_diffSplit),
+          : () {
+              setState(() => _diffSplit = !_diffSplit);
+              _persistDiffPrefs();
+            },
       'repository.toggleIgnoreWhitespace': selected == null
           ? null
-          : () => setState(() => _diffIgnoreWs = !_diffIgnoreWs),
+          : () {
+              setState(() => _diffIgnoreWs = !_diffIgnoreWs);
+              _persistDiffPrefs();
+            },
       'repository.toggleExpandContext': selected == null
           ? null
-          : () => setState(() => _diffExpandContext = !_diffExpandContext),
+          : () {
+              setState(() => _diffExpandContext = !_diffExpandContext);
+              _persistDiffPrefs();
+            },
       'repository.toggleStage': selected == null
           ? null
           : () => selected.staged
@@ -1528,6 +1607,10 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   MacosWindowScope.maybeOf(context)?.toggleSidebar(),
               onBack: widget.onBack,
               onForward: widget.onForward,
+              onRevealOutput: (id) {
+                ref.read(outputLogProvider.notifier).setVisible(true);
+                ref.read(outputRevealProvider.notifier).request(id);
+              },
               onPrimaryAction: (kind) => _invokePrimaryRepositoryAction(
                 kind,
                 status: status,
@@ -1850,13 +1933,20 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                 ignoreWhitespace: _diffIgnoreWs,
                 expandedContext: _diffExpandContext,
                 blame: _diffBlame,
-                onToggleSplit: () => setState(() => _diffSplit = !_diffSplit),
+                onToggleSplit: () {
+                  setState(() => _diffSplit = !_diffSplit);
+                  _persistDiffPrefs();
+                },
                 onPrevious: () => _moveFileSelection(-1),
                 onNext: () => _moveFileSelection(1),
-                onToggleWhitespace: () =>
-                    setState(() => _diffIgnoreWs = !_diffIgnoreWs),
-                onToggleContext: () =>
-                    setState(() => _diffExpandContext = !_diffExpandContext),
+                onToggleWhitespace: () {
+                  setState(() => _diffIgnoreWs = !_diffIgnoreWs);
+                  _persistDiffPrefs();
+                },
+                onToggleContext: () {
+                  setState(() => _diffExpandContext = !_diffExpandContext);
+                  _persistDiffPrefs();
+                },
                 onToggleBlame: () => setState(() => _diffBlame = !_diffBlame),
                 onPopOut: () => setState(() => _popout = true),
                 onClose: _clearSelection,
@@ -2224,16 +2314,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             busy ? null : _stashPush,
           ),
           const SizedBox(width: 2),
-          if (MediaQuery.sizeOf(context).width >= 900) ...[
-            ActivityCenterButton(
-              repositoryPath: repoPath,
-              onRevealOutput: (id) {
-                ref.read(outputLogProvider.notifier).setVisible(true);
-                ref.read(outputRevealProvider.notifier).request(id);
-              },
-            ),
-            const SizedBox(width: 2),
-          ],
+          // The Activity button used to be rendered a second time here at
+          // >=900px, ~300px from the identical one in the context bar. The bar
+          // now forwards onRevealOutput, so its copy is a full replacement.
           ToolIconButton(
             icon: CupertinoIcons.refresh,
             tooltip: 'Refresh',
@@ -2293,7 +2376,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                 ),
                 const MacosPulldownMenuDivider(),
                 MacosPulldownMenuItem(
-                  title: const Text('Amend last commit'),
+                  // Distinguished from History's `history.amend`, which
+                  // carries the same words: two identically-labelled commands
+                  // that do different things are indistinguishable in the
+                  // palette and the menu bar.
+                  title: const Text('Amend last commit (working tree)'),
                   onTap: _amend,
                 ),
               ],
