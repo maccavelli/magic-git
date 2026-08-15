@@ -12,8 +12,10 @@ import '../../core/providers/app_providers.dart';
 import '../../core/providers/window_manager_bridge.dart';
 import '../../core/theme/app_theme.dart';
 import '../app_shell.dart';
+import '../common/actions.dart';
 import '../common/menu_bar_bridge.dart';
 import '../common/menu_bar_spec.dart';
+import '../common/session_exit_guard.dart';
 import 'tab_strip.dart';
 import 'tab_ui_providers.dart';
 import 'tabs_controller.dart';
@@ -259,7 +261,10 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
         // open (.terminateLater, with a native timeout backstop) until this
         // returns; persist the final bounds and close EVERY tab's SSH session
         // cleanly instead of letting the process die with sockets open.
-        await _onPrepareToTerminate();
+        // Returns false to DECLINE termination — either a session with work
+        // at stake needs the user's say-so first (0009 M5; the confirm path
+        // re-enters via terminateNow), or the user cancelled.
+        return _onPrepareToTerminate();
       case 'syncMenuState':
         // The native side asks for this once its menu items are installed, so
         // the checkmarks are correct even if our startup push raced item
@@ -269,15 +274,45 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     return null;
   }
 
-  Future<void> _onPrepareToTerminate() async {
+  Future<bool> _onPrepareToTerminate() async {
     _boundsSaveTimer?.cancel();
     try {
       await _saveBounds();
     } catch (_) {
       // Best-effort — never block quitting on a bounds read.
     }
-    await _disconnectAllTabs();
+    final atRisk = _sessionsAtRisk();
+    if (atRisk.isEmpty) {
+      await _disconnectAllTabs();
+      return true;
+    }
+    // Decline the terminate FIRST (the native side keeps a 3s backstop, so
+    // a confirm dialog can never answer over this channel), then ask; on
+    // confirm, finish teardown and re-enter termination via terminateNow.
+    unawaited(() async {
+      if (!mounted) return;
+      final proceed = await confirmAction(
+        context,
+        title: 'Quit Magic Git?',
+        message: sessionExitSummaryMessage(atRisk),
+        confirmLabel: 'Quit',
+        destructive: true,
+      );
+      if (!proceed) return;
+      await _disconnectAllTabs();
+      await _menuChannel.invokeMethod<void>('terminateNow');
+    }());
+    return false;
   }
+
+  /// Every connected tab's session with work at stake — the quit/window-close
+  /// summary's input (0009 M5).
+  List<SessionAtRisk> _sessionsAtRisk() => sessionsAtRisk([
+    for (final t in _controller.tabs)
+      if (t.container.read(connectionProvider) case final connection
+          when connection.isConnected && connection.repoPath != null)
+        (t.container, connection.repoPath!),
+  ]);
 
   /// Cleanly disconnects every open tab's session — used on window close and
   /// ⌘Q so no tab leaves a socket dangling.
@@ -331,6 +366,20 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
       await _saveBounds();
     } catch (_) {
       // Best-effort.
+    }
+    // Same at-stake summary as ⌘Q (0009 M5); Cancel simply leaves the
+    // window up — preventClose is still armed, so nothing has happened.
+    final atRisk = _sessionsAtRisk();
+    if (atRisk.isNotEmpty) {
+      if (!mounted) return;
+      final proceed = await confirmAction(
+        context,
+        title: 'Close window?',
+        message: sessionExitSummaryMessage(atRisk),
+        confirmLabel: 'Close Window',
+        destructive: true,
+      );
+      if (!proceed) return;
     }
     await _disconnectAllTabs();
     await windowManager.setPreventClose(false);

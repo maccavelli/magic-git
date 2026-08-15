@@ -16,6 +16,10 @@ Future<bool> confirmSessionExit(
   ProviderContainer container, {
   required String repoPath,
   required String title,
+  // The confirm button's verb. The old title-derived fallback stays for the
+  // two original callers; new titles (Quit…/Disconnect…) must name their own
+  // verb or the button would read "Log Out" (0009 M5).
+  String? confirmLabel,
 }) async {
   var status = container.read(statusProvider(repoPath)).value;
   if (status == null) {
@@ -53,7 +57,48 @@ Future<bool> confirmSessionExit(
     context,
     title: title,
     message: parts.join('\n\n'),
-    confirmLabel: title.contains('Close') ? 'Close Tab' : 'Log Out',
+    confirmLabel:
+        confirmLabel ?? (title.contains('Close') ? 'Close Tab' : 'Log Out'),
     destructive: true,
   );
+}
+
+/// One session that still has work at stake when the whole app is about to
+/// exit (0009 M5).
+typedef SessionAtRisk = ({String repoPath, bool dirty, PendingOp pending});
+
+/// The subset of [sessions] with uncommitted work or a mid-flight sequencer
+/// operation. Reads only already-landed status/pendingOp values — quit and
+/// window-close must never block on a per-tab network round-trip, so an
+/// unknown status counts as clean (the same never-prompt-on-unknown rule the
+/// reconnect overlay uses).
+List<SessionAtRisk> sessionsAtRisk(
+  Iterable<(ProviderContainer, String)> sessions,
+) {
+  final atRisk = <SessionAtRisk>[];
+  for (final (container, repoPath) in sessions) {
+    final status = container.read(statusProvider(repoPath)).value;
+    final pending =
+        container.read(pendingOpProvider(repoPath)).value ?? PendingOp.none;
+    final dirty = status != null && !status.isClean;
+    if (dirty || pending != PendingOp.none) {
+      atRisk.add((repoPath: repoPath, dirty: dirty, pending: pending));
+    }
+  }
+  return atRisk;
+}
+
+/// The quit / window-close summary: one line per at-risk session with its
+/// reason, so multiple dirty tabs get ONE dialog rather than a chain.
+String sessionExitSummaryMessage(List<SessionAtRisk> atRisk) {
+  final lines = [
+    for (final t in atRisk)
+      '• ${t.repoPath} — ${[
+        if (t.dirty) 'uncommitted changes',
+        if (t.pending != PendingOp.none) '${t.pending.name} in progress',
+      ].join(', ')}',
+  ];
+  return '${lines.join('\n')}\n\n'
+      'Nothing is deleted on the host, but these sessions will be left '
+      'as-is.';
 }

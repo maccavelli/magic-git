@@ -603,6 +603,11 @@ class _AppShellState extends ConsumerState<AppShell> {
             'undone — this redo is no longer safe and has been discarded.',
           );
         case RedoStatus.nothingToRedo:
+          // Mirrors undo's "Nothing to undo" — an empty journal must answer,
+          // not stay silent (0009 L1).
+          ref
+              .read(undoToastProvider.notifier)
+              .show(const UndoToast('Nothing to redo'));
         case RedoStatus.blockedByPendingOp:
           break;
       }
@@ -610,6 +615,29 @@ class _AppShellState extends ConsumerState<AppShell> {
       if (!mounted) return;
       await showErrorDialog(context, displayError(e));
     }
+  }
+
+  /// Cancel during auto-reconnect fully disconnects — confirm first when the
+  /// last-known status says work is at stake (0009 M5). A hard drop can
+  /// leave status never-landed; then there is nothing honest to prompt with
+  /// and Cancel disconnects directly, as before.
+  Future<void> _cancelReconnect() async {
+    final connection = ref.read(connectionProvider);
+    final repoPath = connection.repoPath;
+    var proceed = true;
+    if (repoPath != null &&
+        ref.read(statusProvider(repoPath)).value != null &&
+        mounted) {
+      proceed = await confirmSessionExit(
+        context,
+        ProviderScope.containerOf(context, listen: false),
+        repoPath: repoPath,
+        title: 'Disconnect?',
+        confirmLabel: 'Disconnect',
+      );
+    }
+    if (!proceed) return;
+    await ref.read(connectionProvider.notifier).disconnect();
   }
 
   /// Shows the non-dismissible host-key-mismatch dialog. "Cancel Connection"
@@ -1069,8 +1097,7 @@ class _AppShellState extends ConsumerState<AppShell> {
               attempt: connection.reconnectAttempt,
               onStopRetrying: () =>
                   ref.read(connectionProvider.notifier).stopReconnect(),
-              onCancel: () =>
-                  ref.read(connectionProvider.notifier).disconnect(),
+              onCancel: () => unawaited(_cancelReconnect()),
             );
           }
           if (!connected) {

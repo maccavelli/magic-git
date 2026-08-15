@@ -111,23 +111,34 @@ class MainFlutterWindow: NSWindow {
   /// another one (AppKit needs exactly one reply).
   private var terminateRequestInFlight = false
 
+  /// Set once Dart has confirmed a guarded quit and finished its teardown
+  /// (`terminateNow`) — the next applicationShouldTerminate must proceed
+  /// without asking again (0009 M5).
+  private(set) var terminateApproved = false
+
   /// Asks Flutter to shut down cleanly (persist bounds, disconnect SSH) ahead
-  /// of app termination. Returns false when the Flutter channel isn't up yet —
-  /// the caller should terminate immediately. Otherwise `completion` runs
-  /// exactly once: when Dart answers, or after a 3s backstop so quit can never
-  /// hang on an unresponsive connection.
-  func prepareToTerminate(completion: @escaping () -> Void) -> Bool {
-    guard let channel = menuChannel else { return false }
+  /// of app termination. Returns false when the Flutter channel isn't up yet
+  /// (or Dart already approved via terminateNow) — the caller should
+  /// terminate immediately. Otherwise `completion(shouldTerminate)` runs
+  /// exactly once: with Dart's answer (false = a session with work at stake
+  /// declined for now; Dart confirms with the user and re-enters via
+  /// terminateNow), or true after a 3s backstop so quit can never hang on an
+  /// unresponsive connection.
+  func prepareToTerminate(completion: @escaping (Bool) -> Void) -> Bool {
+    guard !terminateApproved, let channel = menuChannel else { return false }
     if terminateRequestInFlight { return true }
     terminateRequestInFlight = true
     var replied = false
-    let finish = {
+    let finish: (Bool) -> Void = { shouldTerminate in
       guard !replied else { return }
       replied = true
-      completion()
+      self.terminateRequestInFlight = false
+      completion(shouldTerminate)
     }
-    channel.invokeMethod("prepareToTerminate", arguments: nil) { _ in finish() }
-    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { finish() }
+    channel.invokeMethod("prepareToTerminate", arguments: nil) { result in
+      finish((result as? Bool) ?? true)
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { finish(true) }
     return true
   }
 
@@ -201,6 +212,13 @@ class MainFlutterWindow: NSWindow {
           self?.installDynamicMenus(spec)
         }
         result(nil)
+      case "terminateNow":
+        // Dart declined an earlier prepareToTerminate to confirm a guarded
+        // quit with the user, finished its teardown, and now wants the real
+        // terminate — do not ask again (0009 M5).
+        self?.terminateApproved = true
+        result(nil)
+        NSApp.terminate(nil)
       case "setEnabledActions":
         if let ids = call.arguments as? [String] {
           self?.enabledActionIds = Set(ids)

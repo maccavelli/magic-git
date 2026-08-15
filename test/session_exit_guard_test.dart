@@ -7,6 +7,8 @@
 // changes the button), and a failed status fetch BLOCKS the exit rather than
 // letting it through.
 
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -333,5 +335,88 @@ void main() {
     await tester.tap(find.text('Cancel'));
     await tester.pumpAndSettle();
     expect(await result, isFalse);
+  });
+
+  // 0009 M5: the quit / window-close path shows ONE summary for every
+  // session with work at stake, and never blocks on a network round-trip.
+  group('quit summary', () {
+    ProviderContainer session({
+      required GitStatus status,
+      PendingOp pending = PendingOp.none,
+    }) {
+      final container = ProviderContainer(
+        overrides: [
+          statusProvider(_repo).overrideWith((ref) => status),
+          pendingOpProvider(_repo).overrideWith((ref) => pending),
+        ],
+      );
+      addTearDown(container.dispose);
+      return container;
+    }
+
+    test('collects only sessions whose landed state has work at stake', () {
+      final dirty = session(status: _dirty());
+      final clean = session(status: _clean());
+      final rebasing = session(status: _clean(), pending: PendingOp.rebase);
+      // A session whose status never landed (hard drop): counts as clean —
+      // quit must not wait on it.
+      final cold = ProviderContainer(
+        overrides: [
+          statusProvider(
+            _repo,
+          ).overrideWith((ref) => Completer<GitStatus>().future),
+          pendingOpProvider(
+            _repo,
+          ).overrideWith((ref) => Completer<PendingOp>().future),
+        ],
+      );
+      addTearDown(cold.dispose);
+
+      final atRisk = sessionsAtRisk([
+        (dirty, _repo),
+        (clean, _repo),
+        (rebasing, _repo),
+        (cold, _repo),
+      ]);
+
+      expect(atRisk, hasLength(2));
+      expect(atRisk[0].dirty, isTrue);
+      expect(atRisk[1].pending, PendingOp.rebase);
+    });
+
+    test('the summary lists one line per session with its reasons', () {
+      final message = sessionExitSummaryMessage([
+        (repoPath: '/srv/app', dirty: true, pending: PendingOp.none),
+        (repoPath: '/srv/lib', dirty: true, pending: PendingOp.merge),
+      ]);
+      expect(message, contains('• /srv/app — uncommitted changes'));
+      expect(
+        message,
+        contains('• /srv/lib — uncommitted changes, merge in progress'),
+      );
+      expect(message, contains('left'));
+    });
+
+    testWidgets('an explicit confirmLabel overrides the title derivation', (
+      tester,
+    ) async {
+      final host = await _host(tester, status: _dirty());
+
+      final result = confirmSessionExit(
+        host.context,
+        host.container,
+        repoPath: _repo,
+        title: 'Disconnect?',
+        confirmLabel: 'Disconnect',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Disconnect'), findsOneWidget);
+      expect(find.text('Log Out'), findsNothing);
+
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+      expect(await result, isFalse);
+    });
   });
 }

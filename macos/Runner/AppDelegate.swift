@@ -18,16 +18,22 @@ class AppDelegate: FlutterAppDelegate {
   /// open just long enough for Flutter to disconnect, with a native timeout
   /// backstop so quit can never hang on a wedged connection.
   override func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-    // The History window first: its engine holds no session state (bounds
-    // are frame-autosaved continuously), so a synchronous teardown is safe
-    // and keeps its engine from outliving the main one mid-quit.
-    (mainFlutterWindow as? MainFlutterWindow)?.teardownAllSecondaryWindows()
     guard let window = mainFlutterWindow as? MainFlutterWindow,
-      window.prepareToTerminate(completion: {
-        NSApp.reply(toApplicationShouldTerminate: true)
+      window.prepareToTerminate(completion: { shouldTerminate in
+        if shouldTerminate {
+          // Pop-outs only once quitting is real: their engines hold no
+          // session state (bounds are frame-autosaved continuously), so a
+          // synchronous teardown is safe — and a cancelled quit must not
+          // have closed them (0009 M5).
+          (self.mainFlutterWindow as? MainFlutterWindow)?
+            .teardownAllSecondaryWindows()
+        }
+        NSApp.reply(toApplicationShouldTerminate: shouldTerminate)
       })
     else {
-      // Flutter channel not up (quit during launch) — nothing to clean.
+      // Flutter channel not up (quit during launch), or Dart already ran a
+      // confirmed teardown (terminateNow) — proceed immediately.
+      (mainFlutterWindow as? MainFlutterWindow)?.teardownAllSecondaryWindows()
       return .terminateNow
     }
     return .terminateLater
