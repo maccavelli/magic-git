@@ -507,7 +507,9 @@ class MainFlutterWindow: NSWindow {
     }
   }
 
-  /// Dims any command whose action id the active panel cannot currently run.
+  /// Dims any command whose action id is neither reachable in this session
+  /// (cross-panel ids a connected session enables — choosing one switches to
+  /// the owning panel) nor runnable on the active panel right now.
   /// The item stays in place: "If all of a menu's items are unavailable, the
   /// menu itself needs to remain available so people can open it and learn
   /// about the commands it contains."

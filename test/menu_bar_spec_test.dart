@@ -42,6 +42,44 @@ void main() {
     }
   });
 
+  // 0009 H1: the session-reachable set must stay a subset of the registered
+  // world (keymap + panel routing), and selection-gated verbs must never
+  // sneak in — those only enable through the owning panel's live handlers.
+  test('cross-panel ids are registered, routed, and never selection-gated', () {
+    for (final id in kCrossPanelMenuActionIds) {
+      expect(
+        kKeymapActionsById,
+        contains(id),
+        reason: 'cross-panel id $id is not in kKeymapActions',
+      );
+      expect(
+        kPanelActionOwner,
+        contains(id),
+        reason: 'cross-panel id $id has no owning panel',
+      );
+    }
+    for (final gated in const [
+      'stashes.apply',
+      'stashes.pop',
+      'stashes.drop',
+      'branches.delete',
+      'branches.merge',
+      'branches.publish',
+      'worktrees.remove',
+      'worktrees.repair',
+      'github.merge',
+      'gitlab.merge',
+      'history.checkout',
+      'repository.abortPending',
+    ]) {
+      expect(
+        kCrossPanelMenuActionIds,
+        isNot(contains(gated)),
+        reason: '$gated needs a live selection — it must stay panel-gated',
+      );
+    }
+  });
+
   test('every menu item is routed to an owning panel', () {
     expect(
       unroutableMenuActionIds(),

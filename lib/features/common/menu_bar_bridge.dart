@@ -29,11 +29,16 @@ class AvailableActions extends Notifier<Set<String>> {
   /// the panel's changes on every selection, the shell's on connection state.
   Set<String> _shellIds = const {};
 
+  /// Session-scoped commands a connected session can reach by switching
+  /// panels (`kCrossPanelMenuActionIds`). Its own lifetime again: changes on
+  /// connection / forge state, never on the active panel's selection.
+  Set<String> _sessionIds = const {};
+
   @override
   Set<String> build() => const {};
 
   void _recompute() {
-    final next = {..._panelIds, ..._shellIds};
+    final next = {..._panelIds, ..._shellIds, ..._sessionIds};
     if (!setEquals(state, next)) state = next;
   }
 
@@ -50,6 +55,11 @@ class AvailableActions extends Notifier<Set<String>> {
 
   void publishShell(Set<String> ids) {
     _shellIds = ids;
+    _recompute();
+  }
+
+  void publishSession(Set<String> ids) {
+    _sessionIds = ids;
     _recompute();
   }
 

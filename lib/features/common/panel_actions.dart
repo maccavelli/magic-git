@@ -105,3 +105,38 @@ const Map<String, int> kPanelActionOwner = {
 /// The panel that owns [actionId], or null when no panel does (a `global.*`
 /// action, or an id that was never registered).
 int? panelOwnerOf(String actionId) => kPanelActionOwner[actionId];
+
+/// Menu ids a connected session may run after switching to the owning panel
+/// (the shell publishes these as the session-scoped availability set — see
+/// `AvailableActions.publishSession`). Choosing one from another panel
+/// switches there and dispatches through the same handler map as ever.
+///
+/// Selection-gated verbs (apply THIS stash, delete THIS branch, merge THIS
+/// pull request…) are deliberately absent: they stay dimmed until the owning
+/// panel is active and publishes a live handler for them.
+const Set<String> kCrossPanelMenuActionIds = {
+  'repository.fetch',
+  'repository.pull',
+  'repository.pullRebase',
+  'repository.pullMerge',
+  'repository.push',
+  'repository.pushSetUpstream',
+  'repository.pushTags',
+  'repository.forcePush',
+  'repository.forcePushHard',
+  'repository.sync',
+  'repository.stash',
+  'repository.stageAll',
+  'repository.unstageAll',
+  'repository.focusCommit',
+  'repository.amend',
+  'branches.newBranch',
+  'branches.createTag',
+  'stashes.stashWithMessage',
+  'forge.newIssue',
+  'github.newPr',
+  'gitlab.newMr',
+  'worktrees.add',
+  'worktrees.repairAll',
+  'worktrees.prune',
+};

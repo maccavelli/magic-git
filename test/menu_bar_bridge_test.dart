@@ -97,6 +97,42 @@ void main() {
       expect(container.read(availableActionsProvider), {'repository.fetch'});
     });
 
+    // 0009 H1: cross-panel ids a connected session publishes stay enabled
+    // regardless of which panel is active (union with the panel's own set).
+    testWidgets('the session set unions with the active panel set', (
+      tester,
+    ) async {
+      final container = await _pumpPanel(
+        tester,
+        handlers: {'history.copySha': () {}},
+      );
+      container.read(availableActionsProvider.notifier).publishSession(const {
+        'repository.fetch',
+        'worktrees.add',
+      });
+
+      expect(container.read(availableActionsProvider), {
+        'history.copySha',
+        'repository.fetch',
+        'worktrees.add',
+      });
+
+      // Disconnect clears the session set; the panel's set survives.
+      container
+          .read(availableActionsProvider.notifier)
+          .publishSession(const {});
+      expect(container.read(availableActionsProvider), {'history.copySha'});
+    });
+
+    test('the session set alone enables Fetch with no panel published', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      container.read(availableActionsProvider.notifier).publishSession(const {
+        'repository.fetch',
+      });
+      expect(container.read(availableActionsProvider), {'repository.fetch'});
+    });
+
     testWidgets('a disposed panel leaves nothing enabled behind it', (
       tester,
     ) async {

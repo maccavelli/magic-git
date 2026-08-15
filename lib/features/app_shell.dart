@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/utils/display_error.dart';
+import '../core/forge/forge.dart';
 import '../core/git/git_service.dart';
 import '../core/output/output_log.dart';
 import '../core/providers/app_providers.dart';
@@ -924,11 +925,23 @@ class _AppShellState extends ConsumerState<AppShell> {
       for (final MapEntry(key: id, value: handler) in globalHandlers.entries)
         if (handler != null) id,
     };
+    // Session-reachable panel verbs (0009 H1): a connected session enables
+    // every cross-panel id — choosing one switches to the owning panel and
+    // dispatches through its handler map. Host-specific create verbs stay out
+    // until the forge is actually detected as that host (while detection is
+    // loading, both are omitted; forge.newIssue stays).
+    final sessionIds = <String>{};
+    if (connected) {
+      sessionIds.addAll(kCrossPanelMenuActionIds);
+      final forge = ref.watch(forgeProvider(connection.repoPath!)).value;
+      if (forge != Forge.github) sessionIds.remove('github.newPr');
+      if (forge != Forge.gitlab) sessionIds.remove('gitlab.newMr');
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        ref.read(availableActionsProvider.notifier).publishShell(
-          availableGlobals,
-        );
+        ref.read(availableActionsProvider.notifier)
+          ..publishShell(availableGlobals)
+          ..publishSession(sessionIds);
       }
     });
     final shortcuts = resolveShortcuts(keymap, globalHandlers);
