@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../../core/settings/keymap.dart';
 import '../common/buttons.dart';
 import '../common/field_styles.dart';
 import '../common/inline_action_button.dart';
@@ -11,7 +13,7 @@ import 'commit_composer_controller.dart';
 
 enum CommitComposerPresentation { collapsed, compact, expanded }
 
-class CommitComposer extends StatefulWidget {
+class CommitComposer extends ConsumerStatefulWidget {
   final CommitComposerController controller;
   final CommitComposerPresentation presentation;
   final String branchLabel;
@@ -34,10 +36,10 @@ class CommitComposer extends StatefulWidget {
   });
 
   @override
-  State<CommitComposer> createState() => _CommitComposerState();
+  ConsumerState<CommitComposer> createState() => _CommitComposerState();
 }
 
-class _CommitComposerState extends State<CommitComposer> {
+class _CommitComposerState extends ConsumerState<CommitComposer> {
   static const int _messageColumns = 80;
   final _message = TextEditingController();
   final _focus = FocusNode(debugLabel: 'commit-composer-message');
@@ -145,138 +147,154 @@ class _CommitComposerState extends State<CommitComposer> {
       );
     }
 
-    return Focus(
-      onKeyEvent: (_, event) {
-        if (event is KeyDownEvent &&
-            event.logicalKey == LogicalKeyboardKey.escape &&
-            !controller.committing) {
-          controller.collapse();
-          widget.onCollapse?.call();
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Text(
-                  'Commit $count file${count == 1 ? '' : 's'}',
-                  style: MacosTheme.of(context).typography.title3,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    '$summary · ${widget.branchLabel}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+    // 0009 H8: the docked composer is the production commit surface — the
+    // advertised commit chords (⌘↩ / ⇧⌘↩ by default, remaps honored) must
+    // work here, not only on the sheet-hosted CommitDialog. Dialog/sheet-
+    // scoped CallbackShortcuts deliberately fire while typing (see
+    // panel_shortcuts.dart).
+    return CallbackShortcuts(
+      bindings: resolveShortcuts(ref.watch(keymapProvider), {
+        'commit.confirm': controller.canAccept
+            ? () => unawaited(widget.onAccept(false))
+            : null,
+        'commit.confirmAndPush': controller.canAccept
+            ? () => unawaited(widget.onAccept(true))
+            : null,
+      }),
+      child: Focus(
+        onKeyEvent: (_, event) {
+          if (event is KeyDownEvent &&
+              event.logicalKey == LogicalKeyboardKey.escape &&
+              !controller.committing) {
+            controller.collapse();
+            widget.onCollapse?.call();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    'Commit $count file${count == 1 ? '' : 's'}',
+                    style: MacosTheme.of(context).typography.title3,
                   ),
-                ),
-                if (controller.previewStale)
-                  InlineActionButton(
-                    label: 'Regenerate',
-                    icon: CupertinoIcons.refresh,
-                    onPressed: () => controller.ensurePreview(regenerate: true),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '$summary · ${widget.branchLabel}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
-                InlineActionButton(
-                  label: controller.assistanceExpanded
-                      ? 'Hide Assistance'
-                      : 'Assistance',
-                  icon: CupertinoIcons.lightbulb,
-                  onPressed: controller.committing
-                      ? null
-                      : controller.toggleAssistance,
-                ),
-                InlineActionButton(
-                  label: 'Clear',
-                  icon: CupertinoIcons.clear,
-                  onPressed: controller.committing
-                      ? null
-                      : controller.clearDraft,
-                ),
-                if (widget.onCollapse != null)
+                  if (controller.previewStale)
+                    InlineActionButton(
+                      label: 'Regenerate',
+                      icon: CupertinoIcons.refresh,
+                      onPressed: () =>
+                          controller.ensurePreview(regenerate: true),
+                    ),
                   InlineActionButton(
-                    label: 'Collapse',
-                    icon: CupertinoIcons.chevron_down,
+                    label: controller.assistanceExpanded
+                        ? 'Hide Assistance'
+                        : 'Assistance',
+                    icon: CupertinoIcons.lightbulb,
                     onPressed: controller.committing
                         ? null
-                        : () {
-                            controller.collapse();
-                            widget.onCollapse?.call();
-                          },
+                        : controller.toggleAssistance,
                   ),
+                  InlineActionButton(
+                    label: 'Clear',
+                    icon: CupertinoIcons.clear,
+                    onPressed: controller.committing
+                        ? null
+                        : controller.clearDraft,
+                  ),
+                  if (widget.onCollapse != null)
+                    InlineActionButton(
+                      label: 'Collapse',
+                      icon: CupertinoIcons.chevron_down,
+                      onPressed: controller.committing
+                          ? null
+                          : () {
+                              controller.collapse();
+                              widget.onCollapse?.call();
+                            },
+                    ),
+                ],
+              ),
+              if (controller.gpgSignConfigured)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    'GPG signing is configured; commits use --no-gpg-sign because '
+                    'remote signing is unavailable.',
+                    style: MacosTheme.of(context).typography.caption1.copyWith(
+                      color: MacosColors.systemOrangeColor,
+                    ),
+                  ),
+                ),
+              if (controller.assistanceExpanded) ...[
+                const SizedBox(height: 8),
+                _assistancePanel(context, controller),
               ],
-            ),
-            if (controller.gpgSignConfigured)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Text(
-                  'GPG signing is configured; commits use --no-gpg-sign because '
-                  'remote signing is unavailable.',
-                  style: MacosTheme.of(context).typography.caption1.copyWith(
-                    color: MacosColors.systemOrangeColor,
+              const SizedBox(height: 8),
+              if (controller.loadingPreview && controller.message.isEmpty)
+                const Expanded(child: Center(child: ProgressCircle()))
+              else
+                Expanded(
+                  child: MacosTextField(
+                    controller: _message,
+                    focusNode: _focus,
+                    readOnly: !controller.editable,
+                    maxLines: null,
+                    expands: true,
+                    placeholder: 'Commit message',
+                    placeholderStyle: kAppPlaceholderStyle,
+                    style: _messageStyle(MacosTheme.of(context).typography),
+                    decoration: kAppTextFieldDecoration,
+                    focusedDecoration: kAppTextFieldFocusedDecoration,
+                    onChanged: (value) {
+                      if (!_syncing) controller.updateMessage(value);
+                    },
                   ),
                 ),
-              ),
-            if (controller.assistanceExpanded) ...[
-              const SizedBox(height: 8),
-              _assistancePanel(context, controller),
-            ],
-            const SizedBox(height: 8),
-            if (controller.loadingPreview && controller.message.isEmpty)
-              const Expanded(child: Center(child: ProgressCircle()))
-            else
-              Expanded(
-                child: MacosTextField(
-                  controller: _message,
-                  focusNode: _focus,
-                  readOnly: !controller.editable,
-                  maxLines: null,
-                  expands: true,
-                  placeholder: 'Commit message',
-                  placeholderStyle: kAppPlaceholderStyle,
-                  style: _messageStyle(MacosTheme.of(context).typography),
-                  decoration: kAppTextFieldDecoration,
-                  focusedDecoration: kAppTextFieldFocusedDecoration,
-                  onChanged: (value) {
-                    if (!_syncing) controller.updateMessage(value);
-                  },
-                ),
-              ),
-            const SizedBox(height: 6),
-            Row(
-              children: [
-                Expanded(child: _statusText(context, controller)),
-                if (controller.generated && !controller.editable)
+              const SizedBox(height: 6),
+              Row(
+                children: [
+                  Expanded(child: _statusText(context, controller)),
+                  if (controller.generated && !controller.editable)
+                    AppPushButton(
+                      controlSize: ControlSize.regular,
+                      secondary: true,
+                      onPressed: controller.beginEdit,
+                      child: const Text('Edit'),
+                    ),
+                  const SizedBox(width: 8),
                   AppPushButton(
                     controlSize: ControlSize.regular,
                     secondary: true,
-                    onPressed: controller.beginEdit,
-                    child: const Text('Edit'),
+                    onPressed: controller.canAccept
+                        ? () => widget.onAccept(true)
+                        : null,
+                    child: const Text('Accept + Push'),
                   ),
-                const SizedBox(width: 8),
-                AppPushButton(
-                  controlSize: ControlSize.regular,
-                  secondary: true,
-                  onPressed: controller.canAccept
-                      ? () => widget.onAccept(true)
-                      : null,
-                  child: const Text('Accept + Push'),
-                ),
-                const SizedBox(width: 8),
-                AppPushButton(
-                  controlSize: ControlSize.regular,
-                  onPressed: controller.canAccept
-                      ? () => widget.onAccept(false)
-                      : null,
-                  child: const Text('Accept'),
-                ),
-              ],
-            ),
-          ],
+                  const SizedBox(width: 8),
+                  AppPushButton(
+                    controlSize: ControlSize.regular,
+                    onPressed: controller.canAccept
+                        ? () => widget.onAccept(false)
+                        : null,
+                    child: const Text('Accept'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

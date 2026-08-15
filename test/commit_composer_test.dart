@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/features/repository/commit_composer.dart';
@@ -23,16 +24,18 @@ Future<void> _pump(
   VoidCallback? onCollapse,
 }) async {
   await tester.pumpWidget(
-    MacosApp(
-      home: SizedBox(
-        width: 800,
-        height: 420,
-        child: CommitComposer(
-          controller: controller,
-          presentation: presentation,
-          branchLabel: 'feature/composer',
-          onAccept: (_) async {},
-          onCollapse: onCollapse,
+    ProviderScope(
+      child: MacosApp(
+        home: SizedBox(
+          width: 800,
+          height: 420,
+          child: CommitComposer(
+            controller: controller,
+            presentation: presentation,
+            branchLabel: 'feature/composer',
+            onAccept: (_) async {},
+            onCollapse: onCollapse,
+          ),
         ),
       ),
     ),
@@ -129,16 +132,18 @@ void main() {
     final controller = _controller();
     addTearDown(controller.dispose);
     await tester.pumpWidget(
-      MacosApp(
-        home: SizedBox(
-          width: 800,
-          height: 420,
-          child: CommitComposer(
-            controller: controller,
-            presentation: CommitComposerPresentation.expanded,
-            branchLabel: 'feature/composer',
-            policyAdvisory: '#42 · checks success',
-            onAccept: (_) async {},
+      ProviderScope(
+        child: MacosApp(
+          home: SizedBox(
+            width: 800,
+            height: 420,
+            child: CommitComposer(
+              controller: controller,
+              presentation: CommitComposerPresentation.expanded,
+              branchLabel: 'feature/composer',
+              policyAdvisory: '#42 · checks success',
+              onAccept: (_) async {},
+            ),
           ),
         ),
       ),

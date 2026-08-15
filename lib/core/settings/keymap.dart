@@ -426,7 +426,7 @@ final List<KeymapAction> kKeymapActions = [
   ),
   KeymapAction(
     id: 'repository.focusCommit',
-    label: 'Open commit dialog',
+    label: 'Focus commit composer',
     category: KeymapCategory.repository,
     defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyG, meta: true)],
   ),
