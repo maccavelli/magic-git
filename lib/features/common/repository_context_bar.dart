@@ -633,28 +633,34 @@ class _SyncGroup extends StatelessWidget {
           ),
           const SizedBox(width: 4),
         ],
-        MacosPulldownButton(
-          icon: CupertinoIcons.chevron_down,
-          items: [
-            for (final (command, label) in overflowVerbs)
-              MacosPulldownMenuItem(
-                title: Text(label),
-                enabled: group.reasonFor(command) == null,
-                onTap: () => group.onInvoke(command),
-              ),
-            if (overflowVerbs.isNotEmpty) const MacosPulldownMenuDivider(),
-            for (final (command, label, destructive) in _variants)
-              MacosPulldownMenuItem(
-                title: Text(
-                  label,
-                  style: destructive
-                      ? const TextStyle(color: MacosColors.systemRedColor)
-                      : null,
+        // Title-only (empty): macos_ui always paints its compact caret, so
+        // `icon: chevron_down` stacked a second, larger arrow on top of it.
+        Semantics(
+          button: true,
+          label: 'More sync actions',
+          child: MacosPulldownButton(
+            title: '',
+            items: [
+              for (final (command, label) in overflowVerbs)
+                MacosPulldownMenuItem(
+                  title: Text(label),
+                  enabled: group.reasonFor(command) == null,
+                  onTap: () => group.onInvoke(command),
                 ),
-                enabled: group.reasonFor(command) == null,
-                onTap: () => group.onInvoke(command),
-              ),
-          ],
+              if (overflowVerbs.isNotEmpty) const MacosPulldownMenuDivider(),
+              for (final (command, label, destructive) in _variants)
+                MacosPulldownMenuItem(
+                  title: Text(
+                    label,
+                    style: destructive
+                        ? const TextStyle(color: MacosColors.systemRedColor)
+                        : null,
+                  ),
+                  enabled: group.reasonFor(command) == null,
+                  onTap: () => group.onInvoke(command),
+                ),
+            ],
+          ),
         ),
       ],
     );

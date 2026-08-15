@@ -6,7 +6,7 @@
 // look at it, so nothing about it can be learned. Here the recommendation only
 // changes which of four fixed buttons is accented.
 
-import 'package:flutter/widgets.dart';
+import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -203,6 +203,20 @@ void main() {
         reason: 'the unavailable verb must be disabled, not merely inert',
       );
     });
+  });
+
+  testWidgets('the overflow is macos_ui\'s caret only — not a second chevron', (
+    tester,
+  ) async {
+    await _pump(tester, snapshot: _snapshot());
+    final pulldown = tester.widget<MacosPulldownButton>(
+      find.byType(MacosPulldownButton).last,
+    );
+    // MacosPulldownButton always paints `_DownCaretPainter`. An icon of
+    // chevron_down stacked the Cupertino chevron on top of that caret.
+    expect(pulldown.icon, isNull);
+    expect(pulldown.title, '');
+    expect(find.byIcon(CupertinoIcons.chevron_down), findsNothing);
   });
 
   group('the overflow carries every variant', () {
