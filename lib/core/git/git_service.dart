@@ -4714,6 +4714,66 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     timeout: commitTimeout,
   );
 
+  /// `--continue` for a paused merge — commits with the prepared MERGE_MSG
+  /// (`core.editor=true` accepts it non-interactively, same as
+  /// [rebaseContinue]). 0009 M14: merge/cherry-pick/revert used to have no
+  /// continue at all.
+  Future<SSHCommandResult> mergeContinue(String repoPath) => _run(
+    repoPath,
+    ['git', '-c', 'core.editor=true', ..._idArgs, 'merge', '--continue'],
+    'git merge --continue',
+    timeout: commitTimeout,
+  );
+
+  /// `--continue` for a paused cherry-pick (see [mergeContinue]).
+  Future<SSHCommandResult> cherryPickContinue(String repoPath) => _run(
+    repoPath,
+    ['git', '-c', 'core.editor=true', ..._idArgs, 'cherry-pick', '--continue'],
+    'git cherry-pick --continue',
+    timeout: commitTimeout,
+  );
+
+  /// The message git prepared for a paused operation: merge, cherry-pick, and
+  /// revert all stage theirs in `MERGE_MSG`; a conflicted rebase keeps the
+  /// replayed commit's message in `rebase-merge/message`. Null when neither
+  /// file exists (no pending op, or a step without a prepared message).
+  /// Comment lines are stripped the way `git commit` itself would strip them.
+  Future<String?> pendingCommitMessage(String repoPath) async {
+    // --git-path resolves linked-worktree/submodule layouts; checking both
+    // candidates in one round-trip keeps this a single exec like
+    // [commitTemplate]'s script (dash-clean, no bashisms).
+    const script =
+        'for f in MERGE_MSG rebase-merge/message; do '
+        'p=\$(git rev-parse --git-path "\$f") || exit \$?; '
+        'if [ -r "\$p" ]; then cat -- "\$p"; exit 0; fi; '
+        'done; exit 0';
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: _scopeEnvFor(repoPath),
+      gitArgs: ['sh', '-c', script],
+      retries: _readRetries,
+      lane: ExecLane.read,
+      compress: true,
+    );
+    if (!result.isSuccess) {
+      throw GitException('reading pending commit message failed', result);
+    }
+    final message = result.stdout
+        .split('\n')
+        .where((line) => !line.startsWith('#'))
+        .join('\n')
+        .trim();
+    return message.isEmpty ? null : message;
+  }
+
+  /// `--continue` for a paused revert (see [mergeContinue]).
+  Future<SSHCommandResult> revertContinue(String repoPath) => _run(
+    repoPath,
+    ['git', '-c', 'core.editor=true', ..._idArgs, 'revert', '--continue'],
+    'git revert --continue',
+    timeout: commitTimeout,
+  );
+
   /// Aborts an in-progress rebase, restoring the pre-rebase branch state.
   Future<void> rebaseAbort(String repoPath) =>
       _runVoid(repoPath, ['git', 'rebase', '--abort'], 'git rebase --abort');

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -139,4 +140,23 @@ void main() {
       );
     },
   );
+
+  test('an LFS pointer is named honestly instead of "could not decode" '
+      '(0009 M17)', () async {
+    final pointer = Uint8List.fromList(
+      'version https://git-lfs.github.com/spec/v1\n'
+              'oid sha256:aaaa\nsize 12345\n'
+          .codeUnits,
+    );
+    await expectLater(
+      inspectImageDiffBytes(pointer),
+      throwsA(
+        isA<ImageDiffReadException>().having(
+          (e) => e.message,
+          'message',
+          contains('Git LFS pointer'),
+        ),
+      ),
+    );
+  });
 }

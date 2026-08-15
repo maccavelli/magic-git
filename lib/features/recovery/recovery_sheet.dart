@@ -168,7 +168,21 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
             for (final entry in entries)
               _reflogRow(entry, decorations, typography),
             _sectionHeader('Snapshots', typography),
-            if (snapshots.isEmpty)
+            // A failed fetch must not masquerade as "no snapshots" — that
+            // reads as "nothing to recover" exactly when recovery matters
+            // (0009 M32).
+            if (snapshotsAsync.hasError)
+              Padding(
+                padding: const EdgeInsets.all(12),
+                child: Text(
+                  'Could not load snapshots: '
+                  '${displayError(snapshotsAsync.error!)}',
+                  style: typography.caption1.copyWith(
+                    color: MacosColors.systemOrangeColor,
+                  ),
+                ),
+              )
+            else if (snapshots.isEmpty)
               Padding(
                 padding: const EdgeInsets.all(12),
                 child: Text(

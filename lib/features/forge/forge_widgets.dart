@@ -8,11 +8,13 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:url_launcher/url_launcher.dart' show launchUrl;
 
 import '../../core/forge/forge_dashboard.dart';
+import '../../core/providers/app_providers.dart' show dashboardVisibleProvider;
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/display_error.dart';
 import '../common/async_views.dart';
 import '../common/buttons.dart';
 import '../common/field_styles.dart';
+import '../common/inline_action_button.dart';
 import '../common/label_colors.dart';
 import '../common/section_collapse.dart';
 import '../common/tappable.dart';
@@ -173,6 +175,60 @@ class PaneError extends StatelessWidget {
           ).typography.body.copyWith(color: MacosColors.systemRedColor),
         ),
       ),
+    );
+  }
+}
+
+/// Heuristic: does a forge CLI failure read like missing or expired
+/// credentials? Matches the phrasings gh/glab actually emit (HTTP 401, "Bad
+/// credentials", "not logged in", "To get started with GitLab CLI, please run:
+/// glab auth login") rather than exit codes — glab's exit codes are advisory.
+@visibleForTesting
+bool looksLikeAuthFailure(Object error) {
+  final text = displayError(error).toLowerCase();
+  return text.contains('401') ||
+      text.contains('bad credentials') ||
+      text.contains('unauthorized') ||
+      text.contains('authentication') ||
+      text.contains('auth login') ||
+      text.contains('not logged in');
+}
+
+/// [SectionError] plus an actionable sign-in callout when the failure looks
+/// like a credentials problem — a raw "HTTP 401" dump taught users nothing
+/// about the fix (0009 M20). The copy mirrors the Dashboard's Authentication
+/// section ("run `gh auth login` on the target") and the button opens that
+/// Dashboard, where the per-target probe shows exactly which CLI is signed
+/// out. [cli] names the CLI to authenticate ('gh' or 'glab').
+class ForgeListError extends ConsumerWidget {
+  final Object error;
+  final String cli;
+
+  const ForgeListError(this.error, {required this.cli, super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!looksLikeAuthFailure(error)) return SectionError(error);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SectionError(error),
+        SectionMessage(
+          'This looks like a sign-in problem — run `$cli auth login` on '
+          'the target, then refresh.',
+          color: MacosColors.systemOrangeColor,
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: InlineActionButton(
+            label: 'Open Dashboard',
+            icon: CupertinoIcons.gauge,
+            onPressed: () =>
+                ref.read(dashboardVisibleProvider.notifier).setVisible(true),
+          ),
+        ),
+      ],
     );
   }
 }

@@ -25,6 +25,7 @@ import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/palette_intents.dart';
 import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
+import 'package:remote_magic_git/features/common/status_style.dart';
 import 'package:remote_magic_git/features/common/tool_icon_button.dart';
 import 'package:remote_magic_git/features/common/workspace_focus.dart';
 import 'package:remote_magic_git/features/common/workspace_navigation.dart';
@@ -2187,5 +2188,53 @@ void main() {
       ),
       findsOneWidget,
     );
+  });
+
+  // 0009 M13: "Review all visible" must cover every visible section, not just
+  // the first non-empty one.
+  testWidgets('Review all visible walks every section, not just the first', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      status: _statusWith(
+        staged: const [
+          GitFileStatus(path: 'lib/staged.dart', statusX: 'M', statusY: '.'),
+        ],
+        unstaged: const [
+          GitFileStatus(path: 'lib/unstaged.dart', statusX: '.', statusY: 'M'),
+        ],
+      ),
+    );
+
+    await tester.tap(find.text('Review all visible'));
+    await tester.pumpAndSettle();
+
+    // Both sections' files are in the review run — the counter says 2 and the
+    // strip lists both paths.
+    expect(find.text('1 of 2'), findsOneWidget);
+    expect(find.textContaining('lib/staged.dart'), findsWidgets);
+    expect(find.textContaining('lib/unstaged.dart'), findsWidgets);
+  });
+
+  // 0009 M17 (gitlink half): a submodule entry is badged — its "change" is a
+  // recorded commit pointer, not file content.
+  testWidgets('a submodule change row carries the sub badge', (tester) async {
+    await _pump(
+      tester,
+      status: _statusWith(
+        unstaged: const [
+          GitFileStatus(
+            path: 'vendor/lib',
+            statusX: '.',
+            statusY: 'M',
+            isSubmodule: true,
+          ),
+          GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+        ],
+      ),
+    );
+
+    expect(find.byType(SubmoduleChip), findsOneWidget);
   });
 }

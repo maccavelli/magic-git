@@ -139,25 +139,40 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     }
   }
 
-  // Memoized branch→run fusion: recomputed only when the runs list *instance*
-  // changes (Riverpod hands back the same list until invalidated).
+  // Memoized branch→run / sha→run fusion: recomputed only when the runs list
+  // *instance* changes (Riverpod hands back the same list until invalidated).
   List<WorkflowRun>? _lastRuns;
   Map<String, WorkflowRun> _runByBranch = const {};
+  Map<String, WorkflowRun> _runBySha = const {};
 
   Map<String, WorkflowRun> _runByBranchFor(List<WorkflowRun> runs) {
     if (identical(runs, _lastRuns)) return _runByBranch;
     _lastRuns = runs;
     final map = <String, WorkflowRun>{};
+    final bySha = <String, WorkflowRun>{};
     for (final r in runs) {
-      // Runs come newest-first, so the first entry per branch wins (most recent).
+      // Runs come newest-first, so the first entry per branch/sha wins (most
+      // recent).
       if (r.headBranch.isNotEmpty) map.putIfAbsent(r.headBranch, () => r);
+      final sha = r.headSha;
+      if (sha != null && sha.isNotEmpty) bySha.putIfAbsent(sha, () => r);
     }
+    _runBySha = bySha;
     return _runByBranch = map;
   }
 
-  /// The most recent workflow run for [pr]'s head branch, or null.
-  WorkflowRun? _headRunFor(PullRequest pr, Map<String, WorkflowRun> byBranch) =>
-      byBranch[pr.headRefName];
+  /// The workflow run for [pr]'s head: an exact head-commit match when the PR
+  /// detail carries headOid (0009 M23 — a same-named branch in a fork, or a
+  /// just-pushed newer commit, made the branch-name match lie), falling back
+  /// to the most recent run on the head branch.
+  WorkflowRun? _headRunFor(PullRequest pr, Map<String, WorkflowRun> byBranch) {
+    final oid = pr.headOid;
+    if (oid != null && oid.isNotEmpty) {
+      final exact = _runBySha[oid];
+      if (exact != null) return exact;
+    }
+    return byBranch[pr.headRefName];
+  }
 
   /// Switches the detail pane to [next]; when that would discard a dirty
   /// inline-create draft, asks first (safe default: keep editing).
@@ -495,9 +510,9 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
       ),
       // A failed source list must say so — an Inbox that silently omits a
       // whole category reads as "nothing needs attention".
-      if (prs.hasError) SectionError(prs.error!),
-      if (runs.hasError) SectionError(runs.error!),
-      if (issues.hasError) SectionError(issues.error!),
+      if (prs.hasError) ForgeListError(prs.error!, cli: 'gh'),
+      if (runs.hasError) ForgeListError(runs.error!, cli: 'gh'),
+      if (issues.hasError) ForgeListError(issues.error!, cli: 'gh'),
     ];
   }
 
@@ -823,10 +838,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
           // and dropped. Bounded like the comments band so the checks pane
           // keeps the flexible space.
           if ((effective.body ?? '').trim().isNotEmpty)
-            SizedBox(
-              height: 120,
-              child: ForgeBodyText(effective.body!.trim()),
-            ),
+            SizedBox(height: 120, child: ForgeBodyText(effective.body!.trim())),
           Expanded(child: _prChecks(headRun)),
           ForgeCommentsSection(
             comments: ref.watch(
@@ -887,7 +899,6 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   /// the row's right-click menu below the primary trio, so the detail pane is a
   /// full action surface without a wall of buttons.
   Widget _prMorePulldown(PullRequest pr, {bool detailLoading = false}) {
-    final plan = mergePlanForGitHub(pr: pr);
     return MacosPulldownButton(
       title: 'More',
       items: [
@@ -899,13 +910,9 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
           title: const Text('Request changes…'),
           onTap: () => _requestChangesPr(pr.number),
         ),
-        // Recomputed from the row here, so it must also wait for detail
-        // before offering to bypass protection (0009 H10).
-        if (!detailLoading && plan.supportsAdminBypass)
-          MacosPulldownMenuItem(
-            title: const Text('Admin merge…'),
-            onTap: () => _adminMerge(pr),
-          ),
+        // Admin merge is gone until a real permission bit exists to gate it
+        // on (0009 M21) — supportsAdminBypass is now always false for
+        // GitHub, so the item would never render anyway.
         MacosPulldownMenuItem(
           title: Text(pr.draft ? 'Mark ready for review' : 'Convert to draft'),
           onTap: () => _setPrDraft(pr.number, draft: !pr.draft),
@@ -1058,38 +1065,6 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     if (!mounted) return;
     setState(() => _approvingPrs.remove(number));
     if (success) _invalidateChangeRequest(repoPath, number);
-  }
-
-  Future<void> _adminMerge(PullRequest pr) async {
-    if (_mergingPrs.contains(pr.number)) return;
-    final repoPath = this.repoPath;
-    final ok = await confirmAction(
-      context,
-      title: 'Admin merge',
-      message:
-          'Bypass branch protection and merge #${pr.number}? This requires '
-          'admin privileges and can land unreviewed work.',
-      confirmLabel: 'Admin merge',
-    );
-    if (!ok || !mounted) return;
-    setState(() => _mergingPrs.add(pr.number));
-    final gh = ref.read(ghServiceProvider);
-    final success = await runAction(
-      context,
-      () => gh.mergePullRequest(
-        repoPath,
-        pr.number,
-        admin: true,
-        matchHeadCommit: pr.headOid,
-      ),
-    );
-    if (!mounted) return;
-    setState(() => _mergingPrs.remove(pr.number));
-    if (success) {
-      setState(() => _sel = const ForgeNothingSel());
-      ref.invalidate(pullRequestsProvider(repoPath));
-      ref.invalidate(pullRequestDetailProvider((repoPath, pr.number)));
-    }
   }
 
   Future<void> _enableAutoMerge(PullRequest pr, MergePlan plan) async {

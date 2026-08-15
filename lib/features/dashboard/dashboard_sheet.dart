@@ -535,7 +535,10 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _sectionTitle(typography, 'Contributions'),
+        // Honest scope: the shared logProvider payload is capped at 200
+        // commits, so on an active repo the year grid only covers the tail
+        // of it — say so instead of implying a full year (0009 M33).
+        _sectionTitle(typography, 'Contributions (last 200 commits)'),
         Align(
           alignment: Alignment.centerLeft,
           child: ContributionHeatmap(commitDays: days),

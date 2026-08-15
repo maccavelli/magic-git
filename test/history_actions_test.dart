@@ -15,6 +15,7 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/branches/create_tag_sheet.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/commit_patch_view.dart';
@@ -77,8 +78,25 @@ class _FakeGit extends GitService {
     return commits;
   }
 
+  /// Refs reported to the panel (checkout's branch-at-OID preference reads
+  /// these); checkouts land in [checkedOut].
+  List<GitRef> refList = const [];
+  final List<String> checkedOut = [];
+
   @override
-  Future<List<GitRef>> refs(String repoPath) async => const [];
+  Future<List<GitRef>> refs(String repoPath) async => refList;
+
+  @override
+  Future<void> checkout(String repoPath, String ref) async {
+    checkedOut.add(ref);
+  }
+
+  // Clean tree, so checkout's dirty-tree guard passes straight through.
+  @override
+  Future<GitStatus> status(String repoPath) async => GitStatus(
+    branch: const GitBranchInfo(head: 'main'),
+    files: const [],
+  );
 
   @override
   Future<String> showCommit(
@@ -86,8 +104,7 @@ class _FakeGit extends GitService {
     String hash, {
     String? path,
     int? context,
-  }) async =>
-      'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
+  }) async => 'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
 
   @override
   Future<String> diffRange(
@@ -441,8 +458,7 @@ void main() {
   testWidgets('a lost ⌘ key-up is recovered — app deactivation unfreezes the '
       'commit list scroll', (tester) async {
     await _pump(tester, [head, mid, older]);
-    ListView list() =>
-        tester.widgetList<ListView>(find.byType(ListView)).first;
+    ListView list() => tester.widgetList<ListView>(find.byType(ListView)).first;
     expect(list().physics, isNot(isA<NeverScrollableScrollPhysics>()));
 
     // ⌘ goes down (⌘-scroll zoom arms), freezing the list's own scrolling…
@@ -499,10 +515,7 @@ void main() {
     await tester.tap(find.text('head commit'));
     await tester.pumpAndSettle();
 
-    await tester.tap(
-      find.text('old commit'),
-      buttons: kSecondaryMouseButton,
-    );
+    await tester.tap(find.text('old commit'), buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
 
     // The menu targets the clicked row, not the pre-click selection.
@@ -532,10 +545,7 @@ void main() {
     await tester.pumpAndSettle();
     await shiftClick(tester, find.text('old commit'));
 
-    await tester.tap(
-      find.text('mid commit'),
-      buttons: kSecondaryMouseButton,
-    );
+    await tester.tap(find.text('mid commit'), buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Cherry-pick 3 commits'));
     await tester.pumpAndSettle();
@@ -558,10 +568,7 @@ void main() {
     await tester.pumpAndSettle();
     await shiftClick(tester, find.text('old commit'));
 
-    await tester.tap(
-      find.text('head commit'),
-      buttons: kSecondaryMouseButton,
-    );
+    await tester.tap(find.text('head commit'), buttons: kSecondaryMouseButton);
     await tester.pumpAndSettle();
     await tester.tap(find.text('Revert 3 commits'));
     await tester.pumpAndSettle();
@@ -683,7 +690,10 @@ void main() {
       '2026-01-01',
     );
     await tester.enterText(
-      find.widgetWithText(MacosTextField, 'Limit to a file or folder, e.g. lib/src/'),
+      find.widgetWithText(
+        MacosTextField,
+        'Limit to a file or folder, e.g. lib/src/',
+      ),
       'src/',
     );
     await tester.tap(find.byType(MacosCheckbox)); // hide merges
@@ -762,5 +772,35 @@ void main() {
     nav = container.read(workspaceNavigationProvider(key));
     expect(nav.pending, isNull);
     expect(nav.unavailable, loc('feedfacedeadbeef'));
+  });
+
+  testWidgets('Checkout prefers a local branch pointing at the commit — '
+      'no detached HEAD (0009 M11)', (tester) async {
+    final git = _FakeGit([head, older])
+      ..refList = [
+        GitRef(
+          name: 'refs/heads/topic',
+          oid: head.hash,
+          isHead: false,
+          subject: 'head commit',
+        ),
+      ];
+    await _pump(tester, [head, older], git: git);
+    await tester.tap(find.text('head commit'), buttons: kSecondaryMouseButton);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Checkout aaaaaaa'));
+    await tester.pumpAndSettle();
+
+    // The confirm names the branch, not a detached-HEAD warning.
+    expect(find.textContaining('branch "topic"'), findsOneWidget);
+    expect(find.textContaining('detached HEAD'), findsNothing);
+    await tester.tap(find.text('Checkout').last);
+    await tester.pumpAndSettle();
+
+    expect(
+      git.checkedOut,
+      ['topic'],
+      reason: 'the branch at that OID must be checked out, not the hash',
+    );
   });
 }

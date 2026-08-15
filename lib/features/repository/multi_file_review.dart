@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/providers/app_providers.dart';
+import '../../core/utils/display_error.dart';
 import '../common/diff_view.dart';
 import '../common/inline_action_button.dart';
 import 'conflict_view.dart';
@@ -193,8 +194,11 @@ class _MultiFileReviewViewState extends ConsumerState<MultiFileReviewView> {
         Expanded(
           child: diff.when(
             loading: () => const Center(child: ProgressCircle()),
-            error: (error, _) =>
-                Center(child: Text('Could not load ${active.path}: $error')),
+            error: (error, _) => Center(
+              child: Text(
+                'Could not load ${active.path}: ${displayError(error)}',
+              ),
+            ),
             data: (data) =>
                 conflict ? ConflictView(content: data) : DiffView(diff: data),
           ),
@@ -217,7 +221,9 @@ class _MultiFileReviewViewState extends ConsumerState<MultiFileReviewView> {
     // Only a conflict section needs the pending-op-honest side labels; keep
     // the provider untouched otherwise so plain reviews never start it.
     final sides = section == RepoChangeSection.conflict
-        ? conflictSideLabels(ref.watch(pendingOpProvider(widget.repoPath)).value)
+        ? conflictSideLabels(
+            ref.watch(pendingOpProvider(widget.repoPath)).value,
+          )
         : null;
     final callbacks = switch (section) {
       RepoChangeSection.staged => [('Unstage', widget.onUnstage)],

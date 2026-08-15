@@ -173,6 +173,33 @@ void main() {
       expect(exec.calls[1], ['git', 'rebase', '--abort']);
     });
 
+    test('every sequencer continue silences the editor (0009 M14)', () async {
+      await git.mergeContinue('/repo');
+      await git.cherryPickContinue('/repo');
+      await git.revertContinue('/repo');
+      expect(exec.calls[0], [
+        'git',
+        '-c',
+        'core.editor=true',
+        'merge',
+        '--continue',
+      ]);
+      expect(exec.calls[1], [
+        'git',
+        '-c',
+        'core.editor=true',
+        'cherry-pick',
+        '--continue',
+      ]);
+      expect(exec.calls[2], [
+        'git',
+        '-c',
+        'core.editor=true',
+        'revert',
+        '--continue',
+      ]);
+    });
+
     test(
       'setUpstream uses the = form; unsetUpstream guards the positional',
       () async {

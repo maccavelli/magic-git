@@ -359,7 +359,10 @@ MergePlan mergePlanForGitHub({
     defaultDeleteSource: policy?.deleteBranchOnMerge ?? false,
     headSha: headSha,
     pinHeadSha: pin,
-    supportsAdminBypass: true,
+    // No real permission bit exists for admin bypass in the list/detail
+    // payloads — offering it unconditionally was a lie for every
+    // non-admin (0009 M21). Re-enable only from an actual capability probe.
+    supportsAdminBypass: false,
     autoMergeAlreadyEnabled: autoAlready,
     needsBranchUpdate: needsUpdate,
   );
@@ -373,6 +376,18 @@ MergePlan mergePlanForGitLab({
   final reasons = <MergeBlockedReason>[];
   var needsUpdate = false;
   var canAuto = false;
+
+  // GitLab reports the caller's own merge permission on the MR payload —
+  // honor it instead of offering a Merge that can only 403 (0009 M21).
+  // Tri-state: null (older GitLab / list tier) stays permissive.
+  if (mr.userCanMerge == false) {
+    reasons.add(
+      const MergeBlockedReason(
+        'permission',
+        "Your account doesn't have permission to merge this request.",
+      ),
+    );
+  }
 
   if (mr.draft) {
     reasons.add(
@@ -507,6 +522,7 @@ MergePlan mergePlanForGitLab({
   }
 
   final hardBlockCodes = {
+    'permission', // auto-merge would 403 exactly like an immediate merge
     'draft',
     'conflicts',
     'review',

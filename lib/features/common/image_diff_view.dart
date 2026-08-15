@@ -44,8 +44,22 @@ class ImageDiffReadException implements Exception {
   String toString() => message;
 }
 
+/// The signature every Git LFS pointer file starts with (the pointer spec's
+/// mandatory first line). A checked-out-but-unsmudged LFS image is this tiny
+/// text stub, not image data — decode would fail with a misleading "could not
+/// be decoded" message (0009 M17).
+const String _lfsPointerSignature = 'version https://git-lfs';
+
 @visibleForTesting
 Future<ImageDiffAsset> inspectImageDiffBytes(Uint8List bytes) async {
+  if (bytes.length >= _lfsPointerSignature.length &&
+      String.fromCharCodes(bytes, 0, _lfsPointerSignature.length) ==
+          _lfsPointerSignature) {
+    throw const ImageDiffReadException(
+      'This side is a Git LFS pointer, not image data. '
+      'Run `git lfs pull` on the host to fetch the real file.',
+    );
+  }
   ui.ImmutableBuffer? buffer;
   ui.ImageDescriptor? descriptor;
   try {

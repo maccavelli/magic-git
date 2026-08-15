@@ -152,23 +152,39 @@ void main() {
     expect(find.text('Move feature here'), findsOneWidget);
   });
 
-  testWidgets('choosing Merge runs git merge of the dragged branch', (
-    tester,
-  ) async {
+  testWidgets('choosing Merge confirms first, then runs git merge of the '
+      'dragged branch (0009 M10)', (tester) async {
     final git = await _pump(tester);
     await _dragOnto(tester, find.text('feature'), find.text('head commit'));
     await tester.tap(find.text('Merge feature into main'));
+    await tester.pumpAndSettle();
+    // Same confirm the Branches panel gives the identical operation — a drop
+    // release is even easier to trigger by accident than a menu click.
+    expect(find.text('Merge branch'), findsOneWidget);
+    await tester.tap(find.text('Merge'));
     await tester.pumpAndSettle();
     expect(git.mergedBranches, [('feature', MergeMode.normal)]);
     expect(git.rebasedOnto, isEmpty);
   });
 
-  testWidgets('choosing Rebase runs git rebase onto the dragged branch', (
-    tester,
-  ) async {
+  testWidgets('cancelling the merge confirm runs nothing', (tester) async {
+    final git = await _pump(tester);
+    await _dragOnto(tester, find.text('feature'), find.text('head commit'));
+    await tester.tap(find.text('Merge feature into main'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(git.mergedBranches, isEmpty);
+  });
+
+  testWidgets('choosing Rebase confirms first, then runs git rebase onto the '
+      'dragged branch (0009 M10)', (tester) async {
     final git = await _pump(tester);
     await _dragOnto(tester, find.text('feature'), find.text('head commit'));
     await tester.tap(find.text('Rebase main onto feature'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rebase branch'), findsOneWidget);
+    await tester.tap(find.text('Rebase'));
     await tester.pumpAndSettle();
     expect(git.rebasedOnto, ['feature']);
     expect(git.mergedBranches, isEmpty);

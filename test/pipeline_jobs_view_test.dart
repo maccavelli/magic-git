@@ -155,9 +155,10 @@ void main() {
               Job(id: _jobId, name: 'build', stage: 'build', status: 'success'),
             ],
           ),
-          jobTraceProvider(
-            (_repo, _jobId),
-          ).overrideWith((ref) => Stream<String>.value('')),
+          jobTraceProvider((
+            _repo,
+            _jobId,
+          )).overrideWith((ref) => Stream<String>.value('')),
         ],
       );
       addTearDown(container.dispose);
@@ -238,10 +239,68 @@ void main() {
 
       // The trace log renders plain Text chunks under one SelectionArea
       // (cross-chunk copy), so the error is a directly findable Text.
-      expect(
-        find.textContaining('glab ci trace failed'),
-        findsOneWidget,
+      expect(find.textContaining('glab ci trace failed'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'jobs auto-refresh while a job is live and stop once all are terminal '
+    '(0009 M23)',
+    (tester) async {
+      var fetches = 0;
+      final container = ProviderContainer(
+        overrides: [
+          jobsProvider((_repo, _pipelineId)).overrideWith((ref) async {
+            fetches++;
+            // First fetch reports a running job; every later fetch reports it
+            // finished, so the poll must then stand down.
+            return fetches == 1
+                ? const [
+                    Job(
+                      id: _jobId,
+                      name: 'build',
+                      stage: 'build',
+                      status: 'running',
+                    ),
+                  ]
+                : const [
+                    Job(
+                      id: _jobId,
+                      name: 'build',
+                      stage: 'build',
+                      status: 'success',
+                    ),
+                  ];
+          }),
+        ],
       );
+      addTearDown(container.dispose);
+      await tester.pumpWidget(
+        UncontrolledProviderScope(
+          container: container,
+          child: const MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: SizedBox(
+              width: 800,
+              height: 600,
+              child: PipelineJobsView(repoPath: _repo, pipelineId: _pipelineId),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(fetches, 1);
+
+      // The 5s poll fires and re-fetches the (still-live-looking) jobs.
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pump();
+      expect(fetches, 2, reason: 'a live job must trigger an auto-refresh');
+
+      // The second fetch showed only terminal jobs — no further polling.
+      await tester.pump(const Duration(seconds: 12));
+      await tester.pump();
+      expect(fetches, 2, reason: 'a settled pipeline must not keep polling');
     },
   );
 }

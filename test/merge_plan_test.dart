@@ -38,6 +38,7 @@ MergeRequest _mr({
   String? detailedMergeStatus,
   String? sha,
   bool mergeWhenPipelineSucceeds = false,
+  bool? userCanMerge,
 }) => MergeRequest(
   iid: 1,
   title: 't',
@@ -50,6 +51,7 @@ MergeRequest _mr({
   detailedMergeStatus: detailedMergeStatus,
   sha: sha,
   mergeWhenPipelineSucceeds: mergeWhenPipelineSucceeds,
+  userCanMerge: userCanMerge,
 );
 
 void main() {
@@ -185,6 +187,19 @@ void main() {
       expect(plan.canMergeNow, isFalse);
     });
 
+    test('userCanMerge == false hard-blocks (0009 M21)', () {
+      final plan = mergePlanForGitLab(
+        mr: _mr(
+          detailedMergeStatus: 'mergeable',
+          sha: 'x',
+          userCanMerge: false,
+        ),
+      );
+      expect(plan.canMergeNow, isFalse);
+      expect(plan.canEnableAutoMerge, isFalse);
+      expect(plan.blockedReasons.any((r) => r.code == 'permission'), isTrue);
+    });
+
     test('mergeable with sha pins', () {
       final plan = mergePlanForGitLab(
         mr: _mr(detailedMergeStatus: 'mergeable', sha: 'deadbeef'),
@@ -230,24 +245,30 @@ void main() {
       expect(plan.allowedMethods, [MergeMethod.mergeCommit]);
     });
 
-    test('squash always hides the plain merge method, not just re-defaults', () {
-      final plan = mergePlanForGitLab(
-        mr: _mr(detailedMergeStatus: 'mergeable', sha: 'x'),
-        policy: const GlRepoMergePolicy(squashOption: 'always'),
-      );
-      // GitLab ignores squash=false on such a project, and the options sheet
-      // clamps to allowedMethods — so leaving mergeCommit here meant the UI
-      // offered a "Merge" that silently performed a squash.
-      expect(plan.allowedMethods, [MergeMethod.squash]);
-      expect(plan.defaultMethod, MergeMethod.squash);
-    });
+    test(
+      'squash always hides the plain merge method, not just re-defaults',
+      () {
+        final plan = mergePlanForGitLab(
+          mr: _mr(detailedMergeStatus: 'mergeable', sha: 'x'),
+          policy: const GlRepoMergePolicy(squashOption: 'always'),
+        );
+        // GitLab ignores squash=false on such a project, and the options sheet
+        // clamps to allowedMethods — so leaving mergeCommit here meant the UI
+        // offered a "Merge" that silently performed a squash.
+        expect(plan.allowedMethods, [MergeMethod.squash]);
+        expect(plan.defaultMethod, MergeMethod.squash);
+      },
+    );
 
     test('default_on pre-selects squash but keeps merge available', () {
       final plan = mergePlanForGitLab(
         mr: _mr(detailedMergeStatus: 'mergeable', sha: 'x'),
         policy: const GlRepoMergePolicy(squashOption: 'default_on'),
       );
-      expect(plan.allowedMethods, [MergeMethod.mergeCommit, MergeMethod.squash]);
+      expect(plan.allowedMethods, [
+        MergeMethod.mergeCommit,
+        MergeMethod.squash,
+      ]);
       expect(plan.defaultMethod, MergeMethod.squash);
     });
 
@@ -256,7 +277,10 @@ void main() {
         mr: _mr(detailedMergeStatus: 'mergeable', sha: 'x'),
         policy: const GlRepoMergePolicy(squashOption: 'default_off'),
       );
-      expect(plan.allowedMethods, [MergeMethod.mergeCommit, MergeMethod.squash]);
+      expect(plan.allowedMethods, [
+        MergeMethod.mergeCommit,
+        MergeMethod.squash,
+      ]);
       expect(plan.defaultMethod, MergeMethod.mergeCommit);
     });
   });

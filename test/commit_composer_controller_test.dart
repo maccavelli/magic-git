@@ -10,12 +10,14 @@ CommitComposerController _controller({
   Future<bool> Function()? gpg,
   Future<List<String>> Function()? recentSubjects,
   Future<String?> Function()? template,
+  Future<String?> Function()? pendingMessage,
 }) => CommitComposerController(
   repoPath: '/repo',
   generatePreview: preview ?? () async => null,
   loadGpgSignConfigured: gpg ?? () async => false,
   loadRecentSubjects: recentSubjects,
   loadTemplate: template,
+  loadPendingMessage: pendingMessage,
 );
 
 void main() {
@@ -207,4 +209,58 @@ void main() {
     );
     expect(controller.coAuthors, isEmpty);
   });
+
+  test('a pending operation message wins over generation (0009 M14)', () async {
+    var generateCalls = 0;
+    final controller = _controller(
+      preview: () async {
+        generateCalls++;
+        return 'feat: generated';
+      },
+      pendingMessage: () async =>
+          "Merge branch 'topic'\n\n# Conflicts already stripped",
+    );
+    addTearDown(controller.dispose);
+    controller.updateStaged(count: 1, signature: 'a');
+    await controller.ensurePreview();
+
+    expect(generateCalls, 0, reason: 'MERGE_MSG must preempt generation');
+    expect(controller.message, startsWith("Merge branch 'topic'"));
+    expect(controller.generated, isFalse);
+    expect(controller.editable, isTrue);
+
+    // A typed draft is never clobbered by the prepared message.
+    controller.updateMessage('my own words');
+    controller.updateStaged(count: 2, signature: 'b');
+    await controller.ensurePreview();
+    expect(controller.message, 'my own words');
+  });
+
+  test('a failing pending-message read falls through to generation', () async {
+    final controller = _controller(
+      preview: () async => 'feat: generated',
+      pendingMessage: () async => throw Exception('unreadable'),
+    );
+    addTearDown(controller.dispose);
+    controller.updateStaged(count: 1, signature: 'a');
+    await controller.ensurePreview();
+    expect(controller.message, 'feat: generated');
+  });
+
+  test(
+    'assistance load errors are humanized, not raw toString (0009 M18)',
+    () async {
+      final controller = _controller(
+        recentSubjects: () async => throw Exception('boom'),
+      );
+      addTearDown(controller.dispose);
+      await controller.loadRecentSubjects();
+      expect(
+        controller.error,
+        contains('Could not load recent commit subjects.'),
+      );
+      expect(controller.error, contains('boom'));
+      expect(controller.error, isNot(contains('Exception:')));
+    },
+  );
 }

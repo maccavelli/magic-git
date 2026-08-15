@@ -1165,12 +1165,25 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     }
   }
 
-  Future<void> _continueRebase() async {
-    final ok = await runLogged('git rebase --continue', (log) async {
-      log.logResult(
-        'git rebase --continue',
-        await ref.read(gitServiceProvider).rebaseContinue(repoPath),
-      );
+  /// The matching `--continue` for whichever operation is paused — the
+  /// prepared message (MERGE_MSG / the sequencer's) commits as-is, so a
+  /// hand-resolved conflict needs no composer round-trip (0009 M14).
+  Future<void> _continuePending(PendingOp op) async {
+    final git = ref.read(gitServiceProvider);
+    final (label, run) = switch (op) {
+      PendingOp.rebase => ('git rebase --continue', git.rebaseContinue),
+      PendingOp.merge => ('git merge --continue', git.mergeContinue),
+      PendingOp.cherryPick => (
+        'git cherry-pick --continue',
+        git.cherryPickContinue,
+      ),
+      PendingOp.revert => ('git revert --continue', git.revertContinue),
+      // The banner only renders for a real pending op.
+      PendingOp.none => ('', git.rebaseContinue),
+    };
+    if (op == PendingOp.none) return;
+    final ok = await runLogged(label, (log) async {
+      log.logResult(label, await run(repoPath));
     });
     // Same reasoning as _abortPending: only clear on success.
     if (ok && mounted) _clearSelection();
@@ -1181,9 +1194,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   Widget _pendingBanner(BuildContext context, PendingOp op) {
     final typography = MacosTheme.of(context).typography;
     final verb = _pendingVerb(op);
-    final hint = op == PendingOp.rebase
-        ? '$verb in progress — resolve conflicts, then continue, or abort.'
-        : '$verb in progress — resolve conflicts and commit, or abort.';
+    final hint =
+        '$verb in progress — resolve conflicts, then continue, or abort.';
     return Container(
       color: MacosColors.systemOrangeColor.withValues(alpha: 0.14),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -1196,14 +1208,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           ),
           const SizedBox(width: 8),
           Expanded(child: Text(hint, style: typography.caption1)),
-          if (op == PendingOp.rebase) ...[
-            InlineActionButton(
-              label: 'Continue',
-              icon: CupertinoIcons.play,
-              onPressed: _continueRebase,
-            ),
-            const SizedBox(width: 8),
-          ],
+          InlineActionButton(
+            label: 'Continue',
+            icon: CupertinoIcons.play,
+            onPressed: () => _continuePending(op),
+          ),
+          const SizedBox(width: 8),
           InlineActionButton(
             label: 'Abort $verb',
             // Aborting throws the in-progress operation (and any conflict
@@ -1679,11 +1689,17 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                     initialSplit: _diffSplit,
                     initialIgnoreWs: _diffIgnoreWs,
                     contextLines: _diffCtx,
+                    expandedContext: _diffExpandContext,
+                    onToggleContext: () {
+                      setState(() => _diffExpandContext = !_diffExpandContext);
+                      _persistDiffPrefs();
+                    },
                     bounds: Size(
                       canvasConstraints.maxWidth,
                       canvasConstraints.maxHeight,
                     ),
                     onHunkAction: _applyHunk,
+                    onSelectionAction: _applySelection,
                     onClose: () => setState(() => _popout = false),
                   ),
               ],
@@ -1816,8 +1832,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         });
         return;
       case RepositoryPrimaryActionKind.continueOperation:
-        if (pending == PendingOp.rebase) {
-          _continueRebase().ignore();
+        if (pending != null && pending != PendingOp.none) {
+          _continuePending(pending).ignore();
           return;
         }
         final stagedCount = status?.staged.length ?? 0;
@@ -2447,17 +2463,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       onReviewAllVisible: result.visibleFiles == 0
           ? null
           : () {
+              // ALL visible rows across every section (0009 M13) — the old
+              // first-section-only walk silently dropped the rest of the
+              // list the button claimed to review.
               final visible = result.rows.whereType<_FileRow>().toList();
-              final firstSection = visible.first.section;
-              final sameSection = visible
-                  .where((row) => row.section == firstSection)
-                  .map((row) => row.file.path)
-                  .toSet();
               _reviewController.open(
                 reviewItemsFromRows(
                   result.rows,
-                  paths: sameSection,
-                  section: firstSection,
+                  paths: visible.map((row) => row.file.path).toSet(),
                 ),
               );
               setState(() => _reviewOpen = true);
@@ -2836,6 +2849,10 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                if (file.isSubmodule) ...[
+                  const SizedBox(width: 6),
+                  const SubmoduleChip(),
+                ],
                 if (row.discardable)
                   ToolIconButton(
                     // An untracked file has nothing tracked to revert to — delete

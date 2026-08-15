@@ -199,4 +199,41 @@ void main() {
       findsOneWidget,
     );
   });
+
+  testWidgets('a failed snapshots load shows an error, not the empty state '
+      '(0009 M32)', (tester) async {
+    // retry:null — an errored provider otherwise schedules a perpetual
+    // backoff retry timer that pumpAndSettle would hang on.
+    final container = ProviderContainer(
+      retry: (_, _) => null,
+      overrides: [
+        connectionProvider.overrideWith(_StubConnection.new),
+        reflogProvider.overrideWith((ref, repoPath) async => _entries),
+        magicSnapshotsProvider.overrideWith(
+          (ref, repoPath) async => throw Exception('ref walk failed'),
+        ),
+        refsProvider.overrideWith((ref, repoPath) async => const <GitRef>[]),
+        commitDiffProvider.overrideWith((ref, key) async => _diff),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: RecoverySheet(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('Could not load snapshots'), findsOneWidget);
+    expect(find.textContaining('ref walk failed'), findsOneWidget);
+    expect(
+      find.textContaining('No snapshots'),
+      findsNothing,
+      reason: 'an error must never masquerade as an empty list',
+    );
+  });
 }

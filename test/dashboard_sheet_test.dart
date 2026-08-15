@@ -138,6 +138,11 @@ void main() {
     // Watcher state from the stream stub.
     expect(find.textContaining('Polling fallback'), findsOneWidget);
 
+    // Heatmap caption states its real scope — the shared log payload is
+    // capped at 200 commits, so the year grid must not imply a full year
+    // (0009 M33).
+    expect(find.text('Contributions (last 200 commits)'), findsOneWidget);
+
     // Close via the X so the periodic uptime ticker is disposed.
     await tester.tap(
       find.byWidgetPredicate(

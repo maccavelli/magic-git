@@ -44,6 +44,39 @@ String? _code(String raw) {
   return t;
 }
 
+/// A small "sub" chip marking a submodule entry in a change list — the change
+/// is the recorded commit pointer, not file content, so the usual
+/// stage/diff/discard semantics differ (0009 M17). The porcelain v2 parser has
+/// always carried [GitFileStatus.isSubmodule]; this is its first surfacing.
+class SubmoduleChip extends StatelessWidget {
+  const SubmoduleChip({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    const color = MacosColors.systemPurpleColor;
+    return MacosTooltip(
+      message: 'Submodule — this row tracks its recorded commit, not files',
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(4),
+          border: Border.all(color: color.withValues(alpha: 0.45)),
+        ),
+        child: const Text(
+          'sub',
+          style: TextStyle(
+            color: color,
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            height: 1.2,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// A polished circular status badge: the status letter tinted by change kind on
 /// a matching translucent fill + ring. Used in the working-tree status list.
 class GitStatusBadge extends StatelessWidget {

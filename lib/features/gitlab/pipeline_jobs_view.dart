@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show SelectionArea;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -32,6 +34,24 @@ class PipelineJobsView extends ConsumerStatefulWidget {
 class _PipelineJobsViewState extends ConsumerState<PipelineJobsView> {
   int? _selectedJobId;
 
+  /// Auto-refresh while the pipeline is live: job rows froze at their
+  /// first-fetch status until a manual refresh (0009 M23). Runs only while at
+  /// least one job is non-terminal, so a settled pipeline costs nothing.
+  Timer? _pollTimer;
+
+  static const Duration _pollInterval = Duration(seconds: 5);
+
+  /// GitLab job states that will never change again on their own. `manual`
+  /// counts — it only moves when a person plays it, and the poll restarts
+  /// from the fetch that shows it running.
+  static const Set<String> _terminalStatuses = {
+    'success',
+    'failed',
+    'canceled',
+    'skipped',
+    'manual',
+  };
+
   @override
   void didUpdateWidget(PipelineJobsView old) {
     super.didUpdateWidget(old);
@@ -40,10 +60,33 @@ class _PipelineJobsViewState extends ConsumerState<PipelineJobsView> {
   }
 
   @override
+  void dispose() {
+    _pollTimer?.cancel();
+    super.dispose();
+  }
+
+  void _syncPolling(List<Job>? jobs) {
+    final live =
+        jobs != null &&
+        jobs.any((job) => !_terminalStatuses.contains(job.status));
+    if (live && _pollTimer == null) {
+      _pollTimer = Timer.periodic(_pollInterval, (_) {
+        ref.invalidate(jobsProvider((widget.repoPath, widget.pipelineId)));
+      });
+    } else if (!live && _pollTimer != null) {
+      _pollTimer!.cancel();
+      _pollTimer = null;
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final jobsAsync = ref.watch(
       jobsProvider((widget.repoPath, widget.pipelineId)),
     );
+    // Timer management, not widget state — safe (and idempotent) in build,
+    // and build is the one place that sees cached data on a re-mount.
+    _syncPolling(jobsAsync.value);
 
     return ResizableMasterDetail(
       paneId: PaneId.jobsList,
@@ -52,11 +95,10 @@ class _PipelineJobsViewState extends ConsumerState<PipelineJobsView> {
       master: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Manual refresh only (no auto-polling): a running pipeline's
-          // job statuses otherwise stay frozen until the pipeline is
-          // re-selected. Invalidating re-fetches this pipeline's jobs (and,
-          // since the trace view watches its own provider, a re-selected
-          // job re-tails).
+          // Manual refresh stays for a settled pipeline (auto-poll only runs
+          // while a job is live). Invalidating re-fetches this pipeline's
+          // jobs (and, since the trace view watches its own provider, a
+          // re-selected job re-tails).
           ForgeSectionHeader(
             'Jobs',
             refreshTooltip: 'Refresh jobs',
@@ -100,7 +142,6 @@ class _PipelineJobsViewState extends ConsumerState<PipelineJobsView> {
       },
     );
   }
-
 }
 
 /// Live log for one job. The trace stream delivers **incremental** chunks; we

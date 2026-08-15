@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/features/viewer/preview_view.dart';
@@ -7,9 +8,7 @@ Future<void> _pump(WidgetTester tester, Widget child) async {
   await tester.pumpWidget(
     MacosApp(
       debugShowCheckedModeBanner: false,
-      home: MacosWindow(
-        child: ContentArea(builder: (_, _) => child),
-      ),
+      home: MacosWindow(child: ContentArea(builder: (_, _) => child)),
     ),
   );
   await tester.pumpAndSettle();
@@ -45,33 +44,43 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('image is replaced by an inert placeholder (no network fetch)', (
-      tester,
-    ) async {
-      await _pump(
-        tester,
-        const MarkdownPreview(
-          source: '![the alt text](https://example.com/pic.png)',
-        ),
-      );
-      // No real image widget is ever created — only our placeholder, labelled
-      // with the alt text.
-      expect(find.byType(Image), findsNothing);
-      expect(find.text('the alt text'), findsOneWidget);
-      expect(tester.takeException(), isNull);
-    });
+    testWidgets(
+      'image is replaced by an inert placeholder (no network fetch)',
+      (tester) async {
+        await _pump(
+          tester,
+          const MarkdownPreview(
+            source: '![the alt text](https://example.com/pic.png)',
+          ),
+        );
+        // No real image widget is ever created — only our placeholder, labelled
+        // with the alt text.
+        expect(find.byType(Image), findsNothing);
+        expect(find.text('the alt text'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
 
-    testWidgets('a link renders as text (navigation is inert by construction)', (
-      tester,
-    ) async {
+    testWidgets('a web link is wired to open externally; other schemes stay '
+        'inert (0009 M34)', (tester) async {
       await _pump(
         tester,
         const MarkdownPreview(source: '[click me](https://example.com)'),
       );
-      // The link text renders; onTapLink is a no-op so a tap can never
-      // navigate or launch anything (verified by construction, not simulated —
-      // an inline link span inside selectable rich text isn't tap-targetable).
       expect(_allText(tester), contains('click me'));
+      // Verified by construction (an inline link span inside selectable rich
+      // text isn't tap-targetable in a widget test): the handler exists, and
+      // a non-web scheme passed through it launches nothing and throws
+      // nothing.
+      final markdown = tester.widget<Markdown>(find.byType(Markdown));
+      expect(
+        markdown.onTapLink,
+        isNotNull,
+        reason: 'a styled link that does nothing on click is a taught no-op',
+      );
+      markdown.onTapLink!('mail', 'mailto:x@example.com', '');
+      markdown.onTapLink!('rel', 'docs/other.md', '');
+      await tester.pump();
       expect(tester.takeException(), isNull);
     });
   });
@@ -108,7 +117,8 @@ void main() {
       await _pump(
         tester,
         const HtmlPreview(
-          source: '<p>visible</p><script>var secret = "should-not-render";'
+          source:
+              '<p>visible</p><script>var secret = "should-not-render";'
               '</script>',
         ),
       );

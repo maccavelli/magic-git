@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_html/flutter_html.dart';
 import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/theme/app_theme.dart';
 
 /// Rendered previews of Markdown and HTML files — the "Preview" tab of the
@@ -100,8 +103,15 @@ class MarkdownPreview extends StatelessWidget {
         selectable: true,
         styleSheet: styleSheet,
         padding: EdgeInsets.zero,
-        // No navigation: tapping a link is inert.
-        onTapLink: (text, href, title) {},
+        // Web links open in the default browser — a styled link that does
+        // nothing on click is a taught no-op (0009 M34). Non-web schemes and
+        // relative links stay inert (nothing sane to hand them to).
+        onTapLink: (text, href, title) {
+          final uri = href == null ? null : Uri.tryParse(href);
+          if (uri != null && (uri.scheme == 'http' || uri.scheme == 'https')) {
+            unawaited(launchUrl(uri));
+          }
+        },
         // No network fetch: every image becomes a labelled placeholder.
         imageBuilder: (uri, title, alt) =>
             _ImagePlaceholder(label: _imageLabel(alt, uri)),

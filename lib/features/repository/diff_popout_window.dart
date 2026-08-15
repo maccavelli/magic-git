@@ -5,8 +5,10 @@ import '../../core/git/unified_diff.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
+import '../common/image_diff_view.dart';
 import '../common/split_diff_view.dart';
 import '../common/tool_icon_button.dart';
+import '../viewer/file_type.dart';
 import 'hunk_diff_view.dart';
 
 /// A floating, draggable, resizable diff viewer — the "popped out" form of the
@@ -27,10 +29,18 @@ class DiffPopoutWindow extends ConsumerStatefulWidget {
   final bool untracked;
   final bool initialSplit;
   final bool initialIgnoreWs;
+
+  /// Live context width, owned by the Repository panel (0009 M16): the
+  /// pop-out's context toggle drives [onToggleContext] on the parent, whose
+  /// rebuild feeds the new width back through here — one source of truth,
+  /// same persistence as the inline pane, never a frozen copy.
   final int contextLines;
+  final bool expandedContext;
+  final VoidCallback onToggleContext;
   final Size bounds;
   final void Function(DiffFile file, DiffHunk hunk, HunkAction action)
   onHunkAction;
+  final SelectionActionCallback onSelectionAction;
   final VoidCallback onClose;
 
   const DiffPopoutWindow({
@@ -42,8 +52,11 @@ class DiffPopoutWindow extends ConsumerStatefulWidget {
     required this.initialSplit,
     required this.initialIgnoreWs,
     required this.contextLines,
+    required this.expandedContext,
+    required this.onToggleContext,
     required this.bounds,
     required this.onHunkAction,
+    required this.onSelectionAction,
     required this.onClose,
   });
 
@@ -238,6 +251,13 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
                             onPressed: () =>
                                 setState(() => _ignoreWs = !_ignoreWs),
                           ),
+                          _toggle(
+                            context,
+                            icon: CupertinoIcons.rectangle_expand_vertical,
+                            tooltip: 'Expand context',
+                            active: widget.expandedContext,
+                            onPressed: widget.onToggleContext,
+                          ),
                           const SizedBox(width: 4),
                           ToolIconButton(
                             icon: CupertinoIcons.xmark,
@@ -256,6 +276,30 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
                       loading: () => const DiffPending(),
                       error: (err, _) => DiffFailure(err),
                       data: (diff) {
+                        // Same image routing as the inline pane (0009 M16) —
+                        // an image file used to render as raw patch text here.
+                        if (viewerFileTypeFor(widget.path).preview ==
+                            PreviewKind.image) {
+                          final file = parseUnifiedDiff(diff);
+                          final added =
+                              widget.untracked ||
+                              file?.change == DiffFileChange.added;
+                          final deleted =
+                              file?.change == DiffFileChange.deleted;
+                          return ImageDiffView(
+                            repoPath: widget.repoPath,
+                            displayPath: widget.path,
+                            beforePath: added
+                                ? null
+                                : file?.oldPath ?? widget.path,
+                            beforeRevision: widget.staged ? 'HEAD' : ':0',
+                            afterPath: deleted
+                                ? null
+                                : file?.newPath ?? widget.path,
+                            afterRevision: widget.staged ? ':0' : null,
+                            canOpenExternally: !deleted,
+                          );
+                        }
                         final String? banner = _split
                             ? 'Line actions require Unified view because '
                                   'split rows do not map one-to-one to the '
@@ -274,6 +318,7 @@ class _DiffPopoutWindowState extends ConsumerState<DiffPopoutWindow> {
                             diff: diff,
                             staged: widget.staged,
                             onAction: widget.onHunkAction,
+                            onSelectionAction: widget.onSelectionAction,
                           );
                         }
                         if (banner == null) return body;

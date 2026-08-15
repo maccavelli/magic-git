@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/git/git_service.dart' show PendingOp;
 import '../../core/providers/app_providers.dart';
+import '../../core/utils/display_error.dart';
 import '../common/commit_assistance.dart';
 
 @immutable
@@ -41,12 +43,14 @@ class CommitComposerController extends ChangeNotifier {
     required Future<bool> Function() loadGpgSignConfigured,
     Future<List<String>> Function()? loadRecentSubjects,
     Future<String?> Function()? loadTemplate,
+    Future<String?> Function()? loadPendingMessage,
   }) : this._(
          repoPath: repoPath,
          generatePreview: generatePreview,
          loadGpgSignConfigured: loadGpgSignConfigured,
          loadRecentSubjects: loadRecentSubjects ?? (() async => const []),
          loadTemplate: loadTemplate ?? (() async => null),
+         loadPendingMessage: loadPendingMessage ?? (() async => null),
        );
 
   CommitComposerController._({
@@ -55,6 +59,7 @@ class CommitComposerController extends ChangeNotifier {
     required this._loadGpgSignConfigured,
     required this._loadRecentSubjects,
     required this._loadTemplate,
+    required this._loadPendingMessage,
   });
 
   final String repoPath;
@@ -62,6 +67,13 @@ class CommitComposerController extends ChangeNotifier {
   final Future<bool> Function() _loadGpgSignConfigured;
   final Future<List<String>> Function() _loadRecentSubjects;
   final Future<String?> Function() _loadTemplate;
+
+  /// Git's own prepared message for a paused merge/cherry-pick/revert/rebase
+  /// (`MERGE_MSG` / `rebase-merge/message`), or null when nothing is pending.
+  /// When present it wins over generation in [ensurePreview] — committing a
+  /// resolved merge should carry the merge message, not an AI summary
+  /// (0009 M14).
+  final Future<String?> Function() _loadPendingMessage;
   final Set<String> _previewedSignatures = {};
   bool _disposed = false;
 
@@ -177,7 +189,7 @@ class CommitComposerController extends ChangeNotifier {
       final loaded = await _loadRecentSubjects();
       publishLandedSubjects(loaded);
     } catch (caught) {
-      error = 'Could not load recent commit subjects.\n$caught';
+      error = 'Could not load recent commit subjects.\n${displayError(caught)}';
     } finally {
       loadingRecentSubjects = false;
       _notifyListeners();
@@ -193,7 +205,8 @@ class CommitComposerController extends ChangeNotifier {
       template = await _loadTemplate();
       templateLoaded = true;
     } catch (caught) {
-      error = 'Could not load the configured commit template.\n$caught';
+      error =
+          'Could not load the configured commit template.\n${displayError(caught)}';
     } finally {
       loadingTemplate = false;
       _notifyListeners();
@@ -259,6 +272,24 @@ class CommitComposerController extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
+      // A pending operation's prepared message takes precedence over
+      // generation; a failed read just falls through to the normal path.
+      String? pending;
+      try {
+        pending = await _loadPendingMessage();
+      } catch (_) {
+        pending = null;
+      }
+      if (pending != null && pending.trim().isNotEmpty) {
+        _previewedSignatures.add(signature);
+        if (message.isEmpty || generated) {
+          message = pending.trim();
+          generated = false;
+          editable = true;
+          previewStale = false;
+        }
+        return;
+      }
       final preview = await _generatePreview();
       _previewedSignatures.add(signature);
       if (stagedSignature != signature) {
@@ -274,7 +305,8 @@ class CommitComposerController extends ChangeNotifier {
         editable = true;
       }
     } catch (caught) {
-      error = 'Could not generate a message. Enter one manually.\n$caught';
+      error =
+          'Could not generate a message. Enter one manually.\n${displayError(caught)}';
       editable = true;
     } finally {
       loadingPreview = false;
@@ -330,6 +362,13 @@ final commitComposerControllerProvider =
             commit.subject,
         ],
         loadTemplate: () => git.commitTemplate(key.repoPath),
+        // Gated on the pending-op probe so the common no-pending-op commit
+        // never pays the extra message-file round-trip.
+        loadPendingMessage: () async {
+          final op = await ref.read(pendingOpProvider(key.repoPath).future);
+          if (op == PendingOp.none) return null;
+          return git.pendingCommitMessage(key.repoPath);
+        },
       );
       ref.listen<List<String>>(
         landedCommitSubjectsProvider(assistanceKey),

@@ -164,7 +164,7 @@ List<Widget> projectSectionChildren({
       //
       // The dashboard query caps labels at 100. Once "Show all" is tapped the
       // REST page-walk takes over and supplies the full set.
-      _dashboardSection(dashboard, (d) {
+      _dashboardSection(dashboard, forge == Forge.github ? 'gh' : 'glab', (d) {
         final source = labelsFull && labels.hasValue && labels.value!.isNotEmpty
             ? labels.value!
             : d.labels;
@@ -183,7 +183,11 @@ List<Widget> projectSectionChildren({
         ),
       if (labelsFull && labels.isLoading)
         const ShowMoreRow(label: 'Loading labels…', busy: true),
-      if (labels.hasError) SectionError(labels.error!),
+      if (labels.hasError)
+        ForgeListError(
+          labels.error!,
+          cli: forge == Forge.github ? 'gh' : 'glab',
+        ),
     ],
     const SizedBox(height: 16),
     // 4. Milestones.
@@ -224,7 +228,7 @@ List<Widget> projectSectionChildren({
     if (!releasesCollapsed) ...[
       // The dashboard query caps releases at 20; "Show all" swaps in the REST
       // page-walk rather than leaving the overflow merely reported.
-      _dashboardSection(dashboard, (d) {
+      _dashboardSection(dashboard, forge == Forge.github ? 'gh' : 'glab', (d) {
         final source =
             releasesFull && releases.hasValue && releases.value!.isNotEmpty
             ? releases.value!
@@ -251,7 +255,11 @@ List<Widget> projectSectionChildren({
         ),
       if (releasesFull && releases.isLoading)
         const ShowMoreRow(label: 'Loading releases…', busy: true),
-      if (releases.hasError) SectionError(releases.error!),
+      if (releases.hasError)
+        ForgeListError(
+          releases.error!,
+          cli: forge == Forge.github ? 'gh' : 'glab',
+        ),
     ],
     const SizedBox(height: 16),
     // 6. CI (Workflow Runs / Pipelines) — forge-specific, built by the caller.
@@ -265,17 +273,21 @@ List<Widget> projectSectionChildren({
 /// [body] on data. Mirrors [asyncListSection]'s error-with-value handling.
 Widget _dashboardSection(
   AsyncValue<ForgeProjectDashboard> dashboard,
+  String cli,
   Widget Function(ForgeProjectDashboard) body,
 ) {
   if (dashboard.hasError && dashboard.hasValue) {
     return Column(
-      children: [SectionError(dashboard.error!), body(dashboard.requireValue)],
+      children: [
+        ForgeListError(dashboard.error!, cli: cli),
+        body(dashboard.requireValue),
+      ],
     );
   }
   return dashboard.when(
     skipLoadingOnReload: true,
     loading: () => const SectionLoading(),
-    error: (err, _) => SectionError(err),
+    error: (err, _) => ForgeListError(err, cli: cli),
     data: body,
   );
 }
@@ -429,7 +441,10 @@ Widget? projectDetailFor({
       if (dashboard.hasError && !dashboard.hasValue) {
         return Column(
           children: [
-            SectionError(dashboard.error!),
+            ForgeListError(
+              dashboard.error!,
+              cli: forge == Forge.github ? 'gh' : 'glab',
+            ),
             Expanded(child: form),
           ],
         );

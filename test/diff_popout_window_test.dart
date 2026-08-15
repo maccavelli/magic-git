@@ -17,6 +17,7 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'package:remote_magic_git/features/common/image_diff_view.dart';
 import 'package:remote_magic_git/features/common/split_diff_view.dart';
 import 'package:remote_magic_git/features/repository/diff_popout_window.dart';
 import 'package:remote_magic_git/features/repository/diff_view_controls.dart';
@@ -92,6 +93,15 @@ Future<void> _pump(WidgetTester tester) async {
         false,
         true,
         3,
+      )).overrideWith((ref) async => _diff),
+      // Expanded-context key (0009 M16): the pop-out's context toggle drives
+      // the parent's live context width.
+      fileDiffProvider((
+        _repo,
+        'lib/a.dart',
+        false,
+        false,
+        25,
       )).overrideWith((ref) async => _diff),
     ],
   );
@@ -286,8 +296,11 @@ void main() {
                     initialSplit: false,
                     initialIgnoreWs: false,
                     contextLines: 3,
+                    expandedContext: false,
+                    onToggleContext: () {},
                     bounds: bounds,
                     onHunkAction: (_, _, _) {},
+                    onSelectionAction: (_, _, _, _) {},
                     onClose: () {},
                   ),
                 ],
@@ -381,8 +394,11 @@ void main() {
                       initialSplit: false,
                       initialIgnoreWs: false,
                       contextLines: 3,
+                      expandedContext: false,
+                      onToggleContext: () {},
                       bounds: const Size(380, 300), // below the 420×280 minimum
                       onHunkAction: (_, _, _) {},
+                      onSelectionAction: (_, _, _, _) {},
                       onClose: () {},
                     ),
                   ],
@@ -472,4 +488,84 @@ void main() {
       expect(_byMacosTooltip('Close diff'), findsNothing);
     },
   );
+
+  // 0009 M16: the float shares the inline pane's live context width — its
+  // toggle drives the parent's state, whose rebuild feeds the new width back.
+  testWidgets('the pop-out context toggle widens the diff context live', (
+    tester,
+  ) async {
+    await _pump(tester);
+    await tester.tap(find.text('lib/a.dart'));
+    await tester.pumpAndSettle();
+    await _openPopout(tester);
+
+    DiffPopoutWindow popoutWidget() =>
+        tester.widget<DiffPopoutWindow>(find.byType(DiffPopoutWindow));
+    expect(popoutWidget().contextLines, 3);
+    expect(popoutWidget().expandedContext, isFalse);
+
+    await tester.tap(_byMacosTooltip('Expand context'));
+    await tester.pumpAndSettle();
+
+    expect(popoutWidget().contextLines, 25);
+    expect(popoutWidget().expandedContext, isTrue);
+    // The wider diff rendered (the expanded-context provider key resolved).
+    expect(find.byType(HunkDiffView), findsOneWidget);
+  });
+
+  // 0009 M16: an image file routes to the raster comparison in the float,
+  // exactly like the inline pane — never a raw patch-text render.
+  testWidgets('the pop-out routes an image file to the image comparison', (
+    tester,
+  ) async {
+    final container = ProviderContainer(
+      retry: (_, _) => null,
+      overrides: [
+        gitServiceProvider.overrideWithValue(_FakeGitService()),
+        fileDiffProvider((_repo, 'img/logo.png', false, false, 3)).overrideWith(
+          (ref) async =>
+              'diff --git a/img/logo.png b/img/logo.png\n'
+              'index 111..222 100644\n'
+              'Binary files a/img/logo.png and b/img/logo.png differ\n',
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: MacosWindow(
+            child: ContentArea(
+              builder: (_, _) => Stack(
+                children: [
+                  DiffPopoutWindow(
+                    repoPath: _repo,
+                    path: 'img/logo.png',
+                    staged: false,
+                    untracked: false,
+                    initialSplit: false,
+                    initialIgnoreWs: false,
+                    contextLines: 3,
+                    expandedContext: false,
+                    onToggleContext: () {},
+                    bounds: const Size(800, 600),
+                    onHunkAction: (_, _, _) {},
+                    onSelectionAction: (_, _, _, _) {},
+                    onClose: () {},
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byType(ImageDiffView), findsOneWidget);
+    expect(find.byType(HunkDiffView), findsNothing);
+  });
 }

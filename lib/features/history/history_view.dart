@@ -704,12 +704,22 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   }
 
   Future<void> _actCheckout(String hash) async {
+    // Same branch-at-OID preference Recovery has (0009 M11): when a local
+    // branch points exactly here, check IT out — no detached HEAD, and no
+    // scary warning for what is really just a branch switch.
+    final refs = ref.read(refsProvider(repoPath)).value ?? const <GitRef>[];
+    final branch = refs
+        .where((r) => r.isLocalBranch && r.oid == hash)
+        .map((r) => r.shortName)
+        .firstOrNull;
+    final short = hash.length <= 10 ? hash : hash.substring(0, 10);
     final ok = await confirmAction(
       context,
-      title: 'Checkout commit',
-      message:
-          'Check out $hash? You will be on a detached HEAD — create a branch '
-          'to keep any new commits.',
+      title: 'Checkout',
+      message: branch != null
+          ? 'Check out branch "$branch" (at $short)?'
+          : 'Check out commit $short? You will be on a detached HEAD — '
+                'create a branch to keep any new commits.',
       confirmLabel: 'Checkout',
     );
     if (!ok || busy || !mounted) return;
@@ -724,7 +734,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         context,
         ref,
         repoPath,
-        () => _git.checkout(repoPath, hash),
+        // The branch when one sits at this OID (attached HEAD), else the raw
+        // commit (detached, as warned above).
+        () => _git.checkout(repoPath, branch ?? hash),
       );
       // Only an actual switch invalidates the selection — a cancelled guard
       // dialog leaves everything as it was.
@@ -2291,29 +2303,57 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   }
 
   Future<void> _actMergeInto(GitRef branch, MergeMode mode) async {
+    // Same confirm the Branches panel gives the identical operation
+    // (0009 M10) — a drop release is even easier to do by accident than a
+    // menu click.
+    final name = branch.shortName;
+    final message = switch (mode) {
+      MergeMode.normal => 'Merge "$name" into the current branch?',
+      MergeMode.noFf =>
+        'Merge "$name" into the current branch, always creating a merge '
+            'commit (--no-ff)?',
+      MergeMode.ffOnly =>
+        'Fast-forward the current branch to "$name" (--ff-only)?',
+      MergeMode.squash =>
+        'Squash-merge "$name": stage its combined changes without '
+            'committing?',
+    };
+    final ok = await confirmAction(
+      context,
+      title: 'Merge branch',
+      message: message,
+      confirmLabel: 'Merge',
+    );
+    if (!ok || !mounted) return;
     final label = [
       'git merge',
       if (mode == MergeMode.noFf) '--no-ff',
       if (mode == MergeMode.squash) '--squash',
-      branch.shortName,
+      name,
     ].join(' ');
     await runLogged(
       label,
-      (log) async => log.logResult(
-        label,
-        await _git.merge(repoPath, branch.shortName, mode: mode),
-      ),
+      (log) async =>
+          log.logResult(label, await _git.merge(repoPath, name, mode: mode)),
     );
   }
 
   Future<void> _actRebaseOnto(GitRef branch) async {
-    final label = 'git rebase ${branch.shortName}';
+    final name = branch.shortName;
+    final ok = await confirmAction(
+      context,
+      title: 'Rebase branch',
+      message:
+          'Rebase the current branch onto "$name"? Your commits are '
+          'replayed on top of it; conflicts pause the rebase for resolution.',
+      confirmLabel: 'Rebase',
+    );
+    if (!ok || !mounted) return;
+    final label = 'git rebase $name';
     await runLogged(
       label,
-      (log) async => log.logResult(
-        label,
-        await _git.rebaseOnto(repoPath, branch.shortName),
-      ),
+      (log) async =>
+          log.logResult(label, await _git.rebaseOnto(repoPath, name)),
     );
   }
 

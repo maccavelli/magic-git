@@ -549,9 +549,9 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       ),
       // A failed source list must say so — an Inbox that silently omits a
       // whole category reads as "nothing needs attention".
-      if (mrs.hasError) SectionError(mrs.error!),
-      if (pipelines.hasError) SectionError(pipelines.error!),
-      if (issues.hasError) SectionError(issues.error!),
+      if (mrs.hasError) ForgeListError(mrs.error!, cli: 'glab'),
+      if (pipelines.hasError) ForgeListError(pipelines.error!, cli: 'glab'),
+      if (issues.hasError) ForgeListError(issues.error!, cli: 'glab'),
     ];
   }
 
