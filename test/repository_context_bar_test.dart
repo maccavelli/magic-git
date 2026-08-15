@@ -73,7 +73,9 @@ void main() {
     tester,
   ) async {
     RepositoryWorkspacePrefs? changed;
-    tester.view.physicalSize = const Size(1100, 300);
+    // Tall enough for the view-options menu, which now lists every hideable
+    // toolbar slot as well as the presets.
+    tester.view.physicalSize = const Size(1100, 900);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
     await tester.pumpWidget(
@@ -81,7 +83,7 @@ void main() {
         child: MacosApp(
           home: SizedBox(
             width: 1100,
-            height: 300,
+            height: 900,
             child: RepositoryWorkspaceScaffold(
               repositoryContext: RepositoryContextBar(
                 snapshot: _snapshot,

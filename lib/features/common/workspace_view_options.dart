@@ -57,7 +57,13 @@ class _WorkspaceViewOptionsButtonState
           ),
         ),
       ),
-      for (final slot in WorkspaceToolbarSlot.values)
+      const ContextMenuDivider(),
+      // Every item here is also a menu-bar command, which is what makes hiding
+      // it safe: a toolbar item must never be the only place a command lives.
+      // The repository's identity and the primary action are deliberately
+      // absent — those are not customizable.
+      for (final slot in WorkspaceToolbarSlot.values) ...[
+        if (slot == WorkspaceToolbarSlot.syncGroup) const ContextMenuDivider(),
         ContextMenuItem(
           icon: preferences.visibleToolbarSlots.contains(slot)
               ? CupertinoIcons.check_mark
@@ -71,6 +77,7 @@ class _WorkspaceViewOptionsButtonState
             scope.onChanged!(preferences.copyWith(visibleToolbarSlots: next));
           },
         ),
+      ],
       const ContextMenuDivider(),
       for (final preset in WorkspacePreset.values)
         ContextMenuItem(

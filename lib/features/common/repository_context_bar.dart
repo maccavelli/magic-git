@@ -70,9 +70,16 @@ class RepositoryContextBar extends StatelessWidget {
         final appearance = WorkspaceAppearanceScope.maybeOf(context);
         final preferencesScope = WorkspacePreferencesScope.maybeOf(context);
         final preferences = preferencesScope?.preferences;
+        // A slot with no preferences to consult is shown: the bar renders in
+        // places (tests, pop-outs) that carry no workspace preferences, and the
+        // default there is the full bar.
+        bool slotVisible(WorkspaceToolbarSlot slot) =>
+            preferences == null ||
+            preferences.visibleToolbarSlots.contains(slot);
         final showWorkspaceOptions =
             preferencesScope?.optionsEnabled == true &&
-            preferencesScope?.onChanged != null;
+            preferencesScope?.onChanged != null &&
+            slotVisible(WorkspaceToolbarSlot.viewOptions);
         final sizeClass = WorkspaceSizeClass.fromWidth(constraints.maxWidth);
         final compact = sizeClass == WorkspaceSizeClass.compact;
         // The sync group keeps all four buttons only where they fit beside the
@@ -113,16 +120,8 @@ class RepositoryContextBar extends StatelessWidget {
                   const SizedBox(width: 2),
                 ],
                 _NavigationControls(
-                  showBack:
-                      preferences == null ||
-                      preferences.visibleToolbarSlots.contains(
-                        WorkspaceToolbarSlot.back,
-                      ),
-                  showForward:
-                      preferences == null ||
-                      preferences.visibleToolbarSlots.contains(
-                        WorkspaceToolbarSlot.forward,
-                      ),
+                  showBack: slotVisible(WorkspaceToolbarSlot.back),
+                  showForward: slotVisible(WorkspaceToolbarSlot.forward),
                   showLabels:
                       !compact && (preferences?.showToolbarLabels ?? false),
                 ),
@@ -137,11 +136,16 @@ class RepositoryContextBar extends StatelessWidget {
                     children: [
                       Flexible(child: _RepositoryIdentity(snapshot: snapshot)),
                       if (!compact) ...[
-                        const SizedBox(width: 10),
-                        _StatusSummary(snapshot: snapshot),
+                        if (slotVisible(
+                          WorkspaceToolbarSlot.statusSummary,
+                        )) ...[
+                          const SizedBox(width: 10),
+                          _StatusSummary(snapshot: snapshot),
+                        ],
                         const SizedBox(width: 10),
                         _SupplementSummary(snapshot: snapshot),
-                        if (showLinkStatus) ...[
+                        if (showLinkStatus &&
+                            slotVisible(WorkspaceToolbarSlot.linkStatus)) ...[
                           const SizedBox(width: 10),
                           const Flexible(child: SshLinkStatusRow()),
                         ],
@@ -159,18 +163,22 @@ class RepositoryContextBar extends StatelessWidget {
                   const SizedBox(width: 4),
                 ] else
                   const SizedBox(width: 6),
-                WorkspaceFocusRegion(
-                  role: WorkspacePaneRole.activity,
-                  child: ActivityCenterButton(
-                    repositoryPath: snapshot.repositoryPath,
-                    // Forwarded so this instance is a full replacement for the
-                    // second copy the Repository toolbar used to render: the
-                    // reveal-in-Output affordance lived only on that copy.
-                    onRevealOutput: onRevealOutput,
+                if (slotVisible(WorkspaceToolbarSlot.activity)) ...[
+                  WorkspaceFocusRegion(
+                    role: WorkspacePaneRole.activity,
+                    child: ActivityCenterButton(
+                      repositoryPath: snapshot.repositoryPath,
+                      // Forwarded so this instance is a full replacement for
+                      // the second copy the Repository toolbar used to render:
+                      // the reveal-in-Output affordance lived only on that
+                      // copy.
+                      onRevealOutput: onRevealOutput,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 6),
-                if (onStash != null) ...[
+                  const SizedBox(width: 6),
+                ],
+                if (onStash != null &&
+                    slotVisible(WorkspaceToolbarSlot.stash)) ...[
                   ToolIconButton(
                     icon: CupertinoIcons.tray_arrow_down,
                     tooltip: 'Stash changes',
@@ -178,7 +186,8 @@ class RepositoryContextBar extends StatelessWidget {
                   ),
                   const SizedBox(width: 2),
                 ],
-                if (onRefresh != null) ...[
+                if (onRefresh != null &&
+                    slotVisible(WorkspaceToolbarSlot.refresh)) ...[
                   ToolIconButton(
                     icon: CupertinoIcons.refresh,
                     tooltip: 'Refresh',
@@ -186,7 +195,11 @@ class RepositoryContextBar extends StatelessWidget {
                   ),
                   const SizedBox(width: 4),
                 ],
-                if (syncGroup case final group?)
+                // Hiding the sync group does not hide the primary action: the
+                // bar falls back to the single emphasized button below, which
+                // is the one control this bar always shows.
+                if (syncGroup case final group?
+                    when slotVisible(WorkspaceToolbarSlot.syncGroup))
                   _SyncGroup(
                     group: group,
                     recommendation: primaryAction,

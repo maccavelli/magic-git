@@ -10,15 +10,46 @@ enum RepositoryNavigatorMode { changes, files }
 
 enum WorkspacePreset { review, commit, investigate, minimal }
 
-/// Optional secondary context-bar slots. The contextual primary action is
-/// never hidden by this set.
-enum WorkspaceToolbarSlot { back, forward }
+/// Context-bar items the user may hide.
+///
+/// Deliberately excluded, and therefore always present: the repository
+/// identity block and the emphasized primary action. Apple's guidance is that
+/// "items on the toolbar's leading edge aren't customizable" and to "only
+/// specify one primary action" — a bar you can strip to nothing tells you
+/// nothing about which repository you are looking at.
+///
+/// Hiding is only safe because every one of these also exists as a menu
+/// command (MADR 0008, Phase 1): a toolbar item "can't be the only place that
+/// presents a command", or turning it off would delete the command.
+enum WorkspaceToolbarSlot {
+  back,
+  forward,
+  syncGroup,
+  stash,
+  refresh,
+  activity,
+  viewOptions,
+  statusSummary,
+  linkStatus,
+}
 
 extension WorkspaceToolbarSlotPresentation on WorkspaceToolbarSlot {
   String get label => switch (this) {
     WorkspaceToolbarSlot.back => 'Back',
     WorkspaceToolbarSlot.forward => 'Forward',
+    WorkspaceToolbarSlot.syncGroup => 'Sync actions',
+    WorkspaceToolbarSlot.stash => 'Stash',
+    WorkspaceToolbarSlot.refresh => 'Refresh',
+    WorkspaceToolbarSlot.activity => 'Activity',
+    WorkspaceToolbarSlot.viewOptions => 'View options',
+    WorkspaceToolbarSlot.statusSummary => 'Status summary',
+    WorkspaceToolbarSlot.linkStatus => 'Connection status',
   };
+
+  /// Where the slot sits, so the menu can group leading and trailing items the
+  /// way they appear on the bar.
+  bool get isLeading =>
+      this == WorkspaceToolbarSlot.back || this == WorkspaceToolbarSlot.forward;
 }
 
 extension WorkspacePresetPresentation on WorkspacePreset {
@@ -137,9 +168,18 @@ class RepositoryWorkspacePrefs {
     this.diffContextLines = 3,
     this.grouping = RepositoryChangeGrouping.status,
     this.showToolbarLabels = false,
+    // Everything on by default: a fresh workspace shows the full bar, and
+    // hiding is an explicit choice rather than something to discover.
     this.visibleToolbarSlots = const {
       WorkspaceToolbarSlot.back,
       WorkspaceToolbarSlot.forward,
+      WorkspaceToolbarSlot.syncGroup,
+      WorkspaceToolbarSlot.stash,
+      WorkspaceToolbarSlot.refresh,
+      WorkspaceToolbarSlot.activity,
+      WorkspaceToolbarSlot.viewOptions,
+      WorkspaceToolbarSlot.statusSummary,
+      WorkspaceToolbarSlot.linkStatus,
     },
   });
 
