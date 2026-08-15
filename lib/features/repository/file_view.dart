@@ -50,14 +50,12 @@ class FileView extends ConsumerStatefulWidget {
   final double maxWidth;
   final String repoPath;
   final OpenFileCallback onOpenFile;
-  final bool embedded;
 
   const FileView({
     super.key,
     required this.maxWidth,
     required this.repoPath,
     required this.onOpenFile,
-    this.embedded = false,
   });
 
   @override
@@ -85,10 +83,8 @@ class _FileViewState extends ConsumerState<FileView> {
   final Map<String, List<RepoNode>> _lazyChildren = {};
   final Set<String> _lazyLoading = {};
 
-  /// The selection is SHARED with the Changes list and the other FileView
-  /// instance (this widget is built twice — docked pane and navigator tab).
-  /// It used to be private state here, which is why switching Changes↔Files
-  /// lost the highlight and the two trees could disagree.
+  /// Shared with the Changes list so a tree click and a list click highlight
+  /// the same path.
   Set<String> get _selectedPaths =>
       ref.read(repoFileSelectionProvider(repoPath)).paths;
 
@@ -498,9 +494,6 @@ class _FileViewState extends ConsumerState<FileView> {
   Widget build(BuildContext context) {
     final async = ref.watch(repoStructureProvider(repoPath));
     final overlay = ref.watch(repoStatusOverlayProvider(repoPath));
-    if (widget.embedded) {
-      return RepaintBoundary(child: _body(context, async, overlay));
-    }
     // The stored width is clamped to THIS panel's relative bounds on render
     // only — a width chosen on a wide window renders clamped on a narrow one
     // without being overwritten (only drags persist).

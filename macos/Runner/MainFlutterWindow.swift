@@ -668,6 +668,14 @@ class MainFlutterWindow: NSWindow {
   /// menu itself needs to remain available so people can open it and learn
   /// about the commands it contains."
   override func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+    // Settings is always available (same as its keymap/palette handlers).
+    // Do not fold it through enabledActionIds — that is what left the
+    // remapped Apple-menu item dimmed after Ventura renamed it.
+    if menuItem.action == #selector(showSettingsWindow(_:))
+      || menuItem.action == #selector(showPreferencesWindow(_:))
+    {
+      return true
+    }
     guard menuItem.action == #selector(dynamicMenuActionFired(_:)) else {
       return super.validateMenuItem(menuItem)
     }
@@ -684,16 +692,44 @@ class MainFlutterWindow: NSWindow {
     menuChannel?.invokeMethod("dispatchAction", arguments: actionId)
   }
 
-  /// Wires the standard "Preferences…" item (⌘, from MainMenu.xib), which had
-  /// no action at all — it opened the menu, dimmed, and did nothing, while the
-  /// only way to Settings was a gear buried in a repository toolbar.
+  /// Wires the standard Apple-menu Settings/Preferences item (⌘, from
+  /// MainMenu.xib). Ventura+ remaps the xib title "Preferences…" to
+  /// "Settings…" (and may assign `showSettingsWindow:`), so matching only
+  /// the English "Preferences" prefix left the item unwired and dimmed.
+  /// A dedicated selector stays enabled independently of `enabledActionIds`.
   private func installPreferencesAction() {
     guard let appMenu = NSApp.mainMenu?.items.first?.submenu else { return }
-    for item in appMenu.items where item.title.hasPrefix("Preferences") {
+    for item in appMenu.items where Self.isSettingsMenuItem(item) {
       item.target = self
-      item.action = #selector(dynamicMenuActionFired(_:))
+      item.action = #selector(showSettingsWindow(_:))
       item.representedObject = "global.openSettings"
     }
+  }
+
+  /// Identity for the Apple-menu Settings item: the comma equivalent is
+  /// stable across the Preferences→Settings rename and localization; the
+  /// English titles cover a remapped item that lost its equivalent.
+  private static func isSettingsMenuItem(_ item: NSMenuItem) -> Bool {
+    if item.isSeparatorItem { return false }
+    if item.keyEquivalent == "," { return true }
+    let title = item.title
+    return title.hasPrefix("Preferences") || title.hasPrefix("Settings")
+  }
+
+  /// Dispatches Settings through the same Dart action the keymap and palette
+  /// use. Called from the Apple-menu item and from AppDelegate's
+  /// `showSettingsWindow:` / `showPreferencesWindow:` (the selectors AppKit
+  /// enables the remapped item with).
+  func openSettingsFromMenu() {
+    menuChannel?.invokeMethod("dispatchAction", arguments: "global.openSettings")
+  }
+
+  @objc func showSettingsWindow(_ sender: Any?) {
+    openSettingsFromMenu()
+  }
+
+  @objc func showPreferencesWindow(_ sender: Any?) {
+    openSettingsFromMenu()
   }
 
   /// Repoints the standard "About Magic Git" menu item (wired in MainMenu.xib to

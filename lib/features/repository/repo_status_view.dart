@@ -94,16 +94,14 @@ class RepoStatusView extends ConsumerStatefulWidget {
 
 class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     with BusyActionState {
-  // The selection lives in a repo-keyed provider so the Changes list and BOTH
-  // FileView instances (docked pane + navigator tab) read the same value —
-  // switching Changes↔Files used to lose the highlight entirely.
+  // Shared with the docked FileView so a tree click and a list click
+  // highlight the same path.
   RepoChangeSelection get _selection =>
       ref.read(repoFileSelectionProvider(repoPath));
   RepoFileSelection get _selectionNotifier =>
       ref.read(repoFileSelectionProvider(repoPath).notifier);
   final _changeFilterController = TextEditingController();
   RepoChangeFilter _changeFilter = const RepoChangeFilter();
-  RepositoryNavigatorMode? _navigatorModeOverride;
   bool _composerExpanded = false;
   final _reviewController = RepoReviewController();
   bool _reviewOpen = false;
@@ -429,7 +427,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       _popout = false;
       _changeFilterController.clear();
       _changeFilter = const RepoChangeFilter();
-      _navigatorModeOverride = null;
       _reviewOpen = false;
       _reviewController.clear();
     }
@@ -1512,8 +1509,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         ? _selectedPaths.toList()
         : null;
     final multiKind = multiPaths == null ? null : _selectionKind;
-    final navigatorMode =
-        _navigatorModeOverride ?? workspacePreferences.navigatorMode;
     final keymap = ref.watch(keymapProvider);
     // One handler map for both consumers: the keyboard shortcuts and the
     // command palette's dispatched intents (see PanelShortcuts.handlers).
@@ -1671,7 +1666,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   children: [
                     Expanded(child: centerColumn),
                     if ((fileVisible || workspacePreferences.filesPinned) &&
-                        navigatorMode != RepositoryNavigatorMode.files &&
                         canvasConstraints.maxWidth >= 1200)
                       FileView(
                         maxWidth: canvasConstraints.maxWidth,
@@ -2421,13 +2415,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               ),
             ),
           );
-    final mode = _navigatorModeOverride ?? preferences.navigatorMode;
     return RepoChangeNavigator(
-      mode: mode,
-      onModeChanged: (next) {
-        setState(() => _navigatorModeOverride = next);
-        onPreferencesChanged?.call(preferences.copyWith(navigatorMode: next));
-      },
       filterController: _changeFilterController,
       filter: effectiveFilter,
       onFilterChanged: (next) {
@@ -2476,12 +2464,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               setState(() => _reviewOpen = true);
             },
       changes: changes,
-      files: FileView(
-        maxWidth: preferences.navigatorWidth,
-        repoPath: repoPath,
-        onOpenFile: _openFileFromTree,
-        embedded: true,
-      ),
     );
   }
 

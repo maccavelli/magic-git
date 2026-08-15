@@ -6,8 +6,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../storage/repository_ui_identity.dart';
 import 'pane_layout.dart';
 
-enum RepositoryNavigatorMode { changes, files }
-
 enum WorkspacePreset { review, commit, investigate, minimal }
 
 /// Context-bar items the user may hide.
@@ -122,7 +120,6 @@ class RepositoryWorkspacePrefs {
   static const int maxDiffContextLines = 50;
 
   final int version;
-  final RepositoryNavigatorMode navigatorMode;
   final WorkspacePreset preset;
   final double navigatorWidth;
   final double inspectorWidth;
@@ -148,7 +145,6 @@ class RepositoryWorkspacePrefs {
 
   const RepositoryWorkspacePrefs({
     this.version = currentVersion,
-    this.navigatorMode = RepositoryNavigatorMode.changes,
     this.preset = WorkspacePreset.review,
     this.navigatorWidth = defaultNavigatorWidth,
     this.inspectorWidth = defaultInspectorWidth,
@@ -202,7 +198,6 @@ class RepositoryWorkspacePrefs {
 
   RepositoryWorkspacePrefs copyWith({
     int? version,
-    RepositoryNavigatorMode? navigatorMode,
     WorkspacePreset? preset,
     double? navigatorWidth,
     double? inspectorWidth,
@@ -220,7 +215,6 @@ class RepositoryWorkspacePrefs {
     Set<WorkspaceToolbarSlot>? visibleToolbarSlots,
   }) => RepositoryWorkspacePrefs(
     version: version ?? this.version,
-    navigatorMode: navigatorMode ?? this.navigatorMode,
     preset: preset ?? this.preset,
     navigatorWidth: navigatorWidth ?? this.navigatorWidth,
     inspectorWidth: inspectorWidth ?? this.inspectorWidth,
@@ -242,7 +236,6 @@ class RepositoryWorkspacePrefs {
     final value = normalized;
     return {
       'version': currentVersion,
-      'navigatorMode': value.navigatorMode.name,
       'preset': value.preset.name,
       'navigatorWidth': value.navigatorWidth,
       'inspectorWidth': value.inspectorWidth,
@@ -284,11 +277,6 @@ class RepositoryWorkspacePrefs {
           raw is num ? raw.toDouble() : fallback;
 
       return RepositoryWorkspacePrefs(
-        navigatorMode: enumValue(
-          RepositoryNavigatorMode.values,
-          json['navigatorMode'],
-          RepositoryNavigatorMode.changes,
-        ),
         preset: enumValue(
           WorkspacePreset.values,
           json['preset'],

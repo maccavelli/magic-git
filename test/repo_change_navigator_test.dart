@@ -2,7 +2,6 @@ import 'package:flutter/cupertino.dart' hide OverlayVisibilityMode;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
-import 'package:remote_magic_git/core/settings/repository_workspace_prefs.dart';
 import 'package:remote_magic_git/features/repository/repo_change_filter.dart';
 import 'package:remote_magic_git/features/repository/repo_change_model.dart';
 import 'package:remote_magic_git/features/repository/repo_change_navigator.dart';
@@ -12,7 +11,6 @@ Future<void> _pump(
   required TextEditingController controller,
   required RepoChangeFilter filter,
   required ValueChanged<RepoChangeFilter> onFilterChanged,
-  RepositoryNavigatorMode mode = RepositoryNavigatorMode.changes,
   int hidden = 0,
 }) async {
   await tester.pumpWidget(
@@ -21,8 +19,6 @@ Future<void> _pump(
         width: 420,
         height: 500,
         child: RepoChangeNavigator(
-          mode: mode,
-          onModeChanged: (_) {},
           filterController: controller,
           filter: filter,
           onFilterChanged: onFilterChanged,
@@ -32,7 +28,6 @@ Future<void> _pump(
           onRevealSelection: () {},
           onClearSelection: () {},
           changes: const Text('changes-body'),
-          files: const Text('files-body'),
         ),
       ),
     ),
@@ -62,30 +57,24 @@ void main() {
     expect(next?.query, isEmpty);
   });
 
-  testWidgets(
-    'mode swaps one navigator body and hidden selection is explicit',
-    (tester) async {
-      final controller = TextEditingController();
-      addTearDown(controller.dispose);
-      await _pump(
-        tester,
-        controller: controller,
-        filter: const RepoChangeFilter(),
-        onFilterChanged: (_) {},
-        mode: RepositoryNavigatorMode.files,
-        hidden: 3,
-      );
+  testWidgets('hidden selection is explicit', (tester) async {
+    final controller = TextEditingController();
+    addTearDown(controller.dispose);
+    await _pump(
+      tester,
+      controller: controller,
+      filter: const RepoChangeFilter(),
+      onFilterChanged: (_) {},
+      hidden: 3,
+    );
 
-      expect(find.text('files-body'), findsOneWidget);
-      expect(find.text('changes-body'), findsNothing);
-      expect(
-        find.textContaining('3 selected items are hidden'),
-        findsOneWidget,
-      );
-      expect(find.text('Reveal'), findsOneWidget);
-      expect(find.text('Clear Selection'), findsOneWidget);
-    },
-  );
+    expect(find.text('changes-body'), findsOneWidget);
+    expect(find.text('Changes'), findsNothing);
+    expect(find.text('Files'), findsNothing);
+    expect(find.textContaining('3 selected items are hidden'), findsOneWidget);
+    expect(find.text('Reveal'), findsOneWidget);
+    expect(find.text('Clear Selection'), findsOneWidget);
+  });
 
   Finder tooltip(String message) =>
       find.byWidgetPredicate((w) => w is MacosTooltip && w.message == message);

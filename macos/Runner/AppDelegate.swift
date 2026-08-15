@@ -38,4 +38,16 @@ class AppDelegate: FlutterAppDelegate {
     }
     return .terminateLater
   }
+
+  /// Ventura+ retitles the Apple-menu "Preferences…" item to "Settings…" and
+  /// enables it only when the responder chain implements this selector (or
+  /// `showPreferencesWindow:`). Without it the item stays dimmed even though
+  /// ⌘, and the command palette still open Settings.
+  @objc func showSettingsWindow(_ sender: Any?) {
+    (mainFlutterWindow as? MainFlutterWindow)?.openSettingsFromMenu()
+  }
+
+  @objc func showPreferencesWindow(_ sender: Any?) {
+    showSettingsWindow(sender)
+  }
 }

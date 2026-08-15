@@ -11,8 +11,6 @@ import 'repo_change_filter.dart';
 import 'repo_change_model.dart';
 
 class RepoChangeNavigator extends StatelessWidget {
-  final RepositoryNavigatorMode mode;
-  final ValueChanged<RepositoryNavigatorMode> onModeChanged;
   final TextEditingController filterController;
   final RepoChangeFilter filter;
   final ValueChanged<RepoChangeFilter> onFilterChanged;
@@ -25,12 +23,9 @@ class RepoChangeNavigator extends StatelessWidget {
   final VoidCallback? onReviewSelected;
   final VoidCallback? onReviewAllVisible;
   final Widget changes;
-  final Widget files;
 
   const RepoChangeNavigator({
     super.key,
-    required this.mode,
-    required this.onModeChanged,
     required this.filterController,
     required this.filter,
     required this.onFilterChanged,
@@ -43,7 +38,6 @@ class RepoChangeNavigator extends StatelessWidget {
     this.onReviewSelected,
     this.onReviewAllVisible,
     required this.changes,
-    required this.files,
   });
 
   KeyEventResult _onFilterKey(FocusNode node, KeyEvent event) {
@@ -73,139 +67,120 @@ class RepoChangeNavigator extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              CupertinoSlidingSegmentedControl<RepositoryNavigatorMode>(
-                groupValue: mode,
-                children: const {
-                  RepositoryNavigatorMode.changes: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12),
-                    child: Text('Changes'),
-                  ),
-                  RepositoryNavigatorMode.files: Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 12),
-                    child: Text('Files'),
-                  ),
-                },
-                onValueChanged: (next) {
-                  if (next != null) onModeChanged(next);
-                },
+              Focus(
+                onKeyEvent: _onFilterKey,
+                child: MacosTextField(
+                  controller: filterController,
+                  placeholder: 'Filter changed paths',
+                  placeholderStyle: kAppPlaceholderStyle,
+                  decoration: kAppTextFieldDecoration,
+                  focusedDecoration: kAppTextFieldFocusedDecoration,
+                  prefix: const MacosIcon(CupertinoIcons.search, size: 14),
+                  clearButtonMode: OverlayVisibilityMode.editing,
+                  onChanged: (query) =>
+                      onFilterChanged(filter.copyWith(query: query)),
+                ),
               ),
-              if (mode == RepositoryNavigatorMode.changes) ...[
-                const SizedBox(height: 7),
-                Focus(
-                  onKeyEvent: _onFilterKey,
-                  child: MacosTextField(
-                    controller: filterController,
-                    placeholder: 'Filter changed paths',
-                    placeholderStyle: kAppPlaceholderStyle,
-                    decoration: kAppTextFieldDecoration,
-                    focusedDecoration: kAppTextFieldFocusedDecoration,
-                    prefix: const MacosIcon(CupertinoIcons.search, size: 14),
-                    clearButtonMode: OverlayVisibilityMode.editing,
-                    onChanged: (query) =>
-                        onFilterChanged(filter.copyWith(query: query)),
+              const SizedBox(height: 5),
+              Row(
+                children: [
+                  _statusButton(
+                    RepoChangeSection.conflict,
+                    CupertinoIcons.exclamationmark_triangle_fill,
+                    'Conflicts',
+                    MacosColors.systemRedColor,
                   ),
-                ),
-                const SizedBox(height: 5),
-                Row(
-                  children: [
-                    _statusButton(
-                      RepoChangeSection.conflict,
-                      CupertinoIcons.exclamationmark_triangle_fill,
-                      'Conflicts',
-                      MacosColors.systemRedColor,
+                  _statusButton(
+                    RepoChangeSection.staged,
+                    CupertinoIcons.checkmark_alt_circle_fill,
+                    'Staged',
+                    MacosColors.systemGreenColor,
+                  ),
+                  _statusButton(
+                    RepoChangeSection.unstaged,
+                    CupertinoIcons.pencil_circle_fill,
+                    'Unstaged',
+                    MacosColors.systemOrangeColor,
+                  ),
+                  _statusButton(
+                    RepoChangeSection.untracked,
+                    CupertinoIcons.plus_square_fill,
+                    'Untracked',
+                    MacosColors.systemTealColor,
+                  ),
+                  const Spacer(),
+                  Text(
+                    '$visibleCount of $totalCount',
+                    style: MacosTheme.of(context).typography.caption1,
+                  ),
+                  const SizedBox(width: 4),
+                  if (filter.active)
+                    ToolIconButton(
+                      icon: CupertinoIcons.clear_circled,
+                      tooltip: 'Clear filters',
+                      size: 14,
+                      onPressed: () {
+                        filterController.clear();
+                        onFilterChanged(
+                          RepoChangeFilter(grouping: filter.grouping),
+                        );
+                      },
                     ),
-                    _statusButton(
-                      RepoChangeSection.staged,
-                      CupertinoIcons.checkmark_alt_circle_fill,
-                      'Staged',
-                      MacosColors.systemGreenColor,
-                    ),
-                    _statusButton(
-                      RepoChangeSection.unstaged,
-                      CupertinoIcons.pencil_circle_fill,
-                      'Unstaged',
-                      MacosColors.systemOrangeColor,
-                    ),
-                    _statusButton(
-                      RepoChangeSection.untracked,
-                      CupertinoIcons.plus_square_fill,
-                      'Untracked',
-                      MacosColors.systemTealColor,
-                    ),
-                    const Spacer(),
-                    Text(
-                      '$visibleCount of $totalCount',
-                      style: MacosTheme.of(context).typography.caption1,
-                    ),
-                    const SizedBox(width: 4),
-                    if (filter.active)
-                      ToolIconButton(
-                        icon: CupertinoIcons.clear_circled,
-                        tooltip: 'Clear filters',
-                        size: 14,
-                        onPressed: () {
-                          filterController.clear();
-                          onFilterChanged(
-                            RepoChangeFilter(grouping: filter.grouping),
-                          );
-                        },
+                  MacosPulldownButton(
+                    icon: CupertinoIcons.line_horizontal_3_decrease,
+                    items: [
+                      MacosPulldownMenuItem(
+                        title: const Text('Group by status'),
+                        onTap: () => onFilterChanged(
+                          filter.copyWith(
+                            grouping: RepositoryChangeGrouping.status,
+                          ),
+                        ),
                       ),
-                    MacosPulldownButton(
-                      icon: CupertinoIcons.line_horizontal_3_decrease,
-                      items: [
-                        MacosPulldownMenuItem(
-                          title: const Text('Group by status'),
-                          onTap: () => onFilterChanged(
-                            filter.copyWith(
-                              grouping: RepositoryChangeGrouping.status,
-                            ),
+                      MacosPulldownMenuItem(
+                        title: const Text('Group by directory'),
+                        onTap: () => onFilterChanged(
+                          filter.copyWith(
+                            grouping: RepositoryChangeGrouping.directory,
                           ),
                         ),
-                        MacosPulldownMenuItem(
-                          title: const Text('Group by directory'),
-                          onTap: () => onFilterChanged(
-                            filter.copyWith(
-                              grouping: RepositoryChangeGrouping.directory,
-                            ),
-                          ),
-                        ),
-                        const MacosPulldownMenuDivider(),
-                        MacosPulldownMenuItem(
-                          title: Text(
-                            filter.includeReviewed
-                                ? 'Hide reviewed paths'
-                                : 'Include reviewed paths',
-                          ),
-                          onTap: () => onFilterChanged(
-                            filter.copyWith(
-                              includeReviewed: !filter.includeReviewed,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 5),
-                Wrap(
-                  alignment: WrapAlignment.end,
-                  spacing: 6,
-                  runSpacing: 3,
-                  children: [
-                    if (selectedCount > 1)
-                      InlineActionButton(
-                        label: 'Review selected ($selectedCount)',
-                        icon: CupertinoIcons.rectangle_stack,
-                        onPressed: onReviewSelected,
                       ),
+                      const MacosPulldownMenuDivider(),
+                      MacosPulldownMenuItem(
+                        title: Text(
+                          filter.includeReviewed
+                              ? 'Hide reviewed paths'
+                              : 'Include reviewed paths',
+                        ),
+                        onTap: () => onFilterChanged(
+                          filter.copyWith(
+                            includeReviewed: !filter.includeReviewed,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 5),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 6,
+                runSpacing: 3,
+                children: [
+                  if (selectedCount > 1)
                     InlineActionButton(
-                      label: 'Review all visible',
-                      icon: CupertinoIcons.eye,
-                      onPressed: visibleCount == 0 ? null : onReviewAllVisible,
+                      label: 'Review selected ($selectedCount)',
+                      icon: CupertinoIcons.rectangle_stack,
+                      onPressed: onReviewSelected,
                     ),
-                  ],
-                ),
-              ],
+                  InlineActionButton(
+                    label: 'Review all visible',
+                    icon: CupertinoIcons.eye,
+                    onPressed: visibleCount == 0 ? null : onReviewAllVisible,
+                  ),
+                ],
+              ),
             ],
           ),
         ),
@@ -239,9 +214,7 @@ class RepoChangeNavigator extends StatelessWidget {
             ),
           ),
         Expanded(
-          child: mode == RepositoryNavigatorMode.files
-              ? files
-              : visibleCount == 0 && totalCount > 0
+          child: visibleCount == 0 && totalCount > 0
               ? Center(
                   child: Text(
                     'No changed paths match the current filters.',

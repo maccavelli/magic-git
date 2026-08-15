@@ -1,12 +1,10 @@
 /// The repository pane's one file selection, shared across every surface that
 /// shows it (audit M13).
 ///
-/// It used to live in three independent places: `RepoStatusView._selectedPaths`
-/// for the Changes list, plus a private `_selectedPath` inside EACH of the two
-/// `FileView` instances the repository pane builds (the docked right pane and
-/// the navigator's Files tab). Because the two file trees are mutually
-/// exclusive by layout, switching Changes↔Files lost the highlight every time,
-/// and the docked tree and the tab tree could disagree about what was selected.
+/// It used to live in independent places: `RepoStatusView._selectedPaths`
+/// for the Changes list, plus a private `_selectedPath` inside `FileView`.
+/// The docked tree and the list now share this provider so a click in
+/// either highlights the same path.
 ///
 /// The payload is [RepoChangeSelection] — already immutable, already tested,
 /// and already carrying the `section` and reconcile/rehome logic the Changes
@@ -73,8 +71,6 @@ class RepoFileSelection extends Notifier<RepoChangeSelection> {
 /// mismatch. `ConnectionController._invalidateRepoState` clears it explicitly
 /// alongside the other non-family UI state.
 final repoFileSelectionProvider =
-    NotifierProvider.family<
-      RepoFileSelection,
-      RepoChangeSelection,
-      String
-    >(RepoFileSelection.new);
+    NotifierProvider.family<RepoFileSelection, RepoChangeSelection, String>(
+      RepoFileSelection.new,
+    );

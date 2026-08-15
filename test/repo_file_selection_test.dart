@@ -1,9 +1,8 @@
 // The repository pane's shared file selection (audit M13).
 //
-// Recorded as complete in plan 0004 but never built: the Changes list and the
-// TWO FileView instances (docked pane + navigator tab) each kept their own,
-// so switching Changes↔Files lost the highlight every time and the two trees
-// could disagree about what was selected.
+// Recorded as complete in plan 0004 but never built: the Changes list and
+// FileView each kept their own selection, so a click in one did not
+// highlight the other.
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -35,10 +34,9 @@ void main() {
         .selectOnly('lib/main.dart');
 
     // Whichever surface asks, it is the same provider instance.
-    expect(
-      container.read(repoFileSelectionProvider(_repo)).paths,
-      {'lib/main.dart'},
-    );
+    expect(container.read(repoFileSelectionProvider(_repo)).paths, {
+      'lib/main.dart',
+    });
   });
 
   test('selections do not leak between repositories', () {
@@ -46,7 +44,9 @@ void main() {
     addTearDown(container.dispose);
 
     container.read(repoFileSelectionProvider(_repo).notifier).selectOnly('a');
-    container.read(repoFileSelectionProvider('/other').notifier).selectOnly('b');
+    container
+        .read(repoFileSelectionProvider('/other').notifier)
+        .selectOnly('b');
 
     expect(container.read(repoFileSelectionProvider(_repo)).paths, {'a'});
     expect(container.read(repoFileSelectionProvider('/other')).paths, {'b'});
@@ -82,7 +82,9 @@ void main() {
     test('drops a path that has left the working tree', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      final notifier = container.read(repoFileSelectionProvider(_repo).notifier);
+      final notifier = container.read(
+        repoFileSelectionProvider(_repo).notifier,
+      );
 
       notifier.set(
         const RepoChangeSelection(
@@ -98,7 +100,9 @@ void main() {
     test('rehomes a path that merely moved section', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      final notifier = container.read(repoFileSelectionProvider(_repo).notifier);
+      final notifier = container.read(
+        repoFileSelectionProvider(_repo).notifier,
+      );
 
       notifier.set(
         const RepoChangeSelection(
@@ -117,7 +121,9 @@ void main() {
         'not a stale Changes-list entry', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      final notifier = container.read(repoFileSelectionProvider(_repo).notifier);
+      final notifier = container.read(
+        repoFileSelectionProvider(_repo).notifier,
+      );
 
       // What the file tree produces when a clean file is clicked: a real
       // selection for a path that appears in NO status section.
@@ -130,10 +136,9 @@ void main() {
       // Clearing it would make the tree highlight flicker away on the next
       // `git status` tick — a regression the shared seam would otherwise
       // introduce, since the tree used to keep its own private highlight.
-      expect(
-        container.read(repoFileSelectionProvider(_repo)).paths,
-        {'README.md'},
-      );
+      expect(container.read(repoFileSelectionProvider(_repo)).paths, {
+        'README.md',
+      });
     });
   });
 }

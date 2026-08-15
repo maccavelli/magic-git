@@ -20,7 +20,7 @@ class HelpDataModelTests: XCTestCase {
                   "summary": "Summary 1",
                   "keywords": ["test", "topic"],
                   "shortcuts": [
-                    { "label": "Shortcut 1", "keys": "⌘K" }
+                    { "label": "Shortcut 1", "keys": "⌘K", "actionId": "global.commandPalette" }
                   ],
                   "sections": [
                     {
@@ -62,6 +62,27 @@ class HelpDataModelTests: XCTestCase {
         XCTAssertEqual(topic.shortcuts?.count, 1)
         XCTAssertEqual(topic.shortcuts?.first?.label, "Shortcut 1")
         XCTAssertEqual(topic.shortcuts?.first?.keys, "⌘K")
+        XCTAssertEqual(topic.shortcuts?.first?.actionId, "global.commandPalette")
+    }
+
+    func testShortcutWithoutActionIdStillDecodes() throws {
+        let json = """
+        {
+          "title": "T",
+          "version": "1.0",
+          "categories": [{
+            "id": "c", "title": "C", "icon": "folder",
+            "topics": [{
+              "id": "t", "title": "T", "summary": "S",
+              "keywords": ["k"],
+              "shortcuts": [{ "label": "Go", "keys": "⌘K" }],
+              "sections": [{ "type": "paragraph", "text": "Hi" }]
+            }]
+          }]
+        }
+        """
+        let book = try JSONDecoder().decode(HelpBook.self, from: json.data(using: .utf8)!)
+        XCTAssertNil(book.categories.first?.topics.first?.shortcuts?.first?.actionId)
 
         XCTAssertEqual(topic.sections.count, 2)
         XCTAssertEqual(topic.sections[0].type, .paragraph)
@@ -76,8 +97,8 @@ class HelpDataModelTests: XCTestCase {
         XCTAssertFalse(book.title.isEmpty)
         XCTAssertFalse(book.categories.isEmpty)
         
-        let tabCategory = book.categories.first { $0.id == "tabs" }
-        XCTAssertNotNil(tabCategory, "Expected 'tabs' category in help_book.json")
+        let tabCategory = book.categories.first { $0.id == "panels" }
+        XCTAssertNotNil(tabCategory, "Expected 'panels' category in help_book.json")
         
         if let tabCat = tabCategory {
             let topicIds = tabCat.topics.map { $0.id }

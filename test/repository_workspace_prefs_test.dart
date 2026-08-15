@@ -16,7 +16,6 @@ void main() {
 
   test('v1 round-trip retains layout fields and clamps unsafe dimensions', () {
     const original = RepositoryWorkspacePrefs(
-      navigatorMode: RepositoryNavigatorMode.files,
       preset: WorkspacePreset.investigate,
       navigatorWidth: 9999,
       inspectorWidth: 10,
@@ -36,7 +35,6 @@ void main() {
 
     final decoded = RepositoryWorkspacePrefs.decode(original.encode());
     expect(decoded.version, RepositoryWorkspacePrefs.currentVersion);
-    expect(decoded.navigatorMode, RepositoryNavigatorMode.files);
     expect(decoded.preset, WorkspacePreset.investigate);
     expect(decoded.navigatorWidth, RepositoryWorkspacePrefs.maxNavigatorWidth);
     expect(decoded.inspectorWidth, RepositoryWorkspacePrefs.minInspectorWidth);
@@ -65,7 +63,6 @@ void main() {
 
   test('built-in presets change only pane arrangement state', () {
     const original = RepositoryWorkspacePrefs(
-      navigatorMode: RepositoryNavigatorMode.files,
       diffLayout: RepositoryDiffLayout.split,
       ignoreWhitespace: true,
       diffContextLines: 12,
@@ -77,7 +74,6 @@ void main() {
     for (final preset in WorkspacePreset.values) {
       final applied = applyWorkspacePreset(original, preset);
       expect(applied.preset, preset);
-      expect(applied.navigatorMode, original.navigatorMode);
       expect(applied.diffLayout, original.diffLayout);
       expect(applied.ignoreWhitespace, original.ignoreWhitespace);
       expect(applied.diffContextLines, original.diffContextLines);

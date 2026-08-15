@@ -226,9 +226,12 @@ The Repository screen becomes the reference implementation of the scaffold.
 * Replace the modal-by-default commit path with a persistent, collapsible
   composer docked to the change navigator or bottom task area. Keep a larger
   sheet/pop-out as an optional focused editor for generated or long messages.
-* Offer **Changes** and **Files** as navigator modes. On normal widths, this
-  avoids showing both a status list and full file tree at opposite sides of the
-  diff. On wide widths, users may pin Files as an additional pane.
+* The navigator is the working-tree **Changes** list (filter, grouping,
+  review). The full file tree is the optional docked inspector (View → Show
+  File View, pin). It is not a second navigator mode. (Amended 2026-08-15:
+  Changes/Files as peer modes mounted a duplicate `FileView` in the
+  navigator and spent a full-width segmented control on a surface that
+  already exists as the right pane.)
 * Add status, path, and text filters; directory/status grouping; visible result
   counts; and a one-keystroke clear action. Filtering changes only presentation,
   never staging state.
@@ -349,8 +352,8 @@ Use available width and explicit user preference, not one fixed arrangement.
 | Width/context | Default behavior |
 | --- | --- |
 | Compact/main-window minimum | Collapsible main sidebar; one navigator or canvas at a time when necessary; task dock overlays or collapses; no four-pane layout. |
-| Standard/1080×720 | Sidebar + navigator + canvas; inspector and Files are mutually switchable or overlayable; composer remains visible in compact form. |
-| Wide display | Sidebar + navigator + canvas + optional pinned inspector/Files; independent persisted widths. |
+| Standard/1080×720 | Sidebar + Changes navigator + canvas; File View is off unless the user opens it (and only mounts at ≥1200). Composer remains visible in compact form. |
+| Wide display | Sidebar + Changes navigator + canvas + optional pinned File View inspector; independent persisted widths. |
 | Pop-out/secondary window | Purpose-specific subset with the same context bar and shortcuts; no controls that the proxy cannot execute. |
 
 Provide named presets such as **Review**, **Commit**, **Investigate**, and
@@ -421,7 +424,7 @@ relative and must be re-estimated from an implementation spike.
 | P0 | Shared workspace scaffold, context model, semantic design tokens, and state contracts | Very high | Large | Prevents another round of divergent panel-specific polish and makes all later work cheaper. |
 | P0 | Activity Center backed by executor/service telemetry and undo/recovery links | Very high | Medium–large | Remote latency and mutation trust affect every workflow and uniquely differentiate Magic Git. |
 | P1 | Persistent collapsible commit composer with visible staged scope | Very high | Medium | Removes a modal transition from the highest-frequency end-to-end task. |
-| P1 | Repository Changes/Files navigator modes with filter, grouping, and counts | High | Small–medium | Delivers immediate value for large working copies using existing status/tree data. |
+| P1 | Repository Changes navigator with filter, grouping, and counts; File View remains the docked inspector | High | Small–medium | Delivers immediate value for large working copies using existing status/tree data. |
 | P1 | Resizable/collapsible Repository panes and adaptive sidebar behavior | High | Medium | Improves both 640px survival and wide-screen productivity. |
 | P1 | Aggregate multi-file review queue with visible bulk actions and reviewed state | Very high | Medium–large | Turns multi-selection into a review workflow instead of a count-only state. |
 | P1 | Entity-aware Go to / Do palette | Very high | Large | Makes existing features dramatically easier to discover and links the six screens by intent. |
@@ -608,6 +611,17 @@ if the scaffold prevents a domain screen from presenting its primary task.
   visual tokens.
 * [0004-MADR-ui-ux-deep-debug-audit.md](0004-MADR-ui-ux-deep-debug-audit.md)
   — predecessor correctness and wiring audit.
+
+### Amendment — 2026-08-15
+
+Files-as-a-navigator-mode is withdrawn. The Changes/Files segmented control
+and the embedded `FileView` in the left navigator are removed. The tree
+stays one place: the docked right inspector (`FileView`, View → Show File
+View / pin). The navigator is only the dirty-file list. Rationale: at the
+widths where the inspector can mount, the switch was a second door into the
+same widget and cost a permanent row; below those widths the tree remains
+reachable from the View menu when the pane is wide enough. Do not restore
+a navigator Files tab without a new MADR.
 
 ### External research snapshot
 

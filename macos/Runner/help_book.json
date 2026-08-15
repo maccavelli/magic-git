@@ -1,6 +1,6 @@
 {
   "title": "Magic Git User Guide",
-  "version": "1.1",
+  "version": "2.0",
   "categories": [
     {
       "id": "getting_started",
@@ -10,54 +10,58 @@
         {
           "id": "overview",
           "title": "Welcome to Magic Git",
-          "summary": "Overview of Magic Git's native macOS interface, workspace multi-tab concept, and core capabilities.",
+          "summary": "A native macOS Git client with six sidebar panels, File tabs, and factory-default shortcuts.",
           "keywords": [
             "welcome",
             "overview",
             "introduction",
             "getting started",
             "magic git",
-            "workspace"
+            "workspace",
+            "sidebar"
           ],
           "shortcuts": [
             {
-              "label": "Global Command Palette",
-              "keys": "⌘K"
+              "label": "Command Palette",
+              "keys": "⌘K",
+              "actionId": "global.commandPalette"
             },
             {
-              "label": "Refresh Repository State",
-              "keys": "⌘R"
+              "label": "Refresh",
+              "keys": "⌘R",
+              "actionId": "global.refresh"
             },
             {
-              "label": "Preferences & Settings",
-              "keys": "⌘,"
+              "label": "Open Settings",
+              "keys": "⌘,",
+              "actionId": "global.openSettings"
             }
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "Magic Git is a native macOS Git desktop client designed for extreme performance, safety, and modern software engineering workflows. It provides a tabbed multi-repository workspace, SSH connection manager, interactive commit graph, and built-in Forge integrations."
+              "text": "Magic Git is a native macOS Git client that drives git, gh, and glab on this Mac or on a remote POSIX host over SSH, without cloning the remote repository locally. A connected session has six sidebar panels — Repository, History, Branches, Stashes, Forge, and Worktrees — plus File tabs for more than one repository."
             },
             {
               "type": "heading",
-              "text": "Native macOS Architecture"
+              "text": "Help versus live shortcuts"
             },
             {
               "type": "paragraph",
-              "text": "Magic Git combines Flutter for high-refresh-rate UI rendering with native Swift AppKit/SwiftUI controllers for system menu integration, security-scoped sandbox bookmarks, multi-window isolation, and native support documentation."
+              "text": "This window (Help ▸ Support & Help, ⌘?) is the user guide. It lists factory-default shortcuts. Your remaps are in Keyboard Shortcuts (⌘/) and Settings → Keyboard Mappings."
             },
             {
               "type": "callout",
               "style": "info",
               "title": "App Sandbox Security",
-              "text": "Local repository access in Magic Git uses macOS security-scoped bookmarks, ensuring full compliance with Apple Sandbox privacy rules."
+              "text": "Local repository access uses macOS security-scoped bookmarks, so later launches reopen a folder without asking again."
             }
           ]
         },
         {
           "id": "quickstart",
           "title": "Connecting to Repositories",
-          "summary": "Learn how to open local Git repositories and connect to remote hosts over SSH.",
+          "summary": "Open a local folder or an SSH host from the Connections Manager and Recent Repositories list.",
           "keywords": [
             "connect",
             "ssh",
@@ -65,7 +69,8 @@
             "clone",
             "create",
             "remote",
-            "bookmark"
+            "bookmark",
+            "reconnect"
           ],
           "sections": [
             {
@@ -74,7 +79,7 @@
             },
             {
               "type": "paragraph",
-              "text": "To open a local repository, use the Connections Manager on the landing screen (or a recent repository from its Recents list) and pick the folder in the macOS open panel — or drop the folder onto the window. Magic Git saves a security-scoped bookmark so later launches reopen it without asking again."
+              "text": "Use the Connections Manager on the landing screen, or pick a recent repository from Recent Repositories. Add existing repository opens the macOS folder panel. Magic Git stores a security-scoped bookmark so later launches reopen that folder without asking again."
             },
             {
               "type": "heading",
@@ -82,27 +87,279 @@
             },
             {
               "type": "paragraph",
-              "text": "Magic Git runs git directly on a remote host over SSH. Enter the host, username and port, then load or paste a PEM private key. Keys with passphrases and host-key verification prompts are fully supported."
+              "text": "Magic Git runs git on the remote host over SSH. Enter the host, username, and port, then load or paste a PEM key or use a password. Keys with passphrases, optional scoped git directories, and host tokens are supported."
             },
             {
               "type": "callout",
               "style": "tip",
               "title": "Automatic Reconnection",
-              "text": "If a remote SSH connection drops mid-session, Magic Git covers the window with a reconnect overlay and retries with a live timer; Stop Retrying pauses it and Cancel returns to the connection card. Your local work state is preserved."
+              "text": "If SSH drops mid-session, a Connection interrupted overlay retries with an attempt counter and elapsed timer. Stop Retrying pauses auto-reconnect and shows Connection lost (Reconnect or Start Fresh). Cancel fully disconnects and confirms if the session is at risk."
+            }
+          ]
+        },
+        {
+          "id": "clone_create",
+          "title": "Clone and Create Repositories",
+          "summary": "Provision a new working copy from Connections or the command palette.",
+          "keywords": [
+            "clone",
+            "create",
+            "wizard",
+            "github",
+            "gitlab",
+            "destination"
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Clone repository and Create repository live on the Connections Manager toolbar and under app: in the command palette."
+            },
+            {
+              "type": "heading",
+              "text": "Clone"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Destination — where the new working copy will live.",
+                "Source — browse GitHub or GitLab, or paste a URL.",
+                "Location — the folder name on the host.",
+                "Review — confirm and run. A failed or cancelled clone deletes the partial folder."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Create"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Destination — local Mac or an SSH host.",
+                "Source — empty folder or an existing folder.",
+                "Remote — create on GitHub or GitLab, a custom URL, or none.",
+                "Details — name, initial branch, first commit.",
+                "Review — confirm and activate the session."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "tabs_workspaces",
+          "title": "File Tabs and Saved Workspaces",
+          "summary": "Open several repositories at once, save a set, and confirm before closing dirty work.",
+          "keywords": [
+            "tabs",
+            "new tab",
+            "close tab",
+            "saved workspaces",
+            "dirty",
+            "quit"
+          ],
+          "shortcuts": [
+            {
+              "label": "New Tab",
+              "keys": "⌘T",
+              "actionId": "global.newTab"
+            }
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "File tabs are repository sessions, not the six sidebar panels. File ▸ New Tab (⌘T) opens another session. Close Tab is on the File menu only — ⌘W closes a viewer window, not a tab. The strip holds at most 8 tabs and hides when only one is open. Middle-click a tab to close it."
+            },
+            {
+              "type": "items",
+              "items": [
+                "An orange dot means uncommitted changes.",
+                "A red dot means conflicts.",
+                "Saved Workspaces (Connections toolbar or the palette) save, open, delete, or alias a set of tabs."
+              ]
+            },
+            {
+              "type": "callout",
+              "style": "warning",
+              "title": "Leaving a session",
+              "text": "Close tab, Log out, Disconnect, Quit, and Close window confirm when the tree is dirty or a merge, rebase, cherry-pick, or revert is in progress."
             }
           ]
         }
       ]
     },
     {
-      "id": "tabs",
-      "title": "Main Application Tabs",
-      "icon": "sidebar.left",
+      "id": "workspace",
+      "title": "The Workspace",
+      "icon": "rectangle.3.offgrid",
+      "topics": [
+        {
+          "id": "workspace_chrome",
+          "title": "Context Bar, Size, and Menus",
+          "summary": "How the repository chrome adapts below 720 px and at 1200 px, and what the context bar and menus contain.",
+          "keywords": [
+            "context bar",
+            "compact",
+            "sync",
+            "preset",
+            "menu bar",
+            "720",
+            "1200"
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "The workspace is compact below 720 px (navigator or canvas, not both; the sync group collapses; a sidebar toggle sits on the bar), standard from 720 to 1199, and wide at 1200 px and above."
+            },
+            {
+              "type": "heading",
+              "text": "Context bar"
+            },
+            {
+              "type": "paragraph",
+              "text": "The bar always shows the repository identity, watch-health dot, status summary, and one primary action. On SSH it also shows link chips. Leading controls: Back, Forward, then Fetch · Pull · Push · Sync (one emphasized, variants in the overflow). Trailing: Stash, Refresh, Activity, view options. Below 720 px a ⋯ control opens Repository details."
+            },
+            {
+              "type": "heading",
+              "text": "View options"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Show or hide secondary action labels (off by default).",
+                "Show or hide Back, Forward, Sync actions, Stash, Refresh, Activity, View options, Status summary, and Connection status.",
+                "Presets Review, Commit, Investigate, and Minimal. Default is Review. Investigate names an inspector slot that is unused — Focus Inspector does nothing."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Menus"
+            },
+            {
+              "type": "paragraph",
+              "text": "File, Repository, Branch, Stash, Forge, and Worktree sit in the macOS menu bar with App, Edit, View, Window, and Help. Unavailable items stay visible and dim. View ▸ Focus Navigator, Canvas, Task Dock, and Activity exist and are unbound. Choosing a command from another panel switches there and runs it."
+            }
+          ]
+        },
+        {
+          "id": "file_view_and_output",
+          "title": "File View and Output",
+          "summary": "The docked file tree (⇧⌘E) and the command Output log (⇧⌘O).",
+          "keywords": [
+            "file view",
+            "output",
+            "pin",
+            "tree",
+            "log"
+          ],
+          "shortcuts": [
+            {
+              "label": "Toggle File View",
+              "keys": "⇧⌘E",
+              "actionId": "global.toggleFileView"
+            },
+            {
+              "label": "Toggle Output View",
+              "keys": "⇧⌘O",
+              "actionId": "global.toggleOutput"
+            }
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "File View is View ▸ Show File View (⇧⌘E). It is on by default but hidden until the canvas is at least 1200 px wide unless you Pin file view open. Hide and Collapse all sit on the Files header. There is no Changes | Files switch — the change list stays in the navigator and the tree is this third pane."
+            },
+            {
+              "type": "paragraph",
+              "text": "Output is a docked command log under the Repository canvas, visible by default. Toggle it with ⇧⌘O. It shows git and SSH invocations, stdout, stderr, and exit codes, including doctor install output."
+            }
+          ]
+        },
+        {
+          "id": "dashboard_recovery_activity",
+          "title": "Dashboard, Recovery, and Activity",
+          "summary": "Session telemetry, reflog snapshots, and the live operations sheet.",
+          "keywords": [
+            "dashboard",
+            "recovery",
+            "activity",
+            "reflog",
+            "heatmap"
+          ],
+          "shortcuts": [
+            {
+              "label": "Toggle Dashboard",
+              "keys": "⇧⌘D",
+              "actionId": "global.toggleDashboard"
+            },
+            {
+              "label": "Toggle Recovery",
+              "keys": "⇧⌘U",
+              "actionId": "global.toggleRecovery"
+            }
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Dashboard (View ▸ Show Dashboard, ⇧⌘D) is session telemetry — connection, latency, watcher and tool health, forge auth, command counts, and a heatmap of the last 200 commits. It is not the Forge panel."
+            },
+            {
+              "type": "paragraph",
+              "text": "Recovery (⇧⌘U) is a sheet over HEAD's reflog plus refs/magic-git/snapshots/. Use it for state Undo Git Operation can no longer reach."
+            },
+            {
+              "type": "paragraph",
+              "text": "Activity is the context-bar bell. It opens a live sheet of running and failed operations, can reveal a command in Output, and can undo the newest undoable record."
+            }
+          ]
+        },
+        {
+          "id": "settings",
+          "title": "Settings",
+          "summary": "Timeouts, identity, sync defaults, appearance, known hosts, and keyboard mappings.",
+          "keywords": [
+            "settings",
+            "preferences",
+            "timeouts",
+            "auto-fetch",
+            "known hosts",
+            "keyboard"
+          ],
+          "shortcuts": [
+            {
+              "label": "Open Settings",
+              "keys": "⌘,",
+              "actionId": "global.openSettings"
+            }
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Open Settings from Magic Git ▸ Settings… (⌘,), the palette, or this book. Changes apply after Save, except Keyboard Mappings and Forget Host, which save immediately."
+            },
+            {
+              "type": "items",
+              "items": [
+                "Command timeouts — network (fetch/pull/push) defaults to 3 minutes; commit defaults to 5 minutes; the floor is 5 seconds.",
+                "Committer identity — applied to every commit. Leave blank to use the host git config. Magic Git always records unsigned commits (--no-gpg-sign).",
+                "Default sync — Pull / Sync uses Fast-forward only, Rebase, or Merge (default Fast-forward only). Push tags by default is off.",
+                "Auto-fetch — Off, or every 5, 10, 15, or 30 minutes. Default is every 5 minutes.",
+                "Workspace appearance — Density Compact or Comfortable (default Comfortable), High contrast, Reduce Motion follows macOS.",
+                "Known Hosts — Forget a recorded SSH key immediately.",
+                "Keyboard Mappings — Customize remaps; they save immediately. The live cheat sheet is ⌘/.",
+                "External tools — override binary paths and Scan the host."
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "panels",
+      "title": "Panels",
+      "icon": "square.stack",
       "topics": [
         {
           "id": "tab_repository",
-          "title": "Repository (Status & Staging) Tab",
-          "summary": "Stage changes, view line diffs, discard modifications, and commit HEAD updates.",
+          "title": "Repository",
+          "summary": "Stage, review, resolve conflicts, and commit from the Repository sidebar panel.",
           "keywords": [
             "status",
             "staging",
@@ -110,452 +367,898 @@
             "amend",
             "discard",
             "diff",
-            "split diff"
+            "conflicts"
           ],
           "shortcuts": [
             {
-              "label": "Stage / Unstage Selected File",
-              "keys": "Space"
+              "label": "Switch to Repository",
+              "keys": "⌘1",
+              "actionId": "global.panel1"
+            },
+            {
+              "label": "Toggle Stage for Selected File",
+              "keys": "Space",
+              "actionId": "repository.toggleStage"
             },
             {
               "label": "Stage All Changes",
-              "keys": "⌘⇧A"
+              "keys": "⇧⌘A",
+              "actionId": "repository.stageAll"
             },
             {
-              "label": "Discard Unstaged Changes",
-              "keys": "⌘⇧⌫"
+              "label": "Discard Changes to Selected File",
+              "keys": "⇧⌘⌫",
+              "actionId": "repository.discard"
             },
             {
               "label": "Toggle Side-by-Side Diff",
-              "keys": "⌥⌘S"
+              "keys": "⌥⌘S",
+              "actionId": "repository.toggleSplitDiff"
             },
             {
-              "label": "Confirm & Commit",
-              "keys": "⌘↩"
+              "label": "Toggle Ignore Whitespace in Diff",
+              "keys": "⌥⌘W",
+              "actionId": "repository.toggleIgnoreWhitespace"
+            },
+            {
+              "label": "Toggle Expanded Diff Context",
+              "keys": "⌥⌘X",
+              "actionId": "repository.toggleExpandContext"
+            },
+            {
+              "label": "Focus Commit Composer",
+              "keys": "⌘G",
+              "actionId": "repository.focusCommit"
+            },
+            {
+              "label": "Confirm Commit",
+              "keys": "⌘↩",
+              "actionId": "commit.confirm"
+            },
+            {
+              "label": "Commit and Push",
+              "keys": "⇧⌘↩",
+              "actionId": "commit.confirmAndPush"
+            },
+            {
+              "label": "Fetch",
+              "keys": "⇧⌘F",
+              "actionId": "repository.fetch"
+            },
+            {
+              "label": "Pull",
+              "keys": "⇧⌘L",
+              "actionId": "repository.pull"
+            },
+            {
+              "label": "Push",
+              "keys": "⇧⌘P",
+              "actionId": "repository.push"
+            },
+            {
+              "label": "Sync",
+              "keys": "⇧⌘Y",
+              "actionId": "repository.sync"
+            },
+            {
+              "label": "Stash Changes",
+              "keys": "⇧⌘S",
+              "actionId": "repository.stash"
+            },
+            {
+              "label": "Force Push with Lease",
+              "keys": "⌃⌘U",
+              "actionId": "repository.forcePush"
             }
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Repository tab (⌘1) displays working tree modifications organized into Staged Changes and Unstaged Changes lists."
+              "text": "The Repository panel (⌘1) is a sidebar page, not a File tab. The change list is Conflicts, Staged, Changes, and Untracked, with filter chips, Hide reviewed, and group-by status or directory. Review selected and Review all visible open multi-file review."
             },
             {
               "type": "heading",
-              "text": "Staging & Discarding"
+              "text": "Staging and diffs"
             },
             {
               "type": "items",
               "items": [
-                "Press Space on any file row to toggle staging for that file.",
-                "Use ⌘⇧A to stage all tracked and untracked modifications.",
-                "Use ⌘⇧⌫ to discard unstaged changes on the selected file after confirmation.",
-                "Drag to select specific diff lines in the right pane for partial hunk staging."
+                "Space toggles staging for the selected file or files.",
+                "Line staging works on unified, whitespace-exact diffs with blame off: select lines, then Stage, Unstage, or Discard Selection. Split and ignore-whitespace diffs are read-only. Per-hunk buttons also exist.",
+                "Drag unstaged files onto the staging banner to Stage; drag staged files to Unstage.",
+                "Conflicts offer Ours, Theirs, and Mark Resolved. A pending banner offers Continue or Abort."
               ]
             },
             {
               "type": "heading",
-              "text": "Diff Inspection & Committing"
+              "text": "Committing"
             },
             {
               "type": "paragraph",
-              "text": "Toggle between inline diff view and side-by-side split view using ⌥⌘S. Enter your commit subject and description in the bottom pane. Toggle 'Amend last commit' or press ⌘↩ to rewrite HEAD."
+              "text": "A collapsed Commit… bar sits under the list. ⌘G expands the composer in the task dock — one message field, Accept, and Accept + Push (⇧⌘↩). There is no amend checkbox. Amend Last Commit… is on the Repository menu (unbound). Assistance offers recent subjects, a template, and a policy advisory. Commits are unsigned (--no-gpg-sign)."
             },
             {
               "type": "callout",
-              "style": "tip",
-              "title": "Co-Authors",
-              "text": "You can add Git Co-authored-by trailers directly from the commit editor prior to committing."
+              "style": "info",
+              "title": "Repository menu only",
+              "text": "Pull with Rebase, Pull with Merge, Push and Set Upstream, Push Tags, Force Push (no lease), Unstage All, and Abort Pending Operation have no default shortcut. Use the Repository menu or the command palette."
             }
           ]
         },
         {
           "id": "tab_history",
-          "title": "History & Commit Graph Tab",
-          "summary": "Explore commit history, topological graph lanes, filter commits, and perform branch mutations.",
+          "title": "History",
+          "summary": "Commit graph, filters, checkout, rebase, and the History window.",
           "keywords": [
             "history",
             "graph",
-            "commit graph",
-            "all branches",
-            "log",
-            "revert",
-            "cherry-pick",
-            "pop out"
+            "checkout",
+            "rebase",
+            "filter",
+            "zoom",
+            "minimap"
           ],
           "shortcuts": [
             {
-              "label": "Checkout Selected Commit",
-              "keys": "⌘⇧B"
+              "label": "Switch to History",
+              "keys": "⌘2",
+              "actionId": "global.panel2"
             },
             {
-              "label": "Open History in New Window",
-              "keys": "⌘⇧H"
+              "label": "Checkout Selected Commit",
+              "keys": "⇧⌘B",
+              "actionId": "history.checkout"
+            },
+            {
+              "label": "Branch from Selected Commit",
+              "keys": "⇧⌘N",
+              "actionId": "history.branchFrom"
+            },
+            {
+              "label": "Cherry-pick Selected Commit",
+              "keys": "⌥⌘C",
+              "actionId": "history.cherryPick"
+            },
+            {
+              "label": "Interactive Rebase from Selected Commit",
+              "keys": "⇧⌘R",
+              "actionId": "history.rebaseFrom"
+            },
+            {
+              "label": "Amend Last Commit",
+              "keys": "⇧⌘↩",
+              "actionId": "history.amend"
             },
             {
               "label": "Copy Commit SHA",
-              "keys": "⌘C"
+              "keys": "⌘C",
+              "actionId": "history.copySha"
             },
             {
-              "label": "Filter History Log",
-              "keys": "⌘F"
+              "label": "Filter Commits",
+              "keys": "⌘F",
+              "actionId": "history.filter"
+            },
+            {
+              "label": "Zoom Commit List In",
+              "keys": "⌘=",
+              "actionId": "history.zoomIn"
+            },
+            {
+              "label": "Zoom Commit List Out",
+              "keys": "⌘-",
+              "actionId": "history.zoomOut"
+            },
+            {
+              "label": "Reset Commit List Zoom",
+              "keys": "⌘0",
+              "actionId": "history.zoomReset"
+            },
+            {
+              "label": "Open History in New Window",
+              "keys": "⇧⌘H",
+              "actionId": "global.openHistoryWindow"
             }
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "The History tab (⌘2) renders an interactive topological commit graph with colored branch lanes, ref tags, and commit metadata."
+              "text": "The History panel (⌘2) is a sidebar page, not a File tab. It draws a topological commit graph with ref chips and a minimap. The context-bar primary is Refresh."
             },
             {
               "type": "heading",
-              "text": "All Branches Scope vs HEAD Scope"
+              "text": "All Branches versus HEAD"
             },
             {
               "type": "paragraph",
-              "text": "Click the All Branches button in the History toolbar to toggle between git log --all and git log HEAD. When All Branches is active, merged and cut feature branches across the repository history are rendered. This toggle has no keyboard shortcut — ⌘⇧B is Checkout Selected Commit, which asks for confirmation before checking out."
+              "text": "The All Branches control is an icon on the filter bar (tooltip Show all branches), not a labeled toolbar button. It has no keyboard shortcut — ⇧⌘B is Checkout Selected Commit, which asks for confirmation."
             },
             {
               "type": "heading",
-              "text": "Commit Actions & Secondary Windows"
+              "text": "Filters and zoom"
+            },
+            {
+              "type": "paragraph",
+              "text": "⌘F focuses the filter. Prefixes include author:, file:, sha:, after:, and before:. Hide merges is a separate chip. Zoom with ⌘=, ⌘-, ⌘0, pinch, or ⌘-scroll."
+            },
+            {
+              "type": "heading",
+              "text": "Commit actions"
             },
             {
               "type": "items",
               "items": [
-                "Right-click or select a commit to open actions: Checkout, Create Branch, Create Tag, Cherry-pick, and Revert.",
-                "Click 'Open History in New Window' or press ⌘⇧H to pop out a dedicated, floating history window that updates live."
+                "Single commit: Checkout, Branch from…, Branch from… in a new worktree…, Tag…, Cherry-pick, Revert, Interactive rebase, Reset (soft / mixed / hard), Amend last commit (HEAD only), Copy SHA.",
+                "Two commits: compare. Several commits: cherry-pick or revert N, copy N SHAs.",
+                "Drop a branch onto a commit to merge, rebase, or move that branch here.",
+                "Open History in New Window (⇧⌘H) pops a live native History window."
               ]
-            },
-            {
-              "type": "callout",
-              "style": "info",
-              "title": "Live Updates",
-              "text": "The History view listens to repository file system events and automatically refreshes when refs or branch tips move."
             }
           ]
         },
         {
           "id": "tab_branches",
-          "title": "Branches & Merging Tab",
-          "summary": "Manage local and remote tracking branches, create new branches, merge, rebase, and sync remotes.",
+          "title": "Branches",
+          "summary": "Browse and review local and remote branches, tags, merge, and publish.",
           "keywords": [
             "branches",
             "checkout",
-            "create branch",
             "merge",
-            "rebase",
-            "fetch",
-            "push",
-            "pull"
+            "tag",
+            "review",
+            "publish"
           ],
           "shortcuts": [
             {
-              "label": "Create New Branch",
-              "keys": "⌘B"
+              "label": "Switch to Branches",
+              "keys": "⌘3",
+              "actionId": "global.panel3"
+            },
+            {
+              "label": "Focus New Branch Field",
+              "keys": "⌘B",
+              "actionId": "branches.newBranch"
+            },
+            {
+              "label": "Create Tag",
+              "keys": "⇧⌘T",
+              "actionId": "branches.createTag"
             },
             {
               "label": "Merge Selected Branch",
-              "keys": "⌘⇧M"
+              "keys": "⇧⌘M",
+              "actionId": "branches.merge"
             },
             {
               "label": "Delete Selected Branch",
-              "keys": "⌘⌫"
-            },
-            {
-              "label": "Sync / Fetch Remotes",
-              "keys": "⌘⇧Y"
+              "keys": "⌘⌫",
+              "actionId": "branches.delete"
             }
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Branches tab (⌘3) provides full control over local branches, remote tracking branches, and branch integration."
+              "text": "The Branches panel (⌘3) is a sidebar page, not a File tab. It is master–detail with Browse | Review, pin, hide, and folder grouping. The context-bar primary is Fetch & Prune (no default shortcut). An empty selection shows dashboard stats."
             },
             {
               "type": "heading",
-              "text": "Branch Operations"
+              "text": "Branch operations"
             },
             {
               "type": "items",
               "items": [
-                "Press ⌘B to create a new branch from current HEAD.",
-                "Double-click a branch to check it out.",
-                "Select a branch and press ⌘⇧M to merge it into your active branch.",
-                "Use the context menu to Rebase active branch onto target branch or Delete (⌘⌫)."
+                "⌘B opens the New branch sheet (name + start-at, default selected ref or HEAD). After Create, choose Here or New worktree.",
+                "Double-click or press Enter to check a branch out. You can also check out in a new worktree.",
+                "⇧⌘M merges the selected branch into the current branch.",
+                "⌘⌫ deletes the selected branch. Unmerged branches confirm.",
+                "Rebase the current branch onto another by dragging that branch onto HEAD — there is no Rebase item on the context menu."
               ]
             },
             {
               "type": "callout",
-              "style": "warning",
-              "title": "Unmerged Branch Deletion",
-              "text": "Deleting an unmerged branch prompts for confirmation to prevent accidental loss of unmerged commit history."
+              "style": "info",
+              "title": "Review and the Branch menu",
+              "text": "Review offers compare, Publish, Create Pull or Merge Request, and Open CI. Those four verbs are also on the Branch menu and have no default shortcut. Bulk pin, hide, and delete-if-merged sit on the list."
             }
           ]
         },
         {
           "id": "tab_stashes",
-          "title": "Stashes Tab",
-          "summary": "Save uncommitted modifications to the stash stack, inspect diff previews, apply, pop, and drop stashes.",
+          "title": "Stashes",
+          "summary": "Shelve work with include-untracked, then apply, pop, or drop a stash.",
           "keywords": [
             "stash",
             "stashes",
             "apply",
             "pop",
             "drop",
-            "save stash",
             "untracked"
           ],
           "shortcuts": [
             {
-              "label": "Stash Working Changes",
-              "keys": "⌘⇧S"
+              "label": "Switch to Stashes",
+              "keys": "⌘4",
+              "actionId": "global.panel4"
+            },
+            {
+              "label": "Stash Changes",
+              "keys": "⇧⌘S",
+              "actionId": "repository.stash"
             },
             {
               "label": "Apply Selected Stash",
-              "keys": "⌥⌘A"
+              "keys": "⌥⌘A",
+              "actionId": "stashes.apply"
+            },
+            {
+              "label": "Pop Selected Stash",
+              "keys": "⌥⌘P",
+              "actionId": "stashes.pop"
+            },
+            {
+              "label": "Drop Selected Stash",
+              "keys": "⌘⌫",
+              "actionId": "stashes.drop"
             }
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Stashes tab (⌘4) allows temporary shelving of working tree modifications without creating formal commits."
+              "text": "The Stashes panel (⌘4) is a sidebar page, not a File tab. The list has a filter field. Select a stash to preview its patch."
             },
             {
               "type": "heading",
-              "text": "Creating & Inspecting Stashes"
+              "text": "Creating a stash"
             },
             {
               "type": "paragraph",
-              "text": "Click 'Stash Changes' to specify a custom message and optionally include untracked files. Select any stash in the list to view its commit hash, branch context, and modified file diffs."
+              "text": "Stash Changes (context bar, ⇧⌘S) immediately runs git stash push --include-untracked with no prompt. Untracked files are always included. To set a message, use Stash ▸ Stash with Message…."
             },
             {
               "type": "heading",
-              "text": "Applying & Popping"
+              "text": "Applying and removing"
             },
             {
               "type": "items",
               "items": [
-                "Apply (⌥⌘A): Restores stashed changes to your working directory while leaving the stash in the stack.",
-                "Pop: Restores stashed changes and removes the stash entry from the stack.",
-                "Drop: Permanently deletes the selected stash entry."
+                "Apply (⌥⌘A) restores the stash and leaves it on the stack. Pop (⌥⌘P) restores and removes it. Both can use --index.",
+                "Drop (⌘⌫) deletes the selected stash after confirmation.",
+                "Create branch from stash is on the row menu.",
+                "Apply latest, Pop latest, and Clear all are Stash-menu only."
               ]
             }
           ]
         },
         {
           "id": "tab_forge",
-          "title": "Forge (GitHub & GitLab) Tab",
-          "summary": "Inspect Pull Requests, Merge Requests, CI/CD pipeline runs, issues, and live build trace logs.",
+          "title": "Forge",
+          "summary": "GitHub and GitLab inbox, change requests, issues, and CI traces.",
           "keywords": [
             "forge",
             "github",
             "gitlab",
-            "pr",
             "pull request",
-            "mr",
             "merge request",
-            "ci/cd",
-            "pipeline",
-            "job trace"
+            "inbox",
+            "pipeline"
           ],
           "shortcuts": [
             {
-              "label": "Switch to Forge Panel",
-              "keys": "⌘5"
+              "label": "Switch to Forge",
+              "keys": "⌘5",
+              "actionId": "global.panel5"
+            },
+            {
+              "label": "New Pull Request",
+              "keys": "⌘N",
+              "actionId": "github.newPr"
+            },
+            {
+              "label": "New Merge Request",
+              "keys": "⌘N",
+              "actionId": "gitlab.newMr"
+            },
+            {
+              "label": "Approve Selected Pull Request",
+              "keys": "⌥⌘A",
+              "actionId": "github.approve"
+            },
+            {
+              "label": "Approve Selected Merge Request",
+              "keys": "⌥⌘A",
+              "actionId": "gitlab.approve"
+            },
+            {
+              "label": "Merge Selected Pull Request",
+              "keys": "⇧⌘M",
+              "actionId": "github.merge"
+            },
+            {
+              "label": "Merge Selected Merge Request",
+              "keys": "⇧⌘M",
+              "actionId": "gitlab.merge"
+            },
+            {
+              "label": "Re-run Selected Workflow Run",
+              "keys": "⌥⌘R",
+              "actionId": "github.rerun"
+            },
+            {
+              "label": "Retry Selected Pipeline",
+              "keys": "⌥⌘R",
+              "actionId": "gitlab.retry"
             }
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Forge tab (⌘5) integrates directly with GitHub (`gh` CLI/API) and GitLab (`glab` CLI/API) hosts."
+              "text": "The Forge panel (⌘5) is a sidebar page, not a File tab. It talks to GitHub through gh and GitLab through glab. The context-bar primary is New Pull Request or New Merge Request."
             },
             {
               "type": "heading",
-              "text": "Pull / Merge Request Workflows"
+              "text": "Inbox and Browse"
+            },
+            {
+              "type": "paragraph",
+              "text": "Switch Inbox and Browse. Inbox chips filter All / PRs or MRs / CI / Issues. Lists show open items plus a text filter; merged and closed work is not a status chip. Inbox rows can be pinned or snoozed. Browse sections are Issues, PRs or MRs, Labels, Milestones, Releases, and Workflow Runs or Pipelines."
+            },
+            {
+              "type": "heading",
+              "text": "Change requests"
             },
             {
               "type": "items",
               "items": [
-                "Filter PRs/MRs by status (Open, Merged, Closed, Mine).",
-                "View full title, description, author, review approvals, and changed file diffs.",
-                "Click 'Checkout Branch' to locally check out a PR/MR's head branch with one click."
+                "A merge readiness strip shows blockers. Check out checks out the head branch.",
+                "Approve (⌥⌘A), Merge (⇧⌘M), and Re-run or Retry (⌥⌘R) follow the detected host.",
+                "Enable or cancel auto-merge from the detail pane. Cancel auto-merge is also on the Forge menu.",
+                "Update branch and Rebase onto target sit on the detail More menu.",
+                "New Issue is Forge-menu only (no default shortcut)."
               ]
-            },
-            {
-              "type": "heading",
-              "text": "CI/CD Pipeline Monitoring"
-            },
-            {
-              "type": "paragraph",
-              "text": "Inspect live GitHub Actions workflows or GitLab CI pipeline runs. Click any job to stream ANSI-formatted execution trace logs in real time."
             }
           ]
         },
         {
           "id": "tab_worktrees",
-          "title": "Worktrees Tab",
-          "summary": "Create and manage multiple concurrent Git worktrees for parallel branch development.",
+          "title": "Worktrees",
+          "summary": "Parallel checkouts in a nested strip — Overview plus Changes, History, Branches, and Stashes.",
           "keywords": [
             "worktree",
             "worktrees",
-            "parallel",
-            "checkout",
-            "directory",
-            "sandbox"
+            "overview",
+            "lock",
+            "prune",
+            "nested"
           ],
           "shortcuts": [
             {
-              "label": "Switch to Worktrees Panel",
-              "keys": "⌘6"
+              "label": "Switch to Worktrees",
+              "keys": "⌘6",
+              "actionId": "global.panel6"
             }
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Worktrees tab (⌘6) enables working on multiple branches simultaneously in separate filesystem folders."
+              "text": "The Worktrees panel (⌘6) is a sidebar page, not a File tab. Opening a worktree adds a checkout tab on the Worktrees strip (Overview | that checkout). That nested strip is not the File-tab switcher. Each checkout tab has Changes, History, Branches, and Stashes. Forge stays on the repository, not the checkout."
             },
             {
               "type": "heading",
-              "text": "Adding Worktrees"
+              "text": "Overview"
             },
             {
               "type": "paragraph",
-              "text": "Click 'Add Worktree' to check out a branch into a target directory. Magic Git automatically creates a security-scoped bookmark for the new worktree path."
+              "text": "Overview lists every worktree and its state: main, detached, locked, or missing. The Worktree menu (all unbound) offers Add, Open, Lock, Unlock, Move, Repair, Repair All, Prune, and Remove."
             },
             {
-              "type": "callout",
-              "style": "tip",
-              "title": "Tab Integration",
-              "text": "Opening a worktree loads it as a tab in your multi-tab workspace, allowing seamless switching without changing branch state in your main directory."
+              "type": "heading",
+              "text": "Adding a worktree"
+            },
+            {
+              "type": "paragraph",
+              "text": "Add Worktree can create a new branch, use an existing one, or detach. Optional: copy ignored files, run a post-create command. A local add records a security-scoped bookmark. SSH has no sandbox bookmark. A worktree created in the terminal prompts once on first open."
             }
           ]
         }
       ]
     },
     {
-      "id": "features",
-      "title": "Tier 1 Core Features",
-      "icon": "gearshape.2",
+      "id": "files",
+      "title": "Files, Diffs & Windows",
+      "icon": "doc.text",
       "topics": [
         {
-          "id": "feature_ssh",
-          "title": "Remote SSH & Host Verification",
-          "summary": "Secure remote Git operations over SSH with key passphrases and host key verification.",
+          "id": "viewer_and_remote_edit",
+          "title": "File Viewer and Remote Edit",
+          "summary": "Floating Code and Preview windows, find, wrap, and Open in Default App.",
           "keywords": [
-            "ssh",
-            "remote",
-            "passphrase",
-            "host key",
-            "reconnect",
-            "network"
+            "viewer",
+            "preview",
+            "remote edit",
+            "open",
+            "wrap",
+            "find"
+          ],
+          "shortcuts": [
+            {
+              "label": "Close Viewer Window",
+              "keys": "⌘W",
+              "actionId": "viewer.close"
+            },
+            {
+              "label": "Copy File Contents",
+              "keys": "⇧⌘C",
+              "actionId": "viewer.copyContents"
+            },
+            {
+              "label": "Toggle Word Wrap",
+              "keys": "⌥Z",
+              "actionId": "viewer.wordWrap"
+            },
+            {
+              "label": "Find in File",
+              "keys": "⌘F",
+              "actionId": "viewer.find"
+            }
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "Magic Git includes a custom SSH command executor and transport manager supporting public-key authentication, encrypted private keys, and custom SSH ports."
+              "text": "File viewer windows are floating overlays, not the docked File View pane. Switch Code and Preview in the title bar. Markdown preview links open in the browser. Escape or ⌘W closes the front viewer."
             },
             {
               "type": "heading",
-              "text": "Host Key Verification Prompts"
+              "text": "Open in Default App"
             },
             {
               "type": "paragraph",
-              "text": "When connecting to a new remote host or if a server's fingerprint changes, Magic Git displays an SSH Host Key prompt showing the trusted vs presented fingerprints before establishing a connection."
+              "text": "On a local repo, Open uses the macOS opener. On SSH, Open in Default App copies the file to a temp path, watches the parent directory, and uploads on save. A conflicting remote change offers overwrite."
             }
           ]
         },
         {
-          "id": "feature_palette",
-          "title": "Command Palette & Keymap",
-          "summary": "Search all actions, run panel commands, and customize global keyboard shortcuts.",
+          "id": "diffs_blame_history",
+          "title": "Diffs, Blame, and File History",
+          "summary": "Line staging rules, blame, follow-renames history, image diffs, and LFS pointers.",
           "keywords": [
-            "palette",
-            "command palette",
-            "shortcuts",
-            "keymap",
-            "keybindings",
-            "undo"
-          ],
-          "shortcuts": [
-            {
-              "label": "Global Command Palette",
-              "keys": "⌘K"
-            },
-            {
-              "label": "Keyboard Shortcuts Sheet",
-              "keys": "⌘/"
-            },
-            {
-              "label": "Undo Last Action",
-              "keys": "⌘Z"
-            }
+            "diff",
+            "blame",
+            "file history",
+            "lfs",
+            "image",
+            "gitignore"
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "Press ⌘K anywhere in the application to summon the Command Palette. Type to search commands, branch names, worktrees, or settings."
+              "text": "The blame gutter is off by default. Show blame on the diff or open the Blame sheet. File history (git log --follow) is on the file tree, not the Changes list."
             },
             {
-              "type": "heading",
-              "text": "Global Undo Engine"
-            },
+              "type": "items",
+              "items": [
+                "Image diffs show before and after.",
+                "Git LFS pointers are named as pointers — run git lfs pull. They are not shown as a binary image.",
+                "The file tree can View file, Open, Mark Resolved, act on staged or unstaged halves, Add to .gitignore, or Delete (undoable)."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "drag_and_drop",
+          "title": "Drag and Drop",
+          "summary": "Stage, stash, cherry-pick, merge, rebase, and create worktrees by dragging.",
+          "keywords": [
+            "drag",
+            "drop",
+            "cherry-pick",
+            "merge",
+            "stash",
+            "esc"
+          ],
+          "sections": [
             {
-              "type": "paragraph",
-              "text": "Magic Git maintains a global undo stack. Destructive actions (such as staging, discarding, branch switches, or stash drops) present an Undo Toast notification (`⌘Z` to reverse)."
+              "type": "items",
+              "items": [
+                "Unstaged files onto the staging banner = Stage; staged files = Unstage.",
+                "Files onto Stashes = a path-scoped stash (include-untracked).",
+                "A commit onto Repository = cherry-pick (confirm).",
+                "A local branch onto Forge = create a pull or merge request.",
+                "A commit or branch onto Worktrees = the Add Worktree sheet.",
+                "A branch onto a History commit = merge, rebase, or move that branch here.",
+                "A commit onto a branch row = cherry-pick onto that branch; a branch onto HEAD = merge or rebase.",
+                "Esc cancels a drag."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "secondary_windows",
+          "title": "Secondary Windows",
+          "summary": "Native History, detached Status, and the in-window diff pop-out.",
+          "keywords": [
+            "window",
+            "pop-out",
+            "history",
+            "detached",
+            "key equivalent"
+          ],
+          "shortcuts": [
+            {
+              "label": "Open History in New Window",
+              "keys": "⇧⌘H",
+              "actionId": "global.openHistoryWindow"
+            }
+          ],
+          "sections": [
+            {
+              "type": "items",
+              "items": [
+                "The native History window is a singleton (⇧⌘H, View menu, or the palette).",
+                "A detached repo window is full Status for that path.",
+                "The diff pop-out is an in-window float, not a native window.",
+                "While a pop-out is key, native menu key equivalents are stripped so they do not steal from the detached session."
+              ]
             }
           ]
         }
       ]
     },
     {
-      "id": "troubleshooting",
-      "title": "Diagnostics & Support",
-      "icon": "exclamationmark.triangle",
+      "id": "commands",
+      "title": "Commands & Shortcuts",
+      "icon": "command",
       "topics": [
         {
-          "id": "tool_health",
-          "title": "Tool Health & Environment",
-          "summary": "Check system availability and binary paths for git, ssh, gh, and glab.",
+          "id": "feature_palette",
+          "title": "Command Palette",
+          "summary": "Search go, git, forge, and app commands, plus branches, commits, files, stashes, and worktrees.",
           "keywords": [
-            "tool health",
-            "git path",
-            "ssh path",
-            "gh",
-            "glab",
-            "binary",
-            "environment"
+            "palette",
+            "command palette",
+            "prefix",
+            "search"
+          ],
+          "shortcuts": [
+            {
+              "label": "Command Palette",
+              "keys": "⌘K",
+              "actionId": "global.commandPalette"
+            },
+            {
+              "label": "Show Keyboard Shortcuts",
+              "keys": "⌘/",
+              "actionId": "global.showShortcuts"
+            }
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "Magic Git checks for system dependencies on startup. If a required binary is missing from PATH, a Tool Health Banner appears at the top of the window with installation guidance."
+              "text": "Press ⌘K to open the command palette. Prefix with go:, git:, forge:, app:, branch:, commit:, file:, stash:, or worktree:. file: lists changed paths only, not the whole tree. Open Settings is a command — the palette does not search Settings keys."
+            },
+            {
+              "type": "paragraph",
+              "text": "Clone, Create, Saved Workspaces, and Manage Connections live under app:. Commit-message and viewer actions are intentionally absent from the palette catalog."
+            }
+          ]
+        },
+        {
+          "id": "menus_and_keymap",
+          "title": "Menus and Factory-Default Shortcuts",
+          "summary": "Every factory-default shortcut, plus menu-only verbs. Remaps live under ⌘/.",
+          "keywords": [
+            "keymap",
+            "shortcuts",
+            "menu",
+            "factory-default",
+            "remap"
+          ],
+          "shortcuts": [
+            { "label": "Refresh", "keys": "⌘R", "actionId": "global.refresh" },
+            { "label": "Open Settings", "keys": "⌘,", "actionId": "global.openSettings" },
+            { "label": "Show Keyboard Shortcuts", "keys": "⌘/", "actionId": "global.showShortcuts" },
+            { "label": "Command Palette", "keys": "⌘K", "actionId": "global.commandPalette" },
+            { "label": "Undo Git Operation", "keys": "⌘Z", "actionId": "global.undo" },
+            { "label": "Redo Git Operation", "keys": "⇧⌘Z", "actionId": "global.redo" },
+            { "label": "Switch to Repository", "keys": "⌘1", "actionId": "global.panel1" },
+            { "label": "Switch to History", "keys": "⌘2", "actionId": "global.panel2" },
+            { "label": "Switch to Branches", "keys": "⌘3", "actionId": "global.panel3" },
+            { "label": "Switch to Stashes", "keys": "⌘4", "actionId": "global.panel4" },
+            { "label": "Switch to Forge", "keys": "⌘5", "actionId": "global.panel5" },
+            { "label": "Switch to Worktrees", "keys": "⌘6", "actionId": "global.panel6" },
+            { "label": "Toggle Output View", "keys": "⇧⌘O", "actionId": "global.toggleOutput" },
+            { "label": "Toggle File View", "keys": "⇧⌘E", "actionId": "global.toggleFileView" },
+            { "label": "Toggle Dashboard", "keys": "⇧⌘D", "actionId": "global.toggleDashboard" },
+            { "label": "Toggle Recovery", "keys": "⇧⌘U", "actionId": "global.toggleRecovery" },
+            { "label": "Open History in New Window", "keys": "⇧⌘H", "actionId": "global.openHistoryWindow" },
+            { "label": "New Tab", "keys": "⌘T", "actionId": "global.newTab" },
+            { "label": "Fetch", "keys": "⇧⌘F", "actionId": "repository.fetch" },
+            { "label": "Push", "keys": "⇧⌘P", "actionId": "repository.push" },
+            { "label": "Pull", "keys": "⇧⌘L", "actionId": "repository.pull" },
+            { "label": "Stash Changes", "keys": "⇧⌘S", "actionId": "repository.stash" },
+            { "label": "Sync", "keys": "⇧⌘Y", "actionId": "repository.sync" },
+            { "label": "Stage All Changes", "keys": "⇧⌘A", "actionId": "repository.stageAll" },
+            { "label": "Force Push with Lease", "keys": "⌃⌘U", "actionId": "repository.forcePush" },
+            { "label": "Toggle Side-by-Side Diff", "keys": "⌥⌘S", "actionId": "repository.toggleSplitDiff" },
+            { "label": "Toggle Ignore Whitespace in Diff", "keys": "⌥⌘W", "actionId": "repository.toggleIgnoreWhitespace" },
+            { "label": "Toggle Expanded Diff Context", "keys": "⌥⌘X", "actionId": "repository.toggleExpandContext" },
+            { "label": "Toggle Stage for Selected File", "keys": "Space", "actionId": "repository.toggleStage" },
+            { "label": "Discard Changes to Selected File", "keys": "⇧⌘⌫", "actionId": "repository.discard" },
+            { "label": "Focus Commit Composer", "keys": "⌘G", "actionId": "repository.focusCommit" },
+            { "label": "Focus New Branch Field", "keys": "⌘B", "actionId": "branches.newBranch" },
+            { "label": "Create Tag", "keys": "⇧⌘T", "actionId": "branches.createTag" },
+            { "label": "Merge Selected Branch", "keys": "⇧⌘M", "actionId": "branches.merge" },
+            { "label": "Delete Selected Branch", "keys": "⌘⌫", "actionId": "branches.delete" },
+            { "label": "Confirm Commit", "keys": "⌘↩", "actionId": "commit.confirm" },
+            { "label": "Commit and Push", "keys": "⇧⌘↩", "actionId": "commit.confirmAndPush" },
+            { "label": "Copy Commit SHA", "keys": "⌘C", "actionId": "history.copySha" },
+            { "label": "Checkout Selected Commit", "keys": "⇧⌘B", "actionId": "history.checkout" },
+            { "label": "Branch from Selected Commit", "keys": "⇧⌘N", "actionId": "history.branchFrom" },
+            { "label": "Cherry-pick Selected Commit", "keys": "⌥⌘C", "actionId": "history.cherryPick" },
+            { "label": "Interactive Rebase from Selected Commit", "keys": "⇧⌘R", "actionId": "history.rebaseFrom" },
+            { "label": "Amend Last Commit", "keys": "⇧⌘↩", "actionId": "history.amend" },
+            { "label": "Filter Commits", "keys": "⌘F", "actionId": "history.filter" },
+            { "label": "Zoom Commit List In", "keys": "⌘=", "actionId": "history.zoomIn" },
+            { "label": "Zoom Commit List Out", "keys": "⌘-", "actionId": "history.zoomOut" },
+            { "label": "Reset Commit List Zoom", "keys": "⌘0", "actionId": "history.zoomReset" },
+            { "label": "Apply Selected Stash", "keys": "⌥⌘A", "actionId": "stashes.apply" },
+            { "label": "Pop Selected Stash", "keys": "⌥⌘P", "actionId": "stashes.pop" },
+            { "label": "Drop Selected Stash", "keys": "⌘⌫", "actionId": "stashes.drop" },
+            { "label": "New Merge Request", "keys": "⌘N", "actionId": "gitlab.newMr" },
+            { "label": "Approve Selected Merge Request", "keys": "⌥⌘A", "actionId": "gitlab.approve" },
+            { "label": "Merge Selected Merge Request", "keys": "⇧⌘M", "actionId": "gitlab.merge" },
+            { "label": "Retry Selected Pipeline", "keys": "⌥⌘R", "actionId": "gitlab.retry" },
+            { "label": "New Pull Request", "keys": "⌘N", "actionId": "github.newPr" },
+            { "label": "Approve Selected Pull Request", "keys": "⌥⌘A", "actionId": "github.approve" },
+            { "label": "Merge Selected Pull Request", "keys": "⇧⌘M", "actionId": "github.merge" },
+            { "label": "Re-run Selected Workflow Run", "keys": "⌥⌘R", "actionId": "github.rerun" },
+            { "label": "Close Viewer Window", "keys": "⌘W", "actionId": "viewer.close" },
+            { "label": "Copy File Contents", "keys": "⇧⌘C", "actionId": "viewer.copyContents" },
+            { "label": "Toggle Word Wrap", "keys": "⌥Z", "actionId": "viewer.wordWrap" },
+            { "label": "Find in File", "keys": "⌘F", "actionId": "viewer.find" }
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "This topic catalogs every factory-default shortcut. Help ▸ Support & Help is ⌘?. Keyboard Shortcuts (the live cheat sheet of your remaps) is ⌘/. Settings → Keyboard Mappings saves remaps immediately."
+            },
+            {
+              "type": "heading",
+              "text": "Menus"
+            },
+            {
+              "type": "paragraph",
+              "text": "File, Repository, Branch, Stash, Forge, and Worktree hold every toolbar verb. Some chords are shared across scopes (⇧⌘M, ⌥⌘A, ⌘N, ⇧⌘↩, ⌘⌫) — only the active panel's handler runs."
+            },
+            {
+              "type": "heading",
+              "text": "No default shortcut"
+            },
+            {
+              "type": "paragraph",
+              "text": "Use the menu or palette, and bind them in Keyboard Mappings if you want a chord: Toggle Sidebar, Close Tab, Focus Navigator / Canvas / Task Dock / Activity, Pull with Rebase or Merge, Push and Set Upstream, Push Tags, Force Push (no lease), Unstage All, Amend Last Commit… (working tree), Abort Pending, Publish, Create Pull or Merge Request, Open CI, Compare with Base, Stash with Message, Apply/Pop latest, Clear all, every Worktree verb, New Issue, Cancel auto-merge. Focus Inspector exists on the View menu and is unbound; the inspector slot is unused."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "safety",
+      "title": "Safety & Diagnostics",
+      "icon": "exclamationmark.triangle",
+      "topics": [
+        {
+          "id": "feature_ssh",
+          "title": "Local and SSH Sessions",
+          "summary": "The same UI for a local Mac and a remote host; silent TOFU; Host Key Changed on mismatch.",
+          "keywords": [
+            "ssh",
+            "local",
+            "tofu",
+            "host key",
+            "password",
+            "reconnect"
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Local repositories use Process.start on this Mac. Remote repositories use the same screens over SSH. Both PEM (with passphrase) and password auth work, as do custom ports."
+            },
+            {
+              "type": "heading",
+              "text": "Host keys"
+            },
+            {
+              "type": "paragraph",
+              "text": "The first time Magic Git sees a host it records the key silently (TOFU). If a known host presents a different fingerprint, a Host Key Changed dialog offers Cancel Connection or Refresh Key and Continue. Settings ▸ Known Hosts can Forget a recorded key."
+            }
+          ]
+        },
+        {
+          "id": "undo_recovery",
+          "title": "Undo, Redo, and Recovery",
+          "summary": "⌘Z undoes the last git operation. Staging is not undoable. Redo is tags only.",
+          "keywords": [
+            "undo",
+            "redo",
+            "recovery",
+            "toast",
+            "reflog"
+          ],
+          "shortcuts": [
+            {
+              "label": "Undo Git Operation",
+              "keys": "⌘Z",
+              "actionId": "global.undo"
+            },
+            {
+              "label": "Redo Git Operation",
+              "keys": "⇧⌘Z",
+              "actionId": "global.redo"
+            },
+            {
+              "label": "Toggle Recovery",
+              "keys": "⇧⌘U",
+              "actionId": "global.toggleRecovery"
+            }
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "⌘Z undoes the last git operation. A toast lasts about five seconds and pauses while you hover. The journal covers commit, amend, reset, checkout, create or delete branch or tag, stash drop/pop/clear/branch, discard, remove files, and hard-reset-shaped merge, rebase, cherry-pick, or revert. Unlike discard, staging is not undoable."
+            },
+            {
+              "type": "items",
+              "items": [
+                "⇧⌘Z redo applies only to atomic tag create or delete.",
+                "An empty journal toasts Nothing to undo or Nothing to redo.",
+                "Edit ▸ Undo is still text undo in a field.",
+                "Recovery (⇧⌘U) reaches reflog and snapshots that ⌘Z cannot."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "tool_health",
+          "title": "Tool Health",
+          "summary": "Host probe on a live connection: essential versus feature binaries, Scan, and sideload.",
+          "keywords": [
+            "tool health",
+            "git",
+            "gh",
+            "glab",
+            "scan",
+            "sideload",
+            "essential"
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Tool health runs on a live connection, not the landing page. Missing essential binaries are errors; missing feature binaries and outdated versions are warnings. Linux hosts are not blamed for a missing fswatch. A banner offers Scan environment; Settings ▸ External tools opens the doctor for one-click install when safe, copy-paste commands, and a sideload drop zone for binaries."
             }
           ]
         },
         {
           "id": "output_log",
-          "title": "Output Log & Command Recovery",
-          "summary": "View real-time command execution output, stdout/stderr streams, and exit codes.",
+          "title": "Output Log",
+          "summary": "The docked log of git and SSH invocations, stdout, stderr, and exit codes.",
           "keywords": [
-            "output log",
-            "recovery",
-            "command log",
+            "output",
+            "log",
             "stdout",
             "stderr",
             "diagnostics"
           ],
           "shortcuts": [
             {
-              "label": "Toggle Output Log View",
-              "keys": "⌘⇧O"
-            },
-            {
-              "label": "Toggle Recovery View",
-              "keys": "⌘⇧U"
+              "label": "Toggle Output View",
+              "keys": "⇧⌘O",
+              "actionId": "global.toggleOutput"
             }
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "Open the Output Log (⌘⇧O) or Recovery View (⌘⇧U) from the View menu to inspect raw Git/SSH command invocations, stdout output, stderr traces, and exit statuses."
+              "text": "Output (⇧⌘O) is the docked command log described in File View and Output. Recovery is a separate sheet — see Dashboard, Recovery, and Activity, and Undo, Redo, and Recovery."
             }
           ]
         }

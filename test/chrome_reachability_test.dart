@@ -99,11 +99,22 @@ void main() {
     });
 
     test('Settings moved to the app menu, which had to be wired first', () {
-      // MainMenu.xib has always carried a ⌘, "Preferences…" item — with no
-      // action at all, so the only route to Settings was the band's gear.
+      // MainMenu.xib has always carried a ⌘, "Preferences…" item. Ventura+
+      // retitles it Settings and enables it only for showSettingsWindow: —
+      // a Preferences-prefix match plus enabledActionIds left it dimmed.
       final swift = _read('macos/Runner/MainFlutterWindow.swift');
       expect(swift.contains('installPreferencesAction'), isTrue);
+      expect(swift.contains('isSettingsMenuItem'), isTrue);
+      expect(swift.contains('hasPrefix("Settings")'), isTrue);
+      expect(swift.contains('showSettingsWindow'), isTrue);
       expect(swift.contains('"global.openSettings"'), isTrue);
+
+      final delegate = _read('macos/Runner/AppDelegate.swift');
+      expect(delegate.contains('showSettingsWindow'), isTrue);
+      expect(delegate.contains('showPreferencesWindow'), isTrue);
+
+      final xib = _read('macos/Runner/Base.lproj/MainMenu.xib');
+      expect(xib.contains('showSettingsWindow:'), isTrue);
     });
 
     test('Refresh also reached the View menu', () {

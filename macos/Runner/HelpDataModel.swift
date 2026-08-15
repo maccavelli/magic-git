@@ -27,6 +27,9 @@ public struct KeyboardShortcutRef: Codable, Identifiable {
     public var id: String { label }
     public let label: String
     public let keys: String
+    /// Factory-default keymap action this chip teaches. Optional so v1.1
+    /// books still decode; Help Book 2.0 requires it on every chip.
+    public let actionId: String?
 }
 
 public struct HelpSection: Codable, Identifiable {

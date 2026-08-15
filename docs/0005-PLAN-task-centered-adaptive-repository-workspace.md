@@ -14,6 +14,9 @@ Associated MADR:
   wrapper), and `test/repo_change_filter_test.dart:23-37` contains a vacuous
   command-count assertion. Verified 2026-08-14 by
   [0007-MADR-docs-completion-audit.md](0007-MADR-docs-completion-audit.md).
+- Amendment 2026-08-15: Phase 4 step 4's Changes/Files navigator modes are
+  withdrawn. The navigator is Changes only; File View stays the docked
+  inspector. See the companion MADR amendment of the same date.
 - Codebase assessment date: 2026-08-13
 - Delivery completion date: 2026-08-13
 - Decision prerequisite: MADR 0005 was accepted when the maintainer explicitly
@@ -111,7 +114,7 @@ changing the chosen architecture:
 | --- | --- |
 | Workspace contracts | Shared context, navigator, canvas, inspector, task dock, async/error, selection, and focus primitives |
 | Adaptive layout | Compact/standard/wide arrangements, resizable and collapsible panes, sidebar auto-collapse, durable safe restoration |
-| Repository cockpit | Changes/Files modes, local filtering/grouping, visible bulk actions, aggregate review queue, useful clean state |
+| Repository cockpit | Changes navigator (filter/grouping/review), docked File View inspector, useful clean state |
 | Commit flow | Persistent collapsible composer, existing hook preview, Accept and Accept + Push, optional focused editor |
 | Context | Repository/backend/host/worktree/branch/base/dirty/pending/divergence plus cached forge/CI state and one resolved primary action |
 | Activity | Typed lifecycle, safe labels, output linkage, undo/recovery linkage, per-repository presentation |
@@ -499,11 +502,11 @@ semantics.
    Preserve hidden selected paths in the selection payload; display a banner
    such as “3 selected items are hidden by filters” with Reveal and Clear
    Selection actions. Never silently mutate the selection.
-4. Implement Changes and Files navigator modes. Changes reuses status sections;
-   Files embeds the current `FileView` tree behavior as a navigator body. At
-   standard width only one navigator mode is visible. Wide mode may pin Files
-   as an inspector using the same tree controller rather than mounting a second
-   provider graph.
+4. The navigator is Changes only (status sections + filter). Do **not**
+   embed `FileView` as a second navigator body. The tree is the docked
+   inspector (`FileView`, View → Show File View / pin). Amended 2026-08-15:
+   the Changes/Files segmented control and `embedded` FileView seat are
+   removed as redundant with that inspector.
 5. Add filter field, status chips, grouping menu, result count, clear button,
    and empty-filter result state. `Escape` first clears filter text, then yields
    to normal selection/pane dismissal.
@@ -530,7 +533,7 @@ semantics.
 | `lib/features/repository/diff_view_controls.dart` | Consolidated diff controls |
 | `lib/features/repository/repository_clean_state.dart` | Calm useful clean state |
 | `lib/features/repository/repo_status_view.dart` | Orchestration and mutation callbacks |
-| `lib/features/repository/file_view.dart` | Embeddable body/controller; no duplicate pane chrome |
+| `lib/features/repository/file_view.dart` | Docked inspector only; no navigator-embedded seat |
 | `lib/core/settings/repository_workspace_prefs.dart` | Repository navigator/layout fields |
 | `test/repo_change_model_test.dart` | Partially staged, refresh, hidden selection invariants |
 | `test/repo_change_filter_test.dart` | Query/status/path/group deterministic cases |
