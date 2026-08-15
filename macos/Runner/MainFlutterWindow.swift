@@ -197,6 +197,7 @@ class MainFlutterWindow: NSWindow {
       self?.installViewMenuItems()
       self?.installHelpMenuItems()
       self?.installAboutPanelOverride()
+      self?.installPreferencesAction()
     }
 
     super.awakeFromNib()
@@ -346,6 +347,21 @@ class MainFlutterWindow: NSWindow {
       viewMenu.addItem(item)
     }
 
+    // Refresh. The repository toolbar band that used to carry a refresh
+    // button is gone; ⌘R still works, and this is its menu route.
+    if viewMenu.items.first(where: {
+      ($0.representedObject as? String) == "global.refresh"
+    }) == nil {
+      let item = NSMenuItem(
+        title: "Refresh", action: #selector(dynamicMenuActionFired(_:)),
+        keyEquivalent: "r")
+      item.keyEquivalentModifierMask = [.command]
+      item.representedObject = "global.refresh"
+      item.target = self
+      viewMenu.addItem(NSMenuItem.separator())
+      viewMenu.addItem(item)
+    }
+
     // The items now exist, so pull the current checkbox states from Flutter.
     // Flutter also pushes them once at startup, but that push races this
     // (async-deferred) install and is dropped if it lands while showOutputItem
@@ -474,6 +490,18 @@ class MainFlutterWindow: NSWindow {
       let actionId = item.representedObject as? String
     else { return }
     menuChannel?.invokeMethod("dispatchAction", arguments: actionId)
+  }
+
+  /// Wires the standard "Preferences…" item (⌘, from MainMenu.xib), which had
+  /// no action at all — it opened the menu, dimmed, and did nothing, while the
+  /// only way to Settings was a gear buried in a repository toolbar.
+  private func installPreferencesAction() {
+    guard let appMenu = NSApp.mainMenu?.items.first?.submenu else { return }
+    for item in appMenu.items where item.title.hasPrefix("Preferences") {
+      item.target = self
+      item.action = #selector(dynamicMenuActionFired(_:))
+      item.representedObject = "global.openSettings"
+    }
   }
 
   /// Repoints the standard "About Magic Git" menu item (wired in MainMenu.xib to

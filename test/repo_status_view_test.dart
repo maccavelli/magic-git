@@ -282,10 +282,14 @@ Future<_FakeGitService> _pump(
             remotes ??
             (refs.any((r) => r.isRemote) ? const ['origin'] : const <String>[]),
       ),
+      // Connected, because that is the only state in which this panel is on
+      // screen — and the sync group disables every verb while the session is
+      // down, since a git command against a dead transport can only fail.
       connectionProvider.overrideWith(
         () => _StubConnection(
           ConnectionState(
             backend: isLocal ? ConnectionBackend.local : ConnectionBackend.ssh,
+            phase: ConnectionPhase.connected,
           ),
         ),
       ),
@@ -293,6 +297,12 @@ Future<_FakeGitService> _pump(
     ],
   );
   addTearDown(container.dispose);
+  // A realistic window: the app's default is 1080x720 and its floor is 640x480,
+  // but the 800x600 test default sits right where the context bar collapses its
+  // sync group, which is not the state most of these tests are about.
+  tester.view.physicalSize = const Size(1400, 900);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
   await tester.pumpWidget(
     UncontrolledProviderScope(
       container: container,
@@ -304,6 +314,26 @@ Future<_FakeGitService> _pump(
   );
   await tester.pumpAndSettle();
   return resolved;
+}
+
+
+/// The label of the sync group's accented (non-secondary) button, or null when
+/// nothing is recommended. This replaced the old green icon tint: the cue moved
+/// from "colour one of four icons" to "accent one of four labelled buttons",
+/// which says the same thing without relying on colour alone.
+String? _emphasizedVerb(WidgetTester tester) {
+  for (final button in tester.widgetList<AppPushButton>(
+    find.byType(AppPushButton),
+  )) {
+    if (button.secondary == true) continue;
+    final child = button.child;
+    if (child is Text) return child.data;
+    if (child is Row) {
+      final first = child.children.first;
+      if (first is Text) return first.data;
+    }
+  }
+  return null;
 }
 
 Finder _icon(IconData d) =>
@@ -467,20 +497,12 @@ void main() {
       ),
     );
 
-    // In the header's hamburger — targeted by its glyph, since the context
-    // bar's sync group now also owns a pull-down. The label is qualified:
-    // History offers a plain "Amend last commit" that rewrites the selected
-    // commit, and the two menus can be a keystroke apart.
-    await tester.tap(
-      find.byWidgetPredicate(
-        (w) =>
-            w is MacosPulldownButton &&
-            w.icon == CupertinoIcons.line_horizontal_3,
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Amend last commit'), findsNothing);
-    await tester.tap(find.text('Amend last commit (working tree)'));
+    // Amend's home is the Repository menu and the palette now that the second
+    // toolbar band is gone; both arrive on the intent bus, which is the path
+    // exercised here.
+    ProviderScope.containerOf(tester.element(find.byType(RepoStatusView)))
+        .read(paletteIntentProvider.notifier)
+        .dispatch('repository.amend');
     await tester.pumpAndSettle();
 
     // Nothing runs until the rewrite is confirmed.
@@ -526,18 +548,18 @@ void main() {
     final git = _FakeGitService()..fetchGate = Completer<void>();
     await _pump(tester, git: git, status: _statusWith(), refs: _remoteRefs);
 
-    MacosIconButton fetchButton() => tester.widget<MacosIconButton>(
-      find.ancestor(
-        of: _icon(CupertinoIcons.cloud_download),
-        matching: find.byType(MacosIconButton),
-      ),
-    );
+    AppPushButton fetchButton() => tester
+        .widgetList<AppPushButton>(find.byType(AppPushButton))
+        .firstWhere(
+          (button) =>
+              button.child is Text && (button.child as Text).data == 'Fetch',
+        );
 
     expect(fetchButton().onPressed, isNotNull);
 
-    await tester.tap(_icon(CupertinoIcons.cloud_download));
+    await tester.tap(find.text('Fetch'));
     await tester.pump();
-    // In flight: the toolbar button goes inert, so it can't fire a second time.
+    // In flight: every sync verb goes inert, so none can fire a second time.
     expect(fetchButton().onPressed, isNull);
     expect(git.fetchCalls, 1);
 
@@ -740,7 +762,7 @@ void main() {
   );
 
   testWidgets(
-    'Push flips green when ahead; Pull and Sync stay at their default color',
+    'ahead of upstream recommends Push, and only Push',
     (tester) async {
       final git = _FakeGitService();
       final container = ProviderContainer(
@@ -779,19 +801,11 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      Color? colorOf(IconData icon) =>
-          tester.widget<MacosIcon>(_icon(icon)).color;
-
-      expect(
-        colorOf(CupertinoIcons.arrow_up_circle),
-        MacosColors.systemGreenColor,
-      );
-      expect(colorOf(CupertinoIcons.arrow_down_circle), isNull);
-      expect(colorOf(CupertinoIcons.arrow_2_circlepath), isNull);
+      expect(_emphasizedVerb(tester), 'Push');
     },
   );
 
-  testWidgets('Pull and Sync flip green when behind', (tester) async {
+  testWidgets('behind upstream recommends Pull', (tester) async {
     await _pump(
       tester,
       status: GitStatus(
@@ -804,20 +818,10 @@ void main() {
       ),
     );
 
-    Color? colorOf(IconData icon) =>
-        tester.widget<MacosIcon>(_icon(icon)).color;
-
-    expect(
-      colorOf(CupertinoIcons.arrow_down_circle),
-      MacosColors.systemGreenColor,
-    );
-    expect(colorOf(CupertinoIcons.arrow_up_circle), isNull);
-    expect(colorOf(CupertinoIcons.arrow_2_circlepath), isNull);
+    expect(_emphasizedVerb(tester), 'Pull');
   });
 
-  testWidgets('Sync flips green only when both ahead and behind', (
-    tester,
-  ) async {
+  testWidgets('diverged in both directions recommends Sync', (tester) async {
     await _pump(
       tester,
       status: GitStatus(
@@ -831,21 +835,7 @@ void main() {
       ),
     );
 
-    Color? colorOf(IconData icon) =>
-        tester.widget<MacosIcon>(_icon(icon)).color;
-
-    expect(
-      colorOf(CupertinoIcons.arrow_up_circle),
-      MacosColors.systemGreenColor,
-    );
-    expect(
-      colorOf(CupertinoIcons.arrow_down_circle),
-      MacosColors.systemGreenColor,
-    );
-    expect(
-      colorOf(CupertinoIcons.arrow_2_circlepath),
-      MacosColors.systemGreenColor,
-    );
+    expect(_emphasizedVerb(tester), 'Sync');
   });
 
   testWidgets('the toolbar divergence badge hides entirely when in sync', (
@@ -897,17 +887,23 @@ void main() {
     },
   );
 
-  testWidgets('no upstream leaves Push/Pull/Sync at their default color', (
-    tester,
-  ) async {
+  testWidgets('with no remote configured the group still recommends Fetch, '
+      'but every verb is disabled and says why', (tester) async {
     await _pump(tester, status: _statusWith());
 
-    Color? colorOf(IconData icon) =>
-        tester.widget<MacosIcon>(_icon(icon)).color;
-
-    expect(colorOf(CupertinoIcons.arrow_up_circle), isNull);
-    expect(colorOf(CupertinoIcons.arrow_down_circle), isNull);
-    expect(colorOf(CupertinoIcons.arrow_2_circlepath), isNull);
+    expect(_emphasizedVerb(tester), 'Fetch');
+    expect(
+      tester
+          .widgetList<AppPushButton>(find.byType(AppPushButton))
+          .every((button) => button.onPressed == null),
+      isTrue,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is MacosTooltip && w.message.contains('No remote'),
+      ),
+      findsWidgets,
+    );
   });
 
   testWidgets(
@@ -1665,20 +1661,13 @@ void main() {
 
       // Network actions must be live: fetching/pulling an empty remote is
       // exactly how its first branch arrives.
-      final fetchIcon = find.byWidgetPredicate(
-        (w) => w is MacosIcon && w.icon == CupertinoIcons.cloud_download,
-      );
-      expect(fetchIcon, findsOneWidget);
-      expect(
-        tester
-            .widget<MacosTooltip>(
-              find
-                  .ancestor(of: fetchIcon, matching: find.byType(MacosTooltip))
-                  .first,
-            )
-            .message,
-        'Fetch',
-      );
+      final fetch = tester
+          .widgetList<AppPushButton>(find.byType(AppPushButton))
+          .firstWhere(
+            (button) =>
+                button.child is Text && (button.child as Text).data == 'Fetch',
+          );
+      expect(fetch.onPressed, isNotNull);
     },
   );
 
@@ -1707,16 +1696,20 @@ void main() {
         refs: _remoteRefs, // SSH backend is the default here → chip renders
       );
 
-      // The hamburger overflow menu is the toolbar's last child.
-      final hamburger = _icon(CupertinoIcons.line_horizontal_3);
-      expect(hamburger, findsOneWidget);
+      // The sync group's overflow pull-down is the bar's last child.
+      final overflow = find.byWidgetPredicate(
+        (w) =>
+            w is MacosPulldownButton && w.icon == CupertinoIcons.chevron_down,
+      );
+      expect(overflow, findsOneWidget);
       final paneWidth = tester.getSize(find.byType(RepoStatusView)).width;
-      // 16px toolbar padding plus the pulldown's own inset; anything much
-      // wider means the trailing cluster lost its claim on the free space.
+      // 12px bar padding plus the pulldown's own inset; anything much wider
+      // means the trailing cluster lost its claim on the free space — which is
+      // what a loose Flexible sibling of the identity's Expanded would cause.
       expect(
-        paneWidth - tester.getTopRight(hamburger).dx,
+        paneWidth - tester.getTopRight(overflow).dx,
         lessThan(40),
-        reason: 'toolbar overflow menu must hug the right margin',
+        reason: 'the trailing cluster must hug the right margin',
       );
     },
   );

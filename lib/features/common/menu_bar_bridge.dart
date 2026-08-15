@@ -22,9 +22,20 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// availability.
 class AvailableActions extends Notifier<Set<String>> {
   Object? _owner;
+  Set<String> _panelIds = const {};
+
+  /// Shell-scoped commands (Refresh, Preferences…) that no panel owns. Kept
+  /// separate from the panel's set because the two have different lifetimes:
+  /// the panel's changes on every selection, the shell's on connection state.
+  Set<String> _shellIds = const {};
 
   @override
   Set<String> build() => const {};
+
+  void _recompute() {
+    final next = {..._panelIds, ..._shellIds};
+    if (!setEquals(state, next)) state = next;
+  }
 
   void publish(Object owner, Set<String> ids) {
     if (ids.isEmpty) {
@@ -33,7 +44,13 @@ class AvailableActions extends Notifier<Set<String>> {
     } else {
       _owner = owner;
     }
-    if (!setEquals(state, ids)) state = ids;
+    _panelIds = ids;
+    _recompute();
+  }
+
+  void publishShell(Set<String> ids) {
+    _shellIds = ids;
+    _recompute();
   }
 
   /// Called when a publishing panel is disposed. Deferred past the widget

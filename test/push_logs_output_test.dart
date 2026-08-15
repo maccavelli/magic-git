@@ -3,7 +3,6 @@
 // outputLogProvider state, so it exercises the real button -> _push ->
 // _runLogged -> logResult path in repo_status_view.dart.
 
-import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -68,6 +67,15 @@ class _HiddenFileView extends FileViewVisibility {
 
 const _repo = '/srv/repo';
 
+/// A connection pinned at `connected`. The sync group disables every verb
+/// while the session is down — a git command against a dead transport can only
+/// fail — so a test that presses Push has to model a live session.
+class _ConnectedStub extends ConnectionController {
+  @override
+  ConnectionState build() =>
+      const ConnectionState(phase: ConnectionPhase.connected);
+}
+
 // A remote-tracking ref so the header's `hasRemote` is true and the Push button
 // is enabled (network actions are disabled when no remote is detected).
 const _remoteRefs = [
@@ -97,6 +105,7 @@ Future<ProviderContainer> _mountAndPush(
       // Sibling of the refs override: the views now read CONFIGURED
       // remotes (remotesProvider), not remote-tracking refs.
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+      connectionProvider.overrideWith(_ConnectedStub.new),
     ],
   );
   addTearDown(container.dispose);
@@ -110,11 +119,9 @@ Future<ProviderContainer> _mountAndPush(
     ),
   );
   await tester.pumpAndSettle();
-  await tester.tap(
-    find.byWidgetPredicate(
-      (w) => w is MacosIcon && w.icon == CupertinoIcons.arrow_up_circle,
-    ),
-  );
+  // Push is now a labelled button in the context bar's sync group, not an
+  // icon in a second toolbar band.
+  await tester.tap(find.text('Push'));
   await tester.pumpAndSettle();
   return container;
 }
@@ -138,6 +145,7 @@ void main() {
         // Sibling of the refs override: the views now read CONFIGURED
         // remotes (remotesProvider), not remote-tracking refs.
         remotesProvider(repo).overrideWith((ref) async => const ['origin']),
+        connectionProvider.overrideWith(_ConnectedStub.new),
       ],
     );
     addTearDown(container.dispose);
@@ -156,12 +164,10 @@ void main() {
     // Nothing logged before the tap.
     expect(container.read(outputLogProvider).lines, isEmpty);
 
-    // Tap the Push toolbar button (its up-circle icon).
-    final pushIcon = find.byWidgetPredicate(
-      (w) => w is MacosIcon && w.icon == CupertinoIcons.arrow_up_circle,
-    );
-    expect(pushIcon, findsOneWidget);
-    await tester.tap(pushIcon);
+    // Push is a labelled button in the context bar's sync group.
+    final push = find.text('Push');
+    expect(push, findsOneWidget);
+    await tester.tap(push);
     await tester.pumpAndSettle();
 
     expect(fakeGit.pushed, isTrue, reason: 'Push button should call git.push');

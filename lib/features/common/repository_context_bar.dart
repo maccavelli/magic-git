@@ -8,6 +8,7 @@ import '../../core/settings/app_settings.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
 import 'activity_center.dart';
 import 'buttons.dart';
+import 'link_status_chip.dart';
 import 'repository_context.dart';
 import 'repository_workspace_models.dart';
 import 'repository_workspace_scaffold.dart';
@@ -17,6 +18,9 @@ import 'workspace_appearance.dart';
 import 'workspace_focus_order.dart';
 import 'workspace_navigation.dart';
 import 'workspace_view_options.dart';
+
+/// Bar width below which the sync group collapses to one button plus overflow.
+const double _syncGroupMinWidth = 900;
 
 class RepositoryContextBar extends StatelessWidget {
   final RepositoryContextSnapshot snapshot;
@@ -28,6 +32,21 @@ class RepositoryContextBar extends StatelessWidget {
   /// and [primaryAction] becomes the *recommendation* — which verb to
   /// emphasize — rather than the only reachable one.
   final RepositorySyncGroup? syncGroup;
+
+  /// Stash-everything, offered beside the sync group. It is neither a sync
+  /// verb nor a navigation control, but it is the other thing you reach for
+  /// constantly before syncing, so it keeps a button rather than retreating
+  /// to the menu bar alone.
+  final VoidCallback? onStash;
+
+  /// Re-read the repository. Cheap, frequent, and the one control every panel
+  /// wants; ⌘R and View ▸ Refresh are its other routes.
+  final VoidCallback? onRefresh;
+
+  /// Whether to show the SSH link/latency strip. The remote backend's ambient
+  /// connection health had exactly one home in the app — the deleted second
+  /// toolbar band — so it moves here rather than disappearing.
+  final bool showLinkStatus;
   final VoidCallback? onToggleSidebar;
   final ValueChanged<OperationId>? onRevealOutput;
 
@@ -37,6 +56,9 @@ class RepositoryContextBar extends StatelessWidget {
     required this.primaryAction,
     required this.onPrimaryAction,
     this.syncGroup,
+    this.onStash,
+    this.onRefresh,
+    this.showLinkStatus = false,
     this.onToggleSidebar,
     this.onRevealOutput,
   });
@@ -51,9 +73,16 @@ class RepositoryContextBar extends StatelessWidget {
         final showWorkspaceOptions =
             preferencesScope?.optionsEnabled == true &&
             preferencesScope?.onChanged != null;
-        final compact =
-            WorkspaceSizeClass.fromWidth(constraints.maxWidth) ==
-            WorkspaceSizeClass.compact;
+        final sizeClass = WorkspaceSizeClass.fromWidth(constraints.maxWidth);
+        final compact = sizeClass == WorkspaceSizeClass.compact;
+        // The sync group keeps all four buttons only where they fit beside the
+        // repository's identity. The trailing cluster — navigation, stash,
+        // refresh, activity, four verbs and an overflow — measures roughly
+        // 460pt; below about 900 the identity is squeezed to nothing (it
+        // overflowed by a fraction of a point at 800), and the identity is the
+        // one thing on this bar that cannot move elsewhere. So the group
+        // collapses to the recommended verb plus its overflow instead.
+        final collapseSyncGroup = constraints.maxWidth < _syncGroupMinWidth;
         return Semantics(
           container: true,
           label: 'Repository context',
@@ -98,13 +127,29 @@ class RepositoryContextBar extends StatelessWidget {
                       !compact && (preferences?.showToolbarLabels ?? false),
                 ),
                 const SizedBox(width: 6),
-                Expanded(child: _RepositoryIdentity(snapshot: snapshot)),
-                if (!compact) ...[
-                  const SizedBox(width: 10),
-                  _StatusSummary(snapshot: snapshot),
-                  const SizedBox(width: 10),
-                  _SupplementSummary(snapshot: snapshot),
-                ] else ...[
+                // The whole informational cluster shares ONE Expanded, with
+                // its shrinkable pieces Flexible *inside* it. A loose Flexible
+                // sibling of an Expanded would instead split the free space
+                // with it — flex a loose child declines is not handed back —
+                // which drags the trailing controls toward the middle.
+                Expanded(
+                  child: Row(
+                    children: [
+                      Flexible(child: _RepositoryIdentity(snapshot: snapshot)),
+                      if (!compact) ...[
+                        const SizedBox(width: 10),
+                        _StatusSummary(snapshot: snapshot),
+                        const SizedBox(width: 10),
+                        _SupplementSummary(snapshot: snapshot),
+                        if (showLinkStatus) ...[
+                          const SizedBox(width: 10),
+                          const Flexible(child: SshLinkStatusRow()),
+                        ],
+                      ],
+                    ],
+                  ),
+                ),
+                if (compact) ...[
                   const SizedBox(width: 4),
                   _CompactMetadata(snapshot: snapshot),
                 ],
@@ -125,12 +170,28 @@ class RepositoryContextBar extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 6),
+                if (onStash != null) ...[
+                  ToolIconButton(
+                    icon: CupertinoIcons.tray_arrow_down,
+                    tooltip: 'Stash changes',
+                    onPressed: onStash,
+                  ),
+                  const SizedBox(width: 2),
+                ],
+                if (onRefresh != null) ...[
+                  ToolIconButton(
+                    icon: CupertinoIcons.refresh,
+                    tooltip: 'Refresh',
+                    onPressed: onRefresh,
+                  ),
+                  const SizedBox(width: 4),
+                ],
                 if (syncGroup case final group?)
                   _SyncGroup(
                     group: group,
                     recommendation: primaryAction,
                     snapshot: snapshot,
-                    compact: compact,
+                    compact: collapseSyncGroup,
                   )
                 else
                   MacosTooltip(
@@ -206,13 +267,34 @@ class _RepositoryIdentity extends StatelessWidget {
 
   const _RepositoryIdentity({required this.snapshot});
 
+  /// The change-detection dot. Green when a real watcher is streaming, orange
+  /// when polling covers for it, grey when nothing is watching.
+  static Color _watchColor(RepositoryWatchHealth health) => switch (health) {
+    RepositoryWatchHealth.live => MacosColors.systemGreenColor,
+    RepositoryWatchHealth.degraded => MacosColors.systemOrangeColor,
+    RepositoryWatchHealth.stopped => MacosColors.systemGrayColor,
+  };
+
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
+    final health = snapshot.watchHealth;
+    final notice = snapshot.notice;
     return MacosTooltip(
       message: '${snapshot.repositoryPath}\nBranch: ${snapshot.branchLabel}',
       child: Row(
         children: [
+          if (health != null) ...[
+            MacosTooltip(
+              message: snapshot.watchHint ?? '',
+              child: MacosIcon(
+                CupertinoIcons.circle_fill,
+                size: 8,
+                color: _watchColor(health),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
           const MacosIcon(CupertinoIcons.folder, size: 16),
           const SizedBox(width: 6),
           Flexible(
@@ -234,6 +316,21 @@ class _RepositoryIdentity extends StatelessWidget {
               ),
             ),
           ),
+          if (notice != null) ...[
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(
+                notice,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: typography.caption1.copyWith(
+                  color: snapshot.noticeTone == RepositoryNoticeTone.warning
+                      ? MacosColors.systemYellowColor
+                      : MacosColors.systemGrayColor,
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

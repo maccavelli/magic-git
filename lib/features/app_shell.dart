@@ -222,6 +222,11 @@ class _ReconnectingOverlayState extends State<_ReconnectingOverlay> {
 class _AppShellState extends ConsumerState<AppShell> {
   BuildContext? _windowScopeContext;
 
+  /// The shell-scoped action handlers from the last build, so a native menu
+  /// choice for a command no panel owns runs the very same callback its
+  /// keyboard shortcut does.
+  Map<String, VoidCallback?> _globalHandlers = const {};
+
   void _toggleSidebar() {
     final scopeContext = _windowScopeContext;
     if (scopeContext == null) return;
@@ -799,8 +804,13 @@ class _AppShellState extends ConsumerState<AppShell> {
     ref.listen(menuActionRequestProvider, (previous, next) {
       if (next == null || next.token == previous?.token) return;
       final panel = panelOwnerOf(next.actionId);
-      if (panel == null) return;
-      _dispatchPaletteAction(next.actionId, panel);
+      if (panel != null) {
+        _dispatchPaletteAction(next.actionId, panel);
+        return;
+      }
+      // Shell-scoped commands (Refresh, Preferences…) belong to no panel, so
+      // they run here — through the same handler their keyboard shortcut uses.
+      _globalHandlers[next.actionId]?.call();
     });
     // A changed host key pauses the in-progress connect/reconnect on an
     // explicit decision — surfaced as a non-dismissible modal regardless of
@@ -825,7 +835,10 @@ class _AppShellState extends ConsumerState<AppShell> {
 
     final keymap = ref.watch(keymapProvider);
     final tabs = TabsController.current;
-    final shortcuts = resolveShortcuts(keymap, {
+    // Held in a field as well as used here: the native menu bar dispatches
+    // shell-scoped ids (Refresh, Preferences…) that no panel owns, and it must
+    // run the same handler this map defines rather than a second copy.
+    final globalHandlers = <String, VoidCallback?>{
       'global.refresh': _refresh,
       'global.openSettings': () => _openSettings(context),
       'global.showShortcuts': () => _openShortcuts(context),
@@ -903,7 +916,22 @@ class _AppShellState extends ConsumerState<AppShell> {
               WorkspacePaneRole.activity,
             )
           : null,
+    };
+    _globalHandlers = globalHandlers;
+    // Publish what the shell can run so the native items for Refresh and
+    // Preferences… dim on exactly the same condition their shortcuts do.
+    final availableGlobals = {
+      for (final MapEntry(key: id, value: handler) in globalHandlers.entries)
+        if (handler != null) id,
+    };
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        ref.read(availableActionsProvider.notifier).publishShell(
+          availableGlobals,
+        );
+      }
     });
+    final shortcuts = resolveShortcuts(keymap, globalHandlers);
 
     return CallbackShortcuts(
       bindings: shortcuts,

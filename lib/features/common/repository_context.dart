@@ -122,6 +122,21 @@ final repositoryContextSupplementCacheProvider =
       Map<RepositoryContextSupplementKey, RepositoryContextSupplement>
     >(RepositoryContextSupplementCache.new);
 
+/// How live the repository's change detection currently is.
+enum RepositoryWatchHealth {
+  /// A real file-system watcher is streaming events.
+  live,
+
+  /// Falling back to polling because the watcher is unavailable.
+  degraded,
+
+  /// Nothing is watching.
+  stopped,
+}
+
+/// A short caption about the repository as a whole, shown beside its identity.
+enum RepositoryNoticeTone { info, warning }
+
 /// Immutable, render-ready repository context derived from already-landed
 /// connection/status/ref/remote state.
 @immutable
@@ -149,6 +164,19 @@ class RepositoryContextSnapshot {
   final bool busy;
   final bool incomplete;
   final int refCount;
+
+  /// Change-detection health and the sentence explaining it. Rendered as the
+  /// small dot beside the repository name — it used to live in the second
+  /// toolbar band, which is exactly the kind of ambient state that belongs
+  /// with the identity it describes.
+  final RepositoryWatchHealth? watchHealth;
+  final String? watchHint;
+
+  /// A caption about the repository itself ("No remote detected", "No branches
+  /// yet — repository is empty"), with the tone it should be read in.
+  final String? notice;
+  final RepositoryNoticeTone noticeTone;
+
   final RepositoryContextSupplement? supplement;
 
   const RepositoryContextSnapshot({
@@ -169,6 +197,10 @@ class RepositoryContextSnapshot {
     this.busy = false,
     this.incomplete = false,
     this.refCount = 0,
+    this.watchHealth,
+    this.watchHint,
+    this.notice,
+    this.noticeTone = RepositoryNoticeTone.info,
     this.supplement,
   });
 

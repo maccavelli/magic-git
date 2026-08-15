@@ -24,7 +24,6 @@ import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
 import '../common/image_diff_view.dart';
 import '../common/inline_action_button.dart';
-import '../common/link_status_chip.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/repository_context.dart';
@@ -38,7 +37,6 @@ import '../common/tool_icon_button.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/staging_drop_banner.dart';
-import '../settings/settings_sheet.dart';
 import '../viewer/file_type.dart';
 import '../viewer/remote_edit_service.dart';
 import 'blame_sheet.dart';
@@ -1429,6 +1427,30 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       busy: busy,
       incomplete: status == null || remotes == null || pending == null,
       refCount: refs?.length ?? 0,
+      // Ambient repository state that used to live in the second toolbar band:
+      // it describes the repository, so it now sits with the repository's
+      // identity instead of in a strip of its own.
+      watchHealth: switch (watchMode) {
+        WatchMode.eventDriven => RepositoryWatchHealth.live,
+        WatchMode.polling => RepositoryWatchHealth.degraded,
+        WatchMode.stopped || null => RepositoryWatchHealth.stopped,
+      },
+      watchHint: switch (watchMode) {
+        WatchMode.eventDriven => 'Live file watcher',
+        WatchMode.polling => 'Polling for changes (watcher unavailable)',
+        WatchMode.stopped || null => 'Watcher stopped',
+      },
+      // Null (still loading) counts as "has a remote" so the caption does not
+      // flash on before the first fetch resolves. A wired-but-empty repo says
+      // so rather than implying its remote setup failed.
+      notice: remotes != null && remotes.isEmpty
+          ? 'No remote detected'
+          : refs != null && refs.isEmpty
+          ? 'No branches yet — repository is empty'
+          : null,
+      noticeTone: remotes != null && remotes.isEmpty
+          ? RepositoryNoticeTone.warning
+          : RepositoryNoticeTone.info,
       supplement: supplement,
     );
     final primaryAction = resolvePrimaryRepositoryAction(snapshot);
@@ -1572,7 +1594,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             children: [
               if (sessionWarning != null)
                 _warningBanner(context, sessionWarning),
-              _header(context, status, watchMode, refs),
               if (pending != null && pending != PendingOp.none)
                 _pendingBanner(context, pending),
               statusArea,
@@ -1627,6 +1648,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               snapshot: snapshot,
               primaryAction: primaryAction,
               syncGroup: syncGroup,
+              onStash: busy ? null : _stashPush,
+              onRefresh: _refresh,
+              showLinkStatus: !connection.isLocal,
               onToggleSidebar: () =>
                   MacosWindowScope.maybeOf(context)?.toggleSidebar(),
               onRevealOutput: (id) {
@@ -2237,262 +2261,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       ),
     );
   }
-
-  Widget _header(
-    BuildContext context,
-    GitStatus? status,
-    WatchMode? watchMode,
-    List<GitRef>? refs,
-  ) {
-    final typography = MacosTheme.of(context).typography;
-    final branch = status?.branch;
-    // CONFIGURED remotes (`git remote`), not remote-tracking refs: a freshly
-    // created or cloned EMPTY repository has a perfectly wired `origin` and
-    // zero remote refs, and the old refs-based test falsely reported "No
-    // remote detected" for exactly the repos the create/clone flows had just
-    // set up. Null (still loading) is treated as "has a remote" so the label
-    // doesn't flash on before the first fetch resolves.
-    final remotes = ref.watch(remotesProvider(repoPath)).value;
-    final hasRemote = remotes == null || remotes.isNotEmpty;
-    // A repo with a remote but no refs at all is simply EMPTY (unborn HEAD,
-    // nothing fetched) — say that, instead of implying its remote setup
-    // failed.
-    final emptyRepo = hasRemote && refs != null && refs.isEmpty;
-    // Network actions need a remote — disable them (not just the busy gate)
-    // when none is configured, so they can't be clicked into a guaranteed
-    // error. Matches the "No remote detected" label rendered below.
-    final remoteDisabled = busy || !hasRemote;
-    final label = branch == null
-        ? repoPath
-        : branch.isDetached
-        ? '(detached)'
-        : branch.head ?? repoPath;
-    final (dotColor, watchHint) = switch (watchMode) {
-      WatchMode.eventDriven => (
-        MacosColors.systemGreenColor,
-        'Live file watcher',
-      ),
-      WatchMode.polling => (
-        MacosColors.systemOrangeColor,
-        'Polling for changes (watcher unavailable)',
-      ),
-      WatchMode.stopped ||
-      null => (MacosColors.systemGrayColor, 'Watcher stopped'),
-    };
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      child: Row(
-        children: [
-          // The whole informational cluster shares ONE Expanded, with the
-          // shrinkable pieces (branch name, SSH status) Flexible inside it:
-          // when the pane runs narrow they truncate instead of painting an
-          // overflow stripe, and when it's wide the leftover space stays
-          // inside this cluster so the action buttons keep their flush-right
-          // alignment. (A Spacer alongside loose Flexible siblings would
-          // instead split the free space with them — flex allocations a loose
-          // child declines are NOT handed back — pulling the buttons toward
-          // the middle.)
-          Expanded(
-            child: Row(
-              children: [
-                MacosTooltip(
-                  message: watchHint,
-                  child: MacosIcon(
-                    CupertinoIcons.circle_fill,
-                    size: 8,
-                    color: dotColor,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const MacosIcon(CupertinoIcons.arrow_branch, size: 18),
-                const SizedBox(width: 6),
-                // The branch name is the one unbounded piece of user data in
-                // this toolbar — it truncates first.
-                Flexible(
-                  child: Text(
-                    label,
-                    style: typography.headline,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-                // The divergence badge moved to the sync group's emphasized
-                // verb, where the recommendation it explains lives. Rendering
-                // it here too put the same "↑2" twice on one screen.
-                if (!hasRemote) ...[
-                  const SizedBox(width: 8),
-                  Text(
-                    'No remote detected',
-                    style: typography.caption1.copyWith(
-                      color: MacosColors.systemYellowColor,
-                    ),
-                  ),
-                ] else if (emptyRepo) ...[
-                  // The remote IS wired; the repo just has no commits/refs
-                  // yet. The old refs-based test rendered "No remote
-                  // detected" here, reading like the create/clone flow had
-                  // failed to configure origin when it had done so perfectly.
-                  const SizedBox(width: 8),
-                  Text(
-                    'No branches yet — repository is empty',
-                    style: typography.caption1.copyWith(
-                      color: MacosColors.systemGrayColor,
-                    ),
-                  ),
-                ],
-                // SSH latency + connection status (ambient shell row is
-                // hidden on this page so the strip lives only on the
-                // toolbar). Hidden for local sessions — skip the gap too so
-                // layout stays tight. Flexible: ambient info yields
-                // (truncates) when the pane runs narrow.
-                if (!ref.watch(
-                  connectionProvider.select((c) => c.isLocal),
-                )) ...[
-                  const SizedBox(width: 12),
-                  const Flexible(child: SshLinkStatusRow()),
-                ],
-              ],
-            ),
-          ),
-          _toolButton(
-            CupertinoIcons.cloud_download,
-            'Fetch',
-            remoteDisabled ? null : _fetch,
-          ),
-          _toolButton(
-            CupertinoIcons.arrow_down_circle,
-            'Pull',
-            remoteDisabled
-                ? null
-                : () => _pull(ref.read(appSettingsProvider).defaultPullMode),
-            color: _needsPull(branch) ? MacosColors.systemGreenColor : null,
-          ),
-          _toolButton(
-            CupertinoIcons.arrow_up_circle,
-            'Push',
-            remoteDisabled
-                ? null
-                : () => _push(
-                    followTags: ref.read(appSettingsProvider).pushFollowTags,
-                  ),
-            color: _needsPush(branch) ? MacosColors.systemGreenColor : null,
-          ),
-          _toolButton(
-            CupertinoIcons.arrow_2_circlepath,
-            'Sync (pull then push)',
-            remoteDisabled
-                ? null
-                : () => _sync(ref.read(appSettingsProvider).defaultPullMode),
-            color: _needsPush(branch) && _needsPull(branch)
-                ? MacosColors.systemGreenColor
-                : null,
-          ),
-          _toolButton(
-            CupertinoIcons.tray_arrow_down,
-            'Stash',
-            busy ? null : _stashPush,
-          ),
-          const SizedBox(width: 2),
-          // The Activity button used to be rendered a second time here at
-          // >=900px, ~300px from the identical one in the context bar. The bar
-          // now forwards onRevealOutput, so its copy is a full replacement.
-          ToolIconButton(
-            icon: CupertinoIcons.refresh,
-            tooltip: 'Refresh',
-            onPressed: _refresh,
-          ),
-          const SizedBox(width: 2),
-          ToolIconButton(
-            icon: CupertinoIcons.gear,
-            tooltip: 'Settings',
-            onPressed: () => showMacosSheet<void>(
-              context: context,
-              builder: (_) => const EscapeDismissible(child: SettingsSheet()),
-            ),
-          ),
-          const SizedBox(width: 6),
-          // System-grey to match the History toolbar's overflow menu, distinct
-          // from the accent-tinted action icons to its left.
-          MacosPulldownButtonTheme(
-            data: MacosPulldownButtonTheme.of(
-              context,
-            ).copyWith(iconColor: MacosColors.systemGrayColor),
-            child: MacosPulldownButton(
-              // Convention: toolbar menus use the "hamburger" (three horizontal
-              // lines) glyph — the universally recognized menu affordance.
-              icon: CupertinoIcons.line_horizontal_3,
-              items: [
-                MacosPulldownMenuItem(
-                  title: const Text('Pull (rebase)'),
-                  onTap: () => _pull(PullMode.rebase),
-                ),
-                MacosPulldownMenuItem(
-                  title: const Text('Pull (merge)'),
-                  onTap: () => _pull(PullMode.merge),
-                ),
-                const MacosPulldownMenuDivider(),
-                MacosPulldownMenuItem(
-                  title: const Text('Push (set upstream)'),
-                  onTap: () => _push(setUpstream: true),
-                ),
-                MacosPulldownMenuItem(
-                  title: const Text('Push tags'),
-                  onTap: () => _push(followTags: true),
-                ),
-                MacosPulldownMenuItem(
-                  title: const Text('Force push (with lease)'),
-                  onTap: () => _push(force: PushForce.withLease),
-                ),
-                MacosPulldownMenuItem(
-                  title: const Text('Force push'),
-                  onTap: () => _push(force: PushForce.force),
-                ),
-                const MacosPulldownMenuDivider(),
-                MacosPulldownMenuItem(
-                  title: const Text('Sync (pull then push)'),
-                  onTap: () =>
-                      _sync(ref.read(appSettingsProvider).defaultPullMode),
-                ),
-                const MacosPulldownMenuDivider(),
-                MacosPulldownMenuItem(
-                  // Distinguished from History's `history.amend`, which
-                  // carries the same words: two identically-labelled commands
-                  // that do different things are indistinguishable in the
-                  // palette and the menu bar.
-                  title: const Text('Amend last commit (working tree)'),
-                  onTap: _amend,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _toolButton(
-    IconData icon,
-    String tooltip,
-    VoidCallback? onPressed, {
-    Color? color,
-  }) => ToolIconButton(
-    icon: icon,
-    tooltip: tooltip,
-    size: 18,
-    color: color,
-    onPressed: onPressed,
-  );
-
-  // Whether the Push/Sync icons should flip to green — a commit sitting
-  // locally, unpushed, with nothing else needed. No upstream means there's
-  // nothing to compare against, so no cue either way.
-  bool _needsPush(GitBranchInfo? branch) =>
-      branch != null && branch.hasUpstream && branch.ahead > 0;
-
-  // Same, for Pull/Sync: the upstream has commits this branch doesn't.
-  bool _needsPull(GitBranchInfo? branch) =>
-      branch != null && branch.hasUpstream && branch.behind > 0;
 
   List<_StatusRow> _statusRows(GitStatus status) {
     if (identical(status, _rowsForStatus)) return _rows;
