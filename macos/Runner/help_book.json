@@ -1,6 +1,6 @@
 {
   "title": "Magic Git User Guide",
-  "version": "1.0",
+  "version": "1.1",
   "categories": [
     {
       "id": "getting_started",
@@ -11,11 +11,27 @@
           "id": "overview",
           "title": "Welcome to Magic Git",
           "summary": "Overview of Magic Git's native macOS interface, workspace multi-tab concept, and core capabilities.",
-          "keywords": ["welcome", "overview", "introduction", "getting started", "magic git", "workspace"],
+          "keywords": [
+            "welcome",
+            "overview",
+            "introduction",
+            "getting started",
+            "magic git",
+            "workspace"
+          ],
           "shortcuts": [
-            {"label": "Global Command Palette", "keys": "⌘K"},
-            {"label": "Refresh Repository State", "keys": "⌘R"},
-            {"label": "Preferences & Settings", "keys": "⌘,"}
+            {
+              "label": "Global Command Palette",
+              "keys": "⌘K"
+            },
+            {
+              "label": "Refresh Repository State",
+              "keys": "⌘R"
+            },
+            {
+              "label": "Preferences & Settings",
+              "keys": "⌘,"
+            }
           ],
           "sections": [
             {
@@ -42,10 +58,14 @@
           "id": "quickstart",
           "title": "Connecting to Repositories",
           "summary": "Learn how to open local Git repositories and connect to remote hosts over SSH.",
-          "keywords": ["connect", "ssh", "local", "clone", "create", "remote", "bookmark"],
-          "shortcuts": [
-            {"label": "Open Connections Sheet", "keys": "⌘⇧C"},
-            {"label": "Clone Repository", "keys": "⌘⇧O"}
+          "keywords": [
+            "connect",
+            "ssh",
+            "local",
+            "clone",
+            "create",
+            "remote",
+            "bookmark"
           ],
           "sections": [
             {
@@ -54,7 +74,7 @@
             },
             {
               "type": "paragraph",
-              "text": "To open a local repository, click Open Local Folder on the landing screen or use the Connections panel. Magic Git requests folder access via a standard macOS open panel and saves a security-scoped bookmark for subsequent app launches."
+              "text": "To open a local repository, use the Connections Manager on the landing screen (or a recent repository from its Recents list) and pick the folder in the macOS open panel — or drop the folder onto the window. Magic Git saves a security-scoped bookmark so later launches reopen it without asking again."
             },
             {
               "type": "heading",
@@ -62,13 +82,13 @@
             },
             {
               "type": "paragraph",
-              "text": "Magic Git supports direct remote SSH operations. Enter your SSH host, username, port, and key path. Private keys with passphrases and host key verification prompts are fully supported."
+              "text": "Magic Git runs git directly on a remote host over SSH. Enter the host, username and port, then load or paste a PEM private key. Keys with passphrases and host-key verification prompts are fully supported."
             },
             {
               "type": "callout",
               "style": "tip",
               "title": "Automatic Reconnection",
-              "text": "If a remote SSH connection drops mid-session, Magic Git displays a background retry banner with a live reconnect timer without losing your local work state."
+              "text": "If a remote SSH connection drops mid-session, Magic Git covers the window with a reconnect overlay and retries with a live timer; Stop Retrying pauses it and Cancel returns to the connection card. Your local work state is preserved."
             }
           ]
         }
@@ -83,13 +103,36 @@
           "id": "tab_repository",
           "title": "Repository (Status & Staging) Tab",
           "summary": "Stage changes, view line diffs, discard modifications, and commit HEAD updates.",
-          "keywords": ["status", "staging", "commit", "amend", "discard", "diff", "split diff"],
+          "keywords": [
+            "status",
+            "staging",
+            "commit",
+            "amend",
+            "discard",
+            "diff",
+            "split diff"
+          ],
           "shortcuts": [
-            {"label": "Stage / Unstage Selected File", "keys": "Space"},
-            {"label": "Stage All Changes", "keys": "⌘⇧A"},
-            {"label": "Discard Unstaged Changes", "keys": "⌘⇧⌫"},
-            {"label": "Toggle Side-by-Side Diff", "keys": "⌥⌘S"},
-            {"label": "Confirm & Commit", "keys": "⌘↩"}
+            {
+              "label": "Stage / Unstage Selected File",
+              "keys": "Space"
+            },
+            {
+              "label": "Stage All Changes",
+              "keys": "⌘⇧A"
+            },
+            {
+              "label": "Discard Unstaged Changes",
+              "keys": "⌘⇧⌫"
+            },
+            {
+              "label": "Toggle Side-by-Side Diff",
+              "keys": "⌥⌘S"
+            },
+            {
+              "label": "Confirm & Commit",
+              "keys": "⌘↩"
+            }
           ],
           "sections": [
             {
@@ -129,12 +172,33 @@
           "id": "tab_history",
           "title": "History & Commit Graph Tab",
           "summary": "Explore commit history, topological graph lanes, filter commits, and perform branch mutations.",
-          "keywords": ["history", "graph", "commit graph", "all branches", "log", "revert", "cherry-pick", "pop out"],
+          "keywords": [
+            "history",
+            "graph",
+            "commit graph",
+            "all branches",
+            "log",
+            "revert",
+            "cherry-pick",
+            "pop out"
+          ],
           "shortcuts": [
-            {"label": "Checkout Selected Commit", "keys": "⌘⇧B"},
-            {"label": "Open History in New Window", "keys": "⌘⇧H"},
-            {"label": "Copy Commit SHA", "keys": "⌘C"},
-            {"label": "Filter History Log", "keys": "⌘F"}
+            {
+              "label": "Checkout Selected Commit",
+              "keys": "⌘⇧B"
+            },
+            {
+              "label": "Open History in New Window",
+              "keys": "⌘⇧H"
+            },
+            {
+              "label": "Copy Commit SHA",
+              "keys": "⌘C"
+            },
+            {
+              "label": "Filter History Log",
+              "keys": "⌘F"
+            }
           ],
           "sections": [
             {
@@ -172,12 +236,33 @@
           "id": "tab_branches",
           "title": "Branches & Merging Tab",
           "summary": "Manage local and remote tracking branches, create new branches, merge, rebase, and sync remotes.",
-          "keywords": ["branches", "checkout", "create branch", "merge", "rebase", "fetch", "push", "pull"],
+          "keywords": [
+            "branches",
+            "checkout",
+            "create branch",
+            "merge",
+            "rebase",
+            "fetch",
+            "push",
+            "pull"
+          ],
           "shortcuts": [
-            {"label": "Create New Branch", "keys": "⌘B"},
-            {"label": "Merge Selected Branch", "keys": "⌘⇧M"},
-            {"label": "Delete Selected Branch", "keys": "⌘⌫"},
-            {"label": "Sync / Fetch Remotes", "keys": "⌘⇧Y"}
+            {
+              "label": "Create New Branch",
+              "keys": "⌘B"
+            },
+            {
+              "label": "Merge Selected Branch",
+              "keys": "⌘⇧M"
+            },
+            {
+              "label": "Delete Selected Branch",
+              "keys": "⌘⌫"
+            },
+            {
+              "label": "Sync / Fetch Remotes",
+              "keys": "⌘⇧Y"
+            }
           ],
           "sections": [
             {
@@ -209,10 +294,24 @@
           "id": "tab_stashes",
           "title": "Stashes Tab",
           "summary": "Save uncommitted modifications to the stash stack, inspect diff previews, apply, pop, and drop stashes.",
-          "keywords": ["stash", "stashes", "apply", "pop", "drop", "save stash", "untracked"],
+          "keywords": [
+            "stash",
+            "stashes",
+            "apply",
+            "pop",
+            "drop",
+            "save stash",
+            "untracked"
+          ],
           "shortcuts": [
-            {"label": "Stash Working Changes", "keys": "⌘S"},
-            {"label": "Apply Selected Stash", "keys": "⌥⌘A"}
+            {
+              "label": "Stash Working Changes",
+              "keys": "⌘⇧S"
+            },
+            {
+              "label": "Apply Selected Stash",
+              "keys": "⌥⌘A"
+            }
           ],
           "sections": [
             {
@@ -245,9 +344,23 @@
           "id": "tab_forge",
           "title": "Forge (GitHub & GitLab) Tab",
           "summary": "Inspect Pull Requests, Merge Requests, CI/CD pipeline runs, issues, and live build trace logs.",
-          "keywords": ["forge", "github", "gitlab", "pr", "pull request", "mr", "merge request", "ci/cd", "pipeline", "job trace"],
+          "keywords": [
+            "forge",
+            "github",
+            "gitlab",
+            "pr",
+            "pull request",
+            "mr",
+            "merge request",
+            "ci/cd",
+            "pipeline",
+            "job trace"
+          ],
           "shortcuts": [
-            {"label": "Switch to Forge Panel", "keys": "⌘5"}
+            {
+              "label": "Switch to Forge Panel",
+              "keys": "⌘5"
+            }
           ],
           "sections": [
             {
@@ -280,9 +393,19 @@
           "id": "tab_worktrees",
           "title": "Worktrees Tab",
           "summary": "Create and manage multiple concurrent Git worktrees for parallel branch development.",
-          "keywords": ["worktree", "worktrees", "parallel", "checkout", "directory", "sandbox"],
+          "keywords": [
+            "worktree",
+            "worktrees",
+            "parallel",
+            "checkout",
+            "directory",
+            "sandbox"
+          ],
           "shortcuts": [
-            {"label": "Switch to Worktrees Panel", "keys": "⌘6"}
+            {
+              "label": "Switch to Worktrees Panel",
+              "keys": "⌘6"
+            }
           ],
           "sections": [
             {
@@ -316,7 +439,14 @@
           "id": "feature_ssh",
           "title": "Remote SSH & Host Verification",
           "summary": "Secure remote Git operations over SSH with key passphrases and host key verification.",
-          "keywords": ["ssh", "remote", "passphrase", "host key", "reconnect", "network"],
+          "keywords": [
+            "ssh",
+            "remote",
+            "passphrase",
+            "host key",
+            "reconnect",
+            "network"
+          ],
           "sections": [
             {
               "type": "paragraph",
@@ -336,16 +466,32 @@
           "id": "feature_palette",
           "title": "Command Palette & Keymap",
           "summary": "Search all actions, run panel commands, and customize global keyboard shortcuts.",
-          "keywords": ["palette", "command palette", "shortcuts", "keymap", "keybindings", "undo"],
+          "keywords": [
+            "palette",
+            "command palette",
+            "shortcuts",
+            "keymap",
+            "keybindings",
+            "undo"
+          ],
           "shortcuts": [
-            {"label": "Global Command Palette", "keys": "⌘K"},
-            {"label": "Keyboard Shortcuts Sheet", "keys": "⌘?"},
-            {"label": "Undo Last Action", "keys": "⌘Z"}
+            {
+              "label": "Global Command Palette",
+              "keys": "⌘K"
+            },
+            {
+              "label": "Keyboard Shortcuts Sheet",
+              "keys": "⌘/"
+            },
+            {
+              "label": "Undo Last Action",
+              "keys": "⌘Z"
+            }
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "Press ⌘K or ⌘P anywhere in the application to summon the Command Palette. Type to search commands, branch names, worktrees, or settings."
+              "text": "Press ⌘K anywhere in the application to summon the Command Palette. Type to search commands, branch names, worktrees, or settings."
             },
             {
               "type": "heading",
@@ -368,7 +514,15 @@
           "id": "tool_health",
           "title": "Tool Health & Environment",
           "summary": "Check system availability and binary paths for git, ssh, gh, and glab.",
-          "keywords": ["tool health", "git path", "ssh path", "gh", "glab", "binary", "environment"],
+          "keywords": [
+            "tool health",
+            "git path",
+            "ssh path",
+            "gh",
+            "glab",
+            "binary",
+            "environment"
+          ],
           "sections": [
             {
               "type": "paragraph",
@@ -380,10 +534,23 @@
           "id": "output_log",
           "title": "Output Log & Command Recovery",
           "summary": "View real-time command execution output, stdout/stderr streams, and exit codes.",
-          "keywords": ["output log", "recovery", "command log", "stdout", "stderr", "diagnostics"],
+          "keywords": [
+            "output log",
+            "recovery",
+            "command log",
+            "stdout",
+            "stderr",
+            "diagnostics"
+          ],
           "shortcuts": [
-            {"label": "Toggle Output Log View", "keys": "⌘⇧O"},
-            {"label": "Toggle Recovery View", "keys": "⌘⇧U"}
+            {
+              "label": "Toggle Output Log View",
+              "keys": "⌘⇧O"
+            },
+            {
+              "label": "Toggle Recovery View",
+              "keys": "⌘⇧U"
+            }
           ],
           "sections": [
             {

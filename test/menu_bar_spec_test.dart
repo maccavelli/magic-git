@@ -90,8 +90,12 @@ void main() {
 
   test('every menu item resolves to a handler in its owning panel', () {
     for (final id in menuBarActionIds()) {
-      final panel = panelOwnerOf(id)!;
-      final sources = _panelSources[panel]!;
+      final panel = panelOwnerOf(id);
+      // Shell-scoped ids (File ▸ New/Close Tab) run through AppShell's
+      // _globalHandlers map instead of a panel (0009 M4).
+      final sources = panel == null
+          ? const ['lib/features/app_shell.dart']
+          : _panelSources[panel]!;
       final wired = sources.any((path) => _read(path).contains("'$id':"));
       expect(
         wired,
@@ -118,7 +122,10 @@ void main() {
     expect(payload.length, kMenuBarMenus.length);
 
     // Swift walks exactly these keys; a rename here silently empties a menu.
-    final repository = payload.first;
+    // File leads (Swift repositions it after the app menu); Repository is
+    // the first repository-facing menu.
+    expect(payload.first['title'], 'File');
+    final repository = payload[1];
     expect(repository['title'], 'Repository');
     final items = repository['items']! as List<Object?>;
     expect(items, isNotEmpty);

@@ -4,7 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/exec/operation_activity.dart';
+import '../../core/providers/app_providers.dart';
+import 'escape_dismissible.dart';
 import 'inline_action_button.dart';
+import 'menu_bar_bridge.dart';
 import 'tool_icon_button.dart';
 
 class ActivityCenterButton extends ConsumerWidget {
@@ -47,20 +50,74 @@ class ActivityCenterButton extends ConsumerWidget {
         tooltip: label,
         onPressed: () => showMacosSheet<void>(
           context: context,
-          builder: (context) => MacosSheet(
-            child: SizedBox(
-              width: 520,
-              height: 420,
-              child: ActivityCenterList(
-                records: records,
-                onRevealOutput: onRevealOutput,
-                onUndo: onUndo,
-                onOpenRecovery: onOpenRecovery,
+          builder: (context) => EscapeDismissible(
+            child: MacosSheet(
+              child: SizedBox(
+                width: 520,
+                height: 420,
+                // A live sheet, not a tap-time snapshot (0009 M3): the sheet
+                // itself watches the provider, so a fetch that finishes while
+                // it is open updates in place.
+                child: ActivityCenterSheet(
+                  repositoryPath: repositoryPath,
+                  onRevealOutput: onRevealOutput,
+                ),
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The sheet body: watches [operationActivityProvider] live and wires the
+/// actions the tap-time snapshot never could (0009 M3). Undo re-enters
+/// through the same `global.undo` route the keyboard and menu use — with all
+/// of its stale/dirty guards — and is only offered on the newest undoable
+/// record, since the journal is a stack. Recovery toggles the shared
+/// provider-driven sheet.
+class ActivityCenterSheet extends ConsumerWidget {
+  final String? repositoryPath;
+  final ValueChanged<OperationId>? onRevealOutput;
+
+  const ActivityCenterSheet({
+    super.key,
+    this.repositoryPath,
+    this.onRevealOutput,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final records = ref.watch(operationActivityProvider).where((record) {
+      return repositoryPath == null ||
+          record.descriptor.repositoryPath == repositoryPath;
+    }).toList();
+    final newestUndoable = records
+        .where((record) => record.undoable)
+        .firstOrNull;
+    return ActivityCenterList(
+      records: records,
+      undoableRecordId: newestUndoable?.id,
+      // Reveal pops the sheet first so the Output pane isn't buried under it.
+      onRevealOutput: onRevealOutput == null
+          ? null
+          : (id) {
+              Navigator.of(context).pop();
+              onRevealOutput!(id);
+            },
+      onUndo: newestUndoable == null
+          ? null
+          : (id) {
+              Navigator.of(context).pop();
+              ref
+                  .read(menuActionRequestProvider.notifier)
+                  .request('global.undo');
+            },
+      onOpenRecovery: (id) {
+        Navigator.of(context).pop();
+        ref.read(recoveryVisibleProvider.notifier).setVisible(true);
+      },
     );
   }
 }
@@ -71,12 +128,17 @@ class ActivityCenterList extends StatelessWidget {
   final ValueChanged<OperationId>? onUndo;
   final ValueChanged<OperationId>? onOpenRecovery;
 
+  /// The only record whose row may offer Undo — the journal is a stack, so
+  /// anything but its newest undoable entry would be a lying button.
+  final OperationId? undoableRecordId;
+
   const ActivityCenterList({
     super.key,
     required this.records,
     this.onRevealOutput,
     this.onUndo,
     this.onOpenRecovery,
+    this.undoableRecordId,
   });
 
   @override
@@ -108,7 +170,7 @@ class ActivityCenterList extends StatelessWidget {
                 itemBuilder: (context, index) => _ActivityRow(
                   record: records[index],
                   onRevealOutput: onRevealOutput,
-                  onUndo: onUndo,
+                  onUndo: records[index].id == undoableRecordId ? onUndo : null,
                   onOpenRecovery: onOpenRecovery,
                 ),
               ),

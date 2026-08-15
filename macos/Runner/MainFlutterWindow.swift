@@ -212,6 +212,14 @@ class MainFlutterWindow: NSWindow {
           self?.installDynamicMenus(spec)
         }
         result(nil)
+      case "setViewMenuShortcuts":
+        // Dart pushes the keymap's CURRENT bindings for the View items
+        // (0009 M2) — a remapped ⌘R/⌘K stops fighting a stale native
+        // equivalent, and an unbound action loses its equivalent entirely.
+        if let spec = call.arguments as? [String: [String: Any]] {
+          self?.applyViewMenuShortcuts(spec)
+        }
+        result(nil)
       case "terminateNow":
         // Dart declined an earlier prepareToTerminate to confirm a guarded
         // quit with the user, finished its teardown, and now wants the real
@@ -500,6 +508,46 @@ class MainFlutterWindow: NSWindow {
 
   /// Adds plain (non-checkable) command items to an existing menu, skipping
   /// any already installed — `awakeFromNib` can run more than once.
+  private static func modifierMask(_ modifiers: [String]) -> NSEvent.ModifierFlags {
+    var mask: NSEvent.ModifierFlags = []
+    for modifier in modifiers {
+      switch modifier {
+      case "command": mask.insert(.command)
+      case "shift": mask.insert(.shift)
+      case "option": mask.insert(.option)
+      case "control": mask.insert(.control)
+      default: break
+      }
+    }
+    return mask
+  }
+
+  /// Applies Dart-pushed key equivalents to the View menu's items (0009 M2).
+  /// Items are matched by their representedObject action id; the four toggle
+  /// items don't carry one (they use dedicated selectors), so they are mapped
+  /// explicitly. Suppression (H16) holds saved equivalents, so it is lifted
+  /// and re-applied around the update.
+  private func applyViewMenuShortcuts(_ spec: [String: [String: Any]]) {
+    let wasSuppressed = equivalentsSuppressed
+    if wasSuppressed { setKeyEquivalentsSuppressed(false) }
+    func apply(_ item: NSMenuItem?, _ id: String) {
+      guard let item = item, let binding = spec[id] else { return }
+      item.keyEquivalent = binding["key"] as? String ?? ""
+      item.keyEquivalentModifierMask = Self.modifierMask(
+        binding["modifiers"] as? [String] ?? [])
+    }
+    if let viewMenu = installedViewMenu {
+      for item in viewMenu.items {
+        if let id = item.representedObject as? String { apply(item, id) }
+      }
+    }
+    apply(showOutputItem, "global.toggleOutput")
+    apply(showFileItem, "global.toggleFileView")
+    apply(dashboardItem, "global.toggleDashboard")
+    apply(recoveryItem, "global.toggleRecovery")
+    if wasSuppressed { setKeyEquivalentsSuppressed(true) }
+  }
+
   private func installPlainItems(
     in menu: NSMenu,
     items: [(title: String, actionId: String, key: String,
@@ -560,7 +608,13 @@ class MainFlutterWindow: NSWindow {
       submenu.autoenablesItems = true
       populate(menu: submenu, from: items)
       parent.submenu = submenu
-      mainMenu.insertItem(parent, at: insertAt)
+      if title == "File" {
+        // File belongs right after the app menu, not among the repository
+        // menus before Window (0009 M4). Everything below shifts one right.
+        mainMenu.insertItem(parent, at: min(1, mainMenu.items.count))
+      } else {
+        mainMenu.insertItem(parent, at: insertAt)
+      }
       dynamicMenuItems.append(parent)
       insertAt += 1
     }

@@ -198,5 +198,63 @@ void main() {
         reason: 'the History topic should teach ⌘⇧B as checkout',
       );
     });
+
+    // 0009 M27: every Help chord that collides with a keymap default must
+    // describe the same verb — a taught chord that runs something else is
+    // exactly the ⌘⇧B/checkout trap H18 closed. Verbs are compared by
+    // significant-word overlap with the owning action's label; any scope's
+    // owner counts, since non-overlapping scopes may legitimately share a
+    // chord.
+    test('every Help chord agrees with the keymap action that owns it', () {
+      const stopWords = {
+        'the', 'a', 'an', 'to', 'of', 'in', 'on', 'for', 'and', 'or',
+        'view', 'sheet', 'panel', 'selected', 'all', 'with', 'file', 'files',
+        'log', 'state', 'last', 'working', //
+      };
+      Set<String> words(String s) => s
+          .toLowerCase()
+          .split(RegExp('[^a-z]+'))
+          .where((w) => w.isNotEmpty && !stopWords.contains(w))
+          .toSet();
+      String keyPartOf(KeyBinding b) => b.label.replaceAll(
+        RegExp('[⌃⌥⇧⌘]'),
+        '',
+      );
+
+      for (final cat in jsonBook['categories'] as List<dynamic>) {
+        final topics = (cat as Map<String, dynamic>)['topics'] as List<dynamic>;
+        for (final top in topics) {
+          final topic = top as Map<String, dynamic>;
+          final shortcuts = topic['shortcuts'] as List<dynamic>? ?? const [];
+          for (final sc in shortcuts) {
+            final shortcut = sc as Map<String, dynamic>;
+            final chord = _parseChord(shortcut['keys'] as String);
+            final owners = kKeymapActions.where(
+              (action) => action.defaultBindings.any(
+                (b) =>
+                    b.meta == chord.meta &&
+                    b.shift == chord.shift &&
+                    b.alt == chord.alt &&
+                    b.control == chord.control &&
+                    keyPartOf(b).toUpperCase() == chord.key.toUpperCase(),
+              ),
+            );
+            if (owners.isEmpty) continue; // chord unbound (native ⌘, etc.)
+            final helpWords = words(shortcut['label'] as String);
+            expect(
+              owners.any(
+                (a) => words(a.label).intersection(helpWords).isNotEmpty,
+              ),
+              isTrue,
+              reason:
+                  'Help teaches "${shortcut['label']}" for '
+                  '${shortcut['keys']}, but the keymap binds that chord to '
+                  '${owners.map((a) => '${a.id} ("${a.label}")').join(', ')} '
+                  '(topic ${topic['id']})',
+            );
+          }
+        }
+      }
+    });
   });
 }

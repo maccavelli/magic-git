@@ -64,9 +64,10 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
     _email = TextEditingController(text: s.committerEmail);
     _pullMode = s.defaultPullMode;
     _followTags = s.pushFollowTags;
-    _autoFetch = _fetchChoices.contains(s.autoFetchMinutes)
-        ? s.autoFetchMinutes
-        : 0;
+    // Never coerce: a custom interval (edited config, older build) must not
+    // silently become Off just because this sheet was opened and saved
+    // (0009 M28) — the picker lists the stored value as its own choice.
+    _autoFetch = s.autoFetchMinutes;
     _workspaceDensity = s.workspaceDensity;
     _workspaceHighContrast = s.workspaceHighContrast;
     _bin = {
@@ -245,7 +246,12 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
                 MacosPulldownButton(
                   title: _fetchLabel(_autoFetch),
                   items: [
-                    for (final m in _fetchChoices)
+                    // A custom stored interval joins the stock choices in
+                    // its sorted position, so it stays selected (0009 M28).
+                    for (final m
+                        in _fetchChoices.contains(_autoFetch)
+                            ? _fetchChoices
+                            : ([..._fetchChoices, _autoFetch]..sort()))
                       MacosPulldownMenuItem(
                         title: Text(_fetchLabel(m)),
                         onTap: () => setState(() => _autoFetch = m),

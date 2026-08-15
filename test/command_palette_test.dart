@@ -251,6 +251,25 @@ void main() {
     expect(find.text('Refresh'), findsOneWidget);
   });
 
+  // 0009 M1: the catalog derives from kPanelActionOwner, so panel verbs the
+  // menu offers can never be missing from ⌘K. Spot-check the ones the old
+  // hardcoded list omitted.
+  testWidgets('menu-only repository verbs are searchable', (tester) async {
+    await _open(tester, _Recorder());
+
+    for (final label in [
+      'Pull (rebase)',
+      'Unstage all',
+      'Abort pending operation',
+      'Amend last commit (working tree)',
+    ]) {
+      await tester.enterText(find.byType(MacosTextField), label);
+      await tester.pumpAndSettle();
+      // Two: the query text inside the field, and the matching row.
+      expect(find.text(label), findsNWidgets(2), reason: '$label missing');
+    }
+  });
+
   testWidgets('Clone/Create Repository commands invoke their callbacks', (
     tester,
   ) async {

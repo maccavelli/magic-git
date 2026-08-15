@@ -10,6 +10,8 @@ import 'package:window_manager/window_manager.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/providers/window_manager_bridge.dart';
+import '../../core/settings/keymap.dart';
+import '../../core/settings/settings_bus.dart';
 import '../../core/theme/app_theme.dart';
 import '../app_shell.dart';
 import '../common/actions.dart';
@@ -79,6 +81,10 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
   /// item's checkmark stays in sync. Routed to the ACTIVE tab's container.
   static const _menuChannel = MethodChannel('magicgit/menu');
 
+  /// Re-pushes the View items' native key equivalents when Keyboard Mappings
+  /// persists a change (0009 M2).
+  StreamSubscription<void>? _keymapSub;
+
   /// Debounces persisting the window's bounds while it's moved/resized. Saving
   /// continuously (rather than only on close/quit) is what makes the restore
   /// reliable: ⌘Q is intercepted (`prepareToTerminate`) and the red button
@@ -124,6 +130,12 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _pushActiveState();
     });
+    // A rebind in Keyboard Mappings must reach the native View items too, or
+    // the stale equivalent keeps beating Flutter's handler (0009 M2). The
+    // bus fires once per persisted write — no extra debounce needed.
+    _keymapSub = SettingsBus.instance.onKeymapWritten.listen((_) {
+      if (mounted) _pushViewMenuShortcuts();
+    });
   }
 
   @override
@@ -131,6 +143,7 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     // Detach the native menu handler so a late toggle from Swift can't touch a
     // disposed container.
     _menuChannel.setMethodCallHandler(null);
+    _keymapSub?.cancel();
     _boundsSaveTimer?.cancel();
     windowManager.removeListener(this);
     for (final s in _activeSubs) {
@@ -220,7 +233,52 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     _syncMenuState('setDashboardChecked', c.read(dashboardVisibleProvider));
     _syncMenuState('setRecoveryChecked', c.read(recoveryVisibleProvider));
     _syncEnabledActions(c.read(availableActionsProvider));
+    _pushViewMenuShortcuts();
     unawaited(windowManager.setTitle(c.read(windowTitleProvider)));
+  }
+
+  /// The View items whose native key equivalents mirror the live keymap
+  /// (0009 M2). The pane-focus items ship unbound and stay out.
+  static const _viewShortcutIds = [
+    'global.toggleOutput',
+    'global.toggleFileView',
+    'global.toggleDashboard',
+    'global.toggleRecovery',
+    'global.refresh',
+    'global.commandPalette',
+  ];
+
+  /// AppKit key equivalents are single characters; a binding on anything
+  /// else (Enter, arrows…) clears the native shortcut instead — the Flutter
+  /// handler still serves it.
+  static String _keyEquivalentFor(KeyBinding binding) {
+    final label = LogicalKeyboardKey(binding.keyId).keyLabel;
+    return label.length == 1 ? label.toLowerCase() : '';
+  }
+
+  void _pushViewMenuShortcuts() {
+    final c = _controller.active?.container;
+    if (c == null) return;
+    final keymap = c.read(keymapProvider);
+    final payload = <String, Map<String, Object>>{};
+    for (final id in _viewShortcutIds) {
+      final binding = (keymap[id] ?? const <KeyBinding>[]).firstOrNull;
+      final key = binding == null ? '' : _keyEquivalentFor(binding);
+      payload[id] = {
+        'key': key,
+        'modifiers': key.isEmpty
+            ? const <String>[]
+            : [
+                if (binding!.meta) 'command',
+                if (binding.shift) 'shift',
+                if (binding.alt) 'option',
+                if (binding.control) 'control',
+              ],
+      };
+    }
+    _menuChannel
+        .invokeMethod<void>('setViewMenuShortcuts', payload)
+        .catchError((_) {});
   }
 
   void _syncMenuState(String method, bool visible) {

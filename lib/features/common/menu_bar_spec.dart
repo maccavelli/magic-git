@@ -106,9 +106,17 @@ class MenuBarMenu {
 }
 
 /// The repository-facing menus, inserted before the Window menu in the order
-/// given. The app, Edit, View, Window and Help menus stay as they are — View
-/// keeps its own natively-installed toggles.
+/// given — except the File menu, which Swift places right after the app menu
+/// (its conventional macOS position). The app, Edit, View, Window and Help
+/// menus stay as they are — View keeps its own natively-installed toggles.
 const List<MenuBarMenu> kMenuBarMenus = [
+  // Tab lifecycle (0009 M4). New Tab shows its ⌘T equivalent; Close Tab
+  // ships unbound (⌘W is viewer-owned — see keymap.dart) so this menu item
+  // is its discoverable route.
+  MenuBarMenu('File', [
+    MenuBarItem('New Tab', 'global.newTab', key: 't'),
+    MenuBarItem('Close Tab', 'global.closeTab'),
+  ]),
   MenuBarMenu('Repository', [
     MenuBarItem('Fetch', 'repository.fetch'),
     MenuBarItem.submenu('Pull', [
@@ -215,7 +223,10 @@ Set<String> menuBarActionIds() => {
   for (final menu in kMenuBarMenus) ...menu.actionIds,
 };
 
-/// Menu ids whose owning panel is unknown — always empty in a correct build,
-/// and asserted to be so by `menu_bar_spec_test.dart`.
-Set<String> unroutableMenuActionIds() =>
-    menuBarActionIds().where((id) => panelOwnerOf(id) == null).toSet();
+/// Menu ids with no route at all — always empty in a correct build, and
+/// asserted to be so by `menu_bar_spec_test.dart`. `global.*` ids are routed
+/// by the shell itself (the menu-request listener falls through to
+/// `_globalHandlers`), so only non-global ids need a panel owner.
+Set<String> unroutableMenuActionIds() => menuBarActionIds()
+    .where((id) => panelOwnerOf(id) == null && !id.startsWith('global.'))
+    .toSet();
