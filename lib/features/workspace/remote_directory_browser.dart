@@ -154,9 +154,9 @@ class _RemoteDirectoryBrowserSheetState
                 ],
               ),
               const SheetDescription(
-                'Browse the connected host\'s filesystem and pick a folder — '
-                'double-click to enter a folder, or type an absolute path '
-                'and press Return.',
+                'Browse the connected host\'s filesystem — click a folder to '
+                'open it, or type an absolute path and press Return. Use '
+                '"Choose This Folder" to pick the folder you are in.',
               ),
               const SizedBox(height: 12),
               Row(

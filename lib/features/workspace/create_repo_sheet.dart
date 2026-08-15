@@ -269,6 +269,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
 
   @override
   void dispose() {
+    // A barrier-dismiss / route teardown skips _requestClose — hang up any
+    // still-provisioned session instead of leaking it (0009 M29; same
+    // fire-and-forget pattern as AddExistingRepoSheet's dispose).
+    _resetProvisioning();
     _unregisterEscape?.call();
     _name.dispose();
     _branch.dispose();
@@ -341,7 +345,14 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     final token = await ref
         .read(connectionProvider.notifier)
         .beginProvisioning(conn);
-    if (!mounted) return false;
+    if (!mounted) {
+      // Torn down while dialing — hang up rather than leak the session
+      // (0009 M29); the token was never stored, so dispose can't reach it.
+      if (token != null) {
+        ref.read(connectionProvider.notifier).abortProvisioning(token).ignore();
+      }
+      return false;
+    }
     setState(() {
       _provisioning = false;
       _provisionToken = token;
@@ -753,8 +764,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       final warning = warnings.isEmpty ? null : warnings.join('\n\n');
 
       // --- Register + activate (shared matrix) --------------------------
-      await _register(dest);
+      final registered = await _register(dest);
       if (!mounted) return;
+      if (!registered) {
+        // Created on disk/forge but never became the live workspace — the
+        // green Complete state would be a lie (0009 H19). Provisioning (if
+        // any) stays alive for a retry.
+        setState(() {
+          _error = 'The repository was created but could not be opened.';
+        });
+        return;
+      }
       _provisionToken = null; // finalized (or not provisioning) — don't abort
       if (warning != null) {
         setState(() => _completedWarning = warning);
@@ -992,17 +1012,19 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     }
   }
 
-  Future<void> _register(String dest) async {
+  /// Returns whether the new repo actually became the live workspace
+  /// (0009 H19) — a silent failure must not paint the green Complete state.
+  Future<bool> _register(String dest) async {
     switch (_target) {
       case WorkspaceTarget.localMac:
-        await registerAndActivateLocal(
+        return registerAndActivateLocal(
           ref,
           dest: dest,
           label: _localLabel.text.trim(),
           save: _saveLocal,
         );
       case WorkspaceTarget.sshActive:
-        await registerAndActivateSshActive(
+        return registerAndActivateSshActive(
           ref,
           dest: dest,
           fsmonitor: _fsmonitor,
@@ -1011,19 +1033,22 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       case WorkspaceTarget.sshProvision:
         final conn = await _connectionById(_destConnectionId);
         final token = _provisionToken;
-        if (conn != null && token != null) {
-          await ref.read(connectionProvider.notifier).finalizeProvisioned(
-            token: token,
-            conn: conn,
-            repoPath: dest,
-            enableFsmonitor: _fsmonitor,
-            label: _remoteLabel.text.trim(),
-          );
-        }
+        if (conn == null || token == null) return false;
+        return ref.read(connectionProvider.notifier).finalizeProvisioned(
+          token: token,
+          conn: conn,
+          repoPath: dest,
+          enableFsmonitor: _fsmonitor,
+          label: _remoteLabel.text.trim(),
+        );
     }
   }
 
   Future<void> _requestClose() async {
+    // Escape / title-X while `git init` / forge publish is running must not
+    // tear the SSH session down under the in-flight command — the footer
+    // Cancel is already disabled for the same reason (0009 H20).
+    if (_submitting) return;
     await _resetProvisioning();
     if (mounted) Navigator.of(context).pop();
   }

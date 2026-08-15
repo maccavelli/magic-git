@@ -15,7 +15,11 @@ import '../../core/storage/saved_local_repo.dart';
 /// `AddExistingRepoSheet._openLocal`, minus the validation that `connectLocal`
 /// performs. Best-effort on the save: the repo stays open for the session
 /// even when persisting fails.
-Future<void> registerAndActivateLocal(
+///
+/// Returns whether [dest] actually became the live session — a silent false
+/// used to let the sheets flash green Complete while the user was still on
+/// the previous workspace (0009 H19). Save failures stay warnings (true).
+Future<bool> registerAndActivateLocal(
   WidgetRef ref, {
   required String dest,
   String label = '',
@@ -25,7 +29,7 @@ Future<void> registerAndActivateLocal(
   await ref
       .read(connectionProvider.notifier)
       .connectLocal(dest, label: label.isEmpty ? null : label, id: id);
-  if (!ref.read(connectionProvider).isConnected) return;
+  if (!ref.read(connectionProvider).isConnected) return false;
   if (id != null) {
     // Bookmark only a confirmed-open repo; the child of a picker-granted
     // parent is bookmarkable while that grant is live. Unsigned builds
@@ -47,13 +51,17 @@ Future<void> registerAndActivateLocal(
       // Open-for-session even if the save failed.
     }
   }
+  return true;
 }
 
 /// Persists [dest] into the *active saved connection's* repo list (when the
 /// session is a saved one — an ad-hoc session just switches), optionally
 /// enables fsmonitor, and makes [dest] the active repo. Mirrors the
 /// switcher's `_addRepo` + repo-switch sequence.
-Future<void> registerAndActivateSshActive(
+///
+/// Returns whether the session ended on [dest] (see
+/// [registerAndActivateLocal]) — false when the active session is gone.
+Future<bool> registerAndActivateSshActive(
   WidgetRef ref, {
   required String dest,
   required bool fsmonitor,
@@ -92,5 +100,7 @@ Future<void> registerAndActivateSshActive(
       await ref.read(gitServiceProvider).setFsmonitor(dest, enabled: true);
     } catch (_) {}
   }
+  if (!ref.read(connectionProvider).isConnected) return false;
   ref.read(connectionProvider.notifier).setRepoPath(dest);
+  return true;
 }

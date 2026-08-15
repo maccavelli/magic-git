@@ -65,6 +65,24 @@ class _FakeConnection extends ConnectionController {
   }
 }
 
+/// A connect that never lands — the phase stays disconnected, exactly what a
+/// bad path / dead transport produces.
+class _FailingConnection extends _FakeConnection {
+  _FailingConnection()
+    : super(const ConnectionState(phase: ConnectionPhase.disconnected));
+
+  @override
+  Future<void> connectLocal(
+    String repoPath, {
+    String? label,
+    String? id,
+    String? mainRepoPath,
+    String? gitDir,
+  }) async {
+    recordedConnectLocalRepoPath = repoPath;
+  }
+}
+
 class _FakeLocalRepoStore extends LocalRepoStore {
   SavedLocalRepo? saved;
 
@@ -172,6 +190,30 @@ void main() {
 
       expect(conn.recordedConnectLocalRepoPath, _dest);
       expect(conn.recordedConnectLocalId, isNull);
+      expect(localStore.saved, isNull);
+    });
+
+    // 0009 H19: a connect that never lands must report false — the sheets
+    // used to flash the green Complete state regardless.
+    testWidgets('a failed connect reports false and persists nothing', (
+      tester,
+    ) async {
+      final conn = _FailingConnection();
+      final localStore = _FakeLocalRepoStore();
+      final container = ProviderContainer(overrides: [
+        connectionProvider.overrideWith(() => conn),
+        localRepoStoreProvider.overrideWithValue(localStore),
+        savedLocalReposProvider.overrideWith((ref) async => const []),
+      ]);
+      addTearDown(container.dispose);
+
+      bool? result;
+      await _pumpWork(tester, container, (ref) async {
+        result = await registerAndActivateLocal(ref, dest: _dest, save: true);
+      });
+
+      expect(result, isFalse);
+      expect(conn.recordedConnectLocalRepoPath, _dest);
       expect(localStore.saved, isNull);
     });
 

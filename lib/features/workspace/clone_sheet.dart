@@ -199,6 +199,10 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
   @override
   void dispose() {
     _unregisterEscape?.call();
+    // A barrier-dismiss / route teardown skips _requestClose — hang up any
+    // still-provisioned session instead of leaking it (0009 M29; same
+    // fire-and-forget pattern as AddExistingRepoSheet's dispose).
+    _resetProvisioning();
     _host.dispose();
     _filter.dispose();
     _url.dispose();
@@ -280,7 +284,14 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
     final token = await ref
         .read(connectionProvider.notifier)
         .beginProvisioning(conn);
-    if (!mounted) return false;
+    if (!mounted) {
+      // Torn down while dialing — hang up rather than leak the session
+      // (0009 M29); the token was never stored, so dispose can't reach it.
+      if (token != null) {
+        ref.read(connectionProvider.notifier).abortProvisioning(token).ignore();
+      }
+      return false;
+    }
     setState(() {
       _provisioning = false;
       _provisionToken = token;
@@ -367,8 +378,17 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
       }
 
       final dest = HostFsService.joinPath(parentDir, name);
-      await _register(dest);
+      final registered = await _register(dest);
       if (!mounted) return;
+      if (!registered) {
+        // The clone landed on disk but never became the live workspace —
+        // a green Complete here would be a lie (0009 H19). Provisioning
+        // (if any) stays alive for a retry.
+        setState(() {
+          _error = 'The repository was cloned but could not be opened.';
+        });
+        return;
+      }
       // Provisioning (if any) has been finalized by _register; don't abort it.
       _provisionToken = null;
       // Let the finished (green) progress bar register before the sheet
@@ -385,18 +405,19 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
   }
 
   /// Registers and activates the freshly-cloned repo for the current target
-  /// (shared matrix — see workspace_registration.dart).
-  Future<void> _register(String dest) async {
+  /// (shared matrix — see workspace_registration.dart). Returns whether the
+  /// repo actually became the live workspace (0009 H19).
+  Future<bool> _register(String dest) async {
     switch (_target) {
       case WorkspaceTarget.localMac:
-        await registerAndActivateLocal(
+        return registerAndActivateLocal(
           ref,
           dest: dest,
           label: _localLabel.text.trim(),
           save: _saveLocal,
         );
       case WorkspaceTarget.sshActive:
-        await registerAndActivateSshActive(
+        return registerAndActivateSshActive(
           ref,
           dest: dest,
           fsmonitor: _fsmonitor,
@@ -405,15 +426,14 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
       case WorkspaceTarget.sshProvision:
         final conn = await _connectionById(_destConnectionId);
         final token = _provisionToken;
-        if (conn != null && token != null) {
-          await ref.read(connectionProvider.notifier).finalizeProvisioned(
-            token: token,
-            conn: conn,
-            repoPath: dest,
-            enableFsmonitor: _fsmonitor,
-            label: _remoteLabel.text.trim(),
-          );
-        }
+        if (conn == null || token == null) return false;
+        return ref.read(connectionProvider.notifier).finalizeProvisioned(
+          token: token,
+          conn: conn,
+          repoPath: dest,
+          enableFsmonitor: _fsmonitor,
+          label: _remoteLabel.text.trim(),
+        );
     }
   }
 

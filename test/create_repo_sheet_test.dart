@@ -4,10 +4,10 @@
 // local repo with a warning, the custom-URL mode (init + git remote add),
 // and the post-create origin verification shared by all remote modes.
 
+import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
-import 'dart:ui' show Size;
 
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -25,6 +25,10 @@ class _FakeExecutor extends SSHCommandExecutor {
   final List<List<String>> calls = [];
   final List<SSHCommandResult> results = [];
   final Map<String, String> uploads = {};
+
+  /// When set, every execute parks on it — lets a test hold the create
+  /// "in flight" to prove Escape can't tear the session down mid-run.
+  Completer<void>? gate;
 
   _FakeExecutor() : super(SSHClientManager());
 
@@ -51,6 +55,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     OperationEventCallback? onOperationEvent,
   }) async {
     calls.add(gitArgs);
+    if (gate != null) await gate!.future;
     return results.isNotEmpty
         ? results.removeAt(0)
         : const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
@@ -973,4 +978,43 @@ void main() {
       expect(find.byType(CreateRepositorySheet), findsNothing);
     },
   );
+
+  // 0009 H20: Escape (and the title X — both share _requestClose) must not
+  // tear the session down under a running create; the footer Cancel is
+  // already disabled for exactly that reason.
+  testWidgets('Escape during a running create neither closes nor aborts', (
+    tester,
+  ) async {
+    final (stub, exec, _) = await _pumpConnected(tester);
+    await _next(tester); // Source
+    await _next(tester); // Remote (None)
+    await tester.enterText(_nameField(), 'new-proj');
+    await tester.pumpAndSettle();
+    await _next(tester); // Details → Review
+
+    exec.gate = Completer<void>();
+    exec.results.add(_ok('absent')); // probe (parked behind the gate)
+    await tester.tap(_createButton());
+    await tester.pump();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pump();
+    // The mid-flight progress chrome can overflow the tight test surface;
+    // drain those non-fatal layout exceptions (same as _pumpCreate).
+    // ignore: invalid_use_of_protected_member
+    while (tester.takeException() != null) {}
+    expect(
+      find.byType(CreateRepositorySheet),
+      findsOneWidget,
+      reason: 'mid-create Escape must be ignored',
+    );
+
+    exec.gate!.complete();
+    exec.gate = null;
+    await tester.pumpAndSettle();
+    // ignore: invalid_use_of_protected_member
+    while (tester.takeException() != null) {}
+    expect(stub.repoPathsSet, ['/srv/new-proj']);
+    expect(find.byType(CreateRepositorySheet), findsNothing);
+  });
 }
