@@ -23,6 +23,7 @@ import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/core/window/window_channels.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
 import 'package:remote_magic_git/features/history/ref_chip.dart';
+import 'package:remote_magic_git/features/viewer/viewer_host.dart';
 import 'package:remote_magic_git/features/window/secondary_window_main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -260,6 +261,10 @@ void main() {
     );
     expect(find.byType(HistoryView), findsOneWidget);
     expect(find.text('No commits'), findsOneWidget);
+    // 0009 H14: the viewer float layer is stacked over the body — without
+    // it, "View file" wrote openFileViewersProvider (per-isolate) and
+    // nothing in this window rendered it.
+    expect(find.byType(ViewerHost), findsOneWidget);
     expect(executor.calls, isNotEmpty, reason: 'log/refs fetched via the seam');
     expect(
       find.byWidgetPredicate(
@@ -621,5 +626,39 @@ void main() {
     expect((redoCall.arguments as Map)['repoPath'], '/srv/repo');
     expect(find.text('Redid: Create tag v1'), findsOneWidget);
     expect(find.text('to undo'), findsOneWidget);
+  });
+
+  // 0009 M25: connectionProvider in this isolate projects the wire's
+  // backend/phase, so Reveal-in-Finder / Open-file gates see a detached
+  // LOCAL repo as local rather than as a disconnected SSH one.
+  test('WindowConnection projects the wire backend into connectionProvider', () {
+    final container = ProviderContainer(
+      overrides: [connectionProvider.overrideWith(WindowConnection.new)],
+    );
+    addTearDown(container.dispose);
+
+    // Before the handshake: inert and non-local.
+    expect(container.read(connectionProvider).isConnected, isFalse);
+
+    container
+        .read(windowSessionProvider.notifier)
+        .apply(
+          const ConnectionEventPayload(
+            phase: 'connected',
+            backend: 'local',
+            repoPath: '/Users/dev/repo',
+            connectionLabel: 'This Mac',
+            host: null,
+          ),
+        );
+    final connection = container.read(connectionProvider);
+    expect(connection.isConnected, isTrue);
+    expect(connection.isLocal, isTrue);
+    expect(connection.repoPath, '/Users/dev/repo');
+    expect(
+      connection.sessionEpoch,
+      0,
+      reason: 'epoch-keyed machinery stays main-window-only',
+    );
   });
 }

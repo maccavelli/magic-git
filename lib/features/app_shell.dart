@@ -738,6 +738,12 @@ class _AppShellState extends ConsumerState<AppShell> {
             await ref
                 .read(remoteEditServiceProvider.notifier)
                 .forceUploadAfterConflict(notice.conflictSessionKey!);
+          } else if (mounted) {
+            // Declined — remember the content so the watcher's next tick of
+            // the same bytes doesn't re-open this dialog (0009 M24).
+            ref
+                .read(remoteEditServiceProvider.notifier)
+                .declineConflict(notice.conflictSessionKey!);
           }
         } else {
           await showErrorDialog(context, notice.message);

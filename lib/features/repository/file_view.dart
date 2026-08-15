@@ -22,6 +22,7 @@ import '../common/tool_icon_button.dart';
 import '../history/file_history_sheet.dart';
 import '../viewer/remote_edit_service.dart';
 import '../viewer/viewer_providers.dart';
+import '../window/secondary_window_scope.dart';
 import 'blame_sheet.dart';
 import 'repo_file_selection.dart';
 
@@ -515,6 +516,19 @@ class _FileViewState extends ConsumerState<FileView> {
       );
     }
 
+    // The vibrancy subview rides WindowManipulator, which is wired for the
+    // MAIN window only — in a pop-out the hole-punch would clear through to
+    // nothing. Paint an ordinary opaque pane there instead (0009 M26).
+    if (SecondaryWindowScope.isSecondary(context)) {
+      return SizedBox(
+        width: width,
+        child: ColoredBox(
+          color: MacosTheme.of(context).canvasColor,
+          child: _paneRow(context, width, async, overlay),
+        ),
+      );
+    }
+
     return SizedBox(
       width: width,
       // Same native NSVisualEffectView vibrancy as the sidebar (material +
@@ -532,33 +546,40 @@ class _FileViewState extends ConsumerState<FileView> {
             color: Color.fromRGBO(0, 0, 0, 1.0),
             backgroundBlendMode: BlendMode.clear,
           ),
-          child: Row(
+          child: _paneRow(context, width, async, overlay),
+        ),
+      ),
+    );
+  }
+
+  Widget _paneRow(
+    BuildContext context,
+    double width,
+    AsyncValue<RepoNode> async,
+    RepoStatusOverlay overlay,
+  ) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _resizeHandle(width),
+        Expanded(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _resizeHandle(width),
+              _headerBar(context),
+              Container(height: 1, color: MacosColors.separatorColor),
+              // Isolated into its own compositing layer for the same
+              // reason as output_view.dart's log list: this repaints on
+              // every status/structure refresh, and without a boundary
+              // those repaints were forcing the BlendMode.clear
+              // decoration above to be re-evaluated at the same rate.
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _headerBar(context),
-                    Container(height: 1, color: MacosColors.separatorColor),
-                    // Isolated into its own compositing layer for the same
-                    // reason as output_view.dart's log list: this repaints on
-                    // every status/structure refresh, and without a boundary
-                    // those repaints were forcing the BlendMode.clear
-                    // decoration above to be re-evaluated at the same rate.
-                    Expanded(
-                      child: RepaintBoundary(
-                        child: _body(context, async, overlay),
-                      ),
-                    ),
-                  ],
-                ),
+                child: RepaintBoundary(child: _body(context, async, overlay)),
               ),
             ],
           ),
         ),
-      ),
+      ],
     );
   }
 

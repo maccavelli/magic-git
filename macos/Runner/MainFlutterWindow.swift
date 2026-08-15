@@ -24,6 +24,83 @@ class MainFlutterWindow: NSWindow {
   /// replaces rather than duplicates them.
   private var dynamicMenuItems: [NSMenuItem] = []
 
+  /// The View menu this window populated — tracked so key-equivalent
+  /// suppression (below) can walk exactly the menus this window owns.
+  private var installedViewMenu: NSMenu?
+
+  /// AppKit key equivalents fire process-wide, for the app's key window —
+  /// which routes every chord on this window's menus (View toggles, the
+  /// dynamic repository menus) at the MAIN window's session even while a
+  /// detached pop-out is key (0009 H16). While a secondary window is key the
+  /// equivalents are stripped (menu *clicks* still work and still target the
+  /// main session); they are restored the moment a non-secondary window
+  /// regains key. Only menus this window installed are touched — App/Edit/
+  /// Window keep Quit/Copy/Paste everywhere.
+  private var keyWindowObserver: NSObjectProtocol?
+  private var equivalentsSuppressed = false
+  private var savedKeyEquivalents: [(NSMenuItem, String, NSEvent.ModifierFlags)] = []
+
+  private func installKeyWindowObserver() {
+    guard keyWindowObserver == nil else { return }
+    keyWindowObserver = NotificationCenter.default.addObserver(
+      forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+    ) { [weak self] note in
+      guard let self = self else { return }
+      let window = note.object as? NSWindow
+      let secondaryIsKey = self.secondaryWindows.values.contains {
+        $0.hosts(window)
+      }
+      self.setKeyEquivalentsSuppressed(secondaryIsKey)
+    }
+  }
+
+  private func ownedShortcutItems() -> [NSMenuItem] {
+    var items: [NSMenuItem] = []
+    func walk(_ menu: NSMenu) {
+      for item in menu.items {
+        items.append(item)
+        if let sub = item.submenu { walk(sub) }
+      }
+    }
+    if let viewMenu = installedViewMenu { walk(viewMenu) }
+    for parent in dynamicMenuItems {
+      if let sub = parent.submenu { walk(sub) }
+    }
+    return items
+  }
+
+  private func setKeyEquivalentsSuppressed(_ suppressed: Bool) {
+    guard suppressed != equivalentsSuppressed else { return }
+    equivalentsSuppressed = suppressed
+    if suppressed {
+      savedKeyEquivalents = []
+      stripCurrentEquivalents()
+    } else {
+      for (item, key, mask) in savedKeyEquivalents {
+        item.keyEquivalent = key
+        item.keyEquivalentModifierMask = mask
+      }
+      savedKeyEquivalents = []
+    }
+  }
+
+  private func stripCurrentEquivalents() {
+    for item in ownedShortcutItems() where !item.keyEquivalent.isEmpty {
+      savedKeyEquivalents.append(
+        (item, item.keyEquivalent, item.keyEquivalentModifierMask))
+      item.keyEquivalent = ""
+    }
+  }
+
+  /// A menu (re)install while suppressed creates fresh items with live
+  /// equivalents — strip those too, dropping saved entries whose items were
+  /// just removed from the menu bar.
+  private func refreshSuppressionAfterInstall() {
+    guard equivalentsSuppressed else { return }
+    savedKeyEquivalents = savedKeyEquivalents.filter { $0.0.menu != nil }
+    stripCurrentEquivalents()
+  }
+
   /// Keymap action ids the active panel can run right now. `validateMenuItem`
   /// dims everything else — per the HIG, an unavailable command stays visible
   /// so people can still discover it.
@@ -377,6 +454,10 @@ class MainFlutterWindow: NSWindow {
     // both views default to on. Requesting here guarantees the items exist
     // before Flutter answers, so the marks are correct from the first frame.
     menuChannel?.invokeMethod("syncMenuState", arguments: nil)
+
+    installedViewMenu = viewMenu
+    installKeyWindowObserver()
+    refreshSuppressionAfterInstall()
   }
 
   // Adds (or reuses, if awakeFromNib runs twice) a checkable ⇧⌘<key> item
@@ -465,6 +546,7 @@ class MainFlutterWindow: NSWindow {
       dynamicMenuItems.append(parent)
       insertAt += 1
     }
+    refreshSuppressionAfterInstall()
   }
 
   private func populate(menu: NSMenu, from items: [[String: Any]]) {

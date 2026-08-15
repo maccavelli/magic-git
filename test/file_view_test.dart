@@ -11,6 +11,7 @@ import 'package:flutter/gestures.dart'
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:macos_window_utils/widgets/transparent_macos_sidebar.dart';
 
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/git/repo_tree.dart';
@@ -23,6 +24,7 @@ import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/tool_icon_button.dart';
 import 'package:remote_magic_git/features/repository/file_view.dart';
 import 'package:remote_magic_git/features/viewer/viewer_providers.dart';
+import 'package:remote_magic_git/features/window/secondary_window_scope.dart';
 import 'package:riverpod/misc.dart' show Override;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -330,6 +332,56 @@ void main() {
     expect(find.text('M'), findsOneWidget);
     final letter = tester.widget<Text>(find.text('M'));
     expect(letter.style?.color, MacosColors.systemYellowColor);
+  });
+
+  // 0009 M26: the vibrancy sidebar rides WindowManipulator, which is wired
+  // for the main window only — a pop-out paints an opaque pane instead.
+  testWidgets('a secondary window gets an opaque pane, not the vibrancy '
+      'sidebar', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          repoStructureProvider(_repo).overrideWith((ref) async => _fixture()),
+          repoStatusOverlayProvider(_repo).overrideWith((ref) => _overlay),
+        ],
+        child: MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: SecondaryWindowScope(
+            child: SizedBox(
+              width: 900,
+              height: 600,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: FileView(
+                  maxWidth: 900,
+                  repoPath: _repo,
+                  onOpenFile:
+                      (
+                        _, {
+                        required staged,
+                        required untracked,
+                        required conflict,
+                      }) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TransparentMacOSSidebar), findsNothing);
+    expect(find.text('main.dart'), findsOneWidget); // the tree still renders
+  });
+
+  testWidgets('the main window keeps the vibrancy sidebar', (tester) async {
+    await _pump(
+      tester,
+      onOpenFile:
+          (_, {required staged, required untracked, required conflict}) {},
+    );
+    expect(find.byType(TransparentMacOSSidebar), findsOneWidget);
   });
 
   testWidgets('clicking a conflicted file reports conflict, not staged', (

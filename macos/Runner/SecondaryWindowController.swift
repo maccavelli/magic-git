@@ -81,6 +81,12 @@ enum WindowKind: String {
 /// window id.
 class SecondaryWindowController: NSObject, NSWindowDelegate {
   private var window: NSWindow?
+
+  /// Whether [candidate] is this controller's window — lets the main window
+  /// suppress its menu key equivalents while a pop-out is key (0009 H16).
+  func hosts(_ candidate: NSWindow?) -> Bool {
+    candidate != nil && candidate === window
+  }
   private var engine: FlutterEngine?
   private var viewController: FlutterViewController?
   private var bootstrap: FlutterMethodChannel?

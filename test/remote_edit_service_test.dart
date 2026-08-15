@@ -78,6 +78,18 @@ class FakeGitService implements GitService {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
+class ThrowingGitService implements GitService {
+  @override
+  Future<String> readFileBase64(String repoPath, String path) async =>
+      throw const GitException(
+        'read failed over SSH',
+        CommandResult(exitCode: 1, stdout: '', stderr: 'boom'),
+      );
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
   test(
     'RemoteEditManager downloads file, saves to temp, and opens it',
@@ -113,4 +125,72 @@ void main() {
       expect(session!.lastKnownHash, 'hash1');
     },
   );
+
+  // 0009 H15: an open that fails (download, decode, temp IO) must land on
+  // the notice provider like every sync failure — callers fire-and-forget,
+  // so a thrown error would be silent.
+  test('a failed open surfaces a notice instead of throwing', () async {
+    final container = ProviderContainer(
+      overrides: [
+        fileActionsProvider.overrideWithValue(MockFileActions()),
+        activeExecutorProvider.overrideWithValue(FakeExecutor({})),
+        gitServiceProvider.overrideWithValue(ThrowingGitService()),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final manager = container.read(remoteEditServiceProvider.notifier);
+    await manager.openRemoteFile('repo1', 'file.txt'); // must not throw
+
+    final notice = container.read(remoteEditNoticeProvider);
+    expect(notice, isNotNull);
+    expect(notice!.title, 'Remote Edit Open Failed');
+    expect(notice.message, contains('file.txt'));
+    expect(container.read(remoteEditServiceProvider), isEmpty);
+  });
+
+  // 0009 M24: atomic saves (temp + rename) must still sync — the watch is on
+  // the scratch directory, not the original inode — and a conflict the user
+  // declined must not re-open the dialog for the same bytes.
+  test('atomic saves sync; a declined conflict stays quiet for the same '
+      'bytes', () async {
+    final mockFileActions = MockFileActions();
+    final fakeExecutor = FakeExecutor({'file.txt': 'hash1'});
+    final fakeGit = FakeGitService({'file.txt': 'hello world'});
+    final container = ProviderContainer(
+      overrides: [
+        fileActionsProvider.overrideWithValue(mockFileActions),
+        activeExecutorProvider.overrideWithValue(fakeExecutor),
+        gitServiceProvider.overrideWithValue(fakeGit),
+      ],
+    );
+    addTearDown(container.dispose);
+
+    final manager = container.read(remoteEditServiceProvider.notifier);
+    await manager.openRemoteFile('repo1', 'file.txt');
+    final session = container.read(remoteEditServiceProvider)['repo1/file.txt']!;
+
+    // The remote moved on — the next local save conflicts.
+    fakeExecutor.remoteHashes['file.txt'] = 'hash2';
+
+    // An editor-style atomic save: sibling temp file renamed over the real
+    // one. A modify-only watch on the original inode would never see this.
+    File('${session.tempDir.path}/file.txt.tmp')
+      ..writeAsStringSync('local edit')
+      ..renameSync(session.tempFile.path);
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    expect(container.read(remoteEditNoticeProvider)?.isConflict, isTrue);
+
+    // Decline: the watcher re-reporting the SAME bytes must stay quiet.
+    manager.declineConflict('repo1/file.txt');
+    container.read(remoteEditNoticeProvider.notifier).clear();
+    session.tempFile.writeAsStringSync('local edit');
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    expect(container.read(remoteEditNoticeProvider), isNull);
+
+    // A genuinely new save conflicts again.
+    session.tempFile.writeAsStringSync('local edit, take two');
+    await Future<void>.delayed(const Duration(milliseconds: 1500));
+    expect(container.read(remoteEditNoticeProvider)?.isConflict, isTrue);
+  });
 }

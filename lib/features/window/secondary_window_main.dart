@@ -47,7 +47,9 @@ import '../history/history_view.dart';
 import '../recovery/recovery_sheet.dart';
 import '../repository/repo_status_view.dart';
 import '../viewer/remote_edit_service.dart';
+import '../viewer/viewer_host.dart';
 import 'secondary_window_binding.dart';
+import 'secondary_window_scope.dart';
 
 /// The per-engine bootstrap/allowlist channel (fixed name; each engine has its
 /// own messenger, so there is no collision). Carries the descriptor pull and
@@ -222,10 +224,32 @@ Future<void> _bootSecondaryWindow() async {
         repoWatchProvider.overrideWith(
           (ref, repoPath) => const Stream<RepoWatchEvent>.empty(),
         ),
+        // Mirror the wire's phase/backend into connectionProvider: gates like
+        // Reveal-in-Finder / Open-file / viewer "Open in Default App" read
+        // `connectionProvider.isLocal`, and the inert default read every
+        // detached local repo as a disconnected SSH one (0009 M25).
+        connectionProvider.overrideWith(WindowConnection.new),
       ],
       child: SecondaryWindowApp(descriptor: descriptor, hub: hub),
     ),
   );
+}
+
+/// The secondary isolate's [connectionProvider]: a read-only projection of
+/// [windowSessionProvider] (the `requestState` handshake + pushed
+/// `connectionChanged` events). sessionEpoch stays 0 — epoch-keyed machinery
+/// (supplements, navigation history) belongs to the main window.
+class WindowConnection extends ConnectionController {
+  @override
+  ConnectionState build() {
+    final session = ref.watch(windowSessionProvider);
+    return ConnectionState(
+      phase: session.phase,
+      backend: session.backend,
+      repoPath: session.repoPath,
+      connectionLabel: session.connectionLabel,
+    );
+  }
 }
 
 /// Pulls this window's [WindowDescriptor] from native. The controller installs
@@ -277,9 +301,11 @@ void _installLifecycle(String windowId) {
 
 /// The slice of the main window's connection state this window renders from.
 /// Fed exclusively by the `requestState` handshake and pushed `connectionChanged`
-/// events — the local `connectionProvider` sits inert. The [repoPath] is the
-/// window's own (a detached window stays pinned to its repo regardless of what
-/// is active in the main window).
+/// events — the local `connectionProvider` is overridden to project THIS
+/// (see `_WindowConnection`), so backend-gated affordances (Reveal in
+/// Finder, Open file) see the real backend. The [repoPath] is the window's
+/// own (a detached window stays pinned to its repo regardless of what is
+/// active in the main window).
 class WindowSession {
   final ConnectionPhase phase;
   final ConnectionBackend backend;
@@ -360,7 +386,11 @@ class SecondaryWindowApp extends StatelessWidget {
       navigatorObservers: kWindowDiagnostics
           ? [_HubLogNavigatorObserver()]
           : const <NavigatorObserver>[],
-      home: SecondaryWindowShell(descriptor: descriptor, hub: hub),
+      // The scope lives here (not in the runApp bootstrap) so every mount
+      // of this app — production and widget tests alike — carries it.
+      home: SecondaryWindowScope(
+        child: SecondaryWindowShell(descriptor: descriptor, hub: hub),
+      ),
     );
   }
 }
@@ -827,6 +857,12 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
             await ref
                 .read(remoteEditServiceProvider.notifier)
                 .forceUploadAfterConflict(notice.conflictSessionKey!);
+          } else if (mounted) {
+            // Declined — remember the content so the watcher's next tick of
+            // the same bytes doesn't re-open this dialog (0009 M24).
+            ref
+                .read(remoteEditServiceProvider.notifier)
+                .declineConflict(notice.conflictSessionKey!);
           }
         } else {
           await showErrorDialog(context, notice.message);
@@ -953,7 +989,18 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
                               ),
                             ),
                           ),
-                        Expanded(child: _body(session.repoPath!)),
+                        Expanded(
+                          // The same float layer AppShell stacks over its
+                          // panels: without it, "View file" wrote
+                          // openFileViewersProvider (per-isolate) and
+                          // nothing in this window rendered it (0009 H14).
+                          child: Stack(
+                            children: [
+                              _body(session.repoPath!),
+                              const Positioned.fill(child: ViewerHost()),
+                            ],
+                          ),
+                        ),
                       ],
                     ),
                   // Same top layer as AppShell's Stack: "<op> — ⌘Z to undo"

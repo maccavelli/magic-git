@@ -22,6 +22,11 @@ class RemoteEditSession {
   /// [RemoteEditManager.forceUploadAfterConflict].
   Uint8List? pendingConflictBytes;
 
+  /// The local bytes whose conflict dialog the user dismissed without
+  /// overwriting — the watcher's next debounce of the SAME content must not
+  /// re-open the dialog (0009 M24); a genuinely new save clears this.
+  Uint8List? declinedConflictBytes;
+
   RemoteEditSession({
     required this.repoPath,
     required this.relativePath,
@@ -65,15 +70,20 @@ final remoteEditNoticeProvider =
     );
 
 class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
+  /// Mirror of [state] for teardown: reading `state` inside onDispose trips
+  /// Riverpod's life-cycle assertion, so cleanup walks this instead.
+  Map<String, RemoteEditSession> _sessions = {};
+
   @override
   Map<String, RemoteEditSession> build() {
     ref.onDispose(() {
-      for (final session in state.values) {
+      for (final session in _sessions.values) {
         session.subscription.cancel();
         try {
           session.tempDir.deleteSync(recursive: true);
         } catch (_) {}
       }
+      _sessions = {};
     });
     return {};
   }
@@ -90,6 +100,10 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
     return res.stdout.trim();
   }
 
+  /// Never throws: every failure (download, decode, temp-file IO, watch)
+  /// lands on [remoteEditNoticeProvider] like the sync path's do — callers
+  /// fire-and-forget from tap handlers, so a thrown error would be the
+  /// silent-fail class 0004 H4 was meant to kill (0009 H15).
   Future<void> openRemoteFile(String repoPath, String path) async {
     final sessionKey = '$repoPath/$path';
     if (state.containsKey(sessionKey)) {
@@ -102,48 +116,89 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
       return;
     }
 
-    // 1. Download bytes from working tree
-    final git = ref.read(gitServiceProvider);
-    final b64 = await git.readFileBase64(repoPath, path);
-    final bytes = base64.decode(b64);
+    Directory? tempDir;
+    try {
+      // 1. Download bytes from working tree
+      final git = ref.read(gitServiceProvider);
+      final b64 = await git.readFileBase64(repoPath, path);
+      final bytes = base64.decode(b64);
 
-    // 2. Snapshot (hash-object)
-    final hash = await _getRemoteHash(repoPath, path);
+      // 2. Snapshot (hash-object)
+      final hash = await _getRemoteHash(repoPath, path);
 
-    // 3. Scratch Dir
-    // To preserve the extension and name which helps the IDE with syntax highlighting
-    final slashIndex = path.lastIndexOf('/');
-    final fileName = slashIndex >= 0 ? path.substring(slashIndex + 1) : path;
+      // 3. Scratch Dir
+      // To preserve the extension and name which helps the IDE with syntax highlighting
+      final slashIndex = path.lastIndexOf('/');
+      final fileName = slashIndex >= 0 ? path.substring(slashIndex + 1) : path;
 
-    final tempDir = Directory.systemTemp.createTempSync('magic_git_edit_');
-    final tempFile = File('${tempDir.path}/$fileName');
-    tempFile.writeAsBytesSync(bytes);
+      tempDir = Directory.systemTemp.createTempSync('magic_git_edit_');
+      final tempFile = File('${tempDir.path}/$fileName');
+      tempFile.writeAsBytesSync(bytes);
 
-    // 4. Watch
-    // We'll use a timer to debounce saves
-    Timer? debounce;
-    final sub = tempFile.watch(events: FileSystemEvent.modify).listen((event) {
-      debounce?.cancel();
-      debounce = Timer(const Duration(milliseconds: 500), () {
-        unawaited(_syncFile(repoPath, path, tempFile));
+      // 4. Watch the scratch DIRECTORY, not the file: many editors save via
+      // temp + rename (atomic saves), so the original inode never sees a
+      // modify event again (0009 M24). The dir is exclusive to this file;
+      // only events whose path ends in its name count.
+      Timer? debounce;
+      bool touchesFile(FileSystemEvent event) =>
+          event.path.endsWith('/$fileName') ||
+          (event is FileSystemMoveEvent &&
+              (event.destination?.endsWith('/$fileName') ?? false));
+      final sub = tempDir.watch().listen((event) {
+        if (!touchesFile(event)) return;
+        debounce?.cancel();
+        debounce = Timer(const Duration(milliseconds: 500), () {
+          unawaited(_syncFile(repoPath, path, tempFile));
+        });
       });
-    });
 
-    final session = RemoteEditSession(
-      repoPath: repoPath,
-      relativePath: path,
-      tempDir: tempDir,
-      tempFile: tempFile,
-      subscription: sub,
-      lastKnownHash: hash,
-    );
+      final session = RemoteEditSession(
+        repoPath: repoPath,
+        relativePath: path,
+        tempDir: tempDir,
+        tempFile: tempFile,
+        subscription: sub,
+        lastKnownHash: hash,
+      );
 
-    state = {...state, sessionKey: session};
+      _sessions = {...state, sessionKey: session};
+      state = _sessions;
 
-    // 5. Open in editor
-    unawaited(
-      ref.read(fileActionsProvider).openFiles([tempFile.absolute.path]),
-    );
+      // 5. Open in editor
+      unawaited(
+        ref.read(fileActionsProvider).openFiles([tempFile.absolute.path]),
+      );
+    } catch (e) {
+      try {
+        tempDir?.deleteSync(recursive: true);
+      } catch (_) {}
+      final message = 'Failed to open "$path": ${displayError(e)}';
+      ref
+          .read(outputLogProvider.notifier)
+          .logError('Remote Edit Open Failed', message);
+      ref
+          .read(remoteEditNoticeProvider.notifier)
+          .show(
+            RemoteEditNotice(title: 'Remote Edit Open Failed', message: message),
+          );
+    }
+  }
+
+  /// User dismissed a conflict without overwriting — remember the declined
+  /// bytes so the watcher's next debounce of the same content doesn't
+  /// re-open the dialog (0009 M24).
+  void declineConflict(String sessionKey) {
+    final session = state[sessionKey];
+    if (session == null) return;
+    session.declinedConflictBytes = session.pendingConflictBytes;
+  }
+
+  static bool _sameBytes(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   Future<void> _syncFile(String repoPath, String path, File tempFile) async {
@@ -158,6 +213,10 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
       final currentRemoteHash = await _getRemoteHash(repoPath, path);
       if (currentRemoteHash != session.lastKnownHash &&
           currentRemoteHash.isNotEmpty) {
+        // The user already declined overwriting exactly this content — do
+        // not re-open the dialog on the watcher's next tick (0009 M24).
+        final declined = session.declinedConflictBytes;
+        if (declined != null && _sameBytes(newBytes, declined)) return;
         session.pendingConflictBytes = newBytes;
         final message =
             'The remote file "$path" changed since you opened it. '
@@ -211,6 +270,7 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
     );
     session.lastKnownHash = newHash;
     session.pendingConflictBytes = null;
+    session.declinedConflictBytes = null;
     ref.invalidate(statusProvider(session.repoPath));
   }
 
