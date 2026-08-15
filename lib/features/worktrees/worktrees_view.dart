@@ -20,6 +20,7 @@ import '../common/busy_action.dart';
 import '../common/buttons.dart';
 import '../common/context_menu.dart';
 import '../common/label_chip.dart';
+import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/repository_context.dart';
@@ -30,6 +31,7 @@ import '../common/tool_icon_button.dart';
 import '../common/workspace_focus.dart';
 import '../common/workspace_navigation.dart';
 import '../common/workspace_preferences_binding.dart';
+import '../dnd/deselect.dart';
 import '../history/history_view.dart';
 import '../repository/repo_status_view.dart';
 import '../stash/stash_view.dart';
@@ -105,9 +107,56 @@ const List<(String, IconData)> _subPanels = [
 class _WorktreesViewState extends ConsumerState<WorktreesView>
     with BusyActionState {
   final ContextMenuOverlay _contextMenu = ContextMenuOverlay();
+  final FocusNode _overviewFocus = FocusNode(debugLabel: 'worktree-overview');
+  final Map<String, GlobalKey> _overviewRowKeys = {};
   String? _selectedOverviewPath;
 
   String get repoPath => widget.repoPath;
+
+  GlobalKey _overviewRowKeyFor(String path) =>
+      _overviewRowKeys.putIfAbsent(path, GlobalKey.new);
+
+  void _moveOverviewSelection(int dir) {
+    final worktrees =
+        ref.read(gitWorktreesProvider(repoPath)).value ?? const [];
+    if (worktrees.length <= 1) return;
+    var current = -1;
+    if (_selectedOverviewPath != null) {
+      for (var i = 0; i < worktrees.length; i++) {
+        if (worktrees[i].path == _selectedOverviewPath) {
+          current = i;
+          break;
+        }
+      }
+    }
+    final next = stepSelection(current, dir, worktrees.length);
+    if (next < 0) return;
+    setState(() => _selectedOverviewPath = worktrees[next].path);
+    ensureRowVisible(_overviewRowKeyFor(worktrees[next].path));
+  }
+
+  KeyEventResult _onOverviewKey(FocusNode node, KeyEvent event) {
+    if (event is KeyUpEvent || !widget.isActive || busy) {
+      return KeyEventResult.ignored;
+    }
+    if (PanelShortcuts.textInteractionHasFocus()) {
+      return KeyEventResult.ignored;
+    }
+    switch (event.logicalKey) {
+      case LogicalKeyboardKey.arrowDown:
+        _moveOverviewSelection(1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.arrowUp:
+        _moveOverviewSelection(-1);
+        return KeyEventResult.handled;
+      case LogicalKeyboardKey.escape:
+        return escDeselect(
+          hasSelection: _selectedOverviewPath != null,
+          clear: () => setState(() => _selectedOverviewPath = null),
+        );
+    }
+    return KeyEventResult.ignored;
+  }
 
   @override
   void didUpdateWidget(WorktreesView oldWidget) {
@@ -117,6 +166,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
 
   @override
   void dispose() {
+    _overviewFocus.dispose();
     _contextMenu.dispose();
     super.dispose();
   }
@@ -619,9 +669,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
         if (!mounted) return;
         final location = takeWorkspaceLocation(ref, kWorktreesPageIndex);
         if (location == null) return;
-        final match = all
-            .where((w) => w.path == location.identity)
-            .firstOrNull;
+        final match = all.where((w) => w.path == location.identity).firstOrNull;
         if (match == null) {
           markWorkspaceLocationUnavailable(ref, location);
           return;
@@ -947,9 +995,13 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       data: (worktrees) {
         // Only the main worktree: this repo has no linked worktrees yet.
         if (worktrees.length <= 1) return _empty(context);
-        return ListView.builder(
-          itemCount: worktrees.length,
-          itemBuilder: (context, i) => _row(context, worktrees[i]),
+        return Focus(
+          focusNode: _overviewFocus,
+          onKeyEvent: _onOverviewKey,
+          child: ListView.builder(
+            itemCount: worktrees.length,
+            itemBuilder: (context, i) => _row(context, worktrees[i]),
+          ),
         );
       },
     );
@@ -976,7 +1028,11 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
     };
 
     return Tappable(
-      onTap: () => setState(() => _selectedOverviewPath = wt.path),
+      key: _overviewRowKeyFor(wt.path),
+      onTap: () {
+        _overviewFocus.requestFocus();
+        setState(() => _selectedOverviewPath = wt.path);
+      },
       onDoubleTap: () => _openWorktree(wt),
       onSecondaryTapUp: (d) => _contextMenu.show(
         context,

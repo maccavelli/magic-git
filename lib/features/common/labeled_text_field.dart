@@ -14,6 +14,10 @@ class LabeledTextField extends StatelessWidget {
   /// Called after each edit so a parent StatefulWidget can re-evaluate its
   /// submit-enabled state. The raw text is read from [controller].
   final VoidCallback? onChanged;
+
+  /// Enter on a single-line field. Multi-line fields leave this null so
+  /// Return inserts a newline (same convention as [promptForm]).
+  final ValueChanged<String>? onSubmitted;
   final EdgeInsets padding;
 
   const LabeledTextField({
@@ -24,6 +28,7 @@ class LabeledTextField extends StatelessWidget {
     this.obscure = false,
     this.maxLines = 1,
     this.onChanged,
+    this.onSubmitted,
     this.padding = const EdgeInsets.only(bottom: 12),
   });
 
@@ -45,6 +50,7 @@ class LabeledTextField extends StatelessWidget {
             decoration: kAppTextFieldDecoration,
             focusedDecoration: kAppTextFieldFocusedDecoration,
             onChanged: onChanged == null ? null : (_) => onChanged!(),
+            onSubmitted: maxLines == 1 ? onSubmitted : null,
           ),
         ],
       ),

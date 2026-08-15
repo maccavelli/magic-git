@@ -12,6 +12,7 @@ library;
 import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -252,7 +253,10 @@ void main() {
     tester,
   ) async {
     final wt = worktrees.firstWhere((w) => !w.isMain && !w.isPrunable);
-    final container = await pump(tester, extraOverrides: _tabOverrides(wt.path));
+    final container = await pump(
+      tester,
+      extraOverrides: _tabOverrides(wt.path),
+    );
     container.read(worktreeTabsProvider.notifier).open(wt.path);
     await tester.pumpAndSettle();
 
@@ -277,7 +281,10 @@ void main() {
     tester,
   ) async {
     final wt = worktrees.firstWhere((w) => !w.isMain && !w.isPrunable);
-    final container = await pump(tester, extraOverrides: _tabOverrides(wt.path));
+    final container = await pump(
+      tester,
+      extraOverrides: _tabOverrides(wt.path),
+    );
 
     Color? rowColor(String name) => tester
         .widget<Container>(
@@ -309,6 +316,34 @@ void main() {
 
     expect(find.text('open'), findsOneWidget);
     expect(rowColor('app-feature'), isNot(const Color(0x00000000)));
+  });
+
+  // 0009 L20: overview arrows walk the same stepSelection the Stash list
+  // uses, so the keymap/menu operand (the tinted row) is keyboard-reachable.
+  testWidgets('overview arrow keys walk the selected worktree', (tester) async {
+    await pump(tester);
+
+    Color? rowColor(String name) => tester
+        .widget<Container>(
+          find
+              .ancestor(of: find.text(name), matching: find.byType(Container))
+              .first,
+        )
+        .color;
+
+    await tester.tap(find.text('app'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(rowColor('app'), isNot(const Color(0x00000000)));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+    await tester.pumpAndSettle();
+    expect(rowColor('app-feature'), isNot(const Color(0x00000000)));
+    expect(rowColor('app'), const Color(0x00000000));
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+    await tester.pumpAndSettle();
+    expect(rowColor('app'), isNot(const Color(0x00000000)));
   });
 
   // The tab strip's own behaviour is tested on the notifier rather than through

@@ -574,10 +574,7 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
           // These act on the LATEST stash, whereas the row buttons and
           // ⌥⌘A/⌥⌘P act on the SELECTED one. Same verbs, different operand —
           // so the operand is named in the label rather than left implicit.
-          const MacosPulldownMenuItem(
-            title: Text('\u2014'),
-            enabled: false,
-          ),
+          const MacosPulldownMenuItem(title: Text('\u2014'), enabled: false),
           MacosPulldownMenuItem(
             title: Text(
               'Apply latest stash',
@@ -916,7 +913,7 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
           Text('No stashes', style: typography.title3),
           const SizedBox(height: 6),
           Text(
-            'Use the menu to stash your current changes.',
+            'Use Stash Changes in the context bar to stash your current work.',
             style: typography.body.copyWith(color: MacosColors.systemGrayColor),
           ),
         ],

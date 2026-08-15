@@ -23,6 +23,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/connection/local_repo_form.dart';
 
 /// The MacosSwitch sitting in the same Row as the label [text] — the switches
@@ -49,6 +50,25 @@ Future<void> _pump(WidgetTester tester, {String? initialPickedPath}) async {
 }
 
 void main() {
+  // 0009 L18: a dimmed Open names the first missing field, and Enter on
+  // the label field is wired to submit.
+  testWidgets('Open names the first invalid field and submits on Enter', (
+    tester,
+  ) async {
+    await _pump(tester);
+    expect(find.text('Choose a folder'), findsOneWidget);
+    final open = tester.widget<AppPushButton>(
+      find.widgetWithText(AppPushButton, 'Open'),
+    );
+    expect(open.onPressed, isNull);
+    expect(
+      tester
+          .widget<MacosTextField>(find.byType(MacosTextField).first)
+          .onSubmitted,
+      isNotNull,
+    );
+  });
+
   testWidgets('turning the scoped toggle on forces fsmonitor off and disables '
       'it; turning it off re-enables', (tester) async {
     await _pump(tester);

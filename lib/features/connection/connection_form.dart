@@ -96,8 +96,27 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
     return port != null && port >= 1 && port <= 65535;
   }
 
+  /// First field that keeps Connect disabled (0009 L18) — shown as a caption
+  /// under the button so a dimmed Connect is never a silent no-op.
+  String? get _firstInvalidCaption {
+    if (_host.text.trim().isEmpty) return 'Host is required';
+    final port = int.tryParse(_port.text.trim());
+    if (port == null || port < 1 || port > 65535) {
+      return 'Port must be between 1 and 65535';
+    }
+    if (_username.text.trim().isEmpty) return 'Username is required';
+    if (_password.text.isEmpty && _privateKey.text.trim().isEmpty) {
+      return 'Password or private key is required';
+    }
+    if (_repoPath.text.trim().isEmpty) return 'Repository path is required';
+    if (_scoped && _gitDir.text.trim().isEmpty) {
+      return 'Git directory is required';
+    }
+    return null;
+  }
+
   Future<void> _submit() async {
-    if (_submitting) return;
+    if (!_canSubmit || _submitting) return;
     setState(() => _submitting = true);
     try {
       await _doSubmit();
@@ -449,6 +468,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
                       placeholderStyle: kAppPlaceholderStyle,
                       decoration: kAppTextFieldDecoration,
                       focusedDecoration: kAppTextFieldFocusedDecoration,
+                      onSubmitted: (_) => _submit(),
                     ),
                   ),
                 ],
@@ -461,12 +481,22 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
             const SizedBox(height: 20),
             if (phase == ConnectionPhase.connecting)
               const Center(child: ProgressCircle())
-            else
+            else ...[
               AppPushButton(
                 controlSize: ControlSize.large,
                 onPressed: (_canSubmit && !_submitting) ? _submit : null,
                 child: const Text('Connect'),
               ),
+              if (_firstInvalidCaption != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _firstInvalidCaption!,
+                  style: typography.caption1.copyWith(
+                    color: MacosColors.systemGrayColor,
+                  ),
+                ),
+              ],
+            ],
             if (_saveWarning != null) ...[
               const SizedBox(height: 12),
               Text(
@@ -506,6 +536,9 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
       obscure: obscure,
       maxLines: maxLines,
       onChanged: () => setState(() {}),
+      // Enter submits when the form is valid; otherwise the first-invalid
+      // caption under Connect already names the missing field (0009 L18).
+      onSubmitted: maxLines == 1 ? (_) => _submit() : null,
       // The hint supplies the bottom spacing when present.
       padding: hint == null
           ? const EdgeInsets.only(bottom: 12)

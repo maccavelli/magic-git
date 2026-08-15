@@ -200,6 +200,31 @@ void main() {
       find.widgetWithText(AppPushButton, 'Connect'),
     );
     expect(connect.onPressed, isNull);
+    // 0009 L18: a dimmed Connect names the first missing field, and Enter
+    // on a single-line field is wired to submit.
+    expect(find.text('Host is required'), findsOneWidget);
+    expect(
+      tester
+          .widget<MacosTextField>(find.byType(MacosTextField).first)
+          .onSubmitted,
+      isNotNull,
+    );
+  });
+
+  testWidgets('connection form caption walks to the next invalid field', (
+    tester,
+  ) async {
+    await _pump(tester);
+    await tester.tap(_byMacosTooltip('Add connection'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+      find.byType(MacosTextField).first,
+      'gitlab.example.com',
+    );
+    await tester.pump();
+    expect(find.text('Host is required'), findsNothing);
+    expect(find.text('Username is required'), findsOneWidget);
   });
 
   testWidgets('the empty state\'s New-connection button opens the same form', (

@@ -588,6 +588,19 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
     return !_provisioning && _provisionToken != null;
   }
 
+  /// First field that keeps Open disabled (0009 L18) — shown as a caption
+  /// under the button so a dimmed Open is never a silent no-op.
+  String? get _firstInvalidCaption {
+    if (_pickedPath == null) return 'Choose a folder';
+    if (_scoped && _gitDir.text.trim().isEmpty) {
+      return 'Git directory is required';
+    }
+    if (!_isLocal && (_provisioning || _provisionToken == null)) {
+      return 'Connecting to the host…';
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     final (phase, error) = ref.watch(
@@ -739,12 +752,22 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
               const SizedBox(height: 20),
               if (localConnecting)
                 const Center(child: ProgressCircle())
-              else
+              else ...[
                 AppPushButton(
                   controlSize: ControlSize.large,
                   onPressed: _canSubmit ? _submit : null,
                   child: const Text('Open'),
                 ),
+                if (_firstInvalidCaption != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    _firstInvalidCaption!,
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
+                    ),
+                  ),
+                ],
+              ],
               if (_saveWarning != null) ...[
                 const SizedBox(height: 12),
                 Text(
@@ -787,6 +810,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
               placeholderStyle: kAppPlaceholderStyle,
               decoration: kAppTextFieldDecoration,
               focusedDecoration: kAppTextFieldFocusedDecoration,
+              onSubmitted: (_) => _submit(),
             ),
           ),
         ],
@@ -815,6 +839,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
       placeholderStyle: kAppPlaceholderStyle,
       decoration: kAppTextFieldDecoration,
       focusedDecoration: kAppTextFieldFocusedDecoration,
+      onSubmitted: (_) => _submit(),
     ),
     const FieldHint(
       'Shown in the Connections list; falls back to the folder name when '
@@ -882,6 +907,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
         focusedDecoration: kAppTextFieldFocusedDecoration,
         // Re-evaluate the Open button as the git-dir is typed.
         onChanged: (_) => setState(() {}),
+        onSubmitted: (_) => _submit(),
       ),
     ],
   ];

@@ -231,7 +231,8 @@ void main() {
   ) async {
     await _pump(tester, stashes: const []);
     expect(find.text('No stashes'), findsOneWidget);
-    expect(find.textContaining('stash your current changes'), findsOneWidget);
+    expect(find.textContaining('Stash Changes'), findsWidgets);
+    expect(find.textContaining('context bar'), findsOneWidget);
   });
 
   testWidgets('drop confirms destructively, then hands the service the '
