@@ -22,6 +22,12 @@ class RepositoryContextBar extends StatelessWidget {
   final RepositoryContextSnapshot snapshot;
   final RepositoryPrimaryAction primaryAction;
   final ValueChanged<RepositoryPrimaryActionKind> onPrimaryAction;
+
+  /// Supplied by screens that can actually sync. When present the bar renders
+  /// the grouped Fetch · Pull · Push · Sync control instead of a lone button,
+  /// and [primaryAction] becomes the *recommendation* — which verb to
+  /// emphasize — rather than the only reachable one.
+  final RepositorySyncGroup? syncGroup;
   final VoidCallback? onToggleSidebar;
   final ValueChanged<OperationId>? onRevealOutput;
 
@@ -30,6 +36,7 @@ class RepositoryContextBar extends StatelessWidget {
     required this.snapshot,
     required this.primaryAction,
     required this.onPrimaryAction,
+    this.syncGroup,
     this.onToggleSidebar,
     this.onRevealOutput,
   });
@@ -118,20 +125,29 @@ class RepositoryContextBar extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(width: 6),
-                MacosTooltip(
-                  message: primaryAction.disabledReason ?? primaryAction.label,
-                  child: AppPushButton(
-                    controlSize: ControlSize.regular,
-                    semanticLabel: primaryAction.disabledReason == null
-                        ? primaryAction.label
-                        : '${primaryAction.label}, disabled: '
-                              '${primaryAction.disabledReason}',
-                    onPressed: primaryAction.enabled
-                        ? () => onPrimaryAction(primaryAction.kind)
-                        : null,
-                    child: Text(primaryAction.label),
+                if (syncGroup case final group?)
+                  _SyncGroup(
+                    group: group,
+                    recommendation: primaryAction,
+                    snapshot: snapshot,
+                    compact: compact,
+                  )
+                else
+                  MacosTooltip(
+                    message:
+                        primaryAction.disabledReason ?? primaryAction.label,
+                    child: AppPushButton(
+                      controlSize: ControlSize.regular,
+                      semanticLabel: primaryAction.disabledReason == null
+                          ? primaryAction.label
+                          : '${primaryAction.label}, disabled: '
+                                '${primaryAction.disabledReason}',
+                      onPressed: primaryAction.enabled
+                          ? () => onPrimaryAction(primaryAction.kind)
+                          : null,
+                      child: Text(primaryAction.label),
+                    ),
                   ),
-                ),
               ],
             ),
           ),
@@ -289,7 +305,8 @@ class _StatusSummary extends StatelessWidget {
     final conflicts = snapshot.conflictCount ?? 0;
     final labels = <String>[
       if (conflicts > 0) '$conflicts conflicts',
-      if (conflicts == 0 && snapshot.isDirty) '${snapshot.changedCount} changed',
+      if (conflicts == 0 && snapshot.isDirty)
+        '${snapshot.changedCount} changed',
       if (snapshot.hasWorkingTreeStatus && !snapshot.isDirty) 'Clean',
       if (snapshot.ahead > 0) '↑${snapshot.ahead}',
       if (snapshot.behind > 0) '↓${snapshot.behind}',
@@ -392,6 +409,183 @@ class _CompactMetadata extends StatelessWidget {
             child: MacosIcon(CupertinoIcons.ellipsis_circle, size: 15),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Fetch · Pull · Push · Sync as one grouped control, with the recommended
+/// verb emphasized and the variants in an adjacent overflow.
+///
+/// The design rule this exists to enforce: **no button changes what it does.**
+/// A single primary button that renames itself Fetch → Pull → Push → Sync as
+/// the repository moves underneath means the control at a given pixel is a
+/// different command each time you look, so nothing about it can be learned.
+/// Here the ladder in `resolvePrimaryRepositoryAction` still runs — it just
+/// decides which of four fixed buttons is drawn as the accented one, and
+/// carries the ahead/behind counts as its badge.
+///
+/// The variants (pull with rebase/merge, push with upstream/tags, the two
+/// forces) share ONE overflow rather than getting a chevron each. Apple's
+/// guidance for pull-down buttons — "If you need to list only one or two
+/// items, consider using alternative components" — rules out a two-item Pull
+/// menu, and two chevrons inside a four-button group reads as clutter; one
+/// overflow of six is a real menu and keeps the group's shape flat.
+class _SyncGroup extends StatelessWidget {
+  final RepositorySyncGroup group;
+  final RepositoryPrimaryAction recommendation;
+  final RepositoryContextSnapshot snapshot;
+  final bool compact;
+
+  const _SyncGroup({
+    required this.group,
+    required this.recommendation,
+    required this.snapshot,
+    required this.compact,
+  });
+
+  /// The four fixed verbs, in the order they read as a sentence about the
+  /// remote: bring news, take changes, give changes, do both.
+  static const _verbs = <(RepositorySyncCommand, String)>[
+    (RepositorySyncCommand.fetch, 'Fetch'),
+    (RepositorySyncCommand.pull, 'Pull'),
+    (RepositorySyncCommand.push, 'Push'),
+    (RepositorySyncCommand.sync, 'Sync'),
+  ];
+
+  static const _variants = <(RepositorySyncCommand, String, bool)>[
+    (RepositorySyncCommand.pullRebase, 'Pull with Rebase', false),
+    (RepositorySyncCommand.pullMerge, 'Pull with Merge', false),
+    (RepositorySyncCommand.pushSetUpstream, 'Push and Set Upstream', false),
+    (RepositorySyncCommand.pushTags, 'Push Tags', false),
+    (RepositorySyncCommand.forcePushWithLease, 'Force Push with Lease', true),
+    (RepositorySyncCommand.forcePush, 'Force Push', true),
+  ];
+
+  /// Which fixed verb the ladder is recommending. `publish` is a push that
+  /// also sets upstream, so the emphasis belongs on Push.
+  RepositorySyncCommand? get _recommended => switch (recommendation.kind) {
+    RepositoryPrimaryActionKind.fetch => RepositorySyncCommand.fetch,
+    RepositoryPrimaryActionKind.pull => RepositorySyncCommand.pull,
+    RepositoryPrimaryActionKind.push ||
+    RepositoryPrimaryActionKind.publish => RepositorySyncCommand.push,
+    RepositoryPrimaryActionKind.sync => RepositorySyncCommand.sync,
+    // Resolve / Continue are not sync verbs: nothing in the group is
+    // emphasized while a merge or rebase is waiting on the user.
+    _ => null,
+  };
+
+  /// Ahead/behind ride the emphasized verb, where the recommendation is.
+  /// An in-sync branch shows nothing rather than a noisy "↑0 ↓0" — absence is
+  /// the signal that there is nothing to do.
+  String? get _badge {
+    final ahead = snapshot.ahead;
+    final behind = snapshot.behind;
+    if (ahead == 0 && behind == 0) return null;
+    return [if (behind > 0) '↓$behind', if (ahead > 0) '↑$ahead'].join(' ');
+  }
+
+  /// The badge in plain words, for the tooltip and for VoiceOver — arrows do
+  /// not read aloud usefully.
+  String get _badgeInWords {
+    final ahead = snapshot.ahead;
+    final upstream = snapshot.upstreamLabel;
+    final plural = ahead == 1 ? '' : 's';
+    return '$ahead commit$plural ahead of, ${snapshot.behind} behind'
+        '${upstream == null ? '' : ' $upstream'}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final recommended = _recommended;
+    // Compact: only the recommended verb keeps its button; the other three
+    // join the variants in the overflow rather than wrapping onto a second
+    // line or squeezing the identity out of the bar.
+    final shown = compact
+        ? _verbs.where((verb) => verb.$1 == recommended).toList()
+        : _verbs;
+    final overflowVerbs = compact
+        ? _verbs.where((verb) => verb.$1 != recommended).toList()
+        : const <(RepositorySyncCommand, String)>[];
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final (command, label) in shown) ...[
+          _syncButton(
+            context,
+            command,
+            label,
+            emphasized: command == recommended,
+          ),
+          const SizedBox(width: 4),
+        ],
+        MacosPulldownButton(
+          icon: CupertinoIcons.chevron_down,
+          items: [
+            for (final (command, label) in overflowVerbs)
+              MacosPulldownMenuItem(
+                title: Text(label),
+                enabled: group.reasonFor(command) == null,
+                onTap: () => group.onInvoke(command),
+              ),
+            if (overflowVerbs.isNotEmpty) const MacosPulldownMenuDivider(),
+            for (final (command, label, destructive) in _variants)
+              MacosPulldownMenuItem(
+                title: Text(
+                  label,
+                  style: destructive
+                      ? const TextStyle(color: MacosColors.systemRedColor)
+                      : null,
+                ),
+                enabled: group.reasonFor(command) == null,
+                onTap: () => group.onInvoke(command),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _syncButton(
+    BuildContext context,
+    RepositorySyncCommand command,
+    String label, {
+    required bool emphasized,
+  }) {
+    final reason = group.reasonFor(command);
+    final badge = emphasized ? _badge : null;
+    // Both facts matter on a verb that is emphasized but cannot run: what the
+    // divergence is, and why the button is dim. Neither replaces the other.
+    final description = [
+      badge == null ? label : _badgeInWords,
+      ?reason,
+    ].join(' — ');
+    return MacosTooltip(
+      message: description,
+      child: AppPushButton(
+        controlSize: ControlSize.regular,
+        // Only the recommended verb is accented; the rest stay secondary so
+        // the group has one visual answer to "what now?" without hiding the
+        // other three.
+        secondary: !emphasized,
+        semanticLabel: reason == null
+            ? (badge == null ? label : '$label, $_badgeInWords')
+            : '$label, disabled: $description',
+        onPressed: reason == null ? () => group.onInvoke(command) : null,
+        child: badge == null
+            ? Text(label)
+            : Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(label),
+                  const SizedBox(width: 6),
+                  Text(
+                    badge,
+                    style: MacosTheme.of(context).typography.caption1,
+                  ),
+                ],
+              ),
       ),
     );
   }

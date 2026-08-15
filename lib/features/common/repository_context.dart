@@ -201,6 +201,45 @@ enum RepositoryPrimaryActionKind {
   createRequest,
 }
 
+/// The sync verbs the grouped control offers.
+///
+/// The first four are always present as buttons with fixed meanings; the rest
+/// are variants carried by the group's overflow. A button never changes what
+/// it does with repository state — only which one is *emphasized* does, which
+/// is the whole point of the group: the recommendation is advice, not a
+/// moving target under the pointer.
+enum RepositorySyncCommand {
+  fetch,
+  pull,
+  push,
+  sync,
+  pullRebase,
+  pullMerge,
+  pushSetUpstream,
+  pushTags,
+  forcePushWithLease,
+  forcePush,
+}
+
+/// A screen's sync capability, handed to the context bar in place of a lone
+/// primary button.
+@immutable
+class RepositorySyncGroup {
+  final ValueChanged<RepositorySyncCommand> onInvoke;
+
+  /// Commands that cannot run right now, mapped to the reason. A command
+  /// listed here dims and keeps its tooltip — it never disappears, so the
+  /// group's shape is stable and learnable.
+  final Map<RepositorySyncCommand, String> unavailable;
+
+  const RepositorySyncGroup({
+    required this.onInvoke,
+    this.unavailable = const {},
+  });
+
+  String? reasonFor(RepositorySyncCommand command) => unavailable[command];
+}
+
 @immutable
 class RepositoryPrimaryAction {
   final RepositoryPrimaryActionKind kind;

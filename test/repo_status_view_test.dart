@@ -467,10 +467,17 @@ void main() {
       ),
     );
 
-    // In the header's pulldown menu. The label is qualified — History offers a
-    // plain "Amend last commit" that rewrites the selected commit, and the two
-    // menus can be a keystroke apart, so this one names what it operates on.
-    await tester.tap(find.byType(MacosPulldownButton).first);
+    // In the header's hamburger — targeted by its glyph, since the context
+    // bar's sync group now also owns a pull-down. The label is qualified:
+    // History offers a plain "Amend last commit" that rewrites the selected
+    // commit, and the two menus can be a keystroke apart.
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) =>
+            w is MacosPulldownButton &&
+            w.icon == CupertinoIcons.line_horizontal_3,
+      ),
+    );
     await tester.pumpAndSettle();
     expect(find.text('Amend last commit'), findsNothing);
     await tester.tap(find.text('Amend last commit (working tree)'));
@@ -874,13 +881,16 @@ void main() {
         ),
       );
 
+      // The badge rides the sync group's emphasized verb — the same place the
+      // recommendation it explains is drawn — rather than being repeated in a
+      // second toolbar band.
       expect(find.text('↑2'), findsOneWidget);
       expect(find.textContaining('↓'), findsNothing, reason: 'behind is 0');
       expect(
         find.byWidgetPredicate(
           (w) =>
               w is MacosTooltip &&
-              w.message == '2 commits ahead of, 0 behind origin/main',
+              w.message.startsWith('2 commits ahead of, 0 behind origin/main'),
         ),
         findsOneWidget,
       );

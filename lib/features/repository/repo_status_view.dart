@@ -121,9 +121,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   // multi-select summary panel instead.
   Set<String> get _selectedPaths => _selection.paths;
   set _selectedPaths(Set<String> value) {
-    _selectionNotifier.set(
-      _selection.copyWith(paths: Set.unmodifiable(value)),
-    );
+    _selectionNotifier.set(_selection.copyWith(paths: Set.unmodifiable(value)));
   }
 
   // Anchor for shift-click range selection: the fixed end a range extends
@@ -736,7 +734,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           identity: identity,
           next: prefs.copyWith(taskDockCollapsed: false),
         ).then((_) {
-          if (mounted) ref.invalidate(repositoryWorkspacePrefsProvider(repoPath));
+          if (mounted) {
+            ref.invalidate(repositoryWorkspacePrefsProvider(repoPath));
+          }
         }),
       );
     }
@@ -1432,6 +1432,19 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       supplement: supplement,
     );
     final primaryAction = resolvePrimaryRepositoryAction(snapshot);
+    // The four sync verbs are always on screen with fixed meanings; the ladder
+    // above only decides which one is emphasized. Unavailability is stated per
+    // verb, with the reason, so a dimmed button explains itself.
+    final syncGroup = RepositorySyncGroup(
+      onInvoke: _invokeSyncCommand,
+      unavailable: _syncUnavailability(
+        busy: busy,
+        connected: connection.isConnected,
+        hasRemote:
+            (remotes?.isNotEmpty ?? false) || (branch?.hasUpstream ?? false),
+        hasUpstream: branch?.hasUpstream ?? false,
+      ),
+    );
     final selected = _selected;
     final navigatorMode =
         _navigatorModeOverride ?? workspacePreferences.navigatorMode;
@@ -1613,6 +1626,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             repositoryContext: RepositoryContextBar(
               snapshot: snapshot,
               primaryAction: primaryAction,
+              syncGroup: syncGroup,
               onToggleSidebar: () =>
                   MacosWindowScope.maybeOf(context)?.toggleSidebar(),
               onRevealOutput: (id) {
@@ -1647,6 +1661,72 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         },
       ),
     );
+  }
+
+  /// Why each sync verb cannot run, when it cannot. Absent means available.
+  ///
+  /// Stated once here rather than at each button: the reasons are properties
+  /// of the repository (no connection, no remote, no upstream, an operation
+  /// already running), not of the widgets.
+  Map<RepositorySyncCommand, String> _syncUnavailability({
+    required bool busy,
+    required bool connected,
+    required bool hasRemote,
+    required bool hasUpstream,
+  }) {
+    final blanket = !connected
+        ? 'Repository is disconnected'
+        : busy
+        ? 'Another repository operation is running'
+        : !hasRemote
+        ? 'No remote is configured'
+        : null;
+    if (blanket != null) {
+      return {
+        for (final command in RepositorySyncCommand.values) command: blanket,
+      };
+    }
+    if (hasUpstream) return const {};
+    // A branch with no upstream can still be pushed — that is what
+    // `--set-upstream` is for — but nothing can be pulled or synced from a
+    // tracking branch that does not exist yet.
+    const noUpstream = 'This branch has no upstream yet';
+    return const {
+      RepositorySyncCommand.pull: noUpstream,
+      RepositorySyncCommand.pullRebase: noUpstream,
+      RepositorySyncCommand.pullMerge: noUpstream,
+      RepositorySyncCommand.sync: noUpstream,
+      RepositorySyncCommand.forcePushWithLease: noUpstream,
+      RepositorySyncCommand.forcePush: noUpstream,
+    };
+  }
+
+  /// Every sync verb routes to the same call its keyboard shortcut and menu
+  /// item use — the group adds a surface, never a second implementation.
+  void _invokeSyncCommand(RepositorySyncCommand command) {
+    final settings = ref.read(appSettingsProvider);
+    switch (command) {
+      case RepositorySyncCommand.fetch:
+        _fetch().ignore();
+      case RepositorySyncCommand.pull:
+        _pull(settings.defaultPullMode).ignore();
+      case RepositorySyncCommand.pullRebase:
+        _pull(PullMode.rebase).ignore();
+      case RepositorySyncCommand.pullMerge:
+        _pull(PullMode.merge).ignore();
+      case RepositorySyncCommand.push:
+        _push(followTags: settings.pushFollowTags).ignore();
+      case RepositorySyncCommand.pushSetUpstream:
+        _push(setUpstream: true).ignore();
+      case RepositorySyncCommand.pushTags:
+        _push(followTags: true).ignore();
+      case RepositorySyncCommand.forcePushWithLease:
+        _push(force: PushForce.withLease).ignore();
+      case RepositorySyncCommand.forcePush:
+        _push(force: PushForce.force).ignore();
+      case RepositorySyncCommand.sync:
+        _sync(settings.defaultPullMode).ignore();
+    }
   }
 
   void _invokePrimaryRepositoryAction(
@@ -2237,27 +2317,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                // Divergence from upstream — shown only when there is
-                // something to push or pull. An in-sync branch used to render
-                // a noisy "↑0 ↓0" here; nothing at all is the signal that
-                // nothing needs doing (mirrors the Branches panel's badge).
-                if (branch != null &&
-                    branch.hasUpstream &&
-                    (branch.ahead > 0 || branch.behind > 0)) ...[
-                  const SizedBox(width: 8),
-                  MacosTooltip(
-                    message:
-                        '${branch.ahead} commit${branch.ahead == 1 ? '' : 's'} '
-                        'ahead of, ${branch.behind} behind ${branch.upstream}',
-                    child: Text(
-                      [
-                        if (branch.ahead > 0) '↑${branch.ahead}',
-                        if (branch.behind > 0) '↓${branch.behind}',
-                      ].join(' '),
-                      style: typography.caption1,
-                    ),
-                  ),
-                ],
+                // The divergence badge moved to the sync group's emphasized
+                // verb, where the recommendation it explains lives. Rendering
+                // it here too put the same "↑2" twice on one screen.
                 if (!hasRemote) ...[
                   const SizedBox(width: 8),
                   Text(
