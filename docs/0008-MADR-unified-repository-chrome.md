@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-08-14
 decision-makers: maccavelli (maintainer)
 consulted: Apple HIG (toolbars, pull-down buttons, segmented controls, menus, sidebars, windows); GitHub Desktop, Tower, Fork, Sublime Merge, GitKraken, Sourcetree, Xcode
@@ -269,6 +269,11 @@ precedes §6.
 * No page renders two controls bound to the same handler simultaneously;
   asserted for `ActivityCenterButton` specifically.
 * Chrome height above content is measured at 640/standard/wide and recorded.
+  **Measured** (`test/chrome_budget_test.dart`, one context bar, no second
+  band): compact density 40 / 46 / 46 px at 640 / 900 / 1400; comfortable
+  density 46 / 52 / 52 px. The deleted band's 54 px estimate above was derived
+  from its padding and content; whatever its exact value, it came back in full
+  at every width, because it was a fixed-height row that never adapted.
 * `flutter analyze` and `flutter test` clean; the 48 workspace goldens are
   unaffected (they are synthetic fixtures that never mount real chrome), and
   `test/workspace_responsive_test.dart` is the guard for bar-height changes.

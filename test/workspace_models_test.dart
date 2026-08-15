@@ -19,14 +19,17 @@ void main() {
   });
 
   group('workspace design tokens', () {
-    test('density changes row rhythm while preserving usable targets', () {
+    test('density tightens hit targets without dropping below the floor', () {
       final compact = AppTheme.workspaceTokens(WorkspaceDensity.compact);
       final comfortable = AppTheme.workspaceTokens(
         WorkspaceDensity.comfortable,
       );
+      // The row-rhythm tokens this used to assert on were read by nothing —
+      // rows size from their content — so they are gone. What remains is the
+      // one metric with real consumers, and its accessibility floor.
       expect(
-        compact.metrics.rowHeight,
-        lessThan(comfortable.metrics.rowHeight),
+        compact.metrics.minimumTargetSize,
+        lessThan(comfortable.metrics.minimumTargetSize),
       );
       expect(compact.metrics.minimumTargetSize, greaterThanOrEqualTo(28));
     });

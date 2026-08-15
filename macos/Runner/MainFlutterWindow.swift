@@ -347,20 +347,28 @@ class MainFlutterWindow: NSWindow {
       viewMenu.addItem(item)
     }
 
-    // Refresh. The repository toolbar band that used to carry a refresh
-    // button is gone; ⌘R still works, and this is its menu route.
-    if viewMenu.items.first(where: {
-      ($0.representedObject as? String) == "global.refresh"
-    }) == nil {
-      let item = NSMenuItem(
-        title: "Refresh", action: #selector(dynamicMenuActionFired(_:)),
-        keyEquivalent: "r")
-      item.keyEquivalentModifierMask = [.command]
-      item.representedObject = "global.refresh"
-      item.target = self
-      viewMenu.addItem(NSMenuItem.separator())
-      viewMenu.addItem(item)
-    }
+    // Refresh (the deleted repository toolbar band was its only button), the
+    // command palette, and the pane-focus actions — which ship unbound by
+    // default, so before this the palette had exactly one route and the five
+    // focus actions had none at all. An action with no route is not a feature.
+    installPlainItems(
+      in: viewMenu,
+      items: [
+        (title: "Refresh", actionId: "global.refresh",
+         key: "r", separatorBefore: true),
+        (title: "Command Palette", actionId: "global.commandPalette",
+         key: "k", separatorBefore: false),
+        (title: "Focus Navigator", actionId: "global.focusNavigator",
+         key: "", separatorBefore: true),
+        (title: "Focus Canvas", actionId: "global.focusCanvas",
+         key: "", separatorBefore: false),
+        (title: "Focus Inspector", actionId: "global.focusInspector",
+         key: "", separatorBefore: false),
+        (title: "Focus Task Dock", actionId: "global.focusTaskDock",
+         key: "", separatorBefore: false),
+        (title: "Focus Activity", actionId: "global.focusActivity",
+         key: "", separatorBefore: false),
+      ])
 
     // The items now exist, so pull the current checkbox states from Flutter.
     // Flutter also pushes them once at startup, but that push races this
@@ -389,6 +397,34 @@ class MainFlutterWindow: NSWindow {
     item.state = .off
     menu.addItem(item)
     return item
+  }
+
+  /// Adds plain (non-checkable) command items to an existing menu, skipping
+  /// any already installed — `awakeFromNib` can run more than once.
+  private func installPlainItems(
+    in menu: NSMenu,
+    items: [(title: String, actionId: String, key: String,
+            separatorBefore: Bool)]
+  ) {
+    for spec in items {
+      if menu.items.contains(where: {
+        ($0.representedObject as? String) == spec.actionId
+      }) {
+        continue
+      }
+      if spec.separatorBefore && !menu.items.isEmpty {
+        menu.addItem(NSMenuItem.separator())
+      }
+      let item = NSMenuItem(
+        title: spec.title, action: #selector(dynamicMenuActionFired(_:)),
+        keyEquivalent: spec.key)
+      if !spec.key.isEmpty {
+        item.keyEquivalentModifierMask = [.command]
+      }
+      item.representedObject = spec.actionId
+      item.target = self
+      menu.addItem(item)
+    }
   }
 
   /// Installs (or replaces) the repository menus Dart declared, inserting them

@@ -33,33 +33,29 @@ class WorkspaceRadii {
   static const double pill = 999;
 }
 
+/// Density-derived measurements the workspace actually reads.
+///
+/// It also carried `rowHeight`, `denseRowHeight` and `paneHeaderHeight`, each
+/// declared, constructed for both densities, and read by nothing — a token
+/// nobody consumes is not a design system, it is a claim that rows and pane
+/// headers respond to density when they do not. Removed rather than
+/// retrofitted: the lists and section headers size themselves from their
+/// content and padding, so there is no hardcoded height for these to replace.
 @immutable
 class WorkspaceMetrics {
-  final double rowHeight;
-  final double denseRowHeight;
+  /// The smallest tappable edge length. Enforced by [ToolIconButton] and
+  /// [InlineActionButton].
   final double minimumTargetSize;
-  final double paneHeaderHeight;
 
-  const WorkspaceMetrics({
-    required this.rowHeight,
-    required this.denseRowHeight,
-    required this.minimumTargetSize,
-    required this.paneHeaderHeight,
-  });
+  const WorkspaceMetrics({required this.minimumTargetSize});
 
   static WorkspaceMetrics resolve(WorkspaceDensity density) =>
       switch (density) {
         WorkspaceDensity.compact => const WorkspaceMetrics(
-          rowHeight: 28,
-          denseRowHeight: 24,
           minimumTargetSize: 28,
-          paneHeaderHeight: 36,
         ),
         WorkspaceDensity.comfortable => const WorkspaceMetrics(
-          rowHeight: 34,
-          denseRowHeight: 28,
           minimumTargetSize: 32,
-          paneHeaderHeight: 42,
         ),
       };
 }
