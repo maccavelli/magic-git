@@ -1,9 +1,11 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../../core/settings/keymap.dart';
 import '../common/tool_icon_button.dart';
 
-class DiffViewControls extends StatelessWidget {
+class DiffViewControls extends ConsumerWidget {
   final bool split;
   final bool ignoreWhitespace;
   final bool expandedContext;
@@ -37,7 +39,15 @@ class DiffViewControls extends StatelessWidget {
       active ? MacosColors.systemBlueColor : MacosColors.systemGrayColor;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Live-keymap suffix for the split toggle's tooltip (0009 L10) — the
+    // chord exists (⌘⌥S by default) but the tooltip never taught it.
+    final splitBindings = ref.watch(
+      keymapProvider,
+    )['repository.toggleSplitDiff'];
+    final splitSuffix = (splitBindings == null || splitBindings.isEmpty)
+        ? ''
+        : ' (${splitBindings.first.label})';
     final hunkReason = split
         ? 'Hunk actions are unavailable in split view'
         : ignoreWhitespace
@@ -63,7 +73,8 @@ class DiffViewControls extends StatelessWidget {
           ),
           ToolIconButton(
             icon: CupertinoIcons.square_split_2x1,
-            tooltip: split ? 'Use unified diff' : 'Use split diff',
+            tooltip:
+                '${split ? 'Use unified diff' : 'Use split diff'}$splitSuffix',
             size: 15,
             color: _color(split),
             onPressed: onToggleSplit,

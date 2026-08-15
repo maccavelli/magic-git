@@ -1487,7 +1487,13 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       'history.rebaseFrom': selectedCommit == null
           ? null
           : () => _actRebaseFrom(selectedCommit),
-      'history.amend': hasCommits ? _actAmend : null,
+      // Same HEAD gate the row menu applies (0009 L5): amend rewrites the
+      // real HEAD, so the palette must not offer it while a non-HEAD row is
+      // the selection it appears to act on.
+      'history.amend':
+          hasCommits && (selectedHash == null || _isHead(selectedHash))
+          ? _actAmend
+          : null,
       'history.filter': () => _searchFocus.requestFocus(),
       'history.zoomIn': () => _adjustZoom(0.1),
       'history.zoomOut': () => _adjustZoom(-0.1),

@@ -274,12 +274,23 @@ class _CloseButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MacosIconButton(
-      icon: const MacosIcon(CupertinoIcons.xmark, size: 11),
-      boxConstraints: const BoxConstraints(minWidth: 22, minHeight: 22),
-      padding: EdgeInsets.zero,
-      mouseCursor: SystemMouseCursors.click,
-      onPressed: onClose,
+    // Its own semantics node + tooltip (0009 L2): without them the chip's
+    // combined node reads activate/dirty/close as one action, and assistive
+    // tech can't target the close separately.
+    return Semantics(
+      container: true,
+      button: true,
+      label: 'Close tab',
+      child: MacosTooltip(
+        message: 'Close tab',
+        child: MacosIconButton(
+          icon: const MacosIcon(CupertinoIcons.xmark, size: 11),
+          boxConstraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+          padding: EdgeInsets.zero,
+          mouseCursor: SystemMouseCursors.click,
+          onPressed: onClose,
+        ),
+      ),
     );
   }
 }

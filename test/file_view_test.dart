@@ -913,7 +913,8 @@ void main() {
     });
 
     testWidgets(
-      'Delete File shows the permanent-delete confirmation; "No" cancels',
+      'Delete File confirms with the honest snapshot/undo copy; Cancel is a '
+      'no-op (0009 L9)',
       (tester) async {
         final git = _RecordingGit();
         await pumpWithGit(tester, git);
@@ -923,24 +924,24 @@ void main() {
         await tester.tap(find.text('Delete File'));
         await tester.pumpAndSettle();
 
-        // The exact confirmation copy the user asked for.
+        // The service snapshots before removing, so the copy matches the
+        // discard/undo convention — never "This action is permanent!".
         expect(
           find.text(
-            'Are you sure you want to delete "todo.txt"? '
-            'This action is permanent!',
+            'Delete "todo.txt"? Its content is snapshotted first — '
+            'press ⌘Z to undo, or restore it later from the Recovery view.',
           ),
           findsOneWidget,
         );
-        expect(find.text('Yes'), findsOneWidget);
-        expect(find.text('No'), findsOneWidget);
+        expect(find.textContaining('permanent'), findsNothing);
 
-        await tester.tap(find.text('No'));
+        await tester.tap(find.text('Cancel'));
         await tester.pumpAndSettle();
         expect(git.deleted, isEmpty);
       },
     );
 
-    testWidgets('Delete File → "Yes" deletes the file via GitService', (
+    testWidgets('Delete File → confirm deletes the file via GitService', (
       tester,
     ) async {
       final git = _RecordingGit();
@@ -951,7 +952,7 @@ void main() {
       await tester.tap(find.text('Delete File'));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.text('Yes'));
+      await tester.tap(find.text('Delete'));
       await tester.pumpAndSettle();
       expect(git.deleted, [(_repo, 'todo.txt')]);
     });

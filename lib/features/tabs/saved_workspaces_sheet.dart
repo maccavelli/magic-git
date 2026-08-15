@@ -5,9 +5,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_workspace_set.dart';
 import '../common/actions.dart';
-import '../common/buttons.dart';
-import '../common/escape_dismissible.dart';
-import '../common/field_styles.dart';
+import '../common/prompt_text_sheet.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'saved_workspace_actions.dart';
@@ -173,10 +171,9 @@ class _SavedWorkspacesSheetState extends ConsumerState<SavedWorkspacesSheet> {
   }
 
   Future<void> _saveCurrent(TabsController tabs) async {
-    final name = await _promptText(
+    final name = await promptText(
       context,
-      title: 'Save Workspace',
-      initialValue: '',
+      'Save Workspace',
       placeholder: 'Workspace name',
       confirmLabel: 'Save',
     );
@@ -228,12 +225,13 @@ class _SavedWorkspacesSheetState extends ConsumerState<SavedWorkspacesSheet> {
   Future<void> _renameActive(TabsController tabs) async {
     final tab = tabs.active;
     if (tab == null || tabs.repositoryIdentityFor(tab) == null) return;
-    final alias = await _promptText(
+    final alias = await promptText(
       context,
-      title: 'Rename Tab',
-      initialValue: tabs.aliasFor(tab) ?? '',
+      'Rename Tab',
+      initial: tabs.aliasFor(tab) ?? '',
       placeholder: _basename(tab.repoPath ?? ''),
       confirmLabel: 'Rename',
+      // A confirmed blank means "clear the alias" — distinct from Cancel.
       allowEmpty: true,
     );
     if (alias == null || !mounted) return;
@@ -290,59 +288,6 @@ class _SavedWorkspacesSheetState extends ConsumerState<SavedWorkspacesSheet> {
       if (mounted) setState(() => _busy = false);
     }
   }
-}
-
-Future<String?> _promptText(
-  BuildContext context, {
-  required String title,
-  required String initialValue,
-  required String placeholder,
-  required String confirmLabel,
-  bool allowEmpty = false,
-}) async {
-  final controller = TextEditingController(text: initialValue);
-  final result = await showMacosAlertDialog<String>(
-    context: context,
-    builder: (context) => EscapeDismissible(
-      child: MacosAlertDialog(
-        appIcon: const MacosIcon(CupertinoIcons.rectangle_stack, size: 56),
-        title: Text(title),
-        message: SizedBox(
-          width: 260,
-          child: MacosTextField(
-            controller: controller,
-            autofocus: true,
-            placeholder: placeholder,
-            placeholderStyle: kAppPlaceholderStyle,
-            decoration: kAppTextFieldDecoration,
-            focusedDecoration: kAppTextFieldFocusedDecoration,
-            onSubmitted: (value) {
-              if (allowEmpty || value.trim().isNotEmpty) {
-                Navigator.of(context).pop(value);
-              }
-            },
-          ),
-        ),
-        primaryButton: AppPushButton(
-          controlSize: ControlSize.large,
-          onPressed: () {
-            if (allowEmpty || controller.text.trim().isNotEmpty) {
-              Navigator.of(context).pop(controller.text);
-            }
-          },
-          child: Text(confirmLabel),
-        ),
-        secondaryButton: AppPushButton(
-          controlSize: ControlSize.large,
-          secondary: true,
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-      ),
-    ),
-  );
-  controller.dispose();
-  return result;
 }
 
 String _basename(String path) {

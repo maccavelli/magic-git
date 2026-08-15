@@ -16,6 +16,10 @@ import 'sized_sheet.dart';
 /// inline under the field; while non-null the confirm button is disabled and
 /// Enter is inert — so a caller like rename-branch can reject an invalid ref
 /// name with a specific message before any round trip.
+///
+/// [allowEmpty] lets a caller treat a confirmed empty field as a value in its
+/// own right (returned as `''` — e.g. "clear this alias") instead of folding
+/// it into the cancelled `null`.
 Future<String?> promptText(
   BuildContext context,
   String title, {
@@ -24,6 +28,7 @@ Future<String?> promptText(
   String? description,
   String confirmLabel = 'OK',
   String? Function(String value)? validate,
+  bool allowEmpty = false,
 }) async {
   final value = await showMacosSheet<String>(
     context: context,
@@ -34,9 +39,11 @@ Future<String?> promptText(
       description: description,
       confirmLabel: confirmLabel,
       validate: validate,
+      allowEmpty: allowEmpty,
     ),
   );
   final trimmed = value?.trim();
+  if (allowEmpty) return trimmed;
   return (trimmed == null || trimmed.isEmpty) ? null : trimmed;
 }
 
@@ -51,6 +58,7 @@ class _PromptTextSheet extends StatefulWidget {
   final String? description;
   final String confirmLabel;
   final String? Function(String value)? validate;
+  final bool allowEmpty;
 
   const _PromptTextSheet({
     required this.title,
@@ -59,6 +67,7 @@ class _PromptTextSheet extends StatefulWidget {
     this.description,
     this.confirmLabel = 'OK',
     this.validate,
+    this.allowEmpty = false,
   });
 
   @override
@@ -81,7 +90,11 @@ class _PromptTextSheetState extends State<_PromptTextSheet> {
   void _submit() {
     if (_problem != null) return;
     final text = _controller.text;
-    Navigator.of(context).pop(text.trim().isEmpty ? null : text);
+    // With allowEmpty a confirmed blank pops '' so the caller can tell
+    // "cleared" from a cancel (which pops null).
+    Navigator.of(
+      context,
+    ).pop(text.trim().isEmpty ? (widget.allowEmpty ? '' : null) : text);
   }
 
   @override

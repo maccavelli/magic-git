@@ -2487,6 +2487,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
 
   _SectionKind _kindOfFileRow(_FileRow row) => row.section;
 
+  /// " (Space)"-style tooltip suffix for [actionId]'s first binding under the
+  /// LIVE keymap (remaps honored), or empty when unbound (0009 L10).
+  String _bindingSuffix(String actionId) {
+    final bindings = ref.watch(keymapProvider)[actionId];
+    if (bindings == null || bindings.isEmpty) return '';
+    return ' (${bindings.first.label})';
+  }
+
   /// Handles a plain click, cmd-click, or shift-click on a file/conflict row —
   /// the macOS list-selection conventions: plain click replaces the
   /// selection; cmd-click toggles this row in/out of it; shift-click extends
@@ -2873,7 +2881,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   icon: staged
                       ? CupertinoIcons.minus_circle
                       : CupertinoIcons.plus_circle,
-                  tooltip: staged ? 'Unstage' : 'Stage',
+                  tooltip:
+                      '${staged ? 'Unstage' : 'Stage'}'
+                      '${_bindingSuffix('repository.toggleStage')}',
                   size: 17,
                   color: staged
                       ? MacosColors.systemOrangeColor

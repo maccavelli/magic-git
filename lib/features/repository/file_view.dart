@@ -384,14 +384,17 @@ class _FileViewState extends ConsumerState<FileView> {
       _runMutation(() => ref.read(gitServiceProvider).stage(repoPath, path));
 
   Future<void> _deleteFile(RepoNode node) async {
+    // Honest copy (0009 L9): the service snapshots before removing
+    // (_removeCaptured), so this is undoable — the old "This action is
+    // permanent!" both scared users off a safe action and contradicted the
+    // discard/undo copy everywhere else.
     final ok = await confirmAction(
       context,
       title: 'Delete file',
       message:
-          'Are you sure you want to delete "${node.name}"? '
-          'This action is permanent!',
-      confirmLabel: 'Yes',
-      cancelLabel: 'No',
+          'Delete "${node.name}"? Its content is snapshotted first — '
+          'press ⌘Z to undo, or restore it later from the Recovery view.',
+      confirmLabel: 'Delete',
       destructive: true,
     );
     if (!ok || !mounted) return;
