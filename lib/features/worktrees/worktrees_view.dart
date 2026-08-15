@@ -607,51 +607,91 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
 
     final connection = ref.watch(connectionProvider);
 
-    if (tabs.selected != null) {
-      final selectedPath = tabs.selected!;
-      final all = worktreesAsync.value ?? const <GitWorktree>[];
-      final tabWorktree = all
-          .where((item) => item.path == selectedPath)
-          .firstOrNull;
+    final all = worktreesAsync.value ?? const <GitWorktree>[];
+    final tabPath = tabs.selected;
+    final tabWorktree = tabPath == null
+        ? null
+        : all.where((item) => item.path == tabPath).firstOrNull;
+    // One handler map for the keyboard shortcuts, the command palette and the
+    // native Worktree menu — built above the tab/overview fork so an open
+    // checkout tab keeps its handlers (0009 H2). Inside a tab the operand is
+    // that tab's worktree; on the overview it is the highlighted row.
+    // Everything except add / repair-all / prune acts on the operand, so those
+    // fall through (null) with none — which is also what dims the matching
+    // menu items.
+    final operand = tabPath != null
+        ? tabWorktree
+        : all.where((item) => item.path == _selectedOverviewPath).firstOrNull;
+    final handlers = <String, VoidCallback?>{
+      'worktrees.add': _add,
+      'worktrees.repairAll': _repairAll,
+      'worktrees.prune': _prune,
+      'worktrees.open': operand == null ? null : () => _openWorktree(operand),
+      'worktrees.lock': operand == null || operand.isLocked
+          ? null
+          : () => _toggleLock(operand),
+      'worktrees.unlock': operand == null || !operand.isLocked
+          ? null
+          : () => _toggleLock(operand),
+      'worktrees.move': operand == null ? null : () => _move(operand),
+      'worktrees.repair': operand == null ? null : () => _repair(operand),
+      'worktrees.remove': operand == null || operand.isMain
+          ? null
+          : () => _remove(operand, alsoDeleteBranch: false),
+    };
+    final shortcutsLive = widget.isActive && !busy;
+    final liveBindings = shortcutsLive
+        ? resolveShortcuts(ref.watch(keymapProvider), handlers)
+        : const <ShortcutActivator, VoidCallback>{};
+    final liveHandlers = shortcutsLive
+        ? handlers
+        : const <String, VoidCallback?>{};
+
+    if (tabPath != null) {
+      final selectedPath = tabPath;
       final tabParts = selectedPath.split('/').where((part) => part.isNotEmpty);
       // A worktree tab used to render no context bar at all, and then mount a
       // workspace screen that drew its own — so the chrome either vanished or
       // doubled. The bar belongs to the tab (it names the checkout); the
       // screens inside it are content, marked as nested so they suppress
       // theirs.
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          RepositoryContextBar(
-            snapshot: RepositoryContextSnapshot(
-              repositoryPath: selectedPath,
-              repositoryName:
-                  'Worktree: ${tabParts.isEmpty ? selectedPath : tabParts.last}',
-              connectionLabel: connection.connectionLabel,
-              hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
-              branchLabel: tabWorktree == null
-                  ? 'Worktree'
-                  : tabWorktree.branchLabel,
-              connected: connection.isConnected,
-              busy: busy,
+      return PanelShortcuts(
+        bindings: liveBindings,
+        handlers: liveHandlers,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            RepositoryContextBar(
+              snapshot: RepositoryContextSnapshot(
+                repositoryPath: selectedPath,
+                repositoryName:
+                    'Worktree: ${tabParts.isEmpty ? selectedPath : tabParts.last}',
+                connectionLabel: connection.connectionLabel,
+                hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
+                branchLabel: tabWorktree == null
+                    ? 'Worktree'
+                    : tabWorktree.branchLabel,
+                connected: connection.isConnected,
+                busy: busy,
+              ),
+              primaryAction: RepositoryPrimaryAction(
+                kind: RepositoryPrimaryActionKind.refresh,
+                label: 'Refresh',
+                disabledReason: busy
+                    ? 'Another worktree operation is running'
+                    : null,
+              ),
+              onPrimaryAction: (_) => _refresh(),
             ),
-            primaryAction: RepositoryPrimaryAction(
-              kind: RepositoryPrimaryActionKind.refresh,
-              label: 'Refresh',
-              disabledReason: busy
-                  ? 'Another worktree operation is running'
-                  : null,
+            _strip(context, tabs, all),
+            Container(height: 1, color: MacosColors.separatorColor),
+            Expanded(
+              child: NestedWorkspaceScope(
+                child: _workspace(context, selectedPath),
+              ),
             ),
-            onPrimaryAction: (_) => _refresh(),
-          ),
-          _strip(context, tabs, all),
-          Container(height: 1, color: MacosColors.separatorColor),
-          Expanded(
-            child: NestedWorkspaceScope(
-              child: _workspace(context, selectedPath),
-            ),
-          ),
-        ],
+          ],
+        ),
       );
     }
     final workspace = watchWorkspacePreferences(
@@ -660,7 +700,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       repositoryPath: repoPath,
       fallback: const RepositoryWorkspacePrefs(navigatorWidth: 520),
     );
-    final worktrees = worktreesAsync.value ?? const <GitWorktree>[];
+    final worktrees = all;
     final main = worktrees.where((item) => item.isMain).firstOrNull;
     final selectedWorktree = worktrees
         .where((item) => item.path == _selectedOverviewPath)
@@ -691,39 +731,9 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
               ),
             ),
     );
-    // One handler map for the keyboard shortcuts, the command palette and the
-    // native Worktree menu. Everything except add / repair-all / prune acts on
-    // the selected worktree, so those fall through (null) with none selected —
-    // which is also what dims the matching menu items.
-    final handlers = <String, VoidCallback?>{
-      'worktrees.add': _add,
-      'worktrees.repairAll': _repairAll,
-      'worktrees.prune': _prune,
-      'worktrees.open': selectedWorktree == null
-          ? null
-          : () => _openWorktree(selectedWorktree),
-      'worktrees.lock': selectedWorktree == null || selectedWorktree.isLocked
-          ? null
-          : () => _toggleLock(selectedWorktree),
-      'worktrees.unlock': selectedWorktree == null || !selectedWorktree.isLocked
-          ? null
-          : () => _toggleLock(selectedWorktree),
-      'worktrees.move': selectedWorktree == null
-          ? null
-          : () => _move(selectedWorktree),
-      'worktrees.repair': selectedWorktree == null
-          ? null
-          : () => _repair(selectedWorktree),
-      'worktrees.remove': selectedWorktree == null || selectedWorktree.isMain
-          ? null
-          : () => _remove(selectedWorktree, alsoDeleteBranch: false),
-    };
-    final shortcutsLive = widget.isActive && !busy;
     return PanelShortcuts(
-      bindings: shortcutsLive
-          ? resolveShortcuts(ref.watch(keymapProvider), handlers)
-          : const <ShortcutActivator, VoidCallback>{},
-      handlers: shortcutsLive ? handlers : const {},
+      bindings: liveBindings,
+      handlers: liveHandlers,
       child: RepositoryWorkspaceScaffold(
         repositoryContext: Column(
           children: [
@@ -921,6 +931,9 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
   Widget _row(BuildContext context, GitWorktree wt) {
     final typography = MacosTheme.of(context).typography;
     final open = ref.watch(worktreeTabsProvider).open.contains(wt.path);
+    // The tint marks the keymap/menu operand (the highlighted row), not tab
+    // state — open tabs get a chip instead, so the two are distinguishable.
+    final selected = wt.path == _selectedOverviewPath;
 
     final (IconData icon, Color color) = switch (wt) {
       _ when wt.isPrunable => (
@@ -945,7 +958,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
         width: 280,
       ),
       child: Container(
-        color: open
+        color: selected
             ? MacosColors.systemBlueColor.withValues(alpha: 0.08)
             : const Color(0x00000000),
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
@@ -975,6 +988,13 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
                         const LabelChip(
                           'main worktree',
                           color: MacosColors.systemGreenColor,
+                        ),
+                      ],
+                      if (open) ...[
+                        const SizedBox(width: 4),
+                        const LabelChip(
+                          'open',
+                          color: MacosColors.systemGrayColor,
                         ),
                       ],
                       if (wt.isLocked) ...[

@@ -18,7 +18,12 @@ import 'package:macos_ui/macos_ui.dart';
 
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 import 'package:remote_magic_git/features/common/repository_workspace_scaffold.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_access.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_tabs.dart';
@@ -35,6 +40,36 @@ class _RecordingAccess extends WorktreeAccess {
     released.add(worktreePath);
   }
 }
+
+/// A GitService whose executor fails fast — every read a checkout tab's
+/// nested workspace performs is stubbed at the provider layer, so any call
+/// that reaches this fake is a missing override, not a real subprocess
+/// hanging fake-async.
+class _QuietGit extends GitService {
+  _QuietGit() : super(SSHCommandExecutor(SSHClientManager()));
+}
+
+/// Keeps the nested workspace's FileView from listing the working tree.
+class _HiddenFileView extends FileViewVisibility {
+  @override
+  bool build() => false;
+}
+
+/// Provider stubs for mounting [path]'s checkout tab (its nested workspace
+/// opens on the Changes sub-panel — a full RepoStatusView).
+List<Override> _tabOverrides(String path) => [
+  gitServiceProvider.overrideWithValue(_QuietGit()),
+  statusProvider(path).overrideWith(
+    (ref) async => GitStatus(branch: const GitBranchInfo(), files: const []),
+  ),
+  pendingOpProvider(path).overrideWith((ref) async => PendingOp.none),
+  repoWatchProvider(
+    path,
+  ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
+  refsProvider(path).overrideWith((ref) async => const <GitRef>[]),
+  remotesProvider(path).overrideWith((ref) async => const <String>[]),
+  fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
+];
 
 void main() {
   late Directory tmp;
@@ -209,6 +244,71 @@ void main() {
     // the row's repair — the same words the inline wrench does for one worktree.
     expect(find.text('Repair worktree links'), findsNothing);
     expect(find.text('Repair all worktree links'), findsOneWidget);
+  });
+
+  // 0009 H2: selecting a checkout tab used to return before the handler map
+  // was built, so every Worktree menu/keymap/palette verb silently died.
+  testWidgets('an open checkout tab keeps the Worktree handlers live', (
+    tester,
+  ) async {
+    final wt = worktrees.firstWhere((w) => !w.isMain && !w.isPrunable);
+    final container = await pump(tester, extraOverrides: _tabOverrides(wt.path));
+    container.read(worktreeTabsProvider.notifier).open(wt.path);
+    await tester.pumpAndSettle();
+
+    final worktreeShortcuts = tester
+        .widgetList<PanelShortcuts>(find.byType(PanelShortcuts))
+        .where((w) => w.handlers.containsKey('worktrees.add'))
+        .toList();
+    // Exactly one wrapper above the tab/overview fork.
+    expect(worktreeShortcuts, hasLength(1));
+    final handlers = worktreeShortcuts.single.handlers;
+    expect(handlers['worktrees.add'], isNotNull);
+    expect(handlers['worktrees.repairAll'], isNotNull);
+    expect(handlers['worktrees.prune'], isNotNull);
+    // Selection-gated verbs act on the open checkout itself.
+    expect(handlers['worktrees.repair'], isNotNull);
+    expect(handlers['worktrees.remove'], isNotNull);
+  });
+
+  // 0009 M31: the overview tint marks the keymap/menu operand (the selected
+  // row); an open tab is a separate, weaker marker (the "open" chip).
+  testWidgets('overview highlights the selected row; open tabs get a chip', (
+    tester,
+  ) async {
+    final wt = worktrees.firstWhere((w) => !w.isMain && !w.isPrunable);
+    final container = await pump(tester, extraOverrides: _tabOverrides(wt.path));
+
+    Color? rowColor(String name) => tester
+        .widget<Container>(
+          find
+              .ancestor(of: find.text(name), matching: find.byType(Container))
+              .first,
+        )
+        .color;
+
+    // Nothing selected yet — no tinted rows.
+    expect(rowColor('app-feature'), const Color(0x00000000));
+
+    await tester.tap(find.text('app-feature'));
+    // The row also supports double-click-to-open, so Flutter waits out the
+    // double-click interval before dispatching the single-click selection.
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(rowColor('app-feature'), isNot(const Color(0x00000000)));
+    expect(rowColor('app'), const Color(0x00000000));
+    expect(find.text('open'), findsNothing);
+
+    // Open its tab, then return to the Overview: the row keeps the selection
+    // tint and additionally shows the "open" chip.
+    container.read(worktreeTabsProvider.notifier).open(wt.path);
+    await tester.pumpAndSettle();
+    container.read(worktreeTabsProvider.notifier).select(null);
+    await tester.pumpAndSettle();
+
+    expect(find.text('open'), findsOneWidget);
+    expect(rowColor('app-feature'), isNot(const Color(0x00000000)));
   });
 
   // The tab strip's own behaviour is tested on the notifier rather than through
