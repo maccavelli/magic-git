@@ -10,6 +10,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
 import 'package:remote_magic_git/core/github/models.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/tool_icon_button.dart';
 import 'package:remote_magic_git/features/github/github_panel.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -81,6 +82,13 @@ Future<void> _pump(WidgetTester tester) async {
     ProviderScope(
       overrides: [
         remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+        // 0009 M6: the forge chrome names the real HEAD — stub status.
+        statusProvider(_repo).overrideWith(
+          (ref) async => GitStatus(
+            branch: const GitBranchInfo(head: 'main'),
+            files: const [],
+          ),
+        ),
         pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
         workflowRunsProvider(_repo).overrideWith((ref) async => _runs),
         projectIssuesProvider(_repo).overrideWith((ref) async => _issues),
@@ -99,9 +107,8 @@ Future<void> _pump(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
-Finder _tool(String tooltip) => find.byWidgetPredicate(
-  (w) => w is ToolIconButton && w.tooltip == tooltip,
-);
+Finder _tool(String tooltip) =>
+    find.byWidgetPredicate((w) => w is ToolIconButton && w.tooltip == tooltip);
 
 void main() {
   testWidgets('the Inbox is the default view: PRs, failing/moving CI and '
@@ -171,8 +178,9 @@ void main() {
     expect(prefs.getStringList('forgeInboxMarks_$_repo'), ['s:pr:7']);
   });
 
-  testWidgets('the Browse segment switches to the full sections and persists',
-      (tester) async {
+  testWidgets('the Browse segment switches to the full sections and persists', (
+    tester,
+  ) async {
     await _pump(tester);
 
     await tester.tap(find.text('Browse'));

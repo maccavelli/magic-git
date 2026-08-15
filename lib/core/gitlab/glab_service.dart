@@ -4,6 +4,7 @@ import '../forge/forge.dart';
 import '../forge/forge_dashboard.dart';
 import '../forge/forge_json.dart';
 import '../forge/forge_repo_summary.dart';
+import '../forge/forge_urls.dart' show createdForgeItemNumber;
 import '../forge/merge_plan.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../utils/bounded_tail.dart';
@@ -1020,7 +1021,10 @@ query($path: ID!) {
   /// value and then rejects whatever token follows it with `Accepts 0 arg(s),
   /// received 1`. So there is no injection risk here to guard against, and no
   /// equivalent guard to add.
-  Future<void> createMergeRequest(
+  /// Returns the new MR's iid, parsed from the URL `glab` prints on stdout —
+  /// or null when the output was unexpectedly shaped (the create still
+  /// succeeded; only selection follow-up is lost).
+  Future<int?> createMergeRequest(
     String repoPath, {
     required String sourceBranch,
     required String targetBranch,
@@ -1064,6 +1068,7 @@ query($path: ID!) {
     if (!result.isSuccess) {
       throw GlabException('glab mr create failed', result);
     }
+    return createdForgeItemNumber(result.stdout);
   }
 
   // ---- Issues & milestones -------------------------------------------------
@@ -1259,7 +1264,9 @@ query($path: ID!) {
   /// token after a value-taking flag as that flag's literal value). Like it,
   /// `--description` is passed only when non-empty — glab creates the issue
   /// non-interactively from `--title` alone over the (PTY-less) exec channel.
-  Future<void> createIssue(
+  /// Returns the new issue's iid parsed from the printed URL, or null on
+  /// unexpectedly shaped output.
+  Future<int?> createIssue(
     String repoPath, {
     required String title,
     String description = '',
@@ -1289,6 +1296,7 @@ query($path: ID!) {
     if (!result.isSuccess) {
       throw GlabException('glab issue create failed', result);
     }
+    return createdForgeItemNumber(result.stdout);
   }
 
   /// Closes an issue via `glab issue close` (reversible — see [reopenIssue]).

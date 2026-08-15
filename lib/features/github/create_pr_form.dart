@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../../core/forge/merge_plan.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
@@ -21,13 +22,19 @@ class CreatePrForm extends ConsumerStatefulWidget {
   /// nav item. Null keeps the default "prefill from the checked-out branch".
   final String? initialHead;
 
-  /// Pre-fills the PR base branch once in initState. Null defaults to `main`.
+  /// Pre-fills the PR base branch once in initState. Null defers to the
+  /// repo's default branch (via the merge policy), then `main`.
   /// Never rewritten after the user can edit it.
   final String? initialBase;
 
   /// Dismisses the form back to the "nothing selected" pane state — called on
   /// Cancel and after a successful create.
   final VoidCallback onClose;
+
+  /// The just-created PR's number, when `gh` printed a parsable URL — lets
+  /// the panel select the new item instead of dropping to the neutral pane
+  /// (0009 M22). Called after [onClose].
+  final ValueChanged<int>? onCreated;
 
   /// Reports whether the form holds unsaved content, on every edit. The panel
   /// uses it to confirm before a row click would discard a live draft.
@@ -39,6 +46,7 @@ class CreatePrForm extends ConsumerStatefulWidget {
     required this.onClose,
     this.initialHead,
     this.initialBase,
+    this.onCreated,
     this.onDirtyChanged,
   });
 
@@ -56,6 +64,7 @@ class _CreatePrFormState extends ConsumerState<CreatePrForm> {
 
   bool _submitting = false;
   bool _headPrefilled = false;
+  bool _basePrefilled = false;
   bool _draft = false;
   final Set<String> _labels = {};
   // Keyed by the milestone's id (GitHub `number`, unique), resolved back to
@@ -75,9 +84,27 @@ class _CreatePrFormState extends ConsumerState<CreatePrForm> {
       _head = TextEditingController();
     }
     final baseSeed = widget.initialBase;
-    _base = TextEditingController(
-      text: (baseSeed != null && baseSeed.isNotEmpty) ? baseSeed : 'main',
-    );
+    if (baseSeed != null && baseSeed.isNotEmpty) {
+      _base = TextEditingController(text: baseSeed);
+      _basePrefilled = true;
+    } else {
+      // Filled from the repo's real default branch once the merge policy
+      // lands (0009 H12) — a hardcoded 'main' mis-targets master/develop/
+      // trunk repos.
+      _base = TextEditingController();
+    }
+  }
+
+  /// Prefills the base with the repo's actual default branch; 'main' is only
+  /// the last-resort fallback for repos whose policy could not be read.
+  /// Never overwrites a seed or a user-typed value.
+  void _maybePrefillBase(GhRepoMergePolicy? policy) {
+    if (_basePrefilled || _base.text.trim().isNotEmpty) return;
+    final fallback = policy?.defaultBranch;
+    setState(() {
+      _base.text = (fallback == null || fallback.isEmpty) ? 'main' : fallback;
+      _basePrefilled = true;
+    });
   }
 
   void _maybePrefillHead(GitStatus? status) {
@@ -160,6 +187,7 @@ class _CreatePrFormState extends ConsumerState<CreatePrForm> {
         break;
       }
     }
+    int? created;
     final ok = await runAction(context, () async {
       // `gh pr create --head` assumes the branch already exists on the remote.
       // Push it first (`-u` sets upstream) WHEN it exists locally — publishing
@@ -180,7 +208,7 @@ class _CreatePrFormState extends ConsumerState<CreatePrForm> {
           setUpstream: true,
         );
       }
-      await gh.createPullRequest(
+      created = await gh.createPullRequest(
         widget.repoPath,
         head: head,
         base: base,
@@ -205,6 +233,9 @@ class _CreatePrFormState extends ConsumerState<CreatePrForm> {
       // every other mutation).
       refreshAfterMutation(ref, widget.repoPath);
       widget.onClose();
+      // Unparsable output (created == null) simply keeps the neutral pane —
+      // the create itself already succeeded.
+      if (created != null) widget.onCreated?.call(created!);
     }
   }
 
@@ -221,6 +252,19 @@ class _CreatePrFormState extends ConsumerState<CreatePrForm> {
           if (mounted) _maybePrefillHead(s);
         });
       });
+    }
+    if (!_basePrefilled) {
+      // Fill only on a definitive answer (data or error) so the repo's real
+      // default branch never loses a race against a premature 'main'.
+      final policyAsync = ref.watch(repoMergePolicyProvider(widget.repoPath));
+      if (policyAsync.hasValue || policyAsync.hasError) {
+        final policy = policyAsync.value;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _maybePrefillBase(policy is GhRepoMergePolicy ? policy : null);
+          }
+        });
+      }
     }
     final dashboard = ref
         .watch(githubProjectDashboardProvider(widget.repoPath))

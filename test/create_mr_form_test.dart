@@ -11,6 +11,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
+import 'package:remote_magic_git/core/forge/merge_plan.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/gitlab/glab_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
@@ -27,7 +28,7 @@ class _FakeGlab extends GlabService {
   final List<String> created = [];
 
   @override
-  Future<void> createMergeRequest(
+  Future<int?> createMergeRequest(
     String repoPath, {
     required String sourceBranch,
     required String targetBranch,
@@ -42,6 +43,7 @@ class _FakeGlab extends GlabService {
     bool removeSourceBranch = false,
   }) async {
     created.add('$sourceBranch->$targetBranch:$title');
+    return null;
   }
 }
 
@@ -89,7 +91,11 @@ class _FakeGit extends GitService {
   }
 }
 
-Future<(_FakeGit, _FakeGlab)> _pump(WidgetTester tester) async {
+Future<(_FakeGit, _FakeGlab)> _pump(
+  WidgetTester tester, {
+  GlRepoMergePolicy policy = const GlRepoMergePolicy(),
+  String? initialTarget,
+}) async {
   // The sheet's full content (title + scrollable form + button row) doesn't
   // fit the default 800x600 test surface, which both spams overflow warnings
   // and can leave lower content unhittable.
@@ -115,6 +121,7 @@ Future<(_FakeGit, _FakeGlab)> _pump(WidgetTester tester) async {
       projectDashboardProvider(
         _repo,
       ).overrideWith((ref) async => const ForgeProjectDashboard()),
+      repoMergePolicyProvider(_repo).overrideWith((ref) async => policy),
     ],
   );
   addTearDown(container.dispose);
@@ -123,7 +130,11 @@ Future<(_FakeGit, _FakeGlab)> _pump(WidgetTester tester) async {
       container: container,
       child: MacosApp(
         debugShowCheckedModeBanner: false,
-        home: CreateMrForm(repoPath: _repo, onClose: () {}),
+        home: CreateMrForm(
+          repoPath: _repo,
+          onClose: () {},
+          initialTarget: initialTarget,
+        ),
       ),
     ),
   );
@@ -307,6 +318,11 @@ void main() {
             files: const [],
           ),
         ),
+        // The form now resolves its target prefill from the merge policy —
+        // stub it so the real provider chain never runs (0009 H12).
+        repoMergePolicyProvider(
+          _repo,
+        ).overrideWith((ref) async => const GlRepoMergePolicy()),
         projectDashboardProvider(_repo).overrideWith(
           (ref) async => first
               ? const ForgeProjectDashboard(
@@ -353,5 +369,36 @@ void main() {
       isNull,
       reason: 'the vanished selection must be coerced to null, not asserted',
     );
+  });
+
+  // 0009 H12: the unseeded target comes from the project's real default
+  // branch — 'main' is only the last-resort fallback.
+  testWidgets('target prefills from the merge policy default branch', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      policy: const GlRepoMergePolicy(defaultBranch: 'develop'),
+    );
+    final target = tester
+        .widget<MacosTextField>(find.byType(MacosTextField).at(1))
+        .controller!
+        .text;
+    expect(target, 'develop');
+  });
+
+  testWidgets('an explicit initialTarget wins over the policy default', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      policy: const GlRepoMergePolicy(defaultBranch: 'develop'),
+      initialTarget: 'release',
+    );
+    final target = tester
+        .widget<MacosTextField>(find.byType(MacosTextField).at(1))
+        .controller!
+        .text;
+    expect(target, 'release');
   });
 }

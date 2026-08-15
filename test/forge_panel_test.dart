@@ -10,6 +10,7 @@ import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/repository_workspace_scaffold.dart';
 import 'package:remote_magic_git/features/forge/forge_panel.dart';
 import 'package:remote_magic_git/features/forge/forge_prefs.dart';
@@ -38,6 +39,14 @@ Future<void> _pumpForge(WidgetTester tester, Forge forge) async {
       forgeInboxModeProvider.overrideWith(_BrowseMode.new),
       forgeProvider(_repo).overrideWith((ref) async => forge),
       // Keep the underlying forge panels from hitting a real executor.
+      // The forge chrome now names the real HEAD in the Branch slot (0009
+      // M6), so status must be stubbed like every other provider here.
+      statusProvider(_repo).overrideWith(
+        (ref) async => GitStatus(
+          branch: const GitBranchInfo(head: 'main'),
+          files: const [],
+        ),
+      ),
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       pullRequestsProvider(_repo).overrideWith((ref) async => const []),

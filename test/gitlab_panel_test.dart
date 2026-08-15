@@ -17,6 +17,7 @@ import 'package:remote_magic_git/core/gitlab/models.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/repository_context.dart';
 import 'package:remote_magic_git/features/common/workspace_focus.dart';
 import 'package:remote_magic_git/features/common/workspace_navigation.dart';
@@ -145,9 +146,10 @@ List<Override> _projectOverrides(
     repo,
   ).overrideWith((ref) async => const ForgeProjectDashboard()),
   originRemoteUrlProvider(repo).overrideWith((ref) async => null),
-  changeRequestCommentsProvider(
-    (repo, 7),
-  ).overrideWith((ref) async => comments),
+  changeRequestCommentsProvider((
+    repo,
+    7,
+  )).overrideWith((ref) async => comments),
 ];
 
 Future<ProviderContainer> _pump(
@@ -167,6 +169,13 @@ Future<ProviderContainer> _pump(
       // Sibling of the refs override: the views now read CONFIGURED
       // remotes (remotesProvider), not remote-tracking refs.
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+      // 0009 M6: the forge chrome names the real HEAD — stub status.
+      statusProvider(_repo).overrideWith(
+        (ref) async => GitStatus(
+          branch: const GitBranchInfo(head: 'main'),
+          files: const [],
+        ),
+      ),
       mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
       mergeRequestDetailProvider((
         _repo,
@@ -311,6 +320,13 @@ void main() {
         forgeInboxModeProvider.overrideWith(_BrowseMode.new),
         refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
         remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+        // 0009 M6: the forge chrome names the real HEAD — stub status.
+        statusProvider(_repo).overrideWith(
+          (ref) async => GitStatus(
+            branch: const GitBranchInfo(head: 'main'),
+            files: const [],
+          ),
+        ),
         mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
         mergeRequestDetailProvider((
           _repo,
@@ -439,6 +455,13 @@ void main() {
           // Sibling of the refs override: the views now read CONFIGURED
           // remotes (remotesProvider), not remote-tracking refs.
           remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+          // 0009 M6: the forge chrome names the real HEAD — stub status.
+          statusProvider(_repo).overrideWith(
+            (ref) async => GitStatus(
+              branch: const GitBranchInfo(head: 'main'),
+              files: const [],
+            ),
+          ),
           mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
           mergeRequestDetailProvider((
             _repo,
@@ -525,10 +548,23 @@ void main() {
           // Sibling of the refs override: the views now read CONFIGURED
           // remotes (remotesProvider), not remote-tracking refs.
           remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+          // 0009 M6: the forge chrome names the real HEAD — stub status.
+          statusProvider(_repo).overrideWith(
+            (ref) async => GitStatus(
+              branch: const GitBranchInfo(head: 'main'),
+              files: const [],
+            ),
+          ),
           refsProvider(repoB).overrideWith((ref) async => _remoteRefs),
           // Sibling of the refs override: the views now read CONFIGURED
           // remotes (remotesProvider), not remote-tracking refs.
           remotesProvider(repoB).overrideWith((ref) async => const ['origin']),
+          statusProvider(repoB).overrideWith(
+            (ref) async => GitStatus(
+              branch: const GitBranchInfo(head: 'main'),
+              files: const [],
+            ),
+          ),
           mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
           pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
           jobsProvider((_repo, 100)).overrideWith((ref) async => _jobs),

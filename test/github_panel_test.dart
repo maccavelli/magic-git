@@ -16,6 +16,7 @@ import 'package:remote_magic_git/core/github/models.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/forge/forge_prefs.dart';
 import 'package:remote_magic_git/features/forge/forge_widgets.dart';
 import 'package:remote_magic_git/features/github/github_panel.dart';
@@ -45,6 +46,15 @@ class _MergeCapturingGh extends GhService {
   Future<PullRequest> pullRequestDetail(String repoPath, int number) async {
     return _readyPr;
   }
+}
+
+class _ApproveGh extends GhService {
+  _ApproveGh() : super(SSHCommandExecutor(SSHClientManager()));
+  final List<int> approvals = [];
+
+  @override
+  Future<void> approvePullRequest(String repoPath, int number) async =>
+      approvals.add(number);
 }
 
 const _repo = '/repo';
@@ -133,6 +143,9 @@ Future<void> _pump(
   WidgetTester tester, {
   GhService? gh,
   List<PullRequest>? prs,
+  // Called on every (re)build of PR #7's detail provider — lets a test count
+  // how often a mutation's invalidation re-fetched the open detail.
+  VoidCallback? onDetailBuild,
 }) async {
   tester.view.physicalSize = const Size(1200, 800);
   tester.view.devicePixelRatio = 1;
@@ -145,11 +158,19 @@ Future<void> _pump(
       // Sibling of the refs override: the views now read CONFIGURED
       // remotes (remotesProvider), not remote-tracking refs.
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+      // The forge chrome names the real HEAD in the Branch slot (0009 M6),
+      // so status must be stubbed like every other provider here.
+      statusProvider(_repo).overrideWith(
+        (ref) async => GitStatus(
+          branch: const GitBranchInfo(head: 'main'),
+          files: const [],
+        ),
+      ),
       pullRequestsProvider(_repo).overrideWith((ref) async => prs ?? _prs),
-      pullRequestDetailProvider((
-        _repo,
-        7,
-      )).overrideWith((ref) async => _readyPr),
+      pullRequestDetailProvider((_repo, 7)).overrideWith((ref) async {
+        onDetailBuild?.call();
+        return _readyPr;
+      }),
       repoMergePolicyProvider(
         _repo,
       ).overrideWith((ref) async => const GhRepoMergePolicy()),
@@ -277,6 +298,34 @@ void main() {
     expect(find.text('Base'), findsOneWidget);
   });
 
+  // 0009 H11: a change-request mutation must refresh the open detail pane —
+  // it prefers detail over the list row, so a list-only invalidate left the
+  // pane stale (draft badge, review chips, title).
+  testWidgets('Approve refreshes the open detail pane, not just the list', (
+    tester,
+  ) async {
+    final gh = _ApproveGh();
+    var detailBuilds = 0;
+    await _pump(tester, gh: gh, onDetailBuild: () => detailBuilds++);
+
+    await tester.tap(find.text('Add the parser'));
+    await tester.pumpAndSettle();
+    expect(detailBuilds, 1);
+
+    await tester.tap(find.text('Approve'));
+    await tester.pumpAndSettle();
+    // The confirm dialog's own Approve button.
+    await tester.tap(find.text('Approve').last);
+    await tester.pumpAndSettle();
+
+    expect(gh.approvals, [7]);
+    expect(
+      detailBuilds,
+      2,
+      reason: 'approve must invalidate the detail family, not only the list',
+    );
+  });
+
   testWidgets('PR detail shows conversation comments', (tester) async {
     tester.view.physicalSize = const Size(1200, 800);
     tester.view.devicePixelRatio = 1;
@@ -286,6 +335,13 @@ void main() {
         forgeInboxModeProvider.overrideWith(_BrowseMode.new),
         refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
         remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+        // 0009 M6: the forge chrome names the real HEAD — stub status.
+        statusProvider(_repo).overrideWith(
+          (ref) async => GitStatus(
+            branch: const GitBranchInfo(head: 'main'),
+            files: const [],
+          ),
+        ),
         pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
         pullRequestDetailProvider((
           _repo,

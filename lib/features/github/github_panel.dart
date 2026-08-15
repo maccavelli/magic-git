@@ -679,6 +679,9 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
             _sel = const ForgeNothingSel();
             _draftDirty = false;
           }),
+          // Land on the new PR, not the neutral pane (0009 M22).
+          onCreated: (number) =>
+              _select(ForgeChangeRequestSel(number)).ignore(),
           // No setState: dirtiness changes nothing visual until a row click
           // or tab-away consults it.
           onDirtyChanged: (dirty) => _draftDirty = dirty,
@@ -694,6 +697,8 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
             _sel = const ForgeNothingSel();
             _draftDirty = false;
           }),
+          // Land on the new issue, not the neutral pane (0009 M22).
+          onIssueCreated: (id) => _select(ForgeIssueSel(id)).ignore(),
           onDirtyChanged: (dirty) => _draftDirty = dirty,
         );
         if (project != null) return project;
@@ -821,7 +826,10 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
             secondary: true,
             onPressed: () => _updatePrBranch(effective),
           ),
-        if (plan.canEnableAutoMerge)
+        // Merge affordances stay hidden until real detail exists — a
+        // list-tier plan cannot vouch for mergeability (0009 H10). The
+        // strip's Checking state is the only merge signal meanwhile.
+        if (!loading && plan.canEnableAutoMerge)
           InFlightPushButton(
             busy: _mergingPrs.contains(pr.number),
             label: 'Enable auto-merge',
@@ -839,9 +847,9 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
             !plan.canEnableAutoMerge &&
             !plan.autoMergeAlreadyEnabled)
           const ProgressCircle()
-        else if (plan.canMergeNow)
+        else if (!loading && plan.canMergeNow)
           _mergeButton(effective, plan),
-        _prMorePulldown(effective),
+        _prMorePulldown(effective, detailLoading: loading),
       ],
     );
   }
@@ -849,7 +857,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
   /// The detail pane's overflow for the secondary PR actions — the same set as
   /// the row's right-click menu below the primary trio, so the detail pane is a
   /// full action surface without a wall of buttons.
-  Widget _prMorePulldown(PullRequest pr) {
+  Widget _prMorePulldown(PullRequest pr, {bool detailLoading = false}) {
     final plan = mergePlanForGitHub(pr: pr);
     return MacosPulldownButton(
       title: 'More',
@@ -862,7 +870,9 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
           title: const Text('Request changes…'),
           onTap: () => _requestChangesPr(pr.number),
         ),
-        if (plan.supportsAdminBypass)
+        // Recomputed from the row here, so it must also wait for detail
+        // before offering to bypass protection (0009 H10).
+        if (!detailLoading && plan.supportsAdminBypass)
           MacosPulldownMenuItem(
             title: const Text('Admin merge…'),
             onTap: () => _adminMerge(pr),
@@ -989,6 +999,17 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     issue: issue,
   );
 
+  /// Refreshes every cache a change-request mutation can stale: the list,
+  /// the open detail pane (which prefers detail over the list row), and its
+  /// comments. One helper so a new mutation can't forget the detail again
+  /// (0009 H11). [repoPath] is the caller's up-front capture — the active
+  /// repo can change while a confirm/prompt is open.
+  void _invalidateChangeRequest(String repoPath, int number) {
+    ref.invalidate(pullRequestsProvider(repoPath));
+    ref.invalidate(pullRequestDetailProvider((repoPath, number)));
+    ref.invalidate(changeRequestCommentsProvider((repoPath, number)));
+  }
+
   Future<void> _approve(int number) async {
     if (_approvingPrs.contains(number)) return;
     final repoPath = this.repoPath;
@@ -1007,9 +1028,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     );
     if (!mounted) return;
     setState(() => _approvingPrs.remove(number));
-    if (success) {
-      ref.invalidate(pullRequestsProvider(repoPath));
-    }
+    if (success) _invalidateChangeRequest(repoPath, number);
   }
 
   Future<void> _adminMerge(PullRequest pr) async {
@@ -1261,7 +1280,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     );
     if (!mounted) return;
     setState(() => _busyPrs.remove(number));
-    if (success) ref.invalidate(pullRequestsProvider(repoPath));
+    if (success) _invalidateChangeRequest(repoPath, number);
   }
 
   Future<void> _commentPr(int number) async {
@@ -1302,12 +1321,13 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     if (body == null || !mounted) return;
     setState(() => _busyPrs.add(number));
     final gh = ref.read(ghServiceProvider);
-    await runAction(
+    final success = await runAction(
       context,
       () => gh.requestChangesOnPullRequest(repoPath, number, body),
     );
     if (!mounted) return;
     setState(() => _busyPrs.remove(number));
+    if (success) _invalidateChangeRequest(repoPath, number);
   }
 
   /// Full title + description edit. Fetches the current fields first (the list
@@ -1351,7 +1371,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         context,
         () => gh.editPullRequest(repoPath, pr.number, title: title, body: body),
       );
-      if (success && mounted) ref.invalidate(pullRequestsProvider(repoPath));
+      if (success && mounted) _invalidateChangeRequest(repoPath, pr.number);
     } finally {
       if (mounted) setState(() => _busyPrs.remove(pr.number));
     }

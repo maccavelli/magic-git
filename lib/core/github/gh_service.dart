@@ -3,6 +3,7 @@ import '../forge/forge.dart';
 import '../forge/forge_dashboard.dart';
 import '../forge/forge_json.dart';
 import '../forge/forge_repo_summary.dart';
+import '../forge/forge_urls.dart' show createdForgeItemNumber;
 import '../forge/merge_plan.dart';
 import '../ssh/ssh_command_executor.dart';
 import 'models.dart';
@@ -614,7 +615,11 @@ class GhService {
   /// `GlabService.createMergeRequest`, no `--end-of-options`/`--` guard is added
   /// — `gh` is a cobra/pflag CLI whose parser binds the token after a
   /// value-taking flag as that flag's literal value.
-  Future<void> createPullRequest(
+  ///
+  /// Returns the new PR's number, parsed from the URL `gh` prints on stdout —
+  /// or null when the output was unexpectedly shaped (the create still
+  /// succeeded; only selection follow-up is lost).
+  Future<int?> createPullRequest(
     String repoPath, {
     required String title,
     required String head,
@@ -655,6 +660,7 @@ class GhService {
     if (!result.isSuccess) {
       throw GhException('gh pr create failed', result);
     }
+    return createdForgeItemNumber(result.stdout);
   }
 
   // ---- Issues & milestones -------------------------------------------------
@@ -826,7 +832,10 @@ class GhService {
   /// is always passed (empty when none) so `gh` never drops into an interactive
   /// editor, and no `--end-of-options` guard is added (cobra/pflag binds the
   /// token after a value-taking flag as its literal value).
-  Future<void> createIssue(
+  ///
+  /// Returns the new issue's number parsed from the printed URL, or null on
+  /// unexpectedly shaped output.
+  Future<int?> createIssue(
     String repoPath, {
     required String title,
     String body = '',
@@ -857,6 +866,7 @@ class GhService {
     if (!result.isSuccess) {
       throw GhException('gh issue create failed', result);
     }
+    return createdForgeItemNumber(result.stdout);
   }
 
   /// Closes an issue via `gh issue close` (reversible — see [reopenIssue]).

@@ -478,7 +478,10 @@ class _CompactMetadata extends StatelessWidget {
       if (snapshot.hasWorkingTreeStatus)
         '${snapshot.changedCount} changed, ${snapshot.conflictCount ?? 0} '
             'conflicts',
-      '${snapshot.ahead} ahead, ${snapshot.behind} behind',
+      // Only meaningful against an upstream — a screen that doesn't track
+      // one must stay silent, not print "0 ahead, 0 behind" (0009 M6).
+      if (snapshot.hasUpstream)
+        '${snapshot.ahead} ahead, ${snapshot.behind} behind',
       if (snapshot.upstreamLabel != null) 'Upstream: ${snapshot.upstreamLabel}',
       if (snapshot.connectionLabel != null) snapshot.connectionLabel!,
       if (snapshot.hostLabel != null) snapshot.hostLabel!,

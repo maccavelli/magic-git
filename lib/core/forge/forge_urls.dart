@@ -108,3 +108,15 @@ String? forgeBranchNameForCreateSeed(String? refName) {
   }
   return refName;
 }
+
+/// The item number at the tail of the URL `gh`/`glab` print after a create
+/// (`…/pull/123`, `…/-/merge_requests/45`, `…/issues/7`), or null when the
+/// output carries no such line. Both CLIs may print notices before the URL,
+/// so lines are scanned from the end.
+int? createdForgeItemNumber(String stdout) {
+  for (final line in stdout.trim().split('\n').reversed) {
+    final match = RegExp(r'https?://\S+/(\d+)$').firstMatch(line.trim());
+    if (match != null) return int.tryParse(match.group(1)!);
+  }
+  return null;
+}

@@ -18,6 +18,7 @@ import 'package:remote_magic_git/core/gitlab/models.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/forge/forge_prefs.dart';
 import 'package:remote_magic_git/features/github/github_panel.dart';
 import 'package:remote_magic_git/features/gitlab/gitlab_panel.dart';
@@ -200,13 +201,21 @@ Future<void> _pumpGithub(WidgetTester tester, {GhService? gh}) async {
       if (gh != null) ghServiceProvider.overrideWithValue(gh),
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
-      pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
-      pullRequestDetailProvider(
-        (_repo, 7),
-      ).overrideWith((ref) async => _readyPr),
-      repoMergePolicyProvider(_repo).overrideWith(
-        (ref) async => const GhRepoMergePolicy(),
+      // 0009 M6: the forge chrome names the real HEAD — stub status.
+      statusProvider(_repo).overrideWith(
+        (ref) async => GitStatus(
+          branch: const GitBranchInfo(head: 'main'),
+          files: const [],
+        ),
       ),
+      pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
+      pullRequestDetailProvider((
+        _repo,
+        7,
+      )).overrideWith((ref) async => _readyPr),
+      repoMergePolicyProvider(
+        _repo,
+      ).overrideWith((ref) async => const GhRepoMergePolicy()),
       workflowRunsProvider(
         _repo,
       ).overrideWith((ref) async => const <WorkflowRun>[]),
@@ -242,13 +251,21 @@ Future<void> _pumpGitlab(WidgetTester tester, {GlabService? glab}) async {
       if (glab != null) glabServiceProvider.overrideWithValue(glab),
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
-      mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
-      mergeRequestDetailProvider(
-        (_repo, 7),
-      ).overrideWith((ref) async => _readyMr),
-      repoMergePolicyProvider(_repo).overrideWith(
-        (ref) async => const GlRepoMergePolicy(),
+      // 0009 M6: the forge chrome names the real HEAD — stub status.
+      statusProvider(_repo).overrideWith(
+        (ref) async => GitStatus(
+          branch: const GitBranchInfo(head: 'main'),
+          files: const [],
+        ),
       ),
+      mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
+      mergeRequestDetailProvider((
+        _repo,
+        7,
+      )).overrideWith((ref) async => _readyMr),
+      repoMergePolicyProvider(
+        _repo,
+      ).overrideWith((ref) async => const GlRepoMergePolicy()),
       pipelinesProvider(_repo).overrideWith((ref) async => const <Pipeline>[]),
       projectIssuesProvider(_repo).overrideWith((ref) async => const []),
       projectMilestonesProvider(_repo).overrideWith((ref) async => const []),

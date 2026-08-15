@@ -745,6 +745,8 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
             _sel = const ForgeNothingSel();
             _draftDirty = false;
           }),
+          // Land on the new MR, not the neutral pane (0009 M22).
+          onCreated: (iid) => _select(ForgeChangeRequestSel(iid)).ignore(),
           // No setState: dirtiness changes nothing visual until a row click
           // or tab-away consults it.
           onDirtyChanged: (dirty) => _draftDirty = dirty,
@@ -760,6 +762,8 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
             _sel = const ForgeNothingSel();
             _draftDirty = false;
           }),
+          // Land on the new issue, not the neutral pane (0009 M22).
+          onIssueCreated: (iid) => _select(ForgeIssueSel(iid)).ignore(),
           onDirtyChanged: (dirty) => _draftDirty = dirty,
         );
         if (project != null) return project;
@@ -1043,6 +1047,17 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     issue: issue,
   );
 
+  /// Refreshes every cache a change-request mutation can stale: the list,
+  /// the open detail pane (which prefers detail over the list row), and its
+  /// comments. One helper so a new mutation can't forget the detail again
+  /// (0009 H11). [repoPath] is the caller's up-front capture — the active
+  /// repo can change while a confirm/prompt is open.
+  void _invalidateChangeRequest(String repoPath, int iid) {
+    ref.invalidate(mergeRequestsProvider(repoPath));
+    ref.invalidate(mergeRequestDetailProvider((repoPath, iid)));
+    ref.invalidate(changeRequestCommentsProvider((repoPath, iid)));
+  }
+
   Future<void> _approve(int iid) async {
     if (_approvingMrs.contains(iid)) return; // already in flight
     // Captured up front: the confirm dialog spans an await, and the active
@@ -1073,9 +1088,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     );
     if (!mounted) return;
     setState(() => _approvingMrs.remove(iid));
-    if (success) {
-      ref.invalidate(mergeRequestsProvider(repoPath));
-    }
+    if (success) _invalidateChangeRequest(repoPath, iid);
   }
 
   Future<void> _enableAutoMerge(MergeRequest mr, MergePlan plan) async {
@@ -1286,7 +1299,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     );
     if (!mounted) return;
     setState(() => _busyMrs.remove(iid));
-    if (success) ref.invalidate(mergeRequestsProvider(repoPath));
+    if (success) _invalidateChangeRequest(repoPath, iid);
   }
 
   Future<void> _commentMr(int iid) async {
@@ -1362,7 +1375,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
           description: description,
         ),
       );
-      if (success && mounted) ref.invalidate(mergeRequestsProvider(repoPath));
+      if (success && mounted) _invalidateChangeRequest(repoPath, mr.iid);
     } finally {
       if (mounted) setState(() => _busyMrs.remove(mr.iid));
     }

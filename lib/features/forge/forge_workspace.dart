@@ -75,13 +75,21 @@ class ForgeRepositoryWorkspace extends ConsumerWidget {
             .ignore();
       },
     );
+    // The Branch slot names the real HEAD — the forge's name is not a branch
+    // (0009 M6); the forge identity already rides the supplement's
+    // forgeLabel via publishLandedForgeSelection.
+    final branch = ref.watch(statusProvider(repoPath)).value?.branch;
     final snapshot = RepositoryContextSnapshot(
       repositoryPath: repoPath,
       repositoryName:
           'Repository: ${pathParts.isEmpty ? repoPath : pathParts.last}',
       connectionLabel: connection.connectionLabel,
       hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
-      branchLabel: forgeLabel,
+      branchLabel: branch == null
+          ? '…'
+          : branch.isDetached
+          ? 'Detached HEAD'
+          : branch.head ?? 'Unborn branch',
       connected: connection.isConnected,
       supplement: supplementKey == null
           ? null

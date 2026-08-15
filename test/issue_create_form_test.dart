@@ -27,7 +27,7 @@ class _FakeGh extends GhService {
   Completer<void>? gate;
 
   @override
-  Future<void> createIssue(
+  Future<int?> createIssue(
     String repoPath, {
     required String title,
     String body = '',
@@ -40,6 +40,7 @@ class _FakeGh extends GhService {
       '${milestone ?? ''}',
     );
     if (gate != null) await gate!.future;
+    return null;
   }
 }
 

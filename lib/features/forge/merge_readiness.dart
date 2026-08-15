@@ -22,7 +22,10 @@ class MergeReadinessStrip extends StatelessWidget {
     final secondary = MacosTheme.of(context).typography.body.color
             ?.withValues(alpha: 0.7) ??
         MacosColors.systemGrayColor;
-    if (detailLoading && plan.blockedReasons.isEmpty && !plan.canMergeNow) {
+    // While detail is in flight, Checking wins over ANY list-tier verdict:
+    // list JSON has no mergeable/mergeStateStatus, so a list-tier plan's
+    // canMergeNow is "not hard-blocked", never "Ready" (0009 H10).
+    if (detailLoading) {
       return _row(
         icon: CupertinoIcons.clock,
         color: secondary,

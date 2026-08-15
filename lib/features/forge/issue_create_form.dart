@@ -24,6 +24,11 @@ class IssueCreateForm extends ConsumerStatefulWidget {
   /// Cancel and after a successful create.
   final VoidCallback onClose;
 
+  /// The just-created issue's number/iid, when the CLI printed a parsable
+  /// URL — lets the panel select the new item instead of dropping to the
+  /// neutral pane (0009 M22). Called after [onClose].
+  final ValueChanged<int>? onCreated;
+
   /// Reports whether the form holds unsaved content, on every edit. The panel
   /// uses it to confirm before a row click would discard a live draft.
   final ValueChanged<bool>? onDirtyChanged;
@@ -34,6 +39,7 @@ class IssueCreateForm extends ConsumerStatefulWidget {
     required this.labels,
     required this.milestones,
     required this.onClose,
+    this.onCreated,
     this.onDirtyChanged,
   });
 
@@ -95,10 +101,11 @@ class _IssueCreateFormState extends ConsumerState<IssueCreateForm> {
       }
     }
 
+    int? created;
     final ok = await runAction(context, () async {
       switch (await ref.read(forgeProvider(widget.repoPath).future)) {
         case Forge.github:
-          await gh.createIssue(
+          created = await gh.createIssue(
             widget.repoPath,
             title: title,
             body: description,
@@ -107,7 +114,7 @@ class _IssueCreateFormState extends ConsumerState<IssueCreateForm> {
             milestone: milestoneTitle,
           );
         case Forge.gitlab:
-          await glab.createIssue(
+          created = await glab.createIssue(
             widget.repoPath,
             title: title,
             description: description,
@@ -135,6 +142,9 @@ class _IssueCreateFormState extends ConsumerState<IssueCreateForm> {
         ref.invalidate(projectDashboardProvider(widget.repoPath));
       }
       widget.onClose();
+      // Unparsable output (created == null) simply keeps the neutral pane —
+      // the create itself already succeeded.
+      if (created != null) widget.onCreated?.call(created!);
     }
   }
 

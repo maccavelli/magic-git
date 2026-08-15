@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../../core/forge/merge_plan.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/utils/git_porcelain_parser.dart';
 import '../common/actions.dart';
@@ -29,6 +30,11 @@ class CreateMrForm extends ConsumerStatefulWidget {
   /// Cancel and after a successful create.
   final VoidCallback onClose;
 
+  /// The just-created MR's iid, when `glab` printed a parsable URL — lets
+  /// the panel select the new item instead of dropping to the neutral pane
+  /// (0009 M22). Called after [onClose].
+  final ValueChanged<int>? onCreated;
+
   /// Reports whether the form holds unsaved content, on every edit. The panel
   /// uses it to confirm before a row click would discard a live draft.
   final ValueChanged<bool>? onDirtyChanged;
@@ -39,6 +45,7 @@ class CreateMrForm extends ConsumerStatefulWidget {
     required this.onClose,
     this.initialSource,
     this.initialTarget,
+    this.onCreated,
     this.onDirtyChanged,
   });
 
@@ -56,6 +63,7 @@ class _CreateMrFormState extends ConsumerState<CreateMrForm> {
 
   bool _submitting = false;
   bool _sourcePrefilled = false;
+  bool _targetPrefilled = false;
   bool _draft = false;
   bool _squash = false;
   bool _removeSource = false;
@@ -81,9 +89,27 @@ class _CreateMrFormState extends ConsumerState<CreateMrForm> {
       _source = TextEditingController();
     }
     final targetSeed = widget.initialTarget;
-    _target = TextEditingController(
-      text: (targetSeed != null && targetSeed.isNotEmpty) ? targetSeed : 'main',
-    );
+    if (targetSeed != null && targetSeed.isNotEmpty) {
+      _target = TextEditingController(text: targetSeed);
+      _targetPrefilled = true;
+    } else {
+      // Filled from the project's real default branch once the merge policy
+      // lands (0009 H12) — a hardcoded 'main' mis-targets master/develop/
+      // trunk projects.
+      _target = TextEditingController();
+    }
+  }
+
+  /// Prefills the target with the project's actual default branch; 'main' is
+  /// only the last-resort fallback when the policy could not be read. Never
+  /// overwrites a seed or a user-typed value.
+  void _maybePrefillTarget(GlRepoMergePolicy? policy) {
+    if (_targetPrefilled || _target.text.trim().isNotEmpty) return;
+    final fallback = policy?.defaultBranch;
+    setState(() {
+      _target.text = (fallback == null || fallback.isEmpty) ? 'main' : fallback;
+      _targetPrefilled = true;
+    });
   }
 
   void _maybePrefillSource(GitStatus? status) {
@@ -167,6 +193,7 @@ class _CreateMrFormState extends ConsumerState<CreateMrForm> {
     }
     final git = ref.read(gitServiceProvider);
     final source = _source.text.trim();
+    int? created;
     final ok = await runAction(context, () async {
       // The GitLab API creates an MR from a branch that already exists on the
       // remote — `glab mr create` only pushes with an opt-in `--push` flag
@@ -186,7 +213,7 @@ class _CreateMrFormState extends ConsumerState<CreateMrForm> {
           setUpstream: true,
         );
       }
-      await glab.createMergeRequest(
+      created = await glab.createMergeRequest(
         widget.repoPath,
         sourceBranch: source,
         targetBranch: _target.text.trim(),
@@ -213,6 +240,9 @@ class _CreateMrFormState extends ConsumerState<CreateMrForm> {
       // every other mutation).
       refreshAfterMutation(ref, widget.repoPath);
       widget.onClose();
+      // Unparsable output (created == null) simply keeps the neutral pane —
+      // the create itself already succeeded.
+      if (created != null) widget.onCreated?.call(created!);
     }
   }
 
@@ -229,6 +259,19 @@ class _CreateMrFormState extends ConsumerState<CreateMrForm> {
           if (mounted) _maybePrefillSource(s);
         });
       });
+    }
+    if (!_targetPrefilled) {
+      // Fill only on a definitive answer (data or error) so the project's
+      // real default branch never loses a race against a premature 'main'.
+      final policyAsync = ref.watch(repoMergePolicyProvider(widget.repoPath));
+      if (policyAsync.hasValue || policyAsync.hasError) {
+        final policy = policyAsync.value;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _maybePrefillTarget(policy is GlRepoMergePolicy ? policy : null);
+          }
+        });
+      }
     }
     // Reuses the one-round-trip GraphQL dashboard the Issues section already
     // fetched for this repo.

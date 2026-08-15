@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
+import 'package:remote_magic_git/core/forge/merge_plan.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/github/gh_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
@@ -60,7 +61,7 @@ class _FakeGh extends GhService {
   _FakeGh() : super(SSHCommandExecutor(SSHClientManager()));
 
   @override
-  Future<void> createPullRequest(
+  Future<int?> createPullRequest(
     String repoPath, {
     required String title,
     required String head,
@@ -73,10 +74,15 @@ class _FakeGh extends GhService {
     String? milestone,
   }) async {
     _calls.add('create $head->$base "$title"');
+    return null;
   }
 }
 
-Future<void> _pump(WidgetTester tester) async {
+Future<void> _pump(
+  WidgetTester tester, {
+  GhRepoMergePolicy policy = const GhRepoMergePolicy(),
+  String? initialBase,
+}) async {
   _calls.clear();
   tester.view.physicalSize = const Size(900, 1000);
   tester.view.devicePixelRatio = 1.0;
@@ -93,6 +99,7 @@ Future<void> _pump(WidgetTester tester) async {
           files: const [],
         ),
       ),
+      repoMergePolicyProvider(_repo).overrideWith((ref) async => policy),
       githubProjectDashboardProvider(
         _repo,
       ).overrideWith((ref) async => const ForgeProjectDashboard()),
@@ -104,12 +111,22 @@ Future<void> _pump(WidgetTester tester) async {
       container: container,
       child: MacosApp(
         debugShowCheckedModeBanner: false,
-        home: CreatePrForm(repoPath: _repo, onClose: () {}),
+        home: CreatePrForm(
+          repoPath: _repo,
+          onClose: () {},
+          initialBase: initialBase,
+        ),
       ),
     ),
   );
   await tester.pumpAndSettle();
 }
+
+/// The Base field's live text (fields render in order: Head, Base, Title, …).
+String _baseText(WidgetTester tester) => tester
+    .widget<MacosTextField>(find.byType(MacosTextField).at(1))
+    .controller!
+    .text;
 
 void main() {
   testWidgets('Create pushes the head branch before creating the PR', (
@@ -130,5 +147,33 @@ void main() {
       'push origin/feature u=true',
       'create feature->main "My change"',
     ], reason: 'the branch must be pushed to origin before gh pr create');
+  });
+
+  // 0009 H12: the unseeded base comes from the repo's real default branch —
+  // 'main' is only the last-resort fallback.
+  testWidgets('base prefills from the merge policy default branch', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      policy: const GhRepoMergePolicy(defaultBranch: 'develop'),
+    );
+    expect(_baseText(tester), 'develop');
+  });
+
+  testWidgets('an explicit initialBase wins over the policy default', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      policy: const GhRepoMergePolicy(defaultBranch: 'develop'),
+      initialBase: 'release',
+    );
+    expect(_baseText(tester), 'release');
+  });
+
+  testWidgets('no policy default falls back to main', (tester) async {
+    await _pump(tester);
+    expect(_baseText(tester), 'main');
   });
 }

@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge_dashboard.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/async_views.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/dashboard_warning_banner.dart';
@@ -79,6 +80,13 @@ class _BrowseMode extends ForgeInboxMode {
 List<Override> _overrides({AsyncValue<ForgeProjectDashboard>? dashboard}) => [
   forgeInboxModeProvider.overrideWith(_BrowseMode.new),
   remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+  // 0009 M6: the forge chrome names the real HEAD — stub status.
+  statusProvider(_repo).overrideWith(
+    (ref) async => GitStatus(
+      branch: const GitBranchInfo(head: 'main'),
+      files: const [],
+    ),
+  ),
   pullRequestsProvider(_repo).overrideWith((ref) async => const []),
   workflowRunsProvider(_repo).overrideWith((ref) async => const []),
   originRemoteUrlProvider(_repo).overrideWith((ref) async => null),

@@ -1,8 +1,9 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/cupertino.dart';
 
 import '../../core/settings/repository_workspace_prefs.dart';
 import 'adaptive_workspace_layout.dart';
 import 'async_views.dart';
+import 'inline_action_button.dart';
 import 'repository_workspace_models.dart';
 import 'workspace_appearance.dart';
 import 'workspace_focus_order.dart';
@@ -89,7 +90,26 @@ class RepositoryWorkspaceScaffold extends StatelessWidget {
     final Object? failure = error;
     final Widget content;
     if (failure != null) {
-      content = Center(child: SectionError(failure));
+      // A screen that hands the scaffold an onRetry gets a real Retry
+      // affordance next to the failure — it used to be stored and dropped
+      // (0009 M19).
+      content = Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SectionError(failure),
+            if (onRetry != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: InlineActionButton(
+                  label: 'Retry',
+                  icon: CupertinoIcons.refresh,
+                  onPressed: onRetry,
+                ),
+              ),
+          ],
+        ),
+      );
     } else if (loading) {
       content = const WorkspaceLoading(label: 'Loading repository');
     } else {

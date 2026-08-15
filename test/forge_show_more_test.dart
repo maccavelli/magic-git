@@ -15,6 +15,7 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/github/models.dart';
 import 'package:remote_magic_git/core/gitlab/models.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/forge/forge_prefs.dart';
 import 'package:remote_magic_git/features/github/github_panel.dart';
 import 'package:remote_magic_git/features/gitlab/gitlab_panel.dart';
@@ -68,6 +69,12 @@ class _BrowseMode extends ForgeInboxMode {
 /// providers so no section is left spinning (pumpAndSettle would hang).
 List<Override> _projectOverrides({required bool github}) => [
   forgeInboxModeProvider.overrideWith(_BrowseMode.new),
+  // The forge chrome names the real HEAD in the Branch slot (0009 M6), so
+  // status must be stubbed like every other provider here.
+  statusProvider(_repo).overrideWith(
+    (ref) async =>
+        GitStatus(branch: const GitBranchInfo(head: 'main'), files: const []),
+  ),
   projectIssuesProvider(_repo).overrideWith((ref) async => const []),
   projectMilestonesProvider(_repo).overrideWith((ref) async => const []),
   if (github)
@@ -192,5 +199,61 @@ void main() {
 
     expect(find.text('ref2'), findsOneWidget);
     expect(find.text('Show all pipelines'), findsNothing);
+  });
+
+  // 0009 H13: the dashboard caps releases at 20 — a release visible only via
+  // "Show all" must still open its detail rather than a dead pane.
+  testWidgets('a release only in the expanded list still opens its detail', (
+    tester,
+  ) async {
+    const dashRelease = ForgeRelease(
+      tagName: 'v1',
+      name: 'v1',
+      description: 'first',
+    );
+    const overflowRelease = ForgeRelease(
+      tagName: 'v0',
+      name: 'v0',
+      description: 'ancient notes',
+    );
+    final container = ProviderContainer(
+      overrides: [
+        refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
+        remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+        statusProvider(_repo).overrideWith(
+          (ref) async => GitStatus(
+            branch: const GitBranchInfo(head: 'main'),
+            files: const [],
+          ),
+        ),
+        pullRequestsProvider(_repo).overrideWith((ref) async => const []),
+        workflowRunsProvider(_repo).overrideWith((ref) async => _runs(1)),
+        projectReleasesProvider(
+          _repo,
+        ).overrideWith((ref) async => const [dashRelease, overflowRelease]),
+        forgeInboxModeProvider.overrideWith(_BrowseMode.new),
+        projectIssuesProvider(_repo).overrideWith((ref) async => const []),
+        projectMilestonesProvider(_repo).overrideWith((ref) async => const []),
+        githubProjectDashboardProvider(_repo).overrideWith(
+          (ref) async => const ForgeProjectDashboard(
+            releases: [dashRelease],
+            releasesTotal: 2,
+          ),
+        ),
+        originRemoteUrlProvider(_repo).overrideWith((ref) async => null),
+      ],
+    );
+    await _pumpPanel(tester, const GitHubPanel(repoPath: _repo), container);
+
+    expect(find.text('v0'), findsNothing);
+    await tester.tap(find.text('Show all releases'));
+    await tester.pumpAndSettle();
+
+    // Twice per row: the title and the trailing tag caption.
+    await tester.tap(find.text('v0').first);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Release not found in dashboard.'), findsNothing);
+    expect(find.textContaining('ancient notes'), findsOneWidget);
   });
 }

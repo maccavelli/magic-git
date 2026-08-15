@@ -403,6 +403,7 @@ Widget? projectDetailFor({
   required String? remoteUrl,
   required VoidCallback onCloseCreate,
   required ValueChanged<bool> onDirtyChanged,
+  ValueChanged<int>? onIssueCreated,
 }) {
   final dashboard = forge == Forge.github
       ? ref.watch(githubProjectDashboardProvider(repoPath))
@@ -420,6 +421,7 @@ Widget? projectDetailFor({
         labels: dashboard.value?.labels ?? const [],
         milestones: milestones,
         onClose: onCloseCreate,
+        onCreated: onIssueCreated,
         onDirtyChanged: onDirtyChanged,
       );
       // The label picker degrades to absent when the dashboard failed
@@ -454,11 +456,22 @@ Widget? projectDetailFor({
       return _milestoneDetail(ref, repoPath, id, forge, remoteUrl);
     case ForgeReleaseSel(:final tagName):
       final data = dashboard.value;
-      final release = data?.releases
+      var release = data?.releases
           .where((r) => r.tagName == tagName)
           .firstOrNull;
+      // "Show all" rows come from the REST page-walk, not the dashboard
+      // (which caps releases at 20) — resolve the tag from that list too, or
+      // every overflow release opens on a dead pane (0009 H13). Only
+      // consulted once the scope was expanded, so selecting a dashboard
+      // release never starts the page-walk.
+      final expanded = ref.watch(projectReleasesScopeProvider(repoPath))
+          ? ref.watch(projectReleasesProvider(repoPath))
+          : null;
+      release ??= expanded?.value
+          ?.where((r) => r.tagName == tagName)
+          .firstOrNull;
       if (release == null) {
-        return dashboard.isLoading
+        return dashboard.isLoading || (expanded?.isLoading ?? false)
             ? const Center(child: ProgressCircle())
             : const PaneError('Release not found in dashboard.');
       }
