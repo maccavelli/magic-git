@@ -2,7 +2,9 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/core/git/git_service.dart' show PendingOp;
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/features/repository/conflict_view.dart';
 import 'package:remote_magic_git/features/repository/multi_file_review.dart';
 import 'package:remote_magic_git/features/repository/repo_change_model.dart';
 import 'package:remote_magic_git/features/repository/repo_review_state.dart';
@@ -114,5 +116,63 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('2 of 2'), findsOneWidget);
     expect(controller.value.reviewed, contains(first));
+  });
+
+  // 0009 H9: a conflict item shows the marker-annotated file in ConflictView
+  // (not a plain diff) and offers the three resolve actions.
+  testWidgets('a conflict item renders ConflictView with resolve actions', (
+    tester,
+  ) async {
+    final controller = RepoReviewController()
+      ..open([
+        const ReviewItemId(
+          section: RepoChangeSection.conflict,
+          path: 'c.dart',
+          worktreeRevision: 'UU:',
+        ),
+      ]);
+    addTearDown(controller.dispose);
+    final resolvedOurs = <String>[];
+    final marked = <String>[];
+    final container = ProviderContainer(
+      overrides: [
+        conflictFileProvider(('/repo', 'c.dart')).overrideWith(
+          (ref) async => '<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> b\n',
+        ),
+        pendingOpProvider('/repo').overrideWith((ref) async => PendingOp.none),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: MacosApp(
+          home: SizedBox(
+            width: 900,
+            height: 500,
+            child: MultiFileReviewView(
+              repoPath: '/repo',
+              controller: controller,
+              onClose: () {},
+              onStage: (paths) async => marked.addAll(paths),
+              onResolveOurs: (paths) async => resolvedOurs.addAll(paths),
+              onResolveTheirs: (paths) async {},
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ConflictView), findsOneWidget);
+    expect(find.text('Use Theirs (incoming) 1'), findsOneWidget);
+
+    await tester.tap(find.text('Use Ours (HEAD) 1'));
+    await tester.pumpAndSettle();
+    expect(resolvedOurs, ['c.dart']);
+
+    await tester.tap(find.text('Mark Resolved 1'));
+    await tester.pumpAndSettle();
+    expect(marked, ['c.dart']);
   });
 }

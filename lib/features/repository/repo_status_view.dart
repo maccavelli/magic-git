@@ -1468,6 +1468,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       ),
     );
     final selected = _selected;
+    // The multi-select operands for toggleStage/discard (0009 M12) — one
+    // section at a time, exactly like the context menu's bulk actions.
+    final multiPaths = _selectedPaths.length > 1
+        ? _selectedPaths.toList()
+        : null;
+    final multiKind = multiPaths == null ? null : _selectionKind;
     final navigatorMode =
         _navigatorModeOverride ?? workspacePreferences.navigatorMode;
     final keymap = ref.watch(keymapProvider);
@@ -1521,21 +1527,33 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               setState(() => _diffExpandContext = !_diffExpandContext);
               _persistDiffPrefs();
             },
-      'repository.toggleStage': selected == null
-          ? null
-          : () => selected.staged
+      // Multi-selections route to the same bulk helpers the context menu
+      // uses (0009 M12); conflicts stay excluded — resolving is an explicit
+      // menu/toolbar act, never a stray Space.
+      'repository.toggleStage': selected != null
+          ? () => selected.staged
                 ? _unstage(selected.path)
-                : _stage(selected.path),
+                : _stage(selected.path)
+          : multiKind == _SectionKind.staged
+          ? () => _unstageMany(multiPaths!)
+          : multiKind == _SectionKind.unstaged ||
+                multiKind == _SectionKind.untracked
+          ? () => _stageMany(multiPaths!)
+          : null,
       // Discard is only offered for unstaged rows elsewhere in this view
       // (the "discardable" rows: unstaged tracked changes and untracked
       // files) — matched here so the shortcut can't silently discard a
       // staged selection. Untracked routes to the delete-file action
       // instead of `git restore`, same split as the file-list row below.
-      'repository.discard': selected == null || selected.staged
-          ? null
-          : () => selected.untracked
+      'repository.discard': selected != null && !selected.staged
+          ? () => selected.untracked
                 ? _discardUntracked(selected.path)
-                : _discard(selected.path),
+                : _discard(selected.path)
+          : multiKind == _SectionKind.unstaged
+          ? () => _discardMany(multiPaths!)
+          : multiKind == _SectionKind.untracked
+          ? () => _discardUntrackedMany(multiPaths!)
+          : null,
       'repository.focusCommit': status != null && status.staged.isNotEmpty
           ? _expandCommitComposer
           : null,
@@ -1807,14 +1825,19 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     }
   }
 
-  /// Opens a tree-selected file's diff in the existing diff panel.
+  /// Opens a tree-selected file's diff in the existing diff panel — or the
+  /// conflict pane for an unmerged path (0009 H5): tree selections skip
+  /// `reconcile`, so nothing downstream would rehome a mis-sectioned one.
   void _openFileFromTree(
     String path, {
     required bool staged,
     required bool untracked,
+    required bool conflict,
   }) {
     setState(() {
-      _selectionKind = untracked
+      _selectionKind = conflict
+          ? _SectionKind.conflict
+          : untracked
           ? _SectionKind.untracked
           : staged
           ? _SectionKind.staged
@@ -1869,7 +1892,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           AppPushButton(
             controlSize: ControlSize.large,
             secondary: !hasUnstaged,
-            onPressed: _stageAll,
+            // Same gate as the repository.stageAll shortcut — nothing left
+            // to stage dims the button instead of running a no-op (0009 L8).
+            onPressed: hasUnstaged ? _stageAll : null,
             child: const Text('Stage All'),
           ),
         ],
@@ -1972,10 +1997,15 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     onDiscard: _discardMany,
     onDelete: _discardUntrackedMany,
     onIgnore: _addToGitignoreMany,
+    onResolveOurs: (paths) => _resolveMany(paths, useOurs: true),
+    onResolveTheirs: (paths) => _resolveMany(paths, useOurs: false),
   );
 
   Widget _conflictPanel(BuildContext context, String path) {
     final contentAsync = ref.watch(conflictFileProvider((repoPath, path)));
+    final sides = conflictSideLabels(
+      ref.watch(pendingOpProvider(repoPath)).value,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1991,19 +2021,29 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              // Ours is the left/HEAD side, theirs the incoming right — the
-              // arrows carry the same left/right convention the conflict
-              // view's columns do.
+              // Ours is the left side, theirs the right — the arrows carry
+              // the same left/right convention the conflict view's columns
+              // do. The words come from conflictSideLabels so a rebase says
+              // Onto/Commit instead of the misleading merge vocabulary.
               InlineActionButton(
-                label: 'Use Ours',
+                label: 'Use ${sides.ours}',
                 icon: CupertinoIcons.arrow_left,
                 onPressed: () => _resolve(path, useOurs: true),
               ),
               const SizedBox(width: 6),
               InlineActionButton(
-                label: 'Use Theirs',
+                label: 'Use ${sides.theirs}',
                 icon: CupertinoIcons.arrow_right,
                 onPressed: () => _resolve(path, useOurs: false),
+              ),
+              const SizedBox(width: 6),
+              InlineActionButton(
+                label: 'Mark Resolved',
+                icon: CupertinoIcons.check_mark_circled,
+                tooltip:
+                    'git add — keep the working-tree file (your manual edit) '
+                    'as the resolution.',
+                onPressed: () => _stage(path),
               ),
               const SizedBox(width: 6),
               ToolIconButton(
@@ -2561,20 +2601,34 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           ),
         ]);
       case _SectionKind.conflict:
+        final sides = conflictSideLabels(
+          ref.read(pendingOpProvider(repoPath)).value,
+        );
         entries.addAll([
           ContextMenuItem(
             icon: CupertinoIcons.person_crop_circle,
-            label: many ? 'Resolve $n Using Ours' : 'Resolve Using Ours',
+            label: many
+                ? 'Resolve $n Using ${sides.ours}'
+                : 'Resolve Using ${sides.ours}',
             onTap: () => many
                 ? _resolveMany(paths, useOurs: true)
                 : _resolve(paths.single, useOurs: true),
           ),
           ContextMenuItem(
             icon: CupertinoIcons.person_crop_circle_fill,
-            label: many ? 'Resolve $n Using Theirs' : 'Resolve Using Theirs',
+            label: many
+                ? 'Resolve $n Using ${sides.theirs}'
+                : 'Resolve Using ${sides.theirs}',
             onTap: () => many
                 ? _resolveMany(paths, useOurs: false)
                 : _resolve(paths.single, useOurs: false),
+          ),
+          // A hand-edited conflict is kept with `git add`, not by taking one
+          // whole side (0009 H6).
+          ContextMenuItem(
+            icon: CupertinoIcons.check_mark_circled,
+            label: many ? 'Mark $n Resolved' : 'Mark Resolved',
+            onTap: () => many ? _stageMany(paths) : _stage(paths.single),
           ),
         ]);
     }

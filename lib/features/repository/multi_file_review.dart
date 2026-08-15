@@ -5,6 +5,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/diff_view.dart';
 import '../common/inline_action_button.dart';
+import 'conflict_view.dart';
 import 'repo_change_model.dart';
 import 'repo_review_state.dart';
 
@@ -17,6 +18,8 @@ class MultiFileReviewView extends ConsumerStatefulWidget {
   final Future<void> Function(List<String>)? onDiscard;
   final Future<void> Function(List<String>)? onDelete;
   final Future<void> Function(List<String>)? onIgnore;
+  final Future<void> Function(List<String>)? onResolveOurs;
+  final Future<void> Function(List<String>)? onResolveTheirs;
 
   const MultiFileReviewView({
     super.key,
@@ -28,6 +31,8 @@ class MultiFileReviewView extends ConsumerStatefulWidget {
     this.onDiscard,
     this.onDelete,
     this.onIgnore,
+    this.onResolveOurs,
+    this.onResolveTheirs,
   });
 
   @override
@@ -70,18 +75,25 @@ class _MultiFileReviewViewState extends ConsumerState<MultiFileReviewView> {
     }
   }
 
-  Future<String> _diffFuture(ReviewItemId item) =>
-      item.section == RepoChangeSection.untracked
-      ? ref.read(untrackedDiffProvider((widget.repoPath, item.path)).future)
-      : ref.read(
-          fileDiffProvider((
-            widget.repoPath,
-            item.path,
-            item.section == RepoChangeSection.staged,
-            false,
-            3,
-          )).future,
-        );
+  Future<String> _diffFuture(ReviewItemId item) => switch (item.section) {
+    // A conflict shows the marker-annotated working file, not a diff —
+    // the same source _conflictPanel renders (0009 H9).
+    RepoChangeSection.conflict => ref.read(
+      conflictFileProvider((widget.repoPath, item.path)).future,
+    ),
+    RepoChangeSection.untracked => ref.read(
+      untrackedDiffProvider((widget.repoPath, item.path)).future,
+    ),
+    _ => ref.read(
+      fileDiffProvider((
+        widget.repoPath,
+        item.path,
+        item.section == RepoChangeSection.staged,
+        false,
+        3,
+      )).future,
+    ),
+  };
 
   @override
   void dispose() {
@@ -95,7 +107,10 @@ class _MultiFileReviewViewState extends ConsumerState<MultiFileReviewView> {
     final active = state.active;
     if (active == null) return const Center(child: Text('No files to review'));
     final paths = state.items.map((item) => item.path).toList(growable: false);
-    final diff = active.section == RepoChangeSection.untracked
+    final conflict = active.section == RepoChangeSection.conflict;
+    final diff = conflict
+        ? ref.watch(conflictFileProvider((widget.repoPath, active.path)))
+        : active.section == RepoChangeSection.untracked
         ? ref.watch(untrackedDiffProvider((widget.repoPath, active.path)))
         : ref.watch(
             fileDiffProvider((
@@ -180,7 +195,8 @@ class _MultiFileReviewViewState extends ConsumerState<MultiFileReviewView> {
             loading: () => const Center(child: ProgressCircle()),
             error: (error, _) =>
                 Center(child: Text('Could not load ${active.path}: $error')),
-            data: (data) => DiffView(diff: data),
+            data: (data) =>
+                conflict ? ConflictView(content: data) : DiffView(diff: data),
           ),
         ),
       ],
@@ -198,6 +214,11 @@ class _MultiFileReviewViewState extends ConsumerState<MultiFileReviewView> {
   );
 
   Widget _bulkActions(RepoChangeSection section, List<String> paths) {
+    // Only a conflict section needs the pending-op-honest side labels; keep
+    // the provider untouched otherwise so plain reviews never start it.
+    final sides = section == RepoChangeSection.conflict
+        ? conflictSideLabels(ref.watch(pendingOpProvider(widget.repoPath)).value)
+        : null;
     final callbacks = switch (section) {
       RepoChangeSection.staged => [('Unstage', widget.onUnstage)],
       RepoChangeSection.unstaged => [
@@ -209,8 +230,13 @@ class _MultiFileReviewViewState extends ConsumerState<MultiFileReviewView> {
         ('Delete', widget.onDelete),
         ('Ignore', widget.onIgnore),
       ],
-      RepoChangeSection.conflict =>
-        <(String, Future<void> Function(List<String>)?)>[],
+      // Mark Resolved is `git add` — the same primitive as Stage, offered
+      // under the honest name for a hand-edited conflict (0009 H9 / H6).
+      RepoChangeSection.conflict => [
+        ('Use ${sides!.ours}', widget.onResolveOurs),
+        ('Use ${sides.theirs}', widget.onResolveTheirs),
+        ('Mark Resolved', widget.onStage),
+      ],
     };
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),

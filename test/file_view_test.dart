@@ -82,6 +82,20 @@ const _overlayMixed = RepoStatusOverlay(
   untrackedDirs: {},
 );
 
+// lib/main.dart is conflicted (UU) — the tree must route it to the conflict
+// pane, not a plain diff, and offer Mark Resolved (0009 H5 / H6).
+const _overlayConflict = RepoStatusOverlay(
+  dirtyDirs: {'lib'},
+  changed: {
+    'lib/main.dart': GitFileStatus(
+      path: 'lib/main.dart',
+      statusX: 'U',
+      statusY: 'U',
+    ),
+  },
+  untrackedDirs: {},
+);
+
 // docs turns dirty too — used to prove a status-only refresh recolors.
 const _overlayDocsDirty = RepoStatusOverlay(
   dirtyDirs: {'lib', 'docs'},
@@ -116,6 +130,7 @@ Future<void> _pump(
   WidgetTester tester, {
   required OpenFileCallback onOpenFile,
   bool dynamicOverlay = false,
+  RepoStatusOverlay? overlay,
   List<Override> extraOverrides = const [],
 }) async {
   await tester.pumpWidget(
@@ -128,7 +143,9 @@ Future<void> _pump(
             _repo,
           ).overrideWith((ref) => ref.watch(_overlaySource))
         else
-          repoStatusOverlayProvider(_repo).overrideWith((ref) => _overlay),
+          repoStatusOverlayProvider(
+            _repo,
+          ).overrideWith((ref) => overlay ?? _overlay),
       ],
       child: MacosApp(
         debugShowCheckedModeBanner: false,
@@ -190,7 +207,8 @@ void main() {
     addTearDown(() => SharedPreferences.setMockInitialValues({}));
     await _pump(
       tester,
-      onOpenFile: (_, {required staged, required untracked}) {},
+      onOpenFile:
+          (_, {required staged, required untracked, required conflict}) {},
     );
 
     // Default width: maxWidth / 4 = 225 (nothing stored).
@@ -217,7 +235,8 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await _pump(
       tester,
-      onOpenFile: (_, {required staged, required untracked}) {},
+      onOpenFile:
+          (_, {required staged, required untracked, required conflict}) {},
     );
     expect(tester.getSize(find.byType(FileView)).width, 280);
   });
@@ -234,7 +253,8 @@ void main() {
     );
     await _pump(
       tester,
-      onOpenFile: (_, {required staged, required untracked}) {},
+      onOpenFile:
+          (_, {required staged, required untracked, required conflict}) {},
       extraOverrides: [
         repositoryUiIdentityProvider(
           _repo,
@@ -272,7 +292,8 @@ void main() {
   ) async {
     await _pump(
       tester,
-      onOpenFile: (_, {required staged, required untracked}) {},
+      onOpenFile:
+          (_, {required staged, required untracked, required conflict}) {},
     );
 
     expect(find.text('lib'), findsOneWidget);
@@ -291,7 +312,8 @@ void main() {
   ) async {
     await _pump(
       tester,
-      onOpenFile: (_, {required staged, required untracked}) {},
+      onOpenFile:
+          (_, {required staged, required untracked, required conflict}) {},
     );
     // 'lib' is dirty → auto-expanded; 'docs' is clean → collapsed.
     expect(find.text('main.dart'), findsOneWidget);
@@ -301,7 +323,8 @@ void main() {
   testWidgets('changed file shows a colored status letter', (tester) async {
     await _pump(
       tester,
-      onOpenFile: (_, {required staged, required untracked}) {},
+      onOpenFile:
+          (_, {required staged, required untracked, required conflict}) {},
     );
     // lib/main.dart is modified (.M) → a yellow 'M' letter (colored text).
     expect(find.text('M'), findsOneWidget);
@@ -309,12 +332,35 @@ void main() {
     expect(letter.style?.color, MacosColors.systemYellowColor);
   });
 
+  testWidgets('clicking a conflicted file reports conflict, not staged', (
+    tester,
+  ) async {
+    ({bool staged, bool untracked, bool conflict})? opened;
+    await _pump(
+      tester,
+      overlay: _overlayConflict,
+      onOpenFile:
+          (path, {required staged, required untracked, required conflict}) =>
+              opened = (
+                staged: staged,
+                untracked: untracked,
+                conflict: conflict,
+              ),
+    );
+
+    await tester.tap(find.text('main.dart'));
+    await tester.pumpAndSettle();
+
+    expect(opened, (staged: false, untracked: false, conflict: true));
+  });
+
   testWidgets('clicking a changed file invokes onOpenFile', (tester) async {
     String? opened;
     await _pump(
       tester,
-      onOpenFile: (path, {required staged, required untracked}) =>
-          opened = path,
+      onOpenFile:
+          (path, {required staged, required untracked, required conflict}) =>
+              opened = path,
     );
 
     await tester.tap(find.text('main.dart'));
@@ -328,9 +374,10 @@ void main() {
     bool? untrackedFlag;
     await _pump(
       tester,
-      onOpenFile: (path, {required staged, required untracked}) {
-        if (path == 'todo.txt') untrackedFlag = untracked;
-      },
+      onOpenFile:
+          (path, {required staged, required untracked, required conflict}) {
+            if (path == 'todo.txt') untrackedFlag = untracked;
+          },
     );
 
     // A new file shows a green 'U' and opens via the untracked diff path.
@@ -345,7 +392,8 @@ void main() {
   ) async {
     await _pump(
       tester,
-      onOpenFile: (_, {required staged, required untracked}) {},
+      onOpenFile:
+          (_, {required staged, required untracked, required conflict}) {},
     );
 
     expect(find.text('readme.md'), findsNothing);
@@ -367,11 +415,12 @@ void main() {
       bool? openedUntracked;
       await _pump(
         tester,
-        onOpenFile: (path, {required staged, required untracked}) {
-          opened = path;
-          openedStaged = staged;
-          openedUntracked = untracked;
-        },
+        onOpenFile:
+            (path, {required staged, required untracked, required conflict}) {
+              opened = path;
+              openedStaged = staged;
+              openedUntracked = untracked;
+            },
       );
 
       // readme.md is clean and under the collapsed 'docs' dir.
@@ -421,11 +470,15 @@ void main() {
                         maxWidth: 900,
                         repoPath: _repo,
                         onOpenFile:
-                            (path, {required staged, required untracked}) =>
-                                events.add((
-                                  staged: staged,
-                                  untracked: untracked,
-                                )),
+                            (
+                              path, {
+                              required staged,
+                              required untracked,
+                              required conflict,
+                            }) => events.add((
+                              staged: staged,
+                              untracked: untracked,
+                            )),
                       ),
                     ),
                   ),
@@ -483,10 +536,16 @@ void main() {
               child: FileView(
                 maxWidth: 900,
                 repoPath: _repo,
-                onOpenFile: (path, {required staged, required untracked}) {
-                  opened = path;
-                  openedStaged = staged;
-                },
+                onOpenFile:
+                    (
+                      path, {
+                      required staged,
+                      required untracked,
+                      required conflict,
+                    }) {
+                      opened = path;
+                      openedStaged = staged;
+                    },
               ),
             ),
           ),
@@ -539,7 +598,13 @@ void main() {
               child: FileView(
                 maxWidth: 900,
                 repoPath: _repo,
-                onOpenFile: (_, {required staged, required untracked}) {},
+                onOpenFile:
+                    (
+                      _, {
+                      required staged,
+                      required untracked,
+                      required conflict,
+                    }) {},
               ),
             ),
           ),
@@ -591,7 +656,12 @@ void main() {
                         maxWidth: 900,
                         repoPath: _repo,
                         onOpenFile:
-                            (_, {required staged, required untracked}) {},
+                            (
+                              _, {
+                              required staged,
+                              required untracked,
+                              required conflict,
+                            }) {},
                       ),
                     ),
                   ),
@@ -626,7 +696,8 @@ void main() {
     (tester) async {
       await _pump(
         tester,
-        onOpenFile: (_, {required staged, required untracked}) {},
+        onOpenFile:
+            (_, {required staged, required untracked, required conflict}) {},
       );
 
       // Untouched, the row is not highlighted.
@@ -674,15 +745,18 @@ void main() {
 
     Future<ProviderContainer> pumpWithGit(
       WidgetTester tester,
-      _RecordingGit git,
-    ) async {
+      _RecordingGit git, {
+      RepoStatusOverlay? overlay,
+    }) async {
       final container = ProviderContainer(
         overrides: [
           gitServiceProvider.overrideWithValue(git),
           repoStructureProvider(
             _repo,
           ).overrideWith((ref) async => fixtureWithIgnored()),
-          repoStatusOverlayProvider(_repo).overrideWith((ref) => _overlay),
+          repoStatusOverlayProvider(
+            _repo,
+          ).overrideWith((ref) => overlay ?? _overlay),
         ],
       );
       addTearDown(container.dispose);
@@ -704,7 +778,12 @@ void main() {
                         maxWidth: 900,
                         repoPath: _repo,
                         onOpenFile:
-                            (_, {required staged, required untracked}) {},
+                            (
+                              _, {
+                              required staged,
+                              required untracked,
+                              required conflict,
+                            }) {},
                       ),
                     ),
                   ),
@@ -718,6 +797,36 @@ void main() {
       await tester.pumpAndSettle();
       return container;
     }
+
+    testWidgets(
+      'a conflicted file offers Mark Resolved, which runs git add (0009 H6)',
+      (tester) async {
+        final git = _RecordingGit();
+        const overlay = RepoStatusOverlay(
+          dirtyDirs: {},
+          changed: {
+            'todo.txt': GitFileStatus(
+              path: 'todo.txt',
+              statusX: 'U',
+              statusY: 'U',
+            ),
+          },
+          untrackedDirs: {},
+        );
+        await pumpWithGit(tester, git, overlay: overlay);
+
+        await tester.tap(find.text('todo.txt'), buttons: kSecondaryMouseButton);
+        await tester.pumpAndSettle();
+        expect(find.text('Mark Resolved'), findsOneWidget);
+        // A UU file reads as staged+unstaged at once — it must not get the
+        // mixed-file staged/unstaged toggle.
+        expect(find.text('Staged changes'), findsNothing);
+
+        await tester.tap(find.text('Mark Resolved'));
+        await tester.pumpAndSettle();
+        expect(git.staged, [(_repo, 'todo.txt')]);
+      },
+    );
 
     testWidgets('"Add to .gitignore" appends the file via GitService', (
       tester,
@@ -873,7 +982,13 @@ void main() {
                 child: FileView(
                   maxWidth: 900,
                   repoPath: repoPath,
-                  onOpenFile: (_, {required staged, required untracked}) {},
+                  onOpenFile:
+                      (
+                        _, {
+                        required staged,
+                        required untracked,
+                        required conflict,
+                      }) {},
                 ),
               ),
             ),
@@ -931,6 +1046,7 @@ class _RecordingGit extends GitService {
   _RecordingGit() : super(SSHCommandExecutor(SSHClientManager()));
   final List<(String, String)> ignored = [];
   final List<(String, String)> deleted = [];
+  final List<(String, String)> staged = [];
 
   @override
   Future<void> addToGitignore(String repoPath, String path) async =>
@@ -939,6 +1055,10 @@ class _RecordingGit extends GitService {
   @override
   Future<void> deleteFile(String repoPath, String path) async =>
       deleted.add((repoPath, path));
+
+  @override
+  Future<void> stage(String repoPath, String path) async =>
+      staged.add((repoPath, path));
 }
 
 /// listIgnoredChildren resolves via a per-repoPath gate the test controls,

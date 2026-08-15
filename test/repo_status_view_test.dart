@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/git/repo_tree.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/settings/repository_workspace_prefs.dart';
@@ -23,6 +24,7 @@ import 'package:remote_magic_git/core/theme/app_theme.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/palette_intents.dart';
+import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 import 'package:remote_magic_git/features/common/tool_icon_button.dart';
 import 'package:remote_magic_git/features/dnd/deselect.dart';
 import 'package:remote_magic_git/features/repository/commit_composer.dart';
@@ -222,6 +224,13 @@ class _HiddenFileView extends FileViewVisibility {
   bool build() => false;
 }
 
+/// Kept visible for tests that stub `repoStructureProvider` and exercise the
+/// tree → panel routing.
+class _VisibleFileView extends FileViewVisibility {
+  @override
+  bool build() => true;
+}
+
 GitStatus _statusWith({
   List<GitFileStatus> staged = const [],
   List<GitFileStatus> unstaged = const [],
@@ -256,6 +265,9 @@ Future<_FakeGitService> _pump(
   // default (remote/SSH) matches every other test here, where they must
   // stay hidden.
   bool isLocal = false,
+  // Mount the real FileView tree (stub repoStructureProvider via
+  // [extraOverrides] when enabling, or it hits the unconfigured executor).
+  bool showFileView = false,
   // Same reasoning as [refs] above, but for whichever file(s) a test selects
   // (a right-click, unlike the icon-button taps most tests here use, also
   // selects the row and so opens the diff panel) — pass an override per
@@ -272,7 +284,9 @@ Future<_FakeGitService> _pump(
       repoWatchProvider(
         _repo,
       ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
-      fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
+      fileViewVisibleProvider.overrideWith(
+        showFileView ? _VisibleFileView.new : _HiddenFileView.new,
+      ),
       refsProvider(_repo).overrideWith((ref) async => refs),
       // Sibling of the refs override: the header now reads CONFIGURED
       // remotes (remotesProvider), not remote-tracking refs. Defaults to
@@ -340,6 +354,32 @@ String? _emphasizedVerb(WidgetTester tester) {
 
 Finder _icon(IconData d) =>
     find.byWidgetPredicate((w) => w is MacosIcon && w.icon == d);
+
+/// The resolved panel binding for [key], mirroring
+/// keyboard_shortcuts_test's `_bindingFor` — calling the handler directly
+/// sidesteps focus placement, which is not what these tests are about.
+VoidCallback? _panelBinding(
+  WidgetTester tester,
+  LogicalKeyboardKey key, {
+  bool meta = false,
+  bool shift = false,
+}) {
+  for (final element in find.byType(PanelShortcuts).evaluate()) {
+    final bindings = (element.widget as PanelShortcuts).bindings;
+    for (final entry in bindings.entries) {
+      final activator = entry.key;
+      if (activator is SingleActivator &&
+          activator.trigger == key &&
+          activator.meta == meta &&
+          activator.shift == shift &&
+          !activator.control &&
+          !activator.alt) {
+        return entry.value;
+      }
+    }
+  }
+  return null;
+}
 
 void main() {
   testWidgets('tapping Stage on an unstaged file calls git.stage', (
@@ -924,13 +964,102 @@ void main() {
       await tester.tap(find.text('lib/c.dart'));
       await tester.pumpAndSettle();
 
-      expect(find.text('Use Ours'), findsOneWidget);
-      await tester.tap(find.text('Use Ours'));
+      expect(find.text('Use Ours (HEAD)'), findsOneWidget);
+      await tester.tap(find.text('Use Ours (HEAD)'));
       await tester.pumpAndSettle();
 
       expect(git.resolved.single, (path: 'lib/c.dart', useOurs: true));
     },
   );
+
+  // 0009 H6: a hand-edited conflict is resolved with `git add`, not by
+  // taking one whole side.
+  testWidgets('Mark Resolved on the conflict pane runs git add', (
+    tester,
+  ) async {
+    final git = await _pump(
+      tester,
+      status: _statusWith(
+        conflicted: const [
+          GitFileStatus(path: 'lib/c.dart', statusX: 'U', statusY: 'U'),
+        ],
+      ),
+    );
+
+    await tester.tap(find.text('lib/c.dart'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mark Resolved'));
+    await tester.pumpAndSettle();
+
+    expect(git.staged, ['lib/c.dart']);
+    expect(git.resolved, isEmpty);
+  });
+
+  // 0009 H5: a tree click on an unmerged path opens the conflict pane, not a
+  // plain diff.
+  testWidgets('tree-click on a conflicted file opens the conflict pane', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      status: _statusWith(
+        conflicted: const [
+          GitFileStatus(path: 'lib/c.dart', statusX: 'U', statusY: 'U'),
+        ],
+      ),
+      showFileView: true,
+      extraOverrides: [
+        repoStructureProvider(_repo).overrideWith(
+          (ref) async => const RepoNode(
+            name: '',
+            path: '',
+            isDir: true,
+            children: [
+              RepoNode(
+                name: 'lib',
+                path: 'lib',
+                isDir: true,
+                children: [
+                  RepoNode(name: 'c.dart', path: 'lib/c.dart', isDir: false),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    // The tree shows the leaf name; the change list shows the full path — so
+    // this tap can only be the tree row.
+    await tester.tap(find.text('c.dart'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Use Ours (HEAD)'), findsOneWidget);
+    expect(find.text('Mark Resolved'), findsOneWidget);
+  });
+
+  // 0009 M15: during a rebase git swaps ours/theirs — the labels must say so.
+  testWidgets('conflict side labels speak rebase during a rebase', (
+    tester,
+  ) async {
+    final git = _FakeGitService()..pendingOp0 = PendingOp.rebase;
+    await _pump(
+      tester,
+      git: git,
+      status: _statusWith(
+        conflicted: const [
+          GitFileStatus(path: 'lib/c.dart', statusX: 'U', statusY: 'U'),
+        ],
+      ),
+    );
+
+    await tester.tap(find.text('lib/c.dart'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Use Onto (ours)'), findsOneWidget);
+    expect(find.text('Use Commit (theirs)'), findsOneWidget);
+    expect(find.text('Use Ours (HEAD)'), findsNothing);
+  });
 
   testWidgets(
     'shows "No remote detected" when the repo has zero remote-tracking refs',
@@ -1512,13 +1641,37 @@ void main() {
         );
 
         await rightClick(tester, find.text('lib/c.dart'));
-        expect(find.text('Resolve Using Ours'), findsOneWidget);
-        expect(find.text('Resolve Using Theirs'), findsOneWidget);
+        expect(find.text('Resolve Using Ours (HEAD)'), findsOneWidget);
+        expect(find.text('Resolve Using Theirs (incoming)'), findsOneWidget);
+        // Twice: the conflict pane behind the menu has its own button.
+        expect(find.text('Mark Resolved'), findsNWidgets(2));
 
-        await tester.tap(find.text('Resolve Using Theirs'));
+        await tester.tap(find.text('Resolve Using Theirs (incoming)'));
         await tester.pumpAndSettle();
 
         expect(git.resolved.single, (path: 'lib/c.dart', useOurs: false));
+      },
+    );
+
+    testWidgets(
+      'Mark Resolved in the conflict context menu stages the file',
+      (tester) async {
+        final git = await _pump(
+          tester,
+          status: _statusWith(
+            conflicted: const [
+              GitFileStatus(path: 'lib/c.dart', statusX: 'U', statusY: 'U'),
+            ],
+          ),
+        );
+
+        await rightClick(tester, find.text('lib/c.dart'));
+        // The menu overlay's item renders above the pane's own button.
+        await tester.tap(find.text('Mark Resolved').last);
+        await tester.pumpAndSettle();
+
+        expect(git.staged, ['lib/c.dart']);
+        expect(git.resolved, isEmpty);
       },
     );
 
@@ -1852,6 +2005,91 @@ void main() {
       isFalse,
       reason: 'the worktree half of a mixed file is still stageable',
     );
+  });
+
+  // 0009 M12: Space / the discard chord act on the whole multi-selection,
+  // through the same bulk helpers the context menu uses.
+  testWidgets('Space stages every selected unstaged file', (tester) async {
+    final git = await _pump(
+      tester,
+      status: _statusWith(
+        unstaged: const [
+          GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+          GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+        ],
+      ),
+    );
+    await tester.tap(find.text('lib/a.dart'));
+    await tester.pumpAndSettle();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.tap(find.text('lib/b.dart'));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+    expect(find.text('2 files selected'), findsOneWidget);
+
+    final toggle = _panelBinding(tester, LogicalKeyboardKey.space);
+    expect(toggle, isNotNull);
+    toggle!();
+    await tester.pumpAndSettle();
+
+    expect(git.staged, ['lib/a.dart', 'lib/b.dart']);
+  });
+
+  testWidgets('the discard chord discards every selected unstaged file', (
+    tester,
+  ) async {
+    final git = await _pump(
+      tester,
+      status: _statusWith(
+        unstaged: const [
+          GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+          GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+        ],
+      ),
+    );
+    await tester.tap(find.text('lib/a.dart'));
+    await tester.pumpAndSettle();
+    await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+    await tester.tap(find.text('lib/b.dart'));
+    await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+    await tester.pumpAndSettle();
+
+    final discard = _panelBinding(
+      tester,
+      LogicalKeyboardKey.backspace,
+      meta: true,
+      shift: true,
+    );
+    expect(discard, isNotNull);
+    discard!();
+    await tester.pumpAndSettle();
+    // Same confirm the context menu's bulk discard shows.
+    await tester.tap(find.text('Discard'));
+    await tester.pumpAndSettle();
+
+    expect(git.discarded, ['lib/a.dart', 'lib/b.dart']);
+  });
+
+  // 0009 L8: the Stage All button uses the same gate as its shortcut.
+  testWidgets('Stage All dims when nothing is left to stage', (tester) async {
+    await _pump(
+      tester,
+      status: _statusWith(
+        staged: const [
+          GitFileStatus(path: 'lib/a.dart', statusX: 'M', statusY: '.'),
+        ],
+      ),
+    );
+
+    final stageAll = tester.widget<AppPushButton>(
+      find.byWidgetPredicate(
+        (w) =>
+            w is AppPushButton &&
+            w.child is Text &&
+            (w.child as Text).data == 'Stage All',
+      ),
+    );
+    expect(stageAll.onPressed, isNull);
   });
 
   // 0009 H7: the pulldown's Hide-reviewed toggle must actually thread the

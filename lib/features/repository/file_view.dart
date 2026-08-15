@@ -28,7 +28,12 @@ import 'repo_file_selection.dart';
 /// Called when a file is chosen in the tree so the host panel can show its diff.
 /// [staged]/[untracked] mirror the `_selected` tuple used by the status list.
 typedef OpenFileCallback =
-    void Function(String path, {required bool staged, required bool untracked});
+    void Function(
+      String path, {
+      required bool staged,
+      required bool untracked,
+      required bool conflict,
+    });
 
 /// The user-resizable file-tree pane docked on the right of the Repository
 /// panel. Renders [repoStructureProvider] (the stable tree shape) recolored by
@@ -78,6 +83,7 @@ class _FileViewState extends ConsumerState<FileView> {
   // Lazily-loaded children of collapsed ignored dirs, keyed by dir path.
   final Map<String, List<RepoNode>> _lazyChildren = {};
   final Set<String> _lazyLoading = {};
+
   /// The selection is SHARED with the Changes list and the other FileView
   /// instance (this widget is built twice — docked pane and navigator tab).
   /// It used to be private state here, which is why switching Changes↔Files
@@ -195,18 +201,29 @@ class _FileViewState extends ConsumerState<FileView> {
       return;
     }
     _selectOnly(node.path);
-    final s = ref.read(repoStatusOverlayProvider(repoPath)).statusFor(node.path);
+    final s = ref
+        .read(repoStatusOverlayProvider(repoPath))
+        .statusFor(node.path);
     // Fire unconditionally — a clean file (s == null) still opens, showing an
     // empty/no-changes diff, rather than silently leaving the tree highlight
     // desynced from whatever the panel was last showing.
     final untracked = s?.isUntracked ?? false;
+    // An unmerged path must land on the conflict pane (Use Ours / Use Theirs),
+    // not a plain diff — a UU file also reads as staged+unstaged, so the
+    // conflict test comes first.
+    final conflict = s?.isUnmerged ?? false;
     // A partially-staged (mixed) file is both staged and unstaged at once;
     // default to its unstaged half (the more common "what did I just edit"
     // question) — the context menu offers the staged half explicitly.
     widget.onOpenFile(
       node.path,
-      staged: !untracked && (s?.isStaged ?? false) && !(s?.isUnstaged ?? false),
+      staged:
+          !conflict &&
+          !untracked &&
+          (s?.isStaged ?? false) &&
+          !(s?.isUnstaged ?? false),
       untracked: untracked,
+      conflict: conflict,
     );
   }
 
@@ -221,11 +238,15 @@ class _FileViewState extends ConsumerState<FileView> {
     // Highlight the right-clicked file (like a left-click, and like Finder) so
     // it's clear which file the menu's actions will target.
     _selectOnly(node.path);
-    final s = ref.read(repoStatusOverlayProvider(repoPath)).statusFor(node.path);
+    final s = ref
+        .read(repoStatusOverlayProvider(repoPath))
+        .statusFor(node.path);
     // Only a genuinely partially-staged file needs the explicit staged/
     // unstaged toggle — a plain click already shows the only relevant half
     // for every other case.
-    final mixed = s != null && !s.isUntracked && s.isStaged && s.isUnstaged;
+    final unmerged = s?.isUnmerged ?? false;
+    final mixed =
+        s != null && !s.isUntracked && !unmerged && s.isStaged && s.isUnstaged;
     final untracked = s?.isUntracked ?? false;
     // Blame has nothing to attribute and there's no history to show for a
     // file git has never committed — disable both rather than letting them
@@ -238,8 +259,9 @@ class _FileViewState extends ConsumerState<FileView> {
       ContextMenuItem(
         icon: CupertinoIcons.doc_text_viewfinder,
         label: 'View file',
-        onTap: () =>
-            ref.read(openFileViewersProvider.notifier).open(repoPath, node.path),
+        onTap: () => ref
+            .read(openFileViewersProvider.notifier)
+            .open(repoPath, node.path),
       ),
       ContextMenuItem(
         icon: CupertinoIcons.square_arrow_up,
@@ -248,23 +270,41 @@ class _FileViewState extends ConsumerState<FileView> {
           if (ref.read(connectionProvider).isLocal) {
             openFiles(['$repoPath/${node.path}']);
           } else {
-            ref.read(remoteEditServiceProvider.notifier).openRemoteFile(repoPath, node.path);
+            ref
+                .read(remoteEditServiceProvider.notifier)
+                .openRemoteFile(repoPath, node.path);
           }
         },
       ),
       const ContextMenuDivider(),
+      // A hand-edited conflict is resolved with `git add`, not by taking one
+      // whole side — this is the only way to keep the edited file (0009 H6).
+      if (unmerged)
+        ContextMenuItem(
+          icon: CupertinoIcons.check_mark_circled,
+          label: 'Mark Resolved',
+          onTap: () => _markResolved(node.path),
+        ),
       if (mixed) ...[
         ContextMenuItem(
           icon: CupertinoIcons.square_stack,
           label: 'Staged changes',
-          onTap: () =>
-              widget.onOpenFile(node.path, staged: true, untracked: false),
+          onTap: () => widget.onOpenFile(
+            node.path,
+            staged: true,
+            untracked: false,
+            conflict: false,
+          ),
         ),
         ContextMenuItem(
           icon: CupertinoIcons.square_stack_3d_down_right,
           label: 'Unstaged changes',
-          onTap: () =>
-              widget.onOpenFile(node.path, staged: false, untracked: false),
+          onTap: () => widget.onOpenFile(
+            node.path,
+            staged: false,
+            untracked: false,
+            conflict: false,
+          ),
         ),
       ],
       ContextMenuItem(
@@ -333,14 +373,21 @@ class _FileViewState extends ConsumerState<FileView> {
     }
   }
 
-  Future<void> _addToGitignore(String path) =>
-      _runMutation(() => ref.read(gitServiceProvider).addToGitignore(repoPath, path));
+  Future<void> _addToGitignore(String path) => _runMutation(
+    () => ref.read(gitServiceProvider).addToGitignore(repoPath, path),
+  );
+
+  /// `git add` on an unmerged path — records the working-tree file as the
+  /// resolution without touching its contents.
+  Future<void> _markResolved(String path) =>
+      _runMutation(() => ref.read(gitServiceProvider).stage(repoPath, path));
 
   Future<void> _deleteFile(RepoNode node) async {
     final ok = await confirmAction(
       context,
       title: 'Delete file',
-      message: 'Are you sure you want to delete "${node.name}"? '
+      message:
+          'Are you sure you want to delete "${node.name}"? '
           'This action is permanent!',
       confirmLabel: 'Yes',
       cancelLabel: 'No',
@@ -371,7 +418,9 @@ class _FileViewState extends ConsumerState<FileView> {
           .listIgnoredChildren(requestRepoPath, path);
       // Also bail if the dir was collapsed (and its entry evicted) while this
       // was in flight — don't resurrect it.
-      if (!mounted || requestRepoPath != repoPath || !_expanded.contains(path)) {
+      if (!mounted ||
+          requestRepoPath != repoPath ||
+          !_expanded.contains(path)) {
         return;
       }
       setState(() {
@@ -380,7 +429,9 @@ class _FileViewState extends ConsumerState<FileView> {
         _touchExpansion();
       });
     } catch (_) {
-      if (!mounted || requestRepoPath != repoPath || !_expanded.contains(path)) {
+      if (!mounted ||
+          requestRepoPath != repoPath ||
+          !_expanded.contains(path)) {
         return;
       }
       setState(() {
@@ -483,29 +534,29 @@ class _FileViewState extends ConsumerState<FileView> {
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            _resizeHandle(width),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _headerBar(context),
-                  Container(height: 1, color: MacosColors.separatorColor),
-                  // Isolated into its own compositing layer for the same
-                  // reason as output_view.dart's log list: this repaints on
-                  // every status/structure refresh, and without a boundary
-                  // those repaints were forcing the BlendMode.clear
-                  // decoration above to be re-evaluated at the same rate.
-                  Expanded(
-                    child: RepaintBoundary(
-                      child: _body(context, async, overlay),
+            children: [
+              _resizeHandle(width),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _headerBar(context),
+                    Container(height: 1, color: MacosColors.separatorColor),
+                    // Isolated into its own compositing layer for the same
+                    // reason as output_view.dart's log list: this repaints on
+                    // every status/structure refresh, and without a boundary
+                    // those repaints were forcing the BlendMode.clear
+                    // decoration above to be re-evaluated at the same rate.
+                    Expanded(
+                      child: RepaintBoundary(
+                        child: _body(context, async, overlay),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ],
-        ),
+            ],
+          ),
         ),
       ),
     );
@@ -544,7 +595,10 @@ class _FileViewState extends ConsumerState<FileView> {
       },
       onDoubleTap: () => ref
           .read(appSettingsProvider.notifier)
-          .setPaneWidth(PaneId.filesTree, paneSpecs[PaneId.filesTree]!.defaultWidth),
+          .setPaneWidth(
+            PaneId.filesTree,
+            paneSpecs[PaneId.filesTree]!.defaultWidth,
+          ),
       child: const MouseRegion(
         cursor: SystemMouseCursors.resizeLeftRight,
         child: SizedBox(
@@ -705,9 +759,7 @@ class _FileViewState extends ConsumerState<FileView> {
           ? null
           : (d) => _showContextMenu(node, d.globalPosition),
       child: Container(
-        color: selected
-            ? AppTheme.rowSelectionTint
-            : const Color(0x00000000),
+        color: selected ? AppTheme.rowSelectionTint : const Color(0x00000000),
         padding: EdgeInsets.only(
           left: 8 + row.depth * 14,
           right: 8,

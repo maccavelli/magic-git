@@ -1,7 +1,17 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:macos_ui/macos_ui.dart';
+import '../../core/git/git_service.dart' show PendingOp;
 import '../common/diff_view.dart';
+
+/// Conflict-side labels honest to the pending operation (0009 M15): during a
+/// rebase git swaps the roles — "ours" is the upstream being rebased onto and
+/// "theirs" the commit being replayed (git-rebase(1)). Only the words change;
+/// the `useOurs` flags handed to git never swap.
+({String ours, String theirs}) conflictSideLabels(PendingOp? op) =>
+    op == PendingOp.rebase
+    ? (ours: 'Onto (ours)', theirs: 'Commit (theirs)')
+    : (ours: 'Ours (HEAD)', theirs: 'Theirs (incoming)');
 
 /// Which region of a conflict block a line falls in, so "ours", "theirs" (and,
 /// for `diff3`/`zdiff3` style conflicts, the common "ancestor") can be colored
@@ -145,9 +155,7 @@ class _ConflictViewState extends State<ConflictView> {
   void _reload(String content) {
     _isBinary = _looksBinary(content);
     _lines = _isBinary ? const [] : _classifyLines(content);
-    _maxLineWidth = _isBinary
-        ? 0
-        : measureDiffWidth(_lines.map((l) => l.text));
+    _maxLineWidth = _isBinary ? 0 : measureDiffWidth(_lines.map((l) => l.text));
   }
 
   @override
@@ -155,8 +163,8 @@ class _ConflictViewState extends State<ConflictView> {
     if (_isBinary) {
       return Center(
         child: Text(
-          'Binary conflict — text preview unavailable. Use Use Ours / Use Theirs '
-          'above to take one whole side.',
+          'Binary conflict — text preview unavailable. Use the Use Ours / '
+          'Use Theirs buttons above to take one whole side.',
           style: MacosTheme.of(
             context,
           ).typography.caption1.copyWith(color: MacosColors.systemGrayColor),
