@@ -92,6 +92,17 @@ String? _emphasized(WidgetTester tester) {
 
 void main() {
   group('the four verbs are always present with fixed meanings', () {
+    testWidgets('all four stay visible at the standard size class (720–1199)', (
+      tester,
+    ) async {
+      // Regression: the group used to collapse below 900, which hid three
+      // verbs on typical SSH windows. 0008 collapses only under 720.
+      await _pump(tester, snapshot: _snapshot(), width: 800);
+      for (final label in ['Fetch', 'Pull', 'Push', 'Sync']) {
+        expect(find.text(label), findsOneWidget);
+      }
+    });
+
     testWidgets('all four render regardless of repository state', (
       tester,
     ) async {

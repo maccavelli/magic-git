@@ -19,9 +19,6 @@ import 'workspace_focus_order.dart';
 import 'workspace_navigation.dart';
 import 'workspace_view_options.dart';
 
-/// Bar width below which the sync group collapses to one button plus overflow.
-const double _syncGroupMinWidth = 900;
-
 class RepositoryContextBar extends StatelessWidget {
   final RepositoryContextSnapshot snapshot;
   final RepositoryPrimaryAction primaryAction;
@@ -82,14 +79,10 @@ class RepositoryContextBar extends StatelessWidget {
             slotVisible(WorkspaceToolbarSlot.viewOptions);
         final sizeClass = WorkspaceSizeClass.fromWidth(constraints.maxWidth);
         final compact = sizeClass == WorkspaceSizeClass.compact;
-        // The sync group keeps all four buttons only where they fit beside the
-        // repository's identity. The trailing cluster — navigation, stash,
-        // refresh, activity, four verbs and an overflow — measures roughly
-        // 460pt; below about 900 the identity is squeezed to nothing (it
-        // overflowed by a fraction of a point at 800), and the identity is the
-        // one thing on this bar that cannot move elsewhere. So the group
-        // collapses to the recommended verb plus its overflow instead.
-        final collapseSyncGroup = constraints.maxWidth < _syncGroupMinWidth;
+        // 0008 §3.3: collapse only at the compact size class (< 720). The
+        // four verbs stay visible through the standard class, which is the
+        // typical SSH content pane after a 240pt sidebar.
+        final collapseSyncGroup = compact;
         return Semantics(
           container: true,
           label: 'Repository context',
