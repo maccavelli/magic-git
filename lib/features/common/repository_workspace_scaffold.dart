@@ -30,6 +30,25 @@ class WorkspacePreferencesScope extends InheritedWidget {
       optionsEnabled != oldWidget.optionsEnabled;
 }
 
+/// Marks a subtree as being mounted *inside* another repository workspace —
+/// today, a worktree tab, whose own chrome already names the checkout.
+///
+/// A nested workspace screen must not draw a second context bar under the
+/// first: two bars stacked a few pixels apart, the inner one describing the
+/// worktree the outer one just named. The suppression lives here rather than
+/// as a flag threaded through every screen, because [RepositoryWorkspaceScaffold]
+/// is the single place all six of them render their bar.
+class NestedWorkspaceScope extends InheritedWidget {
+  const NestedWorkspaceScope({super.key, required super.child});
+
+  static bool isNested(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<NestedWorkspaceScope>() !=
+      null;
+
+  @override
+  bool updateShouldNotify(NestedWorkspaceScope oldWidget) => false;
+}
+
 /// Feature-neutral frame for repository-centered workspaces.
 class RepositoryWorkspaceScaffold extends StatelessWidget {
   final Widget repositoryContext;
@@ -86,6 +105,9 @@ class RepositoryWorkspaceScaffold extends StatelessWidget {
         onPreferencesChanged: onPreferencesChanged,
       );
     }
+    // Nested inside another workspace (a worktree tab): that outer chrome has
+    // already named the repository, so this screen contributes content only.
+    final nested = NestedWorkspaceScope.isNested(context);
     return WorkspaceAppearanceBoundary(
       child: WorkspacePreferencesScope(
         preferences: preferences,
@@ -93,16 +115,18 @@ class RepositoryWorkspaceScaffold extends StatelessWidget {
         optionsEnabled: workspaceOptionsEnabled,
         child: FocusTraversalGroup(
           policy: OrderedTraversalPolicy(),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              WorkspaceFocusRegion(
-                role: WorkspacePaneRole.repositoryContext,
-                child: repositoryContext,
-              ),
-              Expanded(child: content),
-            ],
-          ),
+          child: nested
+              ? content
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    WorkspaceFocusRegion(
+                      role: WorkspacePaneRole.repositoryContext,
+                      child: repositoryContext,
+                    ),
+                    Expanded(child: content),
+                  ],
+                ),
         ),
       ),
     );

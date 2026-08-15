@@ -577,7 +577,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       repositoryContext: RepositoryContextBar(
         snapshot: snapshot,
         primaryAction: RepositoryPrimaryAction(
-          kind: RepositoryPrimaryActionKind.fetch,
+          kind: RepositoryPrimaryActionKind.fetchAndPrune,
           label: 'Fetch & Prune',
           disabledReason: busy ? 'Another branch operation is running' : null,
         ),

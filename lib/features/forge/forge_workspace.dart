@@ -95,7 +95,7 @@ class ForgeRepositoryWorkspace extends ConsumerWidget {
       repositoryContext: RepositoryContextBar(
         snapshot: snapshot,
         primaryAction: RepositoryPrimaryAction(
-          kind: RepositoryPrimaryActionKind.publish,
+          kind: RepositoryPrimaryActionKind.createRequest,
           label: primaryActionLabel,
           disabledReason: onPrimaryAction == null
               ? '$forgeLabel action is unavailable'

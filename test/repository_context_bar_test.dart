@@ -86,8 +86,6 @@ void main() {
               repositoryContext: RepositoryContextBar(
                 snapshot: _snapshot,
                 primaryAction: resolvePrimaryRepositoryAction(_snapshot),
-                onBack: () {},
-                onForward: () {},
                 onPrimaryAction: (_) {},
               ),
               canvas: const SizedBox.shrink(),
@@ -133,8 +131,6 @@ void main() {
               repositoryContext: RepositoryContextBar(
                 snapshot: _snapshot,
                 primaryAction: resolvePrimaryRepositoryAction(_snapshot),
-                onBack: () {},
-                onForward: () {},
                 onPrimaryAction: (_) {},
               ),
               canvas: const SizedBox.shrink(),
@@ -151,15 +147,19 @@ void main() {
     await tester.pump();
 
     expect(find.text('Back'), findsNothing);
+    // The tooltip carries the reason when the direction has nowhere to go —
+    // with no session history in this harness, that is both of them.
     expect(
       find.byWidgetPredicate(
-        (widget) => widget is ToolIconButton && widget.tooltip == 'Back',
+        (widget) =>
+            widget is ToolIconButton && widget.tooltip.startsWith('Back'),
       ),
       findsNothing,
     );
     expect(
       find.byWidgetPredicate(
-        (widget) => widget is ToolIconButton && widget.tooltip == 'Forward',
+        (widget) =>
+            widget is ToolIconButton && widget.tooltip.startsWith('Forward'),
       ),
       findsOneWidget,
     );

@@ -1488,7 +1488,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   ),
           ),
           primaryAction: RepositoryPrimaryAction(
-            kind: RepositoryPrimaryActionKind.fetch,
+            kind: RepositoryPrimaryActionKind.refresh,
             label: 'Refresh',
             disabledReason: busy
                 ? 'Another history operation is running'

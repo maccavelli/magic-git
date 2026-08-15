@@ -274,18 +274,6 @@ class _AppShellState extends ConsumerState<AppShell> {
     }
   }
 
-  void _restoreWorkspaceLocation(bool forward) {
-    final connection = ref.read(connectionProvider);
-    final repoPath = connection.repoPath;
-    if (repoPath == null || connection.sessionEpoch <= 0) return;
-    final key = WorkspaceSessionKey(repoPath, connection.sessionEpoch);
-    final history = ref.read(workspaceNavigationProvider(key).notifier);
-    final location = forward ? history.forward() : history.back();
-    if (location == null) return;
-    ref.read(pageIndexProvider.notifier).select(location.panelIndex);
-    ref.read(visitedPagesProvider.notifier).visit(location.panelIndex);
-  }
-
   void _openPaletteEntity(PaletteEntry entry) {
     final connection = ref.read(connectionProvider);
     final repoPath = connection.repoPath;
@@ -1083,16 +1071,10 @@ class _AppShellState extends ConsumerState<AppShell> {
       index: pageIndex,
       children: [
         visitedPages.contains(0)
-            ? RepoStatusView(
-                repoPath: repoPath,
-                isActive: pageIndex == 0,
-                onBack: navigation.canBack
-                    ? () => _restoreWorkspaceLocation(false)
-                    : null,
-                onForward: navigation.canForward
-                    ? () => _restoreWorkspaceLocation(true)
-                    : null,
-              )
+            // Back/Forward are no longer handed down: the context bar reads
+            // the session history itself, which is what gives all six panels
+            // working navigation instead of only this one.
+            ? RepoStatusView(repoPath: repoPath, isActive: pageIndex == 0)
             : const SizedBox.shrink(),
         visitedPages.contains(1)
             ? HistoryView(

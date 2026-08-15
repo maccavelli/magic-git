@@ -1,5 +1,6 @@
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/widgets.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/exec/operation_activity.dart';
@@ -14,6 +15,7 @@ import 'tappable.dart';
 import 'tool_icon_button.dart';
 import 'workspace_appearance.dart';
 import 'workspace_focus_order.dart';
+import 'workspace_navigation.dart';
 import 'workspace_view_options.dart';
 
 class RepositoryContextBar extends StatelessWidget {
@@ -21,8 +23,6 @@ class RepositoryContextBar extends StatelessWidget {
   final RepositoryPrimaryAction primaryAction;
   final ValueChanged<RepositoryPrimaryActionKind> onPrimaryAction;
   final VoidCallback? onToggleSidebar;
-  final VoidCallback? onBack;
-  final VoidCallback? onForward;
   final ValueChanged<OperationId>? onRevealOutput;
 
   const RepositoryContextBar({
@@ -31,8 +31,6 @@ class RepositoryContextBar extends StatelessWidget {
     required this.primaryAction,
     required this.onPrimaryAction,
     this.onToggleSidebar,
-    this.onBack,
-    this.onForward,
     this.onRevealOutput,
   });
 
@@ -78,34 +76,20 @@ class RepositoryContextBar extends StatelessWidget {
                   ),
                   const SizedBox(width: 2),
                 ],
-                if (preferences == null ||
-                    preferences.visibleToolbarSlots.contains(
-                      WorkspaceToolbarSlot.back,
-                    ))
-                  _SecondaryActionButton(
-                    icon: CupertinoIcons.chevron_back,
-                    label: 'Back',
-                    tooltip: onBack == null
-                        ? 'Back (no earlier location)'
-                        : 'Back',
-                    onPressed: onBack,
-                    showLabel:
-                        !compact && (preferences?.showToolbarLabels ?? false),
-                  ),
-                if (preferences == null ||
-                    preferences.visibleToolbarSlots.contains(
-                      WorkspaceToolbarSlot.forward,
-                    ))
-                  _SecondaryActionButton(
-                    icon: CupertinoIcons.chevron_forward,
-                    label: 'Forward',
-                    tooltip: onForward == null
-                        ? 'Forward (no later location)'
-                        : 'Forward',
-                    onPressed: onForward,
-                    showLabel:
-                        !compact && (preferences?.showToolbarLabels ?? false),
-                  ),
+                _NavigationControls(
+                  showBack:
+                      preferences == null ||
+                      preferences.visibleToolbarSlots.contains(
+                        WorkspaceToolbarSlot.back,
+                      ),
+                  showForward:
+                      preferences == null ||
+                      preferences.visibleToolbarSlots.contains(
+                        WorkspaceToolbarSlot.forward,
+                      ),
+                  showLabels:
+                      !compact && (preferences?.showToolbarLabels ?? false),
+                ),
                 const SizedBox(width: 6),
                 Expanded(child: _RepositoryIdentity(snapshot: snapshot)),
                 if (!compact) ...[
@@ -240,6 +224,58 @@ class _RepositoryIdentity extends StatelessWidget {
   }
 }
 
+/// Back / Forward over the session's workspace history.
+///
+/// The state is read here rather than handed in, so every screen that renders
+/// the bar gets working navigation. Five of the six used to pass nothing and so
+/// showed two permanently dim chevrons, even though the history they navigate
+/// is recorded on all of them.
+class _NavigationControls extends ConsumerWidget {
+  final bool showBack;
+  final bool showForward;
+  final bool showLabels;
+
+  const _NavigationControls({
+    required this.showBack,
+    required this.showForward,
+    required this.showLabels,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final history = watchWorkspaceHistory(ref);
+    final back = (history?.canBack ?? false)
+        ? () => restoreWorkspaceLocation(ref, forward: false)
+        : null;
+    final forward = (history?.canForward ?? false)
+        ? () => restoreWorkspaceLocation(ref, forward: true)
+        : null;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showBack)
+          _SecondaryActionButton(
+            icon: CupertinoIcons.chevron_back,
+            label: 'Back',
+            tooltip: back == null ? 'Back (no earlier location)' : 'Back',
+            onPressed: back,
+            showLabel: showLabels,
+          ),
+        if (showForward)
+          _SecondaryActionButton(
+            icon: CupertinoIcons.chevron_forward,
+            label: 'Forward',
+            tooltip: forward == null
+                ? 'Forward (no later location)'
+                : 'Forward',
+            onPressed: forward,
+            showLabel: showLabels,
+          ),
+      ],
+    );
+  }
+}
+
 class _StatusSummary extends StatelessWidget {
   final RepositoryContextSnapshot snapshot;
 
@@ -247,14 +283,18 @@ class _StatusSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // "Clean" is a claim about the working tree, so it is made only by a
+    // screen that actually knows it — the others contribute ahead/behind and
+    // nothing else, rather than reporting a zero they never measured.
+    final conflicts = snapshot.conflictCount ?? 0;
     final labels = <String>[
-      if (snapshot.conflictCount > 0) '${snapshot.conflictCount} conflicts',
-      if (snapshot.conflictCount == 0 && snapshot.isDirty)
-        '${snapshot.changedCount} changed',
-      if (!snapshot.isDirty) 'Clean',
+      if (conflicts > 0) '$conflicts conflicts',
+      if (conflicts == 0 && snapshot.isDirty) '${snapshot.changedCount} changed',
+      if (snapshot.hasWorkingTreeStatus && !snapshot.isDirty) 'Clean',
       if (snapshot.ahead > 0) '↑${snapshot.ahead}',
       if (snapshot.behind > 0) '↓${snapshot.behind}',
     ];
+    if (labels.isEmpty) return const SizedBox.shrink();
     return Semantics(
       label: labels.join(', '),
       child: ExcludeSemantics(
@@ -308,7 +348,9 @@ class _CompactMetadata extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final details = <String>[
-      '${snapshot.changedCount} changed, ${snapshot.conflictCount} conflicts',
+      if (snapshot.hasWorkingTreeStatus)
+        '${snapshot.changedCount} changed, ${snapshot.conflictCount ?? 0} '
+            'conflicts',
       '${snapshot.ahead} ahead, ${snapshot.behind} behind',
       if (snapshot.upstreamLabel != null) 'Upstream: ${snapshot.upstreamLabel}',
       if (snapshot.connectionLabel != null) snapshot.connectionLabel!,

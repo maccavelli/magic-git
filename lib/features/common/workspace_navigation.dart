@@ -1,5 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/providers/app_providers.dart';
+import '../tabs/tab_ui_providers.dart';
 import 'workspace_focus.dart';
 
 /// Destination pages implement this seam when they can resolve a semantic
@@ -110,3 +112,36 @@ final workspaceNavigationProvider =
       WorkspaceNavigationState,
       WorkspaceSessionKey
     >(WorkspaceNavigationHistory.new);
+
+/// The active session's navigation history, or null when nothing is connected.
+///
+/// Lifted out of AppShell so the context bar itself can offer Back/Forward on
+/// every screen: the history is session state, not one panel's property, and
+/// threading two callbacks through six widgets is how five of them ended up
+/// without the buttons at all.
+WorkspaceNavigationState? watchWorkspaceHistory(WidgetRef ref) {
+  final connection = ref.watch(connectionProvider);
+  final repoPath = connection.repoPath;
+  if (repoPath == null || connection.sessionEpoch <= 0) return null;
+  return ref.watch(
+    workspaceNavigationProvider(
+      WorkspaceSessionKey(repoPath, connection.sessionEpoch),
+    ),
+  );
+}
+
+/// Steps the active session's history and switches to the panel it lands on.
+void restoreWorkspaceLocation(WidgetRef ref, {required bool forward}) {
+  final connection = ref.read(connectionProvider);
+  final repoPath = connection.repoPath;
+  if (repoPath == null || connection.sessionEpoch <= 0) return;
+  final history = ref.read(
+    workspaceNavigationProvider(
+      WorkspaceSessionKey(repoPath, connection.sessionEpoch),
+    ).notifier,
+  );
+  final location = forward ? history.forward() : history.back();
+  if (location == null) return;
+  ref.read(pageIndexProvider.notifier).select(location.panelIndex);
+  ref.read(visitedPagesProvider.notifier).visit(location.panelIndex);
+}

@@ -605,13 +605,52 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       }
     }
 
+    final connection = ref.watch(connectionProvider);
+
     if (tabs.selected != null) {
+      final selectedPath = tabs.selected!;
+      final all = worktreesAsync.value ?? const <GitWorktree>[];
+      final tabWorktree = all
+          .where((item) => item.path == selectedPath)
+          .firstOrNull;
+      final tabParts = selectedPath.split('/').where((part) => part.isNotEmpty);
+      // A worktree tab used to render no context bar at all, and then mount a
+      // workspace screen that drew its own — so the chrome either vanished or
+      // doubled. The bar belongs to the tab (it names the checkout); the
+      // screens inside it are content, marked as nested so they suppress
+      // theirs.
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _strip(context, tabs, worktreesAsync.value ?? const []),
+          RepositoryContextBar(
+            snapshot: RepositoryContextSnapshot(
+              repositoryPath: selectedPath,
+              repositoryName:
+                  'Worktree: ${tabParts.isEmpty ? selectedPath : tabParts.last}',
+              connectionLabel: connection.connectionLabel,
+              hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
+              branchLabel: tabWorktree == null
+                  ? 'Worktree'
+                  : tabWorktree.branchLabel,
+              connected: connection.isConnected,
+              busy: busy,
+            ),
+            primaryAction: RepositoryPrimaryAction(
+              kind: RepositoryPrimaryActionKind.refresh,
+              label: 'Refresh',
+              disabledReason: busy
+                  ? 'Another worktree operation is running'
+                  : null,
+            ),
+            onPrimaryAction: (_) => _refresh(),
+          ),
+          _strip(context, tabs, all),
           Container(height: 1, color: MacosColors.separatorColor),
-          Expanded(child: _workspace(context, tabs.selected!)),
+          Expanded(
+            child: NestedWorkspaceScope(
+              child: _workspace(context, selectedPath),
+            ),
+          ),
         ],
       );
     }
@@ -621,7 +660,6 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       repositoryPath: repoPath,
       fallback: const RepositoryWorkspacePrefs(navigatorWidth: 520),
     );
-    final connection = ref.watch(connectionProvider);
     final worktrees = worktreesAsync.value ?? const <GitWorktree>[];
     final main = worktrees.where((item) => item.isMain).firstOrNull;
     final selectedWorktree = worktrees
@@ -692,7 +730,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
             RepositoryContextBar(
               snapshot: snapshot,
               primaryAction: RepositoryPrimaryAction(
-                kind: RepositoryPrimaryActionKind.fetch,
+                kind: RepositoryPrimaryActionKind.addWorktree,
                 label: 'Add Worktree',
                 disabledReason: busy
                     ? 'Another worktree operation is running'

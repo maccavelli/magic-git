@@ -5,6 +5,7 @@ import '../../core/forge/forge.dart';
 import '../../core/providers/app_providers.dart';
 import '../common/async_views.dart';
 import '../common/repository_context.dart';
+import '../forge/forge_workspace.dart';
 import '../github/github_panel.dart';
 import '../gitlab/gitlab_panel.dart';
 
@@ -45,14 +46,40 @@ class ForgePanel extends ConsumerWidget {
             RepositoryContextSupplement(forgeLabel: label),
           );
     });
+    // Four of the six outcomes used to render bare content with no context
+    // bar, so the repository chrome disappeared while the forge was detecting,
+    // failed to detect, or turned out to be absent. The shell is the same one
+    // the happy paths use; only the canvas differs.
     return forge.when(
-      loading: () => const Center(child: ProgressCircle()),
-      error: (err, _) => SectionError(err),
+      loading: () => ForgeRepositoryWorkspace(
+        repoPath: repoPath,
+        forgeLabel: 'Forge',
+        canvas: const SizedBox.shrink(),
+        loading: true,
+      ),
+      error: (err, _) => ForgeRepositoryWorkspace(
+        repoPath: repoPath,
+        forgeLabel: 'Forge',
+        canvas: const SizedBox.shrink(),
+        error: err,
+        onRetry: () => ref.invalidate(forgeProvider(repoPath)),
+      ),
       data: (f) => switch (f) {
         Forge.github => GitHubPanel(repoPath: repoPath, isActive: isActive),
         Forge.gitlab => GitLabPanel(repoPath: repoPath, isActive: isActive),
-        Forge.none => const NoRemoteNotice('forge features'),
-        Forge.unknown => const UnsupportedForgeNotice(),
+        Forge.none => ForgeRepositoryWorkspace(
+          repoPath: repoPath,
+          forgeLabel: 'No forge remote',
+          canvas: const NoRemoteNotice('forge features'),
+        ),
+        // The identity stays plain 'Forge' here: the canvas already says
+        // "Unsupported forge" in full, and repeating it in the bar two
+        // inches away is the same words twice, not more information.
+        Forge.unknown => ForgeRepositoryWorkspace(
+          repoPath: repoPath,
+          forgeLabel: 'Forge',
+          canvas: const UnsupportedForgeNotice(),
+        ),
       },
     );
   }

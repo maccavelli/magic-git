@@ -134,8 +134,14 @@ class RepositoryContextSnapshot {
   final String? upstreamLabel;
   final int ahead;
   final int behind;
-  final int changedCount;
-  final int conflictCount;
+  /// Working-tree counts, or null when this screen does not know them.
+  ///
+  /// Null is not zero: a screen that never reads `git status` (History,
+  /// Branches, Stashes, Forge, Worktrees) used to pass 0 and so had the bar
+  /// announce "Clean" — a claim about the working tree nobody had checked.
+  /// Absence is now representable, and the summary stays silent for it.
+  final int? changedCount;
+  final int? conflictCount;
   final bool hasPendingOperation;
   final bool hasUpstream;
   final bool hasConfiguredRemote;
@@ -154,8 +160,8 @@ class RepositoryContextSnapshot {
     this.upstreamLabel,
     this.ahead = 0,
     this.behind = 0,
-    this.changedCount = 0,
-    this.conflictCount = 0,
+    this.changedCount,
+    this.conflictCount,
     this.hasPendingOperation = false,
     this.hasUpstream = false,
     this.hasConfiguredRemote = false,
@@ -166,9 +172,20 @@ class RepositoryContextSnapshot {
     this.supplement,
   });
 
-  bool get isDirty => changedCount > 0;
+  /// Whether this screen knows the working tree's state at all.
+  bool get hasWorkingTreeStatus => changedCount != null;
+
+  bool get isDirty => (changedCount ?? 0) > 0;
 }
 
+/// What a screen's primary button actually does.
+///
+/// The kind is the identity of the command, not decoration: it is what
+/// `onPrimaryAction` receives, and what a caller switches on. Screens whose
+/// primary verb is not a sync operation name it here rather than borrowing
+/// [fetch] — four screens used to claim `fetch` while performing a stash, a
+/// worktree add, a refresh and a fetch-and-prune, which made the shared
+/// contract unreadable and any future dispatch on the kind wrong.
 enum RepositoryPrimaryActionKind {
   resolve,
   continueOperation,
@@ -177,6 +194,11 @@ enum RepositoryPrimaryActionKind {
   push,
   publish,
   fetch,
+  fetchAndPrune,
+  stash,
+  addWorktree,
+  refresh,
+  createRequest,
 }
 
 @immutable
@@ -198,11 +220,12 @@ class RepositoryPrimaryAction {
 RepositoryPrimaryAction resolvePrimaryRepositoryAction(
   RepositoryContextSnapshot snapshot,
 ) {
+  final conflicts = snapshot.conflictCount ?? 0;
   final (kind, label) = snapshot.hasPendingOperation
-      ? snapshot.conflictCount > 0
+      ? conflicts > 0
             ? (RepositoryPrimaryActionKind.resolve, 'Resolve')
             : (RepositoryPrimaryActionKind.continueOperation, 'Continue')
-      : snapshot.conflictCount > 0
+      : conflicts > 0
       ? (RepositoryPrimaryActionKind.resolve, 'Resolve')
       : snapshot.ahead > 0 && snapshot.behind > 0
       ? (RepositoryPrimaryActionKind.sync, 'Sync')

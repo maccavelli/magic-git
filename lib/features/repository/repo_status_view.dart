@@ -82,15 +82,11 @@ class RepoStatusView extends ConsumerStatefulWidget {
   /// mounted (via the shell's [IndexedStack]) when another page is shown, so
   /// its keyboard shortcuts must go quiet rather than fire in the background.
   final bool isActive;
-  final VoidCallback? onBack;
-  final VoidCallback? onForward;
 
   const RepoStatusView({
     super.key,
     required this.repoPath,
     this.isActive = true,
-    this.onBack,
-    this.onForward,
   });
 
   @override
@@ -1424,8 +1420,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       upstreamLabel: branch?.upstream,
       ahead: branch?.ahead ?? 0,
       behind: branch?.behind ?? 0,
-      changedCount: status?.files.length ?? 0,
-      conflictCount: status?.conflicted.length ?? 0,
+      changedCount: status?.files.length,
+      conflictCount: status?.conflicted.length,
       hasPendingOperation: pending != null && pending != PendingOp.none,
       hasUpstream: branch?.hasUpstream ?? false,
       hasConfiguredRemote: remotes?.isNotEmpty ?? false,
@@ -1619,8 +1615,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               primaryAction: primaryAction,
               onToggleSidebar: () =>
                   MacosWindowScope.maybeOf(context)?.toggleSidebar(),
-              onBack: widget.onBack,
-              onForward: widget.onForward,
               onRevealOutput: (id) {
                 ref.read(outputLogProvider.notifier).setVisible(true);
                 ref.read(outputRevealProvider.notifier).request(id);
@@ -1695,6 +1689,16 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         return;
       case RepositoryPrimaryActionKind.fetch:
         _fetch().ignore();
+        return;
+      // Other screens' primary verbs. `resolvePrimaryRepositoryAction` — the
+      // only source of this screen's kind — never produces them, and they are
+      // listed rather than defaulted so adding a kind is a compile error here
+      // until someone decides what this screen should do with it.
+      case RepositoryPrimaryActionKind.fetchAndPrune:
+      case RepositoryPrimaryActionKind.stash:
+      case RepositoryPrimaryActionKind.addWorktree:
+      case RepositoryPrimaryActionKind.refresh:
+      case RepositoryPrimaryActionKind.createRequest:
         return;
     }
   }

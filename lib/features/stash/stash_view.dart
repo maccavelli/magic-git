@@ -468,7 +468,7 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
       RepositoryContextBar(
         snapshot: snapshot,
         primaryAction: RepositoryPrimaryAction(
-          kind: RepositoryPrimaryActionKind.fetch,
+          kind: RepositoryPrimaryActionKind.stash,
           label: 'Stash Changes',
           disabledReason: busy ? 'Another stash operation is running' : null,
         ),
