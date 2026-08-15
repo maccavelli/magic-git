@@ -2281,7 +2281,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     final effectiveFilter = _changeFilter.copyWith(
       grouping: preferences.grouping,
     );
-    final result = filterRepoChangeRows(canonical, effectiveFilter);
+    final reviewed = {
+      for (final item in _reviewController.value.reviewed) item.pathIdentity,
+    };
+    final result = filterRepoChangeRows(
+      canonical,
+      effectiveFilter,
+      reviewedPaths: reviewed,
+    );
     final rows = result.rows;
     final selectionSection = _selectionKind;
     final visibleSelected = <String>{

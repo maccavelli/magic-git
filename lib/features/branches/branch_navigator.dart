@@ -27,6 +27,7 @@ import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
+import '../dnd/drag_state.dart';
 import '../forge/forge_widgets.dart' show CiDot;
 import '../worktrees/worktree_tabs.dart';
 import 'branch_detail.dart' show TagRemoteStatus, tagStatus;
@@ -773,14 +774,12 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
     final hasRequest = bf != null && bf.hasRequest;
     final canPublish =
         local != null &&
-        !local.isHead &&
         unpublished &&
         remotes.isNotEmpty &&
         widget.onPublish != null &&
         !widget.busy;
     final canCreateRequest =
         local != null &&
-        !local.isHead &&
         !unpublished &&
         !hasRequest &&
         widget.onCreateRequest != null &&
@@ -1494,6 +1493,8 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
               (d.data as DragRef).ref.name != branch.name;
         },
         onAcceptWithDetails: (d) {
+          // ESC-cancelled drags release as a no-op (see DragStateNotifier).
+          if (ref.read(dragStateProvider) == null) return;
           final data = d.data;
           if (data is DragCommit) {
             widget.onDropCommitOnBranch(

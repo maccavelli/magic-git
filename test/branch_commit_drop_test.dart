@@ -1,5 +1,6 @@
 // E2: drag a commit onto a branch row to cherry-pick onto that branch.
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -156,6 +157,35 @@ void main() {
 
       expect(git.checkouts, isEmpty);
       expect(git.picks, [(_commit.hash, null)]);
+    },
+  );
+
+  testWidgets(
+    'an ESC-cancelled drag released over a branch row is a no-op (0009 H17)',
+    (tester) async {
+      tester.view.physicalSize = const Size(1200, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final git = await _pump(tester);
+
+      final from = tester.getCenter(find.text('drag-commit'));
+      final to = tester.getCenter(find.text('feature'));
+      final gesture = await tester.startGesture(from);
+      await tester.pump(const Duration(milliseconds: 100));
+      await gesture.moveBy(const Offset(0, -20));
+      await tester.pump();
+      await gesture.moveTo(to);
+      await tester.pump();
+      // ESC clears dragStateProvider (DragStateNotifier's hardware handler);
+      // Flutter still delivers the accept on release, which must now no-op.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Cherry-pick onto feature'), findsNothing);
+      expect(git.checkouts, isEmpty);
+      expect(git.picks, isEmpty);
     },
   );
 }

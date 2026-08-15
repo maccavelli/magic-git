@@ -23,10 +23,12 @@ import 'package:remote_magic_git/core/theme/app_theme.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/palette_intents.dart';
+import 'package:remote_magic_git/features/common/tool_icon_button.dart';
 import 'package:remote_magic_git/features/dnd/deselect.dart';
 import 'package:remote_magic_git/features/repository/commit_composer.dart';
 import 'package:remote_magic_git/features/repository/diff_popout_window.dart';
 import 'package:remote_magic_git/features/repository/diff_view_controls.dart';
+import 'package:remote_magic_git/features/repository/repo_change_navigator.dart';
 import 'package:remote_magic_git/features/repository/repo_status_view.dart';
 import 'package:riverpod/misc.dart' show Override;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1849,6 +1851,55 @@ void main() {
       stageAll.secondary,
       isFalse,
       reason: 'the worktree half of a mixed file is still stageable',
+    );
+  });
+
+  // 0009 H7: the pulldown's Hide-reviewed toggle must actually thread the
+  // review controller's reviewed identities into the list filter.
+  testWidgets('Hide reviewed paths hides rows marked reviewed', (tester) async {
+    await _pump(
+      tester,
+      status: _statusWith(
+        unstaged: const [
+          GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+          GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+        ],
+      ),
+    );
+
+    // Review all visible → mark the active file (lib/a.dart) reviewed → close.
+    await tester.tap(find.text('Review all visible'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Mark Reviewed'));
+    await tester.pumpAndSettle();
+    // The review strip shows the check — proves the mark landed.
+    expect(find.text('✓ lib/a.dart'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await tester.pumpAndSettle();
+
+    // Default filter (include reviewed) still shows the reviewed row.
+    expect(find.text('lib/a.dart'), findsOneWidget);
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(RepoChangeNavigator),
+        matching: find.byType(MacosPulldownButton),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Hide reviewed paths'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('lib/a.dart'), findsNothing);
+    expect(find.text('lib/b.dart'), findsOneWidget);
+    // The filter now counts as active: the count shows the hidden row and
+    // the Clear-filters affordance appears.
+    expect(find.text('1 of 2'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is ToolIconButton && w.tooltip == 'Clear filters',
+      ),
+      findsOneWidget,
     );
   });
 }

@@ -131,7 +131,7 @@
           "summary": "Explore commit history, topological graph lanes, filter commits, and perform branch mutations.",
           "keywords": ["history", "graph", "commit graph", "all branches", "log", "revert", "cherry-pick", "pop out"],
           "shortcuts": [
-            {"label": "Toggle All Branches Filter", "keys": "⌘⇧B"},
+            {"label": "Checkout Selected Commit", "keys": "⌘⇧B"},
             {"label": "Open History in New Window", "keys": "⌘⇧H"},
             {"label": "Copy Commit SHA", "keys": "⌘C"},
             {"label": "Filter History Log", "keys": "⌘F"}
@@ -147,7 +147,7 @@
             },
             {
               "type": "paragraph",
-              "text": "Click the All Branches button (or press ⌘⇧B) to toggle between git log --all and git log HEAD. When All Branches is active, merged and cut feature branches across the repository history are rendered."
+              "text": "Click the All Branches button in the History toolbar to toggle between git log --all and git log HEAD. When All Branches is active, merged and cut feature branches across the repository history are rendered. This toggle has no keyboard shortcut — ⌘⇧B is Checkout Selected Commit, which asks for confirmation before checking out."
             },
             {
               "type": "heading",

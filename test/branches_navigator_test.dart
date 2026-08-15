@@ -15,6 +15,7 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
 import 'package:remote_magic_git/features/common/adaptive_workspace_layout.dart';
 import 'package:remote_magic_git/features/common/inline_action_button.dart';
+import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 import 'package:remote_magic_git/features/common/repository_workspace_scaffold.dart';
 
 const _repo = '/repo';
@@ -68,7 +69,11 @@ List<GitRef> _staleRefs() => [
   ),
 ];
 
-Future<void> _pump(WidgetTester tester, {List<GitRef>? refs}) async {
+Future<void> _pump(
+  WidgetTester tester, {
+  List<GitRef>? refs,
+  Map<String, BranchForge>? forge,
+}) async {
   tester.view.physicalSize = const Size(1400, 1400);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -78,7 +83,9 @@ Future<void> _pump(WidgetTester tester, {List<GitRef>? refs}) async {
       refsProvider(_repo).overrideWith((ref) async => refs ?? _refs()),
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       remoteTagsProvider(_repo).overrideWith((ref) async => null),
-      branchForgeProvider(_repo).overrideWith((ref) async => const {}),
+      branchForgeProvider(
+        _repo,
+      ).overrideWith((ref) async => forge ?? const <String, BranchForge>{}),
       mergedBranchesProvider(
         _repo,
       ).overrideWith((ref) async => const <String>{}),
@@ -183,5 +190,77 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('ancient'), findsOneWidget);
+  });
+
+  // 0009 H4: the navigator handler map (which the menu, keymap, and palette
+  // all use) must allow Publish / Create request on the checked-out branch,
+  // matching the detail pane's own gates.
+  group('HEAD publish / create-request handlers', () {
+    Map<String, VoidCallback?> handlers(WidgetTester tester) {
+      for (final w in tester.widgetList<PanelShortcuts>(
+        find.byType(PanelShortcuts),
+      )) {
+        if (w.handlers.containsKey('branches.publish')) return w.handlers;
+      }
+      fail('no PanelShortcuts publishing branches handlers');
+    }
+
+    List<GitRef> publishedHeadRefs() => [
+      const GitRef(
+        name: 'refs/heads/main',
+        oid: 'a',
+        isHead: true,
+        upstream: 'origin/main',
+        subject: 's',
+      ),
+      const GitRef(
+        name: 'refs/heads/fix/crash',
+        oid: 'd',
+        isHead: false,
+        subject: 's',
+      ),
+    ];
+
+    testWidgets('unpublished HEAD with a remote can publish', (tester) async {
+      await _pump(tester); // main isHead, no upstream, origin configured
+      await tester.tap(find.text('main'));
+      await tester.pumpAndSettle();
+      final h = handlers(tester);
+      expect(h['branches.publish'], isNotNull);
+      expect(h['branches.createRequest'], isNull); // still unpublished
+    });
+
+    testWidgets('published HEAD with no open request can create one', (
+      tester,
+    ) async {
+      await _pump(tester, refs: publishedHeadRefs());
+      await tester.tap(find.text('main'));
+      await tester.pumpAndSettle();
+      final h = handlers(tester);
+      expect(h['branches.createRequest'], isNotNull);
+      expect(h['branches.publish'], isNull); // already published
+    });
+
+    testWidgets('published HEAD with an open request cannot create another', (
+      tester,
+    ) async {
+      await _pump(
+        tester,
+        refs: publishedHeadRefs(),
+        forge: const {
+          'main': BranchForge(requestNumber: 7, requestUrl: 'https://x/pr/7'),
+        },
+      );
+      await tester.tap(find.text('main'));
+      await tester.pumpAndSettle();
+      expect(handlers(tester)['branches.createRequest'], isNull);
+    });
+
+    testWidgets('non-HEAD unpublished branch still publishes', (tester) async {
+      await _pump(tester);
+      await tester.tap(find.text('fix/crash'));
+      await tester.pumpAndSettle();
+      expect(handlers(tester)['branches.publish'], isNotNull);
+    });
   });
 }

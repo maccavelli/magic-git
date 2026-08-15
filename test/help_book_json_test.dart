@@ -1,7 +1,40 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_magic_git/core/settings/keymap.dart';
+
+/// Splits a Help chord string like "⌘⇧B" into modifier flags + the key part.
+({bool meta, bool shift, bool alt, bool control, String key}) _parseChord(
+  String keys,
+) {
+  var meta = false;
+  var shift = false;
+  var alt = false;
+  var control = false;
+  var rest = keys;
+  var progressed = true;
+  while (progressed && rest.isNotEmpty) {
+    progressed = true;
+    if (rest.startsWith('⌘')) {
+      meta = true;
+      rest = rest.substring(1);
+    } else if (rest.startsWith('⇧')) {
+      shift = true;
+      rest = rest.substring(1);
+    } else if (rest.startsWith('⌥')) {
+      alt = true;
+      rest = rest.substring(1);
+    } else if (rest.startsWith('⌃')) {
+      control = true;
+      rest = rest.substring(1);
+    } else {
+      progressed = false;
+    }
+  }
+  return (meta: meta, shift: shift, alt: alt, control: control, key: rest);
+}
 
 void main() {
   group('help_book.json validation', () {
@@ -117,6 +150,53 @@ void main() {
       }
 
       expect(shortcutCount, greaterThan(0), reason: 'Expected keyboard shortcut references in topics');
+    });
+
+    // 0009 H18: Help once taught ⌘⇧B as "Toggle All Branches Filter" while
+    // the keymap binds that chord to history.checkout — following Help could
+    // detach HEAD. Any Help entry using the checkout chord must say checkout.
+    // (Phase 10.5 / M27 grows this to a full Help-vs-keymap audit.)
+    test('⌘⇧B in Help only ever means checkout', () {
+      final checkout = kKeymapActions.firstWhere(
+        (a) => a.id == 'history.checkout',
+      );
+      final binding = checkout.defaultBindings.single;
+      expect(binding.meta, isTrue);
+      expect(binding.shift, isTrue);
+      expect(binding.keyId, LogicalKeyboardKey.keyB.keyId);
+
+      var checked = 0;
+      for (final cat in jsonBook['categories'] as List<dynamic>) {
+        final topics = (cat as Map<String, dynamic>)['topics'] as List<dynamic>;
+        for (final top in topics) {
+          final topic = top as Map<String, dynamic>;
+          final shortcuts = topic['shortcuts'] as List<dynamic>? ?? const [];
+          for (final sc in shortcuts) {
+            final shortcut = sc as Map<String, dynamic>;
+            final chord = _parseChord(shortcut['keys'] as String);
+            if (chord.meta &&
+                chord.shift &&
+                !chord.alt &&
+                !chord.control &&
+                chord.key.toUpperCase() == 'B') {
+              checked++;
+              expect(
+                (shortcut['label'] as String).toLowerCase(),
+                contains('checkout'),
+                reason:
+                    '⌘⇧B is bound to history.checkout ("${checkout.label}") — '
+                    'Help must not teach it as "${shortcut['label']}" '
+                    '(topic ${topic['id']})',
+              );
+            }
+          }
+        }
+      }
+      expect(
+        checked,
+        greaterThan(0),
+        reason: 'the History topic should teach ⌘⇧B as checkout',
+      );
     });
   });
 }
