@@ -42,7 +42,7 @@ const LogQuery _historyQuery = (
   sha: null,
   noMerges: false,
   all: false,
-    revision: null,
+  revision: null,
 );
 
 class _CountingGit extends GitService {
@@ -157,14 +157,15 @@ void main() {
 
     // Stage a hunk-worth of work: an ordinary mutation through the panel's real
     // refresh path.
-    await tester.tap(_icon(CupertinoIcons.plus_circle));
+    await tester.tap(_icon(CupertinoIcons.plus_circle_fill));
     await tester.pumpAndSettle();
     expect(git.staged, ['lib/a.dart'], reason: 'the mutation ran');
 
     expect(
       git.logCalls,
       2,
-      reason: 'the repo changed, so the log History reads must be re-walked — '
+      reason:
+          'the repo changed, so the log History reads must be re-walked — '
           'refreshing the retired `logProvider` instead leaves History showing '
           'a pre-mutation list',
     );
@@ -222,7 +223,8 @@ void main() {
     expect(
       refsReads,
       containsAll(const [main, worktree]),
-      reason: 'refs live in the common git dir and are shared by every '
+      reason:
+          'refs live in the common git dir and are shared by every '
           'worktree, so a commit in one moves a branch every other is showing',
     );
 
@@ -231,7 +233,8 @@ void main() {
     expect(
       statusReads,
       const [worktree],
-      reason: "each worktree has its own index and working tree — committing "
+      reason:
+          "each worktree has its own index and working tree — committing "
           "in one does not touch another's file list",
     );
   });

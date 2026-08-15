@@ -2590,7 +2590,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       case _SectionKind.untracked:
         entries.addAll([
           ContextMenuItem(
-            icon: CupertinoIcons.plus_circle,
+            icon: CupertinoIcons.plus_circle_fill,
             label: many ? 'Stage $n Files' : 'Stage',
             onTap: () => many ? _stageMany(paths) : _stage(paths.single),
           ),
@@ -2602,7 +2602,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                 : _addToGitignore(paths.single),
           ),
           ContextMenuItem(
-            icon: CupertinoIcons.trash,
+            icon: CupertinoIcons.trash_fill,
             label: many ? 'Delete $n Files' : 'Delete Untracked File',
             onTap: () => many
                 ? _discardUntrackedMany(paths)
@@ -2612,12 +2612,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       case _SectionKind.unstaged:
         entries.addAll([
           ContextMenuItem(
-            icon: CupertinoIcons.plus_circle,
+            icon: CupertinoIcons.plus_circle_fill,
             label: many ? 'Stage $n Files' : 'Stage',
             onTap: () => many ? _stageMany(paths) : _stage(paths.single),
           ),
           ContextMenuItem(
-            icon: CupertinoIcons.arrow_uturn_left,
+            icon: CupertinoIcons.arrow_uturn_left_circle_fill,
             label: many ? 'Discard Changes in $n Files' : 'Discard Changes',
             onTap: () => many ? _discardMany(paths) : _discard(paths.single),
           ),
@@ -2636,12 +2636,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       case _SectionKind.staged:
         entries.addAll([
           ContextMenuItem(
-            icon: CupertinoIcons.minus_circle,
+            icon: CupertinoIcons.minus_circle_fill,
             label: many ? 'Unstage $n Files' : 'Unstage',
             onTap: () => many ? _unstageMany(paths) : _unstage(paths.single),
           ),
           ContextMenuItem(
-            icon: CupertinoIcons.arrow_uturn_left,
+            icon: CupertinoIcons.arrow_uturn_left_circle_fill,
             label: many
                 ? 'Discard Staged Changes in $n Files'
                 : 'Discard Staged Changes',
@@ -2655,7 +2655,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         );
         entries.addAll([
           ContextMenuItem(
-            icon: CupertinoIcons.person_crop_circle,
+            icon: CupertinoIcons.arrow_left_circle_fill,
             label: many
                 ? 'Resolve $n Using ${sides.ours}'
                 : 'Resolve Using ${sides.ours}',
@@ -2664,7 +2664,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                 : _resolve(paths.single, useOurs: true),
           ),
           ContextMenuItem(
-            icon: CupertinoIcons.person_crop_circle_fill,
+            icon: CupertinoIcons.arrow_right_circle_fill,
             label: many
                 ? 'Resolve $n Using ${sides.theirs}'
                 : 'Resolve Using ${sides.theirs}',
@@ -2789,15 +2789,17 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   ),
                 ),
                 ToolIconButton(
-                  icon: CupertinoIcons.person_crop_circle,
+                  icon: CupertinoIcons.arrow_left_circle_fill,
                   tooltip: 'Resolve using ours',
                   size: 16,
+                  color: MacosColors.systemBlueColor,
                   onPressed: () => _resolve(file.path, useOurs: true),
                 ),
                 ToolIconButton(
-                  icon: CupertinoIcons.person_crop_circle_fill,
+                  icon: CupertinoIcons.arrow_right_circle_fill,
                   tooltip: 'Resolve using theirs',
                   size: 16,
+                  color: MacosColors.systemPurpleColor,
                   onPressed: () => _resolve(file.path, useOurs: false),
                 ),
               ],
@@ -2866,8 +2868,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                     // An untracked file has nothing tracked to revert to — delete
                     // it outright (trash icon) rather than "discard" (revert icon).
                     icon: file.isUntracked
-                        ? CupertinoIcons.trash
-                        : CupertinoIcons.arrow_uturn_left,
+                        ? CupertinoIcons.trash_fill
+                        : CupertinoIcons.arrow_uturn_left_circle_fill,
                     tooltip: file.isUntracked
                         ? 'Delete untracked file'
                         : 'Discard changes',
@@ -2879,8 +2881,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   ),
                 ToolIconButton(
                   icon: staged
-                      ? CupertinoIcons.minus_circle
-                      : CupertinoIcons.plus_circle,
+                      ? CupertinoIcons.minus_circle_fill
+                      : CupertinoIcons.plus_circle_fill,
                   tooltip:
                       '${staged ? 'Unstage' : 'Stage'}'
                       '${_bindingSuffix('repository.toggleStage')}',

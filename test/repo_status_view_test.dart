@@ -345,7 +345,6 @@ Future<_FakeGitService> _pump(
   return resolved;
 }
 
-
 /// The label of the sync group's accented (non-secondary) button, or null when
 /// nothing is recommended. This replaced the old green icon tint: the cue moved
 /// from "colour one of four icons" to "accent one of four labelled buttons",
@@ -408,7 +407,7 @@ void main() {
     );
 
     expect(find.text('lib/a.dart'), findsOneWidget);
-    await tester.tap(_icon(CupertinoIcons.plus_circle));
+    await tester.tap(_icon(CupertinoIcons.plus_circle_fill));
     await tester.pumpAndSettle();
 
     expect(git.staged, ['lib/a.dart']);
@@ -426,7 +425,7 @@ void main() {
       ),
     );
 
-    await tester.tap(_icon(CupertinoIcons.minus_circle));
+    await tester.tap(_icon(CupertinoIcons.minus_circle_fill));
     await tester.pumpAndSettle();
 
     expect(git.unstaged, ['lib/b.dart']);
@@ -529,14 +528,16 @@ void main() {
     // Dispatched on the intent bus rather than as a raw key event: that is the
     // path both the ⌘G binding and the command palette resolve to, and it does
     // not depend on which descendant happens to hold focus.
-    ProviderScope.containerOf(tester.element(find.byType(RepoStatusView)))
-        .read(paletteIntentProvider.notifier)
-        .dispatch('repository.focusCommit');
+    ProviderScope.containerOf(
+      tester.element(find.byType(RepoStatusView)),
+    ).read(paletteIntentProvider.notifier).dispatch('repository.focusCommit');
     await tester.pumpAndSettle();
 
     expect(expanded, findsOneWidget);
     expect(
-      (await loadRepositoryWorkspacePrefs(identity: identity)).taskDockCollapsed,
+      (await loadRepositoryWorkspacePrefs(
+        identity: identity,
+      )).taskDockCollapsed,
       isFalse,
       reason: 'the dock the composer lives in must actually be open',
     );
@@ -555,9 +556,9 @@ void main() {
     // Amend's home is the Repository menu and the palette now that the second
     // toolbar band is gone; both arrive on the intent bus, which is the path
     // exercised here.
-    ProviderScope.containerOf(tester.element(find.byType(RepoStatusView)))
-        .read(paletteIntentProvider.notifier)
-        .dispatch('repository.amend');
+    ProviderScope.containerOf(
+      tester.element(find.byType(RepoStatusView)),
+    ).read(paletteIntentProvider.notifier).dispatch('repository.amend');
     await tester.pumpAndSettle();
 
     // Nothing runs until the rewrite is confirmed.
@@ -583,11 +584,11 @@ void main() {
       );
 
       // First tap starts the (gated) stage and flips _busy.
-      await tester.tap(_icon(CupertinoIcons.plus_circle));
+      await tester.tap(_icon(CupertinoIcons.plus_circle_fill));
       await tester.pump();
       // Second tap, while the first is still parked, must be dropped — two
       // concurrent index writes would race on .git/index.lock.
-      await tester.tap(_icon(CupertinoIcons.plus_circle));
+      await tester.tap(_icon(CupertinoIcons.plus_circle_fill));
       await tester.pump();
 
       git.stageGate!.complete();
@@ -816,49 +817,48 @@ void main() {
     },
   );
 
-  testWidgets(
-    'ahead of upstream recommends Push, and only Push',
-    (tester) async {
-      final git = _FakeGitService();
-      final container = ProviderContainer(
-        overrides: [
-          gitServiceProvider.overrideWithValue(git),
-          statusProvider(_repo).overrideWith(
-            (ref) async => GitStatus(
-              branch: const GitBranchInfo(
-                head: 'main',
-                upstream: 'origin/main',
-                ahead: 2,
-              ),
-              files: const [],
+  testWidgets('ahead of upstream recommends Push, and only Push', (
+    tester,
+  ) async {
+    final git = _FakeGitService();
+    final container = ProviderContainer(
+      overrides: [
+        gitServiceProvider.overrideWithValue(git),
+        statusProvider(_repo).overrideWith(
+          (ref) async => GitStatus(
+            branch: const GitBranchInfo(
+              head: 'main',
+              upstream: 'origin/main',
+              ahead: 2,
             ),
-          ),
-          pendingOpProvider(_repo).overrideWith((ref) async => git.pendingOp0),
-          repoWatchProvider(
-            _repo,
-          ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
-          fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
-          refsProvider(_repo).overrideWith((ref) async => const []),
-          // Sibling of the refs override: the views now read CONFIGURED
-          // remotes (remotesProvider), not remote-tracking refs.
-          remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
-        ],
-      );
-      addTearDown(container.dispose);
-      await tester.pumpWidget(
-        UncontrolledProviderScope(
-          container: container,
-          child: const MacosApp(
-            debugShowCheckedModeBanner: false,
-            home: RepoStatusView(repoPath: _repo),
+            files: const [],
           ),
         ),
-      );
-      await tester.pumpAndSettle();
+        pendingOpProvider(_repo).overrideWith((ref) async => git.pendingOp0),
+        repoWatchProvider(
+          _repo,
+        ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
+        fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
+        refsProvider(_repo).overrideWith((ref) async => const []),
+        // Sibling of the refs override: the views now read CONFIGURED
+        // remotes (remotesProvider), not remote-tracking refs.
+        remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
+      ],
+    );
+    addTearDown(container.dispose);
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: RepoStatusView(repoPath: _repo),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(_emphasizedVerb(tester), 'Push');
-    },
-  );
+    expect(_emphasizedVerb(tester), 'Push');
+  });
 
   testWidgets('behind upstream recommends Pull', (tester) async {
     await _pump(
@@ -1266,7 +1266,10 @@ void main() {
         matching: find.byType(GestureDetector),
       );
       await tester.tap(
-        find.descendant(of: aRow, matching: _icon(CupertinoIcons.plus_circle)),
+        find.descendant(
+          of: aRow,
+          matching: _icon(CupertinoIcons.plus_circle_fill),
+        ),
       );
       await tester.pumpAndSettle();
 
@@ -1666,27 +1669,26 @@ void main() {
       },
     );
 
-    testWidgets(
-      'Mark Resolved in the conflict context menu stages the file',
-      (tester) async {
-        final git = await _pump(
-          tester,
-          status: _statusWith(
-            conflicted: const [
-              GitFileStatus(path: 'lib/c.dart', statusX: 'U', statusY: 'U'),
-            ],
-          ),
-        );
+    testWidgets('Mark Resolved in the conflict context menu stages the file', (
+      tester,
+    ) async {
+      final git = await _pump(
+        tester,
+        status: _statusWith(
+          conflicted: const [
+            GitFileStatus(path: 'lib/c.dart', statusX: 'U', statusY: 'U'),
+          ],
+        ),
+      );
 
-        await rightClick(tester, find.text('lib/c.dart'));
-        // The menu overlay's item renders above the pane's own button.
-        await tester.tap(find.text('Mark Resolved').last);
-        await tester.pumpAndSettle();
+      await rightClick(tester, find.text('lib/c.dart'));
+      // The menu overlay's item renders above the pane's own button.
+      await tester.tap(find.text('Mark Resolved').last);
+      await tester.pumpAndSettle();
 
-        expect(git.staged, ['lib/c.dart']);
-        expect(git.resolved, isEmpty);
-      },
-    );
+      expect(git.staged, ['lib/c.dart']);
+      expect(git.resolved, isEmpty);
+    });
 
     testWidgets('right-clicking within a multi-selection shows pluralized bulk '
         'actions covering every selected file', (tester) async {
@@ -1865,9 +1867,9 @@ void main() {
       );
 
       // The sync group's overflow pull-down is the bar's last child.
+      // Title-only: macos_ui paints its own caret (no chevron icon).
       final overflow = find.byWidgetPredicate(
-        (w) =>
-            w is MacosPulldownButton && w.icon == CupertinoIcons.chevron_down,
+        (w) => w is MacosPulldownButton && w.title == '',
       );
       expect(overflow, findsOneWidget);
       final paneWidth = tester.getSize(find.byType(RepoStatusView)).width;

@@ -5,6 +5,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
 import '../common/field_styles.dart';
 import '../common/inline_action_button.dart';
+import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import 'repo_change_filter.dart';
 import 'repo_change_model.dart';
@@ -109,23 +110,27 @@ class RepoChangeNavigator extends StatelessWidget {
                   children: [
                     _statusButton(
                       RepoChangeSection.conflict,
-                      CupertinoIcons.exclamationmark_triangle,
+                      CupertinoIcons.exclamationmark_triangle_fill,
                       'Conflicts',
+                      MacosColors.systemRedColor,
                     ),
                     _statusButton(
                       RepoChangeSection.staged,
-                      CupertinoIcons.check_mark_circled,
+                      CupertinoIcons.checkmark_alt_circle_fill,
                       'Staged',
+                      MacosColors.systemGreenColor,
                     ),
                     _statusButton(
                       RepoChangeSection.unstaged,
-                      CupertinoIcons.pencil,
-                      'Changes',
+                      CupertinoIcons.pencil_circle_fill,
+                      'Unstaged',
+                      MacosColors.systemOrangeColor,
                     ),
                     _statusButton(
                       RepoChangeSection.untracked,
-                      CupertinoIcons.question_circle,
+                      CupertinoIcons.plus_square_fill,
                       'Untracked',
+                      MacosColors.systemTealColor,
                     ),
                     const Spacer(),
                     Text(
@@ -256,13 +261,96 @@ class RepoChangeNavigator extends StatelessWidget {
     RepoChangeSection section,
     IconData icon,
     String label,
-  ) => ToolIconButton(
+    Color color,
+  ) => _StatusFilterToggle(
     icon: icon,
-    tooltip: 'Filter $label',
-    size: 14,
-    color: filter.statuses.contains(section)
-        ? MacosColors.systemBlueColor
-        : MacosColors.systemGrayColor,
+    label: label,
+    color: color,
+    selected: filter.statuses.contains(section),
     onPressed: () => _toggleStatus(section),
   );
+}
+
+/// Color-coded status filter. The old 14px gray outlines all read the same
+/// and hid their meaning in a tooltip; these keep a distinct filled glyph
+/// and the section's own color whether they are on or off.
+class _StatusFilterToggle extends StatefulWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  const _StatusFilterToggle({
+    required this.icon,
+    required this.label,
+    required this.color,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  @override
+  State<_StatusFilterToggle> createState() => _StatusFilterToggleState();
+}
+
+class _StatusFilterToggleState extends State<_StatusFilterToggle> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final dark = MacosTheme.of(context).brightness.isDark;
+    final selected = widget.selected;
+    final color = widget.color;
+    final fg = selected ? MacosColors.white : color;
+    final fill = selected
+        ? color.withValues(alpha: dark ? 0.88 : 0.92)
+        : color.withValues(
+            alpha: _hovered ? (dark ? 0.28 : 0.20) : (dark ? 0.16 : 0.12),
+          );
+    final border = color.withValues(
+      alpha: selected ? 0.95 : (_hovered ? 0.55 : (dark ? 0.38 : 0.32)),
+    );
+    return MacosTooltip(
+      message: selected
+          ? 'Showing ${widget.label} — click to show all statuses'
+          : 'Show only ${widget.label}',
+      child: Tappable(
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        onTap: widget.onPressed,
+        child: AnimatedContainer(
+          duration: MediaQuery.disableAnimationsOf(context)
+              ? Duration.zero
+              : const Duration(milliseconds: 110),
+          curve: Curves.easeOut,
+          margin: const EdgeInsets.only(right: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color.alphaBlend(
+                  MacosColors.white.withValues(alpha: dark ? 0.10 : 0.28),
+                  fill,
+                ),
+                fill,
+              ],
+            ),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: border, width: 0.5),
+            boxShadow: [
+              if (selected || _hovered)
+                BoxShadow(
+                  color: color.withValues(alpha: selected ? 0.28 : 0.14),
+                  blurRadius: selected ? 4 : 2,
+                  offset: const Offset(0, 0.5),
+                ),
+            ],
+          ),
+          child: MacosIcon(widget.icon, size: 15, color: fg),
+        ),
+      ),
+    );
+  }
 }
