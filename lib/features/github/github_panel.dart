@@ -13,11 +13,14 @@ import '../common/async_views.dart';
 import '../common/branch_switch.dart';
 import '../common/buttons.dart';
 import '../common/context_menu.dart';
+import '../common/panel_actions.dart' show kForgePanel;
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/section_collapse.dart';
 import '../common/show_more_row.dart';
+import '../common/workspace_focus.dart';
+import '../common/workspace_navigation.dart';
 import '../forge/forge_inbox.dart';
 import '../forge/forge_prefs.dart';
 import '../forge/forge_selection.dart';
@@ -191,6 +194,32 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     final remotes = ref.watch(remotesProvider(repoPath)).value;
     if (remotes != null && remotes.isEmpty) {
       return const NoRemoteNotice('GitHub features');
+    }
+    // 0009 H3: apply a restored / palette-revealed forge object — selecting
+    // by id needs no list data, the detail providers fetch on their own.
+    final pendingLocation = widget.isActive
+        ? pendingWorkspaceLocation(ref, kForgePanel)
+        : null;
+    if (pendingLocation != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final location = takeWorkspaceLocation(ref, kForgePanel);
+        if (location == null) return;
+        final id = int.tryParse(location.identity);
+        final ForgeSel? next = id == null
+            ? null
+            : switch (location.kind) {
+                WorkspaceFocusKind.issue => ForgeIssueSel(id),
+                WorkspaceFocusKind.request => ForgeChangeRequestSel(id),
+                WorkspaceFocusKind.pipeline => ForgeCiRunSel(id),
+                _ => null,
+              };
+        if (next == null) {
+          markWorkspaceLocationUnavailable(ref, location);
+          return;
+        }
+        _select(next).ignore();
+      });
     }
     final prs = ref.watch(pullRequestsProvider(repoPath));
     final runs = ref.watch(workflowRunsProvider(repoPath));

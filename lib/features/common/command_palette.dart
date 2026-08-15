@@ -1041,10 +1041,12 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
                   onChanged: _onQueryChanged,
                 ),
                 FieldHint(
+                  // issue:/request:/ci: parse but contribute nothing yet
+                  // (Phase 8) — advertising them was a taught no-op (0009 M7).
                   _selectedEntity == null
                       ? 'Prefix with go:, git:, forge:, app:, branch:, '
-                            'commit:, file:, stash:, worktree:, issue:, '
-                            'request:, or ci:. ↑/↓ to highlight, Return to open.'
+                            'commit:, file:, stash:, or worktree:. '
+                            '↑/↓ to highlight, Return to open.'
                       : 'Choose an action for '
                             '${_selectedEntity!.entry.primaryLabel}.',
                 ),

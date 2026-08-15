@@ -4,7 +4,7 @@
 // right-click menu, bulk cherry-pick/revert). Uses a fake GitService so no
 // SSH is touched.
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/gestures.dart'
     show PointerDeviceKind, kSecondaryMouseButton;
 import 'package:flutter/services.dart';
@@ -18,7 +18,10 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/branches/create_tag_sheet.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/commit_patch_view.dart';
+import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 import 'package:remote_magic_git/features/common/sheet_chrome.dart';
+import 'package:remote_magic_git/features/common/workspace_focus.dart';
+import 'package:remote_magic_git/features/common/workspace_navigation.dart';
 import 'package:remote_magic_git/features/history/commit_graph_view.dart'
     show kGraphRowHeight;
 import 'package:remote_magic_git/features/history/history_minimap.dart';
@@ -132,7 +135,16 @@ GitCommit _c(String hash, String subject) => GitCommit(
 
 const _repo = '/srv/repo';
 
-Future<void> _pump(
+/// A ConnectionController stuck at a fixed state — used to give the panel a
+/// live session (repoPath + sessionEpoch) for the location-restore tests.
+class _StubConnection extends ConnectionController {
+  _StubConnection(this._state);
+  final ConnectionState _state;
+  @override
+  ConnectionState build() => _state;
+}
+
+Future<ProviderContainer> _pump(
   WidgetTester tester,
   List<GitCommit> commits, {
   _FakeGit? git,
@@ -140,6 +152,8 @@ Future<void> _pump(
   // and remote-tags providers — unoverridden they'd error against the fake
   // executor and leave Riverpod retry timers pending.
   bool tagSheetProviders = false,
+  // Gives the panel a live session so workspace-navigation restores apply.
+  bool connected = false,
 }) async {
   // The zoom setter persists through SharedPreferences — back it with the
   // in-memory mock so writes don't hit a missing platform channel.
@@ -148,6 +162,16 @@ Future<void> _pump(
     overrides: [
       gitServiceProvider.overrideWithValue(git ?? _FakeGit(commits)),
       repoWatchProvider.overrideWith((ref, repoPath) => const Stream.empty()),
+      if (connected)
+        connectionProvider.overrideWith(
+          () => _StubConnection(
+            const ConnectionState(
+              phase: ConnectionPhase.connected,
+              repoPath: _repo,
+              sessionEpoch: 1,
+            ),
+          ),
+        ),
       if (tagSheetProviders) ...[
         remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
         remoteTagsProvider(_repo).overrideWith((ref) async => null),
@@ -165,6 +189,16 @@ Future<void> _pump(
     ),
   );
   await tester.pumpAndSettle();
+  return container;
+}
+
+/// The History panel's live handler for [id], read off its PanelShortcuts.
+VoidCallback? _historyHandler(WidgetTester tester, String id) {
+  for (final element in find.byType(PanelShortcuts).evaluate()) {
+    final handlers = (element.widget as PanelShortcuts).handlers;
+    if (handlers.containsKey(id)) return handlers[id];
+  }
+  return null;
 }
 
 Finder get _actionsMenu => find.byWidgetPredicate(
@@ -684,5 +718,49 @@ void main() {
           .text,
       isEmpty,
     );
+  });
+
+  // 0009 H3: a revealed (palette "show in History" / Back-Forward) commit
+  // must become the SELECTED commit, not merely make History the visible
+  // page; an identity the log cannot resolve is marked unavailable.
+  testWidgets('a revealed commit gets selected; an unknown one is marked '
+      'unavailable', (tester) async {
+    final head = _c('aaaaaaa1111111', 'head commit');
+    final older = _c('bbbbbbb2222222', 'old commit');
+    final container = await _pump(tester, [head, older], connected: true);
+    const key = WorkspaceSessionKey(_repo, 1);
+    WorkspaceFocus loc(String id) => WorkspaceFocus(
+      repositoryPath: _repo,
+      sessionEpoch: 1,
+      kind: WorkspaceFocusKind.revision,
+      identity: id,
+      panelIndex: 1,
+    );
+
+    // Nothing selected yet — the selection-gated handler is null.
+    expect(_historyHandler(tester, 'history.copySha'), isNull);
+
+    container
+        .read(workspaceNavigationProvider(key).notifier)
+        .reveal(loc(older.hash));
+    await tester.pumpAndSettle();
+
+    var nav = container.read(workspaceNavigationProvider(key));
+    expect(nav.pending, isNull, reason: 'the adapter consumed the location');
+    expect(nav.unavailable, isNull);
+    expect(
+      _historyHandler(tester, 'history.copySha'),
+      isNotNull,
+      reason: 'the revealed commit is now the live selection',
+    );
+
+    container
+        .read(workspaceNavigationProvider(key).notifier)
+        .reveal(loc('feedfacedeadbeef'));
+    await tester.pumpAndSettle();
+
+    nav = container.read(workspaceNavigationProvider(key));
+    expect(nav.pending, isNull);
+    expect(nav.unavailable, loc('feedfacedeadbeef'));
   });
 }

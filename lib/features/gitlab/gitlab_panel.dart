@@ -13,11 +13,14 @@ import '../common/async_views.dart';
 import '../common/branch_switch.dart';
 import '../common/buttons.dart';
 import '../common/context_menu.dart';
+import '../common/panel_actions.dart' show kForgePanel;
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/section_collapse.dart';
 import '../common/show_more_row.dart';
+import '../common/workspace_focus.dart';
+import '../common/workspace_navigation.dart';
 import '../forge/forge_inbox.dart';
 import '../forge/forge_prefs.dart';
 import '../forge/forge_selection.dart';
@@ -240,6 +243,32 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     final remotes = ref.watch(remotesProvider(repoPath)).value;
     if (remotes != null && remotes.isEmpty) {
       return const NoRemoteNotice('GitLab features');
+    }
+    // 0009 H3: apply a restored / palette-revealed forge object — selecting
+    // by iid needs no list data, the detail providers fetch on their own.
+    final pendingLocation = widget.isActive
+        ? pendingWorkspaceLocation(ref, kForgePanel)
+        : null;
+    if (pendingLocation != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final location = takeWorkspaceLocation(ref, kForgePanel);
+        if (location == null) return;
+        final iid = int.tryParse(location.identity);
+        final ForgeSel? next = iid == null
+            ? null
+            : switch (location.kind) {
+                WorkspaceFocusKind.issue => ForgeIssueSel(iid),
+                WorkspaceFocusKind.request => ForgeChangeRequestSel(iid),
+                WorkspaceFocusKind.pipeline => ForgeCiRunSel(iid),
+                _ => null,
+              };
+        if (next == null) {
+          markWorkspaceLocationUnavailable(ref, location);
+          return;
+        }
+        _select(next).ignore();
+      });
     }
     final mrs = ref.watch(mergeRequestsProvider(repoPath));
     final pipelines = ref.watch(pipelinesProvider(repoPath));

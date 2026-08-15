@@ -245,6 +245,25 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
   @override
   Widget build(BuildContext context) {
     final stashesAsync = ref.watch(stashesProvider(repoPath));
+    // 0009 H3: apply a restored / palette-revealed stash once the list can
+    // resolve its oid.
+    final pendingLocation = widget.isActive
+        ? pendingWorkspaceLocation(ref, 3)
+        : null;
+    if (pendingLocation != null && stashesAsync.hasValue) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final location = takeWorkspaceLocation(ref, 3);
+        if (location == null) return;
+        final entries =
+            ref.read(stashesProvider(repoPath)).value ?? const <GitStash>[];
+        if (!entries.any((s) => s.oid == location.identity)) {
+          markWorkspaceLocationUnavailable(ref, location);
+          return;
+        }
+        setState(() => _selected = location.identity);
+      });
+    }
     final git = ref.read(gitServiceProvider);
     final count = stashesAsync.value?.length ?? 0;
     final keymap = ref.watch(keymapProvider);

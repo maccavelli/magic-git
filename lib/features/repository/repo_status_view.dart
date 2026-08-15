@@ -34,6 +34,7 @@ import '../common/split_diff_view.dart';
 import '../common/status_style.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
+import '../common/workspace_navigation.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/staging_drop_banner.dart';
@@ -1365,6 +1366,33 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
 
     final status = statusAsync.value;
     final connection = ref.watch(connectionProvider);
+    // 0009 H3: apply a restored / palette-revealed file location once status
+    // can classify its section (conflict pane for unmerged, like the tree).
+    final pendingLocation = widget.isActive
+        ? pendingWorkspaceLocation(ref, 0)
+        : null;
+    if (pendingLocation != null && status != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final location = takeWorkspaceLocation(ref, 0);
+        if (location == null) return;
+        final s = ref
+            .read(repoStatusOverlayProvider(repoPath))
+            .statusFor(location.identity);
+        final untracked = s?.isUntracked ?? false;
+        final conflict = s?.isUnmerged ?? false;
+        _openFileFromTree(
+          location.identity,
+          staged:
+              !conflict &&
+              !untracked &&
+              (s?.isStaged ?? false) &&
+              !(s?.isUnstaged ?? false),
+          untracked: untracked,
+          conflict: conflict,
+        );
+      });
+    }
     final composerController = ref.watch(
       commitComposerControllerProvider(
         CommitComposerKey(repoPath, connection.sessionEpoch),

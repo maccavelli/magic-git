@@ -1331,6 +1331,34 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     // change is still a new key, and so still blanks to a spinner — rows the new
     // filter was never applied to must never linger.
     final commits = logAsync.value;
+    // 0009 H3: apply a restored / palette-revealed commit once the log can
+    // resolve it — scheduled before this build's own visit callback so the
+    // restore is not re-recorded as a fresh navigation.
+    final pendingLocation = widget.isActive
+        ? pendingWorkspaceLocation(ref, 1)
+        : null;
+    if (pendingLocation != null && commits != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final location = takeWorkspaceLocation(ref, 1);
+        if (location == null) return;
+        if (!commits.any((c) => c.hash == location.identity)) {
+          markWorkspaceLocationUnavailable(ref, location);
+          return;
+        }
+        final second = location.secondaryIdentity;
+        setState(() {
+          _selectedHashes = {
+            location.identity,
+            if (location.kind == WorkspaceFocusKind.range &&
+                second != null &&
+                commits.any((c) => c.hash == second))
+              second,
+          };
+          _selectionAnchor = location.identity;
+        });
+      });
+    }
     if (commits != null && commits.isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;

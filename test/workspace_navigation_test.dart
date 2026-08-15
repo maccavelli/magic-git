@@ -81,4 +81,52 @@ void main() {
       stale,
     );
   });
+
+  // 0009 H3: reveal records the location AND marks it pending, so the owning
+  // panel's adapter selects the object; plain visit never sets pending (the
+  // sidebar's panel flips must not become selections).
+  test('reveal sets pending; visit does not', () {
+    final container = ProviderContainer.test();
+    final history = container.read(workspaceNavigationProvider(_key).notifier);
+
+    history.visit(_location('a'));
+    expect(container.read(workspaceNavigationProvider(_key)).pending, isNull);
+
+    history.reveal(_location('b', panel: 1));
+    final state = container.read(workspaceNavigationProvider(_key));
+    expect(state.current, _location('b', panel: 1));
+    expect(state.pending, _location('b', panel: 1));
+    expect(history.takePendingForPanel(1), _location('b', panel: 1));
+    expect(container.read(workspaceNavigationProvider(_key)).pending, isNull);
+  });
+
+  // The destination screen re-reports its pre-restore selection from a
+  // post-frame callback scheduled with build-time values. Recording that
+  // echo would truncate the forward stack and undo the Back — only the
+  // exact echo is suppressed; a genuinely new visit records normally.
+  test('a restore ignores the stale echo but not a new visit', () {
+    final container = ProviderContainer.test();
+    final history = container.read(workspaceNavigationProvider(_key).notifier);
+    history.visit(_location('a'));
+    history.visit(_location('b'));
+
+    expect(history.back(), _location('a'));
+    // The screen (still showing b) echoes b — must not re-advance history.
+    history.visit(_location('b'));
+    var state = container.read(workspaceNavigationProvider(_key));
+    expect(state.current, _location('a'));
+    expect(state.canForward, isTrue);
+
+    // The adapter applied the restore; the screen now visits a — a no-op.
+    history.visit(_location('a'));
+    state = container.read(workspaceNavigationProvider(_key));
+    expect(state.current, _location('a'));
+    expect(state.canForward, isTrue, reason: 'b is still ahead');
+
+    // A genuinely new selection truncates forward, exactly as before.
+    history.visit(_location('c'));
+    state = container.read(workspaceNavigationProvider(_key));
+    expect(state.current, _location('c'));
+    expect(state.canForward, isFalse);
+  });
 }

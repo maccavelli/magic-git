@@ -224,6 +224,20 @@ void main() {
     },
   );
 
+  // 0009 M7: issue:/request:/ci: parse but contribute nothing yet — the
+  // hint must not teach scopes that always come back empty.
+  testWidgets('the hint no longer advertises unimplemented scopes', (
+    tester,
+  ) async {
+    await _open(tester, _Recorder());
+
+    expect(find.textContaining('issue:'), findsNothing);
+    expect(find.textContaining('request:'), findsNothing);
+    expect(find.textContaining('ci:'), findsNothing);
+    // The working scopes stay advertised.
+    expect(find.textContaining('worktree:'), findsOneWidget);
+  });
+
   testWidgets('lists navigation commands', (tester) async {
     await _open(tester, _Recorder());
 

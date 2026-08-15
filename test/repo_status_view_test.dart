@@ -26,6 +26,8 @@ import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/palette_intents.dart';
 import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 import 'package:remote_magic_git/features/common/tool_icon_button.dart';
+import 'package:remote_magic_git/features/common/workspace_focus.dart';
+import 'package:remote_magic_git/features/common/workspace_navigation.dart';
 import 'package:remote_magic_git/features/dnd/deselect.dart';
 import 'package:remote_magic_git/features/repository/commit_composer.dart';
 import 'package:remote_magic_git/features/repository/diff_popout_window.dart';
@@ -249,6 +251,10 @@ class _StubConnection extends ConnectionController {
   ConnectionState build() => _state;
 }
 
+/// The container backing the most recent [_pump] — for tests that drive
+/// providers directly (e.g. workspace-navigation reveals).
+ProviderContainer? _lastContainer;
+
 Future<_FakeGitService> _pump(
   WidgetTester tester, {
   required GitStatus status,
@@ -274,6 +280,9 @@ Future<_FakeGitService> _pump(
   // selected path so its fileDiffProvider/untrackedDiffProvider read doesn't
   // hit the fake's unconfigured executor.
   List<Override> extraOverrides = const [],
+  // Gives the panel a live session (repoPath + sessionEpoch) so
+  // workspace-navigation restores apply (0009 H3).
+  bool sessionful = false,
 }) async {
   final resolved = git ?? _FakeGitService();
   final container = ProviderContainer(
@@ -306,12 +315,15 @@ Future<_FakeGitService> _pump(
           ConnectionState(
             backend: isLocal ? ConnectionBackend.local : ConnectionBackend.ssh,
             phase: ConnectionPhase.connected,
+            repoPath: sessionful ? _repo : null,
+            sessionEpoch: sessionful ? 1 : 0,
           ),
         ),
       ),
       ...extraOverrides,
     ],
   );
+  _lastContainer = container;
   addTearDown(container.dispose);
   // A realistic window: the app's default is 1080x720 and its floor is 640x480,
   // but the 800x600 test default sits right where the context bar collapses its
@@ -2090,6 +2102,42 @@ void main() {
       ),
     );
     expect(stageAll.onPressed, isNull);
+  });
+
+  // 0009 H3: a revealed (palette / Back-Forward) file location must land on
+  // its real section — the conflict pane for an unmerged path.
+  testWidgets('a revealed conflicted file opens the conflict pane', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      sessionful: true,
+      status: _statusWith(
+        conflicted: const [
+          GitFileStatus(path: 'lib/c.dart', statusX: 'U', statusY: 'U'),
+        ],
+      ),
+    );
+    final container = _lastContainer!;
+    const key = WorkspaceSessionKey(_repo, 1);
+    const location = WorkspaceFocus(
+      repositoryPath: _repo,
+      sessionEpoch: 1,
+      kind: WorkspaceFocusKind.path,
+      identity: 'lib/c.dart',
+      panelIndex: 0,
+    );
+
+    container.read(workspaceNavigationProvider(key).notifier).reveal(location);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Use Ours (HEAD)'), findsOneWidget);
+    expect(find.text('Mark Resolved'), findsOneWidget);
+    expect(
+      container.read(workspaceNavigationProvider(key)).pending,
+      isNull,
+      reason: 'the adapter consumed the location',
+    );
   });
 
   // 0009 H7: the pulldown's Hide-reviewed toggle must actually thread the

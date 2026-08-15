@@ -52,6 +52,15 @@ class WorkspaceNavigationHistory extends Notifier<WorkspaceNavigationState> {
   final WorkspaceSessionKey session;
   static const int capacity = 50;
 
+  /// While a restore/reveal is settling, the destination screen still
+  /// re-reports its pre-restore selection from post-frame callbacks it
+  /// scheduled with build-time values — recording that echo would truncate
+  /// the forward stack and undo the Back the user just pressed. Only visits
+  /// EQUAL to the pre-restore current are suppressed; any other visit (a
+  /// genuinely new selection, the applied restore itself) clears the guard
+  /// and records normally.
+  WorkspaceFocus? _staleEcho;
+
   @override
   WorkspaceNavigationState build() => const WorkspaceNavigationState();
 
@@ -59,6 +68,12 @@ class WorkspaceNavigationHistory extends Notifier<WorkspaceNavigationState> {
     if (location.repositoryPath != session.repositoryPath ||
         location.sessionEpoch != session.sessionEpoch) {
       return;
+    }
+    if (_staleEcho != null) {
+      if (location == _staleEcho && state.current != location) {
+        return; // the pre-restore selection re-reporting itself
+      }
+      _staleEcho = null;
     }
     if (state.current == location) return;
     var entries = state.index < state.locations.length - 1
@@ -74,12 +89,26 @@ class WorkspaceNavigationHistory extends Notifier<WorkspaceNavigationState> {
     );
   }
 
+  /// Records [location] AND marks it pending, so the owning panel's adapter
+  /// selects the object on its next data frame. This is the palette's
+  /// "open this entity" path (0009 H3); plain [visit] only records — the
+  /// sidebar's `panel:N` visits must never become pending selections.
+  void reveal(WorkspaceFocus location) {
+    final echo = state.current;
+    visit(location);
+    if (state.current == location) {
+      _staleEcho = echo == location ? null : echo;
+      state = state.copyWith(pending: location, clearUnavailable: true);
+    }
+  }
+
   WorkspaceFocus? back() => _restore(state.index - 1);
   WorkspaceFocus? forward() => _restore(state.index + 1);
 
   WorkspaceFocus? _restore(int index) {
     if (index < 0 || index >= state.locations.length) return null;
     final location = state.locations[index];
+    _staleEcho = state.current == location ? null : state.current;
     state = state.copyWith(
       index: index,
       pending: location,
@@ -102,6 +131,9 @@ class WorkspaceNavigationHistory extends Notifier<WorkspaceNavigationState> {
   }
 
   void markUnavailable(WorkspaceFocus location) {
+    // _staleEcho stays: the screen still re-reports its pre-restore
+    // selection, and recording that echo would instantly wipe the
+    // unavailable notice (visit() builds a fresh state).
     state = state.copyWith(clearPending: true, unavailable: location);
   }
 }
@@ -128,6 +160,54 @@ WorkspaceNavigationState? watchWorkspaceHistory(WidgetRef ref) {
       WorkspaceSessionKey(repoPath, connection.sessionEpoch),
     ),
   );
+}
+
+/// The active session's pending location for [panelIndex], WITHOUT consuming
+/// it. Screens watch this and only take ([takeWorkspaceLocation]) once their
+/// data can resolve the identity — taking earlier would consume-and-drop a
+/// restore that raced a still-loading provider (0009 H3).
+WorkspaceFocus? pendingWorkspaceLocation(WidgetRef ref, int panelIndex) {
+  final connection = ref.watch(connectionProvider);
+  final repoPath = connection.repoPath;
+  if (repoPath == null || connection.sessionEpoch <= 0) return null;
+  final pending = ref.watch(
+    workspaceNavigationProvider(
+      WorkspaceSessionKey(repoPath, connection.sessionEpoch),
+    ).select((s) => s.pending),
+  );
+  if (pending == null || pending.panelIndex != panelIndex) return null;
+  // Sidebar flips record `panel:N` repository identities — never a selection.
+  if (pending.kind == WorkspaceFocusKind.repository) return null;
+  return pending;
+}
+
+/// Consumes [panelIndex]'s pending location (see [pendingWorkspaceLocation]).
+WorkspaceFocus? takeWorkspaceLocation(WidgetRef ref, int panelIndex) {
+  final connection = ref.read(connectionProvider);
+  final repoPath = connection.repoPath;
+  if (repoPath == null || connection.sessionEpoch <= 0) return null;
+  return ref
+      .read(
+        workspaceNavigationProvider(
+          WorkspaceSessionKey(repoPath, connection.sessionEpoch),
+        ).notifier,
+      )
+      .takePendingForPanel(panelIndex);
+}
+
+/// Reports a restored [location] whose identity no longer exists — Back
+/// stays deterministic and the chrome can say so.
+void markWorkspaceLocationUnavailable(WidgetRef ref, WorkspaceFocus location) {
+  final connection = ref.read(connectionProvider);
+  final repoPath = connection.repoPath;
+  if (repoPath == null || connection.sessionEpoch <= 0) return;
+  ref
+      .read(
+        workspaceNavigationProvider(
+          WorkspaceSessionKey(repoPath, connection.sessionEpoch),
+        ).notifier,
+      )
+      .markUnavailable(location);
 }
 
 /// Steps the active session's history and switches to the panel it lands on.

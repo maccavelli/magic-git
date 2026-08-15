@@ -323,7 +323,9 @@ class _AppShellState extends ConsumerState<AppShell> {
       panelIndex: panelIndex,
     );
     final key = WorkspaceSessionKey(repoPath, connection.sessionEpoch);
-    ref.read(workspaceNavigationProvider(key).notifier).visit(location);
+    // reveal (not visit): the owning panel must also SELECT the object once
+    // its data lands, not merely become the visible page (0009 H3).
+    ref.read(workspaceNavigationProvider(key).notifier).reveal(location);
     ref.read(pageIndexProvider.notifier).select(panelIndex);
     ref.read(visitedPagesProvider.notifier).visit(panelIndex);
   }

@@ -643,9 +643,17 @@ class BranchDetail extends ConsumerWidget {
         icon: CupertinoIcons.plus_rectangle_on_rectangle,
         onTap: busy ? null : () => onCreateRequest!(b),
       );
+    } else if (mode == BranchWorkspaceMode.review) {
+      // Already comparing — a primary whose tap re-enters Review is a
+      // silent no-op (0009 M9); state the situation instead of offering it.
+      primary = (
+        label: 'Comparing changes',
+        icon: CupertinoIcons.doc_text,
+        onTap: null,
+      );
     } else {
-      // Never a permanently disabled primary CTA — tap enters Review (or
-      // reaffirms comparison) via [onCompare]; inspector stays visible below.
+      // Never a lying primary CTA — in Browse the tap enters Review via
+      // [onCompare]; the inspector stays visible below.
       primary = (
         label: 'Compare Changes',
         icon: CupertinoIcons.doc_text,

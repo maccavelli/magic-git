@@ -608,6 +608,33 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
     final connection = ref.watch(connectionProvider);
 
     final all = worktreesAsync.value ?? const <GitWorktree>[];
+    // 0009 H3: apply a restored / palette-revealed worktree once the list
+    // can resolve its path — into its open tab when one exists, else as the
+    // highlighted overview row.
+    final pendingLocation = widget.isActive
+        ? pendingWorkspaceLocation(ref, kWorktreesPageIndex)
+        : null;
+    if (pendingLocation != null && worktreesAsync.hasValue) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final location = takeWorkspaceLocation(ref, kWorktreesPageIndex);
+        if (location == null) return;
+        final match = all
+            .where((w) => w.path == location.identity)
+            .firstOrNull;
+        if (match == null) {
+          markWorkspaceLocationUnavailable(ref, location);
+          return;
+        }
+        final tabsNow = ref.read(worktreeTabsProvider);
+        if (tabsNow.open.contains(match.path)) {
+          ref.read(worktreeTabsProvider.notifier).select(match.path);
+        } else {
+          ref.read(worktreeTabsProvider.notifier).select(null);
+          setState(() => _selectedOverviewPath = match.path);
+        }
+      });
+    }
     final tabPath = tabs.selected;
     final tabWorktree = tabPath == null
         ? null

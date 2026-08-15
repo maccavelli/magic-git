@@ -256,6 +256,33 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
     final selectedRef = _refByName(refs, _selectedRef);
 
+    // 0009 H3: apply a restored / palette-revealed ref — refs have landed by
+    // definition here (_content is refsAsync's data branch). Scheduled before
+    // this build's own visit callback so the restore is not re-recorded as a
+    // fresh navigation.
+    final pendingLocation = widget.isActive
+        ? pendingWorkspaceLocation(ref, 2)
+        : null;
+    if (pendingLocation != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final location = takeWorkspaceLocation(ref, 2);
+        if (location == null) return;
+        final match = refs
+            .where(
+              (r) =>
+                  r.name == location.identity ||
+                  r.shortName == location.identity,
+            )
+            .firstOrNull;
+        if (match == null) {
+          markWorkspaceLocationUnavailable(ref, location);
+          return;
+        }
+        setState(() => _selectedRef = match.name);
+      });
+    }
+
     // Base is needed for Review (summary + inspector) and for a selected local
     // branch's comparison tabs. Browse with no selection does not start base
     // resolution (keeps the list paint free of git discovery work).
