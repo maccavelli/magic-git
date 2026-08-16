@@ -100,6 +100,38 @@ New/updated tests:
 Manual check on `wonder`: open a dirty repository over SSH, press ⌘G under each
 preset, commit, and commit-and-push.
 
+## Deviations from this plan, as executed
+
+Two things came out differently. Both are recorded here rather than quietly
+absorbed.
+
+1. **Steps 5–7 landed as one commit, not three.** Step 5 alone leaves
+   `_expandCommitComposer` unreferenced, so the tree cannot come out
+   analyzer-clean at that boundary — and AGENTS.md requires clean analyze and
+   test before staging. Restoring the routes and routing them by preference is
+   one indivisible change.
+
+2. **`CommitComposerController.submit()` was changed**, which §Scope put out of
+   bounds. Step 4's goal — "a failed commit *or push* keeps the sheet open with
+   the message intact" — was unreachable without it: `submit` caught a throwing
+   `push()` in the same block as the commit and returned
+   `localCommitted: false`, even though the commit had landed and `clearDraft`
+   had already emptied the draft. The caller was told to keep an empty surface
+   open on a repository that had in fact changed. The two failures are now
+   caught separately: a commit failure returns `localCommitted: false` with the
+   draft intact, a push failure returns `localCommitted: true` with
+   `pushSucceeded: false`. Nothing else about the controller moved.
+
+A third change was required by step 5 and is worth recording as a finding
+rather than a deviation: **`CommitDialog` was calling `updateStaged` from its
+own `build`**. That both notified listeners mid-build — which, once the sheet
+and the collapsed commit bar were on screen together, threw
+`setState() called during build` — and overwrote `RepoStatusView`'s real
+content signature with a synthetic `focused:N` one, under which two different
+staged sets of the same size hash alike and preview-staleness stops working.
+The sheet no longer touches it; `RepoStatusView` is the single owner and
+already pushes it post-frame.
+
 ## Rollout and Rollback
 
 Rollout is a single change behind a preference that defaults to the sheet, so
