@@ -129,10 +129,13 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
         CommitComposerKey(widget.repoPath, epoch),
       ),
     );
-    controller.updateStaged(
-      count: widget.stagedCount,
-      signature: 'focused:${widget.stagedCount}',
-    );
+    // The staged count/signature is NOT set here. `RepoStatusView` owns it: it
+    // pushes the real content signature from a post-frame callback, which is
+    // what preview-staleness compares against. Doing it again from this build
+    // both overwrote that signature with a synthetic `focused:N` — two
+    // different staged sets of the same size hash alike — and notified
+    // listeners mid-build, marking the still-mounted docked composer dirty
+    // while the framework was already building.
     final keymap = ref.watch(keymapProvider);
     return ListenableBuilder(
       listenable: controller,

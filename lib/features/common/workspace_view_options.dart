@@ -79,6 +79,18 @@ class _WorkspaceViewOptionsButtonState
         ),
       ],
       const ContextMenuDivider(),
+      // Where Commit… and ⌘G land (0012). Both surfaces drive the same
+      // controller, so switching mid-draft keeps the draft.
+      for (final surface in CommitSurface.values)
+        ContextMenuItem(
+          icon: surface == preferences.commitSurface
+              ? CupertinoIcons.check_mark
+              : CupertinoIcons.square_pencil,
+          label: 'Commit in ${surface.label}',
+          onTap: () =>
+              scope.onChanged!(preferences.copyWith(commitSurface: surface)),
+        ),
+      const ContextMenuDivider(),
       for (final preset in WorkspacePreset.values)
         ContextMenuItem(
           icon: preset == preferences.preset

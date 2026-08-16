@@ -15,6 +15,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/escape_dismissible.dart';
+import 'package:remote_magic_git/features/repository/commit_composer_controller.dart';
 import 'package:remote_magic_git/features/repository/commit_dialog.dart';
 
 class _FakeGit extends GitService {
@@ -40,6 +41,23 @@ class _FakeGit extends GitService {
     fetchCalls++;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
+}
+
+/// The sheet no longer declares the staged set — `RepoStatusView` owns it and
+/// pushes it post-frame, so in production the signature is already real by the
+/// time the sheet opens (the collapsed commit bar has been mounted the whole
+/// time the tree was dirty). Standalone tests reproduce that ordering: seed the
+/// controller first, then open.
+void _seedStaged(WidgetTester tester, {int count = 2}) {
+  final container = ProviderScope.containerOf(
+    tester.element(find.text('open')),
+  );
+  final epoch = container.read(connectionProvider).sessionEpoch;
+  container
+      .read(
+        commitComposerControllerProvider(CommitComposerKey('/srv/repo', epoch)),
+      )
+      .updateStaged(count: count, signature: 'seed:$count');
 }
 
 Future<void> _openSheet(WidgetTester tester, _FakeGit git) async {
@@ -76,6 +94,7 @@ Future<void> _openSheet(WidgetTester tester, _FakeGit git) async {
       ),
     ),
   );
+  _seedStaged(tester);
   await tester.tap(find.text('open'));
   await tester.pumpAndSettle();
 }
@@ -207,6 +226,7 @@ void main() {
         ),
       ),
     );
+    _seedStaged(tester);
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
 
@@ -272,6 +292,7 @@ void main() {
         ),
       ),
     );
+    _seedStaged(tester);
     await tester.tap(find.text('open'));
     await tester.pumpAndSettle();
 
@@ -344,6 +365,7 @@ void main() {
         ),
       ),
     );
+    _seedStaged(tester);
     await tester.tap(find.text('open'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400)); // route transition

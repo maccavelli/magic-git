@@ -20,6 +20,7 @@ import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
 import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
+import 'package:remote_magic_git/features/repository/commit_composer_controller.dart';
 import 'package:remote_magic_git/features/repository/commit_dialog.dart';
 import 'package:remote_magic_git/features/repository/repo_status_view.dart';
 import 'package:remote_magic_git/features/stash/stash_view.dart';
@@ -192,6 +193,24 @@ void main() {
           ),
         ),
       );
+      await tester.pumpAndSettle();
+
+      // The sheet no longer declares the staged set — RepoStatusView owns it
+      // and pushes it post-frame. Stand in for that here, or nothing is
+      // staged and Accept can never arm.
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(CommitDialog)),
+      );
+      container
+          .read(
+            commitComposerControllerProvider(
+              CommitComposerKey(
+                _repo,
+                container.read(connectionProvider).sessionEpoch,
+              ),
+            ),
+          )
+          .updateStaged(count: 1, signature: 'seed:1');
       await tester.pumpAndSettle();
 
       // No message yet — canAccept is false, so the shortcut is a no-op.

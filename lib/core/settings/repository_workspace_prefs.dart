@@ -119,6 +119,29 @@ RepositoryWorkspacePrefs applyWorkspacePreset(
   ),
 };
 
+/// Where composing a commit happens (0012).
+///
+/// [sheet] is the default: a focused editor over the workspace. [dock] is
+/// 0005's persistent composer in the task dock, kept for the continuous
+/// review-and-commit loop it was designed for.
+enum CommitSurface { sheet, dock }
+
+extension CommitSurfacePresentation on CommitSurface {
+  String get label => switch (this) {
+    CommitSurface.sheet => 'Focused sheet',
+    CommitSurface.dock => 'Task dock',
+  };
+
+  String get description => switch (this) {
+    CommitSurface.sheet => 'Compose in a focused editor over the workspace.',
+    CommitSurface.dock => 'Compose in a panel docked below the changes.',
+  };
+}
+
+/// The surface a workspace that has never chosen one uses. Defined once, for
+/// the reason [defaultVisibleToolbarSlots] is.
+const CommitSurface defaultCommitSurface = CommitSurface.sheet;
+
 enum RepositoryDiffLayout { unified, split }
 
 enum RepositoryChangeGrouping { status, directory, none }
@@ -175,6 +198,7 @@ class RepositoryWorkspacePrefs {
   final RepositoryChangeGrouping grouping;
   final bool showToolbarLabels;
   final Set<WorkspaceToolbarSlot> visibleToolbarSlots;
+  final CommitSurface commitSurface;
 
   const RepositoryWorkspacePrefs({
     this.version = currentVersion,
@@ -200,6 +224,7 @@ class RepositoryWorkspacePrefs {
     // Everything on by default: a fresh workspace shows the full bar, and
     // hiding is an explicit choice rather than something to discover.
     this.visibleToolbarSlots = defaultVisibleToolbarSlots,
+    this.commitSurface = defaultCommitSurface,
   });
 
   RepositoryWorkspacePrefs get normalized => copyWith(
@@ -236,6 +261,7 @@ class RepositoryWorkspacePrefs {
     RepositoryChangeGrouping? grouping,
     bool? showToolbarLabels,
     Set<WorkspaceToolbarSlot>? visibleToolbarSlots,
+    CommitSurface? commitSurface,
   }) => RepositoryWorkspacePrefs(
     version: version ?? this.version,
     preset: preset ?? this.preset,
@@ -253,6 +279,7 @@ class RepositoryWorkspacePrefs {
     grouping: grouping ?? this.grouping,
     showToolbarLabels: showToolbarLabels ?? this.showToolbarLabels,
     visibleToolbarSlots: visibleToolbarSlots ?? this.visibleToolbarSlots,
+    commitSurface: commitSurface ?? this.commitSurface,
   );
 
   Map<String, Object> toJson() {
@@ -277,6 +304,7 @@ class RepositoryWorkspacePrefs {
         for (final slot in WorkspaceToolbarSlot.values)
           if (value.visibleToolbarSlots.contains(slot)) slot.name,
       ],
+      'commitSurface': value.commitSurface.name,
     };
   }
 
@@ -338,6 +366,15 @@ class RepositoryWorkspacePrefs {
         visibleToolbarSlots: version < 2
             ? defaultVisibleToolbarSlots
             : _decodeToolbarSlots(json['visibleToolbarSlots']),
+        // Added after v2 shipped. A record without the key has simply never
+        // chosen, which is the default — unlike the toolbar-slot case, no
+        // older build ever wrote a *different* meaning for it, so there is
+        // nothing to migrate and no version bump to make.
+        commitSurface: enumValue(
+          CommitSurface.values,
+          json['commitSurface'],
+          defaultCommitSurface,
+        ),
       ).normalized;
     } on FormatException {
       return const RepositoryWorkspacePrefs();

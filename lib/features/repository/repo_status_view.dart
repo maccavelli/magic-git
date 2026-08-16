@@ -43,6 +43,7 @@ import '../viewer/remote_edit_service.dart';
 import 'blame_sheet.dart';
 import 'commit_composer.dart';
 import 'commit_composer_controller.dart';
+import 'commit_dialog.dart';
 import 'conflict_view.dart';
 import 'diff_popout_window.dart';
 import 'diff_view_controls.dart';
@@ -712,6 +713,51 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         '${file.path}\u001f${file.statusX}\u001f${file.statusY}',
     ]..sort();
     return parts.join('\u001e');
+  }
+
+  /// Opens whichever commit surface this repository prefers (0012).
+  ///
+  /// One entry point for all three routes — the Commit… bar, the staged
+  /// section's primary action, and `repository.focusCommit` — so the choice is
+  /// made in exactly one place and the two surfaces can never disagree.
+  void _openCommitComposer() {
+    final surface =
+        ref
+            .read(repositoryWorkspacePrefsProvider(repoPath))
+            .value
+            ?.commitSurface ??
+        defaultCommitSurface;
+    switch (surface) {
+      case CommitSurface.sheet:
+        unawaited(_openCommitDialog());
+      case CommitSurface.dock:
+        _expandCommitComposer();
+    }
+  }
+
+  /// Opens the focused commit sheet (0012).
+  ///
+  /// Unlike [_expandCommitComposer] this consults no layout preference: a
+  /// sheet is drawn over the workspace, so it cannot be hidden by a collapsed
+  /// dock the way ⌘G was under three of the four presets (0008-PLAN B9).
+  Future<void> _openCommitDialog() async {
+    final status = ref.read(statusProvider(repoPath)).value;
+    final stagedCount = status?.staged.length ?? 0;
+    if (stagedCount == 0) return;
+    await showMacosSheet<bool>(
+      context: context,
+      builder: (_) => EscapeDismissible(
+        child: CommitDialog(
+          repoPath: repoPath,
+          stagedCount: stagedCount,
+          branchLabel: status!.branch.head ?? 'Detached HEAD',
+          // Push policy stays here — the guardrail, force/upstream variants,
+          // follow-tags and output logging all live in `_push`.
+          onPush: () =>
+              _push(followTags: ref.read(appSettingsProvider).pushFollowTags),
+        ),
+      ),
+    );
   }
 
   /// Opens the expanded composer, un-collapsing the task dock if needed.
@@ -1588,7 +1634,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           ? () => _discardUntrackedMany(multiPaths!)
           : null,
       'repository.focusCommit': status != null && status.staged.isNotEmpty
-          ? _expandCommitComposer
+          ? _openCommitComposer
           : null,
     };
     final live = widget.isActive && !busy;
@@ -1831,7 +1877,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           return;
         }
         final stagedCount = status?.staged.length ?? 0;
-        if (stagedCount > 0) _expandCommitComposer();
+        if (stagedCount > 0) _openCommitComposer();
         return;
       case RepositoryPrimaryActionKind.sync:
         _sync(ref.read(appSettingsProvider).defaultPullMode).ignore();
@@ -1915,7 +1961,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               policyAdvisory: policyAdvisory,
               onAccept: (push) =>
                   _acceptCommitComposer(composerController, push),
-              onExpand: _expandCommitComposer,
+              onExpand: _openCommitComposer,
             ),
           ),
           const SizedBox(width: 8),
