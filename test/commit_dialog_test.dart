@@ -220,6 +220,72 @@ void main() {
     expect(git.fetchCalls, 0);
   });
 
+  testWidgets('a failed commit reports in the sheet, keeping the message', (
+    tester,
+  ) async {
+    // The failure used to arrive as a modal alert stacked on top of the sheet
+    // — the message it was about was behind it.
+    final git = _FailingCommitGit();
+    await _openSheet(tester, git);
+
+    await tester.tap(find.text('Accept'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CommitDialog), findsOneWidget, reason: 'still open');
+    expect(find.byType(MacosAlertDialog), findsNothing);
+    expect(find.textContaining('Could not commit'), findsOneWidget);
+    expect(
+      find.text('feat: add widget'),
+      findsOneWidget,
+      reason: 'the draft it refers to is still there to fix',
+    );
+  });
+
+  testWidgets('a failed push is not reported as a failed commit', (
+    tester,
+  ) async {
+    // The commit landed and the draft is gone, so treating the push failure as
+    // a commit failure left the sheet open on an empty field.
+    final git = _FakeGit('feat: add widget');
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [gitServiceProvider.overrideWithValue(git)],
+        child: MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: Builder(
+            builder: (context) => Center(
+              child: AppPushButton(
+                controlSize: ControlSize.large,
+                child: const Text('open'),
+                onPressed: () => showMacosSheet<bool>(
+                  context: context,
+                  builder: (_) => CommitDialog(
+                    repoPath: '/srv/repo',
+                    stagedCount: 2,
+                    branchLabel: 'master',
+                    onPush: () async => throw Exception('remote rejected'),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Accept + Push'));
+    await tester.pumpAndSettle();
+
+    expect(git.committed, 'feat: add widget', reason: 'the commit landed');
+    expect(
+      find.byType(CommitDialog),
+      findsNothing,
+      reason: 'a landed commit closes the sheet; the push reports on its own',
+    );
+  });
+
   testWidgets('the header states the scope: how many files, and where', (
     tester,
   ) async {
@@ -331,6 +397,16 @@ void main() {
     expect(find.byType(CommitDialog), findsNothing, reason: 'commit finished');
     expect(git.committed, 'feat: add widget');
   });
+}
+
+/// A commit that always fails, to exercise in-sheet error reporting.
+class _FailingCommitGit extends _FakeGit {
+  _FailingCommitGit() : super('feat: add widget');
+
+  @override
+  Future<void> commit(String repoPath, {String? message}) async {
+    throw Exception('nothing to commit, working tree clean');
+  }
 }
 
 /// A hook preview that never resolves until [release] — models a slow AI

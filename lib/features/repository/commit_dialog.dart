@@ -5,7 +5,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
-import '../common/actions.dart';
 import '../common/escape_dismissible.dart';
 import '../common/sized_sheet.dart';
 import 'commit_composer.dart';
@@ -74,12 +73,17 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
   Future<void> _accept(bool push) async {
     final controller = _controller;
     final outcome = await controller.submit(
-      commit: (message) => runAction(
-        context,
-        () => ref
+      // Deliberately NOT wrapped in `runAction`: that reports by stacking a
+      // modal alert on top of this sheet, which puts the failure somewhere the
+      // message it refers to is no longer visible. Letting the throw reach
+      // `submit` records it on the controller, and the composer renders it in
+      // the sheet's own status line beside the draft that is still there.
+      commit: (message) async {
+        await ref
             .read(gitServiceProvider)
-            .commit(widget.repoPath, message: message),
-      ),
+            .commit(widget.repoPath, message: message);
+        return true;
+      },
       push: push ? widget.onPush : null,
     );
     // A commit that did not land leaves the sheet open with the message

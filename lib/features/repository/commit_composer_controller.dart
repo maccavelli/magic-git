@@ -332,16 +332,34 @@ class CommitComposerController extends ChangeNotifier {
     error = null;
     notifyListeners();
     try {
-      final committed = await commit(composed);
-      if (!committed) {
+      try {
+        if (!await commit(composed)) {
+          return const CommitComposerOutcome(localCommitted: false);
+        }
+      } catch (caught) {
+        error = 'Could not commit.\n${displayError(caught)}';
         return const CommitComposerOutcome(localCommitted: false);
       }
+      // Past this point the repository has already changed. A push failure is
+      // not a commit failure: reporting `localCommitted: false` for one sent
+      // the caller down the retry path holding a draft that `clearDraft` had
+      // just emptied, so the surface stayed open with nothing in it.
       clearDraft();
-      final pushed = push == null ? null : await push();
-      return CommitComposerOutcome(localCommitted: true, pushSucceeded: pushed);
-    } catch (caught) {
-      error = caught.toString();
-      return const CommitComposerOutcome(localCommitted: false);
+      if (push == null) {
+        return const CommitComposerOutcome(localCommitted: true);
+      }
+      try {
+        return CommitComposerOutcome(
+          localCommitted: true,
+          pushSucceeded: await push(),
+        );
+      } catch (caught) {
+        error = 'Committed, but the push failed.\n${displayError(caught)}';
+        return const CommitComposerOutcome(
+          localCommitted: true,
+          pushSucceeded: false,
+        );
+      }
     } finally {
       committing = false;
       notifyListeners();
