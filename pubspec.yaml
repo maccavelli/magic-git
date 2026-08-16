@@ -1,5 +1,5 @@
 name: remote_magic_git
-description: "A new Flutter project."
+description: "macOS Git client that drives git/glab/gh on a remote or local host without requiring a working-tree clone."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -100,7 +100,6 @@ flutter:
   assets:
     - assets/MG-icon.png
     - assets/MG_icon.png
-    - assets/MG-RKT-icon.png
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

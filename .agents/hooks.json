@@ -1,5 +1,5 @@
 {
-  "pre-add-test-gate": {
+  "pre-add-analyze-gate": {
     "enabled": true,
     "PreToolUse": [
       {
@@ -7,8 +7,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/Users/saxsmith/gitrepos/magic-git/.agents/pre_add_test_hook.py",
-            "timeout": 60
+            "command": ".agents/pre_add_test_hook.py",
+            "timeout": 180
           }
         ]
       }

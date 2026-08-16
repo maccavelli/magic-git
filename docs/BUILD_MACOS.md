@@ -25,7 +25,7 @@ into `./.flutter-sdk` (git-ignored, delete when done).
 Pick one, depending on whether you have an Apple ID for signing:
 
 ```sh
-cd scripts/dart/remote-magic-git
+# From the repository root.
 
 # No Apple ID (fastest, for E2E). Builds ad-hoc; "Save connection" won't persist.
 ./build_macos.sh --unsigned
@@ -74,12 +74,12 @@ open ~/Applications/Magic\ Git.app
 - **Credential storage**: "Save connection" prefers the macOS Keychain, which
   needs a proper signature. On an `--unsigned` build the Keychain is
   unavailable, so secrets **fall back to a `0600` dotfile** at
-  `~/.remote_magic_git_credentials.json` (owner-only; plaintext, same model as
+  `~/.config/magic_git/credentials.json` (owner-only; plaintext, same model as
   glab/git credential files). To make this land in your *real* home dir,
   `--unsigned` also strips the app-sandbox entitlement. A signed build uses the
   Keychain and never writes the dotfile.
 - **Security note**: the fallback dotfile is plaintext protected only by file
-  permissions. Delete it (`rm ~/.remote_magic_git_credentials.json`) to purge
+  permissions. Delete it (`rm ~/.config/magic_git/credentials.json`) to purge
   stored secrets, or use a signed build for Keychain-backed storage.
 - To sign properly (so Keychain works and Gatekeeper is happy), open
   `macos/Runner.xcworkspace` in Xcode, set a Development Team under Signing,
