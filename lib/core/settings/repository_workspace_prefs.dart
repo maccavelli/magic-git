@@ -31,6 +31,29 @@ enum WorkspaceToolbarSlot {
   linkStatus,
 }
 
+/// Every slot visible — the state a workspace that has never been customized
+/// is in.
+///
+/// This is the SINGLE definition: the constructor default, the
+/// missing-key decode fallback, and the v1 migration all read it. They used to
+/// each carry their own literal, and when [WorkspaceToolbarSlot] grew from two
+/// members to nine only the constructor's copy was updated — the decode
+/// fallback kept returning the stale two-element set, which is what stripped
+/// the bar down to Back/Forward plus a lone primary action. A slot added to the
+/// enum without being added here is caught by
+/// `repository_workspace_prefs_test.dart`, not by a user.
+const Set<WorkspaceToolbarSlot> defaultVisibleToolbarSlots = {
+  WorkspaceToolbarSlot.back,
+  WorkspaceToolbarSlot.forward,
+  WorkspaceToolbarSlot.syncGroup,
+  WorkspaceToolbarSlot.stash,
+  WorkspaceToolbarSlot.refresh,
+  WorkspaceToolbarSlot.activity,
+  WorkspaceToolbarSlot.viewOptions,
+  WorkspaceToolbarSlot.statusSummary,
+  WorkspaceToolbarSlot.linkStatus,
+};
+
 extension WorkspaceToolbarSlotPresentation on WorkspaceToolbarSlot {
   String get label => switch (this) {
     WorkspaceToolbarSlot.back => 'Back',
@@ -106,7 +129,17 @@ enum RepositoryChangeGrouping { status, directory, none }
 /// filters, output, activity, and commit drafts remain session state owned by
 /// their controllers.
 class RepositoryWorkspacePrefs {
-  static const int currentVersion = 1;
+  /// Bumped 1 → 2 when the stale-fallback bug was fixed. A v1 record's
+  /// `visibleToolbarSlots` cannot be trusted: it is either the *complete*
+  /// two-member set of the build that only had Back/Forward, or the stale
+  /// fallback that same literal became once the enum grew to nine — and
+  /// neither is distinguishable from a deliberate hide. [decode] therefore
+  /// keeps every other v1 field and restores the full slot set.
+  static const int currentVersion = 2;
+
+  /// The oldest payload version [decode] can still read. Anything older (or
+  /// unparseable) falls back to defaults wholesale.
+  static const int minReadableVersion = 1;
   static const double defaultNavigatorWidth = 320;
   static const double minNavigatorWidth = 240;
   static const double maxNavigatorWidth = 720;
@@ -166,17 +199,7 @@ class RepositoryWorkspacePrefs {
     this.showToolbarLabels = false,
     // Everything on by default: a fresh workspace shows the full bar, and
     // hiding is an explicit choice rather than something to discover.
-    this.visibleToolbarSlots = const {
-      WorkspaceToolbarSlot.back,
-      WorkspaceToolbarSlot.forward,
-      WorkspaceToolbarSlot.syncGroup,
-      WorkspaceToolbarSlot.stash,
-      WorkspaceToolbarSlot.refresh,
-      WorkspaceToolbarSlot.activity,
-      WorkspaceToolbarSlot.viewOptions,
-      WorkspaceToolbarSlot.statusSummary,
-      WorkspaceToolbarSlot.linkStatus,
-    },
+    this.visibleToolbarSlots = defaultVisibleToolbarSlots,
   });
 
   RepositoryWorkspacePrefs get normalized => copyWith(
@@ -264,7 +287,15 @@ class RepositoryWorkspacePrefs {
       final decoded = jsonDecode(raw);
       if (decoded is! Map) return const RepositoryWorkspacePrefs();
       final json = Map<String, Object?>.from(decoded);
-      if (json['version'] != currentVersion) {
+      final version = json['version'];
+      // Unreadably old, from the future, or not a version at all: the record
+      // carries nothing we can interpret, so start clean. Versions in range are
+      // parsed field-by-field below and migrated forward, which preserves pane
+      // widths / diff options / grouping instead of discarding the record for
+      // the sake of one untrustworthy field.
+      if (version is! int ||
+          version < minReadableVersion ||
+          version > currentVersion) {
         return const RepositoryWorkspacePrefs();
       }
       T enumValue<T extends Enum>(List<T> values, Object? raw, T fallback) {
@@ -303,7 +334,10 @@ class RepositoryWorkspacePrefs {
           RepositoryChangeGrouping.status,
         ),
         showToolbarLabels: json['showToolbarLabels'] as bool? ?? false,
-        visibleToolbarSlots: _decodeToolbarSlots(json['visibleToolbarSlots']),
+        // v1 slot sets are discarded, not decoded — see [currentVersion].
+        visibleToolbarSlots: version < 2
+            ? defaultVisibleToolbarSlots
+            : _decodeToolbarSlots(json['visibleToolbarSlots']),
       ).normalized;
     } on FormatException {
       return const RepositoryWorkspacePrefs();
@@ -316,13 +350,12 @@ class RepositoryWorkspacePrefs {
       'repositoryWorkspacePrefs_v1_${identity.preferenceKey}';
 }
 
+/// A *present* list is the user's explicit choice and is honoured verbatim —
+/// including an empty one, which means they hid everything they are allowed to.
+/// A missing or malformed value means "never configured", which is the full bar,
+/// never a hardcoded subset.
 Set<WorkspaceToolbarSlot> _decodeToolbarSlots(Object? raw) {
-  if (raw == null) {
-    return const {WorkspaceToolbarSlot.back, WorkspaceToolbarSlot.forward};
-  }
-  if (raw is! List) {
-    return const {WorkspaceToolbarSlot.back, WorkspaceToolbarSlot.forward};
-  }
+  if (raw is! List) return defaultVisibleToolbarSlots;
   return {
     for (final item in raw)
       if (item is String)

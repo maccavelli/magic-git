@@ -167,4 +167,101 @@ void main() {
     );
     expect(find.text('Push'), findsOneWidget);
   });
+
+  // Hiding a slot has to remove the information, not just the control that
+  // usually carries it. Two places in the bar re-printed connection and status
+  // detail regardless of the slots: the supplement's host/connection fallback,
+  // and the compact size class's disclosure tooltip.
+  group('a hidden slot does not leak its information elsewhere', () {
+    Future<void> pumpWith(
+      WidgetTester tester, {
+      required double width,
+      required Set<WorkspaceToolbarSlot> slots,
+    }) async {
+      tester.view.physicalSize = Size(width, 300);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MacosApp(
+            home: SizedBox(
+              width: width,
+              height: 300,
+              child: RepositoryWorkspaceScaffold(
+                repositoryContext: RepositoryContextBar(
+                  snapshot: _snapshot,
+                  primaryAction: resolvePrimaryRepositoryAction(_snapshot),
+                  showLinkStatus: true,
+                  onPrimaryAction: (_) {},
+                ),
+                canvas: const SizedBox.shrink(),
+                preferences: RepositoryWorkspacePrefs(
+                  visibleToolbarSlots: slots,
+                ),
+                onPreferencesChanged: (_) {},
+                workspaceOptionsEnabled: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+    }
+
+    testWidgets('the supplement re-prints the connection while it may', (
+      tester,
+    ) async {
+      await pumpWith(
+        tester,
+        width: 900,
+        slots: WorkspaceToolbarSlot.values.toSet(),
+      );
+      expect(find.text('Development Mac'), findsOneWidget);
+    });
+
+    testWidgets('hiding Connection status also silences the supplement', (
+      tester,
+    ) async {
+      await pumpWith(
+        tester,
+        width: 900,
+        slots: WorkspaceToolbarSlot.values
+            .where((slot) => slot != WorkspaceToolbarSlot.linkStatus)
+            .toSet(),
+      );
+      expect(find.text('Development Mac'), findsNothing);
+    });
+
+    testWidgets('the compact disclosure omits hidden slots', (tester) async {
+      final handle = tester.ensureSemantics();
+      await pumpWith(
+        tester,
+        width: 640,
+        slots: WorkspaceToolbarSlot.values.toSet(),
+      );
+      final all = tester
+          .getSemantics(find.bySemanticsLabel('Repository details').first)
+          .value;
+      expect(all, contains('Development Mac'));
+      expect(all, contains('4 changed'));
+      expect(all, contains('2 ahead'));
+
+      await pumpWith(
+        tester,
+        width: 640,
+        slots: WorkspaceToolbarSlot.values
+            .where(
+              (slot) =>
+                  slot != WorkspaceToolbarSlot.linkStatus &&
+                  slot != WorkspaceToolbarSlot.statusSummary,
+            )
+            .toSet(),
+      );
+      // This snapshot carries no supplement, so with both informational slots
+      // off there is nothing left to disclose and the glyph goes with it —
+      // rather than hovering to an empty tooltip.
+      expect(find.bySemanticsLabel('Repository details'), findsNothing);
+      handle.dispose();
+    });
+  });
 }

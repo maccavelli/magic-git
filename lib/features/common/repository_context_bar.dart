@@ -136,7 +136,12 @@ class RepositoryContextBar extends StatelessWidget {
                           _StatusSummary(snapshot: snapshot),
                         ],
                         const SizedBox(width: 10),
-                        _SupplementSummary(snapshot: snapshot),
+                        _SupplementSummary(
+                          snapshot: snapshot,
+                          showConnection: slotVisible(
+                            WorkspaceToolbarSlot.linkStatus,
+                          ),
+                        ),
                         if (showLinkStatus &&
                             slotVisible(WorkspaceToolbarSlot.linkStatus)) ...[
                           const SizedBox(width: 10),
@@ -148,7 +153,15 @@ class RepositoryContextBar extends StatelessWidget {
                 ),
                 if (compact) ...[
                   const SizedBox(width: 4),
-                  _CompactMetadata(snapshot: snapshot),
+                  _CompactMetadata(
+                    snapshot: snapshot,
+                    showStatus: slotVisible(
+                      WorkspaceToolbarSlot.statusSummary,
+                    ),
+                    showConnection: slotVisible(
+                      WorkspaceToolbarSlot.linkStatus,
+                    ),
+                  ),
                 ],
                 if (showWorkspaceOptions) ...[
                   const SizedBox(width: 6),
@@ -427,10 +440,26 @@ class _StatusSummary extends StatelessWidget {
   }
 }
 
+/// What the current screen is scoped to — the worktree, selection, branch,
+/// revision, base, forge or recent commit it is showing.
+///
+/// The tail of that chain is not screen scope but *connection* identity, so it
+/// answers to the Connection status slot: with that slot off, hiding
+/// [SshLinkStatusRow] while this quietly re-printed the same host was hiding
+/// the control, not the information. The screen-scope labels are ungated —
+/// like the repository identity block, they say what you are looking at.
 class _SupplementSummary extends StatelessWidget {
   final RepositoryContextSnapshot snapshot;
 
-  const _SupplementSummary({required this.snapshot});
+  /// Whether the host / connection fallback may be used. Governed by
+  /// [WorkspaceToolbarSlot.linkStatus], not by the backend: a local session
+  /// has no SSH strip but its connection label is still connection identity.
+  final bool showConnection;
+
+  const _SupplementSummary({
+    required this.snapshot,
+    required this.showConnection,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -443,8 +472,9 @@ class _SupplementSummary extends StatelessWidget {
         supplement?.baseLabel ??
         supplement?.forgeLabel ??
         supplement?.recentCommitLabel ??
-        snapshot.hostLabel ??
-        snapshot.connectionLabel;
+        (showConnection
+            ? snapshot.hostLabel ?? snapshot.connectionLabel
+            : null);
     if (label == null || label.isEmpty) return const SizedBox.shrink();
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 180),
@@ -460,24 +490,44 @@ class _SupplementSummary extends StatelessWidget {
   }
 }
 
+/// The compact size class's disclosure for everything width pushed out of the
+/// bar.
+///
+/// It discloses what *width* hid, never what the user did: a slot switched off
+/// in View Options is switched off at every size class, so its lines are
+/// omitted here too. Otherwise narrowing the window would resurrect exactly the
+/// status and connection detail that hiding the slot was meant to remove.
 class _CompactMetadata extends StatelessWidget {
   final RepositoryContextSnapshot snapshot;
 
-  const _CompactMetadata({required this.snapshot});
+  /// Governed by [WorkspaceToolbarSlot.statusSummary] — working-tree counts and
+  /// upstream divergence.
+  final bool showStatus;
+
+  /// Governed by [WorkspaceToolbarSlot.linkStatus] — connection and host.
+  final bool showConnection;
+
+  const _CompactMetadata({
+    required this.snapshot,
+    required this.showStatus,
+    required this.showConnection,
+  });
 
   @override
   Widget build(BuildContext context) {
     final details = <String>[
-      if (snapshot.hasWorkingTreeStatus)
+      if (showStatus && snapshot.hasWorkingTreeStatus)
         '${snapshot.changedCount} changed, ${snapshot.conflictCount ?? 0} '
             'conflicts',
       // Only meaningful against an upstream — a screen that doesn't track
       // one must stay silent, not print "0 ahead, 0 behind" (0009 M6).
-      if (snapshot.hasUpstream)
+      if (showStatus && snapshot.hasUpstream)
         '${snapshot.ahead} ahead, ${snapshot.behind} behind',
-      if (snapshot.upstreamLabel != null) 'Upstream: ${snapshot.upstreamLabel}',
-      if (snapshot.connectionLabel != null) snapshot.connectionLabel!,
-      if (snapshot.hostLabel != null) snapshot.hostLabel!,
+      if (showStatus && snapshot.upstreamLabel != null)
+        'Upstream: ${snapshot.upstreamLabel}',
+      if (showConnection && snapshot.connectionLabel != null)
+        snapshot.connectionLabel!,
+      if (showConnection && snapshot.hostLabel != null) snapshot.hostLabel!,
       if (snapshot.supplement?.worktreeLabel != null)
         snapshot.supplement!.worktreeLabel!,
       if (snapshot.supplement?.recentCommitLabel != null)
@@ -493,6 +543,10 @@ class _CompactMetadata extends StatelessWidget {
       if (snapshot.supplement?.selectionLabel != null)
         snapshot.supplement!.selectionLabel!,
     ];
+    // Nothing left to disclose — a screen with no supplement whose status and
+    // connection slots are both off. Rendering the glyph anyway would leave a
+    // hoverable control with an empty tooltip.
+    if (details.isEmpty) return const SizedBox.shrink();
     // This is metadata, not commands. It used to render as a pull-down whose
     // every item had `onTap: () {}` — an affordance that looked actionable,
     // highlighted on hover, and did nothing. A tooltip says the same thing

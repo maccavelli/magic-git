@@ -14,7 +14,9 @@ void main() {
     clearSessionRepositoryWorkspacePrefs();
   });
 
-  test('v1 round-trip retains layout fields and clamps unsafe dimensions', () {
+  // Named for what it does, not for a schema version — real v1 payloads are
+  // exercised by the `legacy v1 records` group below.
+  test('round-trip retains layout fields and clamps unsafe dimensions', () {
     const original = RepositoryWorkspacePrefs(
       preset: WorkspacePreset.investigate,
       navigatorWidth: 9999,
@@ -48,6 +50,96 @@ void main() {
     expect(decoded.grouping, RepositoryChangeGrouping.directory);
     expect(decoded.showToolbarLabels, isTrue);
     expect(decoded.visibleToolbarSlots, {WorkspaceToolbarSlot.back});
+  });
+
+  // The default set is duplicated nowhere, but it IS a hand-written literal.
+  // A slot added to the enum and not to it would silently ship as hidden-by-
+  // default — the exact shape of the bug this file's v1 tests describe.
+  test('the default slot set covers every slot', () {
+    expect(defaultVisibleToolbarSlots, WorkspaceToolbarSlot.values.toSet());
+    expect(
+      const RepositoryWorkspacePrefs().visibleToolbarSlots,
+      WorkspaceToolbarSlot.values.toSet(),
+    );
+  });
+
+  group('legacy v1 records', () {
+    // WorkspaceToolbarSlot once had exactly two members, so a COMPLETE v1
+    // record reads as "everything except Back/Forward is hidden" under today's
+    // nine-member enum. That is what emptied the context bar down to a lone
+    // primary action ("Fetch" on a clean, in-sync repository) for any
+    // repository first opened while that build was current.
+    String v1({List<String>? slots}) => jsonEncode({
+      'version': 1,
+      'preset': 'commit',
+      'navigatorWidth': 400.0,
+      'inspectorWidth': 360.0,
+      'taskDockHeight': 220.0,
+      'navigatorCollapsed': true,
+      'inspectorCollapsed': false,
+      'taskDockCollapsed': true,
+      'inspectorPinned': false,
+      'filesPinned': true,
+      'diffLayout': 'split',
+      'ignoreWhitespace': true,
+      'diffContextLines': 7,
+      'grouping': 'directory',
+      'showToolbarLabels': true,
+      'visibleToolbarSlots': ?slots,
+    });
+
+    test('a complete two-slot v1 record is restored to the full bar', () {
+      final decoded = RepositoryWorkspacePrefs.decode(
+        v1(slots: const ['back', 'forward']),
+      );
+      expect(decoded.visibleToolbarSlots, WorkspaceToolbarSlot.values.toSet());
+    });
+
+    test('a v1 record with no slot key is restored to the full bar', () {
+      final decoded = RepositoryWorkspacePrefs.decode(v1());
+      expect(decoded.visibleToolbarSlots, WorkspaceToolbarSlot.values.toSet());
+    });
+
+    test('migrating preserves every other v1 field', () {
+      final decoded = RepositoryWorkspacePrefs.decode(v1());
+      expect(decoded.version, RepositoryWorkspacePrefs.currentVersion);
+      expect(decoded.preset, WorkspacePreset.commit);
+      expect(decoded.navigatorWidth, 400);
+      expect(decoded.navigatorCollapsed, isTrue);
+      expect(decoded.filesPinned, isTrue);
+      expect(decoded.diffLayout, RepositoryDiffLayout.split);
+      expect(decoded.ignoreWhitespace, isTrue);
+      expect(decoded.diffContextLines, 7);
+      expect(decoded.grouping, RepositoryChangeGrouping.directory);
+      expect(decoded.showToolbarLabels, isTrue);
+    });
+
+    test('a v2 record still honours an explicit partial choice', () {
+      const hidden = RepositoryWorkspacePrefs(
+        visibleToolbarSlots: {WorkspaceToolbarSlot.refresh},
+      );
+      final decoded = RepositoryWorkspacePrefs.decode(hidden.encode());
+      expect(decoded.visibleToolbarSlots, {WorkspaceToolbarSlot.refresh});
+    });
+
+    test('a v2 record honours hiding every slot', () {
+      const none = RepositoryWorkspacePrefs(visibleToolbarSlots: {});
+      expect(
+        RepositoryWorkspacePrefs.decode(none.encode()).visibleToolbarSlots,
+        isEmpty,
+      );
+    });
+
+    test('an unknown future version falls back to defaults', () {
+      final decoded = RepositoryWorkspacePrefs.decode(
+        jsonEncode({'version': 99, 'navigatorWidth': 400.0}),
+      );
+      expect(decoded.visibleToolbarSlots, WorkspaceToolbarSlot.values.toSet());
+      expect(
+        decoded.navigatorWidth,
+        RepositoryWorkspacePrefs.defaultNavigatorWidth,
+      );
+    });
   });
 
   test('transient workspace state is absent from the durable schema', () {
