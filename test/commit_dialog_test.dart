@@ -240,6 +240,43 @@ void main() {
     expect(git.fetchCalls, 0);
   });
 
+  // The sheet and the composer inside it each bind commit.* (0009 G-H8 added
+  // the composer's copy while the sheet was unreachable). Now that both are on
+  // screen together, one press must still mean one commit.
+  group('the chords fire from the sheet, with the field focused', () {
+    testWidgets('⌘↩ commits exactly once', (tester) async {
+      final git = _FakeGit(null);
+      await _openSheet(tester, git);
+      await tester.enterText(find.byType(MacosTextField), 'fix: a bug');
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pumpAndSettle();
+
+      expect(git.committed, 'fix: a bug');
+      expect(git.pushCalls, 0);
+    });
+
+    testWidgets('⇧⌘↩ commits and pushes exactly once', (tester) async {
+      final git = _FakeGit(null);
+      await _openSheet(tester, git);
+      await tester.enterText(find.byType(MacosTextField), 'fix: a bug');
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+      await tester.pumpAndSettle();
+
+      expect(git.committed, 'fix: a bug');
+      expect(git.pushCalls, 1);
+    });
+  });
+
   testWidgets('a failed commit reports in the sheet, keeping the message', (
     tester,
   ) async {
