@@ -11,16 +11,27 @@ import '../common/sized_sheet.dart';
 import 'commit_composer.dart';
 import 'commit_composer_controller.dart';
 
-/// Optional focused editor around the same repository-scoped composer used by
-/// the Repository task dock. Closing this wrapper never discards its draft.
+/// Focused editor around the same repository-scoped composer used by the
+/// Repository task dock. Closing this wrapper never discards its draft.
 class CommitDialog extends ConsumerStatefulWidget {
   final String repoPath;
   final int stagedCount;
+
+  /// Runs the push for **Accept + Push**, returning whether it succeeded.
+  ///
+  /// Supplied by the caller rather than implemented here: push carries policy
+  /// this sheet has no business duplicating — the behind-upstream guardrail,
+  /// force/set-upstream variants, follow-tags, and output-dock logging all
+  /// live in `RepoStatusView._push`. The sheet's job is to sequence commit and
+  /// push through one `submit()` so a push failure is reported against the
+  /// commit that caused it.
+  final Future<bool> Function() onPush;
 
   const CommitDialog({
     super.key,
     required this.repoPath,
     required this.stagedCount,
+    required this.onPush,
   });
 
   @override
@@ -63,7 +74,10 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
             .read(gitServiceProvider)
             .commit(widget.repoPath, message: message),
       ),
+      push: push ? widget.onPush : null,
     );
+    // A commit that did not land leaves the sheet open with the message
+    // intact; `submit` has already recorded the reason on the controller.
     if (!mounted || !outcome.localCommitted) return;
     refreshAfterMutation(ref, widget.repoPath);
     if (!push) {
@@ -73,7 +87,9 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
             .fetchInBackground(widget.repoPath),
       );
     }
-    if (context.mounted) Navigator.of(context).pop(push);
+    // The push already ran inside `submit`, so the result reports only that
+    // the commit landed — no caller has follow-up work to do.
+    if (context.mounted) Navigator.of(context).pop(true);
   }
 
   @override

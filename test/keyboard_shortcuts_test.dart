@@ -182,9 +182,13 @@ void main() {
       await tester.pumpWidget(
         ProviderScope(
           overrides: [gitServiceProvider.overrideWithValue(git)],
-          child: const MacosApp(
+          child: MacosApp(
             debugShowCheckedModeBanner: false,
-            home: CommitDialog(repoPath: _repo, stagedCount: 1),
+            home: CommitDialog(
+              repoPath: _repo,
+              stagedCount: 1,
+              onPush: () async => true,
+            ),
           ),
         ),
       );

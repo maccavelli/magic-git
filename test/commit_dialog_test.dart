@@ -22,6 +22,7 @@ class _FakeGit extends GitService {
   final String? generated;
   String? committed;
   int fetchCalls = 0;
+  int pushCalls = 0;
 
   @override
   Future<String?> generateCommitMessage(String repoPath) async => generated;
@@ -57,8 +58,15 @@ Future<void> _openSheet(WidgetTester tester, _FakeGit git) async {
               // interceptor.
               onPressed: () => showMacosSheet<void>(
                 context: context,
-                builder: (_) => const EscapeDismissible(
-                  child: CommitDialog(repoPath: '/srv/repo', stagedCount: 2),
+                builder: (_) => EscapeDismissible(
+                  child: CommitDialog(
+                    repoPath: '/srv/repo',
+                    stagedCount: 2,
+                    onPush: () async {
+                      git.pushCalls++;
+                      return true;
+                    },
+                  ),
                 ),
               ),
             ),
@@ -159,10 +167,14 @@ void main() {
     expect(git.fetchCalls, 1);
   });
 
-  testWidgets('Accept + Push commits and pops true so the caller pushes', (
+  testWidgets('Accept + Push runs the push itself, in one submit', (
     tester,
   ) async {
+    // The sheet used to commit and pop `true`, leaving the push to whoever
+    // opened it. It now sequences both through one `submit()`, so a push
+    // failure is reported against the commit that caused it.
     final git = _FakeGit('feat: add widget');
+    final order = <String>[];
     bool? result;
     await tester.pumpWidget(
       ProviderScope(
@@ -177,9 +189,13 @@ void main() {
                 onPressed: () async {
                   result = await showMacosSheet<bool>(
                     context: context,
-                    builder: (_) => const CommitDialog(
+                    builder: (_) => CommitDialog(
                       repoPath: '/srv/repo',
                       stagedCount: 2,
+                      onPush: () async {
+                        order.add('push');
+                        return true;
+                      },
                     ),
                   );
                 },
@@ -196,10 +212,21 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(git.committed, 'feat: add widget');
-    // Pops `true` → the panel runs the push. And no background fetch here (the
-    // push advances/refreshes the remote itself).
-    expect(result, isTrue);
+    expect(order, ['push'], reason: 'the push ran, and ran once');
+    expect(result, isTrue, reason: 'the commit landed');
+    // No background fetch on this path — the push advances the remote itself.
     expect(git.fetchCalls, 0);
+  });
+
+  testWidgets('Accept does not push', (tester) async {
+    final git = _FakeGit('feat: add widget');
+    await _openSheet(tester, git);
+
+    await tester.tap(find.text('Accept'));
+    await tester.pumpAndSettle();
+
+    expect(git.committed, 'feat: add widget');
+    expect(git.pushCalls, 0);
   });
 
   testWidgets('Escape closes the sheet while the hook preview is still '
@@ -221,8 +248,12 @@ void main() {
                 child: const Text('open'),
                 onPressed: () => showMacosSheet<void>(
                   context: context,
-                  builder: (_) => const EscapeDismissible(
-                    child: CommitDialog(repoPath: '/srv/repo', stagedCount: 2),
+                  builder: (_) => EscapeDismissible(
+                    child: CommitDialog(
+                      repoPath: '/srv/repo',
+                      stagedCount: 2,
+                      onPush: () async => true,
+                    ),
                   ),
                 ),
               ),
