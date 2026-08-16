@@ -2,6 +2,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/repository/commit_composer.dart';
 import 'package:remote_magic_git/features/repository/commit_composer_controller.dart';
 
@@ -69,6 +70,48 @@ void main() {
     expect(find.text('Accept'), findsOneWidget);
     expect(find.text('Accept + Push'), findsOneWidget);
     expect(find.text('Clear'), findsOneWidget);
+  });
+
+  testWidgets('both ways of accepting are accented, and only those', (
+    tester,
+  ) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    controller.updateMessage('feat: something worth committing');
+    await _pump(tester, controller, CommitComposerPresentation.expanded);
+    expect(controller.canAccept, isTrue);
+
+    // Every accented button in the whole composer, by label. Asserting the
+    // exact set (rather than two positives) is what keeps a future button
+    // from quietly joining them.
+    final accented = <String>{
+      for (final button in tester.widgetList<AppPushButton>(
+        find.byType(AppPushButton),
+      ))
+        if (button.child case final Text text
+            when button.secondary != true && text.data != null)
+          text.data!,
+    };
+
+    // Accept + Push is a complete, correct way to finish — not a lesser one.
+    expect(accented, {'Accept', 'Accept + Push'});
+  });
+
+  testWidgets('neither accept is accented while it cannot run', (tester) async {
+    final controller = _controller();
+    addTearDown(controller.dispose);
+    await _pump(tester, controller, CommitComposerPresentation.expanded);
+    expect(controller.canAccept, isFalse, reason: 'no message yet');
+
+    for (final label in const ['Accept', 'Accept + Push']) {
+      final button = tester.widget<AppPushButton>(
+        find.ancestor(
+          of: find.text(label),
+          matching: find.byType(AppPushButton),
+        ),
+      );
+      expect(button.onPressed, isNull, reason: '$label is unavailable');
+    }
   });
 
   testWidgets('assistance stays opt-in and unknown policy is not passing', (

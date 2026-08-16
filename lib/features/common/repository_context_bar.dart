@@ -581,9 +581,14 @@ class _CompactMetadata extends StatelessWidget {
 /// A single primary button that renames itself Fetch → Pull → Push → Sync as
 /// the repository moves underneath means the control at a given pixel is a
 /// different command each time you look, so nothing about it can be learned.
-/// Here the ladder in `resolvePrimaryRepositoryAction` still runs — it just
-/// decides which of four fixed buttons is drawn as the accented one, and
-/// carries the ahead/behind counts as its badge.
+/// Here the ladder in `resolvePrimaryRepositoryAction` still runs — it decides
+/// which of the four fixed buttons carries the ahead/behind badge as the
+/// recommended next step.
+///
+/// Accent is a separate, weaker claim: *this verb is worth doing right now*.
+/// More than one can be true at once — two commits up and three down means
+/// Pull, Push and Sync are all real options — so more than one button is
+/// accented. See [_isRelevant].
 ///
 /// The variants (pull with rebase/merge, push with upstream/tags, the two
 /// forces) share ONE overflow rather than getting a chevron each. Apple's
@@ -621,6 +626,26 @@ class _SyncGroup extends StatelessWidget {
     (RepositorySyncCommand.forcePushWithLease, 'Force Push with Lease', true),
     (RepositorySyncCommand.forcePush, 'Force Push', true),
   ];
+
+  /// Whether a verb is worth doing *right now*, from the divergence alone.
+  ///
+  /// Accent answers "can I usefully do this?", which is not the same question
+  /// as "what should I do first?" — the ladder answers that, and only its
+  /// answer carries the ahead/behind badge. Emphasising one verb and greying
+  /// three equally-valid ones made Pull look unavailable while commits were
+  /// waiting to come down.
+  ///
+  /// Fetch is relevant whenever the group is live at all: checking the remote
+  /// is safe and correct at any time, and it is the ladder's own terminal
+  /// answer for a clean, in-sync repository. (Whether the group is live is the
+  /// caller's question — see the `recommended != null` guard at the call site.)
+  bool _isRelevant(RepositorySyncCommand command) => switch (command) {
+    RepositorySyncCommand.fetch => true,
+    RepositorySyncCommand.pull => snapshot.behind > 0,
+    RepositorySyncCommand.push => snapshot.ahead > 0,
+    RepositorySyncCommand.sync => snapshot.ahead > 0 && snapshot.behind > 0,
+    _ => false,
+  };
 
   /// Which fixed verb the ladder is recommending. `publish` is a push that
   /// also sets upstream, so the emphasis belongs on Push.
@@ -676,7 +701,18 @@ class _SyncGroup extends StatelessWidget {
             context,
             command,
             label,
-            emphasized: command == recommended,
+            // With a merge or rebase waiting on the user the ladder points at
+            // Resolve/Continue and `recommended` is null: the group defers
+            // entirely rather than accenting a Fetch that is merely *possible*
+            // while the repository needs attention elsewhere.
+            //
+            // Otherwise the recommendation is always accented, even when
+            // divergence alone would not justify it — Publish (no upstream
+            // yet) is the case that would leave the whole group grey.
+            accented:
+                recommended != null &&
+                (_isRelevant(command) || command == recommended),
+            recommended: command == recommended,
           ),
           const SizedBox(width: 4),
         ],
@@ -717,10 +753,11 @@ class _SyncGroup extends StatelessWidget {
     BuildContext context,
     RepositorySyncCommand command,
     String label, {
-    required bool emphasized,
+    required bool accented,
+    required bool recommended,
   }) {
     final reason = group.reasonFor(command);
-    final badge = emphasized ? _badge : null;
+    final badge = recommended ? _badge : null;
     // Both facts matter on a verb that is emphasized but cannot run: what the
     // divergence is, and why the button is dim. Neither replaces the other.
     final description = [
@@ -731,10 +768,10 @@ class _SyncGroup extends StatelessWidget {
       message: description,
       child: AppPushButton(
         controlSize: ControlSize.regular,
-        // Only the recommended verb is accented; the rest stay secondary so
-        // the group has one visual answer to "what now?" without hiding the
-        // other three.
-        secondary: !emphasized,
+        // Accent every verb worth doing now, not just the first one. A verb
+        // that cannot run is never accented — a blue button that does nothing
+        // when clicked is worse than a grey one.
+        secondary: !accented || reason != null,
         semanticLabel: reason == null
             ? (badge == null ? label : '$label, $_badgeInWords')
             : '$label, disabled: $description',

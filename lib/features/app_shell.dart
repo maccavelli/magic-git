@@ -206,6 +206,11 @@ class _ReconnectingOverlayState extends State<_ReconnectingOverlay> {
                   Expanded(
                     child: AppPushButton(
                       controlSize: ControlSize.large,
+                      // Accent means "this is the thing to do". Cancel here
+                      // abandons the reconnect and disconnects the session, so
+                      // it never carries it — and neither button does: the
+                      // affirmative outcome is the retry already in flight.
+                      secondary: true,
                       onPressed: widget.onCancel,
                       child: const Text('Cancel'),
                     ),

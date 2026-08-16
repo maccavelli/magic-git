@@ -345,20 +345,41 @@ Future<_FakeGitService> _pump(
   return resolved;
 }
 
-/// The label of the sync group's accented (non-secondary) button, or null when
-/// nothing is recommended. This replaced the old green icon tint: the cue moved
-/// from "colour one of four icons" to "accent one of four labelled buttons",
-/// which says the same thing without relying on colour alone.
-String? _emphasizedVerb(WidgetTester tester) {
+const _syncVerbs = {'Fetch', 'Pull', 'Push', 'Sync'};
+
+/// A sync button's label, whether or not it is carrying a divergence badge
+/// (which wraps the label in a Row alongside the count).
+String? _verbLabel(AppPushButton button) => switch (button.child) {
+  final Text text => text.data,
+  final Row row when row.children.first is Text =>
+    (row.children.first as Text).data,
+  _ => null,
+};
+
+/// Every sync verb drawn accented (non-secondary).
+///
+/// Accent means "worth doing right now", so this is a *set*: two commits up
+/// and three down makes Pull, Push and Sync all real options. It replaced the
+/// old green icon tint, and then the older single-emphasis rule that let
+/// exactly one verb be blue. A disabled verb is never accented.
+Set<String> _accentedVerbs(WidgetTester tester) => {
+  for (final button in tester.widgetList<AppPushButton>(
+    find.byType(AppPushButton),
+  ))
+    if (_verbLabel(button) case final String label
+        when button.secondary != true && _syncVerbs.contains(label))
+      label,
+};
+
+/// The single verb the ladder recommends — identified by the ahead/behind
+/// badge it alone carries. Null when the branch is in sync (no badge to show).
+String? _recommendedVerb(WidgetTester tester) {
   for (final button in tester.widgetList<AppPushButton>(
     find.byType(AppPushButton),
   )) {
-    if (button.secondary == true) continue;
-    final child = button.child;
-    if (child is Text) return child.data;
-    if (child is Row) {
-      final first = child.children.first;
-      if (first is Text) return first.data;
+    if (button.child case final Row row when row.children.first is Text) {
+      final label = (row.children.first as Text).data;
+      if (label != null && _syncVerbs.contains(label)) return label;
     }
   }
   return null;
@@ -857,7 +878,11 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(_emphasizedVerb(tester), 'Push');
+    // The ladder still names Push, and the badge it carries is how you can
+    // tell. This fixture configures NO remote, though, so nothing can
+    // actually run — and accent tracks what can run, not what is advised.
+    expect(_recommendedVerb(tester), 'Push');
+    expect(_accentedVerbs(tester), isEmpty);
   });
 
   testWidgets('behind upstream recommends Pull', (tester) async {
@@ -873,7 +898,8 @@ void main() {
       ),
     );
 
-    expect(_emphasizedVerb(tester), 'Pull');
+    expect(_accentedVerbs(tester), {'Fetch', 'Pull'});
+    expect(_recommendedVerb(tester), 'Pull');
   });
 
   testWidgets('diverged in both directions recommends Sync', (tester) async {
@@ -890,7 +916,10 @@ void main() {
       ),
     );
 
-    expect(_emphasizedVerb(tester), 'Sync');
+    // Diverged both ways: every verb is a real option, and the ladder still
+    // names one of them as the recommendation.
+    expect(_accentedVerbs(tester), _syncVerbs);
+    expect(_recommendedVerb(tester), 'Sync');
   });
 
   testWidgets('the toolbar divergence badge hides entirely when in sync', (
@@ -946,7 +975,9 @@ void main() {
       'but every verb is disabled and says why', (tester) async {
     await _pump(tester, status: _statusWith());
 
-    expect(_emphasizedVerb(tester), 'Fetch');
+    // Nothing can run, so nothing is accented — a blue button that does
+    // nothing when clicked is worse than a grey one.
+    expect(_accentedVerbs(tester), isEmpty);
     expect(
       tester
           .widgetList<AppPushButton>(find.byType(AppPushButton))

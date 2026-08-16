@@ -290,9 +290,13 @@ class _CommitComposerState extends ConsumerState<CommitComposer> {
                       child: const Text('Edit'),
                     ),
                   const SizedBox(width: 8),
+                  // Both ways of accepting are accented: each is a complete,
+                  // correct way to finish the commit, and greying one implied
+                  // it was the lesser choice rather than simply the other one.
+                  // Accept stays the *default* — ⌘↩ and the focus ring say
+                  // which one Return takes; colour only says "you can do this".
                   AppPushButton(
                     controlSize: ControlSize.regular,
-                    secondary: true,
                     onPressed: controller.canAccept
                         ? () => widget.onAccept(true)
                         : null,

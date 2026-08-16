@@ -4,7 +4,8 @@
 // primary button that renames itself Fetch → Pull → Push → Sync as the
 // repository changes is a different command at the same pixel every time you
 // look at it, so nothing about it can be learned. Here the recommendation only
-// changes which of four fixed buttons is accented.
+// changes which of four fixed buttons carries the divergence badge, and accent
+// marks every verb worth doing right now rather than a single winner.
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -74,17 +75,35 @@ Future<List<RepositorySyncCommand>> _pump(
   return invoked;
 }
 
-/// The accented (non-secondary) push button's label, or null when none is.
-String? _emphasized(WidgetTester tester) {
+const _verbs = {'Fetch', 'Pull', 'Push', 'Sync'};
+
+/// A sync button's label, with or without a divergence badge beside it.
+String? _label(AppPushButton button) => switch (button.child) {
+  final Text text => text.data,
+  final Row row when row.children.first is Text =>
+    (row.children.first as Text).data,
+  _ => null,
+};
+
+/// Every accented (non-secondary) sync verb.
+Set<String> _accented(WidgetTester tester) => {
+  for (final button in tester.widgetList<AppPushButton>(
+    find.byType(AppPushButton),
+  ))
+    if (_label(button) case final String label
+        when button.secondary != true && _verbs.contains(label))
+      label,
+};
+
+/// The verb the ladder recommends, identified by the ahead/behind badge that
+/// it alone carries. Null when the branch is in sync — there is no badge then.
+String? _badged(WidgetTester tester) {
   for (final button in tester.widgetList<AppPushButton>(
     find.byType(AppPushButton),
   )) {
-    if (button.secondary == true) continue;
-    final child = button.child;
-    if (child is Text) return child.data;
-    if (child is Row) {
-      final first = child.children.first;
-      if (first is Text) return first.data;
+    if (button.child case final Row row when row.children.first is Text) {
+      final label = (row.children.first as Text).data;
+      if (label != null && _verbs.contains(label)) return label;
     }
   }
   return null;
@@ -144,47 +163,92 @@ void main() {
     });
   });
 
-  group('emphasis tracks the ladder', () {
-    testWidgets('and only the emphasis moves', (tester) async {
+  // Accent and recommendation are two different claims. Accent says "this verb
+  // is worth doing right now" and can be true of several at once; the ladder's
+  // recommendation says "do this one first" and is always exactly one, marked
+  // by the badge. Accent used to be single, which left Pull grey while commits
+  // were waiting to come down.
+  group('accent marks every verb worth doing now', () {
+    testWidgets('in sync: only Fetch', (tester) async {
       await _pump(tester, snapshot: _snapshot());
-      expect(_emphasized(tester), 'Fetch');
-
-      await _pump(tester, snapshot: _snapshot(behind: 2));
-      expect(_emphasized(tester), 'Pull');
-
-      await _pump(tester, snapshot: _snapshot(ahead: 2));
-      expect(_emphasized(tester), 'Push');
-
-      await _pump(tester, snapshot: _snapshot(ahead: 1, behind: 1));
-      expect(_emphasized(tester), 'Sync');
+      expect(_accented(tester), {'Fetch'});
     });
 
-    testWidgets('publish emphasizes Push, since that is what it runs', (
+    testWidgets('behind: Fetch and Pull', (tester) async {
+      await _pump(tester, snapshot: _snapshot(behind: 2));
+      expect(_accented(tester), {'Fetch', 'Pull'});
+    });
+
+    testWidgets('ahead: Fetch and Push', (tester) async {
+      await _pump(tester, snapshot: _snapshot(ahead: 2));
+      expect(_accented(tester), {'Fetch', 'Push'});
+    });
+
+    testWidgets('diverged: every verb', (tester) async {
+      await _pump(tester, snapshot: _snapshot(ahead: 1, behind: 1));
+      expect(_accented(tester), _verbs);
+    });
+
+    testWidgets('an unavailable verb is never accented', (tester) async {
+      await _pump(
+        tester,
+        snapshot: _snapshot(ahead: 1, behind: 1),
+        unavailable: const {
+          RepositorySyncCommand.push: 'Another operation is running',
+        },
+      );
+      expect(
+        _accented(tester),
+        {'Fetch', 'Pull', 'Sync'},
+        reason: 'a blue button that cannot run is worse than a grey one',
+      );
+    });
+
+    testWidgets('publish accents Push, since that is what it runs', (
       tester,
     ) async {
+      // No upstream, nothing diverged: divergence alone would leave Push grey,
+      // but the ladder recommends Publish and the recommendation is always
+      // accented.
       await _pump(
         tester,
         snapshot: _snapshot(hasUpstream: false, ahead: 0, behind: 0),
       );
-      expect(_emphasized(tester), 'Push');
+      expect(_accented(tester), {'Fetch', 'Push'});
     });
 
-    testWidgets('nothing is emphasized while a merge waits on the user', (
+    testWidgets('nothing is accented while a merge waits on the user', (
       tester,
     ) async {
       await _pump(tester, snapshot: _snapshot(pending: true, conflicts: 2));
       expect(
-        _emphasized(tester),
-        isNull,
-        reason: 'Resolve is not a sync verb; no sync button should be accented',
+        _accented(tester),
+        isEmpty,
+        reason:
+            'the ladder points at Resolve, so the group defers entirely — '
+            'Fetch being merely possible does not make it worth doing',
+      );
+    });
+  });
+
+  group('the recommendation is exactly one verb', () {
+    testWidgets('the ahead/behind badge rides it, and only it', (tester) async {
+      await _pump(tester, snapshot: _snapshot(ahead: 3, behind: 4));
+      expect(find.text('↓4 ↑3'), findsOneWidget);
+      expect(_badged(tester), 'Sync');
+      expect(
+        _accented(tester),
+        _verbs,
+        reason: 'all four are worth doing; only Sync is recommended',
       );
     });
 
-    testWidgets('the ahead/behind badge rides the emphasized verb', (
-      tester,
-    ) async {
-      await _pump(tester, snapshot: _snapshot(ahead: 3, behind: 4));
-      expect(find.text('↓4 ↑3'), findsOneWidget);
+    testWidgets('it moves with the repository state', (tester) async {
+      await _pump(tester, snapshot: _snapshot(behind: 2));
+      expect(_badged(tester), 'Pull');
+
+      await _pump(tester, snapshot: _snapshot(ahead: 2));
+      expect(_badged(tester), 'Push');
     });
   });
 
