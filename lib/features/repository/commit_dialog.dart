@@ -98,6 +98,23 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
     if (context.mounted) Navigator.of(context).pop(true);
   }
 
+  /// Sizing follows the app's other content sheets (Blame, Rebase): a fraction
+  /// of the window, clamped at both ends.
+  ///
+  /// Not literally intrinsic, despite what a "wraps its content" sheet would
+  /// suggest: the composer's message field is an `Expanded` with
+  /// `expands: true`, so the column it lives in requires a bounded height.
+  /// Making it size to its text would mean reworking the shared composer body,
+  /// which belongs to the dock too. The fixed 760×390 this replaces was the
+  /// real complaint — it left a one-line subject adrift in a half-empty card on
+  /// a large display and scrolled a long generated body inside a short box on
+  /// any display.
+  static double _width(BuildContext context) =>
+      (MediaQuery.sizeOf(context).width * 0.58).clamp(560, 820);
+
+  static double _height(BuildContext context) =>
+      (MediaQuery.sizeOf(context).height * 0.62).clamp(420, 760);
+
   @override
   Widget build(BuildContext context) {
     final epoch = ref.watch(
@@ -123,16 +140,14 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
               : null,
         }),
         child: SizedSheet(
-          width: 760,
-          child: SizedBox(
-            height: 390,
-            child: CommitComposer(
-              controller: controller,
-              presentation: CommitComposerPresentation.expanded,
-              branchLabel: widget.branchLabel,
-              onAccept: _accept,
-              focused: true,
-            ),
+          width: _width(context),
+          height: _height(context),
+          child: CommitComposer(
+            controller: controller,
+            presentation: CommitComposerPresentation.expanded,
+            branchLabel: widget.branchLabel,
+            onAccept: _accept,
+            focused: true,
           ),
         ),
       ),
