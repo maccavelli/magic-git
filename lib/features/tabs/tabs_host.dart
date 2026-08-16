@@ -100,6 +100,19 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
   final List<ProviderSubscription> _activeSubs = [];
   String? _wiredTabId;
 
+  /// Handle on the app's root [Navigator]. This host BUILDS [MacosApp], so its
+  /// own `context` sits ABOVE that Navigator — `showMacosAlertDialog(context:
+  /// context)` from here would throw ("no Navigator in this context") instead
+  /// of showing anything. Quit/close guards therefore push through this key's
+  /// context, which is the Navigator itself. See [_guardContext].
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+
+  /// The context the exit guards show their confirmation in: the root
+  /// Navigator's own element. Null only before the first build (or after
+  /// unmount) — callers treat that as "cannot ask", and must then let the
+  /// close/quit proceed rather than swallow it.
+  BuildContext? get _guardContext => _navigatorKey.currentContext;
+
   @override
   void initState() {
     super.initState();
@@ -340,7 +353,8 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
       // Best-effort — never block quitting on a bounds read.
     }
     final atRisk = _sessionsAtRisk();
-    if (atRisk.isEmpty) {
+    final guardContext = _guardContext;
+    if (atRisk.isEmpty || guardContext == null) {
       await _disconnectAllTabs();
       return true;
     }
@@ -348,9 +362,9 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     // a confirm dialog can never answer over this channel), then ask; on
     // confirm, finish teardown and re-enter termination via terminateNow.
     unawaited(() async {
-      if (!mounted) return;
+      if (!guardContext.mounted) return;
       final proceed = await confirmAction(
-        context,
+        guardContext,
         title: 'Quit Magic Git?',
         message: sessionExitSummaryMessage(atRisk),
         confirmLabel: 'Quit',
@@ -428,10 +442,10 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     // Same at-stake summary as ⌘Q (0009 M5); Cancel simply leaves the
     // window up — preventClose is still armed, so nothing has happened.
     final atRisk = _sessionsAtRisk();
-    if (atRisk.isNotEmpty) {
-      if (!mounted) return;
+    final guardContext = _guardContext;
+    if (atRisk.isNotEmpty && guardContext != null && guardContext.mounted) {
       final proceed = await confirmAction(
-        context,
+        guardContext,
         title: 'Close window?',
         message: sessionExitSummaryMessage(atRisk),
         confirmLabel: 'Close Window',
@@ -459,6 +473,9 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
       ..containerForRepo = _controller.containerForRepo;
     return MacosApp(
       title: 'Magic Git',
+      // Gives the quit/window-close guards a handle on the root Navigator —
+      // they run from this host, whose context is above it. See [_guardContext].
+      navigatorKey: _navigatorKey,
       // Dark-only by design (see AppTheme): pin dark for both slots so the app
       // never renders a half-tuned light appearance regardless of system mode.
       theme: AppTheme.darkTheme,

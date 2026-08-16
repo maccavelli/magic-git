@@ -998,9 +998,12 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
         return Focus(
           focusNode: _overviewFocus,
           onKeyEvent: _onOverviewKey,
-          child: ListView.builder(
-            itemCount: worktrees.length,
-            itemBuilder: (context, i) => _row(context, worktrees[i]),
+          child: DeselectOnEmptyClick(
+            onDeselect: () => setState(() => _selectedOverviewPath = null),
+            child: ListView.builder(
+              itemCount: worktrees.length,
+              itemBuilder: (context, i) => _row(context, worktrees[i]),
+            ),
           ),
         );
       },
@@ -1034,12 +1037,14 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
         setState(() => _selectedOverviewPath = wt.path);
       },
       onDoubleTap: () => _openWorktree(wt),
-      onSecondaryTapUp: (d) => _contextMenu.show(
-        context,
-        d.globalPosition,
-        _rowMenu(wt),
-        width: 280,
-      ),
+      // Selecting first mirrors the tap path (and Stash's card menu): the menu
+      // acts on this row, so the tint and the arrow-key cursor must follow it
+      // rather than stay on whatever was last left-clicked.
+      onSecondaryTapUp: (d) {
+        _overviewFocus.requestFocus();
+        setState(() => _selectedOverviewPath = wt.path);
+        _contextMenu.show(context, d.globalPosition, _rowMenu(wt), width: 280);
+      },
       child: Container(
         color: selected
             ? MacosColors.systemBlueColor.withValues(alpha: 0.08)

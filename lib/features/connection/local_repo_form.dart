@@ -441,6 +441,11 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
   }
 
   void _submit() {
+    // Enter reaches this from any single-line field, so it honors the same
+    // gate the Open button does (0009 L18). Without it a keystroke in the
+    // git-dir field opened a scoped repo with no git-dir — silently unscoped,
+    // exactly what the dimmed button and its caption forbid.
+    if (!_canSubmit) return;
     if (_isLocal) {
       _openLocal();
     } else {

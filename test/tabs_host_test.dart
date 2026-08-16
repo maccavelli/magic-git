@@ -15,9 +15,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/core/git/git_service.dart' show PendingOp;
 import 'package:remote_magic_git/core/output/output_log.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/providers/window_manager_bridge.dart';
+import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/storage/saved_workspace_set.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/app_shell.dart';
@@ -49,12 +52,33 @@ class _Connected extends ConnectionController {
   ConnectionState build() => initial;
 }
 
+/// Answers every command with a clean empty result, so a container holding a
+/// *connected* session never reaches a real SSH client.
+class _QuietExecutor extends SSHCommandExecutor {
+  _QuietExecutor() : super(SSHClientManager());
+
+  @override
+  Future<SSHCommandResult> execute({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    String? stdin,
+    Duration timeout = SSHCommandExecutor.defaultTimeout,
+    int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+  }) async => const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+}
+
 /// Each tab is its own root container with a disconnected session (so AppShell
 /// renders the lightweight ConnectionLanding) and stubbed saved-lists/forge so
 /// nothing reaches disk or a real executor.
 ProviderContainer _tabContainer(List<Override> overrides) => ProviderContainer(
   retry: (_, _) => null,
   overrides: [
+    executorProvider.overrideWithValue(_QuietExecutor()),
     connectionProvider.overrideWith(_Disconnected.new),
     savedConnectionsProvider.overrideWith((ref) => const []),
     savedLocalReposProvider.overrideWith((ref) => const []),
@@ -341,6 +365,92 @@ void main() {
       await _teardownHost(tester);
     },
   );
+
+  testWidgets('the quit guard shows its confirmation on the root navigator', (
+    tester,
+  ) async {
+    // Regression: the guard used to be shown with TabsHost's OWN context, which
+    // sits ABOVE the MacosApp it builds — so Navigator.of() threw and the
+    // dialog never appeared. ⌘Q/red-button/Dock-quit all declined termination
+    // waiting for an answer that could never come, leaving the app unquittable
+    // except by Force Quit.
+    const repo = '/repo-dirty';
+    var created = 0;
+    final c = TabsController(
+      containerFactory: (overrides) {
+        // The FIRST container is the connected, dirty tab (openOrFocus reuses
+        // the blank initial tab for it); the second is a plain disconnected tab
+        // that stays active, so only the light ConnectionLanding ever mounts.
+        if (created++ != 0) return _tabContainer(overrides);
+        return ProviderContainer(
+          retry: (_, _) => null,
+          overrides: [
+            executorProvider.overrideWithValue(_QuietExecutor()),
+            activeExecutorProvider.overrideWithValue(_QuietExecutor()),
+            connectionProvider.overrideWith(
+              () => _Connected(
+                const ConnectionState(
+                  phase: ConnectionPhase.connected,
+                  connectionId: 'saved',
+                  repoPath: repo,
+                  repoPaths: [repo],
+                ),
+              ),
+            ),
+            statusProvider(repo).overrideWith(
+              (ref) async => GitStatus(
+                branch: const GitBranchInfo(head: 'main'),
+                files: const [
+                  GitFileStatus(path: 'a.txt', statusX: 'M', statusY: '.'),
+                ],
+              ),
+            ),
+            pendingOpProvider(repo).overrideWith((ref) async => PendingOp.none),
+            savedConnectionsProvider.overrideWith((ref) => const []),
+            savedLocalReposProvider.overrideWith((ref) => const []),
+            forgeRepoListProvider.overrideWith((ref, key) async => const []),
+            forgeAuthHostProvider.overrideWith((ref, key) async => null),
+            ...overrides,
+          ],
+        );
+      },
+    );
+    addTearDown(c.dispose);
+    c.ensureInitialTab();
+    final dirty = c.openOrFocus(
+      connectionId: 'a',
+      repoPath: repo,
+      connect: (_) {},
+    );
+    c.openOrFocus(connectionId: 'b', repoPath: '/repo-plain', connect: (_) {});
+    // sessionsAtRisk reads only ALREADY-LANDED status, so let it land — and
+    // hold a subscription so the autoDispose provider doesn't drop the value
+    // again before the guard reads it.
+    final keepAlive = dirty.container.listen<AsyncValue<GitStatus>>(
+      statusProvider(repo),
+      (_, _) {},
+    );
+    addTearDown(keepAlive.close);
+    await dirty.container.read(statusProvider(repo).future);
+    await _pumpHost(tester, c);
+
+    expect(
+      dirty.container.read(statusProvider(repo)).value?.isClean,
+      isFalse,
+      reason: 'the background tab must be at risk for the guard to run',
+    );
+    await _sendMenu(tester, 'prepareToTerminate');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Quit Magic Git?'), findsOneWidget);
+    expect(find.textContaining(repo), findsOneWidget);
+
+    // Cancel, so no teardown runs against the test's mock channels.
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.text('Quit Magic Git?'), findsNothing);
+    await _teardownHost(tester);
+  });
 
   testWidgets(
     'the menu channel keeps routing to the active tab after a switch',

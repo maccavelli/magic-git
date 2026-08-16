@@ -12,6 +12,7 @@ library;
 import 'dart:io';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,6 +27,7 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 import 'package:remote_magic_git/features/common/repository_workspace_scaffold.dart';
+import 'package:remote_magic_git/features/dnd/deselect.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_access.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_tabs.dart';
 import 'package:remote_magic_git/features/worktrees/worktrees_view.dart';
@@ -344,6 +346,58 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
     await tester.pumpAndSettle();
     expect(rowColor('app'), isNot(const Color(0x00000000)));
+  });
+
+  // Deselect parity with Stash/History/Branches: the row menu acts on the row
+  // it opened over, so that row becomes the selection (and the arrow cursor);
+  // a click on empty space clears the selection Finder-style.
+  testWidgets('right-click selects the row it acts on', (tester) async {
+    await pump(tester);
+
+    Color? rowColor(String name) => tester
+        .widget<Container>(
+          find
+              .ancestor(of: find.text(name), matching: find.byType(Container))
+              .first,
+        )
+        .color;
+
+    // The rows carry onDoubleTap, so a single tap only lands once the
+    // double-tap window closes — hence the explicit 400ms pump.
+    await tester.tap(find.text('app'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(rowColor('app'), isNot(const Color(0x00000000)));
+
+    await tester.tap(find.text('app-feature'), buttons: kSecondaryButton);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(rowColor('app-feature'), isNot(const Color(0x00000000)));
+    expect(rowColor('app'), const Color(0x00000000));
+  });
+
+  testWidgets('a click on empty overview space deselects', (tester) async {
+    await pump(tester);
+
+    Color? rowColor(String name) => tester
+        .widget<Container>(
+          find
+              .ancestor(of: find.text(name), matching: find.byType(Container))
+              .first,
+        )
+        .color;
+
+    await tester.tap(find.text('app'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(rowColor('app'), isNot(const Color(0x00000000)));
+
+    // Below the three rows, still inside the list — a click no row claims.
+    final area = tester.getRect(find.byType(DeselectOnEmptyClick));
+    await tester.tapAt(Offset(area.center.dx, area.bottom - 20));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    expect(rowColor('app'), const Color(0x00000000));
   });
 
   // The tab strip's own behaviour is tested on the notifier rather than through

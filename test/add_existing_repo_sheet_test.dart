@@ -69,6 +69,64 @@ void main() {
     );
   });
 
+  // 0009 L18 follow-up: Enter honors the same gate as the Open button. The
+  // picked folder here has a linked-worktree gitfile, so an open that DID
+  // fire would first ask for the main repository's sandbox grant — a dialog
+  // this test can see, with no git process involved.
+  testWidgets('Enter does not submit while Open is disabled', (tester) async {
+    // Same channel mock and runAsync discipline as the prefill test below:
+    // flipping the scoped toggle with a folder picked starts the real git
+    // probe, whose processes never resolve inside the fake-async zone.
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('appkit_ui_element_colors'),
+          (call) async => <String, double>{'hueComponent': 0.6},
+        );
+    final temp = Directory.systemTemp.createTempSync('magic_git_l18_');
+    addTearDown(() => temp.deleteSync(recursive: true));
+    final root = temp.resolveSymbolicLinksSync();
+    // A linked-worktree gitfile: an open that DID fire would stop to ask for
+    // the main repository's sandbox grant — a dialog this test can see.
+    File(
+      '$root/.git',
+    ).writeAsStringSync('gitdir: $root/main/.git/worktrees/wt\n');
+
+    await _pump(tester, initialPickedPath: root);
+    final scoped = _switchNear('Scoped work-tree repo');
+    await tester.ensureVisible(scoped);
+    await tester.runAsync(() => tester.tap(scoped));
+    await tester.pump();
+    // Let the probe's processes finish; it finds no scoped layout here, so
+    // the git-dir field stays empty and Open stays dimmed.
+    for (var i = 0; i < 20; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 100)),
+      );
+      await tester.pump();
+    }
+
+    // Scoped with an empty git-dir: Open is dimmed and says why.
+    expect(find.text('Git directory is required'), findsOneWidget);
+    expect(
+      tester
+          .widget<AppPushButton>(find.widgetWithText(AppPushButton, 'Open'))
+          .onPressed,
+      isNull,
+    );
+
+    final gitDir = tester.widget<MacosTextField>(
+      find.byWidgetPredicate(
+        (w) => w is MacosTextField && (w.placeholder ?? '').startsWith('Git '),
+      ),
+    );
+    await tester.runAsync(() async => gitDir.onSubmitted!(''));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.textContaining('Grant access'), findsNothing);
+    expect(find.text('Git directory is required'), findsOneWidget);
+  });
+
   testWidgets('turning the scoped toggle on forces fsmonitor off and disables '
       'it; turning it off re-enables', (tester) async {
     await _pump(tester);
