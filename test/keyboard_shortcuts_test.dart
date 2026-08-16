@@ -138,8 +138,7 @@ class _FakeGit extends GitService {
     String hash, {
     String? path,
     int? context,
-  }) async =>
-      'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
+  }) async => 'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
 
   // The repository panel prefetches diffs for the changed files whenever
   // status lands — serve them here rather than letting the prefetch fall
@@ -187,6 +186,7 @@ void main() {
             home: CommitDialog(
               repoPath: _repo,
               stagedCount: 1,
+              branchLabel: 'master',
               onPush: () async => true,
             ),
           ),
@@ -195,10 +195,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // No message yet — canAccept is false, so the shortcut is a no-op.
-      expect(
-        _bindingFor(tester, LogicalKeyboardKey.enter, meta: true),
-        isNull,
-      );
+      expect(_bindingFor(tester, LogicalKeyboardKey.enter, meta: true), isNull);
 
       await tester.enterText(find.byType(MacosTextField), 'fix: a bug');
       await tester.pumpAndSettle();
@@ -224,8 +221,9 @@ void main() {
           // The Branches tab watches the forge fusion + merged-branch signal;
           // unoverridden they hit the fake executor and leave a retry timer.
           branchForgeProvider(_repo).overrideWith((ref) async => const {}),
-          mergedBranchesProvider(_repo)
-              .overrideWith((ref) async => const <String>{}),
+          mergedBranchesProvider(
+            _repo,
+          ).overrideWith((ref) async => const <String>{}),
         ],
       );
       addTearDown(container.dispose);
@@ -263,16 +261,17 @@ void main() {
       );
     });
 
-    testWidgets('a backgrounded panel (isActive: false) registers no shortcuts', (
-      tester,
-    ) async {
-      await pump(tester, isActive: false);
+    testWidgets(
+      'a backgrounded panel (isActive: false) registers no shortcuts',
+      (tester) async {
+        await pump(tester, isActive: false);
 
-      expect(
-        _bindingFor(tester, LogicalKeyboardKey.keyB, meta: true),
-        isNull,
-      );
-    });
+        expect(
+          _bindingFor(tester, LogicalKeyboardKey.keyB, meta: true),
+          isNull,
+        );
+      },
+    );
 
     testWidgets('selecting a branch enables ⌘⇧M merge / ⌘⌫ delete, which act '
         'on the selection', (tester) async {
@@ -282,7 +281,12 @@ void main() {
           gitServiceProvider.overrideWithValue(git),
           refsProvider(_repo).overrideWith(
             (ref) async => const [
-              GitRef(name: 'refs/heads/main', oid: 'a', isHead: true, subject: 's'),
+              GitRef(
+                name: 'refs/heads/main',
+                oid: 'a',
+                isHead: true,
+                subject: 's',
+              ),
               GitRef(
                 name: 'refs/heads/feature',
                 oid: 'b',
@@ -297,7 +301,9 @@ void main() {
           remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
           remoteTagsProvider(_repo).overrideWith((ref) async => null),
           branchForgeProvider(_repo).overrideWith((ref) async => const {}),
-          mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
+          mergedBranchesProvider(
+            _repo,
+          ).overrideWith((ref) async => const <String>{}),
         ],
       );
       addTearDown(container.dispose);
@@ -357,9 +363,9 @@ void main() {
             ),
           ),
           pendingOpProvider(_repo).overrideWith((ref) async => PendingOp.none),
-          repoWatchProvider(_repo).overrideWith(
-            (ref) => const Stream<RepoWatchEvent>.empty(),
-          ),
+          repoWatchProvider(
+            _repo,
+          ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
           // Sibling of the refs override: the views now read CONFIGURED
@@ -458,9 +464,9 @@ void main() {
             ),
           ),
           pendingOpProvider(_repo).overrideWith((ref) async => PendingOp.none),
-          repoWatchProvider(_repo).overrideWith(
-            (ref) => const Stream<RepoWatchEvent>.empty(),
-          ),
+          repoWatchProvider(
+            _repo,
+          ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
           refsProvider(_repo).overrideWith((ref) async => const []),
           // Sibling of the refs override: the views now read CONFIGURED
@@ -581,7 +587,10 @@ void main() {
       tester,
     ) async {
       await pump(tester, [_commit('aaaaaaa1111111', 'c')]);
-      expect(_bindingFor(tester, LogicalKeyboardKey.keyF, meta: true), isNotNull);
+      expect(
+        _bindingFor(tester, LogicalKeyboardKey.keyF, meta: true),
+        isNotNull,
+      );
     });
 
     testWidgets('↓ moves the commit selection (⌘C then copies the new row)', (
@@ -691,7 +700,8 @@ void main() {
         final conflicts = <String>[];
         for (final other in kKeymapActions) {
           if (other.id == action.id) continue;
-          final overlaps = other.category == action.category ||
+          final overlaps =
+              other.category == action.category ||
               other.category == KeymapCategory.global ||
               action.category == KeymapCategory.global;
           if (overlaps && other.defaultBindings.contains(binding)) {
@@ -701,7 +711,8 @@ void main() {
         expect(
           conflicts,
           isEmpty,
-          reason: '${action.id} default ${binding.label} collides with $conflicts',
+          reason:
+              '${action.id} default ${binding.label} collides with $conflicts',
         );
       }
     }

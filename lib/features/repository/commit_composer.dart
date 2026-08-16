@@ -199,9 +199,13 @@ class _CommitComposerState extends ConsumerState<CommitComposer> {
                     style: MacosTheme.of(context).typography.title3,
                   ),
                   const SizedBox(width: 8),
+                  // The title already counts the files; repeating "N staged
+                  // files" beside it said the same number twice and left the
+                  // branch — the part that says where this lands — competing
+                  // with it for the eye.
                   Expanded(
                     child: Text(
-                      '$summary · ${widget.branchLabel}',
+                      'on ${widget.branchLabel}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),

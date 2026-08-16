@@ -27,11 +27,17 @@ class CommitDialog extends ConsumerStatefulWidget {
   /// commit that caused it.
   final Future<bool> Function() onPush;
 
+  /// The branch this commit lands on. Was the literal string
+  /// `'current branch'` — a placeholder that shipped, and the one piece of
+  /// scope a focused sheet cannot leave to the workspace behind it.
+  final String branchLabel;
+
   const CommitDialog({
     super.key,
     required this.repoPath,
     required this.stagedCount,
     required this.onPush,
+    required this.branchLabel,
   });
 
   @override
@@ -123,7 +129,7 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
             child: CommitComposer(
               controller: controller,
               presentation: CommitComposerPresentation.expanded,
-              branchLabel: 'current branch',
+              branchLabel: widget.branchLabel,
               onAccept: _accept,
               focused: true,
             ),

@@ -62,6 +62,7 @@ Future<void> _openSheet(WidgetTester tester, _FakeGit git) async {
                   child: CommitDialog(
                     repoPath: '/srv/repo',
                     stagedCount: 2,
+                    branchLabel: 'master',
                     onPush: () async {
                       git.pushCalls++;
                       return true;
@@ -192,6 +193,7 @@ void main() {
                     builder: (_) => CommitDialog(
                       repoPath: '/srv/repo',
                       stagedCount: 2,
+                      branchLabel: 'master',
                       onPush: () async {
                         order.add('push');
                         return true;
@@ -216,6 +218,19 @@ void main() {
     expect(result, isTrue, reason: 'the commit landed');
     // No background fetch on this path — the push advances the remote itself.
     expect(git.fetchCalls, 0);
+  });
+
+  testWidgets('the header states the scope: how many files, and where', (
+    tester,
+  ) async {
+    // `branchLabel` used to be the literal 'current branch'. A focused sheet
+    // covers the workspace, so it has to carry the scope itself.
+    final git = _FakeGit('feat: add widget');
+    await _openSheet(tester, git);
+
+    expect(find.text('Commit 2 files'), findsOneWidget);
+    expect(find.text('on master'), findsOneWidget);
+    expect(find.textContaining('current branch'), findsNothing);
   });
 
   testWidgets('Accept does not push', (tester) async {
@@ -252,6 +267,7 @@ void main() {
                     child: CommitDialog(
                       repoPath: '/srv/repo',
                       stagedCount: 2,
+                      branchLabel: 'master',
                       onPush: () async => true,
                     ),
                   ),
