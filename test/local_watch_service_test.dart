@@ -4,6 +4,12 @@
 // either never refresh or refresh on every event. fakeAsync can't drive real
 // filesystem events, so this is a real-FS integration test with small watcher
 // durations and bounded waits.
+//
+// These tests exercise FSEvents behaviour on macOS. dart:io's Directory.watch
+// on Linux/inotify does not recursively watch pre-existing subdirectories, so
+// the .git state and nested working-tree edits this file asserts on are not
+// visible on Linux. Run on macOS.
+@TestOn('mac-os')
 @Tags(['integration'])
 library;
 

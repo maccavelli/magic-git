@@ -9,8 +9,11 @@
 // ahead/behind counts would then sit stale until something else happened to
 // refresh them.
 //
-// These run against real git and a real FSEvents watcher, because that is the
-// only way to prove the bug is actually gone.
+// These run against real git and a real FSEvents watcher on macOS. Linux's
+// inotify implementation in dart:io does not recursively watch pre-existing
+// subdirectories, so the common-git-dir and nested worktree changes this
+// file asserts on are invisible on Linux. Run on macOS.
+@TestOn('mac-os')
 @Tags(['integration'])
 library;
 
@@ -103,26 +106,29 @@ void main() {
     if (tmp.existsSync()) tmp.deleteSync(recursive: true);
   });
 
-  test('a commit made IN the linked worktree is seen as a git-state change',
-      () async {
-    final events = await quietWatcher(wt);
+  test(
+    'a commit made IN the linked worktree is seen as a git-state change',
+    () async {
+      final events = await quietWatcher(wt);
 
-    // The commit that must be observed. It writes the worktree's HEAD/index
-    // under <main>/.git/worktrees/feature, and moves refs/heads/feature under
-    // <main>/.git — none of it inside `wt`.
-    File('$wt/a.txt').writeAsStringSync('two\n');
-    await git_(['add', 'a.txt'], wt);
-    await git_(['commit', '-q', '-m', 'from the worktree'], wt);
+      // The commit that must be observed. It writes the worktree's HEAD/index
+      // under <main>/.git/worktrees/feature, and moves refs/heads/feature under
+      // <main>/.git — none of it inside `wt`.
+      File('$wt/a.txt').writeAsStringSync('two\n');
+      await git_(['add', 'a.txt'], wt);
+      await git_(['commit', '-q', '-m', 'from the worktree'], wt);
 
-    final event = await waitFor(events, (e) => e.touchesGitState);
+      final event = await waitFor(events, (e) => e.touchesGitState);
 
-    expect(
-      event.touchesGitState,
-      isTrue,
-      reason: 'without the common-git-dir root this never fires, and the '
-          'branch list / History stay stale after a commit',
-    );
-  });
+      expect(
+        event.touchesGitState,
+        isTrue,
+        reason:
+            'without the common-git-dir root this never fires, and the '
+            'branch list / History stay stale after a commit',
+      );
+    },
+  );
 
   test('a branch moved in the MAIN repo is seen from the worktree', () async {
     // Refs are shared. A commit on `main` in the main repo changes a ref that
@@ -137,20 +143,22 @@ void main() {
     expect(event.touchesGitState, isTrue);
   });
 
-  test('an ordinary working-tree edit is NOT reported as a git-state change',
-      () async {
-    // The gating in repo_status_view uses touchesGitState to decide between a
-    // full repo refresh and a cheap status-only one. A plain file edit must
-    // stay on the cheap path — otherwise every keystroke-triggered save would
-    // re-walk the log.
-    final events = await quietWatcher(wt);
+  test(
+    'an ordinary working-tree edit is NOT reported as a git-state change',
+    () async {
+      // The gating in repo_status_view uses touchesGitState to decide between a
+      // full repo refresh and a cheap status-only one. A plain file edit must
+      // stay on the cheap path — otherwise every keystroke-triggered save would
+      // re-walk the log.
+      final events = await quietWatcher(wt);
 
-    File('$wt/scratch.txt').writeAsStringSync('just a file\n');
+      File('$wt/scratch.txt').writeAsStringSync('just a file\n');
 
-    final event = await waitFor(events, (e) => e.paths.isNotEmpty);
-    expect(event.paths, contains('scratch.txt'));
-    expect(event.touchesGitState, isFalse);
-  });
+      final event = await waitFor(events, (e) => e.paths.isNotEmpty);
+      expect(event.paths, contains('scratch.txt'));
+      expect(event.touchesGitState, isFalse);
+    },
+  );
 
   test('a worktree of a BARE repo sees git-state changes too', () async {
     // The admin dir of a bare repo's worktree is `<repo>.git/worktrees/<id>` —

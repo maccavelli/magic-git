@@ -59,7 +59,10 @@ class LocalWatchService {
   /// [prefix] is prepended to the result, which is what maps an event in the
   /// common git dir (`<main>/.git/refs/heads/x`) onto the path it would have in
   /// an ordinary repo (`.git/refs/heads/x`).
-  static String Function(String) _relativizer(String root, {String prefix = ''}) {
+  static String Function(String) _relativizer(
+    String root, {
+    String prefix = '',
+  }) {
     final rootWithSlash = root.endsWith('/') ? root : '$root/';
     return (String path) {
       // macOS FSEvents also emits a directory-granularity event for the root
@@ -142,7 +145,9 @@ class LocalWatchService {
     // Resolved once per watch, not per restart: the layout of a checkout can't
     // change while it's open (only `worktree move`/`repair` does that, and both
     // go through a full reconnect).
-    final roots = bounded != null ? _boundedRoots(bounded) : _rootsFor(repoPath);
+    final roots = bounded != null
+        ? _boundedRoots(bounded)
+        : _rootsFor(repoPath);
 
     return watchLifecycle(
       trailing: trailing,
@@ -162,16 +167,33 @@ class LocalWatchService {
         try {
           for (final root in roots) {
             subs.add(
-              Directory(root.dir).watch(recursive: root.recursive).listen(
-                (event) {
-                  hooks.noteActivity();
-                  final path = root.relativize(event.path);
-                  if (!shouldTriggerWatch(path)) return;
-                  hooks.signalPath(path);
-                },
-                onDone: hooks.scheduleRestart,
-                onError: (Object _) => hooks.scheduleRestart(),
-              ),
+              Directory(root.dir)
+                  .watch(recursive: root.recursive)
+                  .listen(
+                    (event) {
+                      hooks.noteActivity();
+                      final path = root.relativize(event.path);
+                      if (shouldTriggerWatch(path)) {
+                        hooks.signalPath(path);
+                      }
+                      // A move has both a source and a destination. The source may be
+                      // a transient lock (e.g. `.git/index.lock`) that
+                      // [shouldTriggerWatch] correctly suppresses; the destination is
+                      // the real file that changed (e.g. `.git/index`), and ignoring
+                      // it misses git's atomic state updates on Linux/inotify.
+                      if (event is FileSystemMoveEvent) {
+                        final dst = event.destination;
+                        if (dst != null) {
+                          final dstPath = root.relativize(dst);
+                          if (shouldTriggerWatch(dstPath)) {
+                            hooks.signalPath(dstPath);
+                          }
+                        }
+                      }
+                    },
+                    onDone: hooks.scheduleRestart,
+                    onError: (Object _) => hooks.scheduleRestart(),
+                  ),
             );
           }
         } catch (e) {

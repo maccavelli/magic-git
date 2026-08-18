@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart' show Colors, LinearProgressIndicator;
 import 'package:flutter/services.dart';
@@ -307,28 +309,32 @@ void main() {
         .setMockMethodCallHandler(accentChannel, null);
   });
   for (final entry in _sizes.entries) {
-    for (final kind in _FixtureKind.values) {
-      testWidgets('${entry.key} ${kind.name}', (tester) async {
-        tester.view.physicalSize = entry.value;
-        tester.view.devicePixelRatio = 1;
-        addTearDown(tester.view.reset);
-        await tester.pumpWidget(
-          MacosApp(
-            debugShowCheckedModeBanner: false,
-            theme: MacosThemeData.dark(),
-            home: SizedBox.fromSize(
-              size: entry.value,
-              child: _WorkspaceGoldenFixture(kind: kind, size: entry.value),
+    group(entry.key, skip: !Platform.isMacOS, () {
+      for (final kind in _FixtureKind.values) {
+        testWidgets(kind.name, (tester) async {
+          tester.view.physicalSize = entry.value;
+          tester.view.devicePixelRatio = 1;
+          addTearDown(tester.view.reset);
+          await tester.pumpWidget(
+            MacosApp(
+              debugShowCheckedModeBanner: false,
+              theme: MacosThemeData.dark(),
+              home: SizedBox.fromSize(
+                size: entry.value,
+                child: _WorkspaceGoldenFixture(kind: kind, size: entry.value),
+              ),
             ),
-          ),
-        );
-        await tester.pump(const Duration(milliseconds: 100));
+          );
+          await tester.pump(const Duration(milliseconds: 100));
 
-        await expectLater(
-          find.byKey(const Key('golden')),
-          matchesGoldenFile('goldens/workspace/${entry.key}_${kind.name}.png'),
-        );
-      });
-    }
+          await expectLater(
+            find.byKey(const Key('golden')),
+            matchesGoldenFile(
+              'goldens/workspace/${entry.key}_${kind.name}.png',
+            ),
+          );
+        });
+      }
+    });
   }
 }
