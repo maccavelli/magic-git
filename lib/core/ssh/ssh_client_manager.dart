@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 
 import '../exec/command_telemetry.dart';
 import '../utils/pausable_timeout.dart';
+import 'native_ssh_socket.dart';
 
 class SSHConnectionProfile {
   final String host;
@@ -560,7 +561,7 @@ class SSHClientManager {
     onVerifyHostKey,
     required Duration authTimeout,
   }) async {
-    final socket = await SSHSocket.connect(
+    final socket = await NativeSshSocket.connect(
       profile.host,
       profile.port,
       timeout: _socketTimeout,
