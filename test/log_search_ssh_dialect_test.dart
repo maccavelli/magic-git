@@ -40,6 +40,7 @@ class _ArgvCapture extends LocalCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
@@ -113,8 +114,6 @@ void main() {
   Future<List<GitCommit>> overSsh(
     List<String> argv, {
     bool compress = false,
-    OperationDescriptor? operation,
-    OperationEventCallback? onOperationEvent,
   }) async {
     final script = CommandFormatter.format(
       repoPath: repo,

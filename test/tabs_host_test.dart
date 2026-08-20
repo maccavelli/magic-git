@@ -67,6 +67,7 @@ class _QuietExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async => const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

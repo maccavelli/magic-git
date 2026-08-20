@@ -38,6 +38,7 @@ void main() {
       expect(decoded.retries, 1);
       expect(decoded.lane, ExecLane.read);
       expect(decoded.compress, isTrue);
+      expect(decoded.activityIdle, isNull);
       expect(decoded.operation?.id, const OperationId('op-1'));
       expect(decoded.operation?.label, 'Refresh repository');
     });
@@ -55,6 +56,34 @@ void main() {
       expect(decoded.extraEnv, isNull);
       expect(decoded.stdin, isNull);
       expect(decoded.operation, isNull);
+      expect(decoded.activityIdle, isNull);
+    });
+
+    test('activityIdleMs round-trips and omitted means wall clock', () {
+      const request = ExecuteRequest(
+        repoPath: '/r',
+        gitArgs: ['git', 'fetch'],
+        timeout: Duration(minutes: 30),
+        retries: 0,
+        lane: ExecLane.sync,
+        compress: false,
+        activityIdle: Duration(minutes: 3),
+      );
+      final decoded = decodeExecuteRequest(encodeExecuteRequest(request));
+      expect(decoded.activityIdle, const Duration(minutes: 3));
+      final omitted = decodeExecuteRequest(
+        encodeExecuteRequest(
+          const ExecuteRequest(
+            repoPath: '/r',
+            gitArgs: ['git', 'status'],
+            timeout: Duration(seconds: 60),
+            retries: 0,
+            lane: ExecLane.read,
+            compress: false,
+          ),
+        ),
+      );
+      expect(omitted.activityIdle, isNull);
     });
 
     test('NUL-delimited stdin survives, and travels as bytes on the wire', () {

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import '../ssh/command_formatter.dart';
 import '../ssh/ssh_command_executor.dart';
+import 'activity_deadline.dart';
 import 'command_lanes.dart';
 import 'command_telemetry.dart';
 import 'operation_activity.dart';
@@ -110,6 +111,7 @@ class LocalCommandExecutor implements CommandExecutor {
     // Ignored: compression exists to save SSH wire bytes; a local pipe has no
     // wire, so spending CPU gzipping/gunzipping it would be pure loss.
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
@@ -122,7 +124,15 @@ class LocalCommandExecutor implements CommandExecutor {
     // other queued commands — mirrors SSHCommandExecutor.execute.
     try {
       final result = await SSHCommandExecutor.runWithRetries(
-        () => _run(repoPath, gitArgs, extraEnv, stdin, timeout, lane),
+        () => _run(
+          repoPath,
+          gitArgs,
+          extraEnv,
+          stdin,
+          timeout,
+          lane,
+          activityIdle,
+        ),
         retries,
         // See SSHCommandExecutor.execute: the deadline is the attempt's own
         // timeout plus a margin, a backstop against a body that never settles and
@@ -153,6 +163,7 @@ class LocalCommandExecutor implements CommandExecutor {
     String? stdin,
     Duration timeout,
     ExecLane lane,
+    Duration? activityIdle,
   ) async {
     final sw = Stopwatch()..start();
     final argv = _rewriteArgv(gitArgs);
@@ -183,6 +194,9 @@ class LocalCommandExecutor implements CommandExecutor {
     // unattended — for one that never exits, forever. Mirrors
     // SSHCommandExecutor._run's flag.
     var timedOut = false;
+    final deadline = activityIdle == null
+        ? null
+        : ActivityDeadline(idle: activityIdle, ceiling: timeout);
 
     Future<SSHCommandResult> spawnAndDrain() async {
       try {
@@ -254,7 +268,10 @@ class LocalCommandExecutor implements CommandExecutor {
       final label = gitArgs.join(' ');
       final stdoutFuture = collectBounded(
         boundedBytes(
-          p.stdout,
+          p.stdout.map((chunk) {
+            deadline?.pulse();
+            return chunk;
+          }),
           budget,
           label,
         ).transform(const Utf8Decoder(allowMalformed: true)),
@@ -262,7 +279,10 @@ class LocalCommandExecutor implements CommandExecutor {
       );
       final stderrFuture = collectBounded(
         boundedBytes(
-          p.stderr,
+          p.stderr.map((chunk) {
+            deadline?.pulse();
+            return chunk;
+          }),
           budget,
           label,
         ).transform(const Utf8Decoder(allowMalformed: true)),
@@ -297,6 +317,7 @@ class LocalCommandExecutor implements CommandExecutor {
 
     final attempt = spawnAndDrain();
     try {
+      if (deadline != null) return await deadline.wait(attempt);
       return await attempt.timeout(timeout);
     } on TimeoutException {
       // If the spawn itself was the slow part, `process` is still null here —

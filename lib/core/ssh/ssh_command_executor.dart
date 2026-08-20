@@ -5,6 +5,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
+import '../exec/activity_deadline.dart';
 import '../exec/command_drain.dart';
 import '../exec/command_lanes.dart';
 import '../exec/command_telemetry.dart';
@@ -197,6 +198,7 @@ abstract class CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   });
@@ -408,6 +410,7 @@ class SSHCommandExecutor implements CommandExecutor {
         timeout,
         false,
         ExecLane.isolated,
+        null,
       ),
       0,
       enqueue: (attempt) => _scheduler.run(
@@ -457,6 +460,7 @@ class SSHCommandExecutor implements CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
@@ -488,6 +492,7 @@ class SSHCommandExecutor implements CommandExecutor {
           timeout,
           compress,
           lane,
+          activityIdle,
         ),
         retries,
         // One enqueued job per *attempt*, and an attempt is bounded by `timeout`
@@ -652,6 +657,7 @@ class SSHCommandExecutor implements CommandExecutor {
     Duration timeout,
     bool compress,
     ExecLane lane,
+    Duration? activityIdle,
   ) async {
     // Started before the channel open so the sample's duration reflects the
     // full user-perceived cost of the command, not just the drain.
@@ -685,6 +691,7 @@ class SSHCommandExecutor implements CommandExecutor {
         compress,
         lane,
         repoPath,
+        activityIdle,
       );
     } finally {
       _activeCommands--;
@@ -701,6 +708,7 @@ class SSHCommandExecutor implements CommandExecutor {
     bool compress,
     ExecLane lane,
     String repoPath,
+    Duration? activityIdle,
   ) async {
     final sw = Stopwatch()..start();
     // Compression is honored only when the probe actually found gzip on the
@@ -747,6 +755,9 @@ class SSHCommandExecutor implements CommandExecutor {
     // would otherwise run on unattended — for a command that never exits (and
     // so never settles this attempt), forever, until disconnect.
     var timedOut = false;
+    final deadline = activityIdle == null
+        ? null
+        : ActivityDeadline(idle: activityIdle, ceiling: timeout);
 
     Future<SSHCommandResult> openAndDrain() async {
       session = await client.execute(command);
@@ -780,6 +791,7 @@ class SSHCommandExecutor implements CommandExecutor {
       final label = gitArgs.join(' ');
       final rawStdout = s.stdout.cast<List<int>>().map((chunk) {
         stdoutWireBytes += chunk.length;
+        deadline?.pulse();
         return chunk;
       });
       final Future<String> stdoutFuture;
@@ -807,7 +819,10 @@ class SSHCommandExecutor implements CommandExecutor {
       }
       final stderrFuture = collectBounded(
         boundedBytes(
-          s.stderr.cast<List<int>>(),
+          s.stderr.cast<List<int>>().map((chunk) {
+            deadline?.pulse();
+            return chunk;
+          }),
           budget,
           label,
         ).transform(const Utf8Decoder(allowMalformed: true)),
@@ -870,6 +885,7 @@ class SSHCommandExecutor implements CommandExecutor {
     // command.
     final attempt = openAndDrain();
     try {
+      if (deadline != null) return await deadline.wait(attempt);
       return await attempt.timeout(timeout);
     } on TimeoutException {
       // If the open itself was the slow part, `session` is still null here

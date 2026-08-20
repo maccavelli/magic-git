@@ -31,6 +31,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
@@ -371,7 +372,9 @@ void main() {
     // "Show all" a real affordance instead of a dead end.
     test('glab: labels walk pages until a short page', () async {
       exec.results.addAll([
-        _ok('$_glabHeaders[{"name":"bug","color":"#f00"},{"name":"ux","color":"#0f0"}]'),
+        _ok(
+          '$_glabHeaders[{"name":"bug","color":"#f00"},{"name":"ux","color":"#0f0"}]',
+        ),
         _ok('$_glabHeaders[{"name":"docs","color":"#00f"}]'),
       ]);
 
@@ -383,20 +386,25 @@ void main() {
       expect(
         exec.calls.every((c) => c.contains('-i')),
         isTrue,
-        reason: "glab's exit codes are advisory — the -i HTTP status is the "
+        reason:
+            "glab's exit codes are advisory — the -i HTTP status is the "
             'authority, and --paginate would force dropping it',
       );
     });
 
-    test('glab: REST calls the field `name` where GraphQL calls it `title`',
-        () async {
-      exec.results.add(_ok('$_glabHeaders[{"name":"bug","color":"#ff0000"}]'));
+    test(
+      'glab: REST calls the field `name` where GraphQL calls it `title`',
+      () async {
+        exec.results.add(
+          _ok('$_glabHeaders[{"name":"bug","color":"#ff0000"}]'),
+        );
 
-      final labels = await glab.listLabels(_repo, perPage: 100);
+        final labels = await glab.listLabels(_repo, perPage: 100);
 
-      expect(labels.single.name, 'bug');
-      expect(labels.single.color, '#ff0000');
-    });
+        expect(labels.single.name, 'bug');
+        expect(labels.single.color, '#ff0000');
+      },
+    );
 
     test('glab: releases map snake_case fields', () async {
       exec.results.add(
@@ -428,15 +436,18 @@ void main() {
       expect(
         exec.calls.every((c) => !c.contains('--paginate')),
         isTrue,
-        reason: 'gh --paginate emits one array per page — invalid JSON to a '
+        reason:
+            'gh --paginate emits one array per page — invalid JSON to a '
             'single decode',
       );
     });
 
     test('gh: a release with no name falls back to its tag', () async {
       exec.results.add(
-        _ok('[{"tag_name":"v2.0","name":"","published_at":"2026-02-02",'
-            '"author":{"login":"mac"}}]'),
+        _ok(
+          '[{"tag_name":"v2.0","name":"","published_at":"2026-02-02",'
+          '"author":{"login":"mac"}}]',
+        ),
       );
 
       final releases = await gh.listReleases(_repo, perPage: 100);

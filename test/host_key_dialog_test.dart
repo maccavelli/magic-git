@@ -68,6 +68,7 @@ class _NoopExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
@@ -150,7 +151,8 @@ void main() {
     expect(
       resolved,
       isTrue,
-      reason: 'the connect must fail closed, not park on an unresolved '
+      reason:
+          'the connect must fail closed, not park on an unresolved '
           'host-key decision',
     );
     expect(container.read(connectionProvider).hostKeyPrompt, isNull);

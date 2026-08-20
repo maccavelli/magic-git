@@ -49,6 +49,7 @@ class ScopedCommandExecutor implements CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) => _inner.execute(
@@ -60,6 +61,7 @@ class ScopedCommandExecutor implements CommandExecutor {
     retries: retries,
     lane: lane,
     compress: compress,
+    activityIdle: activityIdle,
     operation: operation,
     onOperationEvent: onOperationEvent,
   );

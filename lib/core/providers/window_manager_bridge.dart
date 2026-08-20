@@ -605,6 +605,7 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
                 retries: request.retries,
                 lane: request.lane,
                 compress: request.compress,
+                activityIdle: request.activityIdle,
                 operation: request.operation,
                 onOperationEvent: execContainer
                     .read(operationActivityProvider.notifier)

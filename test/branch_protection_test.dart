@@ -33,6 +33,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
@@ -146,49 +147,60 @@ void main() {
       expect(
         exec.calls.every((c) => !c.contains('--paginate')),
         isTrue,
-        reason: 'gh --paginate emits one array per page — invalid JSON to a '
+        reason:
+            'gh --paginate emits one array per page — invalid JSON to a '
             'single decode',
       );
     });
 
-    test('a non-array body throws rather than reading as "none protected"',
-        () async {
-      exec.results.add(_ok('{"message":"Not Found"}'));
+    test(
+      'a non-array body throws rather than reading as "none protected"',
+      () async {
+        exec.results.add(_ok('{"message":"Not Found"}'));
 
-      await expectLater(
-        gh.protectedBranchNames(_repo),
-        throwsA(isA<GhException>()),
-      );
-    });
+        await expectLater(
+          gh.protectedBranchNames(_repo),
+          throwsA(isA<GhException>()),
+        );
+      },
+    );
   });
 
   group('GlabService.protectedBranchPatterns', () {
-    test('hand-walks with per_page/page so it can keep the -i status check',
-        () async {
-      exec.results.add(_glab('[{"name":"release/*"}]'));
+    test(
+      'hand-walks with per_page/page so it can keep the -i status check',
+      () async {
+        exec.results.add(_glab('[{"name":"release/*"}]'));
 
-      final patterns = await glab.protectedBranchPatterns(_repo, perPage: 100);
+        final patterns = await glab.protectedBranchPatterns(
+          _repo,
+          perPage: 100,
+        );
 
-      expect(patterns, ['release/*']);
-      final call = exec.calls.single;
-      expect(call, contains('projects/:id/protected_branches'));
-      expect(
-        call,
-        contains('-i'),
-        reason: "glab's exit codes are advisory; the HTTP status is the "
-            'authority, and --paginate would force dropping it',
-      );
-      expect(call, isNot(contains('--paginate')));
-    });
+        expect(patterns, ['release/*']);
+        final call = exec.calls.single;
+        expect(call, contains('projects/:id/protected_branches'));
+        expect(
+          call,
+          contains('-i'),
+          reason:
+              "glab's exit codes are advisory; the HTTP status is the "
+              'authority, and --paginate would force dropping it',
+        );
+        expect(call, isNot(contains('--paginate')));
+      },
+    );
 
-    test('an HTTP 403 throws instead of reading as "no protected branches"',
-        () async {
-      exec.results.add(_glab('{"message":"403 Forbidden"}', status: 403));
+    test(
+      'an HTTP 403 throws instead of reading as "no protected branches"',
+      () async {
+        exec.results.add(_glab('{"message":"403 Forbidden"}', status: 403));
 
-      await expectLater(
-        glab.protectedBranchPatterns(_repo),
-        throwsA(isA<GlabException>()),
-      );
-    });
+        await expectLater(
+          glab.protectedBranchPatterns(_repo),
+          throwsA(isA<GlabException>()),
+        );
+      },
+    );
   });
 }

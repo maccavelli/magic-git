@@ -36,6 +36,7 @@ class FakeExecutor implements ScopedCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
@@ -168,7 +169,9 @@ void main() {
 
     final manager = container.read(remoteEditServiceProvider.notifier);
     await manager.openRemoteFile('repo1', 'file.txt');
-    final session = container.read(remoteEditServiceProvider)['repo1/file.txt']!;
+    final session = container.read(
+      remoteEditServiceProvider,
+    )['repo1/file.txt']!;
 
     // The remote moved on — the next local save conflicts.
     fakeExecutor.remoteHashes['file.txt'] = 'hash2';

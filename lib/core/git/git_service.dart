@@ -1058,6 +1058,10 @@ class GitService {
   static const Duration defaultCommitTimeout = Duration(minutes: 5);
   static const Duration defaultNetworkTimeout = Duration(minutes: 3);
 
+  /// Absolute ceiling for a network op that is still emitting progress.
+  /// Stall detection uses [networkTimeout] (the settings field).
+  static const Duration defaultNetworkCeiling = Duration(minutes: 30);
+
   /// Ceiling for user-supplied hooks ([runInWorktree]): a cold-cache `pnpm
   /// install` legitimately outlives [defaultCommitTimeout], and on
   /// [ExecLane.isolated] a long hook no longer holds anything else up — so the
@@ -1074,6 +1078,12 @@ class GitService {
   /// killed — hence instance fields rather than constants.
   final Duration commitTimeout;
   final Duration networkTimeout;
+
+  /// Scheduler / activity ceiling: at least [defaultNetworkCeiling], or the
+  /// user's stall budget if they raised it above that.
+  Duration get _networkCeiling => networkTimeout > defaultNetworkCeiling
+      ? networkTimeout
+      : defaultNetworkCeiling;
 
   /// Committer identity applied to every commit-creating command (commit,
   /// amend, merge, cherry-pick, revert, rebase) via `-c user.name/-c
@@ -4095,7 +4105,8 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       repoPath,
       ['git', ...auth, 'push', '--delete', '--end-of-options', remote, branch],
       'git push --delete',
-      timeout: networkTimeout,
+      timeout: _networkCeiling,
+      activityIdle: networkTimeout,
       // Sync lane, like every push: updates the remote and the local tracking
       // ref, never the index/worktree.
       lane: ExecLane.sync,
@@ -4880,7 +4891,8 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
           '--prune',
         ],
         'git fetch',
-        timeout: networkTimeout,
+        timeout: _networkCeiling,
+        activityIdle: networkTimeout,
         lane: ExecLane.sync,
         visibility: background
             ? OperationVisibility.background
@@ -4918,7 +4930,8 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         if (remote != null && branch != null) branch,
       ],
       'git pull',
-      timeout: networkTimeout,
+      timeout: _networkCeiling,
+      activityIdle: networkTimeout,
       // Exclusive: pull can rewrite the index/worktree (merge/rebase), so it
       // must never overlap concurrent reads or mutations.
     );
@@ -4960,7 +4973,8 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         if (remote != null && branch != null) branch,
       ],
       'git push',
-      timeout: networkTimeout,
+      timeout: _networkCeiling,
+      activityIdle: networkTimeout,
       // Sync lane: push updates the remote (and local tracking refs) but never
       // the index/worktree — safe alongside reads, exclusive among sync ops.
       lane: ExecLane.sync,
@@ -5068,7 +5082,8 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         for (final n in names) 'refs/tags/$n',
       ],
       'git push tag',
-      timeout: networkTimeout,
+      timeout: _networkCeiling,
+      activityIdle: networkTimeout,
       lane: ExecLane.sync,
     );
   }
@@ -5096,7 +5111,8 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         'refs/tags/$name',
       ],
       'git push --delete',
-      timeout: networkTimeout,
+      timeout: _networkCeiling,
+      activityIdle: networkTimeout,
       lane: ExecLane.sync,
     );
   }
@@ -5125,7 +5141,8 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         repoPath,
         ['git', ...auth, 'ls-remote', '--tags', '--end-of-options', remote],
         'git ls-remote',
-        timeout: networkTimeout,
+        timeout: _networkCeiling,
+        activityIdle: networkTimeout,
         lane: ExecLane.sync,
       );
     } catch (_) {
@@ -6096,6 +6113,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationVisibility visibility = OperationVisibility.normal,
   }) async {
     final result = await _executor.execute(
@@ -6107,6 +6125,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       retries: retries,
       lane: lane,
       compress: compress,
+      activityIdle: activityIdle,
       operation: lane == ExecLane.read
           ? null
           : OperationDescriptor(

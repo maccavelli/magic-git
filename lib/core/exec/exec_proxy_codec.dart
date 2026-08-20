@@ -100,6 +100,7 @@ class ExecuteRequest {
   final int retries;
   final ExecLane lane;
   final bool compress;
+  final Duration? activityIdle;
   final OperationDescriptor? operation;
 
   const ExecuteRequest({
@@ -111,6 +112,7 @@ class ExecuteRequest {
     required this.retries,
     required this.lane,
     required this.compress,
+    this.activityIdle,
     this.operation,
   });
 }
@@ -125,6 +127,8 @@ Map<String, Object?> encodeExecuteRequest(ExecuteRequest request) => {
   'retries': request.retries,
   'lane': request.lane.name,
   'compress': request.compress,
+  if (request.activityIdle != null && request.activityIdle!.inMilliseconds > 0)
+    'activityIdleMs': request.activityIdle!.inMilliseconds,
   'operation': request.operation?.toWire(),
 };
 
@@ -133,6 +137,7 @@ ExecuteRequest decodeExecuteRequest(Map<Object?, Object?> map) {
   // the documented safe default for anything that doesn't declare otherwise.
   final laneName = map['lane'] as String? ?? '';
   final lane = ExecLane.values.asNameMap()[laneName] ?? ExecLane.exclusive;
+  final idleMs = map['activityIdleMs'] as int?;
   return ExecuteRequest(
     repoPath: map['repoPath'] as String,
     gitArgs: (map['gitArgs'] as List).cast<String>(),
@@ -142,6 +147,9 @@ ExecuteRequest decodeExecuteRequest(Map<Object?, Object?> map) {
     retries: map['retries'] as int? ?? 0,
     lane: lane,
     compress: map['compress'] as bool? ?? false,
+    activityIdle: idleMs == null || idleMs == 0
+        ? null
+        : Duration(milliseconds: idleMs),
     operation: OperationDescriptor.fromWire(map['operation']),
   );
 }

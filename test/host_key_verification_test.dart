@@ -67,6 +67,7 @@ class _NoopExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
@@ -247,8 +248,10 @@ void main() {
     controller.rejectHostKeyChange();
     await connecting;
 
-    expect(container.read(connectionProvider).phase,
-        ConnectionPhase.disconnected);
+    expect(
+      container.read(connectionProvider).phase,
+      ConnectionPhase.disconnected,
+    );
     expect(container.read(connectionProvider).error, isNull);
   });
 

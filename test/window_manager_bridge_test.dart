@@ -56,6 +56,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
@@ -647,7 +648,8 @@ void main() {
     expect(
       (open.arguments as Map)['title'],
       'Status — repo (Prod)',
-      reason: 'secondary_window_main pushes "Status — …" once its session '
+      reason:
+          'secondary_window_main pushes "Status — …" once its session '
           'lands; opening as "Repo — …" made the window retitle itself',
     );
   });
@@ -674,7 +676,8 @@ void main() {
     expect(
       controlCalls.map((c) => c.method),
       isNot(contains('setWindowTitle')),
-      reason: 'the control channel has no setWindowTitle case — such a call '
+      reason:
+          'the control channel has no setWindowTitle case — such a call '
           'only ever threw MissingPluginException into a swallowing '
           'catchError. The child retitles itself off connectionChanged.',
     );

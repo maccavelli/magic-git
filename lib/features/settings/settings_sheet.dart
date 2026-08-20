@@ -177,9 +177,10 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
               _section(
                 context,
                 'Command timeouts',
-                'How long a command may run before it is considered hung and '
-                    'killed. Raise these if a legitimately slow push or commit is '
-                    'being cut off.',
+                'Network seconds is the stall budget: a fetch/pull/push with '
+                    'no output for that long is killed. A slow transfer that is '
+                    'still printing may run up to 30 minutes. Commit timeout is '
+                    'still a wall clock — raise it if a slow hook is cut off.',
               ),
               _fieldRow('Network (fetch/pull/push), seconds', _network),
               const SizedBox(height: 10),

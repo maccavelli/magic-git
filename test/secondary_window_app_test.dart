@@ -51,6 +51,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
@@ -631,34 +632,37 @@ void main() {
   // 0009 M25: connectionProvider in this isolate projects the wire's
   // backend/phase, so Reveal-in-Finder / Open-file gates see a detached
   // LOCAL repo as local rather than as a disconnected SSH one.
-  test('WindowConnection projects the wire backend into connectionProvider', () {
-    final container = ProviderContainer(
-      overrides: [connectionProvider.overrideWith(WindowConnection.new)],
-    );
-    addTearDown(container.dispose);
+  test(
+    'WindowConnection projects the wire backend into connectionProvider',
+    () {
+      final container = ProviderContainer(
+        overrides: [connectionProvider.overrideWith(WindowConnection.new)],
+      );
+      addTearDown(container.dispose);
 
-    // Before the handshake: inert and non-local.
-    expect(container.read(connectionProvider).isConnected, isFalse);
+      // Before the handshake: inert and non-local.
+      expect(container.read(connectionProvider).isConnected, isFalse);
 
-    container
-        .read(windowSessionProvider.notifier)
-        .apply(
-          const ConnectionEventPayload(
-            phase: 'connected',
-            backend: 'local',
-            repoPath: '/Users/dev/repo',
-            connectionLabel: 'This Mac',
-            host: null,
-          ),
-        );
-    final connection = container.read(connectionProvider);
-    expect(connection.isConnected, isTrue);
-    expect(connection.isLocal, isTrue);
-    expect(connection.repoPath, '/Users/dev/repo');
-    expect(
-      connection.sessionEpoch,
-      0,
-      reason: 'epoch-keyed machinery stays main-window-only',
-    );
-  });
+      container
+          .read(windowSessionProvider.notifier)
+          .apply(
+            const ConnectionEventPayload(
+              phase: 'connected',
+              backend: 'local',
+              repoPath: '/Users/dev/repo',
+              connectionLabel: 'This Mac',
+              host: null,
+            ),
+          );
+      final connection = container.read(connectionProvider);
+      expect(connection.isConnected, isTrue);
+      expect(connection.isLocal, isTrue);
+      expect(connection.repoPath, '/Users/dev/repo');
+      expect(
+        connection.sessionEpoch,
+        0,
+        reason: 'epoch-keyed machinery stays main-window-only',
+      );
+    },
+  );
 }

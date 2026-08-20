@@ -110,6 +110,7 @@ class ProxyCommandExecutor implements CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
@@ -122,6 +123,7 @@ class ProxyCommandExecutor implements CommandExecutor {
       retries: retries,
       lane: lane,
       compress: compress,
+      activityIdle: activityIdle,
       operation: operation,
     );
 

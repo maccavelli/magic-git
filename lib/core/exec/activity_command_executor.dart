@@ -34,6 +34,7 @@ class ActivityCommandExecutor implements CommandExecutor {
     int retries = 0,
     ExecLane lane = ExecLane.exclusive,
     bool compress = false,
+    Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) => _inner.execute(
@@ -45,6 +46,7 @@ class ActivityCommandExecutor implements CommandExecutor {
     retries: retries,
     lane: lane,
     compress: compress,
+    activityIdle: activityIdle,
     operation:
         operation ??
         resolveDescriptor(repositoryPath: repoPath, lane: lane, argv: gitArgs),
