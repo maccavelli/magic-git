@@ -5,7 +5,7 @@
 
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/gestures.dart'
     show PointerDeviceKind, kSecondaryMouseButton;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -1139,6 +1139,79 @@ void main() {
       expect(find.textContaining('not logged in'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'a not-logged-in tree error shows a spinner while forge login is pending',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(const {});
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            repoStructureProvider(_repo).overrideWith(
+              (ref) async => throw const GitException(
+                'git ls-files failed',
+                SSHCommandResult(
+                  exitCode: 128,
+                  stdout: '',
+                  stderr: 'glab: not logged in',
+                ),
+              ),
+            ),
+            repoStatusOverlayProvider(_repo).overrideWith((ref) => _overlay),
+            connectionProvider.overrideWith(
+              () => _StubConnection(
+                const ConnectionState(
+                  phase: ConnectionPhase.connected,
+                  forgeAuthPending: true,
+                ),
+              ),
+            ),
+          ],
+          child: MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: SizedBox(
+              width: 900,
+              height: 600,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: FileView(
+                  maxWidth: 900,
+                  repoPath: _repo,
+                  onOpenFile:
+                      (
+                        _, {
+                        required staged,
+                        required untracked,
+                        required conflict,
+                      }) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      // Not pumpAndSettle: the spinner animates forever.
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.byType(ProgressCircle), findsWidgets);
+      expect(find.textContaining('not logged in'), findsNothing);
+
+      // Unmount before the test ends so the ticker cannot fail the
+      // binding's pending-timer assertion at teardown.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(seconds: 1));
+    },
+  );
+}
+
+/// A ConnectionController stuck at a fixed state, so a test can pin
+/// `forgeAuthPending` without running a real connect.
+class _StubConnection extends ConnectionController {
+  final ConnectionState _state;
+  _StubConnection(this._state);
+  @override
+  ConnectionState build() => _state;
 }
 
 /// Records the right-click mutation calls (add-to-.gitignore / delete) without

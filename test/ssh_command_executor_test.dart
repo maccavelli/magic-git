@@ -18,8 +18,10 @@ import 'package:remote_magic_git/core/exec/command_telemetry.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
+import 'helpers/fake_ssh_client.dart';
+
 void main() {
-  group('SSHClientManager generation + dual-client surface', () {
+  group('SSHClientManager generation + client slots', () {
     test('starts at 0 and is bumped by disconnect even with no connection', () {
       final manager = SSHClientManager();
       expect(manager.generation, 0);
@@ -362,6 +364,253 @@ void main() {
         throwsA(isA<SSHChannelOpenError>()),
       );
       expect(CommandTelemetry.instance.channelOpenErrors, 1);
+    });
+  });
+
+  group('bindTestClients test seam', () {
+    test('makes execute see an established connection', () async {
+      final manager = SSHClientManager();
+      final executor = SSHCommandExecutor(manager);
+      final client = FakeSshClient();
+      manager.bindTestClients(command: client);
+
+      final result = await executor.execute(repoPath: '/r', gitArgs: ['true']);
+
+      expect(result.isSuccess, isTrue);
+      expect(result.exitCode, 0);
+      expect(client.executeCommands, hasLength(1));
+      expect(client.executeCommands.single, contains('true'));
+      expect(manager.attachedClientCount, 1);
+      expect(manager.clientGeneration, manager.generation);
+    });
+
+    test('binding no command client leaves the connection unestablished', () {
+      final manager = SSHClientManager();
+      final executor = SSHCommandExecutor(manager);
+      manager.bindTestClients();
+
+      expect(manager.attachedClientCount, 0);
+      expect(manager.clientGeneration, -1);
+      expect(
+        executor.execute(repoPath: '/r', gitArgs: ['true']),
+        throwsA(isA<Exception>()),
+      );
+    });
+  });
+
+  group('ExecLane routing across the client slots', () {
+    // `executeCommands` holds formatted shell strings (`cd '<repo>' && …`),
+    // not argv — so match on a marker substring, never list membership.
+    bool ran(FakeSshClient client, String marker) =>
+        client.executeCommands.any((cmd) => cmd.contains(marker));
+
+    test('sync uses syncClient; other lanes use the command client', () async {
+      final manager = SSHClientManager();
+      final executor = SSHCommandExecutor(manager);
+      final command = FakeSshClient();
+      final sync = FakeSshClient();
+      manager.bindTestClients(command: command, sync: sync);
+
+      await executor.execute(
+        repoPath: '/r',
+        gitArgs: ['zz-read'],
+        lane: ExecLane.read,
+      );
+      await executor.execute(
+        repoPath: '/r',
+        gitArgs: ['zz-sync'],
+        lane: ExecLane.sync,
+      );
+      await executor.execute(
+        repoPath: '/r',
+        gitArgs: ['zz-mut'],
+        lane: ExecLane.exclusive,
+      );
+
+      expect(ran(command, 'zz-read'), isTrue);
+      expect(ran(command, 'zz-mut'), isTrue);
+      expect(ran(command, 'zz-sync'), isFalse);
+
+      expect(ran(sync, 'zz-sync'), isTrue);
+      expect(ran(sync, 'zz-read'), isFalse);
+      expect(ran(sync, 'zz-mut'), isFalse);
+    });
+
+    test('a degraded sync lane shares the command client', () async {
+      final manager = SSHClientManager();
+      final executor = SSHCommandExecutor(manager);
+      final command = FakeSshClient();
+      final stream = FakeSshClient();
+      manager.bindTestClients(command: command, stream: stream);
+
+      expect(manager.syncClientDegraded, isTrue);
+      expect(manager.attachedClientCount, 2);
+      // The fallback must be the *command* client, not a null slot.
+      expect(identical(manager.syncClient, command), isTrue);
+
+      await executor.execute(
+        repoPath: '/r',
+        gitArgs: ['zz-sync'],
+        lane: ExecLane.sync,
+      );
+
+      expect(ran(command, 'zz-sync'), isTrue);
+      expect(ran(stream, 'zz-sync'), isFalse);
+    });
+
+    test('attachedClientCount counts the bound slots', () {
+      final manager = SSHClientManager();
+      expect(manager.attachedClientCount, 0);
+
+      manager.bindTestClients(
+        command: FakeSshClient(),
+        stream: FakeSshClient(),
+        sync: FakeSshClient(),
+      );
+      expect(manager.attachedClientCount, 3);
+      expect(manager.syncClientDegraded, isFalse);
+      expect(manager.streamClientDegraded, isFalse);
+
+      manager.bindTestClients(command: FakeSshClient());
+      expect(manager.attachedClientCount, 1);
+      expect(manager.syncClientDegraded, isTrue);
+      expect(manager.streamClientDegraded, isTrue);
+    });
+  });
+
+  group('uploadBytes sideloads stdin', () {
+    test('feeds stdin via addStream, flush, then close', () async {
+      final manager = SSHClientManager();
+      final executor = SSHCommandExecutor(manager);
+      // uploadBytes runs on ExecLane.isolated — the command client, not sync —
+      // and throws unless the result is exit 0.
+      final client = FakeSshClient();
+      manager.bindTestClients(command: client);
+
+      await executor.uploadBytes('/tmp/x y', Uint8List.fromList([1, 2, 3]));
+
+      final session = client.sessions.single;
+      // A regression to `session.write(stdin)` records 'write' here; a
+      // regression to a single buffered `stdin.add` records 'add'. Either
+      // fails, which is the point of 0014 T7.
+      expect(session.stdinOps, ['addStream', 'flush', 'close']);
+      expect(session.stdinBytes, Uint8List.fromList([1, 2, 3]));
+
+      expect(client.executeCommands.single, contains('cat >'));
+      expect(client.executeCommands.single, contains(r"'/tmp/x y'"));
+    });
+  });
+
+  group('activityIdle through SSHCommandExecutor.execute', () {
+    late SSHClientManager manager;
+    late SSHCommandExecutor executor;
+    late FakeSshClient client;
+    late StreamController<Uint8List> out;
+    late StreamController<Uint8List> err;
+    late Completer<int?> exit;
+    Timer? pulser;
+
+    setUp(() {
+      manager = SSHClientManager();
+      executor = SSHCommandExecutor(manager);
+      client = FakeSshClient();
+      out = StreamController<Uint8List>();
+      err = StreamController<Uint8List>();
+      exit = Completer<int?>();
+      client
+        ..nextStdout = out
+        ..nextStderr = err
+        ..nextExit = exit;
+      manager.bindTestClients(command: client);
+    });
+
+    tearDown(() async {
+      pulser?.cancel();
+      pulser = null;
+      if (!exit.isCompleted) exit.complete(0);
+      await out.close();
+      await err.close();
+    });
+
+    /// Emits a byte every [every] until [ticks] have fired, then closes both
+    /// streams and exits 0. `period > idle budget` is the point: only the
+    /// `deadline.pulse()` calls in the drain keep the command alive.
+    void pulseThenFinish(
+      StreamController<Uint8List> target, {
+      required Duration every,
+      required int ticks,
+    }) {
+      var fired = 0;
+      pulser = Timer.periodic(every, (t) async {
+        if (fired++ >= ticks) {
+          t.cancel();
+          pulser = null;
+          await out.close();
+          await err.close();
+          if (!exit.isCompleted) exit.complete(0);
+          return;
+        }
+        target.add(Uint8List.fromList([0x70]));
+      });
+    }
+
+    test('a session pulsing stderr past the idle budget completes', () async {
+      pulseThenFinish(err, every: const Duration(milliseconds: 40), ticks: 8);
+
+      final result = await executor.execute(
+        repoPath: '/r',
+        gitArgs: ['git', 'fetch'],
+        activityIdle: const Duration(milliseconds: 120),
+        timeout: const Duration(seconds: 5),
+      );
+
+      expect(result.isSuccess, isTrue);
+      expect(result.stderr, isNotEmpty);
+    });
+
+    test('a session pulsing stdout past the idle budget completes', () async {
+      pulseThenFinish(out, every: const Duration(milliseconds: 40), ticks: 8);
+
+      final result = await executor.execute(
+        repoPath: '/r',
+        gitArgs: ['git', 'fetch'],
+        activityIdle: const Duration(milliseconds: 120),
+        timeout: const Duration(seconds: 5),
+      );
+
+      expect(result.isSuccess, isTrue);
+      expect(result.stdout, isNotEmpty);
+    });
+
+    test('a silent session throws SSHCommandTimeout', () async {
+      await expectLater(
+        executor.execute(
+          repoPath: '/r',
+          gitArgs: ['git', 'fetch'],
+          activityIdle: const Duration(milliseconds: 80),
+          timeout: const Duration(seconds: 5),
+        ),
+        throwsA(isA<SSHCommandTimeout>()),
+      );
+    });
+
+    test('the ceiling still kills a pulsing session', () async {
+      // Never finishes: ticks far beyond what the ceiling allows.
+      pulseThenFinish(
+        out,
+        every: const Duration(milliseconds: 20),
+        ticks: 1000,
+      );
+
+      await expectLater(
+        executor.execute(
+          repoPath: '/r',
+          gitArgs: ['git', 'fetch'],
+          activityIdle: const Duration(seconds: 5),
+          timeout: const Duration(milliseconds: 200),
+        ),
+        throwsA(isA<SSHCommandTimeout>()),
+      );
     });
   });
 }

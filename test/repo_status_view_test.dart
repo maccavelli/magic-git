@@ -286,6 +286,13 @@ Future<_FakeGitService> _pump(
   // workspace-navigation restores apply (0009 H3).
   bool sessionful = false,
   Object? statusError,
+  // Connect-time forge login still in flight: an auth-looking status error is
+  // then in-progress login, not a broken tree, and the pane must show a
+  // spinner instead of the dump.
+  bool forgeAuthPending = false,
+  // A mounted ProgressCircle animates forever, so pumpAndSettle would spin;
+  // spinner tests pass `settle: false` and unmount via [_unmount].
+  bool settle = true,
 }) async {
   final resolved = git ?? _FakeGitService();
   final container = ProviderContainer(
@@ -323,6 +330,7 @@ Future<_FakeGitService> _pump(
             phase: ConnectionPhase.connected,
             repoPath: sessionful ? _repo : null,
             sessionEpoch: sessionful ? 1 : 0,
+            forgeAuthPending: forgeAuthPending,
           ),
         ),
       ),
@@ -346,8 +354,20 @@ Future<_FakeGitService> _pump(
       ),
     ),
   );
-  await tester.pumpAndSettle();
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump();
+  }
   return resolved;
+}
+
+/// Unmounts the tree and drains its tickers before the test ends: a mounted
+/// [ProgressCircle] keeps a repeating animation alive, which fails the
+/// binding's `!timersPending` assertion at teardown.
+Future<void> _unmount(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump(const Duration(seconds: 1));
 }
 
 const _syncVerbs = {'Fetch', 'Pull', 'Push', 'Sync'};
@@ -2384,6 +2404,52 @@ void main() {
       );
 
       expect(find.textContaining('not logged in'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a not-logged-in status error shows a spinner while forge login is pending',
+    (tester) async {
+      await _pump(
+        tester,
+        status: _statusWith(),
+        statusError: const GitException(
+          'git status failed',
+          SSHCommandResult(
+            exitCode: 128,
+            stdout: '',
+            stderr: 'glab: not logged in',
+          ),
+        ),
+        forgeAuthPending: true,
+        settle: false,
+      );
+
+      expect(find.byType(ProgressCircle), findsWidgets);
+      expect(find.textContaining('not logged in'), findsNothing);
+
+      await _unmount(tester);
+    },
+  );
+
+  testWidgets(
+    'a non-auth status error is shown even while forge login is pending',
+    (tester) async {
+      await _pump(
+        tester,
+        status: _statusWith(),
+        statusError: const GitException(
+          'git status failed',
+          SSHCommandResult(
+            exitCode: 128,
+            stdout: '',
+            stderr: 'fatal: not a git repository',
+          ),
+        ),
+        forgeAuthPending: true,
+      );
+
+      expect(find.textContaining('not a git repository'), findsOneWidget);
     },
   );
 }

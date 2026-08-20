@@ -10,6 +10,11 @@ class _FakeExecutor extends SSHCommandExecutor {
   final List<Map<String, String>?> envs = [];
   final List<String?> stdins = [];
 
+  /// Stall budget handed to each call, parallel to [calls]. Network ops must
+  /// carry [GitService.networkTimeout] here or the activity deadline built in
+  /// the executor (0014 T2) never applies to fetch/pull/push.
+  final List<Duration?> activityIdles = [];
+
   /// Result for the next call. When [results] is non-empty it is consumed in
   /// order (for multi-call flows like loginWithToken); otherwise [next] is used.
   SSHCommandResult next = const SSHCommandResult(
@@ -38,6 +43,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     calls.add(gitArgs);
     envs.add(extraEnv);
     stdins.add(stdin);
+    activityIdles.add(activityIdle);
     return results.isNotEmpty ? results.removeAt(0) : next;
   }
 }
@@ -603,6 +609,76 @@ void main() {
       expect(exec.calls[4], upstreamProbe);
       expect(exec.calls[5], ['git', 'remote', 'get-url', 'origin']);
       expect(exec.calls[6], ['git', 'push']);
+
+      // The stall budget rides the network commands themselves, not the
+      // local probes that precede them. Indexed by argv content so an added
+      // probe cannot silently shift the assertion onto the wrong call.
+      for (final verb in ['fetch', 'pull', 'push']) {
+        final i = exec.calls.indexWhere((c) => c.contains(verb));
+        expect(i, isNonNegative, reason: 'no $verb call recorded');
+        expect(
+          exec.activityIdles[i],
+          git.networkTimeout,
+          reason: '$verb must carry the stall budget',
+        );
+      }
+      final probe = exec.calls.indexWhere((c) => c.contains('get-url'));
+      expect(exec.activityIdles[probe], isNull);
+    });
+
+    test('network ops pass activityIdle; status does not', () async {
+      await git.fetch('/repo');
+      await git.pull('/repo');
+      await git.push('/repo');
+      await git.deleteRemoteBranch('/repo', 'origin', 'feature');
+      await git.pushTags('/repo', ['v1']);
+      await git.deleteRemoteTag('/repo', 'origin', 'v1');
+      await git.lsRemoteTags('/repo');
+      try {
+        // The empty-stdout snapshot may or may not parse; either way the
+        // execute is already recorded, which is what this asserts on.
+        await git.status('/repo');
+      } catch (_) {
+        // Parsing an empty snapshot is not what this test is about.
+      }
+
+      const networkVerbs = {'fetch', 'pull', 'push', 'ls-remote'};
+      var networkCalls = 0;
+      var localCalls = 0;
+      for (var i = 0; i < exec.calls.length; i++) {
+        final argv = exec.calls[i];
+        if (argv.any(networkVerbs.contains)) {
+          networkCalls++;
+          expect(
+            exec.activityIdles[i],
+            git.networkTimeout,
+            reason: 'network call ${argv.join(' ')} lost its stall budget',
+          );
+        } else {
+          localCalls++;
+          expect(
+            exec.activityIdles[i],
+            isNull,
+            reason: 'local call ${argv.join(' ')} must not stall-detect',
+          );
+        }
+      }
+      // fetch, pull, push, push --delete, push tags, push --delete tag,
+      // ls-remote: every network op in the list above reached the executor.
+      expect(networkCalls, 7);
+      // The upstream/get-url probes and the status snapshot are the local
+      // side; without them the loop above would be vacuously true.
+      expect(localCalls, isNonZero);
+    });
+
+    test('a custom networkTimeout reaches fetch', () async {
+      final custom = GitService(
+        exec,
+        networkTimeout: const Duration(seconds: 17),
+      );
+      await custom.fetch('/repo');
+      final i = exec.calls.indexWhere((c) => c.contains('fetch'));
+      expect(exec.activityIdles[i], const Duration(seconds: 17));
     });
 
     test('a resolved environment pins fetch/push auth to the absolute CLI '

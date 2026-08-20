@@ -266,6 +266,36 @@ class SSHClientManager {
   static Duration streamRedialDelay(int failures) =>
       Duration(seconds: math.min(15 << failures, 120));
 
+  /// Test-only: install already-authenticated client slots without running a
+  /// handshake, so unit tests can assert which slot a lane actually talks to.
+  ///
+  /// Stops and clears any live health monitors and redial timers first — a
+  /// manager that had really connected must not keep pinging a fake — and
+  /// starts none of its own. [connect] is untouched; nothing in production
+  /// calls this.
+  @visibleForTesting
+  void bindTestClients({
+    SSHClient? command,
+    SSHClient? stream,
+    SSHClient? sync,
+  }) {
+    _generation++;
+    _health?.stop();
+    _health = null;
+    _streamHealth?.stop();
+    _streamHealth = null;
+    _syncHealth?.stop();
+    _syncHealth = null;
+    _redialTimer?.cancel();
+    _redialTimer = null;
+    _syncRedialTimer?.cancel();
+    _syncRedialTimer = null;
+    _client = command;
+    _streamClient = stream;
+    _syncClient = sync;
+    _clientGeneration = command == null ? -1 : _generation;
+  }
+
   /// Primary client (commands, SFTP, health). Backward-compatible name.
   SSHClient? get client => _client;
 

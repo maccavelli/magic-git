@@ -2,6 +2,7 @@
 // must say so and hand the user the fix (the Dashboard's Authentication
 // section), instead of a bare red error dump.
 
+import 'package:flutter/widgets.dart' show SizedBox;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -10,6 +11,53 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/forge/forge_widgets.dart';
+
+/// A ConnectionController stuck at a fixed state, so a test can pin
+/// `forgeAuthPending` without running a real connect.
+class _StubConnection extends ConnectionController {
+  final ConnectionState _state;
+  _StubConnection(this._state);
+  @override
+  ConnectionState build() => _state;
+}
+
+/// Unmounts the tree and drains any ticker before the test ends: a mounted
+/// [ProgressCircle] keeps a repeating animation alive, which fails the
+/// binding's `!timersPending` assertion at teardown.
+Future<void> _unmount(WidgetTester tester) async {
+  await tester.pumpWidget(const SizedBox.shrink());
+  await tester.pump(const Duration(seconds: 1));
+}
+
+Future<void> _pumpPane(
+  WidgetTester tester,
+  Object error, {
+  required bool forgeAuthPending,
+}) async {
+  final container = ProviderContainer(
+    overrides: [
+      connectionProvider.overrideWith(
+        () => _StubConnection(
+          ConnectionState(
+            phase: ConnectionPhase.connected,
+            forgeAuthPending: forgeAuthPending,
+          ),
+        ),
+      ),
+    ],
+  );
+  addTearDown(container.dispose);
+  await tester.pumpWidget(
+    UncontrolledProviderScope(
+      container: container,
+      child: MacosApp(
+        debugShowCheckedModeBanner: false,
+        home: PaneError(error),
+      ),
+    ),
+  );
+  await tester.pump();
+}
 
 Future<ProviderContainer> _pump(WidgetTester tester, Object error) async {
   final container = ProviderContainer();
@@ -88,5 +136,45 @@ void main() {
     await _pump(tester, Exception('could not resolve host'));
     expect(find.textContaining('could not resolve host'), findsOneWidget);
     expect(find.text('Open Dashboard'), findsNothing);
+  });
+
+  testWidgets('PaneError shows a spinner for an auth failure while forge '
+      'login is pending', (tester) async {
+    await _pumpPane(
+      tester,
+      Exception('not logged in to github.com'),
+      forgeAuthPending: true,
+    );
+
+    expect(find.byType(ProgressCircle), findsWidgets);
+    expect(find.textContaining('not logged in'), findsNothing);
+
+    await _unmount(tester);
+  });
+
+  testWidgets('PaneError shows the dump once forge login has settled', (
+    tester,
+  ) async {
+    await _pumpPane(
+      tester,
+      Exception('not logged in to github.com'),
+      forgeAuthPending: false,
+    );
+
+    expect(find.textContaining('not logged in'), findsOneWidget);
+    expect(find.byType(ProgressCircle), findsNothing);
+  });
+
+  testWidgets('PaneError never swallows a non-auth failure, pending or not', (
+    tester,
+  ) async {
+    await _pumpPane(
+      tester,
+      Exception('could not resolve host'),
+      forgeAuthPending: true,
+    );
+
+    expect(find.textContaining('could not resolve host'), findsOneWidget);
+    expect(find.byType(ProgressCircle), findsNothing);
   });
 }
