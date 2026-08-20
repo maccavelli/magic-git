@@ -1,6 +1,7 @@
 ---
-status: "proposed"
+status: "executed"
 date: 2026-08-20
+executed: 2026-08-20
 associated-madr: "0015-MADR-ssh-engine-and-ui-unit-test-gaps.md"
 owner: [Maintainer]
 target-milestone: Next work cycle (post-review)
@@ -26,6 +27,26 @@ leaving it unaddressed would mean shipping tests that cannot fail.
 
 A second engineer following only this file, against the tree at `39edbe0`
 plus the U9–U16 working tree, must produce the same diff.
+
+## Outcome
+
+**Executed 2026-08-20** across `0a303cd`, `b3b3756`, `dbe163e`, `3d709c6`.
+Full suite 3259 passed / 2 skipped, analyze and format clean.
+
+What execution taught, beyond the ids:
+
+* **U17 came out of Phase 6, not the audit.** `RunJobsView`'s error test sat
+  on a spinner because a bare `ProviderScope` runs Riverpod's default retry.
+  That is a suite-wide harness defect, and it is why
+  [0017](./0017-MADR-provider-retry-policy-on-providers.md) exists.
+* **U18 came out of Phase 6 too.** Tapping a merge-method label did nothing;
+  nine of ten checkbox/radio sites had inert labels.
+* A `RenderFlex` overflow in the Phase 4 overlay tests is a `flutter_test`
+  font artifact, not a bug: the fixed-width fallback makes
+  `'Reconnecting… (attempt 2)'` roughly twice its SF Pro width against a
+  fixed 340 px card. Drained deliberately, with anything else rethrown.
+* U9/U11 add ~50 s of wall clock to a full run on a machine with sshd. That
+  is the price of the only paths a fake cannot reach.
 
 ## Goal
 

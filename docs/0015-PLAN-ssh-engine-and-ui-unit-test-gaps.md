@@ -1,6 +1,7 @@
 ---
-status: "draft"
+status: "executed"
 date: 2026-08-20
+executed: 2026-08-20
 associated-madr: "0015-MADR-ssh-engine-and-ui-unit-test-gaps.md"
 owner: [Maintainer]
 target-milestone: Next work cycle (post-review)
@@ -22,6 +23,25 @@ produce the same diff.
 production fix and Phase 1's four tests in the same commit that added this
 plan. Phase 1 is therefore a re-verification step, not new work; execution
 starts at Phase 2. Every other phase is untouched.
+
+## Outcome
+
+**Executed 2026-08-20.** Phase 1 was already green on arrival; Phases 2–10
+shipped in `39edbe0`. Full suite 3210 passed / 2 skipped, analyze and format
+clean. Every HIGH id closed with a deletion check.
+
+Three notes worth carrying forward:
+
+* The `extends SSHClient` bet in Phase 3 paid off — dartssh2's constructor
+  over a stub `SSHSocket` schedules no timers, so no `implements` fallback and
+  no production extract was needed, and halt condition 1 never fired.
+* The Phase 8 teardown hazard did not materialise: unmount plus a 1 s drain
+  was enough, with no 3 s escalation and no dropped assertions.
+* Phase 6's instruction to pump `MergeOptionsSheet` directly was impossible —
+  the body is private. Driven through `showMergeOptionsSheet` instead, which
+  is what the forge panels actually call. That mismatch became U19 in
+  [the MADR](./0015-MADR-ssh-engine-and-ui-unit-test-gaps.md) and is now
+  written into `AGENTS.md`.
 
 ## Goal
 

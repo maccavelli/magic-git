@@ -1,6 +1,7 @@
 ---
-status: "proposed"
+status: "executed"
 date: 2026-08-20
+executed: 2026-08-20
 associated-madr: "0017-MADR-provider-retry-policy-on-providers.md"
 owner: [Maintainer]
 target-milestone: Next work cycle (post-review)
@@ -23,6 +24,47 @@ source scan only for the syntactic one (the retry annotation).
 
 A second engineer following only this file, against the tree at `3d709c6`,
 must produce the same diff.
+
+## Outcome
+
+**Executed 2026-08-20** across `f417455`, `764e1f8`, `ed6afc8`, `ec18bd8`,
+`202ed4e`, `791ed1d`. Full suite 3288 passed / 2 skipped, analyze clean, every
+touched file format-clean. All four guards proven by deletion check: removing
+a provider's `retry:` fails the scan by file and line; stripping `app-sandbox`
+from an entitlements copy fails G1; removing one `ShellEscaper.escape` call
+fails seven G2 tests; encoding `stderr` as a String fails both G3 guards.
+
+**Phase 3b found zero fallout.** The plan predicted failing tests and capped
+them at ~15; all 77 annotations landed without changing a single existing
+test. The triage procedure went unused.
+
+**Three specifications in this plan were wrong, and were corrected during
+execution:**
+
+1. *Phase 1's edit mechanism.* The first attempt counted parentheses without
+   skipping string literals — and `app_providers.dart` embeds shell scripts
+   full of unbalanced parens. It corrupted the tree (6157 analyzer errors) and
+   was reverted. The replacement is a lexical scanner that skips strings, raw
+   strings, comments and interpolation, plus an angle-depth pre-scan, because
+   a record type in a type argument (`family<T, ({String repoPath})>`) opens a
+   paren before the argument list does. That same logic is now
+   `_declarationEnd` in `provider_retry_policy_test.dart`.
+2. *G2's invariant was too strict.* "The payload must equal an argv element,
+   or be escaped" rejects git's `:(literal)<path>` pathspec, which composes
+   the value into an element that `CommandFormatter` escapes wholesale and is
+   perfectly safe. The real boundary is narrower: only the `sh -c` script
+   element needs pre-escaping. The coverage guard also misfired on
+   apostrophe-bearing payloads, since escaping rewrites them and the raw
+   substring disappears.
+3. *G3's codec simulation.* `Uint8List` is also a `List<Object?>`, so it
+   matched the list arm and was rebuilt as a plain list — stripping the very
+   typing under test. Typed data now matches first.
+
+**A format sweep followed** (`e53fdce`, 215 files). It was formatting-only —
+verified by comparing token content with whitespace and closer-preceding
+commas normalised away: 4 of 215 files differed, and those four are the ones
+where `dart format` wrapped a single-line `if` onto two lines and tripped
+`curly_braces_in_flow_control_structures`, which needed braces added.
 
 ## Goal
 

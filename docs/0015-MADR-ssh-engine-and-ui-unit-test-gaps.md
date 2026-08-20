@@ -1,6 +1,7 @@
 ---
-status: proposed
+status: accepted
 date: 2026-08-20
+decided: 2026-08-20
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
