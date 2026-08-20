@@ -1,14 +1,15 @@
 // Provider scopes configured the way the app configures its own.
 //
-// A bare ProviderScope/ProviderContainer runs Riverpod in a configuration
-// Magic Git never uses: the default retry policy. Under it a failed provider
-// never emits AsyncError — the retry-pending state is an AsyncLoading
-// carrying the prior error, so `AsyncValue.when` renders `loading`
-// indefinitely and every error branch is unreachable. See
-// `provider_retry_policy_test.dart`, which pins both halves of that.
+// Since 0017 every async provider declares `retry: noProviderRetry` itself,
+// so a bare ProviderScope is no longer a trap: the policy travels with the
+// provider and survives overrideWith. These helpers remain the tidy default
+// — they apply the policy to anything unannotated, and they keep a test's
+// scope matching the app's if more scope configuration is added later.
 //
-// Use these in any widget test that expects to reach an error branch, and by
-// default in new tests so the harness cannot drift from the app again.
+// For the record of what the default policy does, and why the annotation
+// matters, see `provider_retry_policy_test.dart`: a failed provider sits in
+// AsyncLoading for ~38 s (10 retries) before emitting AsyncError, and
+// `when()` renders `loading` throughout.
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';

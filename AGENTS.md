@@ -150,14 +150,19 @@ exclusive barriers), output byte budgets (`command_drain.dart`), telemetry.
   feed the same watch-event pipeline.
 - Feature code lives in `lib/features/<area>/`; transport/domain logic in
   `lib/core/`. Tests are flat in `test/`, roughly one file per unit/widget.
-- The app disables Riverpod's automatic retry
-  (`retry: noProviderRetry`, `lib/core/providers/provider_retry_policy.dart`)
-  at every scope it creates. **A test must too** — build scopes with
-  `appProviderScope` / `appProviderContainer` (`test/helpers/app_scope.dart`).
-  Under the default policy a failed provider never emits `AsyncError`: it
-  holds an `AsyncLoading` carrying the error, so `when()` renders `loading`
-  forever and error branches are unreachable. `provider_retry_policy_test.dart`
-  pins both halves.
+- Riverpod's automatic retry is off. **Every async provider declares
+  `retry: noProviderRetry`** itself
+  (`lib/core/providers/provider_retry_policy.dart`), so the policy travels
+  with the provider and survives `overrideWith` — any scope, including a bare
+  `ProviderScope` in a test, resolves failures the way the app does. The three
+  production scopes pass it too, as a backstop.
+  `test/helpers/app_scope.dart` (`appProviderScope` / `appProviderContainer`)
+  remains the tidy way to build a scope in a test.
+  This is enforced, not requested: `provider_retry_policy_test.dart` scans
+  `lib/` for an unannotated provider or an unconfigured scope, and pins the
+  behaviour both ways. Under the default policy a failed provider sits in
+  `AsyncLoading` for ~38 s (10 retries) before emitting `AsyncError`, so
+  `when()` shows `loading` for longer than any test can pump.
 
 ### Sheets and their test seams
 

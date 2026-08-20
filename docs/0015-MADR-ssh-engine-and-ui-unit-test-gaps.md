@@ -412,11 +412,29 @@ this:
 
 | scope | observed state sequence | `when()` renders |
 |---|---|---|
-| default (tests) | `AsyncLoading` → `AsyncLoading(isReloading: true)`, repeating | **`loading`**, forever |
+| default (tests) | `AsyncLoading` → `AsyncLoading(isReloading: true)`, repeating for ~38 s | **`loading`** throughout |
 | `retry: (_, _) => null` (app) | `AsyncLoading` → `AsyncError` | **`error`** |
 
-Under the default policy the provider **never emits `AsyncError` at
-all**. The retry-pending state is an `AsyncLoading` carrying the prior
+**Corrected 2026-08-20** (see
+[0017](./0017-MADR-provider-retry-policy-on-providers.md)): the original
+wording said "forever" and "never emits `AsyncError` at all". Both overstate
+it. `ProviderContainer.defaultRetry` gives up after 10 attempts (exponential
+200 ms doubling, capped at 6.4 s) and *then* emits `AsyncError` — measured at
+38 s and 12 transitions on this tree. That is far longer than any widget test
+can pump, so the error branch is unreachable *in practice*, which is the
+point; but it is not literally never.
+
+A second correction: `defaultRetry` returns null immediately when
+`error is ProviderException || error is Error`, so a provider throwing an
+`Error` subtype (e.g. `StateError`) reaches `AsyncError` even under a bare
+scope. This sharpens the finding rather than softening it — the app's own
+`GitException` / `GhException` / `GlabException` all `implements Exception`,
+so the failures that matter are exactly the retried ones — but "every error
+branch is unreachable" is too broad, and some existing error tests pass
+legitimately for this reason.
+
+Under the default policy, for an `Exception`, the provider effectively
+never reaches `AsyncError` within a test's lifetime. The retry-pending state is an `AsyncLoading` carrying the prior
 error, so `isReloading` is true (`async_value.dart` ~97:
 `_hasState && isLoading && this is AsyncLoading`) and `when()` —
 whose `skipLoadingOnReload` defaults to **false** (~243, branch at
