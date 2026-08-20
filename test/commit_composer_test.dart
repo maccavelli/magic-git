@@ -54,7 +54,7 @@ void main() {
 
     expect(find.textContaining('2 staged files'), findsOneWidget);
     expect(find.textContaining('feature/composer'), findsOneWidget);
-    expect(find.text('Commit…'), findsOneWidget);
+    expect(find.text('Commit…'), findsNothing);
     expect(find.byType(MacosTextField), findsNothing);
   });
 

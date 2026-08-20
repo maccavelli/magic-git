@@ -1938,14 +1938,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     required String? policyAdvisory,
   }) {
     final stagedCount = status.staged.length;
-    // "Active" (accent-colored) while there's something left to stage; once
-    // everything is staged it reverts to the same secondary look it always had.
-    // Asked of the actual unstaged/untracked lists, not a count comparison —
-    // a partially-staged file is one record in BOTH lists, so `stagedCount <
+    // Accent (not secondary) while that button still has work. Asked of the
+    // actual unstaged/untracked lists, not a count comparison — a
+    // partially-staged file is one record in BOTH lists, so `stagedCount <
     // files.length` read a lone mixed file as "everything staged" while its
     // worktree half still had changes to stage.
     final hasUnstaged =
         status.unstaged.isNotEmpty || status.untracked.isNotEmpty;
+    final hasStaged = stagedCount > 0;
     return Container(
       decoration: const BoxDecoration(
         border: Border(top: BorderSide(color: MacosColors.separatorColor)),
@@ -1967,9 +1967,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           const SizedBox(width: 8),
           AppPushButton(
             controlSize: ControlSize.large,
-            secondary: true,
+            secondary: !hasStaged,
             // The mirror of Stage All — nothing staged, nothing to do.
-            onPressed: stagedCount > 0 ? _unstageAll : null,
+            onPressed: hasStaged ? _unstageAll : null,
             child: const Text('Unstage All'),
           ),
           const SizedBox(width: 8),
@@ -1980,6 +1980,33 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             // to stage dims the button instead of running a no-op (0009 L8).
             onPressed: hasUnstaged ? _stageAll : null,
             child: const Text('Stage All'),
+          ),
+          const SizedBox(width: 8),
+          Builder(
+            builder: (context) {
+              // Teach the live focus-composer chord (⌘G default, remaps
+              // honored) on the button that does the same thing (0009 L10).
+              final bindings = ref.watch(
+                keymapProvider,
+              )['repository.focusCommit'];
+              final suffix = (bindings == null || bindings.isEmpty)
+                  ? ''
+                  : ' (${bindings.first.label})';
+              return MacosTooltip(
+                message: 'Focus commit composer$suffix',
+                child: AppPushButton(
+                  controlSize: ControlSize.large,
+                  secondary: !hasStaged,
+                  onPressed: hasStaged
+                      ? () {
+                          composerController.expand();
+                          _openCommitComposer();
+                        }
+                      : null,
+                  child: const Text('Commit…'),
+                ),
+              );
+            },
           ),
         ],
       ),

@@ -131,33 +131,6 @@ class _CommitComposerState extends ConsumerState<CommitComposer> {
               style: MacosTheme.of(context).typography.caption1,
             ),
           ),
-          const SizedBox(width: 8),
-          Builder(
-            builder: (context) {
-              // Teach the live focus-composer chord (⌘G default, remaps
-              // honored) on the button that does the same thing (0009 L10).
-              final bindings = ref.watch(
-                keymapProvider,
-              )['repository.focusCommit'];
-              final suffix = (bindings == null || bindings.isEmpty)
-                  ? ''
-                  : ' (${bindings.first.label})';
-              return MacosTooltip(
-                message: 'Focus commit composer$suffix',
-                child: AppPushButton(
-                  controlSize: ControlSize.regular,
-                  secondary: false,
-                  onPressed: count == 0
-                      ? null
-                      : () {
-                          controller.expand();
-                          widget.onExpand?.call();
-                        },
-                  child: const Text('Commit…'),
-                ),
-              );
-            },
-          ),
         ],
       );
     }

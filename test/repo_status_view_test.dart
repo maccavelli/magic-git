@@ -2092,9 +2092,14 @@ void main() {
       ),
     );
     expect(
+      stageAll.onPressed,
+      isNotNull,
+      reason: 'the worktree half of a mixed file is still stageable',
+    );
+    expect(
       stageAll.secondary,
       isFalse,
-      reason: 'the worktree half of a mixed file is still stageable',
+      reason: 'accent while there is still something to stage',
     );
   });
 
@@ -2182,6 +2187,48 @@ void main() {
     );
     expect(stageAll.onPressed, isNull);
   });
+
+  testWidgets(
+    'commit bar buttons match size and order Unstage All, Stage All, Commit…',
+    (tester) async {
+      await _pump(
+        tester,
+        status: _statusWith(
+          staged: const [
+            GitFileStatus(path: 'lib/a.dart', statusX: 'M', statusY: '.'),
+          ],
+          unstaged: const [
+            GitFileStatus(path: 'lib/b.dart', statusX: '.', statusY: 'M'),
+          ],
+        ),
+      );
+
+      AppPushButton button(String label) => tester.widget<AppPushButton>(
+        find.byWidgetPredicate(
+          (w) =>
+              w is AppPushButton &&
+              w.child is Text &&
+              (w.child as Text).data == label,
+        ),
+      );
+
+      final unstage = button('Unstage All');
+      final stage = button('Stage All');
+      final commit = button('Commit…');
+      expect(unstage.controlSize, ControlSize.large);
+      expect(stage.controlSize, ControlSize.large);
+      expect(commit.controlSize, ControlSize.large);
+      expect(unstage.secondary, isFalse, reason: 'staged files to unstage');
+      expect(stage.secondary, isFalse, reason: 'unstaged files to stage');
+      expect(commit.secondary, isFalse, reason: 'staged files to commit');
+
+      final unstageX = tester.getCenter(find.text('Unstage All')).dx;
+      final stageX = tester.getCenter(find.text('Stage All')).dx;
+      final commitX = tester.getCenter(find.text('Commit…')).dx;
+      expect(unstageX, lessThan(stageX));
+      expect(stageX, lessThan(commitX));
+    },
+  );
 
   // 0009 H3: a revealed (palette / Back-Forward) file location must land on
   // its real section — the conflict pane for an unmerged path.
