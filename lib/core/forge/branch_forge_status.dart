@@ -14,6 +14,7 @@ import '../git/branch_review_query.dart';
 import '../github/models.dart';
 import '../gitlab/models.dart';
 import '../providers/app_providers.dart';
+import '../providers/provider_retry_policy.dart';
 import 'forge.dart';
 
 /// A unified CI state across GitHub workflow runs and GitLab pipelines — the
@@ -94,12 +95,16 @@ Map<String, BranchForge> _combineGithub(
   }
   return _merge(
     prByBranch.map(
-      (k, pr) => MapEntry(
-        k,
-        (number: pr.number, url: pr.url, title: pr.title, draft: pr.draft),
-      ),
+      (k, pr) => MapEntry(k, (
+        number: pr.number,
+        url: pr.url,
+        title: pr.title,
+        draft: pr.draft,
+      )),
     ),
-    ciByBranch.map((k, r) => MapEntry(k, (ci: _fromGh(r.runState), url: r.url))),
+    ciByBranch.map(
+      (k, r) => MapEntry(k, (ci: _fromGh(r.runState), url: r.url)),
+    ),
     isMr: false,
   );
 }
@@ -120,10 +125,12 @@ Map<String, BranchForge> _combineGitlab(
   }
   return _merge(
     mrByBranch.map(
-      (k, mr) => MapEntry(
-        k,
-        (number: mr.iid, url: mr.webUrl, title: mr.title, draft: mr.draft),
-      ),
+      (k, mr) => MapEntry(k, (
+        number: mr.iid,
+        url: mr.webUrl,
+        title: mr.title,
+        draft: mr.draft,
+      )),
     ),
     ciByBranch.map(
       (k, p) => MapEntry(k, (ci: _fromGl(p.ciStatus), url: p.webUrl)),
@@ -190,7 +197,7 @@ final branchForgeProvider = FutureProvider.autoDispose
         // Forge unreachable / unauthenticated / no remote — no signal, no error.
         return const {};
       }
-    });
+    }, retry: noProviderRetry);
 
 /// Protected-branch rules for [repoPath], or an explicit "unknown".
 ///
@@ -236,7 +243,7 @@ final protectedBranchRulesProvider = FutureProvider.autoDispose
         case Forge.unknown:
           return BranchProtectionRules.unavailable;
       }
-    });
+    }, retry: noProviderRetry);
 
 /// What we know about a repo's forge state — and whether we know it at all.
 ///
@@ -290,9 +297,7 @@ final branchForgeKnowledgeProvider = FutureProvider.autoDispose
         case Forge.github:
           try {
             final prs = await ref.watch(pullRequestsProvider(repoPath).future);
-            final runs = await ref.watch(
-              workflowRunsProvider(repoPath).future,
-            );
+            final runs = await ref.watch(workflowRunsProvider(repoPath).future);
             return BranchForgeKnowledge(
               byShortName: _combineGithub(prs, runs),
               known: true,
@@ -303,9 +308,7 @@ final branchForgeKnowledgeProvider = FutureProvider.autoDispose
           }
         case Forge.gitlab:
           try {
-            final mrs = await ref.watch(
-              mergeRequestsProvider(repoPath).future,
-            );
+            final mrs = await ref.watch(mergeRequestsProvider(repoPath).future);
             final pipes = await ref.watch(pipelinesProvider(repoPath).future);
             return BranchForgeKnowledge(
               byShortName: _combineGitlab(mrs, pipes),
@@ -320,4 +323,4 @@ final branchForgeKnowledgeProvider = FutureProvider.autoDispose
         case Forge.unknown:
           return const BranchForgeKnowledge(forge: Forge.unknown);
       }
-    });
+    }, retry: noProviderRetry);

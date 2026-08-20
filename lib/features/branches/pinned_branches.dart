@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/providers/app_providers.dart';
+import '../../core/providers/provider_retry_policy.dart';
 import 'branch_workspace_prefs.dart';
 
 String _keyFor(String repoPath) => 'pinnedBranches_$repoPath';
@@ -34,7 +35,7 @@ final pinnedBranchesProvider = FutureProvider.autoDispose
       } catch (_) {
         return <String>{};
       }
-    });
+    }, retry: noProviderRetry);
 
 /// The set of hidden branch short-names for [repoPath]. Empty on any error.
 ///
@@ -53,7 +54,7 @@ final hiddenBranchesProvider = FutureProvider.autoDispose
       } catch (_) {
         return <String>{};
       }
-    });
+    }, retry: noProviderRetry);
 
 /// Whether hidden branches are currently revealed for [repoPath].
 final showHiddenBranchesProvider = FutureProvider.autoDispose
@@ -67,7 +68,7 @@ final showHiddenBranchesProvider = FutureProvider.autoDispose
       } catch (_) {
         return false;
       }
-    });
+    }, retry: noProviderRetry);
 
 /// Pins or unpins [branch] in the identity-keyed workspace record.
 Future<void> setPinnedBranch(

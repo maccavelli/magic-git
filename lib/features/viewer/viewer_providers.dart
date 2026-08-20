@@ -6,7 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:meta/meta.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
-import '../../core/ssh/ssh_command_executor.dart' show SSHCommandSuperseded, SSHCommandTimeout, SSHOutputExceeded;
+import '../../core/providers/provider_retry_policy.dart';
+import '../../core/ssh/ssh_command_executor.dart'
+    show SSHCommandSuperseded, SSHCommandTimeout, SSHOutputExceeded;
 import 'file_content.dart';
 import 'text_decoding.dart';
 
@@ -115,14 +117,19 @@ final fileContentProvider = FutureProvider.autoDispose
         } // `raw` out of scope here — freed before the byte read below.
 
         if (fallback != _Fallback.none) {
-          final recovered = await _recodeFromBytes(git, repoPath, path, fallback);
+          final recovered = await _recodeFromBytes(
+            git,
+            repoPath,
+            path,
+            fallback,
+          );
           if (recovered != null) return recovered;
         }
         return content;
       } catch (e) {
         throw mapReadError(e);
       }
-    });
+    }, retry: noProviderRetry);
 
 /// Re-reads [path]'s raw bytes once and decodes them under the codec [fallback]
 /// selected from the UTF-8 read, returning the reclassified content only if it
@@ -173,7 +180,7 @@ final fileBytesProvider = FutureProvider.autoDispose
         // viewer shows the size notice + open-externally, not a raw error.
         throw mapReadError(e);
       }
-    });
+    }, retry: noProviderRetry);
 
 /// The size of the most recently resized viewer window, so a newly opened
 /// window reuses it instead of always reverting to the default — session-scoped

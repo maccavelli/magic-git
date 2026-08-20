@@ -137,4 +137,142 @@ void main() {
           'Unconfigured scopes found at:\n${offenders.join('\n')}',
     );
   });
+
+  test('every async provider declares the retry policy', () {
+    // The container policy is a backstop; the provider's own is what makes a
+    // test scope behave like the app (origin.retry wins, and it survives
+    // overrideWith). A provider without it inherits whatever the enclosing
+    // scope chose — which is not the same thing in a test as in production.
+    //
+    // A provider with genuinely no async failure mode goes here with a
+    // reason, the way _bareTapAllowance documents its entries.
+    const allowed = <String, int>{};
+
+    final offenders = <String, List<int>>{};
+    final declaration = RegExp(
+      r'^final [A-Za-z0-9_]+Provider = '
+      r'(FutureProvider|StreamProvider|AsyncNotifierProvider)',
+    );
+
+    for (final file
+        in Directory('lib')
+            .listSync(recursive: true)
+            .whereType<File>()
+            .where((f) => f.path.endsWith('.dart'))) {
+      final source = file.readAsStringSync();
+      final lines = source.split('\n');
+      var offset = 0;
+      for (var i = 0; i < lines.length; i++) {
+        final lineStart = offset;
+        offset += lines[i].length + 1;
+        if (!declaration.hasMatch(lines[i])) continue;
+        final end = _declarationEnd(source, lineStart);
+        if (!source.substring(lineStart, end).contains('retry:')) {
+          (offenders[file.path] ??= []).add(i + 1);
+        }
+      }
+    }
+
+    final failures = <String>[];
+    for (final entry in offenders.entries) {
+      final budget = allowed[entry.key] ?? 0;
+      if (entry.value.length > budget) {
+        failures.add(
+          '${entry.key}: lines ${entry.value.join(', ')} '
+          '(${entry.value.length} bare, $budget allowed)',
+        );
+      }
+    }
+
+    expect(
+      failures,
+      isEmpty,
+      reason:
+          'Pass `retry: noProviderRetry` '
+          '(core/providers/provider_retry_policy.dart) so this provider '
+          'surfaces failures identically in the app and in a test, whatever '
+          'scope reads it. Unannotated declarations found:\n'
+          '${failures.join('\n')}',
+    );
+  });
+}
+
+/// Offset just past the `)` closing a provider declaration's argument list.
+///
+/// Needs to understand Dart lexically, not just count parens: this codebase
+/// embeds shell scripts full of unbalanced parens in string literals, and
+/// record types in type arguments (`family<T, ({String repoPath})>`) open a
+/// paren before the argument list does.
+int _declarationEnd(String source, int start) {
+  var i = _argumentListOpen(source, start);
+  var depth = 0;
+  while (i < source.length) {
+    final c = source[i];
+    if (_startsLineComment(source, i)) {
+      final nl = source.indexOf('\n', i);
+      i = nl < 0 ? source.length : nl + 1;
+      continue;
+    }
+    if (c == "'" || c == '"') {
+      i = _skipString(source, i);
+      continue;
+    }
+    if (c == 'r' &&
+        i + 1 < source.length &&
+        (source[i + 1] == "'" || source[i + 1] == '"')) {
+      i = _skipString(source, i + 1);
+      continue;
+    }
+    if (c == '(') {
+      depth++;
+    } else if (c == ')') {
+      depth--;
+      if (depth == 0) return i + 1;
+    }
+    i++;
+  }
+  fail('unterminated provider declaration at offset $start');
+}
+
+/// Offset of the `(` opening the argument list, skipping type arguments.
+int _argumentListOpen(String source, int start) {
+  var i = start;
+  var angle = 0;
+  while (i < source.length) {
+    final c = source[i];
+    if (c == "'" || c == '"') {
+      i = _skipString(source, i);
+      continue;
+    }
+    if (c == '<') {
+      angle++;
+    } else if (c == '>') {
+      if (angle > 0) angle--;
+    } else if (c == '(' && angle == 0) {
+      return i;
+    }
+    i++;
+  }
+  fail('no argument list at offset $start');
+}
+
+bool _startsLineComment(String source, int i) =>
+    source[i] == '/' && i + 1 < source.length && source[i + 1] == '/';
+
+/// Offset just past the closing quote of the string literal starting at [i].
+int _skipString(String source, int i) {
+  final quote = source[i];
+  final triple = source.startsWith(quote * 3, i);
+  final terminator = triple ? quote * 3 : quote;
+  i += terminator.length;
+  while (i < source.length) {
+    if (source[i] == r'\') {
+      i += 2;
+      continue;
+    }
+    if (!triple && source[i] == '\n') return i;
+    if (source.startsWith(terminator, i)) return i + terminator.length;
+    i++;
+  }
+  return source.length;
 }

@@ -60,6 +60,7 @@ import '../undo/undo_journal.dart';
 import '../utils/display_error.dart';
 import '../utils/git_porcelain_parser.dart';
 import 'keep_alive_lru.dart';
+import 'provider_retry_policy.dart';
 
 /// Persists the main window's last position/size across launches, using the
 /// same `SharedPreferences` key-naming/read-write convention as
@@ -391,7 +392,7 @@ final savedWorkspaceSetsProvider = FutureProvider<List<SavedWorkspaceSet>>((
   ref,
 ) async {
   return ref.watch(savedWorkspaceStoreProvider).list();
-});
+}, retry: noProviderRetry);
 
 /// The per-repo most-recently-used log — the authoritative recency source for
 /// the landing page, recording each specific repo actually opened (see
@@ -408,7 +409,7 @@ final recentRepoRefsProvider = FutureProvider<List<RecentRepoRef>>((ref) async {
   } catch (_) {
     return const [];
   }
-});
+}, retry: noProviderRetry);
 
 /// The list of saved local repos, mirroring [savedConnectionsProvider] for
 /// the local backend.
@@ -423,7 +424,7 @@ final savedLocalReposProvider = FutureProvider<List<SavedLocalRepo>>((
         .logError('load saved local repos', e.toString());
     rethrow;
   }
-});
+}, retry: noProviderRetry);
 
 /// The list of saved connection profiles.
 ///
@@ -446,7 +447,7 @@ final savedConnectionsProvider = FutureProvider<List<SavedConnection>>((
         .logError('load saved connections', e.toString());
     rethrow;
   }
-});
+}, retry: noProviderRetry);
 
 /// A landing-page "recent workspace" — either a saved SSH [RecentConnection]
 /// or a saved [RecentLocalRepo]. Unifies the two separate stores
@@ -2983,7 +2984,7 @@ final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
   }
   _lastLandedStatus[repoPath] = status;
   return status;
-});
+}, retry: noProviderRetry);
 
 /// Which git operation (merge / cherry-pick / revert / rebase), if any, is
 /// mid-flight, so the Repository panel can offer to continue or abort it.
@@ -2998,7 +2999,7 @@ final pendingOpProvider = FutureProvider.autoDispose.family<PendingOp, String>((
   // Depend on status so this re-runs whenever the working tree changes.
   ref.watch(statusProvider(repoPath));
   return ref.watch(gitServiceProvider).pendingOp(repoPath);
-});
+}, retry: noProviderRetry);
 
 /// Background auto-fetch: while connected and a positive interval is configured,
 /// periodically `git fetch --prune` the active repo and refresh refs/status, so
@@ -3108,7 +3109,7 @@ final repoStructureProvider = FutureProvider.autoDispose
         return Isolate.run(build);
       }
       return build();
-    });
+    }, retry: noProviderRetry);
 
 /// The change/dirty overlay for the file-view pane, derived from
 /// [statusProvider]. Cheap (pure CPU over the status list, no SSH), so it can
@@ -3220,7 +3221,7 @@ final pingSamplesProvider =
 final repoFootprintProvider = FutureProvider.autoDispose
     .family<RepoFootprint, String>((ref, repoPath) {
       return ref.watch(gitServiceProvider).repoFootprint(repoPath);
-    });
+    }, retry: noProviderRetry);
 
 /// Event-driven "repo changed" ticks from the active backend's watcher.
 /// Auto-disposed so the remote fswatch/inotifywait process (or the native
@@ -3271,7 +3272,7 @@ final repoWatchProvider = StreamProvider.autoDispose
       }
       final oracle = ref.watch(ignoreOracleProvider);
       return _withoutIgnoredPaths(oracle, repoPath, raw);
-    });
+    }, retry: noProviderRetry);
 
 /// Drops the paths git ignores from each tick — and the tick itself when
 /// nothing survives.
@@ -3331,7 +3332,7 @@ Stream<RepoWatchEvent> _withoutIgnoredPaths(
 final gitWorktreesProvider = FutureProvider.autoDispose
     .family<List<GitWorktree>, String>((ref, repoPath) {
       return ref.watch(gitServiceProvider).gitWorktrees(repoPath);
-    });
+    }, retry: noProviderRetry);
 
 final refsProvider = FutureProvider.autoDispose.family<List<GitRef>, String>((
   ref,
@@ -3342,7 +3343,7 @@ final refsProvider = FutureProvider.autoDispose.family<List<GitRef>, String>((
     ref.read(outputLogProvider.notifier).logInfo('Ref parse warning: $warning');
   }
   return result.refs;
-});
+}, retry: noProviderRetry);
 
 /// Local branches fully merged into the current HEAD — the source of the
 /// Branches tab's grey "merged" (already-landed) badge. Watches [refsProvider]
@@ -3356,7 +3357,7 @@ final mergedBranchesProvider = FutureProvider.autoDispose
       } catch (_) {
         return const <String>{};
       }
-    });
+    }, retry: noProviderRetry);
 
 class RepoMergePolicyCache extends Notifier<Object?> {
   RepoMergePolicyCache(this.repoPath);
@@ -3456,7 +3457,7 @@ final branchBaseProvider = FutureProvider.autoDispose
           }
         },
       );
-    });
+    }, retry: noProviderRetry);
 
 final branchReviewProvider = FutureProvider.autoDispose
     .family<
@@ -3525,7 +3526,7 @@ final branchReviewProvider = FutureProvider.autoDispose
         },
         failuresByRefName: {...invalidOidFailures, ...result.failuresByRefName},
       );
-    });
+    }, retry: noProviderRetry);
 
 // ---------------------------------------------------------------------------
 // Phase 2 — lazy comparison inspector (OID-keyed, Browse-safe)
@@ -3618,7 +3619,7 @@ final branchUniqueCommitsProvider = AsyncNotifierProvider.autoDispose
       BranchUniqueCommitsNotifier,
       List<GitCommit>,
       BranchUniqueCommitsKey
-    >(BranchUniqueCommitsNotifier.new);
+    >(BranchUniqueCommitsNotifier.new, retry: noProviderRetry);
 
 /// Three-dot comparison metadata for Overview / Changes file list.
 final branchComparisonMetadataProvider = FutureProvider.autoDispose
@@ -3633,7 +3634,7 @@ final branchComparisonMetadataProvider = FutureProvider.autoDispose
             baseOid: key.baseOid,
             branchOid: key.branchOid,
           );
-    });
+    }, retry: noProviderRetry);
 
 /// Three-dot patch (`baseOid...branchOid`). Lazy — only watched from Changes.
 final branchDiffProvider = FutureProvider.autoDispose
@@ -3668,7 +3669,7 @@ final branchDiffProvider = FutureProvider.autoDispose
         onError: (_) => _branchDiffLru.evict(lruKey),
       );
       return future;
-    });
+    }, retry: noProviderRetry);
 
 /// Absolute layout for [repoPath] (linked worktree aware). Null when layout
 /// cannot be resolved — callers treat that as session-only identity.
@@ -3723,7 +3724,7 @@ final mergePreviewCapabilityProvider = FutureProvider.autoDispose
       // notifier is watched above, and set() would invalidate this Future mid-
       // flight. Connect-time probe still owns the Settings version surface.
       return probed;
-    });
+    }, retry: noProviderRetry);
 
 typedef BranchMergePreviewKey = ({
   String repoPath,
@@ -3773,7 +3774,7 @@ final branchMergePreviewProvider = FutureProvider.autoDispose
         _mergePreviewLru.evict(lruKey);
         rethrow;
       }
-    });
+    }, retry: noProviderRetry);
 
 /// Review-mode conflict scan: only branches that have been scanned and found
 /// conflicting. Unscanned branches are never treated as clean.
@@ -3910,7 +3911,7 @@ final conflictScanControllerProvider = NotifierProvider.autoDispose
 final repoLayoutProvider = FutureProvider.autoDispose
     .family<RepoLayout?, String>((ref, repoPath) async {
       return ref.watch(gitServiceProvider).detectRepoLayout(repoPath);
-    });
+    }, retry: noProviderRetry);
 
 /// Stable UI identity for workspace prefs, keyed by [repoPath] within the
 /// active connection session. Null when disconnected (no session epoch).
@@ -3948,7 +3949,7 @@ final repositoryUiIdentityProvider = FutureProvider.autoDispose
         sessionEpoch: conn.sessionEpoch,
         gitCommonDir: common,
       );
-    });
+    }, retry: noProviderRetry);
 
 /// Identity-keyed Branches workspace preferences. The layout/identity read is
 /// lazy and never gates refs first paint; the first durable load migrates the
@@ -3964,7 +3965,7 @@ final branchWorkspacePrefsProvider = FutureProvider.autoDispose
         legacyRepoPath: repoPath,
         globalCollapsed: await loadLegacyBranchCollapsedSections(),
       );
-    });
+    }, retry: noProviderRetry);
 
 /// Durable presentation preferences for the shared repository workspace.
 /// Identity resolution keeps colliding paths on different hosts isolated;
@@ -3983,7 +3984,7 @@ final repositoryWorkspacePrefsProvider = FutureProvider.autoDispose
         identity: identity,
         legacyPaneWidths: legacyPaneWidths,
       );
-    });
+    }, retry: noProviderRetry);
 
 /// The repo's *configured* remotes (`git remote`), e.g. `['origin']` — the
 /// canonical "does this repo have a remote" signal. NOT derivable from
@@ -3996,6 +3997,7 @@ final remotesProvider = FutureProvider.autoDispose.family<List<String>, String>(
   (ref, repoPath) {
     return ref.watch(gitServiceProvider).remotes(repoPath);
   },
+  retry: noProviderRetry,
 );
 
 /// The tags on the repo's remote, as `{shortName: oid}` — what powers the
@@ -4031,7 +4033,7 @@ final remoteTagsProvider = FutureProvider.autoDispose
       return ref
           .read(gitServiceProvider)
           .lsRemoteTags(repoPath, remote: remote);
-    });
+    }, retry: noProviderRetry);
 
 /// Invalidates [remoteTagsProvider] after an operation that changed — or
 /// refreshed local knowledge of — the remote's tags: a tag push, a remote
@@ -4048,7 +4050,7 @@ final logProvider = FutureProvider.autoDispose.family<List<GitCommit>, String>((
   repoPath,
 ) {
   return ref.watch(gitServiceProvider).log(repoPath);
-});
+}, retry: noProviderRetry);
 
 /// The most recent commits reachable from a specific ref — the Branches tab's
 /// single-branch linear view. Keyed by (repoPath, revision); capped small
@@ -4073,20 +4075,20 @@ final branchCommitsProvider = FutureProvider.autoDispose
       } catch (_) {
         return const <GitCommit>[];
       }
-    });
+    }, retry: noProviderRetry);
 
 /// HEAD's reflog — the Recovery sheet's entry list.
 final reflogProvider = FutureProvider.autoDispose
     .family<List<ReflogEntry>, String>((ref, repoPath) {
       return ref.watch(gitServiceProvider).reflog(repoPath);
-    });
+    }, retry: noProviderRetry);
 
 /// The anchored pre-destroy snapshots (`refs/magic-git/snapshots/`) — the
 /// Recovery sheet's second section.
 final magicSnapshotsProvider = FutureProvider.autoDispose
     .family<List<SnapshotRef>, String>((ref, repoPath) {
       return ref.watch(gitServiceProvider).snapshotRefs(repoPath);
-    });
+    }, retry: noProviderRetry);
 
 /// How deep the History panel walks on first load, and how much further each
 /// "Load more" goes.
@@ -4150,6 +4152,7 @@ typedef LogQuery = ({
 final logSearchProvider = AsyncNotifierProvider.autoDispose
     .family<LogSearchNotifier, List<GitCommit>, LogQuery>(
       LogSearchNotifier.new,
+      retry: noProviderRetry,
     );
 
 class LogSearchNotifier extends AsyncNotifier<List<GitCommit>> {
@@ -4575,7 +4578,7 @@ final fileLogProvider = FutureProvider.autoDispose
         onError: (_) => _fileLogLru.evict(key),
       );
       return future;
-    });
+    }, retry: noProviderRetry);
 
 /// Line-by-line blame for a file. Keyed by (repoPath, path). Kept alive
 /// (bounded LRU) — see [KeepAliveLru].
@@ -4592,13 +4595,13 @@ final blameProvider = FutureProvider.autoDispose
         onError: (_) => _blameLru.evict(key),
       );
       return future;
-    });
+    }, retry: noProviderRetry);
 
 /// Stashes for a repo.
 final stashesProvider = FutureProvider.autoDispose
     .family<List<GitStash>, String>((ref, repoPath) {
       return ref.watch(gitServiceProvider).stashList(repoPath);
-    });
+    }, retry: noProviderRetry);
 
 /// The patch a single stash holds, for the stash preview pane. Keyed by
 /// (repoPath, oid) — the stash's stable identity, so a list that shifts
@@ -4608,7 +4611,7 @@ final stashDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       final (repoPath, oid) = key;
       return ref.watch(gitServiceProvider).stashShow(repoPath, oid);
-    });
+    }, retry: noProviderRetry);
 
 /// Unified diff for a single working-tree/staged file. Keyed by
 /// (repoPath, path, staged, ignoreWhitespace, context) — records give
@@ -4635,7 +4638,7 @@ final fileDiffProvider = FutureProvider.autoDispose
         onError: (_) => _fileDiffLru.evict(key),
       );
       return future;
-    });
+    }, retry: noProviderRetry);
 
 /// Full patch for a commit. Keyed by (repoPath, hash, contextLines) — the
 /// context is part of the key because the same commit at `-U3` and at `-U25`
@@ -4653,7 +4656,7 @@ final commitDiffProvider = FutureProvider.autoDispose
         onError: (_) => _commitDiffLru.evict(key),
       );
       return future;
-    });
+    }, retry: noProviderRetry);
 
 /// The diff between two commits — what `newer` adds on top of `older`
 /// (`git diff older..newer`). Keyed by (repoPath, olderHash, newerHash,
@@ -4671,7 +4674,7 @@ final commitRangeDiffProvider = FutureProvider.autoDispose
         onError: (_) => _commitRangeDiffLru.evict(key),
       );
       return future;
-    });
+    }, retry: noProviderRetry);
 
 /// A file's contents **as of a commit** (`git show <rev>:<path>`), split into
 /// lines. Keyed by (repoPath, rev, path) — hash-keyed and therefore immutable,
@@ -4696,7 +4699,7 @@ final blobLinesProvider = FutureProvider.autoDispose
         _blobLru.evict(key);
         rethrow;
       }
-    });
+    }, retry: noProviderRetry);
 
 /// A commit's patch scoped to a single file. Keyed by (repoPath, hash, path)
 /// — used by the file-history view so selecting a commit fetches only the
@@ -4714,7 +4717,7 @@ final commitFileDiffProvider = FutureProvider.autoDispose
         onError: (_) => _commitFileDiffLru.evict(key),
       );
       return future;
-    });
+    }, retry: noProviderRetry);
 
 /// The conflicted working-tree file (with merge markers). Keyed by
 /// (repoPath, path). Kept alive (bounded LRU) — see [KeepAliveLru].
@@ -4731,7 +4734,7 @@ final conflictFileProvider = FutureProvider.autoDispose
         onError: (_) => _conflictFileLru.evict(key),
       );
       return future;
-    });
+    }, retry: noProviderRetry);
 
 /// An untracked file's contents rendered as an all-additions diff, so new files
 /// display their content (a plain `git diff` shows nothing for them). Keyed by
@@ -4751,7 +4754,7 @@ final untrackedDiffProvider = FutureProvider.autoDispose
         onError: (_) => _untrackedDiffLru.evict(key),
       );
       return future;
-    });
+    }, retry: noProviderRetry);
 
 /// Holds a forge data provider until the session's background forge logins
 /// have settled, so a panel visible right at connect loads against an
@@ -4796,7 +4799,7 @@ final mergeRequestsProvider = FutureProvider.autoDispose
       final glab = ref.watch(glabServiceProvider);
       await _forgeAuthReady(ref);
       return glab.mergeRequests(repoPath);
-    });
+    }, retry: noProviderRetry);
 
 /// Whether a Forge-tab CI list (pipelines / workflow runs) has been expanded
 /// to full history via its "Show more" row. One-way per session: nothing
@@ -4828,7 +4831,7 @@ final pipelinesProvider = FutureProvider.autoDispose
       final allHistory = ref.watch(pipelinesScopeProvider(repoPath));
       await _forgeAuthReady(ref);
       return glab.pipelines(repoPath, allHistory: allHistory);
-    });
+    }, retry: noProviderRetry);
 
 /// Jobs of a pipeline. Keyed by (repoPath, pipelineId).
 final jobsProvider = FutureProvider.autoDispose
@@ -4837,7 +4840,7 @@ final jobsProvider = FutureProvider.autoDispose
       final glab = ref.watch(glabServiceProvider);
       await _forgeAuthReady(ref);
       return glab.jobs(repoPath, pipelineId);
-    });
+    }, retry: noProviderRetry);
 
 /// Live CI job-trace log. Keyed by (repoPath, jobId); emits **incremental** log
 /// chunks (the view accumulates them). Auto-disposed so the remote trace process
@@ -4848,7 +4851,7 @@ final jobTraceProvider = StreamProvider.autoDispose
       final glab = ref.watch(glabServiceProvider);
       await _forgeAuthReady(ref);
       yield* glab.traceStream(repoPath, jobId);
-    });
+    }, retry: noProviderRetry);
 
 /// Project overview (issues, labels, milestones, releases) in one GraphQL hop.
 final projectDashboardProvider = FutureProvider.autoDispose
@@ -4856,7 +4859,7 @@ final projectDashboardProvider = FutureProvider.autoDispose
       final glab = ref.watch(glabServiceProvider);
       await _forgeAuthReady(ref);
       return glab.projectDashboard(repoPath);
-    });
+    }, retry: noProviderRetry);
 
 // ---- Forge detection + GitHub providers ------------------------------------
 
@@ -4875,7 +4878,7 @@ final originRemoteUrlProvider = FutureProvider.autoDispose
       if (!remote.isSuccess) return null;
       final url = remote.stdout.trim();
       return url.isEmpty ? null : url;
-    });
+    }, retry: noProviderRetry);
 
 /// The forge (GitHub/GitLab) the repo's `origin` remote points at — decides
 /// which forge panel/service the "Forge" and "Project" tabs drive. Detects by
@@ -4948,7 +4951,7 @@ final forgeProvider = FutureProvider.autoDispose.family<Forge, String>((
     ref.keepAlive();
   }
   return forge;
-});
+}, retry: noProviderRetry);
 
 /// The authenticated user's repositories on a forge host, for the clone
 /// sheet's browse list. Keyed by (forge, host, local) — an *account-level*
@@ -4979,7 +4982,7 @@ final forgeRepoListProvider = FutureProvider.autoDispose
         Forge.gitlab => GlabService(executor).listRepos(host: host),
         _ => throw ArgumentError('forgeRepoListProvider: not a forge: $forge'),
       };
-    });
+    }, retry: noProviderRetry);
 
 /// The forge CLI's parsed auth state on the target machine — the strict
 /// judgment (a host with an expired/revoked token does NOT count as signed
@@ -5013,7 +5016,7 @@ final forgeAuthProvider = FutureProvider.autoDispose
           .read(outputLogProvider.notifier)
           .logInfo('${auth.tool} auth: ${auth.detail}');
       return auth;
-    });
+    }, retry: noProviderRetry);
 
 /// The host the forge CLI on the target machine is signed in to — what the
 /// create/clone wizards prefill their forge-host fields with, so a user on a
@@ -5026,7 +5029,7 @@ final forgeAuthHostProvider = FutureProvider.autoDispose
     .family<String?, (Forge, bool)>((ref, key) async {
       final auth = await ref.watch(forgeAuthProvider(key).future);
       return auth.authenticated ? auth.host : null;
-    });
+    }, retry: noProviderRetry);
 
 /// Authentication status of git/gh/glab on **this Mac** — probed on demand for
 /// the Dashboard's Authentication section (and reusable by any This-Mac flow
@@ -5048,7 +5051,7 @@ final localAuthStatusProvider = FutureProvider.autoDispose<TargetAuth>((
         'glab ${auth.glab.authenticated ? auth.glab.host : 'signed out'}',
       );
   return auth;
-});
+}, retry: noProviderRetry);
 
 /// Authentication status of git/gh/glab on the **active session's** target —
 /// the connected SSH host, or this Mac for a local session. Null when nothing
@@ -5074,7 +5077,7 @@ final sessionAuthStatusProvider = FutureProvider.autoDispose<TargetAuth?>((
     // (an Enterprise remote) resolves; falls back to the home dir otherwise.
     cwd: repoPath ?? '.',
   );
-});
+}, retry: noProviderRetry);
 
 /// Open pull requests for the connected GitHub repo.
 final pullRequestsProvider = FutureProvider.autoDispose
@@ -5082,7 +5085,7 @@ final pullRequestsProvider = FutureProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       await _forgeAuthReady(ref);
       return gh.pullRequests(repoPath);
-    });
+    }, retry: noProviderRetry);
 
 /// Whether the Forge tab's workflow-runs list has been expanded to full
 /// history — the GitHub twin of [pipelinesScopeProvider] (see there for why
@@ -5099,7 +5102,7 @@ final workflowRunsProvider = FutureProvider.autoDispose
       final allHistory = ref.watch(workflowRunsScopeProvider(repoPath));
       await _forgeAuthReady(ref);
       return gh.workflowRuns(repoPath, allHistory: allHistory);
-    });
+    }, retry: noProviderRetry);
 
 /// Live jobs of a workflow run, keyed by (repoPath, runId). Polls until the run
 /// completes (GitHub exposes no live log stream); auto-disposed so the poll
@@ -5110,7 +5113,7 @@ final runJobsProvider = StreamProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       await _forgeAuthReady(ref);
       yield* gh.runJobsStream(repoPath, runId);
-    });
+    }, retry: noProviderRetry);
 
 /// A completed job's log, keyed by (repoPath, jobId). GitHub only serves logs
 /// once a job finishes; an in-progress job surfaces as an error the view shows
@@ -5121,7 +5124,7 @@ final runJobLogProvider = FutureProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       await _forgeAuthReady(ref);
       return gh.runJobLog(repoPath, jobId);
-    });
+    }, retry: noProviderRetry);
 
 /// GitHub repository overview (issues, labels, milestones, releases) in one
 /// GraphQL hop.
@@ -5130,7 +5133,7 @@ final githubProjectDashboardProvider = FutureProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       await _forgeAuthReady(ref);
       return gh.projectDashboard(repoPath);
-    });
+    }, retry: noProviderRetry);
 
 // ---- Project tab: forge-neutral issue/milestone lists ----------------------
 // The Project panel is a single forge-agnostic master-detail widget (unlike the
@@ -5162,7 +5165,7 @@ final projectIssuesProvider = FutureProvider.autoDispose
         case Forge.unknown:
           return const <ForgeIssue>[];
       }
-    });
+    }, retry: noProviderRetry);
 
 /// "Show more" scope for the Project tab's milestone list (see
 /// [projectIssuesScopeProvider]).
@@ -5185,7 +5188,7 @@ final projectMilestonesProvider = FutureProvider.autoDispose
         case Forge.unknown:
           return const <ForgeMilestone>[];
       }
-    });
+    }, retry: noProviderRetry);
 
 /// "Show all" scope for the Project tab's label list.
 final projectLabelsScopeProvider = NotifierProvider.autoDispose
@@ -5214,7 +5217,7 @@ final projectLabelsProvider = FutureProvider.autoDispose
         case Forge.unknown:
           return const <ForgeLabel>[];
       }
-    });
+    }, retry: noProviderRetry);
 
 /// "Show all" scope for the Project tab's release list.
 final projectReleasesScopeProvider = NotifierProvider.autoDispose
@@ -5238,7 +5241,7 @@ final projectReleasesProvider = FutureProvider.autoDispose
         case Forge.unknown:
           return const <ForgeRelease>[];
       }
-    });
+    }, retry: noProviderRetry);
 
 /// A single issue with its description body, fetched lazily when the Project
 /// tab selects an issue row. Keyed by (repoPath, issue number/iid).
@@ -5256,7 +5259,7 @@ final issueDetailProvider = FutureProvider.autoDispose
         case Forge.unknown:
           throw StateError('No forge configured for this repository.');
       }
-    });
+    }, retry: noProviderRetry);
 
 /// Conversation comments on an issue (G-M8). Keyed by (repoPath, issue id).
 final issueCommentsProvider = FutureProvider.autoDispose
@@ -5273,7 +5276,7 @@ final issueCommentsProvider = FutureProvider.autoDispose
         case Forge.unknown:
           return const <ForgeComment>[];
       }
-    });
+    }, retry: noProviderRetry);
 
 /// Conversation comments on a PR/MR (not review threads). Keyed by
 /// (repoPath, change-request id).
@@ -5291,7 +5294,7 @@ final changeRequestCommentsProvider = FutureProvider.autoDispose
         case Forge.unknown:
           return const <ForgeComment>[];
       }
-    });
+    }, retry: noProviderRetry);
 
 /// Single PR detail (mergeability, head SHA, body). Keyed by (repoPath, number).
 final pullRequestDetailProvider = FutureProvider.autoDispose
@@ -5300,7 +5303,7 @@ final pullRequestDetailProvider = FutureProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       await _forgeAuthReady(ref);
       return gh.pullRequestDetail(repoPath, number);
-    });
+    }, retry: noProviderRetry);
 
 /// Single MR detail (detailed_merge_status, sha, description). Keyed by
 /// (repoPath, iid).
@@ -5310,7 +5313,7 @@ final mergeRequestDetailProvider = FutureProvider.autoDispose
       final glab = ref.watch(glabServiceProvider);
       await _forgeAuthReady(ref);
       return glab.mergeRequestDetail(repoPath, iid);
-    });
+    }, retry: noProviderRetry);
 
 /// Repo/project merge method policy (allowed strategies, default delete-source).
 /// Failures surface as AsyncError — callers treat null/error as open method set.
@@ -5328,4 +5331,4 @@ final repoMergePolicyProvider = FutureProvider.autoDispose
       };
       ref.read(repoMergePolicyCacheProvider(repoPath).notifier).set(policy);
       return policy;
-    });
+    }, retry: noProviderRetry);
