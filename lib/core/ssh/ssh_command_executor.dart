@@ -791,7 +791,8 @@ class SSHCommandExecutor implements CommandExecutor {
       }
 
       if (stdin != null) {
-        s.write(stdin);
+        await s.stdin.addStream(Stream<Uint8List>.value(stdin));
+        await s.flush();
       }
       // Always close stdin — with or without data — mirroring
       // LocalCommandExecutor's contract. dartssh2 turns this into a channel
