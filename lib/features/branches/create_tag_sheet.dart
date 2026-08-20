@@ -12,6 +12,7 @@ import '../common/actions.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
+import '../common/labeled_controls.dart';
 import '../common/ref_name_validation.dart';
 import '../common/sized_sheet.dart';
 
@@ -198,17 +199,12 @@ class _CreateTagSheetState extends ConsumerState<CreateTagSheet> {
                 ),
 
               const SizedBox(height: 12),
-              Row(
-                children: [
-                  MacosCheckbox(
-                    value: _annotated,
-                    onChanged: _submitting
-                        ? null
-                        : (v) => setState(() => _annotated = v),
-                  ),
-                  const SizedBox(width: 8),
-                  const Flexible(child: Text('Annotated tag')),
-                ],
+              LabeledCheckbox(
+                label: 'Annotated tag',
+                value: _annotated,
+                onChanged: _submitting
+                    ? null
+                    : (v) => setState(() => _annotated = v),
               ),
               const FieldHint(
                 'An annotated tag records who tagged, when, and a message — '
@@ -230,19 +226,15 @@ class _CreateTagSheetState extends ConsumerState<CreateTagSheet> {
 
               if (remote != null) ...[
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    MacosCheckbox(
-                      value: _pushAfter,
-                      onChanged: _submitting
-                          ? null
-                          : (v) => setState(() => _pushAfter = v),
-                    ),
-                    const SizedBox(width: 8),
-                    // Flexible: a long remote name must wrap, not overflow
-                    // the fixed-width sheet.
-                    Flexible(child: Text('Push to $remote after creating')),
-                  ],
+                // expand: a long remote name must wrap, not overflow the
+                // fixed-width sheet.
+                LabeledCheckbox(
+                  label: 'Push to $remote after creating',
+                  value: _pushAfter,
+                  onChanged: _submitting
+                      ? null
+                      : (v) => setState(() => _pushAfter = v),
+                  expand: true,
                 ),
                 const FieldHint(
                   'git push does not send tags on its own — an unpushed tag '

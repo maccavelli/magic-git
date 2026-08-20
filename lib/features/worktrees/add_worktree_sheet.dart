@@ -13,6 +13,7 @@ import '../../core/settings/app_settings.dart';
 import '../common/actions.dart';
 import '../common/buttons.dart';
 import '../common/field_styles.dart';
+import '../common/labeled_controls.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
 import 'worktree_access.dart';
@@ -158,14 +159,12 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
   /// tool that walks up looking for a repo root.
   void _syncFolderName() {
     if (_nameEdited) return;
-    final slug = _slug(
-      switch (_basis) {
-        _Basis.newBranch => _branch.text,
-        _Basis.existingBranch => _existingBranch ?? '',
-        _Basis.detached =>
-          _revision.text.trim().isEmpty ? 'detached' : _revision.text,
-      },
-    );
+    final slug = _slug(switch (_basis) {
+      _Basis.newBranch => _branch.text,
+      _Basis.existingBranch => _existingBranch ?? '',
+      _Basis.detached =>
+        _revision.text.trim().isEmpty ? 'detached' : _revision.text,
+    });
     final repoName = widget.repoPath.split('/').last;
     _folderName.text = slug.isEmpty ? '' : '$repoName-$slug';
   }
@@ -430,15 +429,10 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
             _postCreateField(context),
 
             const SizedBox(height: 12),
-            Row(
-              children: [
-                MacosCheckbox(
-                  value: _openAfter,
-                  onChanged: (v) => setState(() => _openAfter = v),
-                ),
-                const SizedBox(width: 8),
-                const Text('Open it when done'),
-              ],
+            LabeledCheckbox(
+              label: 'Open it when done',
+              value: _openAfter,
+              onChanged: (v) => setState(() => _openAfter = v),
             ),
 
             const SizedBox(height: 20),
@@ -481,9 +475,9 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
       children: [
         Text(
           'Based on',
-          style: MacosTheme.of(context).typography.caption1.copyWith(
-            color: MacosColors.systemGrayColor,
-          ),
+          style: MacosTheme.of(
+            context,
+          ).typography.caption1.copyWith(color: MacosColors.systemGrayColor),
         ),
         const SizedBox(height: 4),
         // Wrap, not Row: the three labels are wider than the sheet at this size
@@ -634,15 +628,10 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            MacosCheckbox(
-              value: _copyIgnored,
-              onChanged: (v) => setState(() => _copyIgnored = v),
-            ),
-            const SizedBox(width: 8),
-            const Text('Copy ignored files'),
-          ],
+        LabeledCheckbox(
+          label: 'Copy ignored files',
+          value: _copyIgnored,
+          onChanged: (v) => setState(() => _copyIgnored = v),
         ),
         if (_copyIgnored) ...[
           const SizedBox(height: 6),
@@ -667,15 +656,10 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          children: [
-            MacosCheckbox(
-              value: _runPostCreate,
-              onChanged: (v) => setState(() => _runPostCreate = v),
-            ),
-            const SizedBox(width: 8),
-            const Text('Run a command after creating'),
-          ],
+        LabeledCheckbox(
+          label: 'Run a command after creating',
+          value: _runPostCreate,
+          onChanged: (v) => setState(() => _runPostCreate = v),
         ),
         if (_runPostCreate) ...[
           const SizedBox(height: 6),

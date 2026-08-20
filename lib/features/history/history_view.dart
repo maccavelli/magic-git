@@ -28,6 +28,7 @@ import '../common/diff_view.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/inline_action_button.dart';
+import '../common/labeled_controls.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/prompt_text_sheet.dart';
@@ -1870,17 +1871,11 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                   ),
                 ),
                 const SizedBox(width: 8),
-                MacosCheckbox(
+                LabeledCheckbox(
+                  label: 'Hide merges',
                   value: _hideMerges,
                   onChanged: (v) => setState(() => _hideMerges = v),
-                ),
-                const SizedBox(width: 5),
-                Tappable(
-                  onTap: () => setState(() => _hideMerges = !_hideMerges),
-                  child: Text(
-                    'Hide merges',
-                    style: MacosTheme.of(context).typography.caption1,
-                  ),
+                  style: MacosTheme.of(context).typography.caption1,
                 ),
               ],
             ),

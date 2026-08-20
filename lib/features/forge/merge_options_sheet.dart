@@ -5,6 +5,7 @@ import '../../core/forge/merge_plan.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
+import '../common/labeled_controls.dart';
 import '../common/sized_sheet.dart';
 
 /// Result of [showMergeOptionsSheet].
@@ -108,39 +109,23 @@ class _MergeOptionsBodyState extends State<_MergeOptionsBody> {
             for (final m in methods)
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
-                child: Row(
-                  children: [
-                    MacosRadioButton<MergeMethod>(
-                      value: m,
-                      groupValue: _method,
-                      onChanged: (v) {
-                        if (v != null) setState(() => _method = v);
-                      },
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(mergeMethodLabel(m))),
-                  ],
+                child: LabeledRadio<MergeMethod>(
+                  label: mergeMethodLabel(m),
+                  value: m,
+                  groupValue: _method,
+                  onChanged: (v) => setState(() => _method = v),
                 ),
               ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                MacosCheckbox(
-                  value: _deleteSource,
-                  onChanged: (v) => setState(() => _deleteSource = v),
-                ),
-                const SizedBox(width: 8),
-                const Expanded(
-                  child: Text('Delete source branch after merge'),
-                ),
-              ],
+            LabeledCheckbox(
+              label: 'Delete source branch after merge',
+              value: _deleteSource,
+              onChanged: (v) => setState(() => _deleteSource = v),
+              expand: true,
             ),
             if (widget.showCommitMessages) ...[
               const SizedBox(height: 16),
-              Text(
-                'Commit message (optional)',
-                style: typography.headline,
-              ),
+              Text('Commit message (optional)', style: typography.headline),
               const SizedBox(height: 8),
               MacosTextField(
                 controller: _subject,

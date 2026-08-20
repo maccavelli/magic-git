@@ -16,6 +16,18 @@ final _iconButton = RegExp(r'(?<![A-Za-z_$])(MacosIconButton|HelpButton)\(');
 
 final _gestureDetector = RegExp(r'(?<![A-Za-z_$])GestureDetector\(');
 
+/// A checkbox/radio glyph used without the labelled wrapper. On macOS the
+/// label is part of an NSButton, so a bare glyph beside an inert Text drops
+/// behaviour the platform provides. See common/labeled_controls.dart.
+final _bareToggle = RegExp(
+  r'(?<![A-Za-z_$])(MacosCheckbox\(|MacosRadioButton<)',
+);
+
+/// Files allowed to use the bare glyph, with how many sites. A control with
+/// genuinely no label (nothing for the user to click) is the only legitimate
+/// case; add it here with a reason rather than weakening the wrapper.
+const _bareToggleAllowance = <String, int>{};
+
 /// Files allowed to keep bare `GestureDetector(onTap:)` sites, with how many.
 /// Two legitimate reasons exist: an invisible dismiss scrim (no affordance —
 /// the arrow is correct), and a row inside `DragItemDraggable` (whose
@@ -121,6 +133,42 @@ void main() {
           '(common/tappable.dart) instead of a bare GestureDetector(onTap:). '
           'Deliberate arrow surfaces (scrims, rows inside DragItemDraggable) '
           'go in _bareTapAllowance with a reason. Found:\n'
+          '${offenders.join('\n')}',
+    );
+  });
+
+  test('checkbox and radio labels go through the labelled wrapper', () {
+    final sites = <String, List<int>>{};
+    for (final f in _dartFiles()) {
+      if (f.path.endsWith('lib/features/common/labeled_controls.dart')) {
+        continue;
+      }
+      final lines = f.readAsLinesSync();
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].trimLeft().startsWith('//')) continue;
+        if (_bareToggle.hasMatch(lines[i])) {
+          (sites[f.path] ??= []).add(i + 1);
+        }
+      }
+    }
+    final offenders = <String>[];
+    for (final entry in sites.entries) {
+      final allowed = _bareToggleAllowance[entry.key] ?? 0;
+      if (entry.value.length > allowed) {
+        offenders.add(
+          '${entry.key}: lines ${entry.value.join(', ')} '
+          '(${entry.value.length} bare, $allowed allowed)',
+        );
+      }
+    }
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'Use LabeledCheckbox / LabeledRadio (common/labeled_controls.dart) '
+          'so the label is clickable, the way an AppKit checkbox or radio '
+          'title is. A control with no label at all goes in '
+          '_bareToggleAllowance with a reason. Found:\n'
           '${offenders.join('\n')}',
     );
   });

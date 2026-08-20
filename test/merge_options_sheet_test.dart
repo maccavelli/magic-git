@@ -76,9 +76,8 @@ void main() {
   ) async {
     final result = await _open(tester);
 
-    // The label Text is not itself tappable — only the radio control is —
-    // so target the control, in plan.allowedMethods order.
-    await tester.tap(find.byType(MacosRadioButton<MergeMethod>).at(1));
+    // Tap the label, not the glyph: that is the behaviour under test.
+    await tester.tap(find.text(mergeMethodLabel(MergeMethod.squash)));
     await tester.pumpAndSettle();
     await tester.tap(find.byType(MacosCheckbox));
     await tester.pumpAndSettle();

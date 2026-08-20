@@ -15,6 +15,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/utils/display_error.dart';
 import '../common/diff_view.dart';
 import '../common/inline_action_button.dart';
+import '../common/labeled_controls.dart';
 import '../common/split_diff_view.dart';
 import '../common/tappable.dart';
 import 'branch_dashboard_stats.dart';
@@ -97,6 +98,7 @@ class BranchDetail extends ConsumerWidget {
   final BranchWorkspaceMode mode;
   final AsyncValue<BranchBaseResolution>? baseState;
   final AsyncValue<BranchReviewBatchResult>? review;
+
   /// Active Review facets. The three interactive stat chips below are the
   /// chip-shaped face of three of them; the navigator's facet menu owns the
   /// rest. One state, two surfaces — they cannot disagree.
@@ -117,11 +119,13 @@ class BranchDetail extends ConsumerWidget {
   final void Function(GitService, GitRef, TagRemoteStatus, String?) onDeleteTag;
   final void Function(GitService, String, String) onPushTag;
   final void Function(String?) onOpenUrl;
+
   /// Phase 5 lifecycle actions.
   final void Function(GitService, GitRef)? onPublish;
   final void Function(GitRef)? onCreateRequest;
   final void Function(GitRef)? onOpenHistory;
   final void Function(GitRef)? onOpenOnForge;
+
   /// Switches to Review / focuses comparison — used by the primary CTA and keymap.
   final VoidCallback? onCompare;
 
@@ -605,7 +609,8 @@ class BranchDetail extends ConsumerWidget {
       );
     }
     // Phase 5 primary-action precedence (§4.6).
-    final remotes = ref.watch(remotesProvider(repoPath)).value ?? const <String>[];
+    final remotes =
+        ref.watch(remotesProvider(repoPath)).value ?? const <String>[];
     final unpublished = b.upstream == null;
     final canPublish = unpublished && remotes.isNotEmpty && onPublish != null;
     final hasRequest = bf != null && bf.hasRequest;
@@ -639,7 +644,9 @@ class BranchDetail extends ConsumerWidget {
       );
     } else if (canCreateRequest && mode == BranchWorkspaceMode.review) {
       primary = (
-        label: bf?.isMr == true ? 'Create Merge Request' : 'Create Pull Request',
+        label: bf?.isMr == true
+            ? 'Create Merge Request'
+            : 'Create Pull Request',
         icon: CupertinoIcons.plus_rectangle_on_rectangle,
         onTap: busy ? null : () => onCreateRequest!(b),
       );
@@ -717,7 +724,9 @@ class BranchDetail extends ConsumerWidget {
       if (!b.isHead)
         MacosPulldownMenuItem(
           title: const Text('Merge into current'),
-          onTap: busy ? null : () => onMerge(git, b.shortName, MergeMode.normal),
+          onTap: busy
+              ? null
+              : () => onMerge(git, b.shortName, MergeMode.normal),
         ),
       MacosPulldownMenuItem(
         title: const Text('Set upstream…'),
@@ -741,10 +750,7 @@ class BranchDetail extends ConsumerWidget {
     final actions = <Widget>[
       _detailButton(primary.label, primary.icon, primary.onTap),
       ...secondary,
-      MacosPulldownButton(
-        title: 'More',
-        items: moreItems,
-      ),
+      MacosPulldownButton(title: 'More', items: moreItems),
     ];
     return _detailScaffold(
       icon: CupertinoIcons.arrow_branch,
@@ -988,7 +994,9 @@ class _BranchComparisonInspectorState
         typography,
         child: Text(
           'Could not resolve a comparison base.',
-          style: typography.caption1.copyWith(color: MacosColors.systemRedColor),
+          style: typography.caption1.copyWith(
+            color: MacosColors.systemRedColor,
+          ),
         ),
       );
     }
@@ -1063,10 +1071,7 @@ class _BranchComparisonInspectorState
   }
 
   Widget _section(MacosTypography typography, {required Widget child}) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 16),
-      child: child,
-    );
+    return Padding(padding: const EdgeInsets.only(top: 16), child: child);
   }
 
   Widget _overview(String baseOid, String branchOid, BranchBase base) {
@@ -1319,10 +1324,7 @@ class _BranchComparisonInspectorState
         ),
         const SizedBox(height: 4),
         if (bf == null || !bf.hasRequest)
-          Text(
-            'No open request.',
-            style: typography.caption1,
-          )
+          Text('No open request.', style: typography.caption1)
         else ...[
           Text(
             '${bf.isMr ? 'MR' : 'PR'} ${bf.requestLabel}'
@@ -1334,9 +1336,7 @@ class _BranchComparisonInspectorState
             const SizedBox(height: 2),
             Text(
               'CI ${_ciLabel(bf.ci!)}',
-              style: typography.caption1.copyWith(
-                color: _forgeCiColor(bf.ci!),
-              ),
+              style: typography.caption1.copyWith(color: _forgeCiColor(bf.ci!)),
             ),
           ],
         ],
@@ -1375,7 +1375,7 @@ class _BranchComparisonInspectorState
               preview.conflictPaths.isEmpty
                   ? 'Would conflict with the comparison base.'
                   : 'Would conflict in ${preview.conflictPaths.length} '
-                      'path${preview.conflictPaths.length == 1 ? '' : 's'}.',
+                        'path${preview.conflictPaths.length == 1 ? '' : 's'}.',
               style: typography.caption1.copyWith(
                 color: MacosColors.systemRedColor,
               ),
@@ -1472,11 +1472,12 @@ class _BranchComparisonInspectorState
                 ),
               ],
             ),
-            MacosCheckbox(
+            LabeledCheckbox(
+              label: 'Ignore whitespace',
               value: _ignoreWs,
               onChanged: (v) => setState(() => _ignoreWs = v),
+              style: typography.caption1,
             ),
-            Text('Ignore whitespace', style: typography.caption1),
             MacosPulldownButton(
               title: 'Context $_contextLines',
               items: [

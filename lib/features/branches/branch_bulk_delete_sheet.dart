@@ -8,6 +8,7 @@ import '../../core/git/branch_review_query.dart';
 import '../../core/git/git_service.dart';
 import '../common/escape_dismissible.dart';
 import '../common/inline_action_button.dart';
+import '../common/labeled_controls.dart';
 import '../common/sized_sheet.dart';
 
 /// One candidate for base-safe bulk delete.
@@ -325,13 +326,14 @@ class _PreflightRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
-          MacosCheckbox(
-            value: checked,
-            onChanged: onChanged,
-          ),
-          const SizedBox(width: 8),
           Expanded(
-            child: Text(candidate.branchName, style: typography.caption1),
+            child: LabeledCheckbox(
+              label: candidate.branchName,
+              value: checked,
+              onChanged: onChanged,
+              style: typography.caption1,
+              expand: true,
+            ),
           ),
           Text(facts.join('  ·  '), style: caption),
         ],
