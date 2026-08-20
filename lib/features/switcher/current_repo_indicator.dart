@@ -78,8 +78,7 @@ class CurrentRepoIndicator extends ConsumerWidget {
     final ahead = status.branch.ahead;
     final behind = status.branch.behind;
     final children = <Widget>[
-      if (behind > 0)
-        _syncCount(typography, CupertinoIcons.arrow_down, behind),
+      if (behind > 0) _syncCount(typography, CupertinoIcons.arrow_down, behind),
       if (ahead > 0) _syncCount(typography, CupertinoIcons.arrow_up, ahead),
       if (status.hasConflicts)
         _dot(MacosColors.systemRedColor)

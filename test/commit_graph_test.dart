@@ -153,30 +153,51 @@ void main() {
       final mRow = g.rows.firstWhere((r) => r.commit.hash == 'M');
       final bRow = g.rows.firstWhere((r) => r.commit.hash == 'B');
 
-      expect(mRow.column, 0, reason: 'M is on primary chain (HEAD), stays in Lane 0');
-      expect(bRow.column, 0, reason: 'B is on primary chain (HEAD), stays in Lane 0');
+      expect(
+        mRow.column,
+        0,
+        reason: 'M is on primary chain (HEAD), stays in Lane 0',
+      );
+      expect(
+        bRow.column,
+        0,
+        reason: 'B is on primary chain (HEAD), stays in Lane 0',
+      );
       expect(fRow.column, 1, reason: 'F is on side branch, assigned to Lane 1');
     });
 
-    test('merge commit marks non-primary parent edges with isMergeEdge = true', () {
-      // M merges P1 (mainline) and P2 (side branch).
-      final g = CommitGraph.build([
-        c('M', ['P1', 'P2']),
-        c('P1', ['B']),
-        c('P2', ['B']),
-        c('B', []),
-      ]);
+    test(
+      'merge commit marks non-primary parent edges with isMergeEdge = true',
+      () {
+        // M merges P1 (mainline) and P2 (side branch).
+        final g = CommitGraph.build([
+          c('M', ['P1', 'P2']),
+          c('P1', ['B']),
+          c('P2', ['B']),
+          c('B', []),
+        ]);
 
-      final m = g.rows[0];
-      final mergeEdges = m.edges.where((e) => e.kind == GraphEdgeKind.fromNode).toList();
-      expect(mergeEdges.length, 2);
+        final m = g.rows[0];
+        final mergeEdges = m.edges
+            .where((e) => e.kind == GraphEdgeKind.fromNode)
+            .toList();
+        expect(mergeEdges.length, 2);
 
-      final mainEdge = mergeEdges.firstWhere((e) => e.toColumn == 0);
-      final sideEdge = mergeEdges.firstWhere((e) => e.toColumn == 1);
+        final mainEdge = mergeEdges.firstWhere((e) => e.toColumn == 0);
+        final sideEdge = mergeEdges.firstWhere((e) => e.toColumn == 1);
 
-      expect(mainEdge.isMergeEdge, isFalse, reason: 'First parent P1 is mainline edge');
-      expect(sideEdge.isMergeEdge, isTrue, reason: 'Second parent P2 is merge edge');
-    });
+        expect(
+          mainEdge.isMergeEdge,
+          isFalse,
+          reason: 'First parent P1 is mainline edge',
+        );
+        expect(
+          sideEdge.isMergeEdge,
+          isTrue,
+          reason: 'Second parent P2 is merge edge',
+        );
+      },
+    );
 
     test('deduplicates duplicate parent hashes safely', () {
       final g = CommitGraph.build([
@@ -186,8 +207,14 @@ void main() {
 
       expect(g.rows.length, 2);
       final m = g.rows[0];
-      final fromEdges = m.edges.where((e) => e.kind == GraphEdgeKind.fromNode).toList();
-      expect(fromEdges.length, 1, reason: 'Duplicate parent P1 is deduplicated');
+      final fromEdges = m.edges
+          .where((e) => e.kind == GraphEdgeKind.fromNode)
+          .toList();
+      expect(
+        fromEdges.length,
+        1,
+        reason: 'Duplicate parent P1 is deduplicated',
+      );
     });
 
     test('filtered list with missing parents does not leak lanes (F4)', () {
@@ -213,7 +240,9 @@ void main() {
       // (to show the user the commit has a parent), routed to the node's own
       // column rather than a new lane.
       final cRow = g.rows[0];
-      final fromEdges = cRow.edges.where((e) => e.kind == GraphEdgeKind.fromNode).toList();
+      final fromEdges = cRow.edges
+          .where((e) => e.kind == GraphEdgeKind.fromNode)
+          .toList();
       expect(fromEdges.length, 1, reason: 'C still shows it has a parent');
       expect(
         fromEdges.first.toColumn,
@@ -236,7 +265,8 @@ void main() {
       expect(
         g.laneCount,
         lessThanOrEqualTo(2),
-        reason: 'Filtered log with 100 disconnected commits must not '
+        reason:
+            'Filtered log with 100 disconnected commits must not '
             'explode to 100 lanes',
       );
     });
@@ -265,10 +295,8 @@ void main() {
       final eRow = g.rows[0];
       final dRow = g.rows[1];
       final cRow = g.rows[2];
-      expect(eRow.column, dRow.column,
-          reason: 'E and D are in the same lane');
-      expect(dRow.column, cRow.column,
-          reason: 'D and C are in the same lane');
+      expect(eRow.column, dRow.column, reason: 'E and D are in the same lane');
+      expect(dRow.column, cRow.column, reason: 'D and C are in the same lane');
     });
   });
 }

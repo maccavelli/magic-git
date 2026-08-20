@@ -95,11 +95,12 @@ Future<ProviderContainer> _mountAndPush(
     overrides: [
       gitServiceProvider.overrideWithValue(git),
       statusProvider(_repo).overrideWith(
-        (ref) async => GitStatus(branch: const GitBranchInfo(), files: const []),
+        (ref) async =>
+            GitStatus(branch: const GitBranchInfo(), files: const []),
       ),
-      repoWatchProvider(_repo).overrideWith(
-        (ref) => const Stream<RepoWatchEvent>.empty(),
-      ),
+      repoWatchProvider(
+        _repo,
+      ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
       fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
       // Sibling of the refs override: the views now read CONFIGURED
@@ -135,11 +136,12 @@ void main() {
         gitServiceProvider.overrideWithValue(fakeGit),
         // Avoid real SSH from the status fetch and the remote watcher.
         statusProvider(repo).overrideWith(
-          (ref) async => GitStatus(branch: const GitBranchInfo(), files: const []),
+          (ref) async =>
+              GitStatus(branch: const GitBranchInfo(), files: const []),
         ),
-        repoWatchProvider(repo).overrideWith(
-          (ref) => const Stream<RepoWatchEvent>.empty(),
-        ),
+        repoWatchProvider(
+          repo,
+        ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
         fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
         refsProvider(repo).overrideWith((ref) async => _remoteRefs),
         // Sibling of the refs override: the views now read CONFIGURED
@@ -171,7 +173,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(fakeGit.pushed, isTrue, reason: 'Push button should call git.push');
-    final lines = container.read(outputLogProvider).lines.map((l) => l.text).toList();
+    final lines = container
+        .read(outputLogProvider)
+        .lines
+        .map((l) => l.text)
+        .toList();
     expect(lines, contains('\$ git push'));
     expect(lines, contains('   abc123..def456  main -> main'));
     expect(lines, contains('✓ completed'));

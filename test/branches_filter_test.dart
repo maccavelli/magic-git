@@ -58,7 +58,9 @@ Future<void> _pump(WidgetTester tester) async {
       remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
       remoteTagsProvider(_repo).overrideWith((ref) async => null),
       branchForgeProvider(_repo).overrideWith((ref) async => const {}),
-      mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
+      mergedBranchesProvider(
+        _repo,
+      ).overrideWith((ref) async => const <String>{}),
     ],
   );
   addTearDown(container.dispose);
@@ -75,8 +77,9 @@ Future<void> _pump(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets('remote branches past the cap collapse behind a Show more row',
-      (tester) async {
+  testWidgets('remote branches past the cap collapse behind a Show more row', (
+    tester,
+  ) async {
     // Tall viewport: the Show-more row sits below 25 remote rows, and
     // dragging to scroll would grab a row's drag-to-worktree gesture instead.
     tester.view.physicalSize = const Size(1600, 4000);
@@ -90,8 +93,11 @@ void main() {
     await tester.tap(find.text('Show 6 more remote branches'));
     await tester.pumpAndSettle();
     expect(find.text('Show 6 more remote branches'), findsNothing);
-    expect(find.text('origin/topic-29'), findsOneWidget,
-        reason: 'every remote row renders once expanded');
+    expect(
+      find.text('origin/topic-29'),
+      findsOneWidget,
+      reason: 'every remote row renders once expanded',
+    );
   });
 
   testWidgets('typing a filter narrows every section and retitles the '

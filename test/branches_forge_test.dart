@@ -66,7 +66,8 @@ Future<_FakeGit> _pump(
       mergedBranchesProvider(_repo).overrideWith((ref) async => merged),
       // Clean tree so guardedBranchSwitch/merge run without a confirm in the way.
       statusProvider(_repo).overrideWith(
-        (ref) async => GitStatus(branch: const GitBranchInfo(), files: const []),
+        (ref) async =>
+            GitStatus(branch: const GitBranchInfo(), files: const []),
       ),
     ],
   );
@@ -127,8 +128,11 @@ void main() {
     expect(find.text('Pinned (1)'), findsNothing);
 
     // Right-click feature → Pin to top.
-    await tester.tap(find.text('feature'),
-        buttons: kSecondaryButton, warnIfMissed: false);
+    await tester.tap(
+      find.text('feature'),
+      buttons: kSecondaryButton,
+      warnIfMissed: false,
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Pin to top'));
     await tester.pumpAndSettle();
@@ -136,28 +140,30 @@ void main() {
     expect(find.text('Pinned (1)'), findsOneWidget);
   });
 
-  testWidgets('dropping a branch onto the current one offers merge, which runs',
-      (tester) async {
-    final git = await _pump(tester);
+  testWidgets(
+    'dropping a branch onto the current one offers merge, which runs',
+    (tester) async {
+      final git = await _pump(tester);
 
-    final from = tester.getCenter(find.text('feature'));
-    final to = tester.getCenter(find.text('main'));
-    final gesture = await tester.startGesture(from);
-    await tester.pump();
-    await gesture.moveTo(from + const Offset(12, 0)); // exceed touch slop
-    await tester.pump();
-    await gesture.moveTo(to);
-    await tester.pump();
-    await gesture.up();
-    await tester.pumpAndSettle();
+      final from = tester.getCenter(find.text('feature'));
+      final to = tester.getCenter(find.text('main'));
+      final gesture = await tester.startGesture(from);
+      await tester.pump();
+      await gesture.moveTo(from + const Offset(12, 0)); // exceed touch slop
+      await tester.pump();
+      await gesture.moveTo(to);
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
 
-    // The merge-vs-rebase choice, phrased explicitly.
-    final mergeChoice = find.text('Merge "feature" into "main"');
-    expect(mergeChoice, findsOneWidget);
-    await tester.tap(mergeChoice);
-    await tester.pumpAndSettle();
+      // The merge-vs-rebase choice, phrased explicitly.
+      final mergeChoice = find.text('Merge "feature" into "main"');
+      expect(mergeChoice, findsOneWidget);
+      await tester.tap(mergeChoice);
+      await tester.pumpAndSettle();
 
-    expect(git.merged, 'feature');
-    expect(git.rebasedOnto, isNull);
-  });
+      expect(git.merged, 'feature');
+      expect(git.rebasedOnto, isNull);
+    },
+  );
 }

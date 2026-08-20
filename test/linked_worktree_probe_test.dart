@@ -81,21 +81,20 @@ void main() {
     final probe = probeLocalRepo(wt);
 
     expect(probe.kind, LocalRepoKind.linkedWorktree);
-    expect(probe.worktree!.gitDir, '${await _canon(bare)}/worktrees/bare-feature');
+    expect(
+      probe.worktree!.gitDir,
+      '${await _canon(bare)}/worktrees/bare-feature',
+    );
     expect(probe.worktree!.gitCommonDir, await _canon(bare));
     // No main working tree exists — the bare dir itself is what needs the
     // second grant.
     expect(probe.worktree!.mainRepoPath, await _canon(bare));
   });
 
-  test('a worktree of a --separate-git-dir repo resolves its git dir',
-      () async {
+  test('a worktree of a --separate-git-dir repo resolves its git dir', () async {
     final sep = '${tmp.path}/sepmain';
     final gitDir = '${tmp.path}/sep-gitdir';
-    await git_(
-      ['init', '-q', '--separate-git-dir', gitDir, sep],
-      tmp.path,
-    );
+    await git_(['init', '-q', '--separate-git-dir', gitDir, sep], tmp.path);
     await git_(['config', 'user.email', 't@t'], sep);
     await git_(['config', 'user.name', 't'], sep);
     await git_(['commit', '-q', '--allow-empty', '-m', 'init'], sep);

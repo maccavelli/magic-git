@@ -19,8 +19,8 @@ class MergeReadinessStrip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final secondary = MacosTheme.of(context).typography.body.color
-            ?.withValues(alpha: 0.7) ??
+    final secondary =
+        MacosTheme.of(context).typography.body.color?.withValues(alpha: 0.7) ??
         MacosColors.systemGrayColor;
     // While detail is in flight, Checking wins over ANY list-tier verdict:
     // list JSON has no mergeable/mergeStateStatus, so a list-tier plan's
@@ -66,8 +66,7 @@ class MergeReadinessStrip extends StatelessWidget {
               icon: CupertinoIcons.exclamationmark_triangle_fill,
               color: MacosColors.systemOrangeColor,
               text: r.message,
-              trailing:
-                  r.code == 'mergeability_unknown' && onRetry != null
+              trailing: r.code == 'mergeability_unknown' && onRetry != null
                   ? InlineActionButton(
                       label: 'Retry',
                       icon: CupertinoIcons.arrow_clockwise,
@@ -100,10 +99,7 @@ class MergeReadinessStrip extends StatelessWidget {
         Icon(icon, size: 14, color: color),
         const SizedBox(width: 6),
         Expanded(
-          child: Text(
-            text,
-            style: TextStyle(fontSize: 12, color: color),
-          ),
+          child: Text(text, style: TextStyle(fontSize: 12, color: color)),
         ),
         ?trailing,
       ],

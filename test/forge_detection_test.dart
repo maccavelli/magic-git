@@ -88,14 +88,20 @@ void main() {
       expect(authStatusListsHost(glabStatus, 'gitlab.example.com'), isTrue);
     });
 
-    test('matches a "Logged in to <host>" line (gh "account" phrasing too)', () {
-      expect(authStatusListsHost(ghStatus, 'github.com'), isTrue);
-    });
+    test(
+      'matches a "Logged in to <host>" line (gh "account" phrasing too)',
+      () {
+        expect(authStatusListsHost(ghStatus, 'github.com'), isTrue);
+      },
+    );
 
     test('an incidental substring mention is NOT a match', () {
       // The raw contains() scan this replaced would have wrongly matched here.
       expect(
-        authStatusListsHost('See https://docs for git.acme.io tips', 'git.acme.io'),
+        authStatusListsHost(
+          'See https://docs for git.acme.io tips',
+          'git.acme.io',
+        ),
         isFalse,
       );
     });
@@ -122,7 +128,10 @@ void main() {
     });
 
     test('a trailing slash is trimmed (would otherwise 404 the project)', () {
-      expect(remotePathFromUrl('https://gitlab.acme.com/group/repo/'), 'group/repo');
+      expect(
+        remotePathFromUrl('https://gitlab.acme.com/group/repo/'),
+        'group/repo',
+      );
     });
 
     test('a leading slash after the scp colon is trimmed', () {
@@ -144,10 +153,7 @@ void main() {
 
   group('forgeFromRemoteUrl', () {
     test('classifies github and gitlab from full urls', () {
-      expect(
-        forgeFromRemoteUrl('git@github.com:owner/repo.git'),
-        Forge.github,
-      );
+      expect(forgeFromRemoteUrl('git@github.com:owner/repo.git'), Forge.github);
       expect(
         forgeFromRemoteUrl('https://gitlab.com/group/repo.git'),
         Forge.gitlab,
@@ -168,27 +174,21 @@ void main() {
 
   group('forgeGitAuthConfigArgs', () {
     test('github clears ambient helpers and installs gh', () {
-      expect(
-        forgeGitAuthConfigArgs(Forge.github),
-        [
-          '-c',
-          'credential.helper=',
-          '-c',
-          'credential.helper=!gh auth git-credential',
-        ],
-      );
+      expect(forgeGitAuthConfigArgs(Forge.github), [
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!gh auth git-credential',
+      ]);
     });
 
     test('gitlab installs glab', () {
-      expect(
-        forgeGitAuthConfigArgs(Forge.gitlab),
-        [
-          '-c',
-          'credential.helper=',
-          '-c',
-          'credential.helper=!glab auth git-credential',
-        ],
-      );
+      expect(forgeGitAuthConfigArgs(Forge.gitlab), [
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!glab auth git-credential',
+      ]);
     });
 
     test('none/unknown leave host credentials alone', () {
@@ -197,17 +197,14 @@ void main() {
     });
 
     test('all installs both forge CLIs after a clear', () {
-      expect(
-        forgeGitAuthConfigArgsAll(),
-        [
-          '-c',
-          'credential.helper=',
-          '-c',
-          'credential.helper=!gh auth git-credential',
-          '-c',
-          'credential.helper=!glab auth git-credential',
-        ],
-      );
+      expect(forgeGitAuthConfigArgsAll(), [
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!gh auth git-credential',
+        '-c',
+        'credential.helper=!glab auth git-credential',
+      ]);
     });
 
     // Pinning the resolved absolute path stops git's credential subprocess
@@ -216,7 +213,10 @@ void main() {
     // Username".
     test('a resolved path pins the helper to the absolute binary', () {
       expect(
-        forgeGitAuthConfigArgs(Forge.gitlab, glabPath: '/home/u/.local/bin/glab'),
+        forgeGitAuthConfigArgs(
+          Forge.gitlab,
+          glabPath: '/home/u/.local/bin/glab',
+        ),
         [
           '-c',
           'credential.helper=',
@@ -248,17 +248,14 @@ void main() {
     });
 
     test('all pins both resolved paths', () {
-      expect(
-        forgeGitAuthConfigArgsAll(ghPath: '/x/gh', glabPath: '/x/glab'),
-        [
-          '-c',
-          'credential.helper=',
-          '-c',
-          'credential.helper=!/x/gh auth git-credential',
-          '-c',
-          'credential.helper=!/x/glab auth git-credential',
-        ],
-      );
+      expect(forgeGitAuthConfigArgsAll(ghPath: '/x/gh', glabPath: '/x/glab'), [
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!/x/gh auth git-credential',
+        '-c',
+        'credential.helper=!/x/glab auth git-credential',
+      ]);
     });
 
     test('an unknown (null/empty) path falls back to the bare CLI name', () {
@@ -298,10 +295,7 @@ void main() {
 
     test('an existing .git suffix is not doubled', () {
       expect(
-        forgeUrlFromCreateOutput(
-          'https://gitlab.com/g/r.git',
-          name: 'r',
-        ),
+        forgeUrlFromCreateOutput('https://gitlab.com/g/r.git', name: 'r'),
         'https://gitlab.com/g/r.git',
       );
     });
@@ -342,18 +336,21 @@ void main() {
       expect(forgeUrlFromCreateOutput('https://x.com/r', name: ''), isNull);
     });
 
-    test('GitLab slugifies the name into the path — the slug still matches', () {
-      // `glab repo create --name "My Repo"` creates `.../my-repo`; a strict
-      // name-equality check missed it and lost the round-trip-free URL read.
-      expect(
-        forgeUrlFromCreateOutput(
-          '✓ Created project on GitLab: Group / My Repo - '
-          'https://gitlab.corp.example/group/my-repo\n',
-          name: 'My Repo',
-        ),
-        'https://gitlab.corp.example/group/my-repo.git',
-      );
-    });
+    test(
+      'GitLab slugifies the name into the path — the slug still matches',
+      () {
+        // `glab repo create --name "My Repo"` creates `.../my-repo`; a strict
+        // name-equality check missed it and lost the round-trip-free URL read.
+        expect(
+          forgeUrlFromCreateOutput(
+            '✓ Created project on GitLab: Group / My Repo - '
+            'https://gitlab.corp.example/group/my-repo\n',
+            name: 'My Repo',
+          ),
+          'https://gitlab.corp.example/group/my-repo.git',
+        );
+      },
+    );
 
     test('the slug match still rejects an unrelated URL in the output', () {
       expect(

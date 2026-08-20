@@ -38,31 +38,34 @@ void main() {
       expect(cmd, isNot(contains('export')));
     });
 
-    test('unsets only the neutralizeEnv vars, first, and nothing when empty', () {
-      // No neutralization requested → no `unset` prelude, leaving the remote's
-      // own gh/glab auth untouched (the no-token-supplied case).
-      final bare = CommandFormatter.format(
-        repoPath: '/r',
-        gitArgs: ['git', 'fetch'],
-        env: {},
-      );
-      expect(bare, isNot(contains('unset ')));
+    test(
+      'unsets only the neutralizeEnv vars, first, and nothing when empty',
+      () {
+        // No neutralization requested → no `unset` prelude, leaving the remote's
+        // own gh/glab auth untouched (the no-token-supplied case).
+        final bare = CommandFormatter.format(
+          repoPath: '/r',
+          gitArgs: ['git', 'fetch'],
+          env: {},
+        );
+        expect(bare, isNot(contains('unset ')));
 
-      // A forge token was supplied → its vars are unset before anything else.
-      final neutralized = CommandFormatter.format(
-        repoPath: '/r',
-        gitArgs: ['git', 'fetch'],
-        env: {},
-        neutralizeEnv: CommandFormatter.githubTokenVars,
-      );
-      expect(
-        neutralized,
-        startsWith(
-          'unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN '
-          'GITHUB_ENTERPRISE_TOKEN; ',
-        ),
-      );
-    });
+        // A forge token was supplied → its vars are unset before anything else.
+        final neutralized = CommandFormatter.format(
+          repoPath: '/r',
+          gitArgs: ['git', 'fetch'],
+          env: {},
+          neutralizeEnv: CommandFormatter.githubTokenVars,
+        );
+        expect(
+          neutralized,
+          startsWith(
+            'unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN '
+            'GITHUB_ENTERPRISE_TOKEN; ',
+          ),
+        );
+      },
+    );
 
     test('rejects a neutralizeEnv name with shell metacharacters', () {
       // Unset names are interpolated raw into the shell string, so they get

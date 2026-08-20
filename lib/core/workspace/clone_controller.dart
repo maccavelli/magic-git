@@ -201,8 +201,10 @@ class CloneJobController extends Notifier<CloneJobState> {
 
     // --- Stream the clone -------------------------------------------------
     final argv = switch (request.source) {
-      ForgeCloneSource(forge: Forge.github, :final slug) =>
-        GhService.cloneArgv(slug: slug, dirName: request.name),
+      ForgeCloneSource(forge: Forge.github, :final slug) => GhService.cloneArgv(
+        slug: slug,
+        dirName: request.name,
+      ),
       ForgeCloneSource(forge: Forge.gitlab, :final slug) =>
         GlabService.cloneArgv(pathWithNamespace: slug, dirName: request.name),
       ForgeCloneSource() => throw StateError('not a forge source'),
@@ -217,10 +219,12 @@ class CloneJobController extends Notifier<CloneJobState> {
       ],
     };
     final extraEnv = switch (request.source) {
-      ForgeCloneSource(forge: Forge.github, :final host) =>
-        GhService.hostEnv(host),
-      ForgeCloneSource(forge: Forge.gitlab, :final host) =>
-        GlabService.hostEnv(host),
+      ForgeCloneSource(forge: Forge.github, :final host) => GhService.hostEnv(
+        host,
+      ),
+      ForgeCloneSource(forge: Forge.gitlab, :final host) => GlabService.hostEnv(
+        host,
+      ),
       _ => null,
     };
 
@@ -247,16 +251,19 @@ class CloneJobController extends Notifier<CloneJobState> {
           .listen((chunk) => session.append(chunk, OutputLineKind.stdout))
           .asFuture<void>()
           .catchError((_) {});
-      final errDone = handle.stderr.listen((chunk) {
-        session.append(chunk, OutputLineKind.stderr);
-        stderrTail.write(chunk);
-        final frame = _latestFrame(chunk);
-        if (frame.isNotEmpty) {
-          state = state.copyWith(progressLine: frame);
-          final fraction = cloneFractionFor(frame);
-          if (fraction != null) DockProgress.instance.setFraction(fraction);
-        }
-      }).asFuture<void>().catchError((_) {});
+      final errDone = handle.stderr
+          .listen((chunk) {
+            session.append(chunk, OutputLineKind.stderr);
+            stderrTail.write(chunk);
+            final frame = _latestFrame(chunk);
+            if (frame.isNotEmpty) {
+              state = state.copyWith(progressLine: frame);
+              final fraction = cloneFractionFor(frame);
+              if (fraction != null) DockProgress.instance.setFraction(fraction);
+            }
+          })
+          .asFuture<void>()
+          .catchError((_) {});
 
       exitCode = await handle.exitCode;
       // Let the tail of the streams drain so the transcript is complete.
@@ -303,9 +310,7 @@ class CloneJobController extends Notifier<CloneJobState> {
     await _cleanupPartial(fs, request, dest);
     if (_cancelled) return _finishCancelled();
     final tail = stderrTail.toString().trim();
-    return _fail(
-      tail.isEmpty ? 'git clone exited with code $exitCode' : tail,
-    );
+    return _fail(tail.isEmpty ? 'git clone exited with code $exitCode' : tail);
   }
 
   /// Cancels the running job: SIGTERM to the clone, then the same guarded
@@ -340,9 +345,7 @@ class CloneJobController extends Notifier<CloneJobState> {
         );
       }
     } catch (e) {
-      ref
-          .read(outputLogProvider.notifier)
-          .logError('cleanup of $dest', '$e');
+      ref.read(outputLogProvider.notifier).logError('cleanup of $dest', '$e');
     }
   }
 

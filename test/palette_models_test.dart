@@ -118,16 +118,18 @@ void main() {
       expect(label, 'Push, git');
     });
 
-    test('omits the position clause unless both position and count are known',
-        () {
-      expect(
-        paletteRowSemanticsLabel(
-          label: 'Push',
-          categoryPrefix: 'git',
-          position: 3,
-        ),
-        'Push, git',
-      );
-    });
+    test(
+      'omits the position clause unless both position and count are known',
+      () {
+        expect(
+          paletteRowSemanticsLabel(
+            label: 'Push',
+            categoryPrefix: 'git',
+            position: 3,
+          ),
+          'Push, git',
+        );
+      },
+    );
   });
 }

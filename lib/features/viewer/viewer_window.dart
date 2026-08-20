@@ -169,7 +169,11 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
   void _onResize(DragUpdateDetails d) {
     setState(() {
       _size = Size(
-        _fit(_size.width + d.delta.dx, _minWidth, widget.bounds.width - _position.dx),
+        _fit(
+          _size.width + d.delta.dx,
+          _minWidth,
+          widget.bounds.width - _position.dx,
+        ),
         _fit(
           _size.height + d.delta.dy,
           _minHeight,
@@ -203,7 +207,10 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
       _fit(_size.width, _minWidth, widget.bounds.width),
       _fit(_size.height, _minHeight, widget.bounds.height),
     );
-    final maxX = (widget.bounds.width - _size.width).clamp(0.0, double.infinity);
+    final maxX = (widget.bounds.width - _size.width).clamp(
+      0.0,
+      double.infinity,
+    );
     final maxY = (widget.bounds.height - _size.height).clamp(
       0.0,
       double.infinity,
@@ -487,7 +494,8 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
           context,
           icon: CupertinoIcons.doc_text_search,
           title: 'File too large to display',
-          detail: '${_mib(content.charCount)} MB — open it in an external '
+          detail:
+              '${_mib(content.charCount)} MB — open it in an external '
               'editor to view the whole thing.',
         ),
         FileContentKind.binary => _notice(
@@ -511,9 +519,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
   }
 
   Widget _imageBody(BuildContext context) {
-    final async = ref.watch(
-      fileBytesProvider((widget.repoPath, widget.path)),
-    );
+    final async = ref.watch(fileBytesProvider((widget.repoPath, widget.path)));
     return async.when(
       loading: () => const Center(child: ProgressCircle()),
       error: (err, _) => _readErrorNotice(context, err, 'Could not open image'),
@@ -526,8 +532,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
   /// both drawn from the clean [ViewerReadException] text, never a raw
   /// transport error string.
   Widget _readErrorNotice(BuildContext context, Object err, String title) {
-    if (err is ViewerReadException &&
-        err.kind == ViewerReadError.tooLarge) {
+    if (err is ViewerReadException && err.kind == ViewerReadError.tooLarge) {
       return _notice(
         context,
         icon: CupertinoIcons.doc_text_search,
@@ -583,7 +588,9 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
         if (isLocal) {
           openFiles(['${widget.repoPath}/${widget.path}']);
         } else {
-          ref.read(remoteEditServiceProvider.notifier).openRemoteFile(widget.repoPath, widget.path);
+          ref
+              .read(remoteEditServiceProvider.notifier)
+              .openRemoteFile(widget.repoPath, widget.path);
         }
       },
       child: const Text('Open in Default App'),
@@ -620,10 +627,7 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
                 color: MacosColors.systemGrayColor,
               ),
             ),
-            if (openButton != null) ...[
-              const SizedBox(height: 16),
-              openButton,
-            ],
+            if (openButton != null) ...[const SizedBox(height: 16), openButton],
           ],
         ),
       ),

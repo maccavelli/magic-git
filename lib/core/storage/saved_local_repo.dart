@@ -112,24 +112,23 @@ class SavedLocalRepo {
       'lastConnectedAt': lastConnectedAt!.toIso8601String(),
   };
 
-  factory SavedLocalRepo.fromJson(Map<String, dynamic> json) =>
-      SavedLocalRepo(
-        id: json['id'] as String? ?? '',
-        label: json['label'] as String? ?? '',
-        repoPath: json['repoPath'] as String? ?? '',
-        bookmarkData: json['bookmarkData'] as String? ?? '',
-        // Absent in every entry persisted before worktrees existed — defaulting
-        // to empty migrates them silently as ordinary repos.
-        mainRepoPath: json['mainRepoPath'] as String? ?? '',
-        mainRepoBookmarkData: json['mainRepoBookmarkData'] as String? ?? '',
-        fsmonitorEnabled: json['fsmonitorEnabled'] as bool? ?? false,
-        // Absent on entries persisted before scoped repos existed → empty,
-        // migrating them silently as ordinary repos.
-        gitDir: json['gitDir'] as String? ?? '',
-        lastConnectedAt: DateTime.tryParse(
-          json['lastConnectedAt'] as String? ?? '',
-        ),
-      );
+  factory SavedLocalRepo.fromJson(Map<String, dynamic> json) => SavedLocalRepo(
+    id: json['id'] as String? ?? '',
+    label: json['label'] as String? ?? '',
+    repoPath: json['repoPath'] as String? ?? '',
+    bookmarkData: json['bookmarkData'] as String? ?? '',
+    // Absent in every entry persisted before worktrees existed — defaulting
+    // to empty migrates them silently as ordinary repos.
+    mainRepoPath: json['mainRepoPath'] as String? ?? '',
+    mainRepoBookmarkData: json['mainRepoBookmarkData'] as String? ?? '',
+    fsmonitorEnabled: json['fsmonitorEnabled'] as bool? ?? false,
+    // Absent on entries persisted before scoped repos existed → empty,
+    // migrating them silently as ordinary repos.
+    gitDir: json['gitDir'] as String? ?? '',
+    lastConnectedAt: DateTime.tryParse(
+      json['lastConnectedAt'] as String? ?? '',
+    ),
+  );
 
   /// A human label falling back to the folder's basename when none was given
   /// — mirrors [SavedConnection.displayName]'s `user@host` fallback.

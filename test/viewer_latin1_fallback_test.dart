@@ -45,10 +45,7 @@ Future<FileContent> _classifyBytes(List<int> raw) async {
   addTearDown(container.dispose);
   // Keep the autoDispose provider alive across the async read rather than
   // reading `.future` on a bare container (which can race disposal).
-  final sub = container.listen(
-    fileContentProvider((_repo, _path)),
-    (_, _) {},
-  );
+  final sub = container.listen(fileContentProvider((_repo, _path)), (_, _) {});
   addTearDown(sub.close);
   return container.read(fileContentProvider((_repo, _path)).future);
 }
@@ -67,19 +64,22 @@ void main() {
     expect(content.text, isNot(contains('�')));
   });
 
-  test('a sparse cp1252 file (classified text) has its mojibake fixed', () async {
-    // Mostly ASCII with a lone 0x92 smart quote — few enough replacements to
-    // classify as text, but still worth repairing to the real curly quote.
-    final raw = <int>[
-      ...utf8.encode('the plan is done'),
-      0x20, 0x92, 0x73, // " ’s"
-      0x0A,
-    ];
-    final content = await _classifyBytes(raw);
-    expect(content.kind, FileContentKind.text);
-    expect(content.text, contains('’')); // U+2019, cp1252-specific
-    expect(content.text, isNot(contains('�')));
-  });
+  test(
+    'a sparse cp1252 file (classified text) has its mojibake fixed',
+    () async {
+      // Mostly ASCII with a lone 0x92 smart quote — few enough replacements to
+      // classify as text, but still worth repairing to the real curly quote.
+      final raw = <int>[
+        ...utf8.encode('the plan is done'),
+        0x20, 0x92, 0x73, // " ’s"
+        0x0A,
+      ];
+      final content = await _classifyBytes(raw);
+      expect(content.kind, FileContentKind.text);
+      expect(content.text, contains('’')); // U+2019, cp1252-specific
+      expect(content.text, isNot(contains('�')));
+    },
+  );
 
   test('a legitimate U+FFFD glyph in valid UTF-8 is left untouched', () async {
     // Mostly ASCII (so it classifies as text) containing one real replacement

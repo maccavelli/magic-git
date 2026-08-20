@@ -123,8 +123,10 @@ Future<_FakeGit> _pump(
   List<GitRef> refs = _refs,
   Set<String> merged = const {},
   Map<String, List<GitCommit>> logsByRevision = const {},
-  BranchComparisonMetadata Function(({String repoPath, String baseOid, String branchOid}) key)?
-      metadataFor,
+  BranchComparisonMetadata Function(
+    ({String repoPath, String baseOid, String branchOid}) key,
+  )?
+  metadataFor,
 }) async {
   tester.view.physicalSize = const Size(1500, 1300);
   tester.view.devicePixelRatio = 1.0;
@@ -216,7 +218,12 @@ void main() {
           mergeBaseOid: _mainOid,
           ancestry: ComparisonAncestry.connected,
           files: const [
-            BranchChangedFile(status: 'M', path: 'lib/a.dart', additions: 1, deletions: 0),
+            BranchChangedFile(
+              status: 'M',
+              path: 'lib/a.dart',
+              additions: 1,
+              deletions: 0,
+            ),
           ],
           additions: 1,
           deletions: 0,
@@ -262,7 +269,9 @@ void main() {
       await tester.tap(find.text('Changes'));
       await tester.pumpAndSettle();
       expect(
-        find.textContaining('No common ancestor — three-dot patch not available'),
+        find.textContaining(
+          'No common ancestor — three-dot patch not available',
+        ),
         findsOneWidget,
       );
       expect(git.diffRanges, isEmpty);

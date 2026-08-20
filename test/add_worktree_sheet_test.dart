@@ -135,10 +135,7 @@ void main() {
     // directories, and the repo name keeps sibling worktrees identifiable.
     expect(fieldText(tester, _folderNameField), 'app-feature-billing');
     // And the composed destination is spelled out, so there is no doubt.
-    expect(
-      find.text('→ /Users/x/wt-demo/app-feature-billing'),
-      findsOneWidget,
-    );
+    expect(find.text('→ /Users/x/wt-demo/app-feature-billing'), findsOneWidget);
   });
 
   testWidgets('a destination inside the repository is rejected', (
@@ -155,10 +152,7 @@ void main() {
     await tester.enterText(find.byType(MacosTextField).at(_parentField), _repo);
     await tester.pumpAndSettle();
 
-    expect(
-      find.textContaining('outside the repository'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('outside the repository'), findsOneWidget);
     // …and Create is unavailable while that is true.
     final create = tester.widget<AppPushButton>(
       find.ancestor(

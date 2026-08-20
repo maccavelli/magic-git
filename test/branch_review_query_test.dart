@@ -54,7 +54,10 @@ void main() {
   group('compareNaturalBranchName', () {
     test('release/9 before release/10', () {
       expect(compareNaturalBranchName('release/9', 'release/10'), lessThan(0));
-      expect(compareNaturalBranchName('release/10', 'release/9'), greaterThan(0));
+      expect(
+        compareNaturalBranchName('release/10', 'release/9'),
+        greaterThan(0),
+      );
       expect(compareNaturalBranchName('a', 'a'), 0);
     });
   });
@@ -62,10 +65,7 @@ void main() {
   group('facets AND + forge known-empty', () {
     test('no-request facet requires known forge data', () {
       final branch = _ref('x');
-      final unknown = BranchReviewRowContext(
-        branch: branch,
-        forgeKnown: false,
-      );
+      final unknown = BranchReviewRowContext(branch: branch, forgeKnown: false);
       final knownEmpty = BranchReviewRowContext(
         branch: branch,
         forgeKnown: true,
@@ -113,44 +113,47 @@ void main() {
       );
     });
 
-    test('mine uses email when present else name; disabled without identity', () {
-      final row = BranchReviewRowContext(
-        branch: _ref('x', authorName: 'Sam', authorEmail: 'sam@x.com'),
-        committerEmail: 'sam@x.com',
-      );
-      expect(
-        matchesBranchReviewFacets(row, const BranchReviewFacets(mine: true)),
-        isTrue,
-      );
-      expect(
-        matchesBranchReviewFacets(
-          BranchReviewRowContext(
-            branch: _ref('x', authorName: 'Sam', authorEmail: 'other@x.com'),
-            committerEmail: 'sam@x.com',
-            committerName: 'sam',
+    test(
+      'mine uses email when present else name; disabled without identity',
+      () {
+        final row = BranchReviewRowContext(
+          branch: _ref('x', authorName: 'Sam', authorEmail: 'sam@x.com'),
+          committerEmail: 'sam@x.com',
+        );
+        expect(
+          matchesBranchReviewFacets(row, const BranchReviewFacets(mine: true)),
+          isTrue,
+        );
+        expect(
+          matchesBranchReviewFacets(
+            BranchReviewRowContext(
+              branch: _ref('x', authorName: 'Sam', authorEmail: 'other@x.com'),
+              committerEmail: 'sam@x.com',
+              committerName: 'sam',
+            ),
+            const BranchReviewFacets(mine: true),
           ),
-          const BranchReviewFacets(mine: true),
-        ),
-        isFalse, // email takes precedence when configured
-      );
-      expect(
-        matchesBranchReviewFacets(
-          BranchReviewRowContext(
-            branch: _ref('x', authorName: 'Sam'),
-            committerName: 'sam',
+          isFalse, // email takes precedence when configured
+        );
+        expect(
+          matchesBranchReviewFacets(
+            BranchReviewRowContext(
+              branch: _ref('x', authorName: 'Sam'),
+              committerName: 'sam',
+            ),
+            const BranchReviewFacets(mine: true),
           ),
-          const BranchReviewFacets(mine: true),
-        ),
-        isTrue,
-      );
-      expect(
-        matchesBranchReviewFacets(
-          BranchReviewRowContext(branch: _ref('x', authorName: 'Sam')),
-          const BranchReviewFacets(mine: true),
-        ),
-        isFalse,
-      );
-    });
+          isTrue,
+        );
+        expect(
+          matchesBranchReviewFacets(
+            BranchReviewRowContext(branch: _ref('x', authorName: 'Sam')),
+            const BranchReviewFacets(mine: true),
+          ),
+          isFalse,
+        );
+      },
+    );
   });
 
   group('smart sort is deterministic', () {
@@ -192,15 +195,8 @@ void main() {
         'refs/heads/d',
       ]);
       // Anchor was b from toggle; range b..d.
-      expect(sel.ordered, [
-        'refs/heads/b',
-        'refs/heads/c',
-        'refs/heads/d',
-      ]);
-      sel = sel.preserveAfterRefresh([
-        'refs/heads/b',
-        'refs/heads/d',
-      ]);
+      expect(sel.ordered, ['refs/heads/b', 'refs/heads/c', 'refs/heads/d']);
+      sel = sel.preserveAfterRefresh(['refs/heads/b', 'refs/heads/d']);
       expect(sel.ordered, ['refs/heads/b', 'refs/heads/d']);
     });
   });

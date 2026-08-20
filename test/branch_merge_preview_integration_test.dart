@@ -30,11 +30,10 @@ void main() {
   }
 
   Future<int> objectCount() async {
-    final result = await Process.run(
-      'git',
-      ['count-objects', '-v'],
-      workingDirectory: repo,
-    );
+    final result = await Process.run('git', [
+      'count-objects',
+      '-v',
+    ], workingDirectory: repo);
     expect(result.exitCode, 0);
     for (final line in (result.stdout as String).split('\n')) {
       if (line.startsWith('count:')) {

@@ -166,12 +166,14 @@ void main() {
   });
 
   group('fallback', () {
-    test('an unrecognized command yields null so the caller can be generic',
-        () {
-      expect(forgeOperationLabel(['gh', 'something', 'weird']), isNull);
-      expect(forgeOperationLabel(['git', 'push']), isNull);
-      expect(forgeOperationLabel(['gh']), isNull);
-      expect(forgeOperationLabel([]), isNull);
-    });
+    test(
+      'an unrecognized command yields null so the caller can be generic',
+      () {
+        expect(forgeOperationLabel(['gh', 'something', 'weird']), isNull);
+        expect(forgeOperationLabel(['git', 'push']), isNull);
+        expect(forgeOperationLabel(['gh']), isNull);
+        expect(forgeOperationLabel([]), isNull);
+      },
+    );
   });
 }

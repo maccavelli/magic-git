@@ -41,10 +41,7 @@ void main() {
     test('SSH connected → connected', () {
       expect(
         sshUiConnectionStatus(
-          const ConnectionState(
-            phase: ConnectionPhase.connected,
-            host: 'box',
-          ),
+          const ConnectionState(phase: ConnectionPhase.connected, host: 'box'),
         ),
         SshUiConnectionStatus.connected,
       );
@@ -67,10 +64,7 @@ void main() {
     test('phase lost → reconnecting', () {
       expect(
         sshUiConnectionStatus(
-          const ConnectionState(
-            phase: ConnectionPhase.lost,
-            host: 'box',
-          ),
+          const ConnectionState(phase: ConnectionPhase.lost, host: 'box'),
         ),
         SshUiConnectionStatus.reconnecting,
       );
@@ -85,10 +79,7 @@ void main() {
       );
       expect(
         sshUiConnectionStatus(
-          const ConnectionState(
-            phase: ConnectionPhase.error,
-            error: 'boom',
-          ),
+          const ConnectionState(phase: ConnectionPhase.error, error: 'boom'),
         ),
         SshUiConnectionStatus.disconnected,
       );
@@ -105,16 +96,10 @@ void main() {
         ProviderScope(
           overrides: [
             connectionProvider.overrideWith(() => _StubConnection(connection)),
-            pingSamplesProvider.overrideWith(
-              () => _StubPingSamples(samples),
-            ),
+            pingSamplesProvider.overrideWith(() => _StubPingSamples(samples)),
           ],
           child: const MacosApp(
-            home: MacosWindow(
-              child: ContentArea(
-                builder: _content,
-              ),
-            ),
+            home: MacosWindow(child: ContentArea(builder: _content)),
           ),
         ),
       );

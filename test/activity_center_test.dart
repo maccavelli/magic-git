@@ -62,8 +62,9 @@ void main() {
 
   // 0009 M3: the sheet is LIVE (it watches the provider, not a tap-time
   // snapshot) and Escape dismisses it.
-  testWidgets('the open sheet updates as operations land, and Escape closes',
-      (tester) async {
+  testWidgets('the open sheet updates as operations land, and Escape closes', (
+    tester,
+  ) async {
     final container = ProviderContainer();
     addTearDown(container.dispose);
     container

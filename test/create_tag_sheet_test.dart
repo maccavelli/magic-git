@@ -115,21 +115,29 @@ void main() {
 
     await tester.enterText(find.byType(MacosTextField).first, 'v1.2.23');
     await tester.pump();
-    expect(_createEnabled(tester), isNotNull,
-        reason: 'the mirrored message satisfies the annotated requirement');
+    expect(
+      _createEnabled(tester),
+      isNotNull,
+      reason: 'the mirrored message satisfies the annotated requirement',
+    );
 
     await tester.tap(_createButton);
     await tester.pumpAndSettle();
 
     expect(git.createCalls, [('v1.2.23', 'v1.2.23', 'HEAD')]);
-    expect(git.pushCalls, [('v1.2.23', 'origin')],
-        reason: 'push-after-create defaults ON — the whole point');
-    expect(find.byType(CreateTagSheet), findsNothing,
-        reason: 'the sheet closes after a successful create');
+    expect(git.pushCalls, [
+      ('v1.2.23', 'origin'),
+    ], reason: 'push-after-create defaults ON — the whole point');
+    expect(
+      find.byType(CreateTagSheet),
+      findsNothing,
+      reason: 'the sheet closes after a successful create',
+    );
   });
 
-  testWidgets('an invalid name names its violation and disables Create',
-      (tester) async {
+  testWidgets('an invalid name names its violation and disables Create', (
+    tester,
+  ) async {
     await _pump(tester);
 
     await tester.enterText(find.byType(MacosTextField).first, 'v1..2');
@@ -139,8 +147,9 @@ void main() {
   });
 
   testWidgets('unchecking Annotated hides the message and creates a '
-      'lightweight tag; unchecking Push skips the push; both choices persist',
-      (tester) async {
+      'lightweight tag; unchecking Push skips the push; both choices persist', (
+    tester,
+  ) async {
     final git = await _pump(tester);
 
     await tester.enterText(find.byType(MacosTextField).first, 'wip');
@@ -154,8 +163,9 @@ void main() {
     await tester.tap(_createButton);
     await tester.pumpAndSettle();
 
-    expect(git.createCalls, [('wip', null, 'HEAD')],
-        reason: 'no message → lightweight');
+    expect(git.createCalls, [
+      ('wip', null, 'HEAD'),
+    ], reason: 'no message → lightweight');
     expect(git.pushCalls, isEmpty);
 
     // The sheet remembers both choices for next time.
@@ -164,8 +174,9 @@ void main() {
     expect(prefs.getBool('tagPushAfterCreate'), isFalse);
   });
 
-  testWidgets('no remote → no push checkbox, and the create is local-only',
-      (tester) async {
+  testWidgets('no remote → no push checkbox, and the create is local-only', (
+    tester,
+  ) async {
     final git = await _pump(tester, remotes: const []);
 
     expect(find.textContaining('after creating'), findsNothing);
@@ -218,9 +229,11 @@ void main() {
     await tester.tap(find.text('OK'));
     await tester.pumpAndSettle();
 
-    expect(find.byType(CreateTagSheet), findsOneWidget,
-        reason: 'still open — fix the name and try again');
-    expect(git.pushCalls, isEmpty,
-        reason: 'no push after a failed create');
+    expect(
+      find.byType(CreateTagSheet),
+      findsOneWidget,
+      reason: 'still open — fix the name and try again',
+    );
+    expect(git.pushCalls, isEmpty, reason: 'no push after a failed create');
   });
 }

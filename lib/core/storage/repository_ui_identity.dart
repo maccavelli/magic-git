@@ -131,13 +131,8 @@ class RepositoryUiIdentity {
       other.sessionEpoch == sessionEpoch;
 
   @override
-  int get hashCode => Object.hash(
-    scope,
-    scopeKey,
-    gitCommonDir,
-    durable,
-    sessionEpoch,
-  );
+  int get hashCode =>
+      Object.hash(scope, scopeKey, gitCommonDir, durable, sessionEpoch);
 
   @override
   String toString() =>

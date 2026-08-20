@@ -22,9 +22,7 @@ String branchRowSemanticsLabel({
     if (selected || multiSelected) 'selected',
     if (branch.elsewhereWorktreePath != null) 'checked out in another worktree',
     if (merged)
-      baseDisplayName != null
-          ? 'merged into $baseDisplayName'
-          : 'merged',
+      baseDisplayName != null ? 'merged into $baseDisplayName' : 'merged',
     if (forge != null && forge.hasRequest)
       '${forge.requestDraft ? 'draft ' : ''}'
           '${forge.isMr ? 'merge' : 'pull'} request ${forge.requestLabel}',

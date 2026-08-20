@@ -16,16 +16,41 @@ String rec(
 void main() {
   test('parseReflog splits action and detail at the first colon', () {
     final raw =
-        rec('a' * 40, 'aaaaaaa', 'HEAD@{5 minutes ago}', 'commit: add feature',
-            'add feature') +
-        rec('b' * 40, 'bbbbbbb', 'HEAD@{2 hours ago}',
-            'checkout: moving from main to feature', 'base commit') +
-        rec('c' * 40, 'ccccccc', 'HEAD@{3 days ago}',
-            'reset: moving to HEAD~1', 'older commit') +
-        rec('d' * 40, 'ddddddd', 'HEAD@{4 days ago}',
-            'rebase (finish): returning to refs/heads/main', 'rebased') +
-        rec('e' * 40, 'eeeeeee', 'HEAD@{5 days ago}',
-            'commit (amend): better subject', 'better subject');
+        rec(
+          'a' * 40,
+          'aaaaaaa',
+          'HEAD@{5 minutes ago}',
+          'commit: add feature',
+          'add feature',
+        ) +
+        rec(
+          'b' * 40,
+          'bbbbbbb',
+          'HEAD@{2 hours ago}',
+          'checkout: moving from main to feature',
+          'base commit',
+        ) +
+        rec(
+          'c' * 40,
+          'ccccccc',
+          'HEAD@{3 days ago}',
+          'reset: moving to HEAD~1',
+          'older commit',
+        ) +
+        rec(
+          'd' * 40,
+          'ddddddd',
+          'HEAD@{4 days ago}',
+          'rebase (finish): returning to refs/heads/main',
+          'rebased',
+        ) +
+        rec(
+          'e' * 40,
+          'eeeeeee',
+          'HEAD@{5 days ago}',
+          'commit (amend): better subject',
+          'better subject',
+        );
 
     final entries = parseReflog(raw);
     expect(entries, hasLength(5));

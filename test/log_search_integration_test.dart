@@ -50,8 +50,9 @@ void main() {
     ]);
   }
 
-  List<String> subjects(List<GitCommit> commits) =>
-      [for (final c in commits) c.subject];
+  List<String> subjects(List<GitCommit> commits) => [
+    for (final c in commits) c.subject,
+  ];
 
   setUp(() async {
     tempDir = Directory.systemTemp.createTempSync('log_search_int_');
@@ -81,15 +82,17 @@ void main() {
   tearDown(() => tempDir.deleteSync(recursive: true));
 
   group('message search', () {
-    test('multi-word means AND across words, not a contiguous phrase',
-        () async {
-      final hits = await git.log(repo, grep: 'patch collapse');
-      expect(subjects(hits), ['fix [WIP] patch collapse regression']);
+    test(
+      'multi-word means AND across words, not a contiguous phrase',
+      () async {
+        final hits = await git.log(repo, grep: 'patch collapse');
+        expect(subjects(hits), ['fix [WIP] patch collapse regression']);
 
-      // The words never appear adjacent in that order — AND still finds it.
-      final reversed = await git.log(repo, grep: 'collapse patch');
-      expect(subjects(reversed), ['fix [WIP] patch collapse regression']);
-    });
+        // The words never appear adjacent in that order — AND still finds it.
+        final reversed = await git.log(repo, grep: 'collapse patch');
+        expect(subjects(reversed), ['fix [WIP] patch collapse regression']);
+      },
+    );
 
     test('regex metacharacters match literally instead of exit-128', () async {
       final hits = await git.log(repo, grep: '[WIP]');
@@ -113,10 +116,7 @@ void main() {
     });
 
     test('author and message narrow together (AND)', () async {
-      expect(
-        await git.log(repo, grep: 'patch', author: 'other'),
-        hasLength(1),
-      );
+      expect(await git.log(repo, grep: 'patch', author: 'other'), hasLength(1));
       expect(
         await git.log(repo, grep: 'history', author: 'other'),
         isEmpty,
@@ -126,8 +126,7 @@ void main() {
   });
 
   group('path search (pathQuery)', () {
-    test('a bare filename matches at any depth, case-insensitively',
-        () async {
+    test('a bare filename matches at any depth, case-insensitively', () async {
       final hits = await git.log(repo, pathQuery: 'History_View.dart');
       expect(subjects(hits), ['feat(history): add HistoryView pane']);
     });
@@ -147,25 +146,28 @@ void main() {
   });
 
   group('sha search', () {
-    test('a full hash finds its commit; a 4-char prefix finds it too',
-        () async {
-      final full = await raw(['rev-parse', 'HEAD']);
-      expect(
-        subjects(await git.log(repo, sha: full)),
-        ['docs: write user guide'],
-      );
-      expect(
-        subjects(await git.log(repo, sha: full.substring(0, 4))),
-        contains('docs: write user guide'),
-      );
-    });
+    test(
+      'a full hash finds its commit; a 4-char prefix finds it too',
+      () async {
+        final full = await raw(['rev-parse', 'HEAD']);
+        expect(subjects(await git.log(repo, sha: full)), [
+          'docs: write user guide',
+        ]);
+        expect(
+          subjects(await git.log(repo, sha: full.substring(0, 4))),
+          contains('docs: write user guide'),
+        );
+      },
+    );
 
-    test('finds a commit deeper than the page size (object-db, not walk)',
-        () async {
-      final oldest = await raw(['rev-list', '--max-parents=0', 'HEAD']);
-      final hits = await git.log(repo, sha: oldest, maxCount: 1);
-      expect(subjects(hits), ['feat(history): add HistoryView pane']);
-    });
+    test(
+      'finds a commit deeper than the page size (object-db, not walk)',
+      () async {
+        final oldest = await raw(['rev-list', '--max-parents=0', 'HEAD']);
+        final hits = await git.log(repo, sha: oldest, maxCount: 1);
+        expect(subjects(hits), ['feat(history): add HistoryView pane']);
+      },
+    );
 
     test('finds a commit reachable only from another branch', () async {
       await raw(['checkout', '-q', '-b', 'side']);
@@ -177,12 +179,14 @@ void main() {
       expect(subjects(hits), ['side: only on the side branch']);
     });
 
-    test('an unresolvable prefix is "no results", not an error or a full log',
-        () async {
-      expect(await git.log(repo, sha: 'deadbeef'), isEmpty);
-      expect(await git.log(repo, sha: 'zzzz'), isEmpty);
-      expect(await git.log(repo, sha: 'ab'), isEmpty, reason: 'too short');
-    });
+    test(
+      'an unresolvable prefix is "no results", not an error or a full log',
+      () async {
+        expect(await git.log(repo, sha: 'deadbeef'), isEmpty);
+        expect(await git.log(repo, sha: 'zzzz'), isEmpty);
+        expect(await git.log(repo, sha: 'ab'), isEmpty, reason: 'too short');
+      },
+    );
 
     test('survives a prefix that also names blobs and trees', () async {
       // `rev-parse --disambiguate` returns EVERY object type; `--no-walk` must
@@ -225,17 +229,23 @@ void main() {
       await raw(['checkout', '-q', 'main']);
 
       expect(await git.log(repo, grep: 'xyzzy'), isEmpty);
-      expect(
-        subjects(await git.log(repo, grep: 'xyzzy', all: true)),
-        ['topic: special marker xyzzy'],
-      );
+      expect(subjects(await git.log(repo, grep: 'xyzzy', all: true)), [
+        'topic: special marker xyzzy',
+      ]);
     });
 
     test('noMerges drops merge commits from a search', () async {
       await raw(['checkout', '-q', '-b', 'feature']);
       await commitFile('f.txt', 'f\n', 'feature work');
       await raw(['checkout', '-q', 'main']);
-      await raw(['merge', '--no-ff', '-q', '-m', 'merge feature work', 'feature']);
+      await raw([
+        'merge',
+        '--no-ff',
+        '-q',
+        '-m',
+        'merge feature work',
+        'feature',
+      ]);
 
       expect(await git.log(repo, grep: 'feature work'), hasLength(2));
       expect(

@@ -143,7 +143,10 @@ class GapExpansion {
   /// is the only thing [ExpandDirection.all] needs to finish the job — adding it
   /// to whatever is already shown covers the gap exactly, whether this is the
   /// first click or the last of a long walk.
-  GapExpansion plus(ExpandDirection direction, int hidden) => switch (direction) {
+  GapExpansion plus(
+    ExpandDirection direction,
+    int hidden,
+  ) => switch (direction) {
     // "Up" means revealing the lines just above the hunk below — i.e. growing
     // from the BOTTOM of the gap upward.
     ExpandDirection.up => GapExpansion(
@@ -179,9 +182,7 @@ List<PatchRow> buildPatchRows(
   Map<ExpandRequest, GapExpansion> expansions = const {},
   BlobLines blobs = const {},
 }) {
-  final rows = <PatchRow>[
-    for (final line in patch.preamble) PreambleRow(line),
-  ];
+  final rows = <PatchRow>[for (final line in patch.preamble) PreambleRow(line)];
 
   for (var f = 0; f < patch.files.length; f++) {
     final file = patch.files[f];

@@ -31,7 +31,10 @@ void main() {
     addTearDown(container.dispose);
     final n = container.read(historyNavigationIntentProvider.notifier);
     n.set('/repo', 'feature');
-    expect(container.read(historyNavigationIntentProvider)?.revision, 'feature');
+    expect(
+      container.read(historyNavigationIntentProvider)?.revision,
+      'feature',
+    );
     n.clear();
     expect(container.read(historyNavigationIntentProvider), isNull);
   });

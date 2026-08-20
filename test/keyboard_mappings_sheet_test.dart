@@ -13,9 +13,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 /// MacosTooltip (not Flutter's Tooltip) exposes its message as a plain field,
 /// so `find.byTooltip` doesn't see it — match on the wrapper widget instead.
-Finder _byMacosTooltip(String message) => find.byWidgetPredicate(
-  (w) => w is MacosTooltip && w.message == message,
-);
+Finder _byMacosTooltip(String message) =>
+    find.byWidgetPredicate((w) => w is MacosTooltip && w.message == message);
 
 Future<ProviderContainer> _pump(WidgetTester tester) async {
   SharedPreferences.setMockInitialValues({});
@@ -64,10 +63,9 @@ void main() {
 
     expect(find.text('⌘J'), findsOneWidget);
     expect(find.text('⌘R'), findsNothing);
-    expect(
-      container.read(keymapProvider)['global.refresh'],
-      [KeyBinding.fromKey(LogicalKeyboardKey.keyJ, meta: true)],
-    );
+    expect(container.read(keymapProvider)['global.refresh'], [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyJ, meta: true),
+    ]);
   });
 
   testWidgets('+ Add binds a second trigger without dropping the first', (
@@ -119,24 +117,25 @@ void main() {
     );
   });
 
-  testWidgets('Esc cancels an in-progress recording, leaving the binding untouched', (
-    tester,
-  ) async {
-    final container = await _pump(tester);
-    await _filterToRefresh(tester);
+  testWidgets(
+    'Esc cancels an in-progress recording, leaving the binding untouched',
+    (tester) async {
+      final container = await _pump(tester);
+      await _filterToRefresh(tester);
 
-    await tester.tap(find.text('⌘R'));
-    await tester.pump();
-    expect(find.text('Press keys…'), findsOneWidget);
+      await tester.tap(find.text('⌘R'));
+      await tester.pump();
+      expect(find.text('Press keys…'), findsOneWidget);
 
-    await tester.sendKeyDownEvent(LogicalKeyboardKey.escape);
-    await tester.sendKeyUpEvent(LogicalKeyboardKey.escape);
-    await tester.pumpAndSettle();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.escape);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
 
-    expect(find.text('⌘R'), findsOneWidget);
-    expect(
-      container.read(keymapProvider)['global.refresh'],
-      kKeymapActionsById['global.refresh']!.defaultBindings,
-    );
-  });
+      expect(find.text('⌘R'), findsOneWidget);
+      expect(
+        container.read(keymapProvider)['global.refresh'],
+        kKeymapActionsById['global.refresh']!.defaultBindings,
+      );
+    },
+  );
 }

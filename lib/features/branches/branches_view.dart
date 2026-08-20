@@ -113,6 +113,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   bool _showAllRemotes = false;
 
   BranchWorkspaceMode? _modeOverride;
+
   /// Review facets compose by AND. The detail pane's Stale/Merged/Conflicts
   /// chips and the navigator's facet menu are two faces of this one value.
   BranchReviewFacets _facets = const BranchReviewFacets();

@@ -39,7 +39,9 @@ class _RunJobsViewState extends ConsumerState<RunJobsView> {
 
   @override
   Widget build(BuildContext context) {
-    final jobsAsync = ref.watch(runJobsProvider((widget.repoPath, widget.runId)));
+    final jobsAsync = ref.watch(
+      runJobsProvider((widget.repoPath, widget.runId)),
+    );
     final jobs = jobsAsync.value ?? const <GhJob>[];
 
     GhJob? selectedJob;
@@ -74,7 +76,8 @@ class _RunJobsViewState extends ConsumerState<RunJobsView> {
       // A selected job that the (errored) list couldn't resolve should show the
       // error, not the "still running" placeholder that _logPane falls back to
       // for a null job — that would confidently mis-state a failed load.
-      detail: _selectedJobId != null && selectedJob == null && jobsAsync.hasError
+      detail:
+          _selectedJobId != null && selectedJob == null && jobsAsync.hasError
           ? PaneError(jobsAsync.error!)
           : _logPane(context, selectedJob),
     );
@@ -124,7 +127,6 @@ class _RunJobsViewState extends ConsumerState<RunJobsView> {
       },
     );
   }
-
 }
 
 /// A completed job's log, fetched once via `gh run view --job <id> --log`.

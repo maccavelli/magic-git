@@ -33,66 +33,66 @@ class KeyboardShortcutsSheet extends ConsumerWidget {
       // CallbackShortcuts here would need focus *inside* the sheet, which a
       // freshly opened sheet doesn't have until the user clicks something.
       child: SizedBox(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
                 children: [
-                  Row(
-                    children: [
-                      const MacosIcon(CupertinoIcons.command, size: 18),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Keyboard Shortcuts',
-                          style: typography.title2,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      ToolIconButton(
-                        icon: CupertinoIcons.xmark,
-                        tooltip: 'Close',
-                        size: 15,
-                        onPressed: () => Navigator.of(context).pop(),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Customize these in Settings → Keyboard Mappings. '
-                    'Panel shortcuts apply while that panel is active.',
-                    style: typography.caption1.copyWith(
-                      color: MacosColors.systemGrayColor,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
+                  const MacosIcon(CupertinoIcons.command, size: 18),
+                  const SizedBox(width: 8),
                   Expanded(
-                    child: ListView(
-                      children: [
-                        for (final category in KeymapCategory.values)
-                          if (byCategory[category]?.isNotEmpty ?? false) ...[
-                            Padding(
-                              padding: const EdgeInsets.only(top: 14, bottom: 4),
-                              child: Text(
-                                category.label,
-                                style: typography.headline,
-                              ),
-                            ),
-                            for (final action in byCategory[category]!)
-                              _row(
-                                context,
-                                action,
-                                keymap[action.id] ?? const <KeyBinding>[],
-                              ),
-                          ],
-                      ],
+                    child: Text(
+                      'Keyboard Shortcuts',
+                      style: typography.title2,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
+                  ),
+                  ToolIconButton(
+                    icon: CupertinoIcons.xmark,
+                    tooltip: 'Close',
+                    size: 15,
+                    onPressed: () => Navigator.of(context).pop(),
                   ),
                 ],
               ),
-            ),
+              const SizedBox(height: 6),
+              Text(
+                'Customize these in Settings → Keyboard Mappings. '
+                'Panel shortcuts apply while that panel is active.',
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: ListView(
+                  children: [
+                    for (final category in KeymapCategory.values)
+                      if (byCategory[category]?.isNotEmpty ?? false) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(top: 14, bottom: 4),
+                          child: Text(
+                            category.label,
+                            style: typography.headline,
+                          ),
+                        ),
+                        for (final action in byCategory[category]!)
+                          _row(
+                            context,
+                            action,
+                            keymap[action.id] ?? const <KeyBinding>[],
+                          ),
+                      ],
+                  ],
+                ),
+              ),
+            ],
           ),
+        ),
+      ),
     );
   }
 

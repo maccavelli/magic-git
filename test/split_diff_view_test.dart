@@ -23,11 +23,7 @@ index 111..222 100644
 Future<void> _pump(WidgetTester tester, String diff) => tester.pumpWidget(
   MacosApp(
     debugShowCheckedModeBanner: false,
-    home: SizedBox(
-      width: 900,
-      height: 600,
-      child: SplitDiffView(diff: diff),
-    ),
+    home: SizedBox(width: 900, height: 600, child: SplitDiffView(diff: diff)),
   ),
 );
 

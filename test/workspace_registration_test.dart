@@ -25,12 +25,13 @@ class _FakeConnection extends ConnectionController {
   ConnectionState _state;
 
   _FakeConnection([ConnectionState? state])
-      : _state = state ??
-            const ConnectionState(
-              phase: ConnectionPhase.connected,
-              repoPath: '/',
-              connectionId: _connId,
-            );
+    : _state =
+          state ??
+          const ConnectionState(
+            phase: ConnectionPhase.connected,
+            repoPath: '/',
+            connectionId: _connId,
+          );
 
   @override
   ConnectionState build() => _state;
@@ -147,7 +148,9 @@ Future<void> _pumpWork(
     await tester.pump(const Duration(milliseconds: 10));
   }
   if (!done.isCompleted) {
-    await tester.runAsync(() => done.future.timeout(const Duration(seconds: 5)));
+    await tester.runAsync(
+      () => done.future.timeout(const Duration(seconds: 5)),
+    );
   }
   await tester.pump();
 }
@@ -175,11 +178,13 @@ void main() {
     ) async {
       final conn = _FakeConnection();
       final localStore = _FakeLocalRepoStore();
-      final container = ProviderContainer(overrides: [
-        connectionProvider.overrideWith(() => conn),
-        localRepoStoreProvider.overrideWithValue(localStore),
-        savedLocalReposProvider.overrideWith((ref) async => const []),
-      ]);
+      final container = ProviderContainer(
+        overrides: [
+          connectionProvider.overrideWith(() => conn),
+          localRepoStoreProvider.overrideWithValue(localStore),
+          savedLocalReposProvider.overrideWith((ref) async => const []),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _pumpWork(
@@ -200,11 +205,13 @@ void main() {
     ) async {
       final conn = _FailingConnection();
       final localStore = _FakeLocalRepoStore();
-      final container = ProviderContainer(overrides: [
-        connectionProvider.overrideWith(() => conn),
-        localRepoStoreProvider.overrideWithValue(localStore),
-        savedLocalReposProvider.overrideWith((ref) async => const []),
-      ]);
+      final container = ProviderContainer(
+        overrides: [
+          connectionProvider.overrideWith(() => conn),
+          localRepoStoreProvider.overrideWithValue(localStore),
+          savedLocalReposProvider.overrideWith((ref) async => const []),
+        ],
+      );
       addTearDown(container.dispose);
 
       bool? result;
@@ -222,11 +229,13 @@ void main() {
     ) async {
       final conn = _FakeConnection();
       final localStore = _FakeLocalRepoStore();
-      final container = ProviderContainer(overrides: [
-        connectionProvider.overrideWith(() => conn),
-        localRepoStoreProvider.overrideWithValue(localStore),
-        savedLocalReposProvider.overrideWith((ref) async => const []),
-      ]);
+      final container = ProviderContainer(
+        overrides: [
+          connectionProvider.overrideWith(() => conn),
+          localRepoStoreProvider.overrideWithValue(localStore),
+          savedLocalReposProvider.overrideWith((ref) async => const []),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _pumpWork(
@@ -256,11 +265,13 @@ void main() {
       tester,
     ) async {
       final conn = _FakeConnection();
-      final container = ProviderContainer(overrides: [
-        connectionProvider.overrideWith(() => conn),
-        localRepoStoreProvider.overrideWithValue(_FakeLocalRepoStore()),
-        savedLocalReposProvider.overrideWith((ref) async => const []),
-      ]);
+      final container = ProviderContainer(
+        overrides: [
+          connectionProvider.overrideWith(() => conn),
+          localRepoStoreProvider.overrideWithValue(_FakeLocalRepoStore()),
+          savedLocalReposProvider.overrideWith((ref) async => const []),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _pumpWork(
@@ -289,20 +300,21 @@ void main() {
     ) async {
       final conn = _FakeConnection();
       final store = _FakeConnectionStore();
-      final container = ProviderContainer(overrides: [
-        connectionProvider.overrideWith(() => conn),
-        connectionStoreProvider.overrideWithValue(store),
-        savedConnectionsProvider.overrideWith(
-          (ref) async => [savedConn],
-        ),
-        gitServiceProvider.overrideWithValue(_RecordingGitService()),
-      ]);
+      final container = ProviderContainer(
+        overrides: [
+          connectionProvider.overrideWith(() => conn),
+          connectionStoreProvider.overrideWithValue(store),
+          savedConnectionsProvider.overrideWith((ref) async => [savedConn]),
+          gitServiceProvider.overrideWithValue(_RecordingGitService()),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _pumpWork(
         tester,
         container,
-        (ref) => registerAndActivateSshActive(ref, dest: _dest, fsmonitor: false),
+        (ref) =>
+            registerAndActivateSshActive(ref, dest: _dest, fsmonitor: false),
       );
 
       final updated = store.updated;
@@ -316,43 +328,38 @@ void main() {
     ) async {
       final conn = _FakeConnection();
       final git = _RecordingGitService();
-      final container = ProviderContainer(overrides: [
-        connectionProvider.overrideWith(() => conn),
-        connectionStoreProvider.overrideWithValue(_FakeConnectionStore()),
-        savedConnectionsProvider.overrideWith(
-          (ref) async => [savedConn],
-        ),
-        gitServiceProvider.overrideWithValue(git),
-      ]);
+      final container = ProviderContainer(
+        overrides: [
+          connectionProvider.overrideWith(() => conn),
+          connectionStoreProvider.overrideWithValue(_FakeConnectionStore()),
+          savedConnectionsProvider.overrideWith((ref) async => [savedConn]),
+          gitServiceProvider.overrideWithValue(git),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _pumpWork(
         tester,
         container,
-        (ref) => registerAndActivateSshActive(
-          ref,
-          dest: _dest,
-          fsmonitor: true,
-        ),
+        (ref) =>
+            registerAndActivateSshActive(ref, dest: _dest, fsmonitor: true),
       );
 
       expect(git.fsmonitorPath, _dest);
       expect(git.fsmonitorEnabled, isTrue);
     });
 
-    testWidgets('with label saves it in connection metadata', (
-      tester,
-    ) async {
+    testWidgets('with label saves it in connection metadata', (tester) async {
       final conn = _FakeConnection();
       final store = _FakeConnectionStore();
-      final container = ProviderContainer(overrides: [
-        connectionProvider.overrideWith(() => conn),
-        connectionStoreProvider.overrideWithValue(store),
-        savedConnectionsProvider.overrideWith(
-          (ref) async => [savedConn],
-        ),
-        gitServiceProvider.overrideWithValue(_RecordingGitService()),
-      ]);
+      final container = ProviderContainer(
+        overrides: [
+          connectionProvider.overrideWith(() => conn),
+          connectionStoreProvider.overrideWithValue(store),
+          savedConnectionsProvider.overrideWith((ref) async => [savedConn]),
+          gitServiceProvider.overrideWithValue(_RecordingGitService()),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _pumpWork(
@@ -378,20 +385,21 @@ void main() {
         const ConnectionState(phase: ConnectionPhase.connected),
       );
       final store = _FakeConnectionStore();
-      final container = ProviderContainer(overrides: [
-        connectionProvider.overrideWith(() => conn),
-        connectionStoreProvider.overrideWithValue(store),
-        savedConnectionsProvider.overrideWith(
-          (ref) async => [savedConn],
-        ),
-        gitServiceProvider.overrideWithValue(_RecordingGitService()),
-      ]);
+      final container = ProviderContainer(
+        overrides: [
+          connectionProvider.overrideWith(() => conn),
+          connectionStoreProvider.overrideWithValue(store),
+          savedConnectionsProvider.overrideWith((ref) async => [savedConn]),
+          gitServiceProvider.overrideWithValue(_RecordingGitService()),
+        ],
+      );
       addTearDown(container.dispose);
 
       await _pumpWork(
         tester,
         container,
-        (ref) => registerAndActivateSshActive(ref, dest: _dest, fsmonitor: false),
+        (ref) =>
+            registerAndActivateSshActive(ref, dest: _dest, fsmonitor: false),
       );
 
       expect(store.updated, isNull);

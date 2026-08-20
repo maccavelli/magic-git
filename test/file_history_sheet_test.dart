@@ -113,7 +113,8 @@ void main() {
       expect(
         git.showCommitCalls,
         [('aaa1111', _path), ('bbb2222', oldPath)],
-        reason: 'the pre-rename commit must be asked about lib/old_a.dart — '
+        reason:
+            'the pre-rename commit must be asked about lib/old_a.dart — '
             'asking about the current name shows nothing at all',
       );
     },

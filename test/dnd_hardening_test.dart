@@ -136,7 +136,10 @@ void main() {
 
     expect(find.byType(LiftedDragCell), findsOneWidget);
     expect(
-      find.descendant(of: find.byType(LiftedDragCell), matching: find.text('3')),
+      find.descendant(
+        of: find.byType(LiftedDragCell),
+        matching: find.text('3'),
+      ),
       findsOneWidget,
       reason: 'three files in hand -> Finder-style "3" badge on the cell',
     );
@@ -201,7 +204,10 @@ void main() {
   testWidgets('ESC during a rebase row drag cancels the drag, not the sheet', (
     tester,
   ) async {
-    final commits = [_c('a111111111111', 'first'), _c('b222222222222', 'second')];
+    final commits = [
+      _c('a111111111111', 'first'),
+      _c('b222222222222', 'second'),
+    ];
     late BuildContext homeContext;
     await tester.pumpWidget(
       ProviderScope(

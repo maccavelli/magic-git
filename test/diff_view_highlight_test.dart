@@ -48,7 +48,9 @@ Future<void> _pump(WidgetTester tester, String diff) async {
 }
 
 void main() {
-  testWidgets('content lines carry more than one syntax colour', (tester) async {
+  testWidgets('content lines carry more than one syntax colour', (
+    tester,
+  ) async {
     await _pump(tester, _patch);
     expect(_leafColors(tester).toSet().length, greaterThan(1));
     // Text is preserved.

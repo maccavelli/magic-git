@@ -93,10 +93,7 @@ List<SessionAtRisk> sessionsAtRisk(
 String sessionExitSummaryMessage(List<SessionAtRisk> atRisk) {
   final lines = [
     for (final t in atRisk)
-      '• ${t.repoPath} — ${[
-        if (t.dirty) 'uncommitted changes',
-        if (t.pending != PendingOp.none) '${t.pending.name} in progress',
-      ].join(', ')}',
+      '• ${t.repoPath} — ${[if (t.dirty) 'uncommitted changes', if (t.pending != PendingOp.none) '${t.pending.name} in progress'].join(', ')}',
   ];
   return '${lines.join('\n')}\n\n'
       'Nothing is deleted on the host, but these sessions will be left '

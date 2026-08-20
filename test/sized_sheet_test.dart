@@ -65,7 +65,8 @@ void main() {
       expect(
         size.width,
         isNot(300),
-        reason: 'tight route constraints override the inner SizedBox — any '
+        reason:
+            'tight route constraints override the inner SizedBox — any '
             'fixed-size sheet must go through SizedSheet instead',
       );
     },

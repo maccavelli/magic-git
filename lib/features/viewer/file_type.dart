@@ -47,7 +47,8 @@ class ViewerFileType {
   /// Whether the file is fundamentally an image (raster or vector) — content
   /// the viewer renders rather than shows as text. Used to route binary
   /// content to an image preview instead of the "binary file" placeholder.
-  bool get isImage => preview == PreviewKind.image || preview == PreviewKind.svg;
+  bool get isImage =>
+      preview == PreviewKind.image || preview == PreviewKind.svg;
 }
 
 /// Full-basename matches (lower-cased), for files whose *name* — not extension

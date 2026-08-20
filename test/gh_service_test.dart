@@ -855,9 +855,9 @@ void main() {
         final comments = await service.listPullRequestComments(_repo, 7);
 
         expect(
-        executor.calls.first.gitArgs,
-        contains('repos/{owner}/{repo}/issues/7/comments'),
-      );
+          executor.calls.first.gitArgs,
+          contains('repos/{owner}/{repo}/issues/7/comments'),
+        );
         expect(comments, hasLength(1));
         expect(comments.single.author, 'bob');
         expect(comments.single.body, 'Looks good');

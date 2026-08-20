@@ -92,37 +92,40 @@ void main() {
     expect(() => clearHashKeyedRepoCaches(), returnsNormally);
   });
 
-  test(
-    'every KeepAliveLru field is cleared by clearHashKeyedRepoCaches',
-    () {
-      // §0.5.C structural guard: private LRUs cannot be introspected, so
-      // assert source membership. Omitting a new LRU recreates stuck-loading.
-      final providers = File('lib/core/providers/app_providers.dart').readAsStringSync();
-      final lruDecls = RegExp(
-        r'^final (_\w+Lru) = KeepAliveLru',
-        multiLine: true,
-      ).allMatches(providers).map((m) => m.group(1)!).toList();
-      expect(lruDecls, isNotEmpty);
+  test('every KeepAliveLru field is cleared by clearHashKeyedRepoCaches', () {
+    // §0.5.C structural guard: private LRUs cannot be introspected, so
+    // assert source membership. Omitting a new LRU recreates stuck-loading.
+    final providers = File(
+      'lib/core/providers/app_providers.dart',
+    ).readAsStringSync();
+    final lruDecls = RegExp(
+      r'^final (_\w+Lru) = KeepAliveLru',
+      multiLine: true,
+    ).allMatches(providers).map((m) => m.group(1)!).toList();
+    expect(lruDecls, isNotEmpty);
 
-      final clearStart = providers.indexOf('void clearHashKeyedRepoCaches()');
-      expect(clearStart, greaterThanOrEqualTo(0));
-      final clearEnd = providers.indexOf('\n}', clearStart);
-      final clearBody = providers.substring(clearStart, clearEnd);
+    final clearStart = providers.indexOf('void clearHashKeyedRepoCaches()');
+    expect(clearStart, greaterThanOrEqualTo(0));
+    final clearEnd = providers.indexOf('\n}', clearStart);
+    final clearBody = providers.substring(clearStart, clearEnd);
 
-      for (final name in lruDecls) {
-        expect(
-          clearBody,
-          contains('$name.clear()'),
-          reason: '$name must be cleared in clearHashKeyedRepoCaches',
-        );
-      }
-      expect(clearBody, contains('_branchDiffLru.clear()'));
-    },
-  );
+    for (final name in lruDecls) {
+      expect(
+        clearBody,
+        contains('$name.clear()'),
+        reason: '$name must be cleared in clearHashKeyedRepoCaches',
+      );
+    }
+    expect(clearBody, contains('_branchDiffLru.clear()'));
+  });
 
   test('phase-2 comparison families are in repoScopedFetchFamilies', () {
-    final providers = File('lib/core/providers/app_providers.dart').readAsStringSync();
-    final start = providers.indexOf('final List<ProviderOrFamily> repoScopedFetchFamilies');
+    final providers = File(
+      'lib/core/providers/app_providers.dart',
+    ).readAsStringSync();
+    final start = providers.indexOf(
+      'final List<ProviderOrFamily> repoScopedFetchFamilies',
+    );
     expect(start, greaterThanOrEqualTo(0));
     final end = providers.indexOf('];', start);
     final body = providers.substring(start, end);

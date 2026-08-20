@@ -46,14 +46,21 @@ void main() {
     expect(sent, [DockProgress.indeterminate, DockProgress.hidden]);
   });
 
-  test('setFraction overrides indeterminate; ending the op clears it',
-      () async {
-    await dock.track(() async {
-      dock.setFraction(0.25);
-      dock.setFraction(0.5);
-    });
-    expect(sent, [DockProgress.indeterminate, 0.25, 0.5, DockProgress.hidden]);
-  });
+  test(
+    'setFraction overrides indeterminate; ending the op clears it',
+    () async {
+      await dock.track(() async {
+        dock.setFraction(0.25);
+        dock.setFraction(0.5);
+      });
+      expect(sent, [
+        DockProgress.indeterminate,
+        0.25,
+        0.5,
+        DockProgress.hidden,
+      ]);
+    },
+  );
 
   test('fractions are clamped to 0..1', () {
     dock.setFraction(3.7);
@@ -85,9 +92,7 @@ void main() {
   group('cloneFractionFor', () {
     test('maps the transfer to the first 90% of the bar', () {
       expect(
-        CloneJobController.cloneFractionFor(
-          'Receiving objects:   0% (1/2000)',
-        ),
+        CloneJobController.cloneFractionFor('Receiving objects:   0% (1/2000)'),
         0.0,
       );
       expect(

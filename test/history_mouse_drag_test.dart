@@ -64,7 +64,12 @@ Future<void> _pump(WidgetTester tester) async {
   final git = _FakeGit(
     [head, older],
     [
-      GitRef(name: 'refs/heads/main', oid: head.hash, isHead: true, subject: 's'),
+      GitRef(
+        name: 'refs/heads/main',
+        oid: head.hash,
+        isHead: true,
+        subject: 's',
+      ),
       GitRef(
         name: 'refs/heads/feature',
         oid: older.hash,

@@ -32,19 +32,17 @@ Future<void> _pump(WidgetTester tester, GitStatus status) async {
         statusProvider.overrideWith((ref, repo) async => status),
       ],
       child: const MacosApp(
-        home: MacosWindow(
-          child: ContentArea(
-            builder: _builder,
-          ),
-        ),
+        home: MacosWindow(child: ContentArea(builder: _builder)),
       ),
     ),
   );
   await tester.pump(); // resolve the status future
 }
 
-Widget _builder(BuildContext context, ScrollController _) =>
-    const Align(alignment: Alignment.bottomCenter, child: CurrentRepoIndicator());
+Widget _builder(BuildContext context, ScrollController _) => const Align(
+  alignment: Alignment.bottomCenter,
+  child: CurrentRepoIndicator(),
+);
 
 bool _isDot(Widget w, Color color) {
   if (w is! Container) return false;
@@ -53,15 +51,21 @@ bool _isDot(Widget w, Color color) {
 }
 
 void main() {
-  testWidgets('clean + in sync shows the repo but no status dot', (tester) async {
+  testWidgets('clean + in sync shows the repo but no status dot', (
+    tester,
+  ) async {
     await _pump(
       tester,
-      GitStatus(branch: const GitBranchInfo(head: 'main'), files: const []),
+      GitStatus(
+        branch: const GitBranchInfo(head: 'main'),
+        files: const [],
+      ),
     );
     expect(find.text('repo'), findsOneWidget);
     expect(
       find.byWidgetPredicate(
-        (w) => _isDot(w, MacosColors.systemOrangeColor) ||
+        (w) =>
+            _isDot(w, MacosColors.systemOrangeColor) ||
             _isDot(w, MacosColors.systemRedColor),
       ),
       findsNothing,
@@ -73,7 +77,9 @@ void main() {
       tester,
       GitStatus(
         branch: const GitBranchInfo(head: 'main'),
-        files: const [GitFileStatus(path: 'a.dart', statusX: '.', statusY: 'M')],
+        files: const [
+          GitFileStatus(path: 'a.dart', statusX: '.', statusY: 'M'),
+        ],
       ),
     );
     expect(
@@ -87,7 +93,9 @@ void main() {
       tester,
       GitStatus(
         branch: const GitBranchInfo(head: 'main'),
-        files: const [GitFileStatus(path: 'a.dart', statusX: 'U', statusY: 'U')],
+        files: const [
+          GitFileStatus(path: 'a.dart', statusX: 'U', statusY: 'U'),
+        ],
       ),
     );
     expect(

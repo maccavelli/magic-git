@@ -89,8 +89,9 @@ List<DiffLineHighlight> computeDiffLineHighlights(
   // isn't enormous.
   HighlightedLines? postDoc;
   HighlightedLines? preDoc;
-  final languageId = viewerFileTypeFor(file.newPath ?? file.oldPath ?? '')
-      .languageId;
+  final languageId = viewerFileTypeFor(
+    file.newPath ?? file.oldPath ?? '',
+  ).languageId;
   if (enableHighlight &&
       total <= _highlightMaxLines &&
       languageId != null &&
@@ -275,7 +276,10 @@ TextSpan diffLineSpan(
   final kindColor = diffKindColor(kind, defaultColor);
   final marker = rawLine.substring(0, 1);
   final content = rawLine.substring(1);
-  final markerSpan = TextSpan(text: marker, style: base.copyWith(color: kindColor));
+  final markerSpan = TextSpan(
+    text: marker,
+    style: base.copyWith(color: kindColor),
+  );
   if (content.isEmpty) return TextSpan(style: base, children: [markerSpan]);
 
   final runs = h?.runs;

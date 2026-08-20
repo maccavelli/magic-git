@@ -70,36 +70,38 @@ Future<void> _warm(ProviderContainer c) async {
 }
 
 void main() {
-  test(
-    'a multi-repo connection contributes ONE entry, so a local repo is not '
-    'buried (the reported bug)',
-    () async {
-      final c = _container(
-        conns: [
-          _c(
-            'host',
-            DateTime.utc(2026, 1, 1),
-            repoPath: '/a',
-            repoPaths: ['/a', '/b', '/c', '/d', '/e'],
-          ),
-        ],
-        locals: [_l('magic-git', DateTime.utc(2026, 6, 1))],
-        // No MRU yet -> pure fallback (e.g. first run after the fix shipped).
-      );
-      await _warm(c);
+  test('a multi-repo connection contributes ONE entry, so a local repo is not '
+      'buried (the reported bug)', () async {
+    final c = _container(
+      conns: [
+        _c(
+          'host',
+          DateTime.utc(2026, 1, 1),
+          repoPath: '/a',
+          repoPaths: ['/a', '/b', '/c', '/d', '/e'],
+        ),
+      ],
+      locals: [_l('magic-git', DateTime.utc(2026, 6, 1))],
+      // No MRU yet -> pure fallback (e.g. first run after the fix shipped).
+    );
+    await _warm(c);
 
-      final recent = c.read(recentReposProvider);
-      // The local repo (used more recently) leads; the connection adds only its
-      // default repo — NOT all five, which used to crowd the local one out.
-      expect(recent.map((r) => r.repoName).toList(), ['magic-git', 'a']);
-      expect(recent.whereType<RecentLocalRepoEntry>(), hasLength(1));
-    },
-  );
+    final recent = c.read(recentReposProvider);
+    // The local repo (used more recently) leads; the connection adds only its
+    // default repo — NOT all five, which used to crowd the local one out.
+    expect(recent.map((r) => r.repoName).toList(), ['magic-git', 'a']);
+    expect(recent.whereType<RecentLocalRepoEntry>(), hasLength(1));
+  });
 
   test('the MRU ranks the specific repo opened, ahead of the fallback', () async {
     final c = _container(
       conns: [
-        _c('host', DateTime.utc(2026, 1, 1), repoPath: '/a', repoPaths: ['/a', '/b']),
+        _c(
+          'host',
+          DateTime.utc(2026, 1, 1),
+          repoPath: '/a',
+          repoPaths: ['/a', '/b'],
+        ),
       ],
       // The user actually opened /b (not the default /a).
       mru: [_remote('host', '/b', DateTime.utc(2026, 5, 1))],
@@ -131,22 +133,25 @@ void main() {
     ]);
   });
 
-  test('an MRU entry for a deleted profile is dropped and the list self-heals', () async {
-    final c = _container(
-      conns: const [], // the 'gone' connection was deleted
-      locals: [_l('magic-git', DateTime.utc(2026, 6, 1))],
-      mru: [
-        _remote('gone', '/x', DateTime.utc(2026, 9, 1)),
-        _local('magic-git', DateTime.utc(2026, 6, 1)),
-      ],
-    );
-    await _warm(c);
+  test(
+    'an MRU entry for a deleted profile is dropped and the list self-heals',
+    () async {
+      final c = _container(
+        conns: const [], // the 'gone' connection was deleted
+        locals: [_l('magic-git', DateTime.utc(2026, 6, 1))],
+        mru: [
+          _remote('gone', '/x', DateTime.utc(2026, 9, 1)),
+          _local('magic-git', DateTime.utc(2026, 6, 1)),
+        ],
+      );
+      await _warm(c);
 
-    // The dangling remote entry vanishes; the resolvable local one remains.
-    expect(c.read(recentReposProvider).map((r) => r.repoName).toList(), [
-      'magic-git',
-    ]);
-  });
+      // The dangling remote entry vanishes; the resolvable local one remains.
+      expect(c.read(recentReposProvider).map((r) => r.repoName).toList(), [
+        'magic-git',
+      ]);
+    },
+  );
 
   test(
     'an MRU repo not saved in the connection profile still shows '
@@ -189,7 +194,9 @@ void main() {
 
   test('caps the list at five entries total', () async {
     final c = _container(
-      conns: [for (var i = 0; i < 8; i++) _c('c$i', DateTime.utc(2026, 1, i + 1))],
+      conns: [
+        for (var i = 0; i < 8; i++) _c('c$i', DateTime.utc(2026, 1, i + 1)),
+      ],
     );
     await _warm(c);
     expect(c.read(recentReposProvider), hasLength(5));

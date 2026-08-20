@@ -111,10 +111,15 @@ void main() {
     expect(find.text('add feature'), findsOneWidget);
     expect(find.text('moving from main to feature'), findsOneWidget);
     expect(find.text('commit'), findsOneWidget, reason: 'action chip');
-    expect(find.textContaining('aaaaaaa · HEAD@{5 minutes ago}'),
-        findsOneWidget);
-    expect(find.text('Deleted untracked files'), findsOneWidget,
-        reason: 'flavor-B snapshots get a friendly label');
+    expect(
+      find.textContaining('aaaaaaa · HEAD@{5 minutes ago}'),
+      findsOneWidget,
+    );
+    expect(
+      find.text('Deleted untracked files'),
+      findsOneWidget,
+      reason: 'flavor-B snapshots get a friendly label',
+    );
     expect(find.text('2 hours ago'), findsOneWidget);
   });
 
@@ -129,8 +134,11 @@ void main() {
 
     expect(find.byType(DiffView), findsOneWidget);
     expect(find.text('Restore…'), findsOneWidget);
-    expect(find.text('aaaaaaaaaa'), findsOneWidget,
-        reason: 'detail header shows the short hash prefix');
+    expect(
+      find.text('aaaaaaaaaa'),
+      findsOneWidget,
+      reason: 'detail header shows the short hash prefix',
+    );
   });
 
   testWidgets('Create branch here… prompts for a name, creates the branch at '
@@ -194,10 +202,7 @@ void main() {
     await pump(tester, entries: const [], snapshots: const []);
 
     expect(find.text('No reflog entries yet.'), findsOneWidget);
-    expect(
-      find.textContaining('One is taken automatically'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('One is taken automatically'), findsOneWidget);
   });
 
   testWidgets('a failed snapshots load shows an error, not the empty state '

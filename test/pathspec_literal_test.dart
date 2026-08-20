@@ -58,20 +58,22 @@ void main() {
 
   tearDown(() => tempDir.deleteSync(recursive: true));
 
-  test('discard touches EXACTLY the named file, not its glob matches',
-      () async {
-    write('pages/[id].tsx', 'edited-route\n');
-    write('pages/i.tsx', 'edited-i\n');
+  test(
+    'discard touches EXACTLY the named file, not its glob matches',
+    () async {
+      write('pages/[id].tsx', 'edited-route\n');
+      write('pages/i.tsx', 'edited-i\n');
 
-    await git.discard(repo, 'pages/[id].tsx');
+      await git.discard(repo, 'pages/[id].tsx');
 
-    expect(read('pages/[id].tsx'), 'route\n', reason: 'named file discarded');
-    expect(
-      read('pages/i.tsx'),
-      'edited-i\n',
-      reason: "the sibling the glob would match must keep the user's edit",
-    );
-  });
+      expect(read('pages/[id].tsx'), 'route\n', reason: 'named file discarded');
+      expect(
+        read('pages/i.tsx'),
+        'edited-i\n',
+        reason: "the sibling the glob would match must keep the user's edit",
+      );
+    },
+  );
 
   test('stage touches exactly the named file', () async {
     write('pages/[id].tsx', 'edited-route\n');
@@ -111,17 +113,19 @@ void main() {
     );
   });
 
-  test('a file whose name starts with ":" can be staged and discarded',
-      () async {
-    write(':colon.txt', 'v1\n');
-    await git.stage(repo, ':colon.txt');
-    expect(await raw(['diff', '--cached', '--name-only']), ':colon.txt');
+  test(
+    'a file whose name starts with ":" can be staged and discarded',
+    () async {
+      write(':colon.txt', 'v1\n');
+      await git.stage(repo, ':colon.txt');
+      expect(await raw(['diff', '--cached', '--name-only']), ':colon.txt');
 
-    await raw(['commit', '-q', '-m', 'colon']);
-    write(':colon.txt', 'v2\n');
-    await git.discard(repo, ':colon.txt');
-    expect(read(':colon.txt'), 'v1\n');
-  });
+      await raw(['commit', '-q', '-m', 'colon']);
+      write(':colon.txt', 'v2\n');
+      await git.discard(repo, ':colon.txt');
+      expect(read(':colon.txt'), 'v1\n');
+    },
+  );
 
   test('a "*" in the name stays literal for stage and discard', () async {
     write('a*b.txt', 'star\n');
@@ -137,29 +141,31 @@ void main() {
     expect(read('axxb.txt'), 'xx-edit\n');
   });
 
-  test('diff, blame and file-history log are scoped to the named file',
-      () async {
-    write('pages/[id].tsx', 'edited-route\n');
-    write('pages/i.tsx', 'edited-i\n');
+  test(
+    'diff, blame and file-history log are scoped to the named file',
+    () async {
+      write('pages/[id].tsx', 'edited-route\n');
+      write('pages/i.tsx', 'edited-i\n');
 
-    final diff = await git.diffFile(
-      repo,
-      path: 'pages/[id].tsx',
-      staged: false,
-    );
-    expect(diff, contains('[id].tsx'));
-    expect(
-      diff,
-      isNot(contains('pages/i.tsx')),
-      reason: 'the diff pane must not mix in a glob-matched sibling',
-    );
+      final diff = await git.diffFile(
+        repo,
+        path: 'pages/[id].tsx',
+        staged: false,
+      );
+      expect(diff, contains('[id].tsx'));
+      expect(
+        diff,
+        isNot(contains('pages/i.tsx')),
+        reason: 'the diff pane must not mix in a glob-matched sibling',
+      );
 
-    final history = await git.log(repo, path: 'pages/[id].tsx', follow: true);
-    expect(history, hasLength(1));
+      final history = await git.log(repo, path: 'pages/[id].tsx', follow: true);
+      expect(history, hasLength(1));
 
-    final blame = await git.blame(repo, 'pages/[id].tsx');
-    expect(blame, isNotEmpty);
-  });
+      final blame = await git.blame(repo, 'pages/[id].tsx');
+      expect(blame, isNotEmpty);
+    },
+  );
 
   test('conflict resolution resolves exactly the named file', () async {
     // Build a conflict on [id].tsx while i.tsx also differs between branches.

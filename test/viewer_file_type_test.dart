@@ -21,8 +21,10 @@ void main() {
       expect(md.languageId, 'markdown');
       expect(md.preview, PreviewKind.markdown);
       expect(md.hasPreview, isTrue);
-      expect(viewerFileTypeFor('docs/GUIDE.markdown').preview,
-          PreviewKind.markdown);
+      expect(
+        viewerFileTypeFor('docs/GUIDE.markdown').preview,
+        PreviewKind.markdown,
+      );
     });
 
     test('html maps to the xml grammar but previews as html', () {

@@ -10,7 +10,11 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/features/dnd/drag_item.dart';
 import 'package:remote_magic_git/features/dnd/staging_drop_banner.dart';
 
-Future<void> _dragOnto(WidgetTester tester, Finder source, Finder target) async {
+Future<void> _dragOnto(
+  WidgetTester tester,
+  Finder source,
+  Finder target,
+) async {
   final from = tester.getCenter(source);
   final to = tester.getCenter(target);
   final gesture = await tester.startGesture(from);

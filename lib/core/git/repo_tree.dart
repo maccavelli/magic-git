@@ -143,11 +143,7 @@ repoDirtyIndex(GitStatus status) {
     }
     markAncestors(p);
   }
-  return (
-    dirtyDirs: dirtyDirs,
-    changed: changed,
-    untrackedDirs: untrackedDirs,
-  );
+  return (dirtyDirs: dirtyDirs, changed: changed, untrackedDirs: untrackedDirs);
 }
 
 /// An order-independent hash of the paths whose presence/absence changes the

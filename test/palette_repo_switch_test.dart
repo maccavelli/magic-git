@@ -64,10 +64,12 @@ Future<_SwitchRecorder> _open(WidgetTester tester) async {
     ProviderScope(
       overrides: [
         connectionProvider.overrideWith(() => _StubConnection(state, rec)),
-        savedConnectionsProvider.overrideWith((ref) async => [
-          _conn('c1', '/srv/a', ['/srv/b']),
-          _conn('c2', '/srv/c', const []),
-        ]),
+        savedConnectionsProvider.overrideWith(
+          (ref) async => [
+            _conn('c1', '/srv/a', ['/srv/b']),
+            _conn('c2', '/srv/c', const []),
+          ],
+        ),
         refsProvider(_repo).overrideWith((ref) async => const <GitRef>[]),
         gitWorktreesProvider(
           _repo,

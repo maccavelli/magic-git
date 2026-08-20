@@ -136,11 +136,10 @@ void main() {
   testWidgets('sha: finds a commit by prefix in the real runtime', (
     tester,
   ) async {
-    final r = await Process.run(
-      'git',
-      ['rev-parse', 'HEAD~1'],
-      workingDirectory: repo,
-    );
+    final r = await Process.run('git', [
+      'rev-parse',
+      'HEAD~1',
+    ], workingDirectory: repo);
     final prefix = (r.stdout as String).trim().substring(0, 8);
 
     await pumpHistory(tester);

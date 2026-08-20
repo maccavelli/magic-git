@@ -11,11 +11,10 @@ class KnownHostEntry {
 
   const KnownHostEntry({required this.keyType, required this.fingerprint});
 
-  factory KnownHostEntry.fromJson(Map<String, dynamic> json) =>
-      KnownHostEntry(
-        keyType: json['keyType'] as String? ?? '',
-        fingerprint: json['fingerprint'] as String? ?? '',
-      );
+  factory KnownHostEntry.fromJson(Map<String, dynamic> json) => KnownHostEntry(
+    keyType: json['keyType'] as String? ?? '',
+    fingerprint: json['fingerprint'] as String? ?? '',
+  );
 
   Map<String, dynamic> toJson() => {
     'keyType': keyType,

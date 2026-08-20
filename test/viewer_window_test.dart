@@ -36,7 +36,8 @@ class _StubConnection extends ConnectionController {
   ConnectionState build() => _state;
 }
 
-Override _connection({required bool isLocal}) => connectionProvider.overrideWith(
+Override _connection({required bool isLocal}) =>
+    connectionProvider.overrideWith(
       () => _StubConnection(
         ConnectionState(
           backend: isLocal ? ConnectionBackend.local : ConnectionBackend.ssh,
@@ -46,14 +47,13 @@ Override _connection({required bool isLocal}) => connectionProvider.overrideWith
 
 // A ToolIconButton (which paints its glyph via MacosIcon, not a Flutter Icon)
 // identified by its tooltip.
-Finder _toolButton(String tooltip) => find.byWidgetPredicate(
-      (w) => w is ToolIconButton && w.tooltip == tooltip,
-    );
+Finder _toolButton(String tooltip) =>
+    find.byWidgetPredicate((w) => w is ToolIconButton && w.tooltip == tooltip);
 
-Override _content(String path, String raw) =>
-    fileContentProvider((_repo, path)).overrideWith(
-      (ref) => FileContent.classify(raw),
-    );
+Override _content(String path, String raw) => fileContentProvider((
+  _repo,
+  path,
+)).overrideWith((ref) => FileContent.classify(raw));
 
 // A GitService whose reads always throw a given executor-level error, to
 // exercise the viewer's read-error mapping end to end.
@@ -137,7 +137,9 @@ void main() {
     );
     expect(find.byType(FileViewerWindow), findsNothing);
 
-    container.read(openFileViewersProvider.notifier).open(_repo, 'lib/main.dart');
+    container
+        .read(openFileViewersProvider.notifier)
+        .open(_repo, 'lib/main.dart');
     await tester.pumpAndSettle();
 
     expect(find.byType(FileViewerWindow), findsOneWidget);
@@ -283,9 +285,7 @@ void main() {
       // A host (419x259) just below the 420x260 minimum used to make
       // initState's `value.clamp(_minWidth, bounds.width)` throw ArgumentError
       // (lower > upper) while building the window.
-      final container = ProviderContainer(
-        overrides: [_content('a.txt', 'hi')],
-      );
+      final container = ProviderContainer(overrides: [_content('a.txt', 'hi')]);
       addTearDown(container.dispose);
       await tester.pumpWidget(
         UncontrolledProviderScope(
@@ -401,10 +401,7 @@ void main() {
   ) async {
     final container = await _pumpHost(
       tester,
-      overrides: [
-        _content('a.txt', 'aaa'),
-        _content('b.txt', 'bbb'),
-      ],
+      overrides: [_content('a.txt', 'aaa'), _content('b.txt', 'bbb')],
     );
     final notifier = container.read(openFileViewersProvider.notifier);
     notifier.open(_repo, 'a.txt');
@@ -417,60 +414,58 @@ void main() {
     expect(find.byType(FileViewerWindow), findsNWidgets(2));
   });
 
-  testWidgets('Escape closes the front window; a second Escape closes the next', (
-    tester,
-  ) async {
-    final container = await _pumpHost(
-      tester,
-      overrides: [_content('a.txt', 'aaa'), _content('b.txt', 'bbb')],
-    );
-    final notifier = container.read(openFileViewersProvider.notifier);
-    notifier.open(_repo, 'a.txt');
-    notifier.open(_repo, 'b.txt');
-    await tester.pumpAndSettle();
-    expect(find.byType(FileViewerWindow), findsNWidgets(2));
-
-    // Focus the front window the way a user would — a click (onPointerDown
-    // requests focus). The last window in the stack is front-most.
-    await tester.tap(find.byType(FileViewerWindow).last);
-    await tester.pumpAndSettle();
-
-    // Escape closes the front (b.txt); after it closes the new front (a.txt)
-    // must take focus so a second Escape isn't swallowed.
-    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-    await tester.pumpAndSettle();
-    expect(find.byType(FileViewerWindow), findsOneWidget);
-
-    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-    await tester.pumpAndSettle();
-    expect(find.byType(FileViewerWindow), findsNothing);
-  });
-
   testWidgets(
-    'a newly opened window takes keyboard focus — Escape closes it '
-    'without clicking it first',
+    'Escape closes the front window; a second Escape closes the next',
     (tester) async {
-      final mainFocus = FocusNode();
-      addTearDown(mainFocus.dispose);
       final container = await _pumpHost(
         tester,
-        overrides: [_content('a.txt', 'aaa')],
-        mainAreaFocus: mainFocus,
+        overrides: [_content('a.txt', 'aaa'), _content('b.txt', 'bbb')],
       );
-      expect(mainFocus.hasFocus, isTrue, reason: 'main area holds focus');
+      final notifier = container.read(openFileViewersProvider.notifier);
+      notifier.open(_repo, 'a.txt');
+      notifier.open(_repo, 'b.txt');
+      await tester.pumpAndSettle();
+      expect(find.byType(FileViewerWindow), findsNWidgets(2));
 
-      container.read(openFileViewersProvider.notifier).open(_repo, 'a.txt');
+      // Focus the front window the way a user would — a click (onPointerDown
+      // requests focus). The last window in the stack is front-most.
+      await tester.tap(find.byType(FileViewerWindow).last);
+      await tester.pumpAndSettle();
+
+      // Escape closes the front (b.txt); after it closes the new front (a.txt)
+      // must take focus so a second Escape isn't swallowed.
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
       expect(find.byType(FileViewerWindow), findsOneWidget);
 
-      // No tap: the fresh window must have grabbed focus on its own (the
-      // main area held focus before it opened, so autofocus alone would
-      // never win it).
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
       expect(find.byType(FileViewerWindow), findsNothing);
     },
   );
+
+  testWidgets('a newly opened window takes keyboard focus — Escape closes it '
+      'without clicking it first', (tester) async {
+    final mainFocus = FocusNode();
+    addTearDown(mainFocus.dispose);
+    final container = await _pumpHost(
+      tester,
+      overrides: [_content('a.txt', 'aaa')],
+      mainAreaFocus: mainFocus,
+    );
+    expect(mainFocus.hasFocus, isTrue, reason: 'main area holds focus');
+
+    container.read(openFileViewersProvider.notifier).open(_repo, 'a.txt');
+    await tester.pumpAndSettle();
+    expect(find.byType(FileViewerWindow), findsOneWidget);
+
+    // No tap: the fresh window must have grabbed focus on its own (the
+    // main area held focus before it opened, so autofocus alone would
+    // never win it).
+    await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+    await tester.pumpAndSettle();
+    expect(find.byType(FileViewerWindow), findsNothing);
+  });
 
   testWidgets('⌘F opens in-file find, counts matches, Enter steps through', (
     tester,

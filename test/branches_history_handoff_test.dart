@@ -127,7 +127,8 @@ void main() {
     expect(
       intent!.repoPath,
       _mainRepo,
-      reason: 'seeding the worktree path leaves an intent the main History '
+      reason:
+          'seeding the worktree path leaves an intent the main History '
           'mount rejects without clearing, which a later worktree History '
           'view then silently consumes',
     );

@@ -39,7 +39,10 @@ void main() {
     Stream<RepoWatchEvent> stream,
     bool Function(RepoWatchEvent) test, {
     Duration timeout = const Duration(seconds: 15),
-  }) => stream.where(test).first.timeout(
+  }) => stream
+      .where(test)
+      .first
+      .timeout(
         timeout,
         onTimeout: () => fail('no matching watch event within $timeout'),
       );
@@ -48,8 +51,9 @@ void main() {
   /// asserting on its own change isn't handed the tail of setup. Same approach
   /// as local_watch_worktree_test.
   Future<Stream<RepoWatchEvent>> quietWatcher() async {
-    final events =
-        LocalWatchService().watch(workTree, bounded: spec).asBroadcastStream();
+    final events = LocalWatchService()
+        .watch(workTree, bounded: spec)
+        .asBroadcastStream();
     final sub = events.listen(null);
     addTearDown(sub.cancel);
     var lastSeen = DateTime.now();
@@ -109,7 +113,9 @@ void main() {
   test('an edit to a tracked file fires a scoped, non-git event', () async {
     final events = await quietWatcher();
 
-    File('$workTree/.config/bash/aliases.sh').writeAsStringSync('alias l=ls -a\n');
+    File(
+      '$workTree/.config/bash/aliases.sh',
+    ).writeAsStringSync('alias l=ls -a\n');
 
     final event = await waitFor(events, (e) => e.paths.isNotEmpty);
     expect(event.paths, contains('.config/bash/aliases.sh'));

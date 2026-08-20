@@ -160,10 +160,7 @@ class ConnectionStore {
     final updated = existing[idx].copyWith(
       lastConnectedAt: when ?? DateTime.now(),
     );
-    await _writeMetadata([
-      ...existing.where((c) => c.id != id),
-      updated,
-    ]);
+    await _writeMetadata([...existing.where((c) => c.id != id), updated]);
   });
 
   Future<String?> secretFor(String id) => _readSecret(_secretKey(id));

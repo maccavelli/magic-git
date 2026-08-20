@@ -71,16 +71,18 @@ void main() {
       );
     });
 
-    test('git-dir events become .git/… (checked before the work-tree prefix)',
-        () {
-      // The git-dir lives INSIDE the work tree, so precedence matters.
-      expect(relativizeBoundedEvent('$gitDir/index', spec), '.git/index');
-      expect(
-        relativizeBoundedEvent('$gitDir/refs/heads/main', spec),
-        '.git/refs/heads/main',
-      );
-      expect(relativizeBoundedEvent(gitDir, spec), '.git');
-    });
+    test(
+      'git-dir events become .git/… (checked before the work-tree prefix)',
+      () {
+        // The git-dir lives INSIDE the work tree, so precedence matters.
+        expect(relativizeBoundedEvent('$gitDir/index', spec), '.git/index');
+        expect(
+          relativizeBoundedEvent('$gitDir/refs/heads/main', spec),
+          '.git/refs/heads/main',
+        );
+        expect(relativizeBoundedEvent(gitDir, spec), '.git');
+      },
+    );
 
     test('work-tree events become repo-relative', () {
       expect(
@@ -103,12 +105,16 @@ void main() {
       expect(shouldTriggerWatch(index), isTrue);
       expect(index.startsWith('.git/'), isTrue); // sets touchesGitState
 
-      final edit =
-          relativizeBoundedEvent('$workTree/.config/bash/env.sh', spec)!;
+      final edit = relativizeBoundedEvent(
+        '$workTree/.config/bash/env.sh',
+        spec,
+      )!;
       expect(shouldTriggerWatch(edit), isTrue);
 
       expect(
-        shouldTriggerWatch(relativizeBoundedEvent('$gitDir/objects/aa/bb', spec)!),
+        shouldTriggerWatch(
+          relativizeBoundedEvent('$gitDir/objects/aa/bb', spec)!,
+        ),
         isFalse,
       );
       expect(

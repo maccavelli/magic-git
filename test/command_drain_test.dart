@@ -16,11 +16,7 @@ void main() {
 
     test('throws SSHOutputExceeded past maxChars', () async {
       await expectLater(
-        collectBounded(
-          Stream.fromIterable(['12345', '6']),
-          'cmd',
-          maxChars: 5,
-        ),
+        collectBounded(Stream.fromIterable(['12345', '6']), 'cmd', maxChars: 5),
         throwsA(isA<SSHOutputExceeded>()),
       );
     });
@@ -69,18 +65,20 @@ void main() {
       expect(budget.used, 3);
     });
 
-    test('aborts with SSHOutputExceeded once the byte budget is crossed',
-        () async {
-      final budget = OutputByteBudget(5);
-      await expectLater(
-        boundedBytes(
-          Stream.fromIterable([bytes(4), bytes(4)]),
-          budget,
-          'git log',
-        ).toList(),
-        throwsA(isA<SSHOutputExceeded>()),
-      );
-    });
+    test(
+      'aborts with SSHOutputExceeded once the byte budget is crossed',
+      () async {
+        final budget = OutputByteBudget(5);
+        await expectLater(
+          boundedBytes(
+            Stream.fromIterable([bytes(4), bytes(4)]),
+            budget,
+            'git log',
+          ).toList(),
+          throwsA(isA<SSHOutputExceeded>()),
+        );
+      },
+    );
 
     test('a single shared budget bounds stdout + stderr *combined*', () async {
       // 4 + 3 = 7 bytes across two streams sharing a 6-byte budget → the

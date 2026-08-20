@@ -29,7 +29,8 @@ List<String> _binariesInProbeScript() {
   expect(
     m,
     isNotNull,
-    reason: 'the probe script must still loop over a binary list; if its shape '
+    reason:
+        'the probe script must still loop over a binary list; if its shape '
         'changed, this guard has to be taught the new shape rather than deleted',
   );
   return m!.group(1)!.trim().split(RegExp(r'\s+'));
@@ -49,7 +50,8 @@ void main() {
       expect(
         probed,
         contains(spec.bin),
-        reason: '${spec.bin} is in the catalog (so the doctor reports on it and '
+        reason:
+            '${spec.bin} is in the catalog (so the doctor reports on it and '
             'Settings offers a path override) but the probe never looks for it',
       );
     }
@@ -64,7 +66,8 @@ void main() {
     expect(
       identical(AppSettingsNotifier.overridableBinaries, kOverridableBinaries),
       isTrue,
-      reason: 'AppSettingsNotifier.overridableBinaries must delegate to '
+      reason:
+          'AppSettingsNotifier.overridableBinaries must delegate to '
           'kOverridableBinaries, not restate it',
     );
   });
@@ -96,7 +99,8 @@ void main() {
       expect(
         RegExp(r'^[A-Za-z0-9_.-]+$').hasMatch(bin),
         isTrue,
-        reason: '"$bin" would need quoting to be interpolated into the probe '
+        reason:
+            '"$bin" would need quoting to be interpolated into the probe '
             'script safely',
       );
     }

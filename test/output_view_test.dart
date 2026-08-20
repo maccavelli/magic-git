@@ -23,7 +23,11 @@ void main() {
         container: container,
         child: const MacosApp(
           debugShowCheckedModeBanner: false,
-          home: SizedBox(width: 800, height: 600, child: OutputView(maxHeight: 600)),
+          home: SizedBox(
+            width: 800,
+            height: 600,
+            child: OutputView(maxHeight: 600),
+          ),
         ),
       ),
     );

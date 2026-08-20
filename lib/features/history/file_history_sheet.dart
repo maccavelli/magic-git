@@ -110,7 +110,8 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
         ),
       );
     }
-    final selected = (_selected != null && commits.any((c) => c.hash == _selected))
+    final selected =
+        (_selected != null && commits.any((c) => c.hash == _selected))
         ? _selected!
         : commits.first.hash;
     return Row(
@@ -135,9 +136,7 @@ class _FileHistorySheetState extends ConsumerState<FileHistorySheet> {
     return Tappable(
       onTap: () => setState(() => _selected = c.hash),
       child: Container(
-        color: isSel
-            ? AppTheme.rowSelectionTint
-            : const Color(0x00000000),
+        color: isSel ? AppTheme.rowSelectionTint : const Color(0x00000000),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,

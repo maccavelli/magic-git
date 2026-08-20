@@ -46,7 +46,11 @@ const _items = [
   ),
 ];
 
-Future<void> _dragOnto(WidgetTester tester, Finder source, Finder target) async {
+Future<void> _dragOnto(
+  WidgetTester tester,
+  Finder source,
+  Finder target,
+) async {
   final from = tester.getCenter(source);
   final to = tester.getCenter(target);
   final gesture = await tester.startGesture(from);
@@ -118,10 +122,11 @@ void main() {
       // The drop hands the branch to the Forge panel via the seed provider
       // (the panel — not mounted in this harness — consumes and clears it)
       // and brings the Forge tab forward.
-      expect(
-        container.read(forgeCreateSeedProvider),
-        (repoPath: _repo, branch: 'feature', baseRef: null),
-      );
+      expect(container.read(forgeCreateSeedProvider), (
+        repoPath: _repo,
+        branch: 'feature',
+        baseRef: null,
+      ));
       expect(selected, [DropZoneId.forge.pageIndex]);
     },
   );
@@ -134,9 +139,6 @@ void main() {
 
     expect(container.read(forgeCreateSeedProvider), isNull);
     expect(selected, isEmpty);
-    expect(
-      find.textContaining('No GitHub or GitLab remote'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('No GitHub or GitLab remote'), findsOneWidget);
   });
 }

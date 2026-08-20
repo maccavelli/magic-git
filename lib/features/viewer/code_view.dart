@@ -192,10 +192,9 @@ class _CodeViewState extends State<CodeView> {
   // they're measured once and cached rather than re-laid-out on every build.
   late final double _charW =
       (TextPainter(
-                text: TextSpan(text: '0' * 50, style: kDiffMono),
-                textDirection: TextDirection.ltr,
-              )..layout())
-          .width /
+        text: TextSpan(text: '0' * 50, style: kDiffMono),
+        textDirection: TextDirection.ltr,
+      )..layout()).width /
       50;
   late final double _lineH = (TextPainter(
     text: const TextSpan(text: 'Xg', style: kDiffMono),
@@ -313,13 +312,18 @@ class _CodeViewState extends State<CodeView> {
       // Large file: highlight on the shared, long-lived worker isolate (grammars
       // registered once, not per file) rather than spawning a fresh isolate each
       // time. The token guard drops a result superseded by a newer file.
-      highlightWorker.highlight(text, lang).then((doc) {
-        if (mounted && token == _highlightToken) setState(() => _setDoc(doc));
-      }).catchError((_) {
-        // Highlighting failed off-thread (e.g. malformed input the grammar
-        // still choked on, or the worker died); the plain-text render set above
-        // stays in place rather than surfacing as an unhandled async error.
-      });
+      highlightWorker
+          .highlight(text, lang)
+          .then((doc) {
+            if (mounted && token == _highlightToken) {
+              setState(() => _setDoc(doc));
+            }
+          })
+          .catchError((_) {
+            // Highlighting failed off-thread (e.g. malformed input the grammar
+            // still choked on, or the worker died); the plain-text render set above
+            // stays in place rather than surfacing as an unhandled async error.
+          });
     }
   }
 
@@ -358,60 +362,60 @@ class _CodeViewState extends State<CodeView> {
           if (_findOpen) _findBar(context, theme),
           Expanded(
             child: LayoutBuilder(
-        builder: (context, constraints) {
-          final list = ListView.builder(
-            controller: _vCtrl,
-            primary: false,
-            // Fixed row height only when every line is exactly one row; a
-            // wrapped line spans several, so extent must be measured then.
-            itemExtent: widget.wrap ? null : lineH,
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            itemCount: _doc.length,
-            itemBuilder: (context, i) =>
-                _row(i, base, theme, gutterW, lineH, i == currentMatch),
-          );
+              builder: (context, constraints) {
+                final list = ListView.builder(
+                  controller: _vCtrl,
+                  primary: false,
+                  // Fixed row height only when every line is exactly one row; a
+                  // wrapped line spans several, so extent must be measured then.
+                  itemExtent: widget.wrap ? null : lineH,
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  itemCount: _doc.length,
+                  itemBuilder: (context, i) =>
+                      _row(i, base, theme, gutterW, lineH, i == currentMatch),
+                );
 
-          if (widget.wrap) {
-            return SelectionArea(child: list);
-          }
+                if (widget.wrap) {
+                  return SelectionArea(child: list);
+                }
 
-          // No-wrap: one synchronized horizontal scroll over content at least
-          // as wide as the longest line, so every row scrolls together. Measure
-          // the widest line's true pixel width (not chars × charW), so tabs and
-          // wide/CJK glyphs don't leave the tail unreachable off the right
-          // edge. Memoized per (doc, brightness) — the measurement is O(widest
-          // line) and build runs on every frame of a window drag.
-          if (_widestW == null || _widestWFor != brightness) {
-            _widestW = _doc.lines.isEmpty
-                ? 0.0
-                : (TextPainter(
-                    text: lineToSpan(
-                      _doc.lines[_widestLineIndex],
-                      _doc.scopes,
-                      theme,
-                      base,
+                // No-wrap: one synchronized horizontal scroll over content at least
+                // as wide as the longest line, so every row scrolls together. Measure
+                // the widest line's true pixel width (not chars × charW), so tabs and
+                // wide/CJK glyphs don't leave the tail unreachable off the right
+                // edge. Memoized per (doc, brightness) — the measurement is O(widest
+                // line) and build runs on every frame of a window drag.
+                if (_widestW == null || _widestWFor != brightness) {
+                  _widestW = _doc.lines.isEmpty
+                      ? 0.0
+                      : (TextPainter(
+                          text: lineToSpan(
+                            _doc.lines[_widestLineIndex],
+                            _doc.scopes,
+                            theme,
+                            base,
+                          ),
+                          textDirection: TextDirection.ltr,
+                          maxLines: 1,
+                        )..layout()).width;
+                  _widestWFor = brightness;
+                }
+                final widestW = _widestW!;
+                final contentW = (gutterW + 8 + widestW + 24)
+                    .clamp(constraints.maxWidth, double.infinity)
+                    .toDouble();
+                return MacosScrollbar(
+                  controller: _hCtrl,
+                  child: SingleChildScrollView(
+                    controller: _hCtrl,
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      width: contentW,
+                      child: SelectionArea(child: list),
                     ),
-                    textDirection: TextDirection.ltr,
-                    maxLines: 1,
-                  )..layout()).width;
-            _widestWFor = brightness;
-          }
-          final widestW = _widestW!;
-          final contentW = (gutterW + 8 + widestW + 24)
-              .clamp(constraints.maxWidth, double.infinity)
-              .toDouble();
-          return MacosScrollbar(
-            controller: _hCtrl,
-            child: SingleChildScrollView(
-              controller: _hCtrl,
-              scrollDirection: Axis.horizontal,
-              child: SizedBox(
-                width: contentW,
-                child: SelectionArea(child: list),
-              ),
-            ),
-          );
-        },
+                  ),
+                );
+              },
             ),
           ),
         ],
@@ -513,32 +517,32 @@ class _CodeViewState extends State<CodeView> {
           ? MacosColors.systemYellowColor.withValues(alpha: 0.28)
           : const Color(0x00000000),
       child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Line numbers are chrome, not content — exclude them from selection
-        // so a copy yields pure source.
-        SelectionContainer.disabled(
-          child: SizedBox(
-            width: gutterW,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: Text(
-                '${i + 1}',
-                textAlign: TextAlign.right,
-                style: gutterStyle,
-                maxLines: 1,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Line numbers are chrome, not content — exclude them from selection
+          // so a copy yields pure source.
+          SelectionContainer.disabled(
+            child: SizedBox(
+              width: gutterW,
+              child: Padding(
+                padding: const EdgeInsets.only(right: 12),
+                child: Text(
+                  '${i + 1}',
+                  textAlign: TextAlign.right,
+                  style: gutterStyle,
+                  maxLines: 1,
+                ),
               ),
             ),
           ),
-        ),
-        Expanded(
-          child: Text.rich(
-            lineToSpan(_doc.lines[i], _doc.scopes, theme, base),
-            softWrap: widget.wrap,
-            overflow: widget.wrap ? TextOverflow.clip : TextOverflow.visible,
+          Expanded(
+            child: Text.rich(
+              lineToSpan(_doc.lines[i], _doc.scopes, theme, base),
+              softWrap: widget.wrap,
+              overflow: widget.wrap ? TextOverflow.clip : TextOverflow.visible,
+            ),
           ),
-        ),
-      ],
+        ],
       ),
     );
   }

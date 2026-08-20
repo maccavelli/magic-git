@@ -105,8 +105,7 @@ class _PagingGit extends GitService {
     String hash, {
     String? path,
     int? context,
-  }) async =>
-      'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
+  }) async => 'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
 }
 
 /// The key the panel builds with no filters typed — the unfiltered HEAD walk.
@@ -120,7 +119,7 @@ const LogQuery _defaultQuery = (
   sha: null,
   noMerges: false,
   all: true,
-    revision: null,
+  revision: null,
 );
 
 Future<ProviderContainer> _pump(WidgetTester tester, _PagingGit git) async {
@@ -159,7 +158,9 @@ void main() {
     expect(git.walks, [(skip: 0, count: page)]);
   });
 
-  testWidgets('scrolling to the end fetches ONLY the next page', (tester) async {
+  testWidgets('scrolling to the end fetches ONLY the next page', (
+    tester,
+  ) async {
     // The regression this pins: paging used to be expressed as a bigger
     // `--max-count` on a new provider key, so page two re-walked, re-sent and
     // re-parsed the 500 commits already on screen to show 500 more — quadratic
@@ -170,11 +171,9 @@ void main() {
     // gets 200, and that short page is what ends the paging.
     final git = _PagingGit(700);
     final container = await _pump(tester, git);
-    expect(
-      git.walks,
-      [(skip: 0, count: page)],
-      reason: 'one page on first load',
-    );
+    expect(git.walks, [
+      (skip: 0, count: page),
+    ], reason: 'one page on first load');
 
     final controller = _listController(tester);
     controller.jumpTo(controller.position.maxScrollExtent);
@@ -184,7 +183,8 @@ void main() {
     expect(
       git.walks,
       [(skip: 0, count: page), (skip: page, count: page)],
-      reason: 'the second walk skips past what is already held and asks for '
+      reason:
+          'the second walk skips past what is already held and asks for '
           'one page — not 1000 commits from the top',
     );
     // …and the page is stitched onto the list, not swapped in for it.
@@ -198,11 +198,10 @@ void main() {
     final deeper = _listController(tester);
     deeper.jumpTo(deeper.position.maxScrollExtent);
     await tester.pumpAndSettle();
-    expect(
-      git.walks,
-      [(skip: 0, count: page), (skip: page, count: page)],
-      reason: 'an exhausted history is never re-walked',
-    );
+    expect(git.walks, [
+      (skip: 0, count: page),
+      (skip: page, count: page),
+    ], reason: 'an exhausted history is never re-walked');
   });
 
   testWidgets('a refresh re-walks the whole displayed prefix in ONE call', (
@@ -228,16 +227,15 @@ void main() {
     container.invalidate(logSearchProvider);
     await tester.pumpAndSettle();
 
-    expect(
-      git.walks,
-      [(skip: 0, count: page * 2)],
-      reason: 'one walk, from the top, as deep as the user had paged',
-    );
+    expect(git.walks, [
+      (skip: 0, count: page * 2),
+    ], reason: 'one walk, from the top, as deep as the user had paged');
     final commits = container.read(logSearchProvider(_defaultQuery)).value!;
     expect(
       commits,
       hasLength(page * 2),
-      reason: 'the depth the user paged to survives the refresh — the list does '
+      reason:
+          'the depth the user paged to survives the refresh — the list does '
           'not snap back to one page under them',
     );
   });
@@ -279,11 +277,9 @@ void main() {
     controller.jumpTo(controller.position.maxScrollExtent);
     await tester.pumpAndSettle();
 
-    expect(
-      git.walks,
-      [(skip: 0, count: page)],
-      reason: 'nothing deeper to ask for',
-    );
+    expect(git.walks, [
+      (skip: 0, count: page),
+    ], reason: 'nothing deeper to ask for');
     expect(find.text('commit 0'), findsOneWidget);
     expect(find.text('commit 2'), findsOneWidget);
   });
@@ -392,16 +388,20 @@ void main() {
     controller.jumpTo(controller.position.maxScrollExtent);
     await tester.pump();
     await tester.pumpAndSettle();
-    expect(find.text('Couldn\'t load more commits — click to retry'),
-        findsOneWidget);
+    expect(
+      find.text('Couldn\'t load more commits — click to retry'),
+      findsOneWidget,
+    );
 
     // Exactly what a commit/checkout/watcher tick does. The rebuild re-walks
     // from the top AND un-latches paging.
     container.invalidate(logSearchProvider);
     await tester.pumpAndSettle();
 
-    expect(find.text('Couldn\'t load more commits — click to retry'),
-        findsNothing);
+    expect(
+      find.text('Couldn\'t load more commits — click to retry'),
+      findsNothing,
+    );
     // The sentinel is live again: sitting at the end of the list, it pages.
     expect(
       container.read(logSearchProvider(_defaultQuery)).value,

@@ -82,9 +82,7 @@ void main() {
   ) async {
     final container = ProviderContainer(
       retry: (_, _) => null,
-      overrides: [
-        _listProvider.overrideWith((ref) async => throw 'nope'),
-      ],
+      overrides: [_listProvider.overrideWith((ref) async => throw 'nope')],
     );
     addTearDown(container.dispose);
 

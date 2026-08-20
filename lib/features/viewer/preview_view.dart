@@ -34,7 +34,9 @@ class MarkdownPreview extends StatelessWidget {
     final muted = dark ? const Color(0xFF9B9BA1) : const Color(0xFF6E6E73);
     final link = dark ? const Color(0xFF6AB7FF) : const Color(0xFF0066CC);
     final rule = dark ? const Color(0xFF3A3A3C) : const Color(0xFFD6D6DB);
-    final fill = MacosColors.systemGrayColor.withValues(alpha: dark ? 0.18 : 0.12);
+    final fill = MacosColors.systemGrayColor.withValues(
+      alpha: dark ? 0.18 : 0.12,
+    );
     final bg = dark ? AppTheme.terminalBackground : const Color(0xFFFFFFFF);
 
     // A comfortable reading base; headings step down from a clear h1.
@@ -92,7 +94,10 @@ class MarkdownPreview extends StatelessWidget {
       tableHead: body.copyWith(fontWeight: FontWeight.w700),
       tableBody: body,
       tableBorder: TableBorder.all(color: rule),
-      tableCellsPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      tableCellsPadding: const EdgeInsets.symmetric(
+        horizontal: 12,
+        vertical: 6,
+      ),
     );
 
     return Container(
@@ -214,10 +219,9 @@ class _ImagePlaceholder extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: MacosTheme.of(context)
-                  .typography
-                  .caption1
-                  .copyWith(color: muted),
+              style: MacosTheme.of(
+                context,
+              ).typography.caption1.copyWith(color: muted),
             ),
           ),
         ],

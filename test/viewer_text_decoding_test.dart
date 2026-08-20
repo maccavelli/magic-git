@@ -82,9 +82,7 @@ void main() {
 
     test('decodes a UTF-16LE astral char via its surrogate pair', () {
       // U+1F600 GRINNING FACE = surrogate pair D83D DE00; LE bytes 3D D8 00 DE
-      final decoded = decodeUtf16Or32(
-        b([0xFF, 0xFE, 0x3D, 0xD8, 0x00, 0xDE]),
-      );
+      final decoded = decodeUtf16Or32(b([0xFF, 0xFE, 0x3D, 0xD8, 0x00, 0xDE]));
       expect(decoded, '\u{1F600}');
     });
 
@@ -120,11 +118,14 @@ void main() {
       expect(looksLikeLatin1Misdecode(raw), isTrue);
     });
 
-    test('flags a Windows-1252 file (smart-quote byte became a replacement)', () {
-      // "it's" with a 0x92 curly apostrophe: 69 74 92 73.
-      final raw = asUtf8Read([0x69, 0x74, 0x92, 0x73]);
-      expect(looksLikeLatin1Misdecode(raw), isTrue);
-    });
+    test(
+      'flags a Windows-1252 file (smart-quote byte became a replacement)',
+      () {
+        // "it's" with a 0x92 curly apostrophe: 69 74 92 73.
+        final raw = asUtf8Read([0x69, 0x74, 0x92, 0x73]);
+        expect(looksLikeLatin1Misdecode(raw), isTrue);
+      },
+    );
 
     test('does not flag clean ASCII', () {
       expect(looksLikeLatin1Misdecode('plain ascii\n'), isFalse);

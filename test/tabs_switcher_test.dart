@@ -96,69 +96,77 @@ void main() {
       expect(tab.connectionId, 'c1');
       expect(tab.repoPath, '/srv/beta');
       final rec =
-          tab.container.read(connectionProvider.notifier) as _RecordingConnection;
+          tab.container.read(connectionProvider.notifier)
+              as _RecordingConnection;
       expect(rec.connected, [('c1', '/srv/beta')]);
-      expect(find.byType(ConnectionsPanel), findsNothing,
-          reason: 'picking a repo closes the panel');
+      expect(
+        find.byType(ConnectionsPanel),
+        findsNothing,
+        reason: 'picking a repo closes the panel',
+      );
     },
   );
 
-  testWidgets('picking a second repo opens a new tab (does not reuse the first)',
-      (tester) async {
-    SharedPreferences.setMockInitialValues({});
-    final controller = TabsController(containerFactory: _tabContainer);
-    controller.ensureInitialTab();
-    // First tab already holds a repo, so the next pick must open its own tab.
-    controller.openOrFocus(
-      connectionId: 'c1',
-      repoPath: '/srv/alpha',
-      connect: (c) => c.read(connectionProvider.notifier),
-    );
-    TabsController.current = controller;
-    addTearDown(() {
-      TabsController.current = null;
-      controller.dispose();
-    });
+  testWidgets(
+    'picking a second repo opens a new tab (does not reuse the first)',
+    (tester) async {
+      SharedPreferences.setMockInitialValues({});
+      final controller = TabsController(containerFactory: _tabContainer);
+      controller.ensureInitialTab();
+      // First tab already holds a repo, so the next pick must open its own tab.
+      controller.openOrFocus(
+        connectionId: 'c1',
+        repoPath: '/srv/alpha',
+        connect: (c) => c.read(connectionProvider.notifier),
+      );
+      TabsController.current = controller;
+      addTearDown(() {
+        TabsController.current = null;
+        controller.dispose();
+      });
 
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: [
-          savedConnectionsProvider.overrideWith(
-            (ref) async => const [
-              SavedConnection(
-                id: 'c1',
-                label: 'Prod',
-                host: 'h',
-                port: 22,
-                username: 'u',
-                repoPath: '/srv/alpha',
-                repoPaths: ['/srv/alpha', '/srv/beta'],
-              ),
-            ],
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            savedConnectionsProvider.overrideWith(
+              (ref) async => const [
+                SavedConnection(
+                  id: 'c1',
+                  label: 'Prod',
+                  host: 'h',
+                  port: 22,
+                  username: 'u',
+                  repoPath: '/srv/alpha',
+                  repoPaths: ['/srv/alpha', '/srv/beta'],
+                ),
+              ],
+            ),
+            savedLocalReposProvider.overrideWith((ref) async => const []),
+          ],
+          child: const MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: SizedBox(),
           ),
-          savedLocalReposProvider.overrideWith((ref) async => const []),
-        ],
-        child: const MacosApp(
-          debugShowCheckedModeBanner: false,
-          home: SizedBox(),
         ),
-      ),
-    );
-    final ctx = tester.element(find.byType(SizedBox));
-    unawaited(
-      Navigator.of(ctx).push(
-        PageRouteBuilder<void>(pageBuilder: (_, _, _) => const ConnectionsPanel()),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      final ctx = tester.element(find.byType(SizedBox));
+      unawaited(
+        Navigator.of(ctx).push(
+          PageRouteBuilder<void>(
+            pageBuilder: (_, _, _) => const ConnectionsPanel(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.text('Prod'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('beta'));
-    await tester.pumpAndSettle();
+      await tester.tap(find.text('Prod'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('beta'));
+      await tester.pumpAndSettle();
 
-    expect(controller.tabs, hasLength(2));
-    expect(controller.active!.repoPath, '/srv/beta');
-    expect(controller.tabs.first.repoPath, '/srv/alpha');
-  });
+      expect(controller.tabs, hasLength(2));
+      expect(controller.active!.repoPath, '/srv/beta');
+      expect(controller.tabs.first.repoPath, '/srv/alpha');
+    },
+  );
 }

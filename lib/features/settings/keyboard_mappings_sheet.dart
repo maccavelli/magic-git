@@ -42,8 +42,7 @@ class KeyboardMappingsSheet extends ConsumerStatefulWidget {
       _KeyboardMappingsSheetState();
 }
 
-class _KeyboardMappingsSheetState
-    extends ConsumerState<KeyboardMappingsSheet> {
+class _KeyboardMappingsSheetState extends ConsumerState<KeyboardMappingsSheet> {
   final _search = TextEditingController();
   final _captureFocus = FocusNode(debugLabel: 'shortcut-capture');
 
@@ -121,7 +120,8 @@ class _KeyboardMappingsSheetState
     // never checks this same action's own other slots, so without this an
     // "Add" (or replacing a different slot) could land an exact duplicate of
     // a binding this action already has, producing two identical chips.
-    final ownBindings = ref.read(keymapProvider)[actionId] ?? const <KeyBinding>[];
+    final ownBindings =
+        ref.read(keymapProvider)[actionId] ?? const <KeyBinding>[];
     final ownDuplicateSlot = ownBindings.indexOf(binding);
     final conflicts = notifier.conflictsFor(actionId, binding);
     _cancelRecording();
@@ -135,13 +135,15 @@ class _KeyboardMappingsSheetState
       final proceed = await confirmAction(
         context,
         title: 'Shortcut already in use',
-        message: '${binding.label} is already assigned to $names. '
+        message:
+            '${binding.label} is already assigned to $names. '
             'Reassign it here?',
         confirmLabel: 'Reassign',
       );
       if (!proceed || !mounted) return;
       for (final other in conflicts) {
-        final current = ref.read(keymapProvider)[other.id] ?? const <KeyBinding>[];
+        final current =
+            ref.read(keymapProvider)[other.id] ?? const <KeyBinding>[];
         await notifier.setBindings(
           other.id,
           current.where((b) => b != binding).toList(),
@@ -176,7 +178,8 @@ class _KeyboardMappingsSheetState
     final byCategory = <KeymapCategory, List<KeymapAction>>{};
     for (final action in kKeymapActions) {
       final bindings = keymap[action.id] ?? const <KeyBinding>[];
-      final matches = query.isEmpty ||
+      final matches =
+          query.isEmpty ||
           action.label.toLowerCase().contains(query) ||
           bindings.any((b) => b.label.toLowerCase().contains(query));
       if (!matches) continue;
@@ -266,7 +269,9 @@ class _KeyboardMappingsSheetState
                               'Restore every shortcut to its default binding?',
                           confirmLabel: 'Reset All',
                         );
-                        if (ok) await ref.read(keymapProvider.notifier).resetAll();
+                        if (ok) {
+                          await ref.read(keymapProvider.notifier).resetAll();
+                        }
                       },
                       child: const Text('Reset All'),
                     ),
@@ -315,8 +320,9 @@ class _KeyboardMappingsSheetState
                     icon: CupertinoIcons.arrow_counterclockwise,
                     tooltip: 'Reset to default',
                     size: 14,
-                    onPressed: () =>
-                        ref.read(keymapProvider.notifier).resetAction(action.id),
+                    onPressed: () => ref
+                        .read(keymapProvider.notifier)
+                        .resetAction(action.id),
                   )
                 : null,
           ),
@@ -326,8 +332,7 @@ class _KeyboardMappingsSheetState
   }
 
   Widget _bindingChip(String actionId, int slot, KeyBinding binding) {
-    final recording =
-        _recordingActionId == actionId && _recordingSlot == slot;
+    final recording = _recordingActionId == actionId && _recordingSlot == slot;
     return Tappable(
       onTap: () => _startRecording(actionId, slot),
       child: Container(
@@ -383,7 +388,10 @@ class _KeyboardMappingsSheetState
         ),
         child: Text(
           recording ? 'Press keys…' : '+ Add',
-          style: const TextStyle(fontSize: 12, color: MacosColors.systemGrayColor),
+          style: const TextStyle(
+            fontSize: 12,
+            color: MacosColors.systemGrayColor,
+          ),
         ),
       ),
     );

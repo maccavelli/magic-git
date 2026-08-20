@@ -70,7 +70,9 @@ Future<void> pump(WidgetTester tester) async {
       // tests would flag as still pending; null = unknown, no badges.
       remoteTagsProvider(_repo).overrideWith((ref) async => null),
       branchForgeProvider(_repo).overrideWith((ref) async => const {}),
-      mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
+      mergedBranchesProvider(
+        _repo,
+      ).overrideWith((ref) async => const <String>{}),
     ],
   );
   addTearDown(container.dispose);
@@ -136,7 +138,10 @@ void main() {
     // The free branch: Check out is primary; Delete lives under More.
     await tester.tap(find.text('hotfix/login'));
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(InlineActionButton, 'Check out'), findsOneWidget);
+    expect(
+      find.widgetWithText(InlineActionButton, 'Check out'),
+      findsOneWidget,
+    );
     await tester.tap(find.text('More'));
     await tester.pumpAndSettle();
     expect(find.text('Delete'), findsOneWidget);

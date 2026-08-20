@@ -392,7 +392,8 @@ void main() {
     expect(
       node.label,
       contains('git'),
-      reason: 'the category chip is a bare word on screen — VoiceOver needs '
+      reason:
+          'the category chip is a bare word on screen — VoiceOver needs '
           'it attached to the command, not read adrift',
     );
     expect(node.label, contains('item 1 of'));

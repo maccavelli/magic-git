@@ -217,8 +217,8 @@ final Map<String, Mode> _languageModes = {
 /// isolate that highlights one file pays the registration cost once, in that
 /// isolate, rather than at import time on the UI thread.
 Highlight? _engine;
-Highlight get _highlight => _engine ??= (Highlight()
-  ..registerLanguages(_languageModes));
+Highlight get _highlight =>
+    _engine ??= (Highlight()..registerLanguages(_languageModes));
 
 /// Whether [languageId] has a registered grammar.
 bool isLanguageSupported(String? languageId) =>
@@ -251,7 +251,8 @@ HighlightedLines highlightDoc(String code, String? languageId) {
 /// The un-highlighted form: every line as a single un-scoped run. Shared by the
 /// plain-text path and used as the instant first render before an off-thread
 /// highlight completes.
-HighlightedLines plainDoc(String code) => (_DocBuilder()..feed(code, null)).finish();
+HighlightedLines plainDoc(String code) =>
+    (_DocBuilder()..feed(code, null)).finish();
 
 bool _hasOverlongLine(String code) {
   var lineStart = 0;

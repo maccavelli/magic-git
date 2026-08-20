@@ -117,11 +117,7 @@ class CommandFormatter {
         ? ''
         : 'export ${env.entries.map((e) {
             if (!_validEnvKey.hasMatch(e.key)) {
-              throw ArgumentError.value(
-                e.key,
-                'env',
-                'invalid environment variable name',
-              );
+              throw ArgumentError.value(e.key, 'env', 'invalid environment variable name');
             }
             return '${e.key}=${ShellEscaper.escape(e.value)}';
           }).join(' ')}; ';
@@ -132,11 +128,7 @@ class CommandFormatter {
         ? ''
         : 'unset ${neutralizeEnv.map((name) {
             if (!_validEnvKey.hasMatch(name)) {
-              throw ArgumentError.value(
-                name,
-                'neutralizeEnv',
-                'invalid environment variable name',
-              );
+              throw ArgumentError.value(name, 'neutralizeEnv', 'invalid environment variable name');
             }
             return name;
           }).join(' ')}; ';

@@ -72,21 +72,13 @@ void main() {
 
   group('CollapseChevron', () {
     testWidgets('shows right chevron when collapsed', (tester) async {
-      await tester.pumpWidget(
-        const MacosApp(
-          home: CollapseChevron(true),
-        ),
-      );
+      await tester.pumpWidget(const MacosApp(home: CollapseChevron(true)));
 
       expect(find.byType(MacosIcon), findsOneWidget);
     });
 
     testWidgets('shows down chevron when not collapsed', (tester) async {
-      await tester.pumpWidget(
-        const MacosApp(
-          home: CollapseChevron(false),
-        ),
-      );
+      await tester.pumpWidget(const MacosApp(home: CollapseChevron(false)));
 
       expect(find.byType(MacosIcon), findsOneWidget);
     });
@@ -95,9 +87,7 @@ void main() {
   group('CollapsibleSectionHeader', () {
     testWidgets('renders title', (tester) async {
       await tester.pumpWidget(
-        const MacosApp(
-          home: CollapsibleSectionHeader('Branches'),
-        ),
+        const MacosApp(home: CollapsibleSectionHeader('Branches')),
       );
 
       expect(find.text('Branches'), findsOneWidget);
@@ -105,9 +95,7 @@ void main() {
 
     testWidgets('shows count when provided', (tester) async {
       await tester.pumpWidget(
-        const MacosApp(
-          home: CollapsibleSectionHeader('Branches', count: '12'),
-        ),
+        const MacosApp(home: CollapsibleSectionHeader('Branches', count: '12')),
       );
 
       expect(find.text('12'), findsOneWidget);

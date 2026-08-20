@@ -58,8 +58,12 @@ void main() {
 
   test('touch() stamps lastConnectedAt and leaves others unaffected', () async {
     final store = LocalRepoStore();
-    await store.save(const SavedLocalRepo(id: 'r1', label: 'A', repoPath: '/a'));
-    await store.save(const SavedLocalRepo(id: 'r2', label: 'B', repoPath: '/b'));
+    await store.save(
+      const SavedLocalRepo(id: 'r1', label: 'A', repoPath: '/a'),
+    );
+    await store.save(
+      const SavedLocalRepo(id: 'r2', label: 'B', repoPath: '/b'),
+    );
 
     final when = DateTime(2026, 1, 1);
     await store.touch('r1', when: when);
@@ -73,15 +77,21 @@ void main() {
 
   test('touch() on an unknown id is a no-op', () async {
     final store = LocalRepoStore();
-    await store.save(const SavedLocalRepo(id: 'r1', label: 'A', repoPath: '/a'));
+    await store.save(
+      const SavedLocalRepo(id: 'r1', label: 'A', repoPath: '/a'),
+    );
     await store.touch('does-not-exist');
     expect(await store.list(), hasLength(1));
   });
 
   test('delete() removes only the matching entry', () async {
     final store = LocalRepoStore();
-    await store.save(const SavedLocalRepo(id: 'r1', label: 'A', repoPath: '/a'));
-    await store.save(const SavedLocalRepo(id: 'r2', label: 'B', repoPath: '/b'));
+    await store.save(
+      const SavedLocalRepo(id: 'r1', label: 'A', repoPath: '/a'),
+    );
+    await store.save(
+      const SavedLocalRepo(id: 'r2', label: 'B', repoPath: '/b'),
+    );
     await store.delete('r1');
 
     final list = await store.list();
@@ -115,11 +125,14 @@ void main() {
     expect(list.map((r) => r.id), containsAll(['r1', 'r2']));
   });
 
-  test('updateMetadata is equivalent to save (no secrets to distinguish)', () async {
-    final store = LocalRepoStore();
-    await store.updateMetadata(
-      const SavedLocalRepo(id: 'r1', label: 'A', repoPath: '/a'),
-    );
-    expect(await store.list(), hasLength(1));
-  });
+  test(
+    'updateMetadata is equivalent to save (no secrets to distinguish)',
+    () async {
+      final store = LocalRepoStore();
+      await store.updateMetadata(
+        const SavedLocalRepo(id: 'r1', label: 'A', repoPath: '/a'),
+      );
+      expect(await store.list(), hasLength(1));
+    },
+  );
 }

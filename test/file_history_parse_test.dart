@@ -28,11 +28,10 @@ void main() {
         '${_fields('c', 'add old')}$_rs\n\nA\told_name.txt\n';
 
     final entries = parseFileHistory(raw);
-    expect([for (final e in entries) e.commit.subject], [
-      'edit new',
-      'rename',
-      'add old',
-    ]);
+    expect(
+      [for (final e in entries) e.commit.subject],
+      ['edit new', 'rename', 'add old'],
+    );
     expect(
       [for (final e in entries) e.pathAtCommit],
       ['new_name.txt', 'new_name.txt', 'old_name.txt'],

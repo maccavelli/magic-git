@@ -98,9 +98,7 @@ List<String> searchPathspecs(String? path) {
 
   // A trailing slash is how people write "this folder"; it's noise inside the
   // substring forms below (`lib/core/` → `**/*lib/core/*/**`), so drop it.
-  final bare = term.endsWith('/')
-      ? term.substring(0, term.length - 1)
-      : term;
+  final bare = term.endsWith('/') ? term.substring(0, term.length - 1) : term;
 
   return [
     // The literal reading: an exact path from the repo root, or a directory

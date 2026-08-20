@@ -105,7 +105,9 @@ class HighlightWorker {
 
   void _handleDeath() {
     for (final c in _pending.values) {
-      if (!c.isCompleted) c.completeError(StateError('highlight worker exited'));
+      if (!c.isCompleted) {
+        c.completeError(StateError('highlight worker exited'));
+      }
     }
     _pending.clear();
     _teardown();
@@ -138,7 +140,9 @@ class HighlightWorker {
     _toWorker?.send(null);
     _isolate?.kill(priority: Isolate.beforeNextEvent);
     for (final c in _pending.values) {
-      if (!c.isCompleted) c.completeError(StateError('highlight worker disposed'));
+      if (!c.isCompleted) {
+        c.completeError(StateError('highlight worker disposed'));
+      }
     }
     _pending.clear();
     _teardown();

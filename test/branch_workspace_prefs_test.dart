@@ -49,41 +49,41 @@ void main() {
         },
       );
       expect(migrated.pinnedBranchNames.toSet(), {'main', 'feature'});
-      expect(migrated.collapsedSections, {
-        'branches.tags',
-        'branches.remote',
-      });
+      expect(migrated.collapsedSections, {'branches.tags', 'branches.remote'});
       expect(migrated.collapsedSections.contains('issues'), isFalse);
     });
   });
 
   group('load/save durable', () {
-    test('migrates pinnedBranches_<path> once and does not delete legacy', () async {
-      SharedPreferences.setMockInitialValues({
-        'pinnedBranches_/repo': ['main'],
-        'collapsedSections': ['branches.local', 'issues'],
-      });
-      final identity = RepositoryUiIdentity.ssh(
-        connectionId: 'c1',
-        gitCommonDir: '/repo/.git',
-      );
-      final loaded = await loadBranchWorkspacePrefs(
-        identity: identity,
-        legacyRepoPath: '/repo',
-        globalCollapsed: {'branches.local', 'issues'},
-      );
-      expect(loaded.pinnedBranchNames, ['main']);
-      expect(loaded.collapsedSections, {'branches.local'});
+    test(
+      'migrates pinnedBranches_<path> once and does not delete legacy',
+      () async {
+        SharedPreferences.setMockInitialValues({
+          'pinnedBranches_/repo': ['main'],
+          'collapsedSections': ['branches.local', 'issues'],
+        });
+        final identity = RepositoryUiIdentity.ssh(
+          connectionId: 'c1',
+          gitCommonDir: '/repo/.git',
+        );
+        final loaded = await loadBranchWorkspacePrefs(
+          identity: identity,
+          legacyRepoPath: '/repo',
+          globalCollapsed: {'branches.local', 'issues'},
+        );
+        expect(loaded.pinnedBranchNames, ['main']);
+        expect(loaded.collapsedSections, {'branches.local'});
 
-      final sp = await SharedPreferences.getInstance();
-      // Legacy pin key retained.
-      expect(sp.getStringList('pinnedBranches_/repo'), ['main']);
-      // New key written.
-      expect(
-        sp.getString(BranchWorkspacePrefs.storageKeyFor(identity)),
-        isNotNull,
-      );
-    });
+        final sp = await SharedPreferences.getInstance();
+        // Legacy pin key retained.
+        expect(sp.getStringList('pinnedBranches_/repo'), ['main']);
+        // New key written.
+        expect(
+          sp.getString(BranchWorkspacePrefs.storageKeyFor(identity)),
+          isNotNull,
+        );
+      },
+    );
 
     test('second load uses durable record without re-migrating pins', () async {
       final identity = RepositoryUiIdentity.local(

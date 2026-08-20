@@ -21,44 +21,46 @@ void main() {
     addTearDown(container.dispose);
   });
 
-  test('forget deletes the panel-minted entry, keeps a user-saved one',
-      () async {
-    final store = container.read(localRepoStoreProvider);
-    // The grant record the Worktrees panel mints (mainRepoPath set → linked).
-    await store.save(
-      const SavedLocalRepo(
-        id: 'wt-1',
-        label: '',
-        repoPath: '/code/app-feature',
-        bookmarkData: 'bm',
-        mainRepoPath: '/code/app',
-      ),
-    );
-    // A repo the user saved themselves at the SAME path — not ours to delete.
-    await store.save(
-      const SavedLocalRepo(
-        id: 'user-1',
-        label: 'mine',
-        repoPath: '/code/app-feature',
-        bookmarkData: 'bm',
-      ),
-    );
-    // An unrelated worktree entry that must survive.
-    await store.save(
-      const SavedLocalRepo(
-        id: 'wt-2',
-        label: '',
-        repoPath: '/code/app-other',
-        bookmarkData: 'bm',
-        mainRepoPath: '/code/app',
-      ),
-    );
+  test(
+    'forget deletes the panel-minted entry, keeps a user-saved one',
+    () async {
+      final store = container.read(localRepoStoreProvider);
+      // The grant record the Worktrees panel mints (mainRepoPath set → linked).
+      await store.save(
+        const SavedLocalRepo(
+          id: 'wt-1',
+          label: '',
+          repoPath: '/code/app-feature',
+          bookmarkData: 'bm',
+          mainRepoPath: '/code/app',
+        ),
+      );
+      // A repo the user saved themselves at the SAME path — not ours to delete.
+      await store.save(
+        const SavedLocalRepo(
+          id: 'user-1',
+          label: 'mine',
+          repoPath: '/code/app-feature',
+          bookmarkData: 'bm',
+        ),
+      );
+      // An unrelated worktree entry that must survive.
+      await store.save(
+        const SavedLocalRepo(
+          id: 'wt-2',
+          label: '',
+          repoPath: '/code/app-other',
+          bookmarkData: 'bm',
+          mainRepoPath: '/code/app',
+        ),
+      );
 
-    await container.read(worktreeAccessProvider).forget('/code/app-feature');
+      await container.read(worktreeAccessProvider).forget('/code/app-feature');
 
-    final left = (await store.list()).map((r) => r.id).toSet();
-    expect(left, {'user-1', 'wt-2'});
-  });
+      final left = (await store.list()).map((r) => r.id).toSet();
+      expect(left, {'user-1', 'wt-2'});
+    },
+  );
 
   test('forget with no matching entry is a harmless no-op', () async {
     await container.read(worktreeAccessProvider).forget('/nowhere');

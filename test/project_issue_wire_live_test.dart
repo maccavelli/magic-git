@@ -121,184 +121,201 @@ void main() {
   }
 
   group('GitLab live issue wire', () {
-    test(
-      'create project → create issues (one empty-desc) → list → view → '
-      'milestone REST → delete',
-      () async {
-        if (!await _cliReady('glab')) {
-          markTestSkipped('glab not installed/authenticated');
-          return;
-        }
-        final host = await _glabHost() ?? 'gitlab.com';
-        final name =
-            'magicgit-issuewire-${DateTime.now().millisecondsSinceEpoch}';
-        final dest = await initLocalRepo(name);
-        final glab = GlabService(executor);
-        String? projectPathForCleanup;
+    test('create project → create issues (one empty-desc) → list → view → '
+        'milestone REST → delete', () async {
+      if (!await _cliReady('glab')) {
+        markTestSkipped('glab not installed/authenticated');
+        return;
+      }
+      final host = await _glabHost() ?? 'gitlab.com';
+      final name =
+          'magicgit-issuewire-${DateTime.now().millisecondsSinceEpoch}';
+      final dest = await initLocalRepo(name);
+      final glab = GlabService(executor);
+      String? projectPathForCleanup;
 
-        try {
-          // A throwaway project to mutate; wiring origin is what lets glab
-          // infer the project for every issue/milestone call, exactly as in
-          // the app.
-          final created = await glab.createRepoInExisting(
+      try {
+        // A throwaway project to mutate; wiring origin is what lets glab
+        // infer the project for every issue/milestone call, exactly as in
+        // the app.
+        final created = await glab.createRepoInExisting(
+          repoPath: dest,
+          name: name,
+          private: true,
+          host: host,
+        );
+        final resolved = await glab.resolveOriginUrl(
+          repoPath: dest,
+          name: name,
+          host: host,
+          createOutput: created.stdout,
+        );
+        final url = resolved.url;
+        expect(url, isNotNull, reason: resolved.detail);
+        final m = RegExp('([^/:]+)/$name').firstMatch(url!);
+        projectPathForCleanup = m == null ? name : '${m.group(1)}/$name';
+        final add = await executor.execute(
+          repoPath: dest,
+          gitArgs: ['git', 'remote', 'add', 'origin', url],
+          retries: 0,
+        );
+        expect(add.isSuccess, isTrue, reason: add.stderr);
+
+        // THE key unverified behavior: no --description, no PTY — glab must
+        // create non-interactively from --title alone.
+        await glab.createIssue(dest, title: 'Empty-description issue');
+        await glab.createIssue(
+          dest,
+          title: 'Full issue',
+          description: 'Body text from the live wire test.',
+          labels: ['livewire'],
+        );
+
+        final listed = await glab.listIssues(dest);
+        final empty = listed.firstWhere(
+          (i) => i.title == 'Empty-description issue',
+          orElse: () => fail(
+            'empty-desc issue missing from list: '
+            '${listed.map((i) => i.title).toList()}',
+          ),
+        );
+        final full = listed.firstWhere(
+          (i) => i.title == 'Full issue',
+          orElse: () => fail('full issue missing from list'),
+        );
+        expect(empty.id, isNotNull, reason: 'list rows must carry iid');
+        expect(
+          full.labels,
+          contains('livewire'),
+          reason: 'list rows must carry bare-string label names',
+        );
+
+        // Detail view: `--output json`, `description` → body.
+        final fullDetail = await glab.issueDetail(dest, full.id!);
+        expect(fullDetail.title, 'Full issue');
+        expect(fullDetail.body, contains('Body text from the live wire'));
+        final emptyDetail = await glab.issueDetail(dest, empty.id!);
+        expect(emptyDetail.title, 'Empty-description issue');
+        expect(
+          emptyDetail.body == null || emptyDetail.body!.trim().isEmpty,
+          isTrue,
+          reason:
+              'an empty description must parse as null/empty, '
+              'got: ${emptyDetail.body}',
+        );
+
+        // Milestone REST: create one via the passthrough, then list with
+        // the app's exact call (state=active + include_ancestors).
+        await glab.api(
+          dest,
+          'projects/:id/milestones',
+          fields: ['title=live-wire-v1', 'description=live milestone'],
+          method: 'POST',
+        );
+        final milestones = await glab.listMilestones(dest);
+        final ms = milestones.firstWhere(
+          (x) => x.title == 'live-wire-v1',
+          orElse: () => fail(
+            'created milestone missing from list: '
+            '${milestones.map((x) => x.title).toList()}',
+          ),
+        );
+        expect(ms.id, isNotNull, reason: 'fromGlabRest keys on the global id');
+        expect(ms.description, 'live milestone');
+        expect(ms.state, 'active');
+      } finally {
+        // Always delete the live project (its issues/milestones go with
+        // it), even when an expect above failed.
+        if (projectPathForCleanup != null) {
+          final encoded = projectPathForCleanup
+              .split('/')
+              .map(Uri.encodeComponent)
+              .join('%2F');
+          final del = await executor.execute(
             repoPath: dest,
-            name: name,
-            private: true,
-            host: host,
-          );
-          final resolved = await glab.resolveOriginUrl(
-            repoPath: dest,
-            name: name,
-            host: host,
-            createOutput: created.stdout,
-          );
-          final url = resolved.url;
-          expect(url, isNotNull, reason: resolved.detail);
-          final m = RegExp('([^/:]+)/$name').firstMatch(url!);
-          projectPathForCleanup = m == null ? name : '${m.group(1)}/$name';
-          final add = await executor.execute(
-            repoPath: dest,
-            gitArgs: ['git', 'remote', 'add', 'origin', url],
+            gitArgs: ['glab', 'api', 'projects/$encoded', '-X', 'DELETE'],
+            extraEnv: GlabService.hostEnv(host),
             retries: 0,
           );
-          expect(add.isSuccess, isTrue, reason: add.stderr);
-
-          // THE key unverified behavior: no --description, no PTY — glab must
-          // create non-interactively from --title alone.
-          await glab.createIssue(dest, title: 'Empty-description issue');
-          await glab.createIssue(
-            dest,
-            title: 'Full issue',
-            description: 'Body text from the live wire test.',
-            labels: ['livewire'],
-          );
-
-          final listed = await glab.listIssues(dest);
-          final empty = listed.firstWhere(
-            (i) => i.title == 'Empty-description issue',
-            orElse: () => fail('empty-desc issue missing from list: '
-                '${listed.map((i) => i.title).toList()}'),
-          );
-          final full = listed.firstWhere(
-            (i) => i.title == 'Full issue',
-            orElse: () => fail('full issue missing from list'),
-          );
-          expect(empty.id, isNotNull, reason: 'list rows must carry iid');
-          expect(full.labels, contains('livewire'),
-              reason: 'list rows must carry bare-string label names');
-
-          // Detail view: `--output json`, `description` → body.
-          final fullDetail = await glab.issueDetail(dest, full.id!);
-          expect(fullDetail.title, 'Full issue');
-          expect(fullDetail.body, contains('Body text from the live wire'));
-          final emptyDetail = await glab.issueDetail(dest, empty.id!);
-          expect(emptyDetail.title, 'Empty-description issue');
-          expect(
-            emptyDetail.body == null || emptyDetail.body!.trim().isEmpty,
-            isTrue,
-            reason: 'an empty description must parse as null/empty, '
-                'got: ${emptyDetail.body}',
-          );
-
-          // Milestone REST: create one via the passthrough, then list with
-          // the app's exact call (state=active + include_ancestors).
-          await glab.api(
-            dest,
-            'projects/:id/milestones',
-            fields: ['title=live-wire-v1', 'description=live milestone'],
-            method: 'POST',
-          );
-          final milestones = await glab.listMilestones(dest);
-          final ms = milestones.firstWhere(
-            (x) => x.title == 'live-wire-v1',
-            orElse: () => fail('created milestone missing from list: '
-                '${milestones.map((x) => x.title).toList()}'),
-          );
-          expect(ms.id, isNotNull,
-              reason: 'fromGlabRest keys on the global id');
-          expect(ms.description, 'live milestone');
-          expect(ms.state, 'active');
-        } finally {
-          // Always delete the live project (its issues/milestones go with
-          // it), even when an expect above failed.
-          if (projectPathForCleanup != null) {
-            final encoded = projectPathForCleanup
-                .split('/')
-                .map(Uri.encodeComponent)
-                .join('%2F');
-            final del = await executor.execute(
-              repoPath: dest,
-              gitArgs: ['glab', 'api', 'projects/$encoded', '-X', 'DELETE'],
-              extraEnv: GlabService.hostEnv(host),
-              retries: 0,
+          if (!del.isSuccess) {
+            // ignore: avoid_print
+            print(
+              'WARNING: could not delete $projectPathForCleanup: '
+              '${del.stderr}',
             );
-            if (!del.isSuccess) {
-              // ignore: avoid_print
-              print('WARNING: could not delete $projectPathForCleanup: '
-                  '${del.stderr}');
-            }
           }
         }
-      },
-      timeout: const Timeout(Duration(minutes: 5)),
-    );
+      }
+    }, timeout: const Timeout(Duration(minutes: 5)));
   });
 
   group('GitHub live issue wire (non-mutating half)', () {
-    test('list issues/milestones and view a body against an existing repo',
-        () async {
-      if (!await _cliReady('gh')) {
-        markTestSkipped('gh not installed/authenticated');
-        return;
-      }
-      final host = await _ghHost() ?? 'github.com';
-      final gh = GhService(executor);
+    test(
+      'list issues/milestones and view a body against an existing repo',
+      () async {
+        if (!await _cliReady('gh')) {
+          markTestSkipped('gh not installed/authenticated');
+          return;
+        }
+        final host = await _ghHost() ?? 'github.com';
+        final gh = GhService(executor);
 
-      // The user's newest repo stands in for the connected one.
-      final list = await executor.execute(
-        repoPath: tempDir.path,
-        gitArgs: [
-          'gh', 'repo', 'list', '--json', 'url', '--limit', '1',
-          '--jq', '.[0].url',
-        ],
-        extraEnv: GhService.hostEnv(host),
-        retries: 0,
-      );
-      final https = list.stdout.trim();
-      if (!list.isSuccess || https.isEmpty) {
-        markTestSkipped('no repos on the account to probe');
-        return;
-      }
+        // The user's newest repo stands in for the connected one.
+        final list = await executor.execute(
+          repoPath: tempDir.path,
+          gitArgs: [
+            'gh',
+            'repo',
+            'list',
+            '--json',
+            'url',
+            '--limit',
+            '1',
+            '--jq',
+            '.[0].url',
+          ],
+          extraEnv: GhService.hostEnv(host),
+          retries: 0,
+        );
+        final https = list.stdout.trim();
+        if (!list.isSuccess || https.isEmpty) {
+          markTestSkipped('no repos on the account to probe');
+          return;
+        }
 
-      final dest = await initLocalRepo('gh-issue-probe');
-      final add = await executor.execute(
-        repoPath: dest,
-        gitArgs: ['git', 'remote', 'add', 'origin', '$https.git'],
-        retries: 0,
-      );
-      expect(add.isSuccess, isTrue, reason: add.stderr);
+        final dest = await initLocalRepo('gh-issue-probe');
+        final add = await executor.execute(
+          repoPath: dest,
+          gitArgs: ['git', 'remote', 'add', 'origin', '$https.git'],
+          retries: 0,
+        );
+        expect(add.isSuccess, isTrue, reason: add.stderr);
 
-      // Shape checks: the calls must succeed and parse — an empty repo
-      // legitimately yields empty lists.
-      final issues = await gh.listIssues(dest);
-      for (final i in issues) {
-        expect(i.title, isNotEmpty);
-        expect(i.id, isNotNull, reason: 'gh list rows must carry number');
-      }
-      final milestones = await gh.listMilestones(dest);
-      for (final ms in milestones) {
-        expect(ms.title, isNotEmpty);
-      }
-      // Detail (body field) only when the repo actually has an issue.
-      if (issues.isNotEmpty) {
-        final detail = await gh.issueDetail(dest, issues.first.id!);
-        expect(detail.title, issues.first.title);
-        // body may be empty — the point is `--json body` parses.
-      } else {
-        // ignore: avoid_print
-        print('note: newest repo has no open issues; '
-            'gh issue view left unexercised');
-      }
-    }, timeout: const Timeout(Duration(minutes: 3)));
+        // Shape checks: the calls must succeed and parse — an empty repo
+        // legitimately yields empty lists.
+        final issues = await gh.listIssues(dest);
+        for (final i in issues) {
+          expect(i.title, isNotEmpty);
+          expect(i.id, isNotNull, reason: 'gh list rows must carry number');
+        }
+        final milestones = await gh.listMilestones(dest);
+        for (final ms in milestones) {
+          expect(ms.title, isNotEmpty);
+        }
+        // Detail (body field) only when the repo actually has an issue.
+        if (issues.isNotEmpty) {
+          final detail = await gh.issueDetail(dest, issues.first.id!);
+          expect(detail.title, issues.first.title);
+          // body may be empty — the point is `--json body` parses.
+        } else {
+          // ignore: avoid_print
+          print(
+            'note: newest repo has no open issues; '
+            'gh issue view left unexercised',
+          );
+        }
+      },
+      timeout: const Timeout(Duration(minutes: 3)),
+    );
   });
 }

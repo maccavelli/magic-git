@@ -196,7 +196,11 @@ class _CountBadge extends StatelessWidget {
         color: MacosColors.systemRedColor,
         borderRadius: BorderRadius.all(Radius.circular(9)),
         boxShadow: [
-          BoxShadow(color: Color(0x4D000000), blurRadius: 3, offset: Offset(0, 1)),
+          BoxShadow(
+            color: Color(0x4D000000),
+            blurRadius: 3,
+            offset: Offset(0, 1),
+          ),
         ],
       ),
       child: Text(

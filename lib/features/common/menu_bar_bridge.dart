@@ -72,9 +72,8 @@ class AvailableActions extends Notifier<Set<String>> {
   }
 }
 
-final availableActionsProvider = NotifierProvider<AvailableActions, Set<String>>(
-  AvailableActions.new,
-);
+final availableActionsProvider =
+    NotifierProvider<AvailableActions, Set<String>>(AvailableActions.new);
 
 /// A menu-bar choice waiting to be routed to its owning panel.
 ///

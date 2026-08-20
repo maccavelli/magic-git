@@ -16,18 +16,21 @@ class _FakeLink implements KeepAliveLink {
 }
 
 void main() {
-  test('count cap evicts the least-recently-used entry and closes its link', () {
-    final lru = KeepAliveLru<String>(2);
-    final a = _FakeLink(), b = _FakeLink(), c = _FakeLink();
-    lru.touch('a', a);
-    lru.touch('b', b);
-    lru.touch('c', c); // 'a' is now LRU and over capacity 2
+  test(
+    'count cap evicts the least-recently-used entry and closes its link',
+    () {
+      final lru = KeepAliveLru<String>(2);
+      final a = _FakeLink(), b = _FakeLink(), c = _FakeLink();
+      lru.touch('a', a);
+      lru.touch('b', b);
+      lru.touch('c', c); // 'a' is now LRU and over capacity 2
 
-    expect(a.closed, isTrue);
-    expect(b.closed, isFalse);
-    expect(c.closed, isFalse);
-    expect(lru.length, 2);
-  });
+      expect(a.closed, isTrue);
+      expect(b.closed, isFalse);
+      expect(c.closed, isFalse);
+      expect(lru.length, 2);
+    },
+  );
 
   test('touch refreshes recency so a re-touched key survives eviction', () {
     final lru = KeepAliveLru<String>(2);
@@ -47,8 +50,7 @@ void main() {
     expect(lru.length, 2);
   });
 
-  test('a superseded link is never closed — closing one killed the live element',
-      () {
+  test('a superseded link is never closed — closing one killed the live element', () {
     // The invariant a _FakeLink cannot check, which is exactly how the bug lived
     // here: a fake link records `closed` and nothing else, so it agreed happily
     // that closing the superseded link was fine. Against a REAL KeepAliveLink it
@@ -92,13 +94,18 @@ void main() {
     expect(
       builds,
       settled,
-      reason: 'the rebuilt element must stay alive — the thrashing '
+      reason:
+          'the rebuilt element must stay alive — the thrashing '
           'dispose/rebuild loop is what left the pane spinning',
     );
   });
 
   test('an entry over maxEntryBytes is released immediately', () {
-    final lru = KeepAliveLru<String>(24, maxEntryBytes: 1000, maxTotalBytes: 100000);
+    final lru = KeepAliveLru<String>(
+      24,
+      maxEntryBytes: 1000,
+      maxTotalBytes: 100000,
+    );
     final big = _FakeLink();
     lru.touch('big', big);
     lru.reportSize('big', 5000); // over the per-entry cap
@@ -113,7 +120,11 @@ void main() {
     // Budget 100, per-entry cap 100. Three entries of 60 each: after the third
     // reports, total would be 180 > 100, so the two oldest are evicted until
     // back under budget — but the just-reported 'c' is kept.
-    final lru = KeepAliveLru<String>(24, maxTotalBytes: 100, maxEntryBytes: 100);
+    final lru = KeepAliveLru<String>(
+      24,
+      maxTotalBytes: 100,
+      maxEntryBytes: 100,
+    );
     final a = _FakeLink(), b = _FakeLink(), c = _FakeLink();
     lru.touch('a', a);
     lru.reportSize('a', 60);
@@ -131,7 +142,11 @@ void main() {
   });
 
   test('small entries under budget are all retained (count cap governs)', () {
-    final lru = KeepAliveLru<String>(24, maxTotalBytes: 100000, maxEntryBytes: 100000);
+    final lru = KeepAliveLru<String>(
+      24,
+      maxTotalBytes: 100000,
+      maxEntryBytes: 100000,
+    );
     final links = [for (var i = 0; i < 10; i++) _FakeLink()];
     for (var i = 0; i < 10; i++) {
       lru.touch('k$i', links[i]);
@@ -155,7 +170,11 @@ void main() {
 
   test('evict drops one key (closing its link + freeing its bytes) and is a '
       'no-op for an absent key', () {
-    final lru = KeepAliveLru<String>(24, maxTotalBytes: 100000, maxEntryBytes: 100000);
+    final lru = KeepAliveLru<String>(
+      24,
+      maxTotalBytes: 100000,
+      maxEntryBytes: 100000,
+    );
     final a = _FakeLink(), b = _FakeLink();
     lru.touch('a', a);
     lru.reportSize('a', 100);

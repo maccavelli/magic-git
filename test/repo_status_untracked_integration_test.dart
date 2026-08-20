@@ -58,35 +58,34 @@ void main() {
     },
   );
 
-  test('diffUntracked renders an untracked file as an additions diff', () async {
-    File('$repo/new.txt').writeAsStringSync('hello\n');
-    final diff = await git.diffUntracked(repo, 'new.txt');
-    expect(diff, contains('+hello'));
-    expect(diff, contains('/dev/null'));
-  });
-
   test(
-    'diffUntracked on a path git cannot read fails instead of returning an '
-    'empty "successful" diff',
+    'diffUntracked renders an untracked file as an additions diff',
     () async {
-      // A directory (or a vanished file) makes `git diff --no-index` exit 1
-      // with an error on stderr and nothing on stdout — the same exit code as
-      // a genuine diff. This must surface as a failure, not a blank pane.
-      Directory('$repo/somedir').createSync();
-      File('$repo/somedir/x.txt').writeAsStringSync('x\n');
-      await expectLater(
-        git.diffUntracked(repo, 'somedir/'),
-        throwsA(isA<GitException>()),
-      );
-      await expectLater(
-        git.diffUntracked(repo, 'no-such-file.txt'),
-        throwsA(isA<GitException>()),
-      );
+      File('$repo/new.txt').writeAsStringSync('hello\n');
+      final diff = await git.diffUntracked(repo, 'new.txt');
+      expect(diff, contains('+hello'));
+      expect(diff, contains('/dev/null'));
     },
   );
 
-  test('an empty untracked file still reads as a diff, not an error',
-      () async {
+  test('diffUntracked on a path git cannot read fails instead of returning an '
+      'empty "successful" diff', () async {
+    // A directory (or a vanished file) makes `git diff --no-index` exit 1
+    // with an error on stderr and nothing on stdout — the same exit code as
+    // a genuine diff. This must surface as a failure, not a blank pane.
+    Directory('$repo/somedir').createSync();
+    File('$repo/somedir/x.txt').writeAsStringSync('x\n');
+    await expectLater(
+      git.diffUntracked(repo, 'somedir/'),
+      throwsA(isA<GitException>()),
+    );
+    await expectLater(
+      git.diffUntracked(repo, 'no-such-file.txt'),
+      throwsA(isA<GitException>()),
+    );
+  });
+
+  test('an empty untracked file still reads as a diff, not an error', () async {
     // /dev/null vs an empty file: exit 1 with a header-only new-file diff on
     // stdout (verified against git 2.55) — content-empty but not
     // output-empty, so the empty-stdout error guard must not trip on it.

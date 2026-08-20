@@ -91,7 +91,9 @@ Future<_FakeGit> _pump(
       // keepAlive timer that widget tests would flag as still pending.
       remoteTagsProvider(_repo).overrideWith((ref) async => remoteTags),
       branchForgeProvider(_repo).overrideWith((ref) async => const {}),
-      mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
+      mergedBranchesProvider(
+        _repo,
+      ).overrideWith((ref) async => const <String>{}),
     ],
   );
   addTearDown(container.dispose);
@@ -109,28 +111,27 @@ Future<_FakeGit> _pump(
 }
 
 void main() {
-  testWidgets(
-    'tags render newest-first and collapse to the 10 most recent',
-    (tester) async {
-      await _pump(tester);
+  testWidgets('tags render newest-first and collapse to the 10 most recent', (
+    tester,
+  ) async {
+    await _pump(tester);
 
-      expect(find.text('Tags (13)'), findsOneWidget);
+    expect(find.text('Tags (13)'), findsOneWidget);
 
-      // The 10 newest (v13..v4) are visible; the 3 oldest are not.
-      expect(find.text('v13'), findsOneWidget);
-      expect(find.text('v4'), findsOneWidget);
-      expect(find.text('v3'), findsNothing);
-      expect(find.text('v1'), findsNothing);
+    // The 10 newest (v13..v4) are visible; the 3 oldest are not.
+    expect(find.text('v13'), findsOneWidget);
+    expect(find.text('v4'), findsOneWidget);
+    expect(find.text('v3'), findsNothing);
+    expect(find.text('v1'), findsNothing);
 
-      // Newest at the top, despite being fed last.
-      expect(
-        tester.getTopLeft(find.text('v13')).dy,
-        lessThan(tester.getTopLeft(find.text('v4')).dy),
-      );
+    // Newest at the top, despite being fed last.
+    expect(
+      tester.getTopLeft(find.text('v13')).dy,
+      lessThan(tester.getTopLeft(find.text('v4')).dy),
+    );
 
-      expect(find.text('Show 3 more tags'), findsOneWidget);
-    },
-  );
+    expect(find.text('Show 3 more tags'), findsOneWidget);
+  });
 
   testWidgets('the Show more row expands the list in place', (tester) async {
     await _pump(tester);
@@ -203,8 +204,11 @@ void main() {
     await expectPush(tester, 'synced', enabled: false);
     await expectPush(tester, 'moved', enabled: true);
 
-    expect(find.text('Push 1 to origin'), findsOneWidget,
-        reason: 'only the local-only tag counts — not the diverged one');
+    expect(
+      find.text('Push 1 to origin'),
+      findsOneWidget,
+      reason: 'only the local-only tag counts — not the diverged one',
+    );
   });
 
   testWidgets('an unknown remote listing (null) shows no badges and leaves '
@@ -233,16 +237,18 @@ void main() {
 
   // Delete lives on the tag row's right-click menu now.
   Future<void> tapTrash(WidgetTester tester, String tag) async {
-    await tester.tap(find.text(tag),
-        buttons: kSecondaryButton, warnIfMissed: false);
+    await tester.tap(
+      find.text(tag),
+      buttons: kSecondaryButton,
+      warnIfMissed: false,
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Delete tag'));
     await tester.pumpAndSettle();
   }
 
   testWidgets('deleting a tag known to be on the remote escalates to the '
-      'three-way choice; "local and remote" runs both deletes',
-      (tester) async {
+      'three-way choice; "local and remote" runs both deletes', (tester) async {
     final git = await _pump(
       tester,
       refs: threeTags(),

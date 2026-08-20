@@ -32,7 +32,10 @@ class _FakeGit extends GitService {
   Future<GitStatus> status(String repoPath) async {
     statusCalls++;
     // A fresh instance per call — exactly what a real refresh produces.
-    return GitStatus(branch: GitBranchInfo(oid: oid), files: const []);
+    return GitStatus(
+      branch: GitBranchInfo(oid: oid),
+      files: const [],
+    );
   }
 
   /// When set, every diffFile call parks on a fresh completer the test finishes
@@ -118,8 +121,7 @@ void main() {
     expect(git.diffCalls, 2);
   });
 
-  test('worktree changes never restart a fetch that is still in flight',
-      () async {
+  test('worktree changes never restart a fetch that is still in flight', () async {
     // The regression: a status change used to invalidate a diff whose *first*
     // fetch had not landed yet. That doesn't refresh anything — it throws the
     // in-flight read away and starts over from a bare AsyncLoading, because
@@ -159,7 +161,8 @@ void main() {
     expect(
       git.pendingDiffs,
       hasLength(1),
-      reason: 'the in-flight read must be left alone — restarting it on every '
+      reason:
+          'the in-flight read must be left alone — restarting it on every '
           'change is what starved it forever',
     );
 
@@ -174,7 +177,8 @@ void main() {
     expect(
       git.pendingDiffs,
       hasLength(2),
-      reason: 'three mid-flight changes must collapse to one refetch, not three',
+      reason:
+          'three mid-flight changes must collapse to one refetch, not three',
     );
     // Riverpod carries the previous value through that refresh, so the pane
     // keeps showing the diff rather than dropping back to a spinner.
@@ -213,9 +217,9 @@ void main() {
     final fetchesBefore = git.diffCalls;
 
     // A content-only edit to one of them: same status records, different bytes.
-    container
-        .read(worktreeEditsProvider.notifier)
-        .noteFiles(repo, const ['lib/edited.dart']);
+    container.read(worktreeEditsProvider.notifier).noteFiles(repo, const [
+      'lib/edited.dart',
+    ]);
     await Future<void>.delayed(Duration.zero);
     await container.read(fileDiffProvider(edited).future);
     await container.read(fileDiffProvider(untouched).future);
@@ -256,28 +260,30 @@ void main() {
     expect(git.diffCalls, before + 1);
   });
 
-  test('a commit patch cache is immutable — status refreshes never touch it',
-      () async {
-    final git = _FakeGit();
-    final container = ProviderContainer(
-      overrides: [gitServiceProvider.overrideWithValue(git)],
-    );
-    addTearDown(container.dispose);
+  test(
+    'a commit patch cache is immutable — status refreshes never touch it',
+    () async {
+      final git = _FakeGit();
+      final container = ProviderContainer(
+        overrides: [gitServiceProvider.overrideWithValue(git)],
+      );
+      addTearDown(container.dispose);
 
-    const repo = '/repo-staleness-b';
-    const key = (repo, 'abc123', 3);
+      const repo = '/repo-staleness-b';
+      const key = (repo, 'abc123', 3);
 
-    expect(await container.read(commitDiffProvider(key).future), 'patch v1');
-    await container.read(statusProvider(repo).future);
-    container.invalidate(statusProvider(repo));
-    await container.read(statusProvider(repo).future);
-    await Future<void>.delayed(Duration.zero);
+      expect(await container.read(commitDiffProvider(key).future), 'patch v1');
+      await container.read(statusProvider(repo).future);
+      container.invalidate(statusProvider(repo));
+      await container.read(statusProvider(repo).future);
+      await Future<void>.delayed(Duration.zero);
 
-    expect(
-      await container.read(commitDiffProvider(key).future),
-      'patch v1',
-      reason: 'hash-keyed content never refetches on a status change',
-    );
-    expect(git.showCalls, 1);
-  });
+      expect(
+        await container.read(commitDiffProvider(key).future),
+        'patch v1',
+        reason: 'hash-keyed content never refetches on a status change',
+      );
+      expect(git.showCalls, 1);
+    },
+  );
 }

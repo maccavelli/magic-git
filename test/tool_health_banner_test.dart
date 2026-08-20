@@ -33,9 +33,8 @@ class _FixedConn extends ConnectionController {
 }
 
 /// ToolIconButton wraps MacosTooltip (not Flutter's Tooltip).
-Finder _byMacosTooltip(String message) => find.byWidgetPredicate(
-  (w) => w is MacosTooltip && w.message == message,
-);
+Finder _byMacosTooltip(String message) =>
+    find.byWidgetPredicate((w) => w is MacosTooltip && w.message == message);
 
 Future<void> _pump(
   WidgetTester tester, {

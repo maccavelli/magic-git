@@ -123,7 +123,8 @@ void main() {
     expect(
       tester.getRect(find.text('Stage')),
       stageBefore,
-      reason: 'but the hunk actions hold still — they are controls, and they '
+      reason:
+          'but the hunk actions hold still — they are controls, and they '
           'have to stay reachable at any pan, not slide off the right edge '
           'exactly when the diff is at its widest',
     );
@@ -142,8 +143,10 @@ void main() {
     // on the content spans, not the widget's outer style. Read the first
     // content leaf's colour.
     final added = tester.widget<Text>(
-      find.text('new line that runs on and on and on and on and on and on and '
-          'on and on'),
+      find.text(
+        'new line that runs on and on and on and on and on and on and '
+        'on and on',
+      ),
     );
     Color? firstColor;
     added.textSpan!.visitChildren((span) {

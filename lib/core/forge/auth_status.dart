@@ -56,7 +56,8 @@ class ToolAuth {
     tool: tool,
     present: false,
     authenticated: false,
-    detail: 'Not found on the target — check the tool is installed and on '
+    detail:
+        'Not found on the target — check the tool is installed and on '
         'the PATH the app sees.',
   );
 
@@ -208,7 +209,8 @@ ToolAuth parseGhAuthStatus(String output, {required bool present}) {
       present: true,
       authenticated: false,
       host: active.host,
-      detail: 'Token for ${active.host} is expired or invalid — run '
+      detail:
+          'Token for ${active.host} is expired or invalid — run '
           '`gh auth login` on the target.',
     );
   }
@@ -249,7 +251,8 @@ ToolAuth parseGlabAuthStatus(String output, {required bool present}) {
         present: true,
         authenticated: false,
         host: blocks.first.host,
-        detail: 'Token for ${blocks.first.host} is expired or invalid — run '
+        detail:
+            'Token for ${blocks.first.host} is expired or invalid — run '
             '`glab auth login` on the target.',
       );
     }

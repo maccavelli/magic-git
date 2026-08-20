@@ -51,14 +51,17 @@ void main() {
     const caps = HostCapabilities(hasApt: true, passwordlessSudo: true);
 
     test('git → apt-get install', () {
-      expect((planInstall('git', 'linux', caps) as InstallCommand).command,
-          'sudo -n apt-get install -y git');
+      expect(
+        (planInstall('git', 'linux', caps) as InstallCommand).command,
+        'sudo -n apt-get install -y git',
+      );
     });
 
     test('inotifywait → inotify-tools', () {
       expect(
-          (planInstall('inotifywait', 'linux', caps) as InstallCommand).command,
-          'sudo -n apt-get install -y inotify-tools');
+        (planInstall('inotifywait', 'linux', caps) as InstallCommand).command,
+        'sudo -n apt-get install -y inotify-tools',
+      );
     });
 
     test('gh has no one-line apt install → rootless download', () {
@@ -76,18 +79,25 @@ void main() {
     const caps = HostCapabilities(hasDnf: true, passwordlessSudo: true);
 
     test('git / gh / glab install directly', () {
-      expect((planInstall('git', 'linux', caps) as InstallCommand).command,
-          'sudo -n dnf install -y git');
-      expect((planInstall('gh', 'linux', caps) as InstallCommand).command,
-          'sudo -n dnf install -y gh');
-      expect((planInstall('glab', 'linux', caps) as InstallCommand).command,
-          'sudo -n dnf install -y glab');
+      expect(
+        (planInstall('git', 'linux', caps) as InstallCommand).command,
+        'sudo -n dnf install -y git',
+      );
+      expect(
+        (planInstall('gh', 'linux', caps) as InstallCommand).command,
+        'sudo -n dnf install -y gh',
+      );
+      expect(
+        (planInstall('glab', 'linux', caps) as InstallCommand).command,
+        'sudo -n dnf install -y glab',
+      );
     });
 
     test('inotifywait pulls in EPEL alongside inotify-tools', () {
       expect(
-          (planInstall('inotifywait', 'linux', caps) as InstallCommand).command,
-          'sudo -n dnf install -y epel-release inotify-tools');
+        (planInstall('inotifywait', 'linux', caps) as InstallCommand).command,
+        'sudo -n dnf install -y epel-release inotify-tools',
+      );
     });
   });
 
@@ -95,13 +105,17 @@ void main() {
     const caps = HostCapabilities(hasSnap: true, passwordlessSudo: true);
 
     test('glab → snap install', () {
-      expect((planInstall('glab', 'linux', caps) as InstallCommand).command,
-          'sudo -n snap install glab');
+      expect(
+        (planInstall('glab', 'linux', caps) as InstallCommand).command,
+        'sudo -n snap install glab',
+      );
     });
 
     test('git → manual (snap has no path here)', () {
-      expect((planInstall('git', 'linux', caps) as InstallManual).reason,
-          kNoPackageManagerReason);
+      expect(
+        (planInstall('git', 'linux', caps) as InstallManual).reason,
+        kNoPackageManagerReason,
+      );
     });
   });
 
@@ -157,10 +171,14 @@ void main() {
     });
 
     test('asset hint names the exact linux arch + extension when known', () {
-      expect(sideloadAssetHint('glab', 'linux', 'arm64'),
-          contains('glab_*_linux_arm64.tar.gz'));
-      expect(sideloadAssetHint('gh', 'linux', 'amd64'),
-          contains('gh_*_linux_amd64.tar.gz'));
+      expect(
+        sideloadAssetHint('glab', 'linux', 'arm64'),
+        contains('glab_*_linux_arm64.tar.gz'),
+      );
+      expect(
+        sideloadAssetHint('gh', 'linux', 'amd64'),
+        contains('gh_*_linux_amd64.tar.gz'),
+      );
       // Unknown arch degrades gracefully.
       expect(sideloadAssetHint('gh', 'linux', ''), contains('for your host'));
     });
@@ -168,15 +186,23 @@ void main() {
     test('asset hint uses each tool\'s macOS naming (gh: macOS/.zip, '
         'glab: darwin/.tar.gz)', () {
       // gh ships macOS builds as macOS_*.zip …
-      expect(sideloadAssetHint('gh', 'macos', 'arm64'),
-          contains('gh_*_macOS_arm64.zip'));
-      expect(sideloadAssetHint('gh', 'macos', 'amd64'),
-          contains('gh_*_macOS_amd64.zip'));
+      expect(
+        sideloadAssetHint('gh', 'macos', 'arm64'),
+        contains('gh_*_macOS_arm64.zip'),
+      );
+      expect(
+        sideloadAssetHint('gh', 'macos', 'amd64'),
+        contains('gh_*_macOS_amd64.zip'),
+      );
       // … glab ships them as darwin_*.tar.gz.
-      expect(sideloadAssetHint('glab', 'macos', 'arm64'),
-          contains('glab_*_darwin_arm64.tar.gz'));
-      expect(sideloadAssetHint('glab', 'macos', 'amd64'),
-          contains('glab_*_darwin_amd64.tar.gz'));
+      expect(
+        sideloadAssetHint('glab', 'macos', 'arm64'),
+        contains('glab_*_darwin_arm64.tar.gz'),
+      );
+      expect(
+        sideloadAssetHint('glab', 'macos', 'amd64'),
+        contains('glab_*_darwin_amd64.tar.gz'),
+      );
     });
 
     test('releases URL is provided for the static tools', () {

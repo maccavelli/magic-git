@@ -69,19 +69,22 @@ void main() {
     expect(settings.worktreePostCreateEnabled, isTrue);
   });
 
-  test('a parked post-create command can be disarmed without losing it', () async {
-    final c = container();
-    final notifier = c.read(appSettingsProvider.notifier);
+  test(
+    'a parked post-create command can be disarmed without losing it',
+    () async {
+      final c = container();
+      final notifier = c.read(appSettingsProvider.notifier);
 
-    await notifier.setWorktreeDefaults(
-      postCreate: 'pnpm install',
-      postCreateEnabled: true,
-    );
-    // Enabled is a separate flag from the string precisely so the command can be
-    // kept around while switched off, rather than having to be retyped later.
-    await notifier.setWorktreeDefaults(postCreateEnabled: false);
+      await notifier.setWorktreeDefaults(
+        postCreate: 'pnpm install',
+        postCreateEnabled: true,
+      );
+      // Enabled is a separate flag from the string precisely so the command can be
+      // kept around while switched off, rather than having to be retyped later.
+      await notifier.setWorktreeDefaults(postCreateEnabled: false);
 
-    expect(c.read(appSettingsProvider).worktreePostCreate, 'pnpm install');
-    expect(c.read(appSettingsProvider).worktreePostCreateEnabled, isFalse);
-  });
+      expect(c.read(appSettingsProvider).worktreePostCreate, 'pnpm install');
+      expect(c.read(appSettingsProvider).worktreePostCreateEnabled, isFalse);
+    },
+  );
 }

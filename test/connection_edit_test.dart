@@ -269,11 +269,9 @@ void main() {
       ['/srv/gamma'],
       reason: 'the fsmonitor preference follows the renamed entry',
     );
-    expect(
-      stored.repoLabels,
-      {'/srv/gamma': 'Beta Service'},
-      reason: 'the friendly label follows the renamed entry',
-    );
+    expect(stored.repoLabels, {
+      '/srv/gamma': 'Beta Service',
+    }, reason: 'the friendly label follows the renamed entry');
   });
 
   testWidgets('the repo-row pencil sets a friendly label without moving the '
@@ -297,8 +295,10 @@ void main() {
 
     final stored = (await _storedConnections()).single;
     expect(stored.repoLabels, {'/srv/alpha': 'The Alpha'});
-    expect(stored.allRepoPaths, ['/srv/alpha', '/srv/beta'],
-        reason: 'paths untouched');
+    expect(stored.allRepoPaths, [
+      '/srv/alpha',
+      '/srv/beta',
+    ], reason: 'paths untouched');
     expect(stored.fsmonitorPaths, ['/srv/beta'], reason: 'fsmonitor untouched');
   });
 
@@ -378,7 +378,9 @@ void main() {
     await tester.tap(_byMacosTooltip('Edit repository'));
     await tester.pumpAndSettle();
     // `.last`: the tile behind the sheet carries the same tooltip.
-    await tester.tap(_byMacosTooltip('Git fsmonitor off (click to enable)').last);
+    await tester.tap(
+      _byMacosTooltip('Git fsmonitor off (click to enable)').last,
+    );
     await tester.pumpAndSettle();
     await tester.tap(find.text('Save'));
     await tester.pumpAndSettle();

@@ -63,10 +63,9 @@ void main() {
     final git = _FakeGit();
     final oracle = GitIgnoreOracle(git);
 
-    expect(
-      await oracle.visible(repo, {'lib/a.dart', 'build/x.o', 'app.log'}),
-      {'lib/a.dart'},
-    );
+    expect(await oracle.visible(repo, {'lib/a.dart', 'build/x.o', 'app.log'}), {
+      'lib/a.dart',
+    });
     // A second look at the same file is free too.
     final before = git.calls;
     expect(await oracle.visible(repo, {'lib/a.dart'}), {'lib/a.dart'});
@@ -93,7 +92,11 @@ void main() {
     // moves — the most meaningful events there are. check-ignore has no opinion
     // on them and must never be consulted.
     expect(
-      await oracle.visible(repo, {'.git/index', '.git/HEAD', '.git/refs/heads/main'}),
+      await oracle.visible(repo, {
+        '.git/index',
+        '.git/HEAD',
+        '.git/refs/heads/main',
+      }),
       {'.git/index', '.git/HEAD', '.git/refs/heads/main'},
     );
     expect(git.calls, 0);

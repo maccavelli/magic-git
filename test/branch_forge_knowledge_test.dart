@@ -45,9 +45,7 @@ void main() {
   test('a GitHub repo with genuinely nothing open is KNOWN empty', () async {
     final container = _container(forge: Forge.github);
 
-    final k = await container.read(
-      branchForgeKnowledgeProvider(_repo).future,
-    );
+    final k = await container.read(branchForgeKnowledgeProvider(_repo).future);
 
     expect(k.byShortName, isEmpty);
     expect(
@@ -61,9 +59,7 @@ void main() {
       'meaning', () async {
     final container = _container(forge: Forge.github, prsThrow: true);
 
-    final k = await container.read(
-      branchForgeKnowledgeProvider(_repo).future,
-    );
+    final k = await container.read(branchForgeKnowledgeProvider(_repo).future);
 
     expect(k.byShortName, isEmpty);
     expect(
@@ -77,9 +73,7 @@ void main() {
   test('a failed forge detection is unavailable', () async {
     final container = _container(forge: Forge.github, forgeThrows: true);
 
-    final k = await container.read(
-      branchForgeKnowledgeProvider(_repo).future,
-    );
+    final k = await container.read(branchForgeKnowledgeProvider(_repo).future);
 
     expect(k.known, isFalse);
     expect(k.forge, Forge.unknown);
@@ -89,9 +83,7 @@ void main() {
       'requests', () async {
     final container = _container(forge: Forge.none);
 
-    final k = await container.read(
-      branchForgeKnowledgeProvider(_repo).future,
-    );
+    final k = await container.read(branchForgeKnowledgeProvider(_repo).future);
 
     expect(k.known, isTrue);
     expect(k.forge, Forge.none);
@@ -101,39 +93,39 @@ void main() {
   test('an unrecognized host is not known', () async {
     final container = _container(forge: Forge.unknown);
 
-    final k = await container.read(
-      branchForgeKnowledgeProvider(_repo).future,
-    );
+    final k = await container.read(branchForgeKnowledgeProvider(_repo).future);
 
     expect(k.known, isFalse);
   });
 
-  test('real request data is carried through and keyed by short name',
-      () async {
-    final container = _container(
-      forge: Forge.github,
-      prs: const [
-        PullRequest(
-          number: 7,
-          title: 'Add the parser',
-          state: 'open',
-          merged: false,
-          draft: false,
-          headRefName: 'feat',
-          baseRefName: 'main',
-          url: 'https://example.test/7',
-        ),
-      ],
-    );
+  test(
+    'real request data is carried through and keyed by short name',
+    () async {
+      final container = _container(
+        forge: Forge.github,
+        prs: const [
+          PullRequest(
+            number: 7,
+            title: 'Add the parser',
+            state: 'open',
+            merged: false,
+            draft: false,
+            headRefName: 'feat',
+            baseRefName: 'main',
+            url: 'https://example.test/7',
+          ),
+        ],
+      );
 
-    final k = await container.read(
-      branchForgeKnowledgeProvider(_repo).future,
-    );
+      final k = await container.read(
+        branchForgeKnowledgeProvider(_repo).future,
+      );
 
-    expect(k.known, isTrue);
-    expect(k.byShortName['feat']?.hasRequest, isTrue);
-    expect(k.byShortName['feat']?.requestNumber, 7);
-  });
+      expect(k.known, isTrue);
+      expect(k.byShortName['feat']?.hasRequest, isTrue);
+      expect(k.byShortName['feat']?.requestNumber, 7);
+    },
+  );
 
   test('branchForgeProvider still yields the plain map, so badge painting is '
       'unchanged', () async {

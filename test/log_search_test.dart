@@ -31,12 +31,15 @@ void main() {
       expect(globToRegExp('fix(*)'), r'fix\(.*\)');
     });
 
-    test('message words are separate patterns — to be ANDed, not concatenated', () {
-      expect(messageGrepPatterns('patch collapse'), ['patch', 'collapse']);
-      expect(messageGrepPatterns('  spaced   out  '), ['spaced', 'out']);
-      expect(messageGrepPatterns(''), isEmpty);
-      expect(messageGrepPatterns(null), isEmpty);
-    });
+    test(
+      'message words are separate patterns — to be ANDed, not concatenated',
+      () {
+        expect(messageGrepPatterns('patch collapse'), ['patch', 'collapse']);
+        expect(messageGrepPatterns('  spaced   out  '), ['spaced', 'out']);
+        expect(messageGrepPatterns(''), isEmpty);
+        expect(messageGrepPatterns(null), isEmpty);
+      },
+    );
 
     test('an author is one pattern — its spaces belong to the name', () {
       expect(authorGrepPattern('Mac Smith'), 'Mac Smith');
@@ -106,10 +109,15 @@ void main() {
     late Map<String, String> sha;
 
     Future<void> run(List<String> args) async {
-      final r = await Process.run(args.first, args.skip(1).toList(),
-          workingDirectory: repo.path);
+      final r = await Process.run(
+        args.first,
+        args.skip(1).toList(),
+        workingDirectory: repo.path,
+      );
       if (r.exitCode != 0) {
-        throw StateError('fixture setup failed: ${args.join(' ')}\n${r.stderr}');
+        throw StateError(
+          'fixture setup failed: ${args.join(' ')}\n${r.stderr}',
+        );
       }
     }
 
@@ -121,21 +129,28 @@ void main() {
     }) async {
       final f = File('${repo.path}/$file');
       await f.parent.create(recursive: true);
-      await f.writeAsString('${f.path}\n${DateTime.now().microsecondsSinceEpoch}');
+      await f.writeAsString(
+        '${f.path}\n${DateTime.now().microsecondsSinceEpoch}',
+      );
       await run(['git', 'add', '--all']);
       await run([
         'git',
-        '-c', 'user.name=Fixture',
-        '-c', 'user.email=fixture@example.com',
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.com',
         'commit',
         '--author=$author',
-        '-m', subject,
+        '-m',
+        subject,
       ]);
     }
 
     Future<String> head() async {
-      final r = await Process.run('git', ['rev-parse', 'HEAD'],
-          workingDirectory: repo.path);
+      final r = await Process.run('git', [
+        'rev-parse',
+        'HEAD',
+      ], workingDirectory: repo.path);
       return (r.stdout as String).trim();
     }
 
@@ -215,14 +230,12 @@ void main() {
       // The bug: the words were joined into a single pattern, which only ever
       // matched the contiguous phrase — so a commit containing both words was
       // not found.
-      expect(
-        await subjects(grep: 'add collapse'),
-        ['feat(history): add collapse to gap rows'],
-      );
-      expect(
-        await subjects(grep: 'collapse add'),
-        ['feat(history): add collapse to gap rows'],
-      );
+      expect(await subjects(grep: 'add collapse'), [
+        'feat(history): add collapse to gap rows',
+      ]);
+      expect(await subjects(grep: 'collapse add'), [
+        'feat(history): add collapse to gap rows',
+      ]);
       // …and a word that matches nothing still excludes the commit.
       expect(await subjects(grep: 'add collapse nonesuch'), isEmpty);
     });
@@ -244,17 +257,15 @@ void main() {
     test('file: finds a bare filename, at any depth', () async {
       // The bug: a pathspec is rooted at the repo root, so the bare filename a
       // user actually types matched nothing.
-      expect(
-        await subjects(pathQuery: 'history_view.dart'),
-        ['feat(history): add collapse to gap rows'],
-      );
+      expect(await subjects(pathQuery: 'history_view.dart'), [
+        'feat(history): add collapse to gap rows',
+      ]);
     });
 
     test('file: finds a bare folder name, at any depth', () async {
-      expect(
-        await subjects(pathQuery: 'history'),
-        ['feat(history): add collapse to gap rows'],
-      );
+      expect(await subjects(pathQuery: 'history'), [
+        'feat(history): add collapse to gap rows',
+      ]);
     });
 
     test('file: matches a substring of a path', () async {
@@ -295,10 +306,9 @@ void main() {
 
     test('sha: accepts a full hash and any prefix, in any case', () async {
       expect(await subjects(shaTerm: sha['alpha']!), ['feat(core): add alpha']);
-      expect(
-        await subjects(shaTerm: sha['alpha']!.substring(0, 7)),
-        ['feat(core): add alpha'],
-      );
+      expect(await subjects(shaTerm: sha['alpha']!.substring(0, 7)), [
+        'feat(core): add alpha',
+      ]);
       expect(
         await subjects(shaTerm: sha['alpha']!.substring(0, 7).toUpperCase()),
         ['feat(core): add alpha'],
@@ -313,42 +323,44 @@ void main() {
       expect(await subjects(shaTerm: 'a90'), isEmpty);
     });
 
-    test('sha: narrows with the other terms rather than overriding them',
-        () async {
-      final prefix = sha['alpha']!.substring(0, 8);
-      expect(await subjects(shaTerm: prefix, author: 'mac'), hasLength(1));
-      // Same commit, an author it isn't by: the terms are ANDed.
-      expect(await subjects(shaTerm: prefix, author: 'ada'), isEmpty);
-    });
+    test(
+      'sha: narrows with the other terms rather than overriding them',
+      () async {
+        final prefix = sha['alpha']!.substring(0, 8);
+        expect(await subjects(shaTerm: prefix, author: 'mac'), hasLength(1));
+        // Same commit, an author it isn't by: the terms are ANDed.
+        expect(await subjects(shaTerm: prefix, author: 'ada'), isEmpty);
+      },
+    );
 
     test('terms combine as AND', () async {
       expect(await subjects(grep: 'feat', author: 'mac'), hasLength(1));
       expect(await subjects(grep: 'feat', author: 'ada'), hasLength(1));
-      expect(
-        await subjects(pathQuery: '*.dart', author: 'mac'),
-        ['feat(core): add alpha'],
-      );
+      expect(await subjects(pathQuery: '*.dart', author: 'mac'), [
+        'feat(core): add alpha',
+      ]);
       // The subtle one: `--all-match` governs the message words, and an author
       // still has to match on top of it — it must not widen into an OR.
-      expect(
-        await subjects(grep: 'add collapse', author: 'ada'),
-        ['feat(history): add collapse to gap rows'],
-      );
+      expect(await subjects(grep: 'add collapse', author: 'ada'), [
+        'feat(history): add collapse to gap rows',
+      ]);
       expect(await subjects(grep: 'add collapse', author: 'mac'), isEmpty);
     });
 
-    test('an exact path still drives file history — `--follow` is intact',
-        () async {
-      // `path` (exact, one pathspec) and `pathQuery` (a user's search term,
-      // several pathspecs) are different languages; `--follow` accepts only the
-      // former, and git rejects it outright with more than one pathspec.
-      final commits = await git.log(
-        repo.path,
-        path: 'lib/core/alpha.dart',
-        follow: true,
-      );
-      expect(commits.map((c) => c.subject), ['feat(core): add alpha']);
-    });
+    test(
+      'an exact path still drives file history — `--follow` is intact',
+      () async {
+        // `path` (exact, one pathspec) and `pathQuery` (a user's search term,
+        // several pathspecs) are different languages; `--follow` accepts only the
+        // former, and git rejects it outright with more than one pathspec.
+        final commits = await git.log(
+          repo.path,
+          path: 'lib/core/alpha.dart',
+          follow: true,
+        );
+        expect(commits.map((c) => c.subject), ['feat(core): add alpha']);
+      },
+    );
 
     test('no terms is the plain history', () async {
       expect(await subjects(), hasLength(3));

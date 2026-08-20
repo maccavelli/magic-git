@@ -17,8 +17,8 @@ Color ghRunStateColor(GhRunState state) => switch (state) {
   GhRunState.neutral => MacosColors.systemGrayColor,
   // Waiting on a human (a required review / deployment approval), or a state we
   // don't recognize — both worth the attention-grabbing orange.
-  GhRunState.actionRequired || GhRunState.unknown =>
-    MacosColors.systemOrangeColor,
+  GhRunState.actionRequired ||
+  GhRunState.unknown => MacosColors.systemOrangeColor,
 };
 
 // Label color parsing lives in features/common/label_colors.dart — it was

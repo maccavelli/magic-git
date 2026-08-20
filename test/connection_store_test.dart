@@ -137,39 +137,45 @@ void main() {
     expect(await File(dotfile).exists(), isFalse);
   });
 
-  test('touch stamps lastConnectedAt and floats the profile to the end', () async {
-    final store = ConnectionStore(dotfilePath: dotfile);
-    const a = SavedConnection(
-      id: 'a',
-      label: '',
-      host: 'h',
-      port: 22,
-      username: 'u',
-      repoPath: '/r',
-    );
-    const b = SavedConnection(
-      id: 'b',
-      label: '',
-      host: 'h',
-      port: 22,
-      username: 'u',
-      repoPath: '/r',
-    );
-    await store.updateMetadata(a);
-    await store.updateMetadata(b);
+  test(
+    'touch stamps lastConnectedAt and floats the profile to the end',
+    () async {
+      final store = ConnectionStore(dotfilePath: dotfile);
+      const a = SavedConnection(
+        id: 'a',
+        label: '',
+        host: 'h',
+        port: 22,
+        username: 'u',
+        repoPath: '/r',
+      );
+      const b = SavedConnection(
+        id: 'b',
+        label: '',
+        host: 'h',
+        port: 22,
+        username: 'u',
+        repoPath: '/r',
+      );
+      await store.updateMetadata(a);
+      await store.updateMetadata(b);
 
-    final when = DateTime.utc(2026, 1, 2, 3, 4);
-    await store.touch('a', when: when);
+      final when = DateTime.utc(2026, 1, 2, 3, 4);
+      await store.touch('a', when: when);
 
-    final list = await store.list();
-    expect(list.map((c) => c.id).toList(), ['b', 'a']); // 'a' re-appended last
-    expect(list.firstWhere((c) => c.id == 'a').lastConnectedAt, when);
-    expect(list.firstWhere((c) => c.id == 'b').lastConnectedAt, isNull);
+      final list = await store.list();
+      expect(list.map((c) => c.id).toList(), [
+        'b',
+        'a',
+      ]); // 'a' re-appended last
+      expect(list.firstWhere((c) => c.id == 'a').lastConnectedAt, when);
+      expect(list.firstWhere((c) => c.id == 'b').lastConnectedAt, isNull);
 
-    // Touching a missing id is a harmless no-op.
-    await store.touch('nope');
-    expect((await store.list()).length, 2);
-  });
+      // Touching a missing id is a harmless no-op.
+      await store.touch('nope');
+      expect((await store.list()).length, 2);
+    },
+  );
 
   test('a corrupt metadata blob degrades to an empty list', () async {
     SharedPreferences.setMockInitialValues({
@@ -200,44 +206,41 @@ void main() {
     expect(list.single.id, 'a');
   });
 
-  test(
-    'concurrent metadata writes are serialized, not lost to a '
-    'read-modify-write race',
-    () async {
-      final store = ConnectionStore(dotfilePath: dotfile);
-      const a = SavedConnection(
-        id: 'a',
-        label: '',
-        host: 'h',
-        port: 22,
-        username: 'u',
-        repoPath: '/r',
-      );
-      const b = SavedConnection(
-        id: 'b',
-        label: '',
-        host: 'h',
-        port: 22,
-        username: 'u',
-        repoPath: '/r',
-      );
-      await store.updateMetadata(a);
-      await store.updateMetadata(b);
+  test('concurrent metadata writes are serialized, not lost to a '
+      'read-modify-write race', () async {
+    final store = ConnectionStore(dotfilePath: dotfile);
+    const a = SavedConnection(
+      id: 'a',
+      label: '',
+      host: 'h',
+      port: 22,
+      username: 'u',
+      repoPath: '/r',
+    );
+    const b = SavedConnection(
+      id: 'b',
+      label: '',
+      host: 'h',
+      port: 22,
+      username: 'u',
+      repoPath: '/r',
+    );
+    await store.updateMetadata(a);
+    await store.updateMetadata(b);
 
-      // Fired together, with no await between them: each of save/updateMetadata
-      // /touch/delete reads the full list, then writes back a modified copy.
-      // Without serializing that read-modify-write, whichever write commits
-      // last would silently clobber the other's change with its own
-      // stale-read copy of the list.
-      final whenA = DateTime.utc(2026, 1, 1);
-      await Future.wait([
-        store.touch('a', when: whenA),
-        store.updateMetadata(b.copyWith(repoPath: '/renamed')),
-      ]);
+    // Fired together, with no await between them: each of save/updateMetadata
+    // /touch/delete reads the full list, then writes back a modified copy.
+    // Without serializing that read-modify-write, whichever write commits
+    // last would silently clobber the other's change with its own
+    // stale-read copy of the list.
+    final whenA = DateTime.utc(2026, 1, 1);
+    await Future.wait([
+      store.touch('a', when: whenA),
+      store.updateMetadata(b.copyWith(repoPath: '/renamed')),
+    ]);
 
-      final list = await store.list();
-      expect(list.firstWhere((c) => c.id == 'a').lastConnectedAt, whenA);
-      expect(list.firstWhere((c) => c.id == 'b').repoPath, '/renamed');
-    },
-  );
+    final list = await store.list();
+    expect(list.firstWhere((c) => c.id == 'a').lastConnectedAt, whenA);
+    expect(list.firstWhere((c) => c.id == 'b').repoPath, '/renamed');
+  });
 }

@@ -16,7 +16,10 @@ void main() {
     test('known tokens', () {
       expect(parseBaseDeleteStatusToken('deleted'), BaseDeleteStatus.deleted);
       expect(parseBaseDeleteStatusToken('moved\n'), BaseDeleteStatus.moved);
-      expect(parseBaseDeleteStatusToken('notMerged'), BaseDeleteStatus.notMerged);
+      expect(
+        parseBaseDeleteStatusToken('notMerged'),
+        BaseDeleteStatus.notMerged,
+      );
       expect(
         parseBaseDeleteStatusToken('checkedOut'),
         BaseDeleteStatus.checkedOut,
@@ -24,10 +27,7 @@ void main() {
       expect(parseBaseDeleteStatusToken('missing'), BaseDeleteStatus.missing);
     });
     test('unknown throws', () {
-      expect(
-        () => parseBaseDeleteStatusToken('weird'),
-        throwsFormatException,
-      );
+      expect(() => parseBaseDeleteStatusToken('weird'), throwsFormatException);
     });
   });
 
@@ -44,11 +44,7 @@ void main() {
           // through a thinner path by returning a full undo-framed stdout.
           // Instead: the service uses mutationScript via sh -c; MockExecutor
           // returns a framed success with mutation stdout = deleted.
-          return _framed(
-            preExtra: _oid,
-            mutOut: 'deleted\n',
-            postExtra: '',
-          );
+          return _framed(preExtra: _oid, mutOut: 'deleted\n', postExtra: '');
         },
       );
       final git = GitService(exec, onUndoRecord: records.add);
@@ -69,11 +65,8 @@ void main() {
     test('tip moved → moved, no undo', () async {
       final records = <UndoRecord>[];
       final exec = MockExecutor(
-        onExecute: (call) => _framed(
-          preExtra: _other,
-          mutOut: 'moved\n',
-          postExtra: _other,
-        ),
+        onExecute: (call) =>
+            _framed(preExtra: _other, mutOut: 'moved\n', postExtra: _other),
       );
       final git = GitService(exec, onUndoRecord: records.add);
       final result = await git.deleteBranchMergedIntoBase(
@@ -89,11 +82,8 @@ void main() {
     test('not ancestor → notMerged, no undo', () async {
       final records = <UndoRecord>[];
       final exec = MockExecutor(
-        onExecute: (call) => _framed(
-          preExtra: _oid,
-          mutOut: 'notMerged\n',
-          postExtra: _oid,
-        ),
+        onExecute: (call) =>
+            _framed(preExtra: _oid, mutOut: 'notMerged\n', postExtra: _oid),
       );
       final git = GitService(exec, onUndoRecord: records.add);
       final result = await git.deleteBranchMergedIntoBase(
@@ -109,11 +99,8 @@ void main() {
     test('worktree held → checkedOut, no undo', () async {
       final records = <UndoRecord>[];
       final exec = MockExecutor(
-        onExecute: (call) => _framed(
-          preExtra: _oid,
-          mutOut: 'checkedOut\n',
-          postExtra: _oid,
-        ),
+        onExecute: (call) =>
+            _framed(preExtra: _oid, mutOut: 'checkedOut\n', postExtra: _oid),
       );
       final git = GitService(exec, onUndoRecord: records.add);
       final result = await git.deleteBranchMergedIntoBase(
@@ -129,11 +116,8 @@ void main() {
     test('missing → missing, no undo', () async {
       final records = <UndoRecord>[];
       final exec = MockExecutor(
-        onExecute: (call) => _framed(
-          preExtra: '',
-          mutOut: 'missing\n',
-          postExtra: '',
-        ),
+        onExecute: (call) =>
+            _framed(preExtra: '', mutOut: 'missing\n', postExtra: ''),
       );
       final git = GitService(exec, onUndoRecord: records.add);
       final result = await git.deleteBranchMergedIntoBase(
@@ -148,11 +132,8 @@ void main() {
 
     test('unexpected failure throws', () async {
       final exec = MockExecutor(
-        onExecute: (call) => const SSHCommandResult(
-          exitCode: 128,
-          stdout: '',
-          stderr: 'fatal',
-        ),
+        onExecute: (call) =>
+            const SSHCommandResult(exitCode: 128, stdout: '', stderr: 'fatal'),
       );
       await expectLater(
         GitService(exec).deleteBranchMergedIntoBase(

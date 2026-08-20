@@ -31,7 +31,8 @@ void main() {
       expect(
         colors,
         {MacosColors.systemBlueColor},
-        reason: 'every pre-run/running state should read as "in progress", '
+        reason:
+            'every pre-run/running state should read as "in progress", '
             'not "problem"',
       );
     });
@@ -47,15 +48,12 @@ void main() {
       }
     });
 
-    test(
-      'a genuinely unknown status still gets the distinct "unknown" orange, '
-      'never confused with a real pre-run state',
-      () {
-        final unknownColor = wireColor('some_future_gitlab_status');
-        expect(unknownColor, MacosColors.systemOrangeColor);
-        expect(unknownColor, isNot(wireColor('created')));
-      },
-    );
+    test('a genuinely unknown status still gets the distinct "unknown" orange, '
+        'never confused with a real pre-run state', () {
+      final unknownColor = wireColor('some_future_gitlab_status');
+      expect(unknownColor, MacosColors.systemOrangeColor);
+      expect(unknownColor, isNot(wireColor('created')));
+    });
   });
 
   group('parseLabelColor', () {

@@ -20,14 +20,7 @@ import 'drag_item.dart';
 /// repository, history, branches, stashes, forge, worktrees.
 /// Keep this enum, `AppShell`'s stack, keymap `global.panel1`–`panel6`, and
 /// `kWorktreesPageIndex` (`worktree_tabs.dart`) in lockstep when adding a page.
-enum DropZoneId {
-  repository,
-  history,
-  branches,
-  stashes,
-  forge,
-  worktrees,
-}
+enum DropZoneId { repository, history, branches, stashes, forge, worktrees }
 
 extension DropZonePage on DropZoneId {
   int get pageIndex => index;
@@ -207,8 +200,7 @@ List<DropAction> _actionsFor(DragItem item, DropZoneId zone) {
           ),
         ];
       }
-      if (item is DragRef &&
-          (item.ref.isLocalBranch || item.ref.isRemote)) {
+      if (item is DragRef && (item.ref.isLocalBranch || item.ref.isRemote)) {
         final name = item.ref.shortName;
         return [
           DropAction(

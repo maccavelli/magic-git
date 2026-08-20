@@ -48,10 +48,7 @@ class _FakeGlab extends GlabService {
   _FakeGlab() : super(SSHCommandExecutor(SSHClientManager()));
 }
 
-Future<_FakeGh> _pumpForm(
-  WidgetTester tester, {
-  VoidCallback? onClose,
-}) async {
+Future<_FakeGh> _pumpForm(WidgetTester tester, {VoidCallback? onClose}) async {
   tester.view.physicalSize = const Size(900, 1000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.resetPhysicalSize);

@@ -77,7 +77,6 @@ Future<ProviderContainer> _pump(
   return container;
 }
 
-
 Future<void> _openMoreMenu(WidgetTester tester) async {
   // Delete (and other overflow actions) live under the More pulldown.
   if (find.text('Delete').evaluate().isEmpty &&
@@ -108,15 +107,16 @@ void main() {
     expect(AppTheme.rowSelectionTint, isNotNull);
   });
 
-  testWidgets('selecting a remote row shows remote detail without forge create', (
-    tester,
-  ) async {
-    await _pump(tester);
-    await tester.tap(find.text('origin/feature'));
-    await tester.pumpAndSettle();
-    // Remote detail exposes checkout tracking, not create-PR.
-    expect(find.textContaining('origin/feature'), findsWidgets);
-  });
+  testWidgets(
+    'selecting a remote row shows remote detail without forge create',
+    (tester) async {
+      await _pump(tester);
+      await tester.tap(find.text('origin/feature'));
+      await tester.pumpAndSettle();
+      // Remote detail exposes checkout tracking, not create-PR.
+      expect(find.textContaining('origin/feature'), findsWidgets);
+    },
+  );
 
   testWidgets('repo path change clears selection (didUpdateWidget)', (
     tester,
@@ -133,10 +133,12 @@ void main() {
         remoteTagsProvider('/other').overrideWith((ref) async => null),
         branchForgeProvider(_repo).overrideWith((ref) async => const {}),
         branchForgeProvider('/other').overrideWith((ref) async => const {}),
-        mergedBranchesProvider(_repo)
-            .overrideWith((ref) async => const <String>{}),
-        mergedBranchesProvider('/other')
-            .overrideWith((ref) async => const <String>{}),
+        mergedBranchesProvider(
+          _repo,
+        ).overrideWith((ref) async => const <String>{}),
+        mergedBranchesProvider(
+          '/other',
+        ).overrideWith((ref) async => const <String>{}),
       ],
     );
     addTearDown(container.dispose);

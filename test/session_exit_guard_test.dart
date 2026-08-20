@@ -23,8 +23,10 @@ import 'package:remote_magic_git/features/common/session_exit_guard.dart';
 
 const _repo = '/srv/repo';
 
-GitStatus _clean() =>
-    GitStatus(branch: const GitBranchInfo(head: 'main'), files: const []);
+GitStatus _clean() => GitStatus(
+  branch: const GitBranchInfo(head: 'main'),
+  files: const [],
+);
 
 GitStatus _dirty() => GitStatus(
   branch: const GitBranchInfo(head: 'main'),
@@ -117,10 +119,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(
-      find.textContaining('You have uncommitted changes'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('You have uncommitted changes'), findsOneWidget);
     await tester.tap(find.text('Log Out'));
     await tester.pumpAndSettle();
     expect(await result, isTrue);
@@ -170,7 +169,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('A rebase is still in progress'), findsOneWidget);
+    expect(
+      find.textContaining('A rebase is still in progress'),
+      findsOneWidget,
+    );
     // The only Recovery affordance is this prose — there is no button.
     expect(find.textContaining('Use Recovery'), findsOneWidget);
 
@@ -328,7 +330,8 @@ void main() {
     expect(
       find.textContaining('You have uncommitted changes'),
       findsOneWidget,
-      reason: 'the guard must read the passed container; reading the ambient '
+      reason:
+          'the guard must read the passed container; reading the ambient '
           'one would let a dirty background tab close silently',
     );
 

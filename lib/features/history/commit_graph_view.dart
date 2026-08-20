@@ -40,7 +40,11 @@ class CommitRowPainter extends CustomPainter {
   /// painted size).
   final double scale;
 
-  const CommitRowPainter(this.row, {this.laneWidth = kLaneWidth, this.scale = 1.0});
+  const CommitRowPainter(
+    this.row, {
+    this.laneWidth = kLaneWidth,
+    this.scale = 1.0,
+  });
 
   @override
   void paint(Canvas canvas, Size size) {

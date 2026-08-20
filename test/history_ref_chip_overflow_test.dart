@@ -37,12 +37,7 @@ const _commit = GitCommit(
 
 /// Pathological tip: many refs with long names (worktrees + remotes + tags).
 List<GitRef> _manyRefs() => [
-  const GitRef(
-    name: 'refs/heads/main',
-    oid: _hash,
-    isHead: true,
-    subject: 's',
-  ),
+  const GitRef(name: 'refs/heads/main', oid: _hash, isHead: true, subject: 's'),
   const GitRef(
     name: 'refs/heads/feature/some-really-long-branch-name-here',
     oid: _hash,

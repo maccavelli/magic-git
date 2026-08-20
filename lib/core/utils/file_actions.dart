@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 class FileActions {
   const FileActions();
-  
+
   /// Reveals [absolutePath] in Finder, with it selected. Local-machine only —
   /// callers must gate this behind the active connection being local (an SSH
   /// repo's files live on the remote host's disk, not this one).
@@ -25,6 +25,9 @@ class FileActions {
 final fileActionsProvider = Provider<FileActions>((ref) => const FileActions());
 
 /// Backward compatibility for callers not using the provider yet
-Future<void> revealInFinder(String absolutePath) => const FileActions().revealInFinder(absolutePath);
-Future<void> openFiles(List<String> absolutePaths) => const FileActions().openFiles(absolutePaths);
-Future<void> copyToClipboard(String text) => const FileActions().copyToClipboard(text);
+Future<void> revealInFinder(String absolutePath) =>
+    const FileActions().revealInFinder(absolutePath);
+Future<void> openFiles(List<String> absolutePaths) =>
+    const FileActions().openFiles(absolutePaths);
+Future<void> copyToClipboard(String text) =>
+    const FileActions().copyToClipboard(text);

@@ -114,5 +114,4 @@ void main() {
 
 /// git reports symlink-resolved paths; on macOS the temp dir is under /var,
 /// which is a symlink to /private/var.
-Future<String> _canon(String path) =>
-    Directory(path).resolveSymbolicLinks();
+Future<String> _canon(String path) => Directory(path).resolveSymbolicLinks();

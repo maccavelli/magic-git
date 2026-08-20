@@ -91,7 +91,9 @@ Future<_FakeGit> _pump(WidgetTester tester) async {
       // tests would flag as still pending; null = unknown, no badges.
       remoteTagsProvider(_repo).overrideWith((ref) async => null),
       branchForgeProvider(_repo).overrideWith((ref) async => const {}),
-      mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
+      mergedBranchesProvider(
+        _repo,
+      ).overrideWith((ref) async => const <String>{}),
     ],
   );
   addTearDown(container.dispose);

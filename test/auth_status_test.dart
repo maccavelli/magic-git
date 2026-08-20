@@ -52,8 +52,11 @@ ghe.corp.example
 ''';
       final a = parseGhAuthStatus(out, present: true);
       expect(a.host, 'ghe.corp.example');
-      expect(a.account, 'work',
-          reason: 'the account must belong to the shown host');
+      expect(
+        a.account,
+        'work',
+        reason: 'the account must belong to the shown host',
+      );
       expect(a.detail, contains('ghe.corp.example as work'));
     });
 
@@ -73,7 +76,8 @@ github.com
     });
 
     test('signed out — warn level, no host', () {
-      const out = 'You are not logged into any GitHub hosts. '
+      const out =
+          'You are not logged into any GitHub hosts. '
           'To log in, run: gh auth login';
       final a = parseGhAuthStatus(out, present: true);
       expect(a.authenticated, isFalse);

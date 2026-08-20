@@ -77,7 +77,10 @@ Finder _grabbingOverlay() => find.byWidgetPredicate(
 Decoration? _rowChrome(WidgetTester tester) {
   final c = tester.widget<AnimatedContainer>(
     find
-        .ancestor(of: find.text('ROW'), matching: find.byType(AnimatedContainer))
+        .ancestor(
+          of: find.text('ROW'),
+          matching: find.byType(AnimatedContainer),
+        )
         .first,
   );
   return c.foregroundDecoration;

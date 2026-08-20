@@ -135,12 +135,7 @@ List<String> forgeGitAuthConfigArgs(
     Forge.none || Forge.unknown => null,
   };
   if (helper == null) return const [];
-  return [
-    '-c',
-    'credential.helper=',
-    '-c',
-    'credential.helper=$helper',
-  ];
+  return ['-c', 'credential.helper=', '-c', 'credential.helper=$helper'];
 }
 
 /// Both forge CLI helpers, for commands that may touch several remotes

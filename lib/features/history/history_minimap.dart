@@ -209,10 +209,7 @@ class _MinimapPainter extends CustomPainter {
     for (final (i, color) in _refMarks) {
       final y = yFor(i);
       tick.color = color;
-      canvas.drawRect(
-        Rect.fromLTRB(1.5, y - 1, size.width * 0.6, y + 1),
-        tick,
-      );
+      canvas.drawRect(Rect.fromLTRB(1.5, y - 1, size.width * 0.6, y + 1), tick);
     }
     tick.color = const Color(0xCCFFFFFF);
     for (final i in _selectedRows) {
@@ -300,10 +297,7 @@ class _MinimapPainter extends CustomPainter {
         const [0.0, 0.55, 0.85, 1.0],
       );
       // Overlap strips by half a pixel so vertical seams never show a hairline.
-      canvas.drawRect(
-        Rect.fromLTWH(0, y - 0.25, barW, stripH + 0.5),
-        paint,
-      );
+      canvas.drawRect(Rect.fromLTWH(0, y - 0.25, barW, stripH + 0.5), paint);
     }
 
     canvas.restore();

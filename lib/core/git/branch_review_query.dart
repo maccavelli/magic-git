@@ -337,7 +337,11 @@ bool _matchesPlain(BranchReviewRowContext ctx, String q) {
   return false;
 }
 
-bool _matchesStatus(BranchReviewRowContext ctx, String status, {DateTime? now}) {
+bool _matchesStatus(
+  BranchReviewRowContext ctx,
+  String status, {
+  DateTime? now,
+}) {
   final b = ctx.branch;
   return switch (status) {
     'current' => b.isHead,
@@ -347,8 +351,7 @@ bool _matchesStatus(BranchReviewRowContext ctx, String status, {DateTime? now}) 
     'conflict' => ctx.conflictKnown,
     'unpublished' => b.upstream == null || b.upstreamGone,
     'upstream-gone' => b.upstreamGone,
-    'worktree' =>
-      b.worktreePath != null || b.elsewhereWorktreePath != null,
+    'worktree' => b.worktreePath != null || b.elsewhereWorktreePath != null,
     'ci-failing' => ctx.forgeKnown && ctx.forge?.ci == ForgeCi.failure,
     'request' => ctx.forgeKnown && (ctx.forge?.hasRequest ?? false),
     'no-request' => ctx.forgeKnown && !(ctx.forge?.hasRequest ?? false),
@@ -470,19 +473,13 @@ class BranchMultiSelection {
     final next = List<String>.of(ordered);
     if (next.contains(fullRef)) {
       next.remove(fullRef);
-      return BranchMultiSelection(
-        ordered: next,
-        anchor: fullRef,
-      );
+      return BranchMultiSelection(ordered: next, anchor: fullRef);
     }
     next.add(fullRef);
     return BranchMultiSelection(ordered: next, anchor: fullRef);
   }
 
-  BranchMultiSelection rangeTo(
-    String fullRef,
-    List<String> visibleFullRefs,
-  ) {
+  BranchMultiSelection rangeTo(String fullRef, List<String> visibleFullRefs) {
     final start = anchor ?? fullRef;
     final i0 = visibleFullRefs.indexOf(start);
     final i1 = visibleFullRefs.indexOf(fullRef);
@@ -496,14 +493,15 @@ class BranchMultiSelection {
   }
 
   /// Drop vanished refs after a refresh; re-anchor to nearest surviving row.
-  BranchMultiSelection preserveAfterRefresh(
-    List<String> survivingVisible,
-  ) {
+  BranchMultiSelection preserveAfterRefresh(List<String> survivingVisible) {
     final surviving = {
       for (final n in ordered)
         if (survivingVisible.contains(n)) n,
     };
-    final next = [for (final n in ordered) if (surviving.contains(n)) n];
+    final next = [
+      for (final n in ordered)
+        if (surviving.contains(n)) n,
+    ];
     if (next.isEmpty) {
       if (survivingVisible.isEmpty) return empty;
       // Prefer nearest to old anchor.

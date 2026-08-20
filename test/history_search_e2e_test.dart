@@ -88,14 +88,12 @@ void main() {
     TestWidgetsFlutterBinding.ensureInitialized();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(
-      const MethodChannel('appkit_ui_element_colors'),
-      (call) async => <String, double>{'hueComponent': 0.6},
-    );
+          const MethodChannel('appkit_ui_element_colors'),
+          (call) async => <String, double>{'hueComponent': 0.6},
+        );
     // Seed SharedPreferences with a known historyAllBranches value so the
     // HistoryView's _query computes the same LogQuery key the tests warm.
-    SharedPreferences.setMockInitialValues({
-      'historyAllBranches': false,
-    });
+    SharedPreferences.setMockInitialValues({'historyAllBranches': false});
 
     tempDir = Directory.systemTemp.createTempSync('history_e2e_');
     repo = '${tempDir.resolveSymbolicLinksSync()}/repo';
@@ -240,28 +238,29 @@ void main() {
     await drainLaneWatchdogs(tester);
   });
 
-  testWidgets('a no-match filter shows the empty state, and clearing restores',
-      (tester) async {
-    await pump(tester);
-    await warm(tester, query(grep: 'zzz-nothing-matches'));
+  testWidgets(
+    'a no-match filter shows the empty state, and clearing restores',
+    (tester) async {
+      await pump(tester);
+      await warm(tester, query(grep: 'zzz-nothing-matches'));
 
-    await filter(tester, 'zzz-nothing-matches');
-    expect(find.text('No matching commits'), findsOneWidget);
+      await filter(tester, 'zzz-nothing-matches');
+      expect(find.text('No matching commits'), findsOneWidget);
 
-    await filter(tester, '');
-    expect(find.text('feat: first feature'), findsOneWidget);
-    expect(find.text('docs: user guide'), findsOneWidget);
-    await drainLaneWatchdogs(tester);
-  });
+      await filter(tester, '');
+      expect(find.text('feat: first feature'), findsOneWidget);
+      expect(find.text('docs: user guide'), findsOneWidget);
+      await drainLaneWatchdogs(tester);
+    },
+  );
 
   testWidgets('sha: finds a commit by prefix', (tester) async {
     // Even this setup subprocess needs the real zone — run inside runAsync.
     final prefix = (await tester.runAsync(() async {
-      final r = await Process.run(
-        'git',
-        ['rev-parse', 'HEAD~2'],
-        workingDirectory: repo,
-      );
+      final r = await Process.run('git', [
+        'rev-parse',
+        'HEAD~2',
+      ], workingDirectory: repo);
       return (r.stdout as String).trim().substring(0, 8);
     }))!;
 
@@ -280,11 +279,10 @@ void main() {
     tester,
   ) async {
     final prefix = (await tester.runAsync(() async {
-      final r = await Process.run(
-        'git',
-        ['rev-parse', 'HEAD~2'],
-        workingDirectory: repo,
-      );
+      final r = await Process.run('git', [
+        'rev-parse',
+        'HEAD~2',
+      ], workingDirectory: repo);
       return (r.stdout as String).trim().substring(0, 5);
     }))!;
 
@@ -323,7 +321,7 @@ void main() {
       sha: null,
       noMerges: false,
       all: false,
-    revision: null,
+      revision: null,
     ));
 
     await filter(tester, 'author: other');

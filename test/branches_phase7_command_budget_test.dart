@@ -51,7 +51,12 @@ class _CountingGit extends GitService {
       mergeBaseOid: baseOid,
       ancestry: ComparisonAncestry.connected,
       files: const [
-        BranchChangedFile(status: 'M', path: 'a.dart', additions: 1, deletions: 0),
+        BranchChangedFile(
+          status: 'M',
+          path: 'a.dart',
+          additions: 1,
+          deletions: 0,
+        ),
       ],
       additions: 1,
       deletions: 0,
@@ -199,18 +204,24 @@ Future<_CountingGit> _pump(
 
 void main() {
   group('Phase 7 command budget', () {
-    testWidgets('Browse first paint issues zero comparison/patch/merge-tree ops', (
+    testWidgets(
+      'Browse first paint issues zero comparison/patch/merge-tree ops',
+      (tester) async {
+        final git = await _pump(tester);
+        expect(git.ops.where((o) => o.startsWith('diffRange:')), isEmpty);
+        expect(git.ops.where((o) => o == 'mergeTreePreview'), isEmpty);
+        expect(
+          git.ops.where((o) => o.startsWith('branchReviewSummaries')),
+          isEmpty,
+        );
+        expect(git.ops.where((o) => o == 'branchComparisonMetadata'), isEmpty);
+        expect(git.ops.where((o) => o.startsWith('log:')), isEmpty);
+      },
+    );
+
+    testWidgets('select branch Overview loads metadata not patch', (
       tester,
     ) async {
-      final git = await _pump(tester);
-      expect(git.ops.where((o) => o.startsWith('diffRange:')), isEmpty);
-      expect(git.ops.where((o) => o == 'mergeTreePreview'), isEmpty);
-      expect(git.ops.where((o) => o.startsWith('branchReviewSummaries')), isEmpty);
-      expect(git.ops.where((o) => o == 'branchComparisonMetadata'), isEmpty);
-      expect(git.ops.where((o) => o.startsWith('log:')), isEmpty);
-    });
-
-    testWidgets('select branch Overview loads metadata not patch', (tester) async {
       final git = await _pump(tester);
       git.ops.clear();
       await tester.tap(find.text('feature'));
@@ -244,16 +255,17 @@ void main() {
       expect(git.ops.where((o) => o.startsWith('diffRange:')), hasLength(1));
     });
 
-    testWidgets('merge preview is at most one process shape (capability gate)', (
-      tester,
-    ) async {
-      final git = await _pump(tester);
-      await tester.tap(find.text('feature'));
-      await tester.pumpAndSettle();
-      // Overview readiness may request merge-tree once when Git ≥ 2.38.
-      final previews = git.ops.where((o) => o == 'mergeTreePreview').length;
-      expect(previews, lessThanOrEqualTo(1));
-    });
+    testWidgets(
+      'merge preview is at most one process shape (capability gate)',
+      (tester) async {
+        final git = await _pump(tester);
+        await tester.tap(find.text('feature'));
+        await tester.pumpAndSettle();
+        // Overview readiness may request merge-tree once when Git ≥ 2.38.
+        final previews = git.ops.where((o) => o == 'mergeTreePreview').length;
+        expect(previews, lessThanOrEqualTo(1));
+      },
+    );
   });
 
   group('Phase 7 constants', () {

@@ -13,8 +13,7 @@ class _LogGit extends GitService {
   _LogGit() : super(SSHCommandExecutor(SSHClientManager()));
 
   final List<({String revision, int maxCount, int skip})> calls = [];
-  List<GitCommit> Function({required int skip, required int maxCount})?
-  handler;
+  List<GitCommit> Function({required int skip, required int maxCount})? handler;
 
   @override
   Future<List<GitCommit>> log(
@@ -50,35 +49,42 @@ GitCommit _c(String hash, String subject) => GitCommit(
 );
 
 void main() {
-  test('unique commits use base..branch after end-of-options semantics', () async {
-    final git = _LogGit();
-    git.handler = ({required skip, required maxCount}) => [
-      for (var i = skip; i < skip + maxCount; i++)
-        _c(i.toRadixString(16).padLeft(40, '0'), 'c$i'),
-    ];
-    final container = ProviderContainer(
-      overrides: [gitServiceProvider.overrideWithValue(git)],
-    );
-    addTearDown(container.dispose);
+  test(
+    'unique commits use base..branch after end-of-options semantics',
+    () async {
+      final git = _LogGit();
+      git.handler = ({required skip, required maxCount}) => [
+        for (var i = skip; i < skip + maxCount; i++)
+          _c(i.toRadixString(16).padLeft(40, '0'), 'c$i'),
+      ];
+      final container = ProviderContainer(
+        overrides: [gitServiceProvider.overrideWithValue(git)],
+      );
+      addTearDown(container.dispose);
 
-    const key = (repoPath: _repo, baseOid: _base, branchOid: _branch);
-    final first = await container.read(branchUniqueCommitsProvider(key).future);
-    expect(first, hasLength(kBranchUniqueCommitsPageSize));
-    expect(git.calls.single.revision, '$_base..$_branch');
-    expect(git.calls.single.maxCount, kBranchUniqueCommitsPageSize);
-    expect(git.calls.single.skip, 0);
+      const key = (repoPath: _repo, baseOid: _base, branchOid: _branch);
+      final first = await container.read(
+        branchUniqueCommitsProvider(key).future,
+      );
+      expect(first, hasLength(kBranchUniqueCommitsPageSize));
+      expect(git.calls.single.revision, '$_base..$_branch');
+      expect(git.calls.single.maxCount, kBranchUniqueCommitsPageSize);
+      expect(git.calls.single.skip, 0);
 
-    final notifier = container.read(branchUniqueCommitsProvider(key).notifier);
-    await notifier.loadMore();
-    expect(git.calls, hasLength(2));
-    expect(git.calls.last.skip, kBranchUniqueCommitsPageSize);
-    expect(git.calls.last.maxCount, kBranchUniqueCommitsPageSize);
-    // Growing max-count must not replace skip-based paging.
-    expect(git.calls.last.maxCount, isNot(100));
+      final notifier = container.read(
+        branchUniqueCommitsProvider(key).notifier,
+      );
+      await notifier.loadMore();
+      expect(git.calls, hasLength(2));
+      expect(git.calls.last.skip, kBranchUniqueCommitsPageSize);
+      expect(git.calls.last.maxCount, kBranchUniqueCommitsPageSize);
+      // Growing max-count must not replace skip-based paging.
+      expect(git.calls.last.maxCount, isNot(100));
 
-    final all = container.read(branchUniqueCommitsProvider(key)).value!;
-    expect(all, hasLength(kBranchUniqueCommitsPageSize * 2));
-  });
+      final all = container.read(branchUniqueCommitsProvider(key)).value!;
+      expect(all, hasLength(kBranchUniqueCommitsPageSize * 2));
+    },
+  );
 
   test('full first page then failed loadMore keeps rows', () async {
     final git = _LogGit();

@@ -39,64 +39,79 @@ class _CountingLocalStore extends LocalRepoStore {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('a connection-store write refreshes savedConnectionsProvider in every tab',
-      () async {
-    SharedPreferences.setMockInitialValues({});
-    final store = _CountingConnStore();
-    final c = TabsController(
-      containerFactory: (overrides) => ProviderContainer(
-        retry: (_, _) => null,
-        overrides: [
-          connectionStoreProvider.overrideWithValue(store),
-          connectionProvider.overrideWith(_StubConn.new),
-          ...overrides,
-        ],
-      ),
-    );
-    addTearDown(c.dispose);
-    final t1 = c.ensureInitialTab();
-    final t2 = c.openOrFocus(connectionId: 'x', repoPath: '/y', connect: (_) {});
+  test(
+    'a connection-store write refreshes savedConnectionsProvider in every tab',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = _CountingConnStore();
+      final c = TabsController(
+        containerFactory: (overrides) => ProviderContainer(
+          retry: (_, _) => null,
+          overrides: [
+            connectionStoreProvider.overrideWithValue(store),
+            connectionProvider.overrideWith(_StubConn.new),
+            ...overrides,
+          ],
+        ),
+      );
+      addTearDown(c.dispose);
+      final t1 = c.ensureInitialTab();
+      final t2 = c.openOrFocus(
+        connectionId: 'x',
+        repoPath: '/y',
+        connect: (_) {},
+      );
 
-    await t1.container.read(savedConnectionsProvider.future);
-    await t2.container.read(savedConnectionsProvider.future);
-    final before = store.listCalls;
+      await t1.container.read(savedConnectionsProvider.future);
+      await t2.container.read(savedConnectionsProvider.future);
+      final before = store.listCalls;
 
-    StoreBus.instance.notifyConnectionsChanged();
-    await pumpEventQueue();
-    await t1.container.read(savedConnectionsProvider.future);
-    await t2.container.read(savedConnectionsProvider.future);
+      StoreBus.instance.notifyConnectionsChanged();
+      await pumpEventQueue();
+      await t1.container.read(savedConnectionsProvider.future);
+      await t2.container.read(savedConnectionsProvider.future);
 
-    expect(store.listCalls, greaterThan(before),
-        reason: 'both tabs re-listed after the cross-tab write');
-  });
+      expect(
+        store.listCalls,
+        greaterThan(before),
+        reason: 'both tabs re-listed after the cross-tab write',
+      );
+    },
+  );
 
-  test('a local-repo-store write refreshes savedLocalReposProvider in every tab',
-      () async {
-    SharedPreferences.setMockInitialValues({});
-    final store = _CountingLocalStore();
-    final c = TabsController(
-      containerFactory: (overrides) => ProviderContainer(
-        retry: (_, _) => null,
-        overrides: [
-          localRepoStoreProvider.overrideWithValue(store),
-          connectionProvider.overrideWith(_StubConn.new),
-          ...overrides,
-        ],
-      ),
-    );
-    addTearDown(c.dispose);
-    final t1 = c.ensureInitialTab();
-    final t2 = c.openOrFocus(connectionId: 'x', repoPath: '/y', connect: (_) {});
+  test(
+    'a local-repo-store write refreshes savedLocalReposProvider in every tab',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = _CountingLocalStore();
+      final c = TabsController(
+        containerFactory: (overrides) => ProviderContainer(
+          retry: (_, _) => null,
+          overrides: [
+            localRepoStoreProvider.overrideWithValue(store),
+            connectionProvider.overrideWith(_StubConn.new),
+            ...overrides,
+          ],
+        ),
+      );
+      addTearDown(c.dispose);
+      final t1 = c.ensureInitialTab();
+      final t2 = c.openOrFocus(
+        connectionId: 'x',
+        repoPath: '/y',
+        connect: (_) {},
+      );
 
-    await t1.container.read(savedLocalReposProvider.future);
-    await t2.container.read(savedLocalReposProvider.future);
-    final before = store.listCalls;
+      await t1.container.read(savedLocalReposProvider.future);
+      await t2.container.read(savedLocalReposProvider.future);
+      final before = store.listCalls;
 
-    StoreBus.instance.notifyLocalReposChanged();
-    await pumpEventQueue();
-    await t1.container.read(savedLocalReposProvider.future);
-    await t2.container.read(savedLocalReposProvider.future);
+      StoreBus.instance.notifyLocalReposChanged();
+      await pumpEventQueue();
+      await t1.container.read(savedLocalReposProvider.future);
+      await t2.container.read(savedLocalReposProvider.future);
 
-    expect(store.listCalls, greaterThan(before));
-  });
+      expect(store.listCalls, greaterThan(before));
+    },
+  );
 }

@@ -80,7 +80,14 @@ List<Object>? _buildSplitItems(String diff) {
   var postIdx = 0;
   for (final hunk in file.hunks) {
     items.add(_HeaderRow(hunk.header));
-    (preIdx, postIdx) = _splitHunk(hunk, items, preRuns, postRuns, preIdx, postIdx);
+    (preIdx, postIdx) = _splitHunk(
+      hunk,
+      items,
+      preRuns,
+      postRuns,
+      preIdx,
+      postIdx,
+    );
   }
   return items;
 }

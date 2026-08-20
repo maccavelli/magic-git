@@ -72,8 +72,10 @@ List<Override> _projectOverrides({required bool github}) => [
   // The forge chrome names the real HEAD in the Branch slot (0009 M6), so
   // status must be stubbed like every other provider here.
   statusProvider(_repo).overrideWith(
-    (ref) async =>
-        GitStatus(branch: const GitBranchInfo(head: 'main'), files: const []),
+    (ref) async => GitStatus(
+      branch: const GitBranchInfo(head: 'main'),
+      files: const [],
+    ),
   ),
   projectIssuesProvider(_repo).overrideWith((ref) async => const []),
   projectMilestonesProvider(_repo).overrideWith((ref) async => const []),

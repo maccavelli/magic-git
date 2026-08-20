@@ -75,10 +75,7 @@ String relativeEpochLabel(int? epochSeconds, {DateTime? now}) {
 String relativeIsoLabel(String iso, {DateTime? now}) {
   final then = DateTime.tryParse(iso);
   if (then == null) return '';
-  return relativeEpochLabel(
-    then.millisecondsSinceEpoch ~/ 1000,
-    now: now,
-  );
+  return relativeEpochLabel(then.millisecondsSinceEpoch ~/ 1000, now: now);
 }
 
 /// Build [BranchDashboardStats] from a refs snapshot and HEAD-merged short names.

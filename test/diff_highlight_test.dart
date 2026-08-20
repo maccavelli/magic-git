@@ -67,10 +67,13 @@ void main() {
       expect(h.any((e) => e.runs != null && e.runs!.isNotEmpty), isTrue);
     });
 
-    test('skips syntax runs when highlighting is disabled (huge-diff path)', () {
-      final h = computeDiffLineHighlights(file, enableHighlight: false);
-      expect(h.every((e) => e.runs == null), isTrue);
-    });
+    test(
+      'skips syntax runs when highlighting is disabled (huge-diff path)',
+      () {
+        final h = computeDiffLineHighlights(file, enableHighlight: false);
+        expect(h.every((e) => e.runs == null), isTrue);
+      },
+    );
   });
 
   group('diffLineSpan', () {
@@ -84,30 +87,35 @@ void main() {
       expect(spanText(span), raw);
     });
 
-    test('never paints per-character backgrounds — the add/remove colour lives '
-        'in the glyphs and the full-row band, same as the History patch view', () {
-      final highlights = computeDiffLineHighlights(file);
-      final raws = ' class Foo {\n-  final int value = 1;\n'
-              '+  final int value = 2;\n }'
-          .split('\n');
-      for (var i = 0; i < raws.length; i++) {
-        final span = diffLineSpan(
-          raws[i],
-          highlights[i],
-          kDiffMono,
-          defaultColor,
-          theme,
-        );
-        for (final leaf in leaves(span)) {
-          expect(
-            leaf.style?.backgroundColor,
-            isNull,
-            reason: 'leaf "${leaf.text}" of "${raws[i]}" carries a background '
-                'wash — diff text must colour only its glyphs',
+    test(
+      'never paints per-character backgrounds — the add/remove colour lives '
+      'in the glyphs and the full-row band, same as the History patch view',
+      () {
+        final highlights = computeDiffLineHighlights(file);
+        final raws =
+            ' class Foo {\n-  final int value = 1;\n'
+                    '+  final int value = 2;\n }'
+                .split('\n');
+        for (var i = 0; i < raws.length; i++) {
+          final span = diffLineSpan(
+            raws[i],
+            highlights[i],
+            kDiffMono,
+            defaultColor,
+            theme,
           );
+          for (final leaf in leaves(span)) {
+            expect(
+              leaf.style?.backgroundColor,
+              isNull,
+              reason:
+                  'leaf "${leaf.text}" of "${raws[i]}" carries a background '
+                  'wash — diff text must colour only its glyphs',
+            );
+          }
         }
-      }
-    });
+      },
+    );
 
     test('a line with no render data still shows marker + content', () {
       const raw = '+brand new line';

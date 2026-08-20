@@ -15,18 +15,14 @@ class _ImageStage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ColoredBox(
-      color: MacosTheme.brightnessOf(context).resolve(
-        const Color(0xFFF2F2F5),
-        AppTheme.terminalBackground,
-      ),
+      color: MacosTheme.brightnessOf(
+        context,
+      ).resolve(const Color(0xFFF2F2F5), AppTheme.terminalBackground),
       child: InteractiveViewer(
         maxScale: 8,
         minScale: 0.2,
         child: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: child,
-          ),
+          child: Padding(padding: const EdgeInsets.all(16), child: child),
         ),
       ),
     );
@@ -62,9 +58,9 @@ class ImagePreview extends StatelessWidget {
       const SizedBox(height: 8),
       Text(
         'This image could not be decoded.',
-        style: MacosTheme.of(context).typography.body.copyWith(
-          color: MacosColors.systemGrayColor,
-        ),
+        style: MacosTheme.of(
+          context,
+        ).typography.body.copyWith(color: MacosColors.systemGrayColor),
       ),
     ],
   );

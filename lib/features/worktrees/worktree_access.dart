@@ -54,7 +54,9 @@ class WorktreeAccess {
     // Already saved (this app created it, or it was opened before) — resolve the
     // bookmark silently.
     for (final saved in await _ref.read(localRepoStoreProvider).list()) {
-      if (saved.repoPath != worktreePath || saved.bookmarkData.isEmpty) continue;
+      if (saved.repoPath != worktreePath || saved.bookmarkData.isEmpty) {
+        continue;
+      }
       final resolved = await ScopedAccess.instance.acquire(saved.bookmarkData);
       if (resolved != null) {
         _held.add(worktreePath);

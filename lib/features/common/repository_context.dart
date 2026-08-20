@@ -149,6 +149,7 @@ class RepositoryContextSnapshot {
   final String? upstreamLabel;
   final int ahead;
   final int behind;
+
   /// Working-tree counts, or null when this screen does not know them.
   ///
   /// Null is not zero: a screen that never reads `git status` (History,

@@ -72,11 +72,14 @@ class MergeRequest {
   // ---- List enrichment -----------------------------------------------------
   final List<String> labels;
   final List<String> assigneeUsernames;
+
   /// Prefer over deprecated [mergeStatus]. May be stale on list; null if absent.
   final String? detailedMergeStatus;
+
   /// Legacy `merge_status` fallback when `detailed_merge_status` is missing.
   final String? mergeStatus;
   final bool hasConflicts;
+
   /// Head SHA — often present on list; required for SHA-pinned merge.
   final String? sha;
   final bool mergeWhenPipelineSucceeds;
@@ -138,14 +141,12 @@ class MergeRequest {
           (json['merge_when_pipeline_succeeds'] as bool?) ?? false,
       description: json['description'] as String?,
       squash: json['squash'] as bool? ?? json['squash_on_merge'] as bool?,
-      shouldRemoveSourceBranch:
-          json['should_remove_source_branch'] as bool?,
+      shouldRemoveSourceBranch: json['should_remove_source_branch'] as bool?,
       userCanMerge: user is Map ? user['can_merge'] as bool? : null,
     );
   }
 
-  static String? _emptyToNull(String? s) =>
-      (s == null || s.isEmpty) ? null : s;
+  static String? _emptyToNull(String? s) => (s == null || s.isEmpty) ? null : s;
 
   /// GitLab list/view may send bare name strings or `{name}` / `{title}` objects.
   static List<String> _parseLabels(dynamic raw) {

@@ -33,22 +33,33 @@ void main() {
     expect(lines(), ['\$ cmd', 'Cloning into'], reason: 'partial is visible');
 
     s.append(" 'dest'...\nremote: Enumerating\n", OutputLineKind.stderr);
-    expect(lines(), ['\$ cmd', "Cloning into 'dest'...", 'remote: Enumerating']);
+    expect(lines(), [
+      '\$ cmd',
+      "Cloning into 'dest'...",
+      'remote: Enumerating',
+    ]);
 
     s.close(exitCode: 0);
     expect(lines().last, '✓ completed');
   });
 
-  test(r'\r progress frames collapse to one transient line, updated in place', () {
-    final s = log.startStream('cmd');
-    s.append('Receiving objects:  10%\rReceiving objects:  55%',
-        OutputLineKind.stderr);
-    expect(lines(), ['\$ cmd', 'Receiving objects:  55%']);
+  test(
+    r'\r progress frames collapse to one transient line, updated in place',
+    () {
+      final s = log.startStream('cmd');
+      s.append(
+        'Receiving objects:  10%\rReceiving objects:  55%',
+        OutputLineKind.stderr,
+      );
+      expect(lines(), ['\$ cmd', 'Receiving objects:  55%']);
 
-    s.append('\rReceiving objects: 100%, done.\n', OutputLineKind.stderr);
-    expect(lines(), ['\$ cmd', 'Receiving objects: 100%, done.'],
-        reason: 'frames never accumulate as separate lines');
-  });
+      s.append('\rReceiving objects: 100%, done.\n', OutputLineKind.stderr);
+      expect(lines(), [
+        '\$ cmd',
+        'Receiving objects: 100%, done.',
+      ], reason: 'frames never accumulate as separate lines');
+    },
+  );
 
   test(r'a chunk ENDING in \r shows the frame text, not a blank line', () {
     // git's progress.c writes each frame as `...:  42%\r` — the \r AFTER the
@@ -59,12 +70,17 @@ void main() {
     expect(lines(), ['\$ cmd', 'Receiving objects:  42%']);
 
     s.append('Receiving objects:  77%\r', OutputLineKind.stderr);
-    expect(lines(), ['\$ cmd', 'Receiving objects:  77%'],
-        reason: 'later frames replace the transient in place');
+    expect(lines(), [
+      '\$ cmd',
+      'Receiving objects:  77%',
+    ], reason: 'later frames replace the transient in place');
 
     s.close(exitCode: 0);
-    expect(lines(), ['\$ cmd', 'Receiving objects:  77%', '✓ completed'],
-        reason: 'the final frame is flushed into the transcript');
+    expect(lines(), [
+      '\$ cmd',
+      'Receiving objects:  77%',
+      '✓ completed',
+    ], reason: 'the final frame is flushed into the transcript');
   });
 
   test(r'a \r\n terminator split across two chunks keeps the line text', () {
@@ -74,7 +90,8 @@ void main() {
     expect(
       lines(),
       ['\$ cmd', 'remote: Compressing done.', 'next line'],
-      reason: r'the split \r\n must collapse to one newline — the stray \r '
+      reason:
+          r'the split \r\n must collapse to one newline — the stray \r '
           'must not erase the finalized line',
     );
   });
@@ -87,8 +104,11 @@ void main() {
     s.append('-ok\n', OutputLineKind.stdout);
     s.close(exitCode: 0);
 
-    expect(lines(), containsAll(['err-part-done', 'out-part-ok']),
-        reason: 'interleaved chunks must not merge across streams');
+    expect(
+      lines(),
+      containsAll(['err-part-done', 'out-part-ok']),
+      reason: 'interleaved chunks must not merge across streams',
+    );
   });
 
   test('an interleaved batch log leaves the transient as history', () {
@@ -114,10 +134,14 @@ void main() {
     final b = log.startStream('b');
     b.append('fatal: repository not found', OutputLineKind.stderr);
     b.close(exitCode: 128);
-    expect(lines(), containsAllInOrder([
-      'fatal: repository not found',
-      '✗ exited with code 128',
-    ]), reason: 'partial flushed before the status line');
+    expect(
+      lines(),
+      containsAllInOrder([
+        'fatal: repository not found',
+        '✗ exited with code 128',
+      ]),
+      reason: 'partial flushed before the status line',
+    );
 
     final c = log.startStream('c');
     c.close();

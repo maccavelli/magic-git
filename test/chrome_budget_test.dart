@@ -97,7 +97,8 @@ void main() {
           expect(
             height,
             lessThanOrEqualTo(52),
-            reason: 'the context bar grew past its 52px comfortable ceiling '
+            reason:
+                'the context bar grew past its 52px comfortable ceiling '
                 'at ${density.name}/${width.toInt()}',
           );
           expect(height, greaterThanOrEqualTo(40));

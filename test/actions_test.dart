@@ -16,15 +16,11 @@ class _Host extends StatelessWidget {
       home: Builder(
         builder: (context) => TextButton(
           onPressed: () async {
-            await runAction(
-              context,
-              () async {
-                if (throwOnAction) {
-                  throw Exception(errorMessage ?? 'op failed');
-                }
-              },
-              dock: false,
-            );
+            await runAction(context, () async {
+              if (throwOnAction) {
+                throw Exception(errorMessage ?? 'op failed');
+              }
+            }, dock: false);
           },
           child: const Text('Run'),
         ),
@@ -112,11 +108,7 @@ void main() {
           home: Builder(
             builder: (context) => TextButton(
               onPressed: () async {
-                final ok = await runAction(
-                  context,
-                  () async {},
-                  dock: true,
-                );
+                final ok = await runAction(context, () async {}, dock: true);
                 expect(ok, isTrue);
               },
               child: const Text('Run'),

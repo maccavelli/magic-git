@@ -498,9 +498,8 @@ class BranchMergePreview {
     state: MergePreviewState.unsupported,
   );
 
-  static BranchMergePreview unrelated() => const BranchMergePreview(
-    state: MergePreviewState.unrelated,
-  );
+  static BranchMergePreview unrelated() =>
+      const BranchMergePreview(state: MergePreviewState.unrelated);
 
   static BranchMergePreview clean({required String treeOid}) =>
       BranchMergePreview(state: MergePreviewState.clean, treeOid: treeOid);
@@ -594,8 +593,5 @@ BranchMergePreview parseMergeTreeOutput({
   }
   // exit 1: conflicts. Paths may be empty for rare directory/file edge cases;
   // still report conflicts so we never present unknown as clean.
-  return BranchMergePreview.conflicts(
-    treeOid: treeOid,
-    conflictPaths: paths,
-  );
+  return BranchMergePreview.conflicts(treeOid: treeOid, conflictPaths: paths);
 }

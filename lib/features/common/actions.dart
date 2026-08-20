@@ -163,9 +163,7 @@ Future<bool> confirmAction(
     builder: (context) => EscapeDismissible(
       child: MacosAlertDialog(
         appIcon: MacosIcon(
-          destructive
-              ? CupertinoIcons.trash
-              : CupertinoIcons.question_circle,
+          destructive ? CupertinoIcons.trash : CupertinoIcons.question_circle,
           size: 56,
           color: destructive
               ? MacosColors.systemRedColor

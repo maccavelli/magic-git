@@ -130,9 +130,9 @@ void main() {
     final items = repository['items']! as List<Object?>;
     expect(items, isNotEmpty);
 
-    final pull = items
-        .cast<Map<String, Object?>>()
-        .firstWhere((item) => item['title'] == 'Pull');
+    final pull = items.cast<Map<String, Object?>>().firstWhere(
+      (item) => item['title'] == 'Pull',
+    );
     expect(pull['items'], isA<List<Object?>>());
     expect(
       (pull['items']! as List<Object?>).length,

@@ -7,8 +7,10 @@ import 'package:remote_magic_git/core/settings/tool_catalog.dart';
 void main() {
   group('ToolVersion.parse', () {
     test('extracts x.y.z from noisy version output', () {
-      expect(ToolVersion.parse('git version 2.39.3 (Apple Git-145)'),
-          const ToolVersion(2, 39, 3));
+      expect(
+        ToolVersion.parse('git version 2.39.3 (Apple Git-145)'),
+        const ToolVersion(2, 39, 3),
+      );
       expect(ToolVersion.parse('glab 1.40.0'), const ToolVersion(1, 40, 0));
     });
 
@@ -27,8 +29,14 @@ void main() {
       expect(const ToolVersion(2, 24, 0) < const ToolVersion(2, 24, 1), isTrue);
       expect(const ToolVersion(2, 23, 9) < const ToolVersion(2, 24, 0), isTrue);
       expect(const ToolVersion(1, 99, 0) < const ToolVersion(2, 0, 0), isTrue);
-      expect(const ToolVersion(2, 24, 0) >= const ToolVersion(2, 24, 0), isTrue);
-      expect(const ToolVersion(2, 30, 0) >= const ToolVersion(2, 24, 0), isTrue);
+      expect(
+        const ToolVersion(2, 24, 0) >= const ToolVersion(2, 24, 0),
+        isTrue,
+      );
+      expect(
+        const ToolVersion(2, 30, 0) >= const ToolVersion(2, 24, 0),
+        isTrue,
+      );
     });
   });
 
@@ -86,8 +94,10 @@ void main() {
   group('installHints', () {
     test('macOS git offers Xcode CLT and Homebrew', () {
       final hints = installHints('git', 'macos');
-      expect(hints.map((h) => h.command),
-          containsAll(['xcode-select --install', 'brew install git']));
+      expect(
+        hints.map((h) => h.command),
+        containsAll(['xcode-select --install', 'brew install git']),
+      );
     });
 
     test('Linux gh includes the official apt repo and a rootless option', () {
@@ -109,8 +119,10 @@ void main() {
     });
 
     test('unknown OS falls back to Homebrew for brew-able tools', () {
-      expect(installHints('glab', 'unknown').single.command,
-          'brew install glab');
+      expect(
+        installHints('glab', 'unknown').single.command,
+        'brew install glab',
+      );
     });
   });
 }

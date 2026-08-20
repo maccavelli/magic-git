@@ -1032,9 +1032,7 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
                             '${widget.vm.hiddenLocalCount == 1 ? 'branch' : 'branches'}'
                             ' (click to show)',
                   size: 15,
-                  color: widget.showHidden
-                      ? MacosColors.systemBlueColor
-                      : null,
+                  color: widget.showHidden ? MacosColors.systemBlueColor : null,
                   onPressed: widget.onToggleShowHidden,
                 ),
               ],
@@ -1101,11 +1099,7 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
           f.upstreamGone,
           f.copyWith(upstreamGone: !f.upstreamGone),
         ),
-        item(
-          'In a worktree',
-          f.worktree,
-          f.copyWith(worktree: !f.worktree),
-        ),
+        item('In a worktree', f.worktree, f.copyWith(worktree: !f.worktree)),
         if (widget.forgeKnown) ...[
           const MacosPulldownMenuDivider(),
           item(

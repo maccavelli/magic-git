@@ -47,7 +47,9 @@ void main() {
       'gh pr merge failed\n\nGraphQL: 502',
     );
     expect(
-      displayError(GlabException('glab api failed', _failed('401 Unauthorized'))),
+      displayError(
+        GlabException('glab api failed', _failed('401 Unauthorized')),
+      ),
       'glab api failed\n\n401 Unauthorized',
     );
   });

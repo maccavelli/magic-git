@@ -153,9 +153,8 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
       if (s.applicable()) s,
   ];
 
-  bool _sourceValid() => _tab == _SourceTab.url
-      ? _url.text.trim().isNotEmpty
-      : _selected != null;
+  bool _sourceValid() =>
+      _tab == _SourceTab.url ? _url.text.trim().isNotEmpty : _selected != null;
 
   bool _locationValid() {
     if (!HostFsService.isValidRepoDirName(_name.text.trim())) return false;
@@ -338,9 +337,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
       }
 
       final name = _name.text.trim();
-      final parentDir = _isLocalTarget
-          ? _pickedParent!
-          : _parent.text.trim();
+      final parentDir = _isLocalTarget ? _pickedParent! : _parent.text.trim();
       // Same host derivation the browse list used (_effectiveForgeHost) —
       // the repo the user picked from that list must be cloned from the host
       // it was listed on, never from a stale/stock field value. A repo can
@@ -427,13 +424,15 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
         final conn = await _connectionById(_destConnectionId);
         final token = _provisionToken;
         if (conn == null || token == null) return false;
-        return ref.read(connectionProvider.notifier).finalizeProvisioned(
-          token: token,
-          conn: conn,
-          repoPath: dest,
-          enableFsmonitor: _fsmonitor,
-          label: _remoteLabel.text.trim(),
-        );
+        return ref
+            .read(connectionProvider.notifier)
+            .finalizeProvisioned(
+              token: token,
+              conn: conn,
+              repoPath: dest,
+              enableFsmonitor: _fsmonitor,
+              label: _remoteLabel.text.trim(),
+            );
     }
   }
 
@@ -1074,7 +1073,8 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
             AppPushButton(
               controlSize: ControlSize.large,
               onPressed:
-                  !_submitting && steps[_stepIndex.clamp(0, steps.length - 1)].valid()
+                  !_submitting &&
+                      steps[_stepIndex.clamp(0, steps.length - 1)].valid()
                   ? _goNext
                   : null,
               child: const Text('Continue'),

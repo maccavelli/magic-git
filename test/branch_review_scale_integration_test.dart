@@ -62,8 +62,7 @@ void main() {
       final refs = await git.refs(repo);
       final locals = [
         for (final r in refs)
-          if (r.isLocalBranch && !r.isHead)
-            (refName: r.name, oid: r.commitOid),
+          if (r.isLocalBranch && !r.isHead) (refName: r.name, oid: r.commitOid),
       ];
       expect(locals.length, greaterThanOrEqualTo(n));
 

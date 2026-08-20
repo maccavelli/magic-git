@@ -11,11 +11,7 @@ void main() {
     // Fields: hash, shortHash, authorName, authorEmail, date, parents, subject
     // Hashes must be at least 7 chars so shortHash = hash.substring(0, 7)
     // is well-defined (full OIDs are 40 hex chars on the wire).
-    String record(
-      String hash,
-      String subject, {
-      String parents = '',
-    }) {
+    String record(String hash, String subject, {String parents = ''}) {
       assert(hash.length >= 7, 'test hash must be ≥7 chars');
       return [
         hash,
@@ -80,8 +76,7 @@ void main() {
       );
       final a = record('aaaaaaaa', 'feat A');
       final b = record('bbbbbbbb', 'feat B');
-      final raw =
-          '$merge${GitService.recordSep}$a${GitService.recordSep}$b';
+      final raw = '$merge${GitService.recordSep}$a${GitService.recordSep}$b';
       final commits = parseGitLog(raw);
       expect(commits.length, 3);
       expect(commits[0].parents, ['aaaaaaaa', 'bbbbbbbb']);
@@ -98,8 +93,7 @@ void main() {
     test('truncated records (< 7 fields) are silently skipped', () {
       final good = record('aaaaaaaa', 'good commit');
       const truncated = 'hash${GitService.fieldSep}short'; // only 2 fields
-      final raw =
-          '$good${GitService.recordSep}$truncated';
+      final raw = '$good${GitService.recordSep}$truncated';
       final commits = parseGitLog(raw);
       expect(commits.length, 1);
       expect(commits.first.hash, 'aaaaaaaa');

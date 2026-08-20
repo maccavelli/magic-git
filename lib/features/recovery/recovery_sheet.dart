@@ -119,9 +119,7 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
             const SizedBox(height: 12),
             Expanded(
               child: repoPath == null
-                  ? Center(
-                      child: Text('Not connected', style: typography.body),
-                    )
+                  ? Center(child: Text('Not connected', style: typography.body))
                   : Row(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -194,7 +192,8 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
                   ),
                 ),
               ),
-            for (final snapshot in snapshots) _snapshotRow(snapshot, typography),
+            for (final snapshot in snapshots)
+              _snapshotRow(snapshot, typography),
           ],
         );
       },
@@ -323,9 +322,7 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
     child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(
-        color: selected
-            ? AppTheme.rowSelectionTint
-            : null,
+        color: selected ? AppTheme.rowSelectionTint : null,
         borderRadius: BorderRadius.circular(6),
       ),
       child: child,
@@ -405,15 +402,11 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
         ),
         MacosPulldownMenuItem(
           title: const Text('Reset current branch here (soft)'),
-          onTap: _busy
-              ? null
-              : () => _actReset(repoPath, hash, ResetMode.soft),
+          onTap: _busy ? null : () => _actReset(repoPath, hash, ResetMode.soft),
         ),
         MacosPulldownMenuItem(
           title: const Text('Reset current branch here (hard)'),
-          onTap: _busy
-              ? null
-              : () => _actReset(repoPath, hash, ResetMode.hard),
+          onTap: _busy ? null : () => _actReset(repoPath, hash, ResetMode.hard),
         ),
         MacosPulldownMenuItem(
           title: const Text('Copy hash'),
@@ -484,11 +477,7 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
     await _run(repoPath, () => git.branchFrom(repoPath, name, hash));
   }
 
-  Future<void> _actReset(
-    String repoPath,
-    String hash,
-    ResetMode mode,
-  ) async {
+  Future<void> _actReset(String repoPath, String hash, ResetMode mode) async {
     final branch = _currentBranch(repoPath);
     if (branch == null) {
       await showErrorDialog(
@@ -537,10 +526,7 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
     await _run(repoPath, () => git.restoreSnapshot(repoPath, snapshot));
   }
 
-  Future<void> _actDeleteSnapshot(
-    String repoPath,
-    SnapshotRef snapshot,
-  ) async {
+  Future<void> _actDeleteSnapshot(String repoPath, SnapshotRef snapshot) async {
     final ok = await confirmAction(
       context,
       title: 'Delete Snapshot',
@@ -567,9 +553,9 @@ class _RecoverySheetState extends ConsumerState<RecoverySheet> {
       child: Text(
         message,
         textAlign: TextAlign.center,
-        style: MacosTheme.of(context).typography.caption1.copyWith(
-          color: MacosColors.systemRedColor,
-        ),
+        style: MacosTheme.of(
+          context,
+        ).typography.caption1.copyWith(color: MacosColors.systemRedColor),
       ),
     ),
   );

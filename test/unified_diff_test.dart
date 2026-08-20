@@ -36,7 +36,10 @@ void main() {
     expect(diffLineKind(' ctx'), DiffLineKind.context);
     expect(diffLineKind('+add'), DiffLineKind.add);
     expect(diffLineKind('-del'), DiffLineKind.remove);
-    expect(diffLineKind(r'\ No newline at end of file'), DiffLineKind.noNewline);
+    expect(
+      diffLineKind(r'\ No newline at end of file'),
+      DiffLineKind.noNewline,
+    );
     expect(diffLineKind(''), DiffLineKind.context);
   });
 
@@ -140,7 +143,8 @@ void main() {
     // just cannot expand its context (canExpand needs every range to have
     // parsed). Refusing to expand is right — the line arithmetic is exactly
     // what we could not trust.
-    const diff = 'diff --git a/x.txt b/x.txt\n'
+    const diff =
+        'diff --git a/x.txt b/x.txt\n'
         '--- a/x.txt\n'
         '+++ b/x.txt\n'
         '@@ -1,99999999999999999999 +1,1 @@\n'

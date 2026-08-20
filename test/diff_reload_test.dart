@@ -203,20 +203,23 @@ void main() {
     expect(
       state.hasValue,
       isTrue,
-      reason: 'the pane is watching this provider and it has published nothing '
+      reason:
+          'the pane is watching this provider and it has published nothing '
           '— it renders a spinner, and never stops: the read it is waiting on '
           'landed on an element that had already been disposed',
     );
     expect(
       state.value,
       _diffOf('edited'),
-      reason: 'and it must be the file as it is NOW, not as it was when it '
+      reason:
+          'and it must be the file as it is NOW, not as it was when it '
           'went off screen',
     );
     expect(
       git.readCount,
       lessThanOrEqualTo(1),
-      reason: 'exactly one re-read: the thrashing dispose/rebuild loop this '
+      reason:
+          'exactly one re-read: the thrashing dispose/rebuild loop this '
           'caused issued several, each landing nowhere',
     );
   });
@@ -231,7 +234,11 @@ void main() {
 
     await tester.tap(find.text(_path));
     await tester.pumpAndSettle();
-    expect(find.text('+new'), findsOneWidget, reason: 'sanity: the diff loaded');
+    expect(
+      find.text('+new'),
+      findsOneWidget,
+      reason: 'sanity: the diff loaded',
+    );
 
     git.gate = true;
     container.invalidate(fileDiffProvider((_repo, _path, false, false, 3)));
@@ -269,7 +276,8 @@ void main() {
     expect(
       git.readCount,
       1,
-      reason: 'the read already in flight is reading the very worktree this '
+      reason:
+          'the read already in flight is reading the very worktree this '
           'refresh is about — restarting it wastes the read (and the git '
           'command behind it is not cancelled: it runs to completion holding a '
           'read slot) and puts the pane back to a bare spinner',

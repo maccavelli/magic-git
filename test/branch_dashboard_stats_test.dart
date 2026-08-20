@@ -5,11 +5,7 @@ import 'package:remote_magic_git/features/branches/branch_dashboard_stats.dart';
 void main() {
   final now = DateTime.utc(2026, 8, 4);
 
-  GitRef local(
-    String short, {
-    bool isHead = false,
-    int? creatorDate,
-  }) {
+  GitRef local(String short, {bool isHead = false, int? creatorDate}) {
     return GitRef(
       name: 'refs/heads/$short',
       oid: 'oid-$short',
@@ -24,7 +20,8 @@ void main() {
       final head = local(
         'main',
         isHead: true,
-        creatorDate: now.subtract(const Duration(days: 400)).millisecondsSinceEpoch ~/
+        creatorDate:
+            now.subtract(const Duration(days: 400)).millisecondsSinceEpoch ~/
             1000,
       );
       expect(isBranchStale(head, now: now), isFalse);
@@ -35,7 +32,7 @@ void main() {
         'old',
         creatorDate:
             now.subtract(const Duration(days: 100)).millisecondsSinceEpoch ~/
-                1000,
+            1000,
       );
       expect(isBranchStale(old, now: now), isTrue);
     });
@@ -45,7 +42,7 @@ void main() {
         'new',
         creatorDate:
             now.subtract(const Duration(days: 10)).millisecondsSinceEpoch ~/
-                1000,
+            1000,
       );
       expect(isBranchStale(recent, now: now), isFalse);
     });
@@ -66,24 +63,28 @@ void main() {
   group('buildBranchDashboardStats', () {
     test('counts locals remotes tags and merged deletable', () {
       final refs = [
-        local('main', isHead: true, creatorDate: now.millisecondsSinceEpoch ~/ 1000),
+        local(
+          'main',
+          isHead: true,
+          creatorDate: now.millisecondsSinceEpoch ~/ 1000,
+        ),
         local(
           'feature',
           creatorDate:
               now.subtract(const Duration(days: 5)).millisecondsSinceEpoch ~/
-                  1000,
+              1000,
         ),
         local(
           'stale-one',
           creatorDate:
               now.subtract(const Duration(days: 120)).millisecondsSinceEpoch ~/
-                  1000,
+              1000,
         ),
         local(
           'pinned-stale',
           creatorDate:
               now.subtract(const Duration(days: 200)).millisecondsSinceEpoch ~/
-                  1000,
+              1000,
         ),
         const GitRef(
           name: 'refs/remotes/origin/main',
@@ -115,23 +116,26 @@ void main() {
       expect(stats.mergedDeletable, ['feature']); // not main (isHead)
     });
 
-    test('filter narrows merged deletable but totals stay full local count', () {
-      final refs = [
-        local('main', isHead: true),
-        local('feature-a'),
-        local('other'),
-      ];
-      final stats = buildBranchDashboardStats(
-        refs: refs,
-        pinnedShortNames: const {},
-        mergedShortNames: {'feature-a', 'other'},
-        filterLower: 'feature',
-        now: now,
-      );
-      // totalLocals is unfiltered count of local branches
-      expect(stats.local, 3);
-      expect(stats.mergedDeletable, ['feature-a']);
-    });
+    test(
+      'filter narrows merged deletable but totals stay full local count',
+      () {
+        final refs = [
+          local('main', isHead: true),
+          local('feature-a'),
+          local('other'),
+        ];
+        final stats = buildBranchDashboardStats(
+          refs: refs,
+          pinnedShortNames: const {},
+          mergedShortNames: {'feature-a', 'other'},
+          filterLower: 'feature',
+          now: now,
+        );
+        // totalLocals is unfiltered count of local branches
+        expect(stats.local, 3);
+        expect(stats.mergedDeletable, ['feature-a']);
+      },
+    );
   });
 
   group('branchNameMatchesFilter', () {

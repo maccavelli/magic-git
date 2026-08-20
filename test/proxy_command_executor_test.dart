@@ -58,7 +58,8 @@ void main() {
       return switch (kind) {
         'timeout' => encodeExecuteError(const SSHCommandTimeout('git log')),
         'superseded' => encodeExecuteError(
-            const SSHCommandSuperseded('git log')),
+          const SSHCommandSuperseded('git log'),
+        ),
         _ => encodeExecuteError(const SSHOutputExceeded('git log')),
       };
     });
@@ -113,7 +114,11 @@ void main() {
         .execute(repoPath: '/r', gitArgs: ['git', 'first'], lane: ExecLane.read)
         .then((r) => resolved.add(r.stdout));
     final second = executor
-        .execute(repoPath: '/r', gitArgs: ['git', 'second'], lane: ExecLane.read)
+        .execute(
+          repoPath: '/r',
+          gitArgs: ['git', 'second'],
+          lane: ExecLane.read,
+        )
         .then((r) => resolved.add(r.stdout));
 
     // Release in reverse order — replies must pair with their own calls.
@@ -136,10 +141,16 @@ void main() {
     });
 
     final mutated = <String>[];
-    final executor = ProxyCommandExecutor.forWindow(_windowId, onMutationCompleted: mutated.add);
+    final executor = ProxyCommandExecutor.forWindow(
+      _windowId,
+      onMutationCompleted: mutated.add,
+    );
 
-    await executor.execute(repoPath: '/repo', gitArgs: ['git', 'log'],
-        lane: ExecLane.read);
+    await executor.execute(
+      repoPath: '/repo',
+      gitArgs: ['git', 'log'],
+      lane: ExecLane.read,
+    );
     expect(mutated, isEmpty, reason: 'reads never fire the callback');
 
     await executor.execute(repoPath: '/repo', gitArgs: ['git', 'commit']);
@@ -204,87 +215,94 @@ void main() {
       );
     });
 
-    test('a slow command is NOT abandoned while the window keeps answering',
-        () async {
-      // The whole point of probing rather than timing out. This command takes far
-      // longer than several probe intervals — as a real one queued behind a
-      // commit would — and must be left alone, because the pings are coming back.
-      var pings = 0;
-      final done = Completer<Map<Object?, Object?>>();
-      messenger.setMockMethodCallHandler(_channel, (call) async {
-        if (call.method == 'ping') {
-          pings++;
-          return null;
-        }
-        return done.future;
-      });
+    test(
+      'a slow command is NOT abandoned while the window keeps answering',
+      () async {
+        // The whole point of probing rather than timing out. This command takes far
+        // longer than several probe intervals — as a real one queued behind a
+        // commit would — and must be left alone, because the pings are coming back.
+        var pings = 0;
+        final done = Completer<Map<Object?, Object?>>();
+        messenger.setMockMethodCallHandler(_channel, (call) async {
+          if (call.method == 'ping') {
+            pings++;
+            return null;
+          }
+          return done.future;
+        });
 
-      final executor = fastProbe();
-      final call = executor.execute(
-        repoPath: '/srv/repo',
-        gitArgs: ['git', 'diff'],
-        lane: ExecLane.read,
-      );
-
-      // Long enough that a dead window would have been declared dead several
-      // times over.
-      await Future<void>.delayed(const Duration(milliseconds: 300));
-      expect(pings, greaterThan(2), reason: 'sanity: it really is probing');
-
-      done.complete(
-        encodeExecuteResult(
-          const SSHCommandResult(exitCode: 0, stdout: 'ok', stderr: ''),
-        ),
-      );
-      final result = await call.timeout(const Duration(seconds: 5));
-      expect(
-        result.stdout,
-        'ok',
-        reason: 'a live window running a long command must be waited for, '
-            'however long it takes',
-      );
-    });
-
-    test('a hub whose handler is gone fails readably, not as a raw error',
-        () async {
-      // No handler at all on the channel: the messenger answers with
-      // MissingPluginException, which is NOT a PlatformException and so used to
-      // escape the proxy's catch as an unreadable raw error.
-      messenger.setMockMethodCallHandler(_channel, null);
-
-      await expectLater(
-        fastProbe().execute(
+        final executor = fastProbe();
+        final call = executor.execute(
           repoPath: '/srv/repo',
           gitArgs: ['git', 'diff'],
           lane: ExecLane.read,
-        ),
-        throwsA(isA<ProxyExecuteException>()),
-      );
-    });
+        );
 
-    test('every call waiting on a dead window is abandoned, not just one',
-        () async {
-      messenger.setMockMethodCallHandler(
-        _channel,
-        (call) => Completer<Map<Object?, Object?>>().future,
-      );
+        // Long enough that a dead window would have been declared dead several
+        // times over.
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+        expect(pings, greaterThan(2), reason: 'sanity: it really is probing');
 
-      final executor = fastProbe();
-      final calls = [
-        for (var i = 0; i < 3; i++)
-          executor.execute(
+        done.complete(
+          encodeExecuteResult(
+            const SSHCommandResult(exitCode: 0, stdout: 'ok', stderr: ''),
+          ),
+        );
+        final result = await call.timeout(const Duration(seconds: 5));
+        expect(
+          result.stdout,
+          'ok',
+          reason:
+              'a live window running a long command must be waited for, '
+              'however long it takes',
+        );
+      },
+    );
+
+    test(
+      'a hub whose handler is gone fails readably, not as a raw error',
+      () async {
+        // No handler at all on the channel: the messenger answers with
+        // MissingPluginException, which is NOT a PlatformException and so used to
+        // escape the proxy's catch as an unreadable raw error.
+        messenger.setMockMethodCallHandler(_channel, null);
+
+        await expectLater(
+          fastProbe().execute(
             repoPath: '/srv/repo',
-            gitArgs: ['git', 'diff', '$i'],
+            gitArgs: ['git', 'diff'],
             lane: ExecLane.read,
           ),
-      ];
-
-      for (final call in calls) {
-        await expectLater(
-          call.timeout(const Duration(seconds: 5)),
           throwsA(isA<ProxyExecuteException>()),
         );
-      }
-    });
+      },
+    );
+
+    test(
+      'every call waiting on a dead window is abandoned, not just one',
+      () async {
+        messenger.setMockMethodCallHandler(
+          _channel,
+          (call) => Completer<Map<Object?, Object?>>().future,
+        );
+
+        final executor = fastProbe();
+        final calls = [
+          for (var i = 0; i < 3; i++)
+            executor.execute(
+              repoPath: '/srv/repo',
+              gitArgs: ['git', 'diff', '$i'],
+              lane: ExecLane.read,
+            ),
+        ];
+
+        for (final call in calls) {
+          await expectLater(
+            call.timeout(const Duration(seconds: 5)),
+            throwsA(isA<ProxyExecuteException>()),
+          );
+        }
+      },
+    );
   });
 }

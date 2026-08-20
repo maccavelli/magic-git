@@ -8,7 +8,8 @@ import 'package:remote_magic_git/features/viewer/highlight_worker.dart';
 import 'package:remote_magic_git/features/viewer/syntax_highlighter.dart';
 
 // The document's source text, re-joined from its per-line backing strings.
-String _flatten(HighlightedLines doc) => doc.lines.map((l) => l.text).join('\n');
+String _flatten(HighlightedLines doc) =>
+    doc.lines.map((l) => l.text).join('\n');
 
 void main() {
   late HighlightWorker worker;
@@ -16,15 +17,20 @@ void main() {
   setUp(() => worker = HighlightWorker());
   tearDown(() => worker.dispose());
 
-  test('highlights on the worker and preserves the source text exactly', () async {
-    const code = 'void main() {\n  print("hi");\n}\n';
-    final doc = await worker.highlight(code, 'dart');
-    // Round-trips the source (one entry per line incl. the trailing empty line).
-    expect(_flatten(doc), code);
-    // Highlighting actually ran: a Dart keyword got a scope somewhere.
-    final scoped = doc.lines.expand((l) => l.runScopeIds).where((id) => id >= 0);
-    expect(scoped, isNotEmpty);
-  });
+  test(
+    'highlights on the worker and preserves the source text exactly',
+    () async {
+      const code = 'void main() {\n  print("hi");\n}\n';
+      final doc = await worker.highlight(code, 'dart');
+      // Round-trips the source (one entry per line incl. the trailing empty line).
+      expect(_flatten(doc), code);
+      // Highlighting actually ran: a Dart keyword got a scope somewhere.
+      final scoped = doc.lines
+          .expand((l) => l.runScopeIds)
+          .where((id) => id >= 0);
+      expect(scoped, isNotEmpty);
+    },
+  );
 
   test('matches the inline highlightDoc result', () async {
     const code = 'final x = 1;\nString s = "y";\n';
@@ -47,10 +53,7 @@ void main() {
     const code = 'just some plain text\nsecond line\n';
     final doc = await worker.highlight(code, null);
     expect(_flatten(doc), code);
-    expect(
-      doc.lines.every((l) => l.runScopeIds.every((id) => id < 0)),
-      isTrue,
-    );
+    expect(doc.lines.every((l) => l.runScopeIds.every((id) => id < 0)), isTrue);
   });
 
   test('respawns after dispose (worker is reusable)', () async {

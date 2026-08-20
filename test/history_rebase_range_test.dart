@@ -58,8 +58,7 @@ class _FilterAwareFakeGit extends GitService {
     String hash, {
     String? path,
     int? context,
-  }) async =>
-      'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
+  }) async => 'diff --git a/x b/x\n@@ -1 +1 @@\n-a\n+b';
 }
 
 GitCommit _c(String hash, String subject, {List<String> parents = const []}) =>

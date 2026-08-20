@@ -47,25 +47,28 @@ void main() {
 
   tearDown(() => tempDir.deleteSync(recursive: true));
 
-  test('connectLocal completes with the REAL provider graph (no cycles)', () async {
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
+  test(
+    'connectLocal completes with the REAL provider graph (no cycles)',
+    () async {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
 
-    // Would throw CircularDependencyError before the fix.
-    await container
-        .read(connectionProvider.notifier)
-        .connectLocal(repo, label: 'cycle-pin');
+      // Would throw CircularDependencyError before the fix.
+      await container
+          .read(connectionProvider.notifier)
+          .connectLocal(repo, label: 'cycle-pin');
 
-    final state = container.read(connectionProvider);
-    expect(state.isConnected, isTrue, reason: 'error: ${state.error}');
-    expect(state.repoPath, repo);
+      final state = container.read(connectionProvider);
+      expect(state.isConnected, isTrue, reason: 'error: ${state.error}');
+      expect(state.repoPath, repo);
 
-    // setRepoPath used to hit the ignore-oracle self-reference via
-    // _invalidateRepoState — exercise it too (same path, same repo is a no-op,
-    // so re-point at the same repo through the mutating branch).
-    container.read(connectionProvider.notifier).setRepoPath('$repo/.');
-    // Reaching here without a CircularDependencyError is the assertion.
+      // setRepoPath used to hit the ignore-oracle self-reference via
+      // _invalidateRepoState — exercise it too (same path, same repo is a no-op,
+      // so re-point at the same repo through the mutating branch).
+      container.read(connectionProvider.notifier).setRepoPath('$repo/.');
+      // Reaching here without a CircularDependencyError is the assertion.
 
-    await container.read(connectionProvider.notifier).disconnect();
-  });
+      await container.read(connectionProvider.notifier).disconnect();
+    },
+  );
 }

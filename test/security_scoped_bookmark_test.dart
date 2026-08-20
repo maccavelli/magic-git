@@ -53,18 +53,23 @@ void main() {
 
     tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
-    test('create() invokes createBookmark(path) and returns the data', () async {
-      final data = await SecurityScopedBookmark.create('/repos/proj');
-      expect(data, 'Ym9va21hcms=');
-      expect(calls.single.method, 'createBookmark');
-      expect(calls.single.arguments, '/repos/proj');
-    });
+    test(
+      'create() invokes createBookmark(path) and returns the data',
+      () async {
+        final data = await SecurityScopedBookmark.create('/repos/proj');
+        expect(data, 'Ym9va21hcms=');
+        expect(calls.single.method, 'createBookmark');
+        expect(calls.single.arguments, '/repos/proj');
+      },
+    );
 
     test(
       'startAccessing() invokes startAccessingBookmark(data) and returns the '
       'resolved path',
       () async {
-        final path = await SecurityScopedBookmark.startAccessing('Ym9va21hcms=');
+        final path = await SecurityScopedBookmark.startAccessing(
+          'Ym9va21hcms=',
+        );
         expect(path, '/resolved/path');
         expect(calls.single.method, 'startAccessingBookmark');
         expect(calls.single.arguments, 'Ym9va21hcms=');

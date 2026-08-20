@@ -40,11 +40,7 @@ List<TextSpan> _allLeaves(WidgetTester tester) {
 Future<void> _pump(WidgetTester tester) async {
   await tester.pumpWidget(
     const MacosApp(
-      home: MacosWindow(
-        child: ContentArea(
-          builder: _builder,
-        ),
-      ),
+      home: MacosWindow(child: ContentArea(builder: _builder)),
     ),
   );
   await tester.pumpAndSettle();
@@ -66,10 +62,9 @@ void main() {
 
   testWidgets('applies more than one syntax colour', (tester) async {
     await _pump(tester);
-    final colors = _allLeaves(tester)
-        .map((s) => s.style?.color)
-        .whereType<Color>()
-        .toSet();
+    final colors = _allLeaves(
+      tester,
+    ).map((s) => s.style?.color).whereType<Color>().toSet();
     // A recognised .dart file yields several distinct token colours, not one
     // flat green/red.
     expect(colors.length, greaterThan(1));

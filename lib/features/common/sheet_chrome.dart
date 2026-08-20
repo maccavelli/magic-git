@@ -20,9 +20,7 @@ class SheetDescription extends StatelessWidget {
       padding: const EdgeInsets.only(top: 6),
       child: Text(
         text,
-        style: typography.caption1.copyWith(
-          color: MacosColors.systemGrayColor,
-        ),
+        style: typography.caption1.copyWith(color: MacosColors.systemGrayColor),
       ),
     );
   }
@@ -41,9 +39,7 @@ class FieldHint extends StatelessWidget {
       padding: const EdgeInsets.only(top: 4),
       child: Text(
         text,
-        style: typography.caption1.copyWith(
-          color: MacosColors.systemGrayColor,
-        ),
+        style: typography.caption1.copyWith(color: MacosColors.systemGrayColor),
       ),
     );
   }

@@ -30,7 +30,11 @@ void main() {
           builder: (context) => Center(
             child: GestureDetector(
               onTap: () async {
-                result = await promptForm(context, 'Edit item', fields: _fields());
+                result = await promptForm(
+                  context,
+                  'Edit item',
+                  fields: _fields(),
+                );
               },
               child: const Text('open'),
             ),
@@ -63,7 +67,11 @@ void main() {
           builder: (context) => Center(
             child: GestureDetector(
               onTap: () async {
-                result = await promptForm(context, 'Edit item', fields: _fields());
+                result = await promptForm(
+                  context,
+                  'Edit item',
+                  fields: _fields(),
+                );
                 returned = true;
               },
               child: const Text('open'),

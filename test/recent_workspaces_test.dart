@@ -18,8 +18,12 @@ SavedConnection _c(String id, DateTime? at) => SavedConnection(
   lastConnectedAt: at,
 );
 
-SavedLocalRepo _l(String id, DateTime? at) =>
-    SavedLocalRepo(id: id, label: id, repoPath: '/local/$id', lastConnectedAt: at);
+SavedLocalRepo _l(String id, DateTime? at) => SavedLocalRepo(
+  id: id,
+  label: id,
+  repoPath: '/local/$id',
+  lastConnectedAt: at,
+);
 
 ProviderContainer _container({
   List<SavedConnection> conns = const [],
@@ -66,16 +70,22 @@ void main() {
     expect(recent[1], isA<RecentConnection>());
   });
 
-  test('never-used entries sort last; connections precede locals on a tie', () async {
-    // Both null timestamps -> comparator treats them equal, so ordering falls
-    // back to stored order, and connections are appended before local repos.
-    final c = _container(conns: [_c('conn', null)], locals: [_l('local', null)]);
-    await _warm(c);
-    expect(c.read(recentWorkspacesProvider).map((w) => w.displayName).toList(), [
-      'conn',
-      'local',
-    ]);
-  });
+  test(
+    'never-used entries sort last; connections precede locals on a tie',
+    () async {
+      // Both null timestamps -> comparator treats them equal, so ordering falls
+      // back to stored order, and connections are appended before local repos.
+      final c = _container(
+        conns: [_c('conn', null)],
+        locals: [_l('local', null)],
+      );
+      await _warm(c);
+      expect(
+        c.read(recentWorkspacesProvider).map((w) => w.displayName).toList(),
+        ['conn', 'local'],
+      );
+    },
+  );
 
   test('a used local repo outranks a never-used connection', () async {
     final c = _container(
@@ -83,10 +93,10 @@ void main() {
       locals: [_l('local-used', DateTime.utc(2026, 2, 1))],
     );
     await _warm(c);
-    expect(c.read(recentWorkspacesProvider).map((w) => w.displayName).toList(), [
-      'local-used',
-      'conn-never',
-    ]);
+    expect(
+      c.read(recentWorkspacesProvider).map((w) => w.displayName).toList(),
+      ['local-used', 'conn-never'],
+    );
   });
 
   test('is empty when nothing is saved', () async {
@@ -95,12 +105,17 @@ void main() {
     expect(c.read(recentWorkspacesProvider), isEmpty);
   });
 
-  test('shows a local repo even with no saved connections (the reported bug)', () async {
-    final c = _container(locals: [_l('only-local', DateTime.utc(2026, 5, 1))]);
-    await _warm(c);
-    final recent = c.read(recentWorkspacesProvider);
-    expect(recent, hasLength(1));
-    expect(recent.single, isA<RecentLocalRepo>());
-    expect(recent.single.displayName, 'only-local');
-  });
+  test(
+    'shows a local repo even with no saved connections (the reported bug)',
+    () async {
+      final c = _container(
+        locals: [_l('only-local', DateTime.utc(2026, 5, 1))],
+      );
+      await _warm(c);
+      final recent = c.read(recentWorkspacesProvider);
+      expect(recent, hasLength(1));
+      expect(recent.single, isA<RecentLocalRepo>());
+      expect(recent.single.displayName, 'only-local');
+    },
+  );
 }

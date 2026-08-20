@@ -4,7 +4,11 @@ import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 void main() {
   group('constructor defaults', () {
     test('defaults bookmark/fsmonitor/worktree fields', () {
-      const r = SavedLocalRepo(id: 'a', label: 'My Repo', repoPath: '/home/x/p');
+      const r = SavedLocalRepo(
+        id: 'a',
+        label: 'My Repo',
+        repoPath: '/home/x/p',
+      );
       expect(r.bookmarkData, '');
       expect(r.mainRepoPath, '');
       expect(r.mainRepoBookmarkData, '');
@@ -41,7 +45,9 @@ void main() {
   group('isLinkedWorktree', () {
     test('true when mainRepoPath is non-empty', () {
       const r = SavedLocalRepo(
-        id: 'a', label: '', repoPath: '/w',
+        id: 'a',
+        label: '',
+        repoPath: '/w',
         mainRepoPath: '/main',
       );
       expect(r.isLinkedWorktree, isTrue);
@@ -56,7 +62,9 @@ void main() {
   group('isScoped', () {
     test('true when gitDir is non-empty', () {
       const r = SavedLocalRepo(
-        id: 'a', label: '', repoPath: '/home/x',
+        id: 'a',
+        label: '',
+        repoPath: '/home/x',
         gitDir: '/home/x/.home.git',
       );
       expect(r.isScoped, isTrue);
@@ -130,7 +138,9 @@ void main() {
 
     test('unknown key in JSON is ignored', () {
       final json = <String, dynamic>{
-        'id': 'y', 'label': 'R', 'repoPath': '/r',
+        'id': 'y',
+        'label': 'R',
+        'repoPath': '/r',
         'unknown_key': 'ignored',
       };
       final r = SavedLocalRepo.fromJson(json);
@@ -139,7 +149,9 @@ void main() {
 
     test('null values in JSON are treated as missing', () {
       final json = <String, dynamic>{
-        'id': 'z', 'label': null, 'repoPath': '/z',
+        'id': 'z',
+        'label': null,
+        'repoPath': '/z',
         'fsmonitorEnabled': null,
       };
       final r = SavedLocalRepo.fromJson(json);
@@ -149,7 +161,8 @@ void main() {
 
     test('invalid date string yields null lastConnectedAt', () {
       final json = <String, dynamic>{
-        'id': 'w', 'repoPath': '/w',
+        'id': 'w',
+        'repoPath': '/w',
         'lastConnectedAt': 'not-a-date',
       };
       final r = SavedLocalRepo.fromJson(json);
@@ -160,8 +173,11 @@ void main() {
   group('copyWith', () {
     test('partial update keeps unchanged fields', () {
       const r = SavedLocalRepo(
-        id: 'a', label: 'L', repoPath: '/p',
-        fsmonitorEnabled: true, gitDir: '/p/.git',
+        id: 'a',
+        label: 'L',
+        repoPath: '/p',
+        fsmonitorEnabled: true,
+        gitDir: '/p/.git',
       );
       final updated = r.copyWith(label: 'New Label');
       expect(updated.id, 'a');
@@ -183,12 +199,20 @@ void main() {
 
   group('displayName', () {
     test('uses label when non-empty', () {
-      const r = SavedLocalRepo(id: 'a', label: 'My Repo', repoPath: '/some/long/path');
+      const r = SavedLocalRepo(
+        id: 'a',
+        label: 'My Repo',
+        repoPath: '/some/long/path',
+      );
       expect(r.displayName, 'My Repo');
     });
 
     test('falls back to basename of repoPath when label is empty', () {
-      const r = SavedLocalRepo(id: 'a', label: '', repoPath: '/home/user/project');
+      const r = SavedLocalRepo(
+        id: 'a',
+        label: '',
+        repoPath: '/home/user/project',
+      );
       expect(r.displayName, 'project');
     });
   });

@@ -139,63 +139,56 @@ void main() {
     },
   );
 
-  testWidgets(
-    'an unscoped tick while hidden defers one full family re-sync to '
-    'activation',
-    (tester) async {
-      final h = _Harness.create(_statusAt('aaa'));
-      await h.pump(tester, isActive: false);
-      final logBefore = h.logFetches;
+  testWidgets('an unscoped tick while hidden defers one full family re-sync to '
+      'activation', (tester) async {
+    final h = _Harness.create(_statusAt('aaa'));
+    await h.pump(tester, isActive: false);
+    final logBefore = h.logFetches;
 
-      // Unscoped (watcher restart / overflowing burst): too blunt to act on
-      // repeatedly in the background.
-      await h.tick(tester, const {});
-      expect(h.logFetches, logBefore);
+    // Unscoped (watcher restart / overflowing burst): too blunt to act on
+    // repeatedly in the background.
+    await h.tick(tester, const {});
+    expect(h.logFetches, logBefore);
 
-      // Activation runs the widened re-sync: the whole mutation set, since
-      // the blind tick may have hidden git-state changes.
-      await h.pump(tester, isActive: true);
-      expect(h.logFetches, logBefore + 1);
-    },
-  );
+    // Activation runs the widened re-sync: the whole mutation set, since
+    // the blind tick may have hidden git-state changes.
+    await h.pump(tester, isActive: true);
+    expect(h.logFetches, logBefore + 1);
+  });
 
-  testWidgets(
-    'a quiet hidden spell re-syncs only status on activation',
-    (tester) async {
-      final h = _Harness.create(_statusAt('aaa'));
-      await h.pump(tester, isActive: false);
-      final logBefore = h.logFetches;
-      final statusBefore = h.statusFetches;
+  testWidgets('a quiet hidden spell re-syncs only status on activation', (
+    tester,
+  ) async {
+    final h = _Harness.create(_statusAt('aaa'));
+    await h.pump(tester, isActive: false);
+    final logBefore = h.logFetches;
+    final statusBefore = h.statusFetches;
 
-      await h.pump(tester, isActive: true);
+    await h.pump(tester, isActive: true);
 
-      expect(h.statusFetches, statusBefore + 1);
-      expect(h.logFetches, logBefore, reason: 'no git-state signal, no walk');
-    },
-  );
+    expect(h.statusFetches, statusBefore + 1);
+    expect(h.logFetches, logBefore, reason: 'no git-state signal, no walk');
+  });
 
-  testWidgets(
-    'a HEAD move between landed statuses invalidates the families '
-    '(polling-mode external commit)',
-    (tester) async {
-      final h = _Harness.create(_statusAt('aaa'));
-      await h.pump(tester, isActive: true);
-      final logBefore = h.logFetches;
+  testWidgets('a HEAD move between landed statuses invalidates the families '
+      '(polling-mode external commit)', (tester) async {
+    final h = _Harness.create(_statusAt('aaa'));
+    await h.pump(tester, isActive: true);
+    final logBefore = h.logFetches;
 
-      // A polling tick can only refetch status; the moved oid it lands is the
-      // one signal an external commit leaves in that mode.
-      h.current = _statusAt('bbb');
-      h.container.invalidate(statusProvider(_repo));
-      await _Harness.settle(tester);
+    // A polling tick can only refetch status; the moved oid it lands is the
+    // one signal an external commit leaves in that mode.
+    h.current = _statusAt('bbb');
+    h.container.invalidate(statusProvider(_repo));
+    await _Harness.settle(tester);
 
-      expect(h.logFetches, logBefore + 1);
+    expect(h.logFetches, logBefore + 1);
 
-      // The refetch the detection itself triggered landed with the same oid —
-      // no second round.
-      await _Harness.settle(tester);
-      expect(h.logFetches, logBefore + 1);
-    },
-  );
+    // The refetch the detection itself triggered landed with the same oid —
+    // no second round.
+    await _Harness.settle(tester);
+    expect(h.logFetches, logBefore + 1);
+  });
 
   testWidgets(
     'a HEAD move within the own-mutation window is the echo of our own '

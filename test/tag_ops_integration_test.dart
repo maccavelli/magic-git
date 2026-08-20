@@ -52,53 +52,69 @@ void main() {
 
   tearDown(() => tempDir.deleteSync(recursive: true));
 
-  Future<GitRef> tagRef(String name) async => (await git.refs(
-        repo,
-      )).singleWhere((r) => r.name == 'refs/tags/$name');
+  Future<GitRef> tagRef(String name) async =>
+      (await git.refs(repo)).singleWhere((r) => r.name == 'refs/tags/$name');
 
-  test('full cycle: create → ls-remote empty → push → present with the tag-'
-      'object oid → re-tag diverges and is rejected → delete on remote',
-      () async {
-    await git.createTag(repo, 'wip'); // lightweight
-    await git.createTag(repo, 'v1.0', message: 'release notes'); // annotated
+  test(
+    'full cycle: create → ls-remote empty → push → present with the tag-'
+    'object oid → re-tag diverges and is rejected → delete on remote',
+    () async {
+      await git.createTag(repo, 'wip'); // lightweight
+      await git.createTag(repo, 'v1.0', message: 'release notes'); // annotated
 
-    expect(await git.lsRemoteTags(repo), isEmpty,
-        reason: 'nothing pushed yet — and an empty map is NOT null (the '
-            'remote was reachable and answered "no tags")');
+      expect(
+        await git.lsRemoteTags(repo),
+        isEmpty,
+        reason:
+            'nothing pushed yet — and an empty map is NOT null (the '
+            'remote was reachable and answered "no tags")',
+      );
 
-    await git.pushTag(repo, 'v1.0');
-    final afterOne = await git.lsRemoteTags(repo);
-    final local = await tagRef('v1.0');
-    expect(afterOne, {'v1.0': local.oid},
-        reason: 'the unpeeled ls-remote oid IS the local tag object');
-    expect(local.oid, isNot(local.peeledOid),
-        reason: 'annotated: tag object and peeled commit differ — comparing '
-            'peeled oids would be the wrong equality');
+      await git.pushTag(repo, 'v1.0');
+      final afterOne = await git.lsRemoteTags(repo);
+      final local = await tagRef('v1.0');
+      expect(afterOne, {
+        'v1.0': local.oid,
+      }, reason: 'the unpeeled ls-remote oid IS the local tag object');
+      expect(
+        local.oid,
+        isNot(local.peeledOid),
+        reason:
+            'annotated: tag object and peeled commit differ — comparing '
+            'peeled oids would be the wrong equality',
+      );
 
-    // Bulk push covers the remaining local-only tag.
-    await git.pushTags(repo, ['wip', 'v1.0']);
-    expect((await git.lsRemoteTags(repo))!.keys.toSet(), {'wip', 'v1.0'});
+      // Bulk push covers the remaining local-only tag.
+      await git.pushTags(repo, ['wip', 'v1.0']);
+      expect((await git.lsRemoteTags(repo))!.keys.toSet(), {'wip', 'v1.0'});
 
-    // Re-tag v1.0 at the SAME commit with a different message: the peeled
-    // commit is identical, but the ref-level oid differs — the state the
-    // tags list must show as "differs", because a push IS rejected.
-    await raw(['tag', '-d', 'v1.0']);
-    await raw(['tag', '-a', '-m', 'rewritten notes', 'v1.0']);
-    final retagged = await tagRef('v1.0');
-    final remote = (await git.lsRemoteTags(repo))!;
-    expect(remote['v1.0'], isNot(retagged.oid));
-    expect(retagged.peeledOid, local.peeledOid,
-        reason: 'same commit — only the tag object changed');
-    await expectLater(
-      () => git.pushTag(repo, 'v1.0'),
-      throwsA(isA<GitException>()),
-    );
+      // Re-tag v1.0 at the SAME commit with a different message: the peeled
+      // commit is identical, but the ref-level oid differs — the state the
+      // tags list must show as "differs", because a push IS rejected.
+      await raw(['tag', '-d', 'v1.0']);
+      await raw(['tag', '-a', '-m', 'rewritten notes', 'v1.0']);
+      final retagged = await tagRef('v1.0');
+      final remote = (await git.lsRemoteTags(repo))!;
+      expect(remote['v1.0'], isNot(retagged.oid));
+      expect(
+        retagged.peeledOid,
+        local.peeledOid,
+        reason: 'same commit — only the tag object changed',
+      );
+      await expectLater(
+        () => git.pushTag(repo, 'v1.0'),
+        throwsA(isA<GitException>()),
+      );
 
-    await git.deleteRemoteTag(repo, 'origin', 'v1.0');
-    expect((await git.lsRemoteTags(repo))!.keys.toSet(), {'wip'});
-    expect(await raw(['tag', '--list', 'v1.0']), 'v1.0',
-        reason: 'the local tag is untouched by the remote delete');
-  });
+      await git.deleteRemoteTag(repo, 'origin', 'v1.0');
+      expect((await git.lsRemoteTags(repo))!.keys.toSet(), {'wip'});
+      expect(
+        await raw(['tag', '--list', 'v1.0']),
+        'v1.0',
+        reason: 'the local tag is untouched by the remote delete',
+      );
+    },
+  );
 
   test('an unreachable remote yields null (unknown), never a throw', () async {
     await raw(['remote', 'set-url', 'origin', '/nonexistent/nowhere.git']);

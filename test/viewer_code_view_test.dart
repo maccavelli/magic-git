@@ -42,7 +42,11 @@ String _renderedText(WidgetTester tester) {
 
 void main() {
   testWidgets('renders line-number gutter and source content', (tester) async {
-    await _pump(tester, text: 'class Foo {}\nvoid main() {}\n', languageId: 'dart');
+    await _pump(
+      tester,
+      text: 'class Foo {}\nvoid main() {}\n',
+      languageId: 'dart',
+    );
     // Gutter numbers for the three lines (two + trailing empty).
     expect(find.text('1'), findsOneWidget);
     expect(find.text('2'), findsOneWidget);
@@ -100,7 +104,12 @@ void main() {
       Int32List.fromList([0, maxHighlightLineLength - 1, text.length]),
       Int32List.fromList([-1, -1]),
     );
-    final plain = lineToSpan(line, const <String?>[], theme, base).toPlainText();
+    final plain = lineToSpan(
+      line,
+      const <String?>[],
+      theme,
+      base,
+    ).toPlainText();
     expect(plain, contains('line truncated')); // it did truncate
     // No lone surrogate survived — every rune is a whole code point.
     final loneSurrogate = plain.runes.any((r) => r >= 0xD800 && r <= 0xDFFF);

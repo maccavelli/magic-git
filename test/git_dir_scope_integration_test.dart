@@ -64,9 +64,13 @@ void main() {
     File('$workTree/.testrc').writeAsStringSync('export EDITOR=vim\n');
     await seed(['add', '.testrc']);
     await seed([
-      '-c', 'user.email=t@example.com',
-      '-c', 'user.name=Test',
-      'commit', '-m', 'seed dotfiles',
+      '-c',
+      'user.email=t@example.com',
+      '-c',
+      'user.name=Test',
+      'commit',
+      '-m',
+      'seed dotfiles',
     ]);
 
     git = GitService(LocalCommandExecutor());
@@ -79,45 +83,50 @@ void main() {
   test('unscoped work tree is not a repository — the read fails', () async {
     // No scope registered: git discovers from the working directory (the work
     // tree), finds no `.git`, and the command fails.
-    await expectLater(
-      git.repoLayout(workTree),
-      throwsA(isA<GitException>()),
-    );
+    await expectLater(git.repoLayout(workTree), throwsA(isA<GitException>()));
   });
 
-  test('a registered scope routes GIT_DIR/GIT_WORK_TREE through the executor',
-      () async {
-    git.registerRepoScope(workTree, gitDir: bareDir, workTree: workTree);
+  test(
+    'a registered scope routes GIT_DIR/GIT_WORK_TREE through the executor',
+    () async {
+      git.registerRepoScope(workTree, gitDir: bareDir, workTree: workTree);
 
-    // repoLayout runs `rev-parse --show-toplevel --git-dir …`; it can only
-    // succeed — and echo these exact paths — if both env vars reached git.
-    final layout = await git.repoLayout(workTree);
-    expect(layout.gitDir, bareDir, reason: 'GIT_DIR did not reach git');
-    expect(layout.toplevel, workTree, reason: 'GIT_WORK_TREE did not reach git');
+      // repoLayout runs `rev-parse --show-toplevel --git-dir …`; it can only
+      // succeed — and echo these exact paths — if both env vars reached git.
+      final layout = await git.repoLayout(workTree);
+      expect(layout.gitDir, bareDir, reason: 'GIT_DIR did not reach git');
+      expect(
+        layout.toplevel,
+        workTree,
+        reason: 'GIT_WORK_TREE did not reach git',
+      );
 
-    // A second, content-level read through the same seam: `worktree list`
-    // reports the repository as bare — proving we are genuinely operating the
-    // bare repo, not merely echoing paths back.
-    final worktrees = await git.gitWorktrees(workTree);
-    expect(
-      worktrees.any((w) => w.isBare),
-      isTrue,
-      reason: 'expected the scoped repo to be reported as bare: $worktrees',
-    );
-  });
+      // A second, content-level read through the same seam: `worktree list`
+      // reports the repository as bare — proving we are genuinely operating the
+      // bare repo, not merely echoing paths back.
+      final worktrees = await git.gitWorktrees(workTree);
+      expect(
+        worktrees.any((w) => w.isBare),
+        isTrue,
+        reason: 'expected the scoped repo to be reported as bare: $worktrees',
+      );
+    },
+  );
 
-  test('unregistering the scope reverts to working-directory discovery',
-      () async {
-    git.registerRepoScope(workTree, gitDir: bareDir, workTree: workTree);
-    await git.repoLayout(workTree); // succeeds while scoped
+  test(
+    'unregistering the scope reverts to working-directory discovery',
+    () async {
+      git.registerRepoScope(workTree, gitDir: bareDir, workTree: workTree);
+      await git.repoLayout(workTree); // succeeds while scoped
 
-    git.unregisterRepoScope(workTree);
-    await expectLater(
-      git.repoLayout(workTree),
-      throwsA(isA<GitException>()),
-      reason: 'scope should no longer be injected after unregister',
-    );
-  });
+      git.unregisterRepoScope(workTree);
+      await expectLater(
+        git.repoLayout(workTree),
+        throwsA(isA<GitException>()),
+        reason: 'scope should no longer be injected after unregister',
+      );
+    },
+  );
 
   // The direct `_executor.execute` sites used to bypass the scope registry
   // entirely — every read below failed with "not a git repository" on a
@@ -138,7 +147,8 @@ void main() {
       expect(
         status.files.any((f) => f.path == '.testrc'),
         isTrue,
-        reason: 'snapshot should list the modified tracked file: '
+        reason:
+            'snapshot should list the modified tracked file: '
             '${status.files.map((f) => f.path)}',
       );
     });
@@ -174,11 +184,7 @@ void main() {
 
     test('diffFile shows a work-tree modification', () async {
       File('$workTree/.testrc').writeAsStringSync('export EDITOR=emacs\n');
-      final diff = await git.diffFile(
-        workTree,
-        path: '.testrc',
-        staged: false,
-      );
+      final diff = await git.diffFile(workTree, path: '.testrc', staged: false);
       expect(diff, contains('+export EDITOR=emacs'));
     });
 
@@ -198,45 +204,53 @@ void main() {
 
     test('checkIgnore consults the scoped repo\'s ignore rules', () async {
       File('$workTree/.gitignore').writeAsStringSync('ignored.txt\n');
-      final ignored = await git.checkIgnore(
-        workTree,
-        ['ignored.txt', 'kept.txt'],
-      );
+      final ignored = await git.checkIgnore(workTree, [
+        'ignored.txt',
+        'kept.txt',
+      ]);
       expect(ignored, {'ignored.txt'});
     });
   });
 
-  test('setFsmonitorMany pins each repo\'s scope to its own subshell',
-      () async {
-    git.registerRepoScope(workTree, gitDir: bareDir, workTree: workTree);
-    // A second, ordinary repo in the same sweep. The scoped repo goes FIRST —
-    // the leak geometry: _run funnels the combined script under the first
-    // repo's path, whose GIT_DIR overlay (env beats cwd discovery) used to
-    // send EVERY repo's `git config` write into the scoped repo's git-dir.
-    final root = tempDir.resolveSymbolicLinksSync();
-    final plainDir = Directory('$root/plain')..createSync();
-    final plain = plainDir.resolveSymbolicLinksSync();
-    final init = await Process.run('git', ['init', plain]);
-    expect(init.exitCode, 0, reason: init.stderr.toString());
+  test(
+    'setFsmonitorMany pins each repo\'s scope to its own subshell',
+    () async {
+      git.registerRepoScope(workTree, gitDir: bareDir, workTree: workTree);
+      // A second, ordinary repo in the same sweep. The scoped repo goes FIRST —
+      // the leak geometry: _run funnels the combined script under the first
+      // repo's path, whose GIT_DIR overlay (env beats cwd discovery) used to
+      // send EVERY repo's `git config` write into the scoped repo's git-dir.
+      final root = tempDir.resolveSymbolicLinksSync();
+      final plainDir = Directory('$root/plain')..createSync();
+      final plain = plainDir.resolveSymbolicLinksSync();
+      final init = await Process.run('git', ['init', plain]);
+      expect(init.exitCode, 0, reason: init.stderr.toString());
 
-    final result = await git.setFsmonitorMany(
-      [workTree, plain],
-      enabled: true,
-    );
-    expect(result.stderr, isNot(contains('fsmonitor setup failed')));
+      final result = await git.setFsmonitorMany([
+        workTree,
+        plain,
+      ], enabled: true);
+      expect(result.stderr, isNot(contains('fsmonitor setup failed')));
 
-    // Each repo's write landed in its OWN config: the bare git-dir for the
-    // scoped repo, `.git/config` for the plain one (which stayed empty under
-    // the leak).
-    final scoped = await Process.run(
-      'git',
-      ['--git-dir', bareDir, 'config', '--get', 'core.untrackedCache'],
-    );
-    expect((scoped.stdout as String).trim(), 'true');
-    final plainVal = await Process.run(
-      'git',
-      ['-C', plain, 'config', '--get', 'core.untrackedCache'],
-    );
-    expect((plainVal.stdout as String).trim(), 'true');
-  });
+      // Each repo's write landed in its OWN config: the bare git-dir for the
+      // scoped repo, `.git/config` for the plain one (which stayed empty under
+      // the leak).
+      final scoped = await Process.run('git', [
+        '--git-dir',
+        bareDir,
+        'config',
+        '--get',
+        'core.untrackedCache',
+      ]);
+      expect((scoped.stdout as String).trim(), 'true');
+      final plainVal = await Process.run('git', [
+        '-C',
+        plain,
+        'config',
+        '--get',
+        'core.untrackedCache',
+      ]);
+      expect((plainVal.stdout as String).trim(), 'true');
+    },
+  );
 }

@@ -94,7 +94,11 @@ void main() {
     await _open(tester);
     expect(find.text('code'), findsOneWidget);
     expect(find.text('notes'), findsOneWidget);
-    expect(find.text('.config'), findsNothing, reason: 'dotfiles hidden by default');
+    expect(
+      find.text('.config'),
+      findsNothing,
+      reason: 'dotfiles hidden by default',
+    );
   });
 
   testWidgets('show-hidden reveals and re-hides dotfiles', (tester) async {
@@ -116,17 +120,23 @@ void main() {
     expect(find.text('code'), findsOneWidget);
   });
 
-  testWidgets('a permission-denied folder shows a banner and keeps the listing',
-      (tester) async {
-    await _open(tester);
-    await tester.tap(find.text('code'));
-    await tester.pumpAndSettle();
-    // 'secret' is denied; tapping it must not move us.
-    await tester.tap(find.text('secret'));
-    await tester.pumpAndSettle();
-    expect(find.text('Permission denied.'), findsOneWidget);
-    expect(find.text('magic-git'), findsOneWidget, reason: 'listing retained');
-  });
+  testWidgets(
+    'a permission-denied folder shows a banner and keeps the listing',
+    (tester) async {
+      await _open(tester);
+      await tester.tap(find.text('code'));
+      await tester.pumpAndSettle();
+      // 'secret' is denied; tapping it must not move us.
+      await tester.tap(find.text('secret'));
+      await tester.pumpAndSettle();
+      expect(find.text('Permission denied.'), findsOneWidget);
+      expect(
+        find.text('magic-git'),
+        findsOneWidget,
+        reason: 'listing retained',
+      );
+    },
+  );
 
   testWidgets('Choose This Folder pops the current path', (tester) async {
     await _open(tester);
@@ -167,8 +177,11 @@ void main() {
     fs.gates['/home/mac/code']!.complete(['magic-git', 'secret']);
     await tester.pumpAndSettle();
 
-    expect(find.text('magic-git'), findsNothing,
-        reason: 'the stale listing must not replace the newer one');
+    expect(
+      find.text('magic-git'),
+      findsNothing,
+      reason: 'the stale listing must not replace the newer one',
+    );
     expect(
       tester
           .widget<MacosTextField>(find.byType(MacosTextField))

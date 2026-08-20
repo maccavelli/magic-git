@@ -57,8 +57,10 @@ void main() {
     });
 
     test('draft flag is forwarded', () {
-      expect(const BranchForge(requestNumber: 1, requestDraft: true).requestDraft,
-          isTrue);
+      expect(
+        const BranchForge(requestNumber: 1, requestDraft: true).requestDraft,
+        isTrue,
+      );
     });
   });
 }

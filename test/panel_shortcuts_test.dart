@@ -14,8 +14,11 @@ void main() {
         child: MaterialApp(
           home: PanelShortcuts(
             bindings: {
-              const SingleActivator(LogicalKeyboardKey.backspace, meta: true):
-                  () => fired++,
+              const SingleActivator(
+                LogicalKeyboardKey.backspace,
+                meta: true,
+              ): () =>
+                  fired++,
             },
             child: const Focus(autofocus: true, child: SizedBox.expand()),
           ),
@@ -39,18 +42,21 @@ void main() {
 
       await tester.pumpWidget(
         ProviderScope(
-        child: MaterialApp(
+          child: MaterialApp(
             home: Material(
               child: PanelShortcuts(
                 bindings: {
-                  const SingleActivator(LogicalKeyboardKey.backspace, meta: true):
-                      () => fired++,
+                  const SingleActivator(
+                    LogicalKeyboardKey.backspace,
+                    meta: true,
+                  ): () =>
+                      fired++,
                 },
                 child: TextField(controller: controller),
               ),
             ),
           ),
-      ),
+        ),
       );
 
       await tester.tap(find.byType(TextField));
@@ -65,7 +71,11 @@ void main() {
       await tester.pump();
 
       expect(fired, 0, reason: 'panel binding must yield to text editing');
-      expect(controller.text, isEmpty, reason: 'the edit key reached the field');
+      expect(
+        controller.text,
+        isEmpty,
+        reason: 'the edit key reached the field',
+      );
     },
     // ⌘⌫ = delete-to-line-start only exists in the macOS/iOS text-editing
     // shortcut tables; the guard itself is platform-independent.
@@ -85,7 +95,8 @@ void main() {
           home: Material(
             child: PanelShortcuts(
               bindings: {
-                const SingleActivator(LogicalKeyboardKey.space): () => toggled++,
+                const SingleActivator(LogicalKeyboardKey.space): () =>
+                    toggled++,
               },
               child: TextField(controller: controller),
             ),
@@ -113,7 +124,10 @@ void main() {
           home: Material(
             child: PanelShortcuts(
               bindings: {
-                const SingleActivator(LogicalKeyboardKey.keyC, meta: true): () =>
+                const SingleActivator(
+                  LogicalKeyboardKey.keyC,
+                  meta: true,
+                ): () =>
                     copiedSha++,
               },
               child: SelectionArea(
@@ -149,13 +163,19 @@ void main() {
           home: Material(
             child: PanelShortcuts(
               bindings: {
-                const SingleActivator(LogicalKeyboardKey.keyC, meta: true): () =>
+                const SingleActivator(
+                  LogicalKeyboardKey.keyC,
+                  meta: true,
+                ): () =>
                     fired++,
               },
               child: Column(
                 children: [
                   TextField(controller: controller),
-                  Focus(focusNode: elsewhere, child: const SizedBox(height: 10)),
+                  Focus(
+                    focusNode: elsewhere,
+                    child: const SizedBox(height: 10),
+                  ),
                 ],
               ),
             ),

@@ -179,7 +179,10 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
       ref
           .read(remoteEditNoticeProvider.notifier)
           .show(
-            RemoteEditNotice(title: 'Remote Edit Open Failed', message: message),
+            RemoteEditNotice(
+              title: 'Remote Edit Open Failed',
+              message: message,
+            ),
           );
     }
   }

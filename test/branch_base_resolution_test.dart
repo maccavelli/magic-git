@@ -112,105 +112,111 @@ void main() {
     expect((await resolve(null)).base, isNull);
   });
 
-  test('fallback order prefers remote HEAD, then forge, then main/master', () async {
-    var remoteCalls = 0;
-    final remote = await resolveBranchBase(
-      refs: [
-        _ref('refs/remotes/origin/trunk', _a),
-        _ref('refs/heads/main', _b),
-      ],
-      remotes: const ['origin'],
-      currentBranch: 'main',
-      headOid: _b,
-      storedRefName: null,
-      forgeDefaultBranch: 'main',
-      resolveCommit: (_) async => null,
-      resolveRemoteHead: (_) async {
-        remoteCalls++;
-        return 'refs/remotes/origin/trunk';
-      },
-    );
-    expect(remoteCalls, 1);
-    expect(remote.base?.source, BranchBaseSource.remoteHead);
-    expect(remote.base?.isFallback, isFalse);
+  test(
+    'fallback order prefers remote HEAD, then forge, then main/master',
+    () async {
+      var remoteCalls = 0;
+      final remote = await resolveBranchBase(
+        refs: [
+          _ref('refs/remotes/origin/trunk', _a),
+          _ref('refs/heads/main', _b),
+        ],
+        remotes: const ['origin'],
+        currentBranch: 'main',
+        headOid: _b,
+        storedRefName: null,
+        forgeDefaultBranch: 'main',
+        resolveCommit: (_) async => null,
+        resolveRemoteHead: (_) async {
+          remoteCalls++;
+          return 'refs/remotes/origin/trunk';
+        },
+      );
+      expect(remoteCalls, 1);
+      expect(remote.base?.source, BranchBaseSource.remoteHead);
+      expect(remote.base?.isFallback, isFalse);
 
-    // Symref tip absent from the snapshot still resolves via rev-parse.
-    final missingTip = await resolveBranchBase(
-      refs: [_ref('refs/heads/main', _b)],
-      remotes: const ['origin'],
-      currentBranch: 'main',
-      headOid: _b,
-      storedRefName: null,
-      forgeDefaultBranch: null,
-      resolveCommit: (revision) async {
-        expect(revision, 'refs/remotes/origin/develop^{commit}');
-        return _a;
-      },
-      resolveRemoteHead: (_) async => 'refs/remotes/origin/develop',
-    );
-    expect(missingTip.base?.source, BranchBaseSource.remoteHead);
-    expect(missingTip.base?.oid, _a);
-    expect(missingTip.base?.refName, 'refs/remotes/origin/develop');
+      // Symref tip absent from the snapshot still resolves via rev-parse.
+      final missingTip = await resolveBranchBase(
+        refs: [_ref('refs/heads/main', _b)],
+        remotes: const ['origin'],
+        currentBranch: 'main',
+        headOid: _b,
+        storedRefName: null,
+        forgeDefaultBranch: null,
+        resolveCommit: (revision) async {
+          expect(revision, 'refs/remotes/origin/develop^{commit}');
+          return _a;
+        },
+        resolveRemoteHead: (_) async => 'refs/remotes/origin/develop',
+      );
+      expect(missingTip.base?.source, BranchBaseSource.remoteHead);
+      expect(missingTip.base?.oid, _a);
+      expect(missingTip.base?.refName, 'refs/remotes/origin/develop');
 
-    final forge = await resolveBranchBase(
-      refs: [_ref('refs/heads/develop', _a), _ref('refs/heads/main', _b)],
-      remotes: const ['origin'],
-      currentBranch: 'main',
-      headOid: _b,
-      storedRefName: null,
-      forgeDefaultBranch: 'develop',
-      resolveCommit: (_) async => null,
-      resolveRemoteHead: (_) async => null,
-    );
-    expect(forge.base?.source, BranchBaseSource.forgeDefault);
-    expect(forge.base?.displayName, 'develop');
+      final forge = await resolveBranchBase(
+        refs: [_ref('refs/heads/develop', _a), _ref('refs/heads/main', _b)],
+        remotes: const ['origin'],
+        currentBranch: 'main',
+        headOid: _b,
+        storedRefName: null,
+        forgeDefaultBranch: 'develop',
+        resolveCommit: (_) async => null,
+        resolveRemoteHead: (_) async => null,
+      );
+      expect(forge.base?.source, BranchBaseSource.forgeDefault);
+      expect(forge.base?.displayName, 'develop');
 
-    final localMain = await resolveBranchBase(
-      refs: [_ref('refs/heads/main', _a), _ref('refs/heads/master', _b)],
-      remotes: const [],
-      currentBranch: 'master',
-      headOid: _b,
-      storedRefName: null,
-      forgeDefaultBranch: null,
-      resolveCommit: (_) async => null,
-      resolveRemoteHead: (_) async => null,
-    );
-    expect(localMain.base?.source, BranchBaseSource.localMain);
-    expect(localMain.base?.isFallback, isTrue);
+      final localMain = await resolveBranchBase(
+        refs: [_ref('refs/heads/main', _a), _ref('refs/heads/master', _b)],
+        remotes: const [],
+        currentBranch: 'master',
+        headOid: _b,
+        storedRefName: null,
+        forgeDefaultBranch: null,
+        resolveCommit: (_) async => null,
+        resolveRemoteHead: (_) async => null,
+      );
+      expect(localMain.base?.source, BranchBaseSource.localMain);
+      expect(localMain.base?.isFallback, isTrue);
 
-    final current = await resolveBranchBase(
-      refs: [_ref('refs/heads/work', _a)],
-      remotes: const [],
-      currentBranch: 'work',
-      headOid: _a,
-      storedRefName: null,
-      forgeDefaultBranch: null,
-      resolveCommit: (_) async => null,
-      resolveRemoteHead: (_) async => null,
-    );
-    expect(current.base?.source, BranchBaseSource.currentFallback);
-    expect(current.base?.isFallback, isTrue);
-  });
+      final current = await resolveBranchBase(
+        refs: [_ref('refs/heads/work', _a)],
+        remotes: const [],
+        currentBranch: 'work',
+        headOid: _a,
+        storedRefName: null,
+        forgeDefaultBranch: null,
+        resolveCommit: (_) async => null,
+        resolveRemoteHead: (_) async => null,
+      );
+      expect(current.base?.source, BranchBaseSource.currentFallback);
+      expect(current.base?.isFallback, isTrue);
+    },
+  );
 
-  test('automatic resolution never mutates a stored user base preference', () async {
-    // resolveBranchBase is pure: it reports unavailableStoredRef but never
-    // rewrites the caller's stored selection — only an explicit user choice
-    // (or Reset) may change preferences.
-    const stored = 'refs/heads/gone';
-    final result = await resolveBranchBase(
-      refs: [_ref('refs/heads/main', _a)],
-      remotes: const [],
-      currentBranch: 'main',
-      headOid: _a,
-      storedRefName: stored,
-      forgeDefaultBranch: null,
-      resolveCommit: (_) async => null,
-      resolveRemoteHead: (_) async => null,
-    );
-    expect(result.unavailableStoredRef, stored);
-    expect(result.base?.source, BranchBaseSource.localMain);
-    expect(result.base?.source, isNot(BranchBaseSource.user));
-  });
+  test(
+    'automatic resolution never mutates a stored user base preference',
+    () async {
+      // resolveBranchBase is pure: it reports unavailableStoredRef but never
+      // rewrites the caller's stored selection — only an explicit user choice
+      // (or Reset) may change preferences.
+      const stored = 'refs/heads/gone';
+      final result = await resolveBranchBase(
+        refs: [_ref('refs/heads/main', _a)],
+        remotes: const [],
+        currentBranch: 'main',
+        headOid: _a,
+        storedRefName: stored,
+        forgeDefaultBranch: null,
+        resolveCommit: (_) async => null,
+        resolveRemoteHead: (_) async => null,
+      );
+      expect(result.unavailableStoredRef, stored);
+      expect(result.base?.source, BranchBaseSource.localMain);
+      expect(result.base?.source, isNot(BranchBaseSource.user));
+    },
+  );
 
   test('Browse reads passive policy only; Review may populate it', () async {
     var policyFetches = 0;

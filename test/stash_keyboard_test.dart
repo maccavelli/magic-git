@@ -135,7 +135,11 @@ void main() {
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
-    expect(find.text('PATCH-B'), findsOneWidget, reason: '↓ moved to stash@{1}');
+    expect(
+      find.text('PATCH-B'),
+      findsOneWidget,
+      reason: '↓ moved to stash@{1}',
+    );
     expect(find.text('PATCH-A'), findsNothing);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);

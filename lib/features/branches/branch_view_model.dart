@@ -14,6 +14,7 @@ List<GitRef> shapePhase1ReviewBranches({
   required Map<String, BranchReviewSummary> summaries,
   required BranchReviewQuickFilter filter,
   required BranchReviewSort sort,
+
   /// Full ref names known to conflict after an explicit scan. Unscanned
   /// branches are never treated as clean (they simply fail this filter).
   Set<String> conflictRefNames = const {},
@@ -25,8 +26,9 @@ List<GitRef> shapePhase1ReviewBranches({
         BranchReviewQuickFilter.merged =>
           summaries[branch.name]?.mergedIntoBase ?? false,
         BranchReviewQuickFilter.stale => isBranchStale(branch),
-        BranchReviewQuickFilter.conflicts =>
-          conflictRefNames.contains(branch.name),
+        BranchReviewQuickFilter.conflicts => conflictRefNames.contains(
+          branch.name,
+        ),
       })
         branch,
   ];
@@ -195,6 +197,7 @@ class BranchViewModel {
     required Set<String> collapsedSections,
     required String filterLower,
     required bool showStale,
+
     /// Short names the user has hidden. Filtered out of every derived list
     /// unless [showHidden]; see [hiddenLocalCount] for the count to offer as
     /// a reveal affordance.
@@ -239,9 +242,7 @@ class BranchViewModel {
         : allLocalBranches.where((r) => hidden.contains(r.shortName)).toList();
     final visibleLocals = hiddenLocals.isEmpty
         ? allLocalBranches
-        : allLocalBranches
-              .where((r) => !hidden.contains(r.shortName))
-              .toList();
+        : allLocalBranches.where((r) => !hidden.contains(r.shortName)).toList();
     // The section header's denominator counts what is *showable*, not what
     // exists — otherwise "Local Branches (10 of 12)" would render ten rows
     // with no filter applied and no explanation for the missing two.

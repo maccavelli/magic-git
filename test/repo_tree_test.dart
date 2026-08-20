@@ -37,27 +37,30 @@ void main() {
     expect(index.untrackedDirs, contains('scratch'));
   });
 
-  test('RepoStatusOverlay colors dirs and synthesizes ? under untracked dirs', () {
-    final overlay = RepoStatusOverlay.fromStatus(
-      _status(const [
-        GitFileStatus(path: 'src/util/b.dart', statusX: '.', statusY: 'M'),
-        GitFileStatus(path: 'scratch/', statusX: '?', statusY: '?'),
-      ]),
-    );
+  test(
+    'RepoStatusOverlay colors dirs and synthesizes ? under untracked dirs',
+    () {
+      final overlay = RepoStatusOverlay.fromStatus(
+        _status(const [
+          GitFileStatus(path: 'src/util/b.dart', statusX: '.', statusY: 'M'),
+          GitFileStatus(path: 'scratch/', statusX: '?', statusY: '?'),
+        ]),
+      );
 
-    // Ancestors of a change are dirty; unrelated dirs are not.
-    expect(overlay.isDirtyDir('src'), isTrue);
-    expect(overlay.isDirtyDir('src/util'), isTrue);
-    expect(overlay.isDirtyDir('docs'), isFalse);
+      // Ancestors of a change are dirty; unrelated dirs are not.
+      expect(overlay.isDirtyDir('src'), isTrue);
+      expect(overlay.isDirtyDir('src/util'), isTrue);
+      expect(overlay.isDirtyDir('docs'), isFalse);
 
-    // A reported change keeps its exact status.
-    expect(overlay.statusFor('src/util/b.dart')?.isUnstaged, isTrue);
-    // Files beneath a collapsed untracked dir are synthesized as untracked...
-    expect(overlay.statusFor('scratch/a.txt')?.isUntracked, isTrue);
-    expect(overlay.statusFor('scratch/deep/b.txt')?.isUntracked, isTrue);
-    // ...while an unrelated clean file has no status.
-    expect(overlay.statusFor('src/clean.dart'), isNull);
-  });
+      // A reported change keeps its exact status.
+      expect(overlay.statusFor('src/util/b.dart')?.isUnstaged, isTrue);
+      // Files beneath a collapsed untracked dir are synthesized as untracked...
+      expect(overlay.statusFor('scratch/a.txt')?.isUntracked, isTrue);
+      expect(overlay.statusFor('scratch/deep/b.txt')?.isUntracked, isTrue);
+      // ...while an unrelated clean file has no status.
+      expect(overlay.statusFor('src/clean.dart'), isNull);
+    },
+  );
 
   test('buildRepoTree nests paths and collapses wholly-ignored dirs', () {
     final root = buildRepoTree(
@@ -96,70 +99,71 @@ void main() {
     expect(topFiles, isEmpty); // every top-level entry here is a directory
   });
 
-  test('structureSignature reacts to add/remove/rename but not content edits', () {
-    final clean = _status(const []);
-    // A pure modification doesn't change the tree's shape.
-    final edited = _status(const [
-      GitFileStatus(path: 'a.dart', statusX: '.', statusY: 'M'),
-    ]);
-    expect(structureSignature(edited), structureSignature(clean));
-
-    // Two different modifications still agree (both add no shape).
-    final edited2 = _status(const [
-      GitFileStatus(path: 'b.dart', statusX: '.', statusY: 'M'),
-    ]);
-    expect(structureSignature(edited2), structureSignature(edited));
-
-    // New untracked file, staged addition, and deletion each change the shape.
-    for (final f in const [
-      GitFileStatus(path: 'new.txt', statusX: '?', statusY: '?'),
-      GitFileStatus(path: 'x.dart', statusX: 'A', statusY: '.'),
-      GitFileStatus(path: 'x.dart', statusX: 'D', statusY: '.'),
-    ]) {
-      expect(
-        structureSignature(_status([f])),
-        isNot(structureSignature(clean)),
-        reason: 'status ${f.statusX}${f.statusY} ${f.path} should move the hash',
-      );
-    }
-
-    // A rename (with its old path) differs from the same new path added alone.
-    final renamed = _status(const [
-      GitFileStatus(
-        path: 'lib/new.dart',
-        oldPath: 'lib/old.dart',
-        statusX: 'R',
-        statusY: '.',
-      ),
-    ]);
-    final addedOnly = _status(const [
-      GitFileStatus(path: 'lib/new.dart', statusX: 'A', statusY: '.'),
-    ]);
-    expect(structureSignature(renamed), isNot(structureSignature(addedOnly)));
-  });
-
   test(
-    'two different partially-staged files must not collide '
-    '(regression: staged+unstaged double-counting an XY="AM" file used to '
-    'XOR-cancel its contribution to a fixed, path-independent value)',
+    'structureSignature reacts to add/remove/rename but not content edits',
     () {
-      // XY="AM" — staged as Added, then edited again in the worktree (an
-      // entirely ordinary `git add file; edit file further` workflow). This
-      // single GitFileStatus satisfies both isStaged and isUnstaged, so it
-      // appears in *both* status.staged and status.unstaged. Before the fix,
-      // every such status — regardless of the file's path — collapsed to the
-      // exact same signature: the duplicated key always self-cancels under
-      // XOR (acc = h ^ h = 0) while `count` always double-increments the same
-      // way, so any two different single-partially-staged-file statuses were
-      // indistinguishable, silently skipping a needed tree rebuild.
-      final a = _status(const [
-        GitFileStatus(path: 'a.dart', statusX: 'A', statusY: 'M'),
+      final clean = _status(const []);
+      // A pure modification doesn't change the tree's shape.
+      final edited = _status(const [
+        GitFileStatus(path: 'a.dart', statusX: '.', statusY: 'M'),
       ]);
-      final b = _status(const [
-        GitFileStatus(path: 'b.dart', statusX: 'A', statusY: 'M'),
+      expect(structureSignature(edited), structureSignature(clean));
+
+      // Two different modifications still agree (both add no shape).
+      final edited2 = _status(const [
+        GitFileStatus(path: 'b.dart', statusX: '.', statusY: 'M'),
       ]);
-      expect(structureSignature(a), isNot(structureSignature(b)));
-      expect(structureSignature(a), isNot(structureSignature(_status(const []))));
+      expect(structureSignature(edited2), structureSignature(edited));
+
+      // New untracked file, staged addition, and deletion each change the shape.
+      for (final f in const [
+        GitFileStatus(path: 'new.txt', statusX: '?', statusY: '?'),
+        GitFileStatus(path: 'x.dart', statusX: 'A', statusY: '.'),
+        GitFileStatus(path: 'x.dart', statusX: 'D', statusY: '.'),
+      ]) {
+        expect(
+          structureSignature(_status([f])),
+          isNot(structureSignature(clean)),
+          reason:
+              'status ${f.statusX}${f.statusY} ${f.path} should move the hash',
+        );
+      }
+
+      // A rename (with its old path) differs from the same new path added alone.
+      final renamed = _status(const [
+        GitFileStatus(
+          path: 'lib/new.dart',
+          oldPath: 'lib/old.dart',
+          statusX: 'R',
+          statusY: '.',
+        ),
+      ]);
+      final addedOnly = _status(const [
+        GitFileStatus(path: 'lib/new.dart', statusX: 'A', statusY: '.'),
+      ]);
+      expect(structureSignature(renamed), isNot(structureSignature(addedOnly)));
     },
   );
+
+  test('two different partially-staged files must not collide '
+      '(regression: staged+unstaged double-counting an XY="AM" file used to '
+      'XOR-cancel its contribution to a fixed, path-independent value)', () {
+    // XY="AM" — staged as Added, then edited again in the worktree (an
+    // entirely ordinary `git add file; edit file further` workflow). This
+    // single GitFileStatus satisfies both isStaged and isUnstaged, so it
+    // appears in *both* status.staged and status.unstaged. Before the fix,
+    // every such status — regardless of the file's path — collapsed to the
+    // exact same signature: the duplicated key always self-cancels under
+    // XOR (acc = h ^ h = 0) while `count` always double-increments the same
+    // way, so any two different single-partially-staged-file statuses were
+    // indistinguishable, silently skipping a needed tree rebuild.
+    final a = _status(const [
+      GitFileStatus(path: 'a.dart', statusX: 'A', statusY: 'M'),
+    ]);
+    final b = _status(const [
+      GitFileStatus(path: 'b.dart', statusX: 'A', statusY: 'M'),
+    ]);
+    expect(structureSignature(a), isNot(structureSignature(b)));
+    expect(structureSignature(a), isNot(structureSignature(_status(const []))));
+  });
 }

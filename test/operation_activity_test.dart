@@ -141,30 +141,33 @@ void main() {
     },
   );
 
-  test('a mutation queued behind another is acknowledged before it starts', () async {
-    final executor = LocalCommandExecutor();
-    final first = executor.execute(
-      repoPath: Directory.systemTemp.path,
-      gitArgs: ['sh', '-c', 'sleep 0.15'],
-      lane: ExecLane.exclusive,
-    );
-    final events = <OperationEvent>[];
-    final second = executor.execute(
-      repoPath: Directory.systemTemp.path,
-      gitArgs: ['sh', '-c', 'exit 0'],
-      lane: ExecLane.exclusive,
-      operation: _descriptor,
-      onOperationEvent: events.add,
-    );
+  test(
+    'a mutation queued behind another is acknowledged before it starts',
+    () async {
+      final executor = LocalCommandExecutor();
+      final first = executor.execute(
+        repoPath: Directory.systemTemp.path,
+        gitArgs: ['sh', '-c', 'sleep 0.15'],
+        lane: ExecLane.exclusive,
+      );
+      final events = <OperationEvent>[];
+      final second = executor.execute(
+        repoPath: Directory.systemTemp.path,
+        gitArgs: ['sh', '-c', 'exit 0'],
+        lane: ExecLane.exclusive,
+        operation: _descriptor,
+        onOperationEvent: events.add,
+      );
 
-    expect(events.map((event) => event.phase), [OperationPhase.queued]);
-    await Future.wait([first, second]);
-    expect(
-      events.where((event) => event.phase == OperationPhase.running),
-      hasLength(1),
-    );
-    expect(events.last.phase, OperationPhase.succeeded);
-  });
+      expect(events.map((event) => event.phase), [OperationPhase.queued]);
+      await Future.wait([first, second]);
+      expect(
+        events.where((event) => event.phase == OperationPhase.running),
+        hasLength(1),
+      );
+      expect(events.last.phase, OperationPhase.succeeded);
+    },
+  );
 
   test('background visibility is omitted from the visible notifier', () {
     final container = ProviderContainer();

@@ -12,16 +12,15 @@ void main() {
     Stream<RepoWatchEvent> fastLifecycle({
       required Future<WatchArm> Function(WatchHooks) arm,
       int maxRestarts = 3,
-    }) =>
-        watchLifecycle(
-          arm: arm,
-          trailing: Duration.zero,
-          maxWait: const Duration(milliseconds: 10),
-          minInterval: Duration.zero,
-          pollInterval: const Duration(days: 1),
-          recoveryInterval: const Duration(days: 1),
-          maxRestarts: maxRestarts,
-        );
+    }) => watchLifecycle(
+      arm: arm,
+      trailing: Duration.zero,
+      maxWait: const Duration(milliseconds: 10),
+      minInterval: Duration.zero,
+      pollInterval: const Duration(days: 1),
+      recoveryInterval: const Duration(days: 1),
+      maxRestarts: maxRestarts,
+    );
 
     test('successful arm emits an immediate eventDriven tick', () {
       fakeAsync((async) {

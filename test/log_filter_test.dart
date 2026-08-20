@@ -21,11 +21,7 @@ void main() {
   test('each key fills its own field, and aliases agree', () {
     expect(
       parseLogFilter('author:mac file:lib/core/ after:2026-01-01'),
-      const LogFilter(
-        author: 'mac',
-        path: 'lib/core/',
-        since: '2026-01-01',
-      ),
+      const LogFilter(author: 'mac', path: 'lib/core/', since: '2026-01-01'),
     );
     // path:/since:/until:/commit: are the aliases of file:/after:/before:/sha:
     expect(
@@ -65,7 +61,10 @@ void main() {
       parseLogFilter('fix: history window'),
       const LogFilter(message: 'fix: history window'),
     );
-    expect(parseLogFilter('feat(history): zoom').message, 'feat(history): zoom');
+    expect(
+      parseLogFilter('feat(history): zoom').message,
+      'feat(history): zoom',
+    );
   });
 
   test('a key with no value yet narrows NOTHING — typing must not blank the '
@@ -83,10 +82,7 @@ void main() {
     // users actually type. The old grammar silently demoted BOTH tokens to
     // message text, so the search looked applied and found nothing — the
     // original "history search is completely broken" report.
-    expect(
-      parseLogFilter('author: samuel'),
-      const LogFilter(author: 'samuel'),
-    );
+    expect(parseLogFilter('author: samuel'), const LogFilter(author: 'samuel'));
     expect(parseLogFilter('sha: 14791'), const LogFilter(sha: '14791'));
     expect(
       parseLogFilter('author: "Mac Smith"'),
@@ -94,18 +90,11 @@ void main() {
     );
     expect(
       parseLogFilter('rename author: mac after: 2026-01-01'),
-      const LogFilter(
-        message: 'rename',
-        author: 'mac',
-        since: '2026-01-01',
-      ),
+      const LogFilter(message: 'rename', author: 'mac', since: '2026-01-01'),
     );
     // …but never at the cost of eating a real term: a recognized key:value
     // following a valueless key stays a term, and the dangling key is dropped.
-    expect(
-      parseLogFilter('author: file:lib'),
-      const LogFilter(path: 'lib'),
-    );
+    expect(parseLogFilter('author: file:lib'), const LogFilter(path: 'lib'));
   });
 
   test('a repeated key keeps the last value', () {

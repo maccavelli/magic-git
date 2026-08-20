@@ -33,10 +33,13 @@ void main() {
     await run(['git', 'add', '--all']);
     await run([
       'git',
-      '-c', 'user.name=Fixture',
-      '-c', 'user.email=fixture@example.com',
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.com',
       'commit',
-      '-m', subject,
+      '-m',
+      subject,
     ]);
   }
 
@@ -56,39 +59,48 @@ void main() {
     await run(['git', 'checkout', 'main']);
     await run([
       'git',
-      '-c', 'user.name=Fixture',
-      '-c', 'user.email=fixture@example.com',
-      'merge', '--no-ff', 'side', '-m', 'merge side',
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.com',
+      'merge',
+      '--no-ff',
+      'side',
+      '-m',
+      'merge side',
     ]);
   });
 
   tearDownAll(() => repo.deleteSync(recursive: true));
 
-  test('pages stitch into exactly the walk one deep log would have produced',
-      () async {
-    // The invariant the whole paging design rests on. If this ever fails,
-    // History is showing a list git never actually produced.
-    final whole = await git.log(repo.path, maxCount: 100);
-    expect(whole.length, greaterThan(12), reason: 'sanity: the fixture is deep');
-
-    const pageSize = 4;
-    final paged = <GitCommit>[];
-    for (var skip = 0; skip < whole.length; skip += pageSize) {
-      final page = await git.log(
-        repo.path,
-        maxCount: pageSize,
-        skip: skip,
+  test(
+    'pages stitch into exactly the walk one deep log would have produced',
+    () async {
+      // The invariant the whole paging design rests on. If this ever fails,
+      // History is showing a list git never actually produced.
+      final whole = await git.log(repo.path, maxCount: 100);
+      expect(
+        whole.length,
+        greaterThan(12),
+        reason: 'sanity: the fixture is deep',
       );
-      paged.addAll(page);
-    }
 
-    expect(
-      [for (final c in paged) c.hash],
-      [for (final c in whole) c.hash],
-      reason: 'a stitched sequence of --skip pages must equal the single walk, '
-          'in the same topological order',
-    );
-  });
+      const pageSize = 4;
+      final paged = <GitCommit>[];
+      for (var skip = 0; skip < whole.length; skip += pageSize) {
+        final page = await git.log(repo.path, maxCount: pageSize, skip: skip);
+        paged.addAll(page);
+      }
+
+      expect(
+        [for (final c in paged) c.hash],
+        [for (final c in whole) c.hash],
+        reason:
+            'a stitched sequence of --skip pages must equal the single walk, '
+            'in the same topological order',
+      );
+    },
+  );
 
   test('a page past the end is empty, not an error', () async {
     // How the panel learns the history ran out: a short page, not a failure.
@@ -96,18 +108,20 @@ void main() {
     expect(page, isEmpty);
   });
 
-  test('skip composes with a filter — it offsets the MATCHES, not the walk',
-      () async {
-    // Paging a filtered History (`author:`, `sha:`, a path…) skips within the
-    // filtered result. If --skip counted raw commits instead, page two of a
-    // search would silently drop matches.
-    final all = await git.log(repo.path, maxCount: 100, grep: 'c');
-    expect(all.length, greaterThan(4));
+  test(
+    'skip composes with a filter — it offsets the MATCHES, not the walk',
+    () async {
+      // Paging a filtered History (`author:`, `sha:`, a path…) skips within the
+      // filtered result. If --skip counted raw commits instead, page two of a
+      // search would silently drop matches.
+      final all = await git.log(repo.path, maxCount: 100, grep: 'c');
+      expect(all.length, greaterThan(4));
 
-    final second = await git.log(repo.path, maxCount: 2, skip: 2, grep: 'c');
-    expect(
-      [for (final c in second) c.hash],
-      [for (final c in all.skip(2).take(2)) c.hash],
-    );
-  });
+      final second = await git.log(repo.path, maxCount: 2, skip: 2, grep: 'c');
+      expect(
+        [for (final c in second) c.hash],
+        [for (final c in all.skip(2).take(2)) c.hash],
+      );
+    },
+  );
 }

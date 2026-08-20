@@ -14,7 +14,10 @@ void main() {
       expect(forgeBranchNameForCreateSeed('refs/remotes/origin/main'), 'main');
       expect(forgeBranchNameForCreateSeed('origin/main'), 'main');
       expect(forgeBranchNameForCreateSeed('refs/tags/v1'), isNull);
-      expect(forgeBranchNameForCreateSeed('refs/remotes/upstream/main'), isNull);
+      expect(
+        forgeBranchNameForCreateSeed('refs/remotes/upstream/main'),
+        isNull,
+      );
       expect(
         forgeBranchNameForCreateSeed(
           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',

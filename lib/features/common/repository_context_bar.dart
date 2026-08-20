@@ -155,9 +155,7 @@ class RepositoryContextBar extends StatelessWidget {
                   const SizedBox(width: 4),
                   _CompactMetadata(
                     snapshot: snapshot,
-                    showStatus: slotVisible(
-                      WorkspaceToolbarSlot.statusSummary,
-                    ),
+                    showStatus: slotVisible(WorkspaceToolbarSlot.statusSummary),
                     showConnection: slotVisible(
                       WorkspaceToolbarSlot.linkStatus,
                     ),

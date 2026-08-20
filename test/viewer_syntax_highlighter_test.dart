@@ -5,9 +5,8 @@ import 'package:remote_magic_git/features/viewer/syntax_highlighter.dart';
 String _source(HighlightedLines doc) => doc.lines.map((l) => l.text).join('\n');
 
 // Whether every run in the document is un-scoped (plain text).
-bool _allPlain(HighlightedLines doc) => doc.lines.every(
-      (l) => l.runScopeIds.every((id) => id < 0),
-    );
+bool _allPlain(HighlightedLines doc) =>
+    doc.lines.every((l) => l.runScopeIds.every((id) => id < 0));
 
 void main() {
   group('plainDoc', () {
@@ -67,7 +66,10 @@ void main() {
     });
 
     test('unknown language falls back to plain (no scopes)', () {
-      expect(_allPlain(highlightDoc('anything at all\n', 'no-such-lang')), isTrue);
+      expect(
+        _allPlain(highlightDoc('anything at all\n', 'no-such-lang')),
+        isTrue,
+      );
     });
 
     test('null language is plain text', () {
@@ -90,7 +92,9 @@ void main() {
         expect(line.runStarts.length, line.runCount + 1);
         final rebuilt = StringBuffer();
         for (var k = 0; k < line.runCount; k++) {
-          rebuilt.write(line.text.substring(line.runStarts[k], line.runStarts[k + 1]));
+          rebuilt.write(
+            line.text.substring(line.runStarts[k], line.runStarts[k + 1]),
+          );
         }
         expect(rebuilt.toString(), line.text);
       }

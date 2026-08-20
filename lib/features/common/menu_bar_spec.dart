@@ -73,8 +73,7 @@ class MenuBarItem {
     'modifiers': modifiers,
     'destructive': destructive,
     'separator': separator,
-    if (items.isNotEmpty)
-      'items': [for (final item in items) item.toChannel()],
+    if (items.isNotEmpty) 'items': [for (final item in items) item.toChannel()],
   };
 
   /// Every command id in this item's subtree.

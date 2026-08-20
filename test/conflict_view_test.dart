@@ -35,9 +35,7 @@ Future<void> _pump(WidgetTester tester, String content) async {
     MacosApp(
       debugShowCheckedModeBanner: false,
       home: MacosWindow(
-        child: ContentArea(
-          builder: (_, _) => ConflictView(content: content),
-        ),
+        child: ContentArea(builder: (_, _) => ConflictView(content: content)),
       ),
     ),
   );

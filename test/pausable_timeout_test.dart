@@ -31,7 +31,12 @@ void main() {
         completer.future,
         const Duration(seconds: 10),
         isPaused: () => false,
-      ).then((_) {}, onError: (Object e) { error = e; });
+      ).then(
+        (_) {},
+        onError: (Object e) {
+          error = e;
+        },
+      );
 
       completer.completeError(Exception('boom'));
       async.flushMicrotasks();
@@ -48,7 +53,12 @@ void main() {
         completer.future,
         const Duration(seconds: 10),
         isPaused: () => false,
-      ).then((_) {}, onError: (Object e) { error = e; });
+      ).then(
+        (_) {},
+        onError: (Object e) {
+          error = e;
+        },
+      );
 
       async.elapse(const Duration(seconds: 10));
       expect(error, isA<TimeoutException>());
@@ -66,7 +76,12 @@ void main() {
           completer.future,
           const Duration(seconds: 10),
           isPaused: () => paused,
-        ).then((_) {}, onError: (Object e) { error = e; });
+        ).then(
+          (_) {},
+          onError: (Object e) {
+            error = e;
+          },
+        );
 
         // Well past the raw timeout, but paused the whole time — a human is
         // still reading the host-key prompt.

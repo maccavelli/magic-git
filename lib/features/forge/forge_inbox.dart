@@ -46,10 +46,7 @@ class ForgeInboxEntry {
 /// appended pin/snooze buttons.
 Widget? forgeCombineTrailing(Widget? own, List<Widget> extras) {
   if (extras.isEmpty) return own;
-  return Row(
-    mainAxisSize: MainAxisSize.min,
-    children: [?own, ...extras],
-  );
+  return Row(mainAxisSize: MainAxisSize.min, children: [?own, ...extras]);
 }
 
 /// The Inbox | Browse mode switch: a compact two-segment pill. Hand-built on

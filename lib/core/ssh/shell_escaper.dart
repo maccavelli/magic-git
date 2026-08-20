@@ -18,9 +18,7 @@ class ShellEscaper {
 
   static String escape(String input) {
     if (input.contains(_nulByte)) {
-      throw ArgumentError(
-        'cannot shell-escape a string containing a NUL byte',
-      );
+      throw ArgumentError('cannot shell-escape a string containing a NUL byte');
     }
     return "'${input.replaceAll("'", "'\\''")}'";
   }

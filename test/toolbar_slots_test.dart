@@ -147,10 +147,7 @@ void main() {
     ) async {
       await _pump(
         tester,
-        slots: const {
-          WorkspaceToolbarSlot.stash,
-          WorkspaceToolbarSlot.refresh,
-        },
+        slots: const {WorkspaceToolbarSlot.stash, WorkspaceToolbarSlot.refresh},
       );
 
       expect(find.text('Fetch'), findsNothing, reason: 'the group is hidden');

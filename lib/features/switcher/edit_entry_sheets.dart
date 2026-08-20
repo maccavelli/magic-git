@@ -173,8 +173,10 @@ class _EditConnectionSheetState extends State<EditConnectionSheet> {
                     _field(
                       'Label',
                       _label,
-                      placeholder: '${widget.conn.username}@${widget.conn.host}',
-                      hint: 'Shown in the Connections list; falls back to '
+                      placeholder:
+                          '${widget.conn.username}@${widget.conn.host}',
+                      hint:
+                          'Shown in the Connections list; falls back to '
                           'user@host when empty.',
                     ),
                     _field('Host', _host, placeholder: 'gitlab.example.com'),

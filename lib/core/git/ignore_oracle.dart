@@ -136,8 +136,6 @@ class GitIgnoreOracle {
   static List<String> _ancestorsOf(String path) {
     final parts = path.split('/');
     if (parts.length < 2) return const [];
-    return [
-      for (var i = 1; i < parts.length; i++) parts.take(i).join('/'),
-    ];
+    return [for (var i = 1; i < parts.length; i++) parts.take(i).join('/')];
   }
 }

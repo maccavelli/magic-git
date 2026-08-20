@@ -77,14 +77,15 @@ void main() {
       final rows = buildPatchRows(
         patch,
         blobs: {0: blobOf(40)},
-        expansions: {
-          const ExpandRequest(0, 0): const GapExpansion(fromTop: 3),
-        },
+        expansions: {const ExpandRequest(0, 0): const GapExpansion(fromTop: 3)},
       );
       final texts = textsOf(rows);
       // The gap runs 1..16; revealing 3 from the top gives lines 1,2,3 — as
       // CONTEXT rows (leading space), because that's what they are.
-      expect(texts, containsAllInOrder([' line 1', ' line 2', ' line 3', '⋯13']));
+      expect(
+        texts,
+        containsAllInOrder([' line 1', ' line 2', ' line 3', '⋯13']),
+      );
     });
 
     test('expanding up reveals the lines immediately above the hunk', () {
@@ -101,7 +102,12 @@ void main() {
       // directly above the @@ header. Off-by-one here would show 14/15.
       expect(
         texts,
-        containsAllInOrder(['⋯14', ' line 15', ' line 16', '@@ -17,7 +17,7 @@']),
+        containsAllInOrder([
+          '⋯14',
+          ' line 15',
+          ' line 16',
+          '@@ -17,7 +17,7 @@',
+        ]),
       );
     });
 
@@ -160,17 +166,19 @@ void main() {
 
     test('an ordinary gap opens in one click; a huge one is walked', () {
       final patch = parseCommitPatch(_patch);
-      final small = buildPatchRows(patch, blobs: {0: blobOf(40)})
-          .whereType<ExpanderRow>()
-          .first;
+      final small = buildPatchRows(
+        patch,
+        blobs: {0: blobOf(40)},
+      ).whereType<ExpanderRow>().first;
       expect(small.hiddenLines, 16);
       expect(small.expandsAll, isTrue);
       expect(small.direction, ExpandDirection.all);
 
       // Same patch against a 5000-line file → the trailing gap is enormous.
-      final big = buildPatchRows(patch, blobs: {0: blobOf(5000)})
-          .whereType<ExpanderRow>()
-          .last;
+      final big = buildPatchRows(
+        patch,
+        blobs: {0: blobOf(5000)},
+      ).whereType<ExpanderRow>().last;
       expect(big.hiddenLines, greaterThan(kExpandAllMaxLines));
       expect(
         big.expandsAll,
@@ -258,9 +266,7 @@ void main() {
       final rows = buildPatchRows(
         parseCommitPatch(_patch),
         blobs: {0: blobOf(40)},
-        expansions: {
-          const ExpandRequest(0, 0): const GapExpansion(fromTop: 6),
-        },
+        expansions: {const ExpandRequest(0, 0): const GapExpansion(fromTop: 6)},
       );
       expect(rows.whereType<CollapseRow>().single.revealedLines, 6);
       expect(rows.whereType<ExpanderRow>().first.hiddenLines, 10);

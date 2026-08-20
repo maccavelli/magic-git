@@ -58,7 +58,9 @@ void main() {
     expect(find.text('boom'), findsNothing);
   });
 
-  testWidgets('Escape cancels a confirm dialog (returns false)', (tester) async {
+  testWidgets('Escape cancels a confirm dialog (returns false)', (
+    tester,
+  ) async {
     bool? result;
     await _host(tester, (context) async {
       result = await confirmAction(

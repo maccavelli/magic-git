@@ -21,10 +21,7 @@ void main() {
     final real = Directory('${base.path}/real')..createSync();
     Link('${base.path}/alias').createSync(real.path);
 
-    expect(
-      canonicalPath('${base.path}/alias'),
-      canonicalPath(real.path),
-    );
+    expect(canonicalPath('${base.path}/alias'), canonicalPath(real.path));
   });
 
   test('canonicalPath passes a nonexistent (e.g. remote) path through', () {

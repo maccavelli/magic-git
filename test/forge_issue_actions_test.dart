@@ -85,8 +85,7 @@ final _remoteRefs = [
   ),
 ];
 
-GitStatus _clean() =>
-    GitStatus(branch: const GitBranchInfo(), files: const []);
+GitStatus _clean() => GitStatus(branch: const GitBranchInfo(), files: const []);
 
 Future<void> _pumpGithub(WidgetTester tester, {required GhService gh}) async {
   final container = ProviderContainer(

@@ -18,17 +18,14 @@ class _TextGit extends GitService {
   final String _text;
   final String _base64;
   _TextGit(this._text, [this._base64 = ''])
-      : super(SSHCommandExecutor(SSHClientManager()));
+    : super(SSHCommandExecutor(SSHClientManager()));
 
   @override
   Future<String> readFile(String repoPath, String path) async => _text;
 
   @override
-  Future<String> readFileBase64(String repoPath, String path) async =>
-      _base64;
+  Future<String> readFileBase64(String repoPath, String path) async => _base64;
 }
-
-
 
 /// Keeps an autoDispose provider alive across an async read and returns its
 /// value. Mirrors the pattern in test/viewer_latin1_fallback_test.dart.
@@ -38,9 +35,9 @@ Future<FileContent> _readFileContent(
   String base64 = '',
 }) async {
   final git = _TextGit(text, base64);
-  final container = ProviderContainer(overrides: [
-    gitServiceProvider.overrideWithValue(git),
-  ]);
+  final container = ProviderContainer(
+    overrides: [gitServiceProvider.overrideWithValue(git)],
+  );
   addTearDown(container.dispose);
   final sub = container.listen(fileContentProvider(key), (_, _) {});
   addTearDown(sub.close);
@@ -53,9 +50,9 @@ Future<Uint8List> _readFileBytes(
   required String base64,
 }) async {
   final git = _TextGit('', base64);
-  final container = ProviderContainer(overrides: [
-    gitServiceProvider.overrideWithValue(git),
-  ]);
+  final container = ProviderContainer(
+    overrides: [gitServiceProvider.overrideWithValue(git)],
+  );
   addTearDown(container.dispose);
   final sub = container.listen(fileBytesProvider(key), (_, _) {});
   addTearDown(sub.close);
@@ -131,8 +128,9 @@ void main() {
     test('open adds viewer and returns id', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      final id =
-          container.read(openFileViewersProvider.notifier).open(_repo, _path);
+      final id = container
+          .read(openFileViewersProvider.notifier)
+          .open(_repo, _path);
       final viewers = container.read(openFileViewersProvider);
       expect(viewers.length, 1);
       expect(viewers[0].id, id);
@@ -143,10 +141,12 @@ void main() {
     test('open with same path returns existing id and focuses', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      final first =
-          container.read(openFileViewersProvider.notifier).open(_repo, _path);
-      final second =
-          container.read(openFileViewersProvider.notifier).open(_repo, _path);
+      final first = container
+          .read(openFileViewersProvider.notifier)
+          .open(_repo, _path);
+      final second = container
+          .read(openFileViewersProvider.notifier)
+          .open(_repo, _path);
       expect(second, first);
       expect(container.read(openFileViewersProvider).length, 1);
     });
@@ -154,8 +154,9 @@ void main() {
     test('close removes viewer by id', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      final id =
-          container.read(openFileViewersProvider.notifier).open(_repo, _path);
+      final id = container
+          .read(openFileViewersProvider.notifier)
+          .open(_repo, _path);
       container.read(openFileViewersProvider.notifier).close(id);
       expect(container.read(openFileViewersProvider), isEmpty);
     });
@@ -171,8 +172,9 @@ void main() {
     test('focus brings viewer to front', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      final id1 =
-          container.read(openFileViewersProvider.notifier).open(_repo, 'a.txt');
+      final id1 = container
+          .read(openFileViewersProvider.notifier)
+          .open(_repo, 'a.txt');
       container.read(openFileViewersProvider.notifier).open(_repo, 'b.txt');
       container.read(openFileViewersProvider.notifier).focus(id1);
       final viewers = container.read(openFileViewersProvider);
@@ -182,8 +184,9 @@ void main() {
     test('focus on already-front viewer is no-op', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      final id1 =
-          container.read(openFileViewersProvider.notifier).open(_repo, 'a.txt');
+      final id1 = container
+          .read(openFileViewersProvider.notifier)
+          .open(_repo, 'a.txt');
       container.read(openFileViewersProvider.notifier).open(_repo, 'b.txt');
       container.read(openFileViewersProvider.notifier).focus(id1);
       final before = container.read(openFileViewersProvider);
@@ -203,29 +206,31 @@ void main() {
     test('ids increment across opens', () {
       final container = ProviderContainer();
       addTearDown(container.dispose);
-      final id1 =
-          container.read(openFileViewersProvider.notifier).open(_repo, 'a.txt');
-      final id2 =
-          container.read(openFileViewersProvider.notifier).open(_repo, 'b.txt');
+      final id1 = container
+          .read(openFileViewersProvider.notifier)
+          .open(_repo, 'a.txt');
+      final id2 = container
+          .read(openFileViewersProvider.notifier)
+          .open(_repo, 'b.txt');
       expect(id2, greaterThan(id1));
     });
   });
 
   group('fileContentProvider', () {
     test('returns classified text content on success', () async {
-      final content = await _readFileContent(
-        (_repo, _path),
-        text: 'hello world',
-      );
+      final content = await _readFileContent((
+        _repo,
+        _path,
+      ), text: 'hello world');
       expect(content.isText, isTrue);
       expect(content.text, contains('hello world'));
     });
 
     test('classifies binary content with NUL byte', () async {
-      final content = await _readFileContent(
-        (_repo, _path),
-        text: 'text\u0000more',
-      );
+      final content = await _readFileContent((
+        _repo,
+        _path,
+      ), text: 'text\u0000more');
       expect(content.kind, FileContentKind.binary);
     });
 
@@ -233,25 +238,15 @@ void main() {
       final big = String.fromCharCodes(
         List.filled(FileContent.maxRenderChars + 1, 0x78),
       );
-      final content = await _readFileContent(
-        (_repo, _path),
-        text: big,
-      );
+      final content = await _readFileContent((_repo, _path), text: big);
       expect(content.kind, FileContentKind.tooLarge);
     });
-
-
   });
 
   group('fileBytesProvider', () {
     test('decodes base64 from readFileBase64', () async {
-      final bytes = await _readFileBytes(
-        (_repo, _path),
-        base64: 'aGVsbG8=',
-      );
+      final bytes = await _readFileBytes((_repo, _path), base64: 'aGVsbG8=');
       expect(bytes, [104, 101, 108, 108, 111]);
     });
-
-
   });
 }

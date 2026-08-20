@@ -203,46 +203,43 @@ void main() {
   });
 
   group('context menu appearance', () {
-    testWidgets('menu opens, keyboard-dismisses, and shows items in light theme', (
-      tester,
-    ) async {
-      final menu = ContextMenuOverlay();
-      addTearDown(menu.dispose);
-      await tester.pumpWidget(
-        MacosApp(
-          theme: MacosThemeData.light(),
-          home: MacosWindow(
-            child: Builder(
-              builder: (context) {
-                return Center(
-                  child: GestureDetector(
-                    onTap: () {
-                      menu.show(
-                        context,
-                        const Offset(40, 40),
-                        [
+    testWidgets(
+      'menu opens, keyboard-dismisses, and shows items in light theme',
+      (tester) async {
+        final menu = ContextMenuOverlay();
+        addTearDown(menu.dispose);
+        await tester.pumpWidget(
+          MacosApp(
+            theme: MacosThemeData.light(),
+            home: MacosWindow(
+              child: Builder(
+                builder: (context) {
+                  return Center(
+                    child: GestureDetector(
+                      onTap: () {
+                        menu.show(context, const Offset(40, 40), [
                           ContextMenuItem(
                             icon: CupertinoIcons.star,
                             label: 'Pin',
                             onTap: () {},
                           ),
-                        ],
-                      );
-                    },
-                    child: const Text('Open menu'),
-                  ),
-                );
-              },
+                        ]);
+                      },
+                      child: const Text('Open menu'),
+                    ),
+                  );
+                },
+              ),
             ),
           ),
-        ),
-      );
-      await tester.tap(find.text('Open menu'));
-      await tester.pumpAndSettle();
-      expect(find.text('Pin'), findsOneWidget);
-      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await tester.pumpAndSettle();
-      expect(find.text('Pin'), findsNothing);
-    });
+        );
+        await tester.tap(find.text('Open menu'));
+        await tester.pumpAndSettle();
+        expect(find.text('Pin'), findsOneWidget);
+        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        await tester.pumpAndSettle();
+        expect(find.text('Pin'), findsNothing);
+      },
+    );
   });
 }

@@ -38,24 +38,27 @@ void main() {
     expect(access.holdCount('/repo'), 0);
   });
 
-  test('concurrent holders on the same path release only on the last', () async {
-    // Two saved repos, different bookmark data, same resolved folder.
-    access = make({'bmA': '/shared', 'bmB': '/shared'});
-    await access.acquire('bmA');
-    await access.acquire('bmB');
-    expect(access.holdCount('/shared'), 2);
-    expect(starts, ['bmA', 'bmB']); // native start is idempotent (last-wins)
+  test(
+    'concurrent holders on the same path release only on the last',
+    () async {
+      // Two saved repos, different bookmark data, same resolved folder.
+      access = make({'bmA': '/shared', 'bmB': '/shared'});
+      await access.acquire('bmA');
+      await access.acquire('bmB');
+      expect(access.holdCount('/shared'), 2);
+      expect(starts, ['bmA', 'bmB']); // native start is idempotent (last-wins)
 
-    // First tab closes — access must stay alive for the second.
-    await access.release('/shared');
-    expect(stops, isEmpty, reason: 'the other tab still holds the folder');
-    expect(access.holdCount('/shared'), 1);
+      // First tab closes — access must stay alive for the second.
+      await access.release('/shared');
+      expect(stops, isEmpty, reason: 'the other tab still holds the folder');
+      expect(access.holdCount('/shared'), 1);
 
-    // Last tab closes — now the grant is released exactly once.
-    await access.release('/shared');
-    expect(stops, ['/shared']);
-    expect(access.holdCount('/shared'), 0);
-  });
+      // Last tab closes — now the grant is released exactly once.
+      await access.release('/shared');
+      expect(stops, ['/shared']);
+      expect(access.holdCount('/shared'), 0);
+    },
+  );
 
   test('a failed resolve does not increment the count', () async {
     access = make({'bad': null});

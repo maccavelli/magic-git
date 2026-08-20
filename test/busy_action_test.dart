@@ -53,7 +53,8 @@ void main() {
     expect(
       host.refreshes,
       1,
-      reason: 'a thrown GitException is how a conflict is signaled — the '
+      reason:
+          'a thrown GitException is how a conflict is signaled — the '
           'in-progress state must land on screen now, not on some later '
           'unrelated refresh',
     );
@@ -97,7 +98,8 @@ void main() {
     expect(
       host.refreshes,
       0,
-      reason: 'refreshAfterAction touches ref, which throws after disposal — '
+      reason:
+          'refreshAfterAction touches ref, which throws after disposal — '
           'the worktrees copy of this runner had exactly that bug',
     );
   });

@@ -99,8 +99,11 @@ void main() {
       final stub =
           container.read(connectionProvider.notifier) as _StubConnection;
 
-      expect(container.read(activeExecutorProvider), same(ssh),
-          reason: 'default backend is ssh');
+      expect(
+        container.read(activeExecutorProvider),
+        same(ssh),
+        reason: 'default backend is ssh',
+      );
       stub.force(
         const ConnectionState(
           phase: ConnectionPhase.connected,

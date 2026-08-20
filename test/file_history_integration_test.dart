@@ -36,10 +36,13 @@ void main() {
     await run(['git', 'add', '--all']);
     await run([
       'git',
-      '-c', 'user.name=Fixture',
-      '-c', 'user.email=fixture@example.com',
+      '-c',
+      'user.name=Fixture',
+      '-c',
+      'user.email=fixture@example.com',
       'commit',
-      '-m', subject,
+      '-m',
+      subject,
     ]);
   }
 
@@ -59,8 +62,7 @@ void main() {
 
   tearDownAll(() => repo.deleteSync(recursive: true));
 
-  test('the walk crosses the rename and carries the per-commit path',
-      () async {
+  test('the walk crosses the rename and carries the per-commit path', () async {
     final entries = await git.fileHistory(repo.path, 'new_name.txt');
     expect(
       [for (final e in entries) e.commit.subject],
@@ -84,16 +86,20 @@ void main() {
   test('scoping a pre-rename commit by its own name yields a real diff — '
       'and by the current name, nothing at all', () async {
     final entries = await git.fileHistory(repo.path, 'new_name.txt');
-    final preRename =
-        entries.singleWhere((e) => e.commit.subject == 'edit old_name');
+    final preRename = entries.singleWhere(
+      (e) => e.commit.subject == 'edit old_name',
+    );
 
     final scopedRight = await git.showCommit(
       repo.path,
       preRename.commit.hash,
       path: preRename.pathAtCommit,
     );
-    expect(scopedRight, contains('+b'),
-        reason: 'the edit is visible under the old name');
+    expect(
+      scopedRight,
+      contains('+b'),
+      reason: 'the edit is visible under the old name',
+    );
 
     // The pre-fix behavior, pinned as the failure it is: the current name
     // produces the commit header with NO patch — the silently blank pane.
@@ -131,11 +137,15 @@ void main() {
     expect(
       range.any((c) => c.hash == target.hash),
       isTrue,
-      reason: 'parent..HEAD contains the commit exactly when HEAD descends '
+      reason:
+          'parent..HEAD contains the commit exactly when HEAD descends '
           'from it — the membership test doubles as the ancestry test',
     );
-    expect(range.length, head.length - 1,
-        reason: 'exactly the commits the rebase would rewrite');
+    expect(
+      range.length,
+      head.length - 1,
+      reason: 'exactly the commits the rebase would rewrite',
+    );
 
     // A side branch's commit is not in parent..HEAD.
     await run(['git', 'checkout', '-b', 'side', deepest.hash]);

@@ -37,7 +37,10 @@ void main() {
 
   group('diffLineColor', () {
     test('hunk headers are teal', () {
-      expect(diffLineColor('@@ -1,3 +1,3 @@', _default), MacosColors.systemTealColor);
+      expect(
+        diffLineColor('@@ -1,3 +1,3 @@', _default),
+        MacosColors.systemTealColor,
+      );
     });
 
     test('file-header lines are gray', () {
@@ -64,11 +67,17 @@ void main() {
       expect(diffLineColor('-removed', _default), MacosColors.systemRedColor);
     });
 
-    test('context, no-newline marker, and blank lines use the default color', () {
-      expect(diffLineColor(' context', _default), _default);
-      expect(diffLineColor(r'\ No newline at end of file', _default), _default);
-      expect(diffLineColor('', _default), _default);
-    });
+    test(
+      'context, no-newline marker, and blank lines use the default color',
+      () {
+        expect(diffLineColor(' context', _default), _default);
+        expect(
+          diffLineColor(r'\ No newline at end of file', _default),
+          _default,
+        );
+        expect(diffLineColor('', _default), _default);
+      },
+    );
   });
 
   group('DiffView widget', () {
@@ -79,11 +88,7 @@ void main() {
       await tester.pumpWidget(
         const MacosApp(
           debugShowCheckedModeBanner: false,
-          home: SizedBox(
-            width: 400,
-            height: 300,
-            child: DiffView(diff: diff),
-          ),
+          home: SizedBox(width: 400, height: 300, child: DiffView(diff: diff)),
         ),
       );
       await tester.pumpAndSettle();
@@ -103,29 +108,30 @@ void main() {
       expect(horizontal, hasLength(1));
     });
 
-    testWidgets('no-wrap makes long lines horizontally scrollable to their end', (
-      tester,
-    ) async {
-      final diff = '@@ -1,1 +1,1 @@\n+${'x' * 400}\n';
-      await tester.pumpWidget(
-        MacosApp(
-          debugShowCheckedModeBanner: false,
-          home: Center(
-            child: SizedBox(
-              width: 200,
-              height: 300,
-              child: DiffView(diff: diff),
+    testWidgets(
+      'no-wrap makes long lines horizontally scrollable to their end',
+      (tester) async {
+        final diff = '@@ -1,1 +1,1 @@\n+${'x' * 400}\n';
+        await tester.pumpWidget(
+          MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: Center(
+              child: SizedBox(
+                width: 200,
+                height: 300,
+                child: DiffView(diff: diff),
+              ),
             ),
           ),
-        ),
-      );
-      await tester.pumpAndSettle();
+        );
+        await tester.pumpAndSettle();
 
-      final horizontal = tester
-          .stateList<ScrollableState>(find.byType(Scrollable))
-          .firstWhere((s) => s.position.axis == Axis.horizontal);
-      expect(horizontal.position.maxScrollExtent, greaterThan(0));
-    });
+        final horizontal = tester
+            .stateList<ScrollableState>(find.byType(Scrollable))
+            .firstWhere((s) => s.position.axis == Axis.horizontal);
+        expect(horizontal.position.maxScrollExtent, greaterThan(0));
+      },
+    );
 
     testWidgets('a horizontal wheel pans the whole diff at once', (
       tester,
@@ -214,61 +220,67 @@ void main() {
       expect(find.text('+new line'), findsOneWidget);
     });
 
-    testWidgets('a multi-line drag selection copies across lines', (
-      tester,
-    ) async {
-      // The whole point of the single SelectionArea over plain Text rows:
-      // per-line SelectableText could never carry a selection across lines.
-      const diff = '@@ -1,2 +1,2 @@\n-old line\n+new line\n context';
-      await tester.pumpWidget(
-        const MacosApp(
-          debugShowCheckedModeBanner: false,
-          home: SizedBox(width: 400, height: 300, child: DiffView(diff: diff)),
-        ),
-      );
-      await tester.pumpAndSettle();
+    testWidgets(
+      'a multi-line drag selection copies across lines',
+      (tester) async {
+        // The whole point of the single SelectionArea over plain Text rows:
+        // per-line SelectableText could never carry a selection across lines.
+        const diff = '@@ -1,2 +1,2 @@\n-old line\n+new line\n context';
+        await tester.pumpWidget(
+          const MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: SizedBox(
+              width: 400,
+              height: 300,
+              child: DiffView(diff: diff),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
 
-      String? copied;
-      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
-        SystemChannels.platform,
-        (call) async {
-          if (call.method == 'Clipboard.setData') {
-            copied = (call.arguments as Map<Object?, Object?>)['text']
-                as String?;
-          }
-          return null;
-        },
-      );
-      addTearDown(
-        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        String? copied;
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
           SystemChannels.platform,
-          null,
-        ),
-      );
+          (call) async {
+            if (call.method == 'Clipboard.setData') {
+              copied =
+                  (call.arguments as Map<Object?, Object?>)['text'] as String?;
+            }
+            return null;
+          },
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            SystemChannels.platform,
+            null,
+          ),
+        );
 
-      // Drag from the start of the first line to past the end of the last.
-      final from = tester.getTopLeft(find.text('@@ -1,2 +1,2 @@'));
-      final to =
-          tester.getBottomRight(find.text(' context')) + const Offset(10, 0);
-      final gesture = await tester.startGesture(
-        from + const Offset(1, 1),
-        kind: PointerDeviceKind.mouse,
-      );
-      await tester.pump();
-      await gesture.moveTo(to);
-      await tester.pump();
-      await gesture.up();
-      await tester.pump();
+        // Drag from the start of the first line to past the end of the last.
+        final from = tester.getTopLeft(find.text('@@ -1,2 +1,2 @@'));
+        final to =
+            tester.getBottomRight(find.text(' context')) + const Offset(10, 0);
+        final gesture = await tester.startGesture(
+          from + const Offset(1, 1),
+          kind: PointerDeviceKind.mouse,
+        );
+        await tester.pump();
+        await gesture.moveTo(to);
+        await tester.pump();
+        await gesture.up();
+        await tester.pump();
 
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
-      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
-      await tester.pump();
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
+        await tester.pump();
 
-      expect(copied, isNotNull, reason: 'copy reached the clipboard');
-      for (final line in ['@@ -1,2 +1,2 @@', '-old line', '+new line']) {
-        expect(copied, contains(line));
-      }
-    }, variant: TargetPlatformVariant.only(TargetPlatform.macOS));
+        expect(copied, isNotNull, reason: 'copy reached the clipboard');
+        for (final line in ['@@ -1,2 +1,2 @@', '-old line', '+new line']) {
+          expect(copied, contains(line));
+        }
+      },
+      variant: TargetPlatformVariant.only(TargetPlatform.macOS),
+    );
   });
 }

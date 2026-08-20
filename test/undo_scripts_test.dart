@@ -22,8 +22,11 @@ void main() {
   /// it can never pollute [records].
   Future<String> raw(List<String> args) async {
     final result = await Process.run('git', args, workingDirectory: repo);
-    expect(result.exitCode, 0,
-        reason: 'setup `git ${args.join(' ')}` failed: ${result.stderr}');
+    expect(
+      result.exitCode,
+      0,
+      reason: 'setup `git ${args.join(' ')}` failed: ${result.stderr}',
+    );
     return (result.stdout as String).trim();
   }
 
@@ -34,11 +37,12 @@ void main() {
   /// leading space of ` M` (worktree-modified) is significant and [raw]'s
   /// trim would eat it.
   Future<String> porcelain([List<String> paths = const []]) async {
-    final result = await Process.run(
-      'git',
-      ['status', '--porcelain', if (paths.isNotEmpty) '--', ...paths],
-      workingDirectory: repo,
-    );
+    final result = await Process.run('git', [
+      'status',
+      '--porcelain',
+      if (paths.isNotEmpty) '--',
+      ...paths,
+    ], workingDirectory: repo);
     expect(result.exitCode, 0);
     var out = result.stdout as String;
     if (out.endsWith('\n')) out = out.substring(0, out.length - 1);
@@ -68,20 +72,29 @@ void main() {
   test('the first commit on an unborn branch records nothing', () async {
     final fresh = Directory.systemTemp.createTempSync('undo_unborn_');
     addTearDown(() => fresh.deleteSync(recursive: true));
-    await Process.run('git', ['init', '-q', '-b', 'main'],
-        workingDirectory: fresh.path);
-    await Process.run('git', ['config', 'user.name', 'T'],
-        workingDirectory: fresh.path);
-    await Process.run('git', ['config', 'user.email', 't@e.c'],
-        workingDirectory: fresh.path);
+    await Process.run('git', [
+      'init',
+      '-q',
+      '-b',
+      'main',
+    ], workingDirectory: fresh.path);
+    await Process.run('git', [
+      'config',
+      'user.name',
+      'T',
+    ], workingDirectory: fresh.path);
+    await Process.run('git', [
+      'config',
+      'user.email',
+      't@e.c',
+    ], workingDirectory: fresh.path);
     File('${fresh.path}/x').writeAsStringSync('x');
     await Process.run('git', ['add', 'x'], workingDirectory: fresh.path);
     await git.commit(fresh.path, message: 'first ever');
     expect(records, isEmpty);
   });
 
-  test('undoing a commit restores HEAD with the content left staged',
-      () async {
+  test('undoing a commit restores HEAD with the content left staged', () async {
     await write('a.txt', 'two\n');
     await raw(['add', 'a.txt']);
     await git.commit(repo, message: 'second');
@@ -131,14 +144,20 @@ void main() {
     await raw(['add', 'b.txt']);
 
     await git.reset(repo, 'HEAD~1', mode: ResetMode.mixed);
-    expect(await raw(['diff', '--cached', '--name-only']), '',
-        reason: 'mixed reset unstages everything');
+    expect(
+      await raw(['diff', '--cached', '--name-only']),
+      '',
+      reason: 'mixed reset unstages everything',
+    );
 
     await git.undoExecute(records.single);
 
     expect(await raw(['log', '--format=%s', '-1']), 'second');
-    expect(await raw(['diff', '--cached', '--name-only']), 'b.txt',
-        reason: 'the pre-reset staged state is restored from its tree');
+    expect(
+      await raw(['diff', '--cached', '--name-only']),
+      'b.txt',
+      reason: 'the pre-reset staged state is restored from its tree',
+    );
   });
 
   test('undoing a checkout returns to the previous branch', () async {
@@ -156,9 +175,11 @@ void main() {
     await git.checkout(repo, 'main');
 
     await git.undoExecute(records.single);
-    final result =
-        await Process.run('git', ['symbolic-ref', '-q', 'HEAD'],
-            workingDirectory: repo);
+    final result = await Process.run('git', [
+      'symbolic-ref',
+      '-q',
+      'HEAD',
+    ], workingDirectory: repo);
     expect(result.exitCode, isNot(0), reason: 'HEAD is detached again');
     expect(await raw(['rev-parse', 'HEAD']), head);
   });
@@ -187,8 +208,11 @@ void main() {
 
     await git.undoExecute(records.single);
 
-    expect(await raw(['rev-parse', 'refs/tags/v1.0']), tagObject,
-        reason: 'update-ref restores the identical annotated tag object');
+    expect(
+      await raw(['rev-parse', 'refs/tags/v1.0']),
+      tagObject,
+      reason: 'update-ref restores the identical annotated tag object',
+    );
     expect(await raw(['cat-file', '-t', 'v1.0']), 'tag');
   });
 
@@ -204,17 +228,23 @@ void main() {
     expect(record.deletedOid, isNot(await raw(['rev-parse', 'HEAD'])));
 
     await git.undoExecute(record);
-    final gone = await Process.run(
-        'git', ['rev-parse', '-q', '--verify', 'refs/tags/v2.0'],
-        workingDirectory: repo);
+    final gone = await Process.run('git', [
+      'rev-parse',
+      '-q',
+      '--verify',
+      'refs/tags/v2.0',
+    ], workingDirectory: repo);
     expect(gone.exitCode, isNot(0), reason: 'the created tag is deleted');
   });
 
   test('undoing a lightweight tag creation deletes it, and refuses once the '
       'tag has been moved', () async {
     await git.createTag(repo, 'wip');
-    expect(records.single.deletedOid, await raw(['rev-parse', 'HEAD']),
-        reason: 'a lightweight tag ref IS the target commit');
+    expect(
+      records.single.deletedOid,
+      await raw(['rev-parse', 'HEAD']),
+      reason: 'a lightweight tag ref IS the target commit',
+    );
 
     // Someone re-points the tag before the undo: refuse, do not delete.
     await write('a.txt', 'two\n');
@@ -226,31 +256,42 @@ void main() {
       () => git.undoExecute(records.single),
       throwsA(isA<UndoStaleException>()),
     );
-    expect(await raw(['cat-file', '-t', 'wip']), 'commit',
-        reason: 'the moved tag survives the refused undo');
+    expect(
+      await raw(['cat-file', '-t', 'wip']),
+      'commit',
+      reason: 'the moved tag survives the refused undo',
+    );
   });
 
-  test('undoing a discard restores the file content, unstaged, path-scoped',
-      () async {
-    await write('a.txt', 'modified\n');
-    await write('other.txt', 'untouched\n');
-    await raw(['add', 'other.txt']);
+  test(
+    'undoing a discard restores the file content, unstaged, path-scoped',
+    () async {
+      await write('a.txt', 'modified\n');
+      await write('other.txt', 'untouched\n');
+      await raw(['add', 'other.txt']);
 
-    await git.discard(repo, 'a.txt');
-    expect(await File('$repo/a.txt').readAsString(), 'one\n');
-    final record = records.single;
-    expect(record.snapshotOid, isNotEmpty);
-    // The snapshot is anchored on a hidden ref (never the stash list).
-    expect(await raw(['rev-parse', record.snapshotOid]), record.snapshotOid);
-    expect(await raw(['stash', 'list']), '');
+      await git.discard(repo, 'a.txt');
+      expect(await File('$repo/a.txt').readAsString(), 'one\n');
+      final record = records.single;
+      expect(record.snapshotOid, isNotEmpty);
+      // The snapshot is anchored on a hidden ref (never the stash list).
+      expect(await raw(['rev-parse', record.snapshotOid]), record.snapshotOid);
+      expect(await raw(['stash', 'list']), '');
 
-    await git.undoExecute(record);
-    expect(await File('$repo/a.txt').readAsString(), 'modified\n');
-    expect(await porcelain(['a.txt']), ' M a.txt',
-        reason: 'restored as an unstaged modification, exactly as before');
-    expect(await porcelain(['other.txt']), 'A  other.txt',
-        reason: 'unrelated staged work is untouched by the scoped restore');
-  });
+      await git.undoExecute(record);
+      expect(await File('$repo/a.txt').readAsString(), 'modified\n');
+      expect(
+        await porcelain(['a.txt']),
+        ' M a.txt',
+        reason: 'restored as an unstaged modification, exactly as before',
+      );
+      expect(
+        await porcelain(['other.txt']),
+        'A  other.txt',
+        reason: 'unrelated staged work is untouched by the scoped restore',
+      );
+    },
+  );
 
   test('discarding a hunk snapshots the file, and undo restores it', () async {
     // The hunk-scoped sibling of the discard above: before discardHunk
@@ -268,27 +309,35 @@ void main() {
 
     await git.undoExecute(record);
     expect(await File('$repo/a.txt').readAsString(), 'CHANGED\n');
-    expect(await porcelain(['a.txt']), ' M a.txt',
-        reason: 'back as an unstaged modification, exactly as before');
-  });
-
-  test('a discard undo refuses to overwrite newer edits unless forced',
-      () async {
-    await write('a.txt', 'modified\n');
-    await git.discard(repo, 'a.txt');
-    // The user edits the file again after the discard.
-    await write('a.txt', 'newer edit\n');
-
-    await expectLater(
-      () => git.undoExecute(records.single),
-      throwsA(isA<UndoDirtyException>()),
+    expect(
+      await porcelain(['a.txt']),
+      ' M a.txt',
+      reason: 'back as an unstaged modification, exactly as before',
     );
-    expect(await File('$repo/a.txt').readAsString(), 'newer edit\n',
-        reason: 'nothing overwritten without confirmation');
-
-    await git.undoExecute(records.single, force: true);
-    expect(await File('$repo/a.txt').readAsString(), 'modified\n');
   });
+
+  test(
+    'a discard undo refuses to overwrite newer edits unless forced',
+    () async {
+      await write('a.txt', 'modified\n');
+      await git.discard(repo, 'a.txt');
+      // The user edits the file again after the discard.
+      await write('a.txt', 'newer edit\n');
+
+      await expectLater(
+        () => git.undoExecute(records.single),
+        throwsA(isA<UndoDirtyException>()),
+      );
+      expect(
+        await File('$repo/a.txt').readAsString(),
+        'newer edit\n',
+        reason: 'nothing overwritten without confirmation',
+      );
+
+      await git.undoExecute(records.single, force: true);
+      expect(await File('$repo/a.txt').readAsString(), 'modified\n');
+    },
+  );
 
   test('undoing a staged discard of a never-committed file restores it '
       'staged', () async {
@@ -296,84 +345,117 @@ void main() {
     await raw(['add', 'new.txt']);
 
     await git.discardStaged(repo, 'new.txt');
-    expect(File('$repo/new.txt').existsSync(), isFalse,
-        reason: 'no HEAD counterpart: discardStaged removes it entirely');
+    expect(
+      File('$repo/new.txt').existsSync(),
+      isFalse,
+      reason: 'no HEAD counterpart: discardStaged removes it entirely',
+    );
 
     await git.undoExecute(records.single);
     expect(await File('$repo/new.txt').readAsString(), 'brand new\n');
-    expect(await raw(['status', '--porcelain', '--', 'new.txt']), 'A  new.txt',
-        reason: 'restored to the index from the snapshot^2 tree');
-  });
-
-  test('undoing an untracked deletion restores the files, still untracked',
-      () async {
-    await write('loose notes.txt', 'important\n');
-    await write('scratch.txt', 'also important\n');
-
-    await git.removeUntrackedFilesMany(repo, ['loose notes.txt', 'scratch.txt']);
-    expect(File('$repo/loose notes.txt').existsSync(), isFalse);
-    expect(File('$repo/scratch.txt').existsSync(), isFalse);
-
-    await git.undoExecute(records.single);
-    expect(await File('$repo/loose notes.txt').readAsString(), 'important\n');
-    expect(await File('$repo/scratch.txt').readAsString(), 'also important\n');
     expect(
-      await raw(['status', '--porcelain']),
-      '?? "loose notes.txt"\n?? scratch.txt',
-      reason: 'they come back untracked, exactly as they were',
+      await raw(['status', '--porcelain', '--', 'new.txt']),
+      'A  new.txt',
+      reason: 'restored to the index from the snapshot^2 tree',
     );
   });
 
-  test('undoing a hard reset restores HEAD and the uncommitted changes',
-      () async {
-    await write('a.txt', 'two\n');
-    await raw(['add', 'a.txt']);
-    await raw(['commit', '-q', '-m', 'second']);
-    await write('a.txt', 'uncommitted work\n');
+  test(
+    'undoing an untracked deletion restores the files, still untracked',
+    () async {
+      await write('loose notes.txt', 'important\n');
+      await write('scratch.txt', 'also important\n');
 
-    await git.reset(repo, 'HEAD~1', mode: ResetMode.hard);
-    expect(await File('$repo/a.txt').readAsString(), 'one\n');
-    final record = records.single;
-    expect(record.snapshotOid, isNotEmpty);
+      await git.removeUntrackedFilesMany(repo, [
+        'loose notes.txt',
+        'scratch.txt',
+      ]);
+      expect(File('$repo/loose notes.txt').existsSync(), isFalse);
+      expect(File('$repo/scratch.txt').existsSync(), isFalse);
 
-    await git.undoExecute(record);
-    expect(await raw(['log', '--format=%s', '-1']), 'second');
-    expect(await File('$repo/a.txt').readAsString(), 'uncommitted work\n');
-    expect(await porcelain(), ' M a.txt');
-  });
+      await git.undoExecute(records.single);
+      expect(await File('$repo/loose notes.txt').readAsString(), 'important\n');
+      expect(
+        await File('$repo/scratch.txt').readAsString(),
+        'also important\n',
+      );
+      expect(
+        await raw(['status', '--porcelain']),
+        '?? "loose notes.txt"\n?? scratch.txt',
+        reason: 'they come back untracked, exactly as they were',
+      );
+    },
+  );
 
-  test('a clean-tree hard reset records with no snapshot and undoes exactly',
-      () async {
-    await write('a.txt', 'two\n');
-    await raw(['add', 'a.txt']);
-    await raw(['commit', '-q', '-m', 'second']);
+  test(
+    'undoing a hard reset restores HEAD and the uncommitted changes',
+    () async {
+      await write('a.txt', 'two\n');
+      await raw(['add', 'a.txt']);
+      await raw(['commit', '-q', '-m', 'second']);
+      await write('a.txt', 'uncommitted work\n');
 
-    await git.reset(repo, 'HEAD~1', mode: ResetMode.hard);
-    final record = records.single;
-    expect(record.snapshotOid, '',
-        reason: 'nothing uncommitted: stash create had nothing to capture');
+      await git.reset(repo, 'HEAD~1', mode: ResetMode.hard);
+      expect(await File('$repo/a.txt').readAsString(), 'one\n');
+      final record = records.single;
+      expect(record.snapshotOid, isNotEmpty);
 
-    await git.undoExecute(record);
-    expect(await raw(['log', '--format=%s', '-1']), 'second');
-    expect(await raw(['status', '--porcelain']), '');
-  });
+      await git.undoExecute(record);
+      expect(await raw(['log', '--format=%s', '-1']), 'second');
+      expect(await File('$repo/a.txt').readAsString(), 'uncommitted work\n');
+      expect(await porcelain(), ' M a.txt');
+    },
+  );
 
-  test('expired snapshot refs are pruned when a new snapshot is taken',
-      () async {
-    await raw([
-      'update-ref',
-      '${GitService.snapshotRefPrefix}1000000000-1', // epoch year 2001
-      'HEAD',
-    ]);
-    await write('a.txt', 'modified\n');
-    await git.discard(repo, 'a.txt');
+  test(
+    'a clean-tree hard reset records with no snapshot and undoes exactly',
+    () async {
+      await write('a.txt', 'two\n');
+      await raw(['add', 'a.txt']);
+      await raw(['commit', '-q', '-m', 'second']);
 
-    final refs = await raw(['for-each-ref', '--format=%(refname)',
-        'refs/magic-git/snapshots']);
-    expect(refs, isNot(contains('1000000000-1')), reason: 'ancient ref pruned');
-    expect(refs, contains(GitService.snapshotRefPrefix),
-        reason: 'the fresh snapshot itself is anchored');
-  });
+      await git.reset(repo, 'HEAD~1', mode: ResetMode.hard);
+      final record = records.single;
+      expect(
+        record.snapshotOid,
+        '',
+        reason: 'nothing uncommitted: stash create had nothing to capture',
+      );
+
+      await git.undoExecute(record);
+      expect(await raw(['log', '--format=%s', '-1']), 'second');
+      expect(await raw(['status', '--porcelain']), '');
+    },
+  );
+
+  test(
+    'expired snapshot refs are pruned when a new snapshot is taken',
+    () async {
+      await raw([
+        'update-ref',
+        '${GitService.snapshotRefPrefix}1000000000-1', // epoch year 2001
+        'HEAD',
+      ]);
+      await write('a.txt', 'modified\n');
+      await git.discard(repo, 'a.txt');
+
+      final refs = await raw([
+        'for-each-ref',
+        '--format=%(refname)',
+        'refs/magic-git/snapshots',
+      ]);
+      expect(
+        refs,
+        isNot(contains('1000000000-1')),
+        reason: 'ancient ref pruned',
+      );
+      expect(
+        refs,
+        contains(GitService.snapshotRefPrefix),
+        reason: 'the fresh snapshot itself is anchored',
+      );
+    },
+  );
 
   test('undoing a clean merge restores the pre-merge HEAD', () async {
     await raw(['checkout', '-q', '-b', 'feature']);
@@ -405,8 +487,11 @@ void main() {
 
     await git.merge(repo, 'feature', mode: MergeMode.noFf);
     final record = records.single;
-    expect(record.snapshotOid, isNotEmpty,
-        reason: 'the dirty survivor was snapshotted');
+    expect(
+      record.snapshotOid,
+      isNotEmpty,
+      reason: 'the dirty survivor was snapshotted',
+    );
 
     // The tree is non-empty (the surviving dirt), so the blanket hard-reset
     // guard fires — the user confirms, and the snapshot brings the dirt back.
@@ -453,28 +538,33 @@ void main() {
     expect(File('$repo/picked.txt').existsSync(), isFalse);
   });
 
-  test('undoing a completed interactive rebase restores the old branch tip',
-      () async {
-    await write('a.txt', 'two\n');
-    await raw(['commit', '-qam', 'second']);
-    final second = await raw(['rev-parse', 'HEAD']);
-    await write('a.txt', 'three\n');
-    await raw(['commit', '-qam', 'third']);
-    final third = await raw(['rev-parse', 'HEAD']);
-    final first = await raw(['rev-parse', 'HEAD~2']);
+  test(
+    'undoing a completed interactive rebase restores the old branch tip',
+    () async {
+      await write('a.txt', 'two\n');
+      await raw(['commit', '-qam', 'second']);
+      final second = await raw(['rev-parse', 'HEAD']);
+      await write('a.txt', 'three\n');
+      await raw(['commit', '-qam', 'third']);
+      final third = await raw(['rev-parse', 'HEAD']);
+      final first = await raw(['rev-parse', 'HEAD~2']);
 
-    // Drop "third" by omitting it from the todo.
-    await git.rebaseInteractive(repo, first, [
-      RebaseStep(RebaseAction.pick, second),
-      const RebaseStep(RebaseAction.drop, 'ignored'),
-    ]);
-    expect(await raw(['rev-parse', 'HEAD']), second);
+      // Drop "third" by omitting it from the todo.
+      await git.rebaseInteractive(repo, first, [
+        RebaseStep(RebaseAction.pick, second),
+        const RebaseStep(RebaseAction.drop, 'ignored'),
+      ]);
+      expect(await raw(['rev-parse', 'HEAD']), second);
 
-    await git.undoExecute(records.single);
-    expect(await raw(['rev-parse', 'HEAD']), third,
-        reason: 'the dropped commit is back on the branch');
-    expect(await raw(['log', '--format=%s', '-1']), 'third');
-  });
+      await git.undoExecute(records.single);
+      expect(
+        await raw(['rev-parse', 'HEAD']),
+        third,
+        reason: 'the dropped commit is back on the branch',
+      );
+      expect(await raw(['log', '--format=%s', '-1']), 'third');
+    },
+  );
 
   test('undoing a stash clear re-stores every stash in order', () async {
     await write('a.txt', 'wip one\n');
@@ -487,33 +577,37 @@ void main() {
 
     await git.undoExecute(records.single);
     final list = await raw(['stash', 'list', '--format=%gs']);
-    expect(list.split('\n'), [
-      contains('second wip'),
-      contains('first wip'),
-    ], reason: 'newest back at stash@{0}, original order preserved');
-  });
-
-  test('undoing a checked-out branch creation returns and deletes it',
-      () async {
-    await git.createBranch(repo, 'experiment');
-    expect(await raw(['symbolic-ref', '--short', 'HEAD']), 'experiment');
-    final record = records.single;
-
-    await git.undoExecute(record);
-    expect(await raw(['symbolic-ref', '--short', 'HEAD']), 'main');
-    final probe = await Process.run(
-      'git',
-      ['rev-parse', '-q', '--verify', 'refs/heads/experiment'],
-      workingDirectory: repo,
-    );
-    expect(probe.exitCode, isNot(0), reason: 'branch deleted');
-
-    // Replaying the record must refuse — the branch no longer matches.
-    await expectLater(
-      () => git.undoExecute(record),
-      throwsA(isA<UndoStaleException>()),
+    expect(
+      list.split('\n'),
+      [contains('second wip'), contains('first wip')],
+      reason: 'newest back at stash@{0}, original order preserved',
     );
   });
+
+  test(
+    'undoing a checked-out branch creation returns and deletes it',
+    () async {
+      await git.createBranch(repo, 'experiment');
+      expect(await raw(['symbolic-ref', '--short', 'HEAD']), 'experiment');
+      final record = records.single;
+
+      await git.undoExecute(record);
+      expect(await raw(['symbolic-ref', '--short', 'HEAD']), 'main');
+      final probe = await Process.run('git', [
+        'rev-parse',
+        '-q',
+        '--verify',
+        'refs/heads/experiment',
+      ], workingDirectory: repo);
+      expect(probe.exitCode, isNot(0), reason: 'branch deleted');
+
+      // Replaying the record must refuse — the branch no longer matches.
+      await expectLater(
+        () => git.undoExecute(record),
+        throwsA(isA<UndoStaleException>()),
+      );
+    },
+  );
 
   test('undoing branchFrom (no checkout) deletes without switching; a moved '
       'branch is stale', () async {
@@ -536,16 +630,16 @@ void main() {
     await raw(['branch', '-f', 'pin', tip]);
     await git.undoExecute(record);
     expect(await raw(['symbolic-ref', '--short', 'HEAD']), 'main');
-    final probe = await Process.run(
-      'git',
-      ['rev-parse', '-q', '--verify', 'refs/heads/pin'],
-      workingDirectory: repo,
-    );
+    final probe = await Process.run('git', [
+      'rev-parse',
+      '-q',
+      '--verify',
+      'refs/heads/pin',
+    ], workingDirectory: repo);
     expect(probe.exitCode, isNot(0));
   });
 
-  test('reflog lists real entries with parsed actions, newest first',
-      () async {
+  test('reflog lists real entries with parsed actions, newest first', () async {
     await write('a.txt', 'two\n');
     await raw(['add', 'a.txt']);
     await raw(['commit', '-q', '-m', 'second']);

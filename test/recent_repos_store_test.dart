@@ -19,16 +19,23 @@ void main() {
     expect(list.first.isLocal, isTrue);
   });
 
-  test('re-opening a repo moves it to the front and collapses the old entry', () async {
-    final store = RecentReposStore();
-    await store.record(isLocal: false, id: 'host', repoPath: '/a');
-    await store.record(isLocal: false, id: 'host', repoPath: '/b');
-    await store.record(isLocal: false, id: 'host', repoPath: '/a'); // reopen /a
+  test(
+    're-opening a repo moves it to the front and collapses the old entry',
+    () async {
+      final store = RecentReposStore();
+      await store.record(isLocal: false, id: 'host', repoPath: '/a');
+      await store.record(isLocal: false, id: 'host', repoPath: '/b');
+      await store.record(
+        isLocal: false,
+        id: 'host',
+        repoPath: '/a',
+      ); // reopen /a
 
-    final list = await store.list();
-    // /a jumps ahead of /b, and there's still only one /a entry.
-    expect(list.map((e) => e.repoPath).toList(), ['/a', '/b']);
-  });
+      final list = await store.list();
+      // /a jumps ahead of /b, and there's still only one /a entry.
+      expect(list.map((e) => e.repoPath).toList(), ['/a', '/b']);
+    },
+  );
 
   test('local and remote with the same id are distinct identities', () async {
     final store = RecentReposStore();
@@ -39,13 +46,16 @@ void main() {
     expect(list, hasLength(2));
   });
 
-  test('a repo on the same connection but a different path is its own entry', () async {
-    final store = RecentReposStore();
-    await store.record(isLocal: false, id: 'host', repoPath: '/a');
-    await store.record(isLocal: false, id: 'host', repoPath: '/b');
+  test(
+    'a repo on the same connection but a different path is its own entry',
+    () async {
+      final store = RecentReposStore();
+      await store.record(isLocal: false, id: 'host', repoPath: '/a');
+      await store.record(isLocal: false, id: 'host', repoPath: '/b');
 
-    expect(await store.list(), hasLength(2));
-  });
+      expect(await store.list(), hasLength(2));
+    },
+  );
 
   test('history is capped', () async {
     final store = RecentReposStore();

@@ -206,7 +206,10 @@ class CommitGraph {
           if (p == 0 && (isPrimary || nodeColumn == 0)) {
             if (existing != null && existing.contains(0)) {
               lane = 0;
-            } else if (lanes.isEmpty || lanes[0] == null || freeLanes.contains(0) || nodeColumn == 0) {
+            } else if (lanes.isEmpty ||
+                lanes[0] == null ||
+                freeLanes.contains(0) ||
+                nodeColumn == 0) {
               lane = 0;
               if (lanes.isEmpty) lanes.add(null);
               setLane(0, parentHash);
@@ -272,4 +275,3 @@ class CommitGraph {
     return CommitGraph(rows: rows, laneCount: laneCount);
   }
 }
-

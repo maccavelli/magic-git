@@ -91,7 +91,9 @@ Future<_FakeGit> _pump(WidgetTester tester) async {
       // tests would flag as still pending; null = unknown, no badges.
       remoteTagsProvider(_repo).overrideWith((ref) async => null),
       branchForgeProvider(_repo).overrideWith((ref) async => const {}),
-      mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
+      mergedBranchesProvider(
+        _repo,
+      ).overrideWith((ref) async => const <String>{}),
     ],
   );
   addTearDown(container.dispose);
@@ -108,7 +110,6 @@ Future<_FakeGit> _pump(WidgetTester tester) async {
   return git;
 }
 
-
 Future<void> _openMoreMenu(WidgetTester tester) async {
   // Delete (and other overflow actions) live under the More pulldown.
   if (find.text('Delete').evaluate().isEmpty &&
@@ -119,61 +120,57 @@ Future<void> _openMoreMenu(WidgetTester tester) async {
 }
 
 void main() {
-  testWidgets(
-    'a branch rejected as "not fully merged" offers a force-delete '
-    'confirmation, which retries with force: true',
-    (tester) async {
-      final git = await _pump(tester);
+  testWidgets('a branch rejected as "not fully merged" offers a force-delete '
+      'confirmation, which retries with force: true', (tester) async {
+    final git = await _pump(tester);
 
-      // Right-click the local branch → Delete branch (menu item).
-      await _rightClick(tester, find.text('feature'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Delete branch'));
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
-      expect(find.text('Delete branch'), findsWidgets);
+    // Right-click the local branch → Delete branch (menu item).
+    await _rightClick(tester, find.text('feature'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete branch'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Delete branch'), findsWidgets);
 
-      // Confirm the plain delete — it fails as "not fully merged".
-      await _openMoreMenu(tester);
+    // Confirm the plain delete — it fails as "not fully merged".
+    await _openMoreMenu(tester);
     await tester.tap(find.text('Delete').last);
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
 
-      expect(git.forceCalls, [false]);
-      expect(find.text('Branch not fully merged'), findsOneWidget);
+    expect(git.forceCalls, [false]);
+    expect(find.text('Branch not fully merged'), findsOneWidget);
 
-      // Confirm the force-delete escalation.
-      await tester.tap(find.text('Force Delete'));
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
+    // Confirm the force-delete escalation.
+    await tester.tap(find.text('Force Delete'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
 
-      expect(git.forceCalls, [false, true]);
-    },
-  );
+    expect(git.forceCalls, [false, true]);
+  });
 
-  testWidgets(
-    'cancelling the force-delete escalation does not retry',
-    (tester) async {
-      final git = await _pump(tester);
+  testWidgets('cancelling the force-delete escalation does not retry', (
+    tester,
+  ) async {
+    final git = await _pump(tester);
 
-      await _rightClick(tester, find.text('feature'));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Delete branch'));
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
-      await _openMoreMenu(tester);
+    await _rightClick(tester, find.text('feature'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Delete branch'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await _openMoreMenu(tester);
     await tester.tap(find.text('Delete').last);
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
 
-      expect(find.text('Branch not fully merged'), findsOneWidget);
-      await tester.tap(find.text('Cancel').last);
-      await tester.pump();
-      await tester.pump(const Duration(seconds: 1));
+    expect(find.text('Branch not fully merged'), findsOneWidget);
+    await tester.tap(find.text('Cancel').last);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
 
-      expect(git.forceCalls, [false]);
-    },
-  );
+    expect(git.forceCalls, [false]);
+  });
 
   testWidgets(
     'double-tapping a checkout affordance while one is in flight fires only '
@@ -187,13 +184,15 @@ void main() {
           gitServiceProvider.overrideWithValue(git),
           refsProvider(_repo).overrideWith((ref) async => _refs),
           // The view now watches CONFIGURED remotes to pick the tag-push target
-      // — unoverridden it would fall through to the executor.
-      remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
-      // The real provider keeps a five-minute keepAlive timer that widget
+          // — unoverridden it would fall through to the executor.
+          remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+          // The real provider keeps a five-minute keepAlive timer that widget
           // tests would flag as still pending; null = unknown, no badges.
           remoteTagsProvider(_repo).overrideWith((ref) async => null),
           branchForgeProvider(_repo).overrideWith((ref) async => const {}),
-          mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
+          mergedBranchesProvider(
+            _repo,
+          ).overrideWith((ref) async => const <String>{}),
           // Clean status — guardedBranchSwitch runs the checkout directly
           // with no confirm dialog in the way.
           statusProvider(_repo).overrideWith(

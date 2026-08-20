@@ -15,10 +15,17 @@ Future<void> _pump(WidgetTester tester, Tappable tappable) async {
 }
 
 MouseRegion _region(WidgetTester tester) => tester.widget<MouseRegion>(
-  find.descendant(of: find.byType(Tappable), matching: find.byType(MouseRegion)),
+  find.descendant(
+    of: find.byType(Tappable),
+    matching: find.byType(MouseRegion),
+  ),
 );
 
-const _child = SizedBox(width: 100, height: 40, child: Center(child: Text('T')));
+const _child = SizedBox(
+  width: 100,
+  height: 40,
+  child: Center(child: Text('T')),
+);
 
 void main() {
   testWidgets('hand when onTap is set, arrow when not', (tester) async {
@@ -54,15 +61,18 @@ void main() {
         child: _child,
       ),
     );
-    expect(tester.widget<GestureDetector>(find.byType(GestureDetector)).behavior,
-        HitTestBehavior.opaque);
+    expect(
+      tester.widget<GestureDetector>(find.byType(GestureDetector)).behavior,
+      HitTestBehavior.opaque,
+    );
 
     await tester.tap(find.byType(Tappable));
     expect(taps, 1);
 
     // Opaque behavior: the whole bounds are a hit target, not just the text.
-    await tester.tapAt(tester.getTopLeft(find.byType(Tappable)) +
-        const Offset(2, 2));
+    await tester.tapAt(
+      tester.getTopLeft(find.byType(Tappable)) + const Offset(2, 2),
+    );
     expect(taps, 2);
   });
 }
