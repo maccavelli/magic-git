@@ -11,12 +11,53 @@
 
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/providers/provider_retry_policy.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:riverpod/misc.dart' show ProviderListenable;
 
 import 'helpers/app_scope.dart';
+
+/// No `retry:` — the pre-0017 shape, kept as the contrast case above.
+final _unannotated = FutureProvider.autoDispose<int>((ref) async => 1);
+
+/// Renders which `when` branch a provider resolved to, so a widget test can
+/// assert the branch rather than the AsyncValue's internals.
+class _StatusProbe extends ConsumerWidget {
+  const _StatusProbe();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Text(
+    ref
+        .watch(statusProvider('/repo'))
+        .when(
+          data: (_) => 'data',
+          error: (_, _) => 'error',
+          loading: () => 'loading',
+        ),
+    textDirection: TextDirection.ltr,
+  );
+}
+
+class _UnannotatedProbe extends ConsumerWidget {
+  const _UnannotatedProbe();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) => Text(
+    ref
+        .watch(_unannotated)
+        .when(
+          data: (_) => 'data',
+          error: (_, _) => 'error',
+          loading: () => 'loading',
+        ),
+    textDirection: TextDirection.ltr,
+  );
+}
 
 final _throwingFuture = FutureProvider.autoDispose<int>(
   (ref) async => throw Exception('boom'),
@@ -94,6 +135,55 @@ void main() {
       expect(_branch(afterFailure), 'loading');
       expect(seen.length, greaterThan(2), reason: 'it is still retrying');
     }
+  });
+
+  testWidgets('a bare scope reaches the error branch for an annotated '
+      'provider', (tester) async {
+    // The decision's whole claim, asserted directly. Deliberately NOT
+    // appProviderScope: the point is that a scope built by someone who never
+    // read AGENTS.md behaves like the app anyway, because the policy rides
+    // the provider and survives overrideWith.
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          statusProvider('/repo').overrideWith(
+            (ref) async => throw const GitException(
+              'git status failed',
+              SSHCommandResult(exitCode: 128, stdout: '', stderr: 'boom'),
+            ),
+          ),
+        ],
+        child: const MaterialApp(home: _StatusProbe()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('error'), findsOneWidget);
+    expect(find.text('loading'), findsNothing);
+  });
+
+  testWidgets('the contrast case: an unannotated provider still stalls', (
+    tester,
+  ) async {
+    // Same bare scope, same thrown Exception — but this provider declares no
+    // policy, so it inherits the container's (absent) one and sits in
+    // AsyncLoading while Riverpod retries. This is what every annotated
+    // provider looked like before, and it is why the scan in this file
+    // exists.
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          _unannotated.overrideWith((ref) async => throw Exception('boom')),
+        ],
+        child: const MaterialApp(home: _UnannotatedProbe()),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.text('loading'), findsOneWidget);
+    expect(find.text('error'), findsNothing);
   });
 
   test('every production provider scope uses the policy', () {
