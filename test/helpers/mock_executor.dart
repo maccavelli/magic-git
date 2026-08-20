@@ -14,6 +14,12 @@ class MockExecCall {
   final ExecLane lane;
   final bool compress;
 
+  /// Stall budget, activity descriptor and event sink — recorded so a
+  /// decorator's forwarding can be asserted, not just its argv.
+  final Duration? activityIdle;
+  final OperationDescriptor? operation;
+  final OperationEventCallback? onOperationEvent;
+
   const MockExecCall({
     required this.repoPath,
     required this.gitArgs,
@@ -23,6 +29,9 @@ class MockExecCall {
     required this.retries,
     required this.lane,
     required this.compress,
+    this.activityIdle,
+    this.operation,
+    this.onOperationEvent,
   });
 }
 
@@ -32,12 +41,16 @@ class MockStreamCall {
   final List<String> gitArgs;
   final Map<String, String>? extraEnv;
   final Duration openTimeout;
+  final OperationDescriptor? operation;
+  final OperationEventCallback? onOperationEvent;
 
   const MockStreamCall({
     required this.repoPath,
     required this.gitArgs,
     this.extraEnv,
     required this.openTimeout,
+    this.operation,
+    this.onOperationEvent,
   });
 }
 
@@ -156,6 +169,9 @@ class MockExecutor extends CommandExecutor {
       retries: retries,
       lane: lane,
       compress: compress,
+      activityIdle: activityIdle,
+      operation: operation,
+      onOperationEvent: onOperationEvent,
     );
     calls.add(call);
     final result = onExecute?.call(call);
@@ -177,6 +193,8 @@ class MockExecutor extends CommandExecutor {
       gitArgs: gitArgs,
       extraEnv: extraEnv,
       openTimeout: openTimeout,
+      operation: operation,
+      onOperationEvent: onOperationEvent,
     );
     streamCalls.add(call);
     final result = onStream?.call(call);
@@ -184,18 +202,24 @@ class MockExecutor extends CommandExecutor {
     throw UnimplementedError('MockExecutor.executeStream not configured');
   }
 
+  /// Recorded `uploadBytes` calls: `(remotePath, bytes, routingRepo)`.
+  final List<(String, Uint8List, String?)> uploads = [];
+
+  /// Recorded `configureEnvironment` calls: `(path, binaries)`.
+  final List<(String?, Map<String, String>)> environments = [];
+
   @override
   Future<void> uploadBytes(
     String remotePath,
     Uint8List bytes, {
     String? routingRepo,
-  }) async {}
+  }) async => uploads.add((remotePath, bytes, routingRepo));
 
   @override
   void configureEnvironment({
     String? path,
     Map<String, String> binaries = const {},
-  }) {}
+  }) => environments.add((path, binaries));
 
   @override
   String? resolvedBinaryPath(String name) => null;

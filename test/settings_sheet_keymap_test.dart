@@ -129,4 +129,26 @@ void main() {
     expect(find.text('Every 7 min'), findsOneWidget);
     expect(find.text('Off'), findsNothing);
   });
+
+  testWidgets('the Command timeouts help calls Network a stall budget', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: SettingsSheet(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Network seconds became an *activity* budget in 0014: silence kills,
+    // a still-printing transfer runs to the 30-minute ceiling. A revert to
+    // "command timeout" wall-clock language must fail here.
+    expect(find.textContaining('stall budget'), findsOneWidget);
+    expect(find.textContaining('30 minutes'), findsOneWidget);
+    expect(find.text('Network (fetch/pull/push), seconds'), findsOneWidget);
+  });
 }

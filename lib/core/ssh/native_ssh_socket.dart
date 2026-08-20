@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 
 /// [SSHSocket] over a [Socket] we own, so TCP options dartssh2's
 /// [SSHSocket.connect] never sets can be applied before the handshake.
@@ -26,6 +27,18 @@ class NativeSshSocket implements SSHSocket {
     // Ownership transfers to NativeSshSocket; close/destroy are the API.
     // ignore: close_sinks
     final socket = await Socket.connect(host, port, timeout: timeout);
+    applyTcpOptions(socket);
+    return NativeSshSocket._(socket);
+  }
+
+  /// Applies the TCP options the handshake depends on.
+  ///
+  /// [SocketOption.tcpNoDelay] is load-bearing and set first; Darwin
+  /// `SO_KEEPALIVE` is best-effort, so a platform that rejects the raw option
+  /// must not fail the connect. Extracted from [connect] so the failure path
+  /// is reachable from a test — [connect] opens its own socket.
+  @visibleForTesting
+  static void applyTcpOptions(Socket socket) {
     socket.setOption(SocketOption.tcpNoDelay, true);
     try {
       socket.setRawOption(
@@ -38,7 +51,6 @@ class NativeSshSocket implements SSHSocket {
     } catch (_) {
       // Best-effort. tcpNoDelay is the load-bearing option.
     }
-    return NativeSshSocket._(socket);
   }
 
   @override

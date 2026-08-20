@@ -70,4 +70,65 @@ void main() {
     expect(utf8.decode(await received.future), 'ping');
     socket.destroy();
   });
+
+  test('applyTcpOptions sets tcpNoDelay and Darwin SO_KEEPALIVE', () async {
+    final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(server.close);
+    final sub = server.listen((client) => addTearDown(client.destroy));
+    addTearDown(sub.cancel);
+
+    final socket = await Socket.connect(
+      '127.0.0.1',
+      server.port,
+      timeout: const Duration(seconds: 2),
+    );
+    addTearDown(socket.destroy);
+
+    NativeSshSocket.applyTcpOptions(socket);
+
+    // Read the option back rather than trusting the setter: SO_KEEPALIVE is
+    // not a SocketOption, so it is applied raw and a silent no-op would be
+    // indistinguishable from success.
+    final value = socket.getRawOption(
+      RawSocketOption(RawSocketOption.levelSocket, 0x0008, Uint8List(4)),
+    );
+    expect(
+      value.any((b) => b != 0),
+      isTrue,
+      reason: 'SO_KEEPALIVE should read back as enabled on Darwin',
+    );
+  });
+
+  test('a socket that rejects setRawOption still gets tcpNoDelay', () {
+    final socket = _NoRawOptionSocket();
+
+    // The point of the bare catch in applyTcpOptions: keepalive is a nicety,
+    // the connect is not. A platform without SO_KEEPALIVE must still connect.
+    expect(() => NativeSshSocket.applyTcpOptions(socket), returnsNormally);
+    expect(socket.options, [(SocketOption.tcpNoDelay, true)]);
+    expect(socket.rawAttempts, 1);
+  });
+}
+
+/// Accepts [Socket.setOption] and throws on every raw option, standing in for
+/// a platform where `SO_KEEPALIVE` is unavailable. Everything else is routed
+/// through `noSuchMethod` — the test touches only these two members.
+class _NoRawOptionSocket implements Socket {
+  final List<(SocketOption, bool)> options = [];
+  int rawAttempts = 0;
+
+  @override
+  bool setOption(SocketOption option, bool enabled) {
+    options.add((option, enabled));
+    return true;
+  }
+
+  @override
+  void setRawOption(RawSocketOption option) {
+    rawAttempts++;
+    throw const SocketException('SO_KEEPALIVE unsupported');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

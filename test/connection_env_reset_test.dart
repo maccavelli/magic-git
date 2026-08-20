@@ -296,6 +296,24 @@ void main() {
         1,
         reason: 'a different username must not hit the cache',
       );
+
+      // Sibling of the username case: the cache key is host|port|username,
+      // so a non-default port on the same host is a different environment
+      // (a container's sshd is not the host's sshd).
+      spy.events.clear();
+      await controller.connect(
+        profile: const SSHConnectionProfile(
+          host: 'mac',
+          username: 'u',
+          port: 2222,
+        ),
+        repoPath: '/repo',
+      );
+      expect(
+        spy.events.where((e) => e == 'probe').length,
+        1,
+        reason: 'a different port must not hit the cache',
+      );
     },
   );
 }

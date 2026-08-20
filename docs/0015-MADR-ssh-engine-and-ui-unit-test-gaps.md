@@ -177,6 +177,12 @@ This record does not change product architecture. Filling a gap may
 require a `@visibleForTesting` hook (for example, which `SSHClient` a
 lane used); that is a test seam, not a new transport.
 
+One later finding, **U18**, does touch production UI. It is not a new
+product decision either: it applies the already-decided Tappable/cursor
+canon to labelled controls that were built before that canon existed.
+Anything that would be a genuinely *new* product choice still belongs in
+its own record.
+
 ---
 
 ## Current coverage: SSH engine (fact)
@@ -316,17 +322,43 @@ on macOS where the call usually succeeds.
 
 **U11. Stream *and* sync redial.** `streamRedialDelay` is tested; a
 redial that actually replaces `_syncClient` after a mid-session drop is
-not. Needs a manager-level fake `done` on the sync client only.
+not. **Correction (2026-08-20):** this cannot be a fake-only unit test.
+The `done`-listener that fires `_onSyncClientLost` is installed by the
+connect path, not by `bindTestClients`, and the redial itself calls
+`_openAuthenticatedClient` against `_redialProfile` — a real handshake.
+Reaching it with fakes would need new production seams (a loss-simulator
+plus an injectable opener), which is more transport surface than the
+finding is worth. It belongs on the live sshd suite next to U9:
+close `manager.syncClient`, assert the degrade to 2, wait out the 15 s
+first backoff, assert recovery to 3.
 
 **U12. `ActivityCommandExecutor` forwards `activityIdle` and default
 descriptors.** Small decorator test; blocks a future “forgot to thread
 the new execute() field” bug (already paid once for `activityIdle` on
 ~42 fakes).
 
-**U13. History / connection-form / forge-sheet widget smoke.** Not
-full-panel suites: one pump that the screen builds under a connected
-stub, plus one error/empty path. `history_view.dart` is the largest
-unmatched panel.
+**U13. Connection-form / forge-sheet widget smoke.** Not full-panel
+suites: one pump that the screen builds under a connected stub, plus one
+error/empty path.
+
+**Correction (2026-08-20):** the “56 files unmatched by name” figure
+overstated this badly — name-matching is not coverage. `HistoryView` is
+pumped by **nine** files (`history_paging_test`, `history_actions_test`,
+`history_drag_merge_test`, `history_search_e2e_test`, …);
+`local_repo_form.dart` holds `AddExistingRepoSheet`, which has
+`add_existing_repo_sheet_test.dart`; `ForgeMilestonePicker` has
+`forge_milestone_picker_test.dart`; and `ForgeRepositoryWorkspace` is
+asserted in `repository_chrome_contract_test.dart`. None of those are
+gaps.
+
+What is genuinely unpumped: `ConnectionForm` (reached only from
+`connection_switcher.dart` ~1011 — `connection_edit_test` pumps
+`ConnectionsPanel`, not the form), `MergeOptionsSheet`
+(`showMergeOptionsSheet` from both forge panels), `RunJobsView`
+(`github_panel.dart` ~776/~955; GitLab's equivalent has
+`pipeline_jobs_view_test.dart`), and the forge sheet atoms
+`ForgeSheetField` / `ForgeSheetToggle` / `SheetSubmitRow` /
+`FieldErrorNote` / `ForgeDiffPreview`.
 
 **U14. In-session lost popup.** `app_shell` reconnecting/lost overlay
 vs the landing card. `link_status_chip_test` is not that overlay.
@@ -335,13 +367,131 @@ vs the landing card. `link_status_chip_test` is not that overlay.
 `find.textContaining` on the Network field help, so a copy revert cannot
 silently restore “command timeout” language.
 
-**U16. Env-cache key misses on username and port.**
-`_envKey` is `'${host}|${port}|${username}'` (`app_providers.dart` ~867),
-but `connection_env_reset_test.dart` only ever varies the host. Two
-profiles on the same host with different usernames (a bastion `root` vs
-`deploy`) or a non-22 port would share a cached `RemoteEnvironment` if
-the key ever degraded to host-only, and nothing would fail. One test:
-connect as `u@mac`, reconnect as `admin@mac`, assert the probe re-ran.
+**U16. Env-cache key misses on port.**
+`_envKey` is `'${host}|${port}|${username}'` (`app_providers.dart` ~867).
+
+**Correction (2026-08-20):** the **username** dimension is already
+covered — `connection_env_reset_test.dart` ~291 reconnects as
+`host: 'mac', username: 'other'` and asserts the probe re-ran (`'a
+different username must not hit the cache'`). The earlier claim that
+“every test varies only the host” came from a truncated search and was
+wrong.
+
+What remains is only the **port** dimension: two profiles differing
+solely by port would share a cached `RemoteEnvironment` if the key ever
+degraded, and nothing would fail. That is one line next to the existing
+username case, not a finding of its own weight — treat it as LOW.
+
+### Discovered while executing 0016 (U17–U19)
+
+These were not in the original audit. They surfaced because writing the
+first widget tests for screens nothing had pumped before exposed
+assumptions the suite had never had to state. Evidence is from
+2026-08-20 against `39edbe0`.
+
+**U17. Test provider scopes do not model the app's provider policy —
+so error branches are unreachable.** *(HIGH)*
+
+The app disables Riverpod 3's automatic provider retry. That policy is a
+magic literal, `retry: (_, _) => null`, duplicated at **three**
+production scope sites with three separately-written comments:
+
+* `lib/main.dart` ~109 (root scope)
+* `lib/features/tabs/tabs_controller.dart` ~94 (per-tab container)
+* `lib/features/window/secondary_window_main.dart` ~157 (pop-out engine)
+
+Because it is a literal and not a named policy, tests have nothing to
+share: **126** test files build a `ProviderContainer`/`ProviderScope`,
+and **13** set `retry`. The other ~113 run the framework in a
+configuration the app never uses.
+
+That is not cosmetic. Measured on riverpod 3.3.2 (`Retry` is
+`Duration? Function(int retryCount, Object error)`,
+`provider_container.dart` ~293), a provider that throws behaves like
+this:
+
+| scope | observed state sequence | `when()` renders |
+|---|---|---|
+| default (tests) | `AsyncLoading` → `AsyncLoading(isReloading: true)`, repeating | **`loading`**, forever |
+| `retry: (_, _) => null` (app) | `AsyncLoading` → `AsyncError` | **`error`** |
+
+Under the default policy the provider **never emits `AsyncError` at
+all**. The retry-pending state is an `AsyncLoading` carrying the prior
+error, so `isReloading` is true (`async_value.dart` ~97:
+`_hasState && isLoading && this is AsyncLoading`) and `when()` —
+whose `skipLoadingOnReload` defaults to **false** (~243, branch at
+~250–262) — takes the loading branch every time. Identical for
+`FutureProvider` and `StreamProvider`.
+
+Consequence: **any widget test that builds its own scope cannot reach an
+error branch.** A test asserting error UI there is either failing, or
+passing for an unrelated reason. This was found by `RunJobsView`'s error
+test sitting on a spinner; it is a property of every such test, not of
+that screen.
+
+The divergence is currently masked in exactly one place, which is why
+nobody noticed: `_dashboardSection`
+(`lib/features/forge/project_sections.dart` ~287) passes
+`skipLoadingOnReload: true`, so its error branch is reachable under
+either policy — which is why `forge_project_sections_test.dart`'s
+`'a failed dashboard surfaces errors, not silent empties'` passes under
+a bare scope. `asyncListSection` (`lib/features/common/async_views.dart`
+~268) exposes the same flag defaulting to `false`, so sections built
+through it do **not** have that accidental immunity.
+
+**U18. Checkbox and radio labels are not clickable.** *(MEDIUM,
+production)*
+
+macOS is unambiguous here: an AppKit checkbox or radio is an `NSButton`
+whose **title is part of the control**, so clicking the text toggles it.
+`macos_ui` supplies only the glyph (`MacosCheckbox`,
+`MacosRadioButton`) and leaves the label to the call site — so the
+platform behaviour has to be re-created, and mostly has not been.
+
+Ten call sites; **one** is right:
+
+| site | label |
+|---|---|
+| `history_view.dart` ~1873 | `Tappable` ✅ |
+| `merge_options_sheet.dart` ~113 (radio), ~128 | bare `Text` |
+| `create_tag_sheet.dart` ~203, ~235 | bare `Text` |
+| `add_worktree_sheet.dart` ~435, ~639, ~672 | bare `Text` |
+| `branch_detail.dart` ~1475 | bare `Text` |
+| `branch_bulk_delete_sheet.dart` ~328 | bare `Text` |
+
+This is not a new decision: it is the **existing** cursor/Tappable canon
+(`lib/features/common/tappable.dart`, pinned by
+`tappable_cursor_test.dart` and the source scan in
+`button_cursor_canon_test.dart`) not yet applied to labelled controls.
+The repo already single-sources this class of primitive —
+`LabeledTextField` (`lib/features/common/labeled_text_field.dart`) is
+the naming and structural precedent.
+
+Scope note: `MacosSwitch` is **excluded**. `NSSwitch` has no title and
+AppKit does not make an adjacent label toggle it, so mandating it there
+would invent behaviour rather than restore it. `ForgeSheetToggle` stays
+as it is.
+
+**U19. The sheet test-seam convention is unwritten.** *(LOW, docs)*
+
+0016-PLAN's Phase 6 instructed pumping `MergeOptionsSheet` directly.
+That is impossible — the body is `_MergeOptionsBody`, private. The plan
+was wrong, not the code. The repo has **two** deliberate sheet shapes
+and both are correct:
+
+* **Public sheet widget** (~20 of them: `SettingsSheet`, `DashboardSheet`,
+  `AddWorktreeSheet`, `RecoverySheet`, …). The caller pushes it; a test
+  pumps the widget.
+* **Private body behind a public `show*` function that returns a
+  result** (`showMergeOptionsSheet` → `_MergeOptionsBody`,
+  `showBranchBulkDeleteSheet` → `_BulkDeleteSheet`, `promptForm` →
+  `_PromptFormSheet`, `promptText` → `_PromptTextSheet`). The public API
+  *is* the function, and its return value is the contract — so a test
+  drives the function and asserts what it resolves to.
+
+Nothing needs restructuring. What is missing is the sentence that says
+which seam a given sheet has, so the next plan does not specify an
+impossible one again.
 
 ### LOW — polish / do not prioritize
 
@@ -403,6 +553,12 @@ connect as `u@mac`, reconnect as `admin@mac`, assert the probe re-ran.
 
 * Good, because 0014’s “flutter test clean” bar is no longer mistaken
   for “triple-client and activity deadline are behavior-proven.”
+* Bad, and newly known (U17): for widget tests the bar was weaker still.
+  A suite-wide framework-configuration divergence made every
+  self-built-scope error branch unreachable, so “the error path is
+  tested” could not have been true for those screens no matter how the
+  test was written. That is a property of the harness, not of any one
+  test, and it is the most load-bearing thing this record turned up.
 * Good, because the connect-time auth UI hole has an explicit widget
   follow-up instead of hoping the provider retry is enough.
 * Neutral, because this record is proposed until the maintainer accepts

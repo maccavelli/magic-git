@@ -426,4 +426,118 @@ void main() {
     },
     timeout: const Timeout(Duration(seconds: 120)),
   );
+
+  test(
+    'a real connect attaches all three clients',
+    () async {
+      if (skip()) return;
+      // 0014's triple-client architecture: the handshake test proves three
+      // sockets are *scheduled*, but only a real sshd proves three of them
+      // authenticate and stay attached. Both degraded getters fall back to
+      // the command client, so identity — not null-ness — is the proof.
+      expect(manager.attachedClientCount, 3);
+      expect(manager.syncClientDegraded, isFalse);
+      expect(manager.streamClientDegraded, isFalse);
+      expect(identical(manager.syncClient, manager.client), isFalse);
+      expect(identical(manager.streamClient, manager.client), isFalse);
+      expect(identical(manager.syncClient, manager.streamClient), isFalse);
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
+
+  test(
+    'a read completes while a long sync command is draining',
+    () async {
+      if (skip()) return;
+      // The whole point of the dedicated sync client: a fetch must not
+      // head-of-line-block status/log reads for its entire duration.
+      final sync = executor.execute(
+        repoPath: repo,
+        gitArgs: const ['sh', '-c', 'sleep 3; echo synced'],
+        lane: ExecLane.sync,
+        timeout: const Duration(seconds: 30),
+      );
+
+      final started = Stopwatch()..start();
+      while (!executor.syncBusy) {
+        if (started.elapsed > const Duration(seconds: 3)) {
+          fail('syncBusy never became true');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+
+      final readAt = Stopwatch()..start();
+      final read = await executor.execute(
+        repoPath: repo,
+        gitArgs: const ['echo', 'ok'],
+        lane: ExecLane.read,
+      );
+      readAt.stop();
+
+      expect(read.exitCode, 0);
+      expect(read.stdout.trim(), 'ok');
+      expect(
+        readAt.elapsed,
+        lessThan(const Duration(seconds: 2)),
+        reason: 'the read waited on the sync command — lanes are not split',
+      );
+
+      final synced = await sync;
+      expect(synced.exitCode, 0);
+      expect(synced.stdout.trim(), 'synced');
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
+
+  test(
+    'a dropped sync client degrades, then the backoff redial restores it',
+    () async {
+      if (skip()) return;
+      expect(manager.attachedClientCount, 3);
+      final dropped = manager.syncClient;
+      expect(dropped, isNotNull);
+
+      // A NAT/firewall idle-drop kills the least-used client first; without
+      // the redial the session stays degraded onto the command client for
+      // the rest of its life.
+      await dropped!.close();
+
+      final degradedAt = Stopwatch()..start();
+      while (!manager.syncClientDegraded) {
+        if (degradedAt.elapsed > const Duration(seconds: 10)) {
+          fail('the dropped sync client never degraded');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      expect(manager.attachedClientCount, 2);
+
+      // First backoff is streamRedialDelay(0) = 15s.
+      final recoveredAt = Stopwatch()..start();
+      while (manager.syncClientDegraded) {
+        if (recoveredAt.elapsed > const Duration(seconds: 40)) {
+          fail(
+            'sync client did not redial within 40s '
+            '(first backoff is 15s)',
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+
+      expect(manager.attachedClientCount, 3);
+      expect(
+        identical(manager.syncClient, dropped),
+        isFalse,
+        reason: 'recovery must be a NEW client, not the closed one',
+      );
+
+      // And the restored client actually carries sync work.
+      final synced = await executor.execute(
+        repoPath: repo,
+        gitArgs: const ['echo', 'redialed'],
+        lane: ExecLane.sync,
+      );
+      expect(synced.stdout.trim(), 'redialed');
+    },
+    timeout: const Timeout(Duration(seconds: 90)),
+  );
 }
