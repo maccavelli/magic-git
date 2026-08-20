@@ -150,6 +150,28 @@ exclusive barriers), output byte budgets (`command_drain.dart`), telemetry.
   feed the same watch-event pipeline.
 - Feature code lives in `lib/features/<area>/`; transport/domain logic in
   `lib/core/`. Tests are flat in `test/`, roughly one file per unit/widget.
+- The app disables Riverpod's automatic retry
+  (`retry: noProviderRetry`, `lib/core/providers/provider_retry_policy.dart`)
+  at every scope it creates. **A test must too** — build scopes with
+  `appProviderScope` / `appProviderContainer` (`test/helpers/app_scope.dart`).
+  Under the default policy a failed provider never emits `AsyncError`: it
+  holds an `AsyncLoading` carrying the error, so `when()` renders `loading`
+  forever and error branches are unreachable. `provider_retry_policy_test.dart`
+  pins both halves.
+
+### Sheets and their test seams
+
+Sheets come in two shapes; each one implies how it is tested.
+
+- **A public `*Sheet` widget** (`SettingsSheet`, `DashboardSheet`,
+  `AddWorktreeSheet`, …) — the caller pushes it, so a test pumps the widget
+  directly.
+- **A private body behind a public `show*` function that returns a result**
+  (`showMergeOptionsSheet`, `showBranchBulkDeleteSheet`, `promptForm`,
+  `promptText`) — the function *is* the public API and its resolved value is
+  the contract. A test pumps a host page, calls the function, drives the
+  sheet, and asserts what the future resolves to. Do not make the body public
+  in order to test it.
 
 ### Multi-window
 
