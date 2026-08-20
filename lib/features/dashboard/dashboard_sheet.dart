@@ -346,10 +346,19 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
                 samples.fold<int>(0, (n, s) => n + s.inMicroseconds) ~/
                 samples.length,
           );
-    // Read fresh on every rebuild (each ping sample, ≤15 s): dual-client can
-    // degrade mid-session when the stream connection dies and its slot falls
-    // back to the command client — a state that was previously invisible.
-    final degraded = ref.read(sshClientManagerProvider).streamClientDegraded;
+    // Read fresh on every rebuild (each ping sample, ≤15 s): stream/sync
+    // clients can degrade mid-session when a NAT drop falls back onto the
+    // command client — a state that was previously invisible.
+    final mgr = ref.read(sshClientManagerProvider);
+    final clientCount = mgr.attachedClientCount;
+    final clientLabel = switch (clientCount) {
+      3 => 'triple',
+      2 => 'dual',
+      1 => 'single',
+      _ => '—',
+    };
+    final cap = ref.read(executorProvider).adaptiveReadCap;
+    final opens = CommandTelemetry.instance.channelOpenErrors;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -370,10 +379,16 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
             const SizedBox(width: 24),
             _stat(
               typography,
-              degraded ? 'single' : 'dual',
+              clientLabel,
               'ssh clients',
-              color: degraded ? MacosColors.systemOrangeColor : null,
+              color: clientCount > 0 && clientCount < 3
+                  ? MacosColors.systemOrangeColor
+                  : null,
             ),
+            const SizedBox(width: 24),
+            _stat(typography, '$cap', 'read cap'),
+            const SizedBox(width: 24),
+            _stat(typography, '$opens', 'channel opens'),
             const SizedBox(width: 24),
             Expanded(
               child: SizedBox(

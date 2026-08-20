@@ -695,7 +695,7 @@ class SSHCommandExecutor implements CommandExecutor {
       _activeNonSync++;
     }
     try {
-      return await _runBody(
+      final result = await _runBody(
         client,
         gitArgs,
         extraEnv,
@@ -706,6 +706,11 @@ class SSHCommandExecutor implements CommandExecutor {
         repoPath,
         activityIdle,
       );
+      _adaptiveReads.onSuccess();
+      return result;
+    } on SSHChannelOpenError {
+      _adaptiveReads.onChannelOpenError();
+      rethrow;
     } finally {
       if (isSync) {
         _activeSync--;

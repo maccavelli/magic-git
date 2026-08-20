@@ -49,25 +49,28 @@ void main() {
     );
   });
 
-  test('starts at no-sample cap and requires consecutive samples to change', () {
-    final caps = <int>[];
-    final a = AdaptiveReadConcurrency(
-      consecutiveRequired: 3,
-      onCapChanged: caps.add,
-    );
-    expect(a.effectiveCap, 3);
+  test(
+    'starts at no-sample cap and requires consecutive samples to change',
+    () {
+      final caps = <int>[];
+      final a = AdaptiveReadConcurrency(
+        consecutiveRequired: 3,
+        onCapChanged: caps.add,
+      );
+      expect(a.effectiveCap, 3);
 
-    // Two high-RTT samples are not enough.
-    a.onRtt(const Duration(milliseconds: 300));
-    a.onRtt(const Duration(milliseconds: 300));
-    expect(a.effectiveCap, 3);
-    expect(caps, isEmpty);
+      // Two high-RTT samples are not enough.
+      a.onRtt(const Duration(milliseconds: 300));
+      a.onRtt(const Duration(milliseconds: 300));
+      expect(a.effectiveCap, 3);
+      expect(caps, isEmpty);
 
-    // Third consecutive lands the change.
-    a.onRtt(const Duration(milliseconds: 300));
-    expect(a.effectiveCap, 2);
-    expect(caps, [2]);
-  });
+      // Third consecutive lands the change.
+      a.onRtt(const Duration(milliseconds: 300));
+      expect(a.effectiveCap, 2);
+      expect(caps, [2]);
+    },
+  );
 
   test('mixed intermediate band (80–200ms) settles at 3', () {
     final a = AdaptiveReadConcurrency(consecutiveRequired: 2);
@@ -115,5 +118,63 @@ void main() {
     expect(a.effectiveCap, 3);
     a.reset();
     expect(caps, isEmpty);
+  });
+
+  test('channel-open error drops the cap immediately, floor 1', () {
+    final a = AdaptiveReadConcurrency(consecutiveRequired: 1);
+    for (var i = 0; i < 1; i++) {
+      a.onRtt(const Duration(milliseconds: 20));
+    }
+    expect(a.effectiveCap, 4);
+    a.onChannelOpenError();
+    expect(a.effectiveCap, 3);
+    a.onChannelOpenError();
+    expect(a.effectiveCap, 2);
+    a.onChannelOpenError();
+    expect(a.effectiveCap, 1);
+    a.onChannelOpenError();
+    expect(a.effectiveCap, 1);
+  });
+
+  test('three successes raise the error floor toward the RTT band', () {
+    final a = AdaptiveReadConcurrency(consecutiveRequired: 3);
+    for (var i = 0; i < 3; i++) {
+      a.onRtt(const Duration(milliseconds: 20));
+    }
+    expect(a.effectiveCap, 4);
+    a.onChannelOpenError();
+    expect(a.effectiveCap, 3);
+    a.onSuccess();
+    a.onSuccess();
+    expect(a.effectiveCap, 3);
+    a.onSuccess();
+    expect(a.effectiveCap, 4);
+  });
+
+  test('RTT band 2 wins over a high error floor', () {
+    final a = AdaptiveReadConcurrency(consecutiveRequired: 3);
+    a.onChannelOpenError(); // floor 2 from no-sample 3
+    expect(a.effectiveCap, 2);
+    for (var i = 0; i < 3; i++) {
+      a.onRtt(const Duration(milliseconds: 300));
+    }
+    expect(a.effectiveCap, 2);
+    for (var i = 0; i < 3; i++) {
+      a.onSuccess();
+    }
+    // Floor rises but last RTT band is 2.
+    expect(a.effectiveCap, 2);
+  });
+
+  test('reset restores no-sample cap and clears the error floor', () {
+    final a = AdaptiveReadConcurrency();
+    a.onChannelOpenError();
+    expect(a.effectiveCap, 2);
+    a.reset();
+    expect(a.effectiveCap, 3);
+    for (var i = 0; i < 3; i++) {
+      a.onRtt(const Duration(milliseconds: 20));
+    }
+    expect(a.effectiveCap, 4);
   });
 }
