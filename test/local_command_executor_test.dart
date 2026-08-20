@@ -30,7 +30,10 @@ void main() {
     expect(result.isSuccess, isTrue);
     // Resolve symlinks (macOS's /tmp is a symlink to /private/tmp) so this
     // compares like-for-like with what `pwd` actually prints.
-    expect(result.stdout.trim(), Directory(tempDir.path).resolveSymbolicLinksSync());
+    expect(
+      result.stdout.trim(),
+      Directory(tempDir.path).resolveSymbolicLinksSync(),
+    );
   });
 
   test('execute captures a non-zero exit code without throwing', () async {
@@ -42,34 +45,38 @@ void main() {
     expect(result.isSuccess, isFalse);
   });
 
-  test('a missing binary is a clean 127 result, not a raw ProcessException',
-      () async {
-    // Over SSH a missing binary comes back as a non-zero exit; the local
-    // backend must present the same shape (a result callers turn into a
-    // GitException) instead of throwing an uncaught ProcessException.
-    final result = await executor.execute(
-      repoPath: tempDir.path,
-      gitArgs: ['this-binary-does-not-exist-xyz', '--version'],
-    );
-    expect(result.isSuccess, isFalse);
-    expect(result.exitCode, 127);
-    expect(result.stderr, isNotEmpty);
-  });
+  test(
+    'a missing binary is a clean 127 result, not a raw ProcessException',
+    () async {
+      // Over SSH a missing binary comes back as a non-zero exit; the local
+      // backend must present the same shape (a result callers turn into a
+      // GitException) instead of throwing an uncaught ProcessException.
+      final result = await executor.execute(
+        repoPath: tempDir.path,
+        gitArgs: ['this-binary-does-not-exist-xyz', '--version'],
+      );
+      expect(result.isSuccess, isFalse);
+      expect(result.exitCode, 127);
+      expect(result.stderr, isNotEmpty);
+    },
+  );
 
-  test('a missing working directory is a clean non-127 failure, not a throw',
-      () async {
-    final result = await executor.execute(
-      repoPath: '${tempDir.path}/no-such-subdir',
-      gitArgs: ['sh', '-c', 'pwd'],
-    );
-    expect(result.isSuccess, isFalse);
-    // NOT 127: GitService reads 127 as "git is not installed" and tells the
-    // user to fix their git install — misleading when the repo folder itself
-    // was moved/deleted. Mirrors the SSH backend, where a missing dir is a
-    // failed `cd` (non-127) and surfaces as "not a git repository".
-    expect(result.exitCode, isNot(127));
-    expect(result.stderr, contains('cannot access repository folder'));
-  });
+  test(
+    'a missing working directory is a clean non-127 failure, not a throw',
+    () async {
+      final result = await executor.execute(
+        repoPath: '${tempDir.path}/no-such-subdir',
+        gitArgs: ['sh', '-c', 'pwd'],
+      );
+      expect(result.isSuccess, isFalse);
+      // NOT 127: GitService reads 127 as "git is not installed" and tells the
+      // user to fix their git install — misleading when the repo folder itself
+      // was moved/deleted. Mirrors the SSH backend, where a missing dir is a
+      // failed `cd` (non-127) and surfaces as "not a git repository".
+      expect(result.exitCode, isNot(127));
+      expect(result.stderr, contains('cannot access repository folder'));
+    },
+  );
 
   test('a deterministic spawn failure is not retried', () async {
     // With retries requested, a missing binary must NOT spin (it returns a
@@ -98,10 +105,7 @@ void main() {
   test('execute serializes overlapping commands (no interleaving)', () async {
     final order = <int>[];
     final first = executor
-        .execute(
-          repoPath: tempDir.path,
-          gitArgs: ['sh', '-c', 'sleep 0.05'],
-        )
+        .execute(repoPath: tempDir.path, gitArgs: ['sh', '-c', 'sleep 0.05'])
         .then((_) => order.add(1));
     final second = executor
         .execute(repoPath: tempDir.path, gitArgs: ['sh', '-c', 'true'])
@@ -138,63 +142,62 @@ void main() {
     expect(t.samples.single.success, isFalse);
   });
 
+  test('execute throws SSHOutputExceeded for output past the cap', () async {
+    expect(
+      () => executor.execute(
+        repoPath: tempDir.path,
+        gitArgs: ['sh', '-c', 'yes | head -c 1000'],
+        timeout: const Duration(seconds: 5),
+      ),
+      returnsNormally,
+    );
+    // Confirm the cap actually trips with a tiny ceiling via collectBounded
+    // directly (the canonical coverage lives in command_drain_test.dart).
+    final stream = Stream<String>.fromIterable(['a' * 50, 'b' * 50]);
+    expect(
+      () => collectBounded(stream, 'test', maxChars: 10),
+      throwsA(isA<SSHOutputExceeded>()),
+    );
+  });
+
   test(
-    'execute throws SSHOutputExceeded for output past the cap',
+    'configureEnvironment rewrites argv[0] to an overridden binary path',
     () async {
-      expect(
-        () => executor.execute(
-          repoPath: tempDir.path,
-          gitArgs: [
-            'sh',
-            '-c',
-            'yes | head -c 1000',
-          ],
-          timeout: const Duration(seconds: 5),
-        ),
-        returnsNormally,
+      // Create a fake "git" binary that just echoes its own path, and confirm
+      // argv[0] gets rewritten to it rather than invoking the real `git`.
+      final fakeBin = File('${tempDir.path}/fake-git')
+        ..writeAsStringSync('#!/bin/sh\necho "fake-git-ran"\n');
+      await Process.run('chmod', ['+x', fakeBin.path]);
+
+      executor.configureEnvironment(binaries: {'git': fakeBin.path});
+      final result = await executor.execute(
+        repoPath: tempDir.path,
+        gitArgs: ['git', '--version'],
       );
-      // Confirm the cap actually trips with a tiny ceiling via collectBounded
-      // directly (the canonical coverage lives in command_drain_test.dart).
-      final stream = Stream<String>.fromIterable(['a' * 50, 'b' * 50]);
-      expect(
-        () => collectBounded(stream, 'test', maxChars: 10),
-        throwsA(isA<SSHOutputExceeded>()),
+      expect(result.stdout.trim(), 'fake-git-ran');
+
+      executor.resetEnvironment();
+      final result2 = await executor.execute(
+        repoPath: tempDir.path,
+        gitArgs: ['sh', '-c', 'echo no-override'],
       );
+      expect(result2.stdout.trim(), 'no-override');
     },
   );
 
-  test('configureEnvironment rewrites argv[0] to an overridden binary path', () async {
-    // Create a fake "git" binary that just echoes its own path, and confirm
-    // argv[0] gets rewritten to it rather than invoking the real `git`.
-    final fakeBin = File('${tempDir.path}/fake-git')
-      ..writeAsStringSync('#!/bin/sh\necho "fake-git-ran"\n');
-    await Process.run('chmod', ['+x', fakeBin.path]);
-
-    executor.configureEnvironment(binaries: {'git': fakeBin.path});
-    final result = await executor.execute(
-      repoPath: tempDir.path,
-      gitArgs: ['git', '--version'],
-    );
-    expect(result.stdout.trim(), 'fake-git-ran');
-
-    executor.resetEnvironment();
-    final result2 = await executor.execute(
-      repoPath: tempDir.path,
-      gitArgs: ['sh', '-c', 'echo no-override'],
-    );
-    expect(result2.stdout.trim(), 'no-override');
-  });
-
-  test('executeStream streams incremental output and reports exit code', () async {
-    final handle = await executor.executeStream(
-      repoPath: tempDir.path,
-      gitArgs: ['sh', '-c', 'echo one; echo two; exit 3'],
-    );
-    final lines = await handle.stdout.join();
-    expect(lines, contains('one'));
-    expect(lines, contains('two'));
-    expect(await handle.exitCode, 3);
-  });
+  test(
+    'executeStream streams incremental output and reports exit code',
+    () async {
+      final handle = await executor.executeStream(
+        repoPath: tempDir.path,
+        gitArgs: ['sh', '-c', 'echo one; echo two; exit 3'],
+      );
+      final lines = await handle.stdout.join();
+      expect(lines, contains('one'));
+      expect(lines, contains('two'));
+      expect(await handle.exitCode, 3);
+    },
+  );
 
   test('executeStream cancel terminates a long-running process', () async {
     final handle = await executor.executeStream(
@@ -206,5 +209,65 @@ void main() {
     // before the 30s sleep would naturally finish.
     final code = await handle.exitCode.timeout(const Duration(seconds: 5));
     expect(code, isNot(0));
+  });
+
+  test(
+    'activityIdle: stderr pulses past the idle budget still complete',
+    () async {
+      final result = await executor.execute(
+        repoPath: tempDir.path,
+        gitArgs: [
+          'sh',
+          '-c',
+          'i=0; while [ \$i -lt 8 ]; do echo p >&2; i=\$((i+1)); sleep 0.05; done; echo ok',
+        ],
+        activityIdle: const Duration(milliseconds: 120),
+        timeout: const Duration(seconds: 2),
+      );
+      expect(result.isSuccess, isTrue);
+      expect(result.stdout, contains('ok'));
+    },
+  );
+
+  test(
+    'activityIdle: stdout pulses past the idle budget still complete',
+    () async {
+      final result = await executor.execute(
+        repoPath: tempDir.path,
+        gitArgs: [
+          'sh',
+          '-c',
+          'i=0; while [ \$i -lt 8 ]; do echo p; i=\$((i+1)); sleep 0.05; done; echo ok',
+        ],
+        activityIdle: const Duration(milliseconds: 120),
+        timeout: const Duration(seconds: 2),
+      );
+      expect(result.isSuccess, isTrue);
+      expect(result.stdout, contains('ok'));
+    },
+  );
+
+  test('activityIdle: silence throws SSHCommandTimeout', () async {
+    await expectLater(
+      executor.execute(
+        repoPath: tempDir.path,
+        gitArgs: ['sh', '-c', 'sleep 1; echo ok'],
+        activityIdle: const Duration(milliseconds: 80),
+        timeout: const Duration(seconds: 2),
+      ),
+      throwsA(isA<SSHCommandTimeout>()),
+    );
+  });
+
+  test('activityIdle: ceiling still kills a pulsing command', () async {
+    await expectLater(
+      executor.execute(
+        repoPath: tempDir.path,
+        gitArgs: ['sh', '-c', 'while true; do echo p; sleep 0.02; done'],
+        activityIdle: const Duration(seconds: 5),
+        timeout: const Duration(milliseconds: 150),
+      ),
+      throwsA(isA<SSHCommandTimeout>()),
+    );
   });
 }

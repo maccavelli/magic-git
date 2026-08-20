@@ -11,6 +11,7 @@ import 'package:remote_magic_git/core/output/output_log.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 
 /// A manager whose connect() blocks until the test releases a gate, so we can
 /// interleave a disconnect / a second connect while the first is mid-flight.
@@ -436,6 +437,11 @@ void main() {
     final state = container.read(connectionProvider);
     expect(state.phase, ConnectionPhase.connected);
     expect(state.warning, isNull);
+    expect(
+      state.forgeAuthPending,
+      isTrue,
+      reason: 'background login has not settled yet',
+    );
     expect(gh.logins, 1, reason: 'login started in the background');
     expect(
       container
@@ -458,6 +464,11 @@ void main() {
       container.read(connectionProvider).phase,
       ConnectionPhase.connected,
       reason: 'a login failure is a warning, never a failed session',
+    );
+    expect(
+      container.read(connectionProvider).forgeAuthPending,
+      isFalse,
+      reason: 'the pending flag must drop once the login step settles',
     );
   });
 
@@ -529,4 +540,140 @@ void main() {
       expect(gh.prCalls, 1);
     },
   );
+
+  test(
+    'statusProvider retries a pre-login auth failure after forge login settles',
+    () async {
+      final manager = _GatedManager();
+      final gh = _GatedGh()..gate = Completer<void>();
+      final git = _AuthThenOkGit();
+      final container = ProviderContainer(
+        overrides: [
+          sshClientManagerProvider.overrideWithValue(manager),
+          gitServiceProvider.overrideWithValue(git),
+          ghServiceProvider.overrideWithValue(gh),
+        ],
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(connectionProvider.notifier);
+
+      final connecting = controller.connect(
+        profile: profile,
+        repoPath: '/repo',
+        githubToken: 'tok',
+      );
+      manager.gates.first.complete();
+      await connecting;
+      expect(container.read(connectionProvider).forgeAuthPending, isTrue);
+
+      final statusSub = container.listen(statusProvider('/repo'), (_, _) {});
+      addTearDown(statusSub.close);
+      await Future<void>.delayed(Duration.zero);
+      expect(git.statusCalls, 1);
+      expect(
+        container.read(statusProvider('/repo')).hasError,
+        isFalse,
+        reason: 'auth failure during login must not land as a pane error',
+      );
+      expect(container.read(statusProvider('/repo')).isLoading, isTrue);
+
+      gh.gate!.complete();
+      await controller.forgeAuthSettled;
+      final status = await container.read(statusProvider('/repo').future);
+      expect(status.branch.head, 'main');
+      expect(git.statusCalls, 2);
+      expect(container.read(connectionProvider).forgeAuthPending, isFalse);
+    },
+  );
+
+  test(
+    'repoStructureProvider retries a pre-login auth failure after login',
+    () async {
+      final manager = _GatedManager();
+      final gh = _GatedGh()..gate = Completer<void>();
+      final git = _AuthThenOkGit()..failStatusOnce = false;
+      final container = ProviderContainer(
+        overrides: [
+          sshClientManagerProvider.overrideWithValue(manager),
+          gitServiceProvider.overrideWithValue(git),
+          ghServiceProvider.overrideWithValue(gh),
+        ],
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(connectionProvider.notifier);
+
+      final connecting = controller.connect(
+        profile: profile,
+        repoPath: '/repo',
+        githubToken: 'tok',
+      );
+      manager.gates.first.complete();
+      await connecting;
+
+      final treeSub = container.listen(
+        repoStructureProvider('/repo'),
+        (_, _) {},
+      );
+      addTearDown(treeSub.close);
+      await Future<void>.delayed(Duration.zero);
+      expect(git.treeCalls, 1);
+      expect(container.read(repoStructureProvider('/repo')).hasError, isFalse);
+
+      gh.gate!.complete();
+      final tree = await container.read(repoStructureProvider('/repo').future);
+      expect(tree.children.any((n) => n.name == 'README.md'), isTrue);
+      expect(git.treeCalls, 2);
+    },
+  );
+}
+
+/// First [status]/[listWorkingTree] call fails with a glab "not logged in"
+/// error; subsequent calls succeed. Models the race between the first git
+/// reads and connect-time forge login.
+class _AuthThenOkGit extends GitService {
+  _AuthThenOkGit() : super(_NoopExecutor());
+  int statusCalls = 0;
+  int treeCalls = 0;
+  bool failStatusOnce = true;
+  bool failTreeOnce = true;
+
+  @override
+  Future<void> validateRepoPath(String repoPath) async {}
+
+  @override
+  Future<GitStatus> status(String repoPath) async {
+    statusCalls++;
+    if (failStatusOnce && statusCalls == 1) {
+      throw const GitException(
+        'git status failed',
+        SSHCommandResult(
+          exitCode: 128,
+          stdout: '',
+          stderr: 'glab: not logged in',
+        ),
+      );
+    }
+    return GitStatus(
+      branch: const GitBranchInfo(head: 'main'),
+      files: const [],
+    );
+  }
+
+  @override
+  Future<({List<String> files, List<String> ignored})> listWorkingTree(
+    String repoPath,
+  ) async {
+    treeCalls++;
+    if (failTreeOnce && treeCalls == 1) {
+      throw const GitException(
+        'git ls-files failed',
+        SSHCommandResult(
+          exitCode: 128,
+          stdout: '',
+          stderr: 'glab: not logged in',
+        ),
+      );
+    }
+    return (files: const ['README.md'], ignored: const <String>[]);
+  }
 }

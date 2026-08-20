@@ -285,12 +285,16 @@ Future<_FakeGitService> _pump(
   // Gives the panel a live session (repoPath + sessionEpoch) so
   // workspace-navigation restores apply (0009 H3).
   bool sessionful = false,
+  Object? statusError,
 }) async {
   final resolved = git ?? _FakeGitService();
   final container = ProviderContainer(
     overrides: [
       gitServiceProvider.overrideWithValue(resolved),
-      statusProvider(_repo).overrideWith((ref) async => status),
+      statusProvider(_repo).overrideWith((ref) async {
+        if (statusError != null) throw statusError;
+        return status;
+      }),
       pendingOpProvider(_repo).overrideWith((ref) async => resolved.pendingOp0),
       repoWatchProvider(
         _repo,
@@ -2362,4 +2366,24 @@ void main() {
 
     expect(find.byType(SubmoduleChip), findsOneWidget);
   });
+
+  testWidgets(
+    'a not-logged-in status error is shown once forge login has settled',
+    (tester) async {
+      await _pump(
+        tester,
+        status: _statusWith(),
+        statusError: const GitException(
+          'git status failed',
+          SSHCommandResult(
+            exitCode: 128,
+            stdout: '',
+            stderr: 'glab: not logged in',
+          ),
+        ),
+      );
+
+      expect(find.textContaining('not logged in'), findsOneWidget);
+    },
+  );
 }

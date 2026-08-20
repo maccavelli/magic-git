@@ -6,7 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/forge/forge_widgets.dart';
 
 Future<ProviderContainer> _pump(WidgetTester tester, Object error) async {
@@ -40,6 +42,26 @@ void main() {
       looksLikeAuthFailure(Exception('not logged in to github.com')),
       true,
     );
+    expect(
+      looksLikeAuthFailure(
+        const GitException(
+          'git status failed',
+          SSHCommandResult(
+            exitCode: 128,
+            stdout: '',
+            stderr: 'glab: not logged in',
+          ),
+        ),
+      ),
+      true,
+    );
+    expect(
+      looksLikeAuthFailure(
+        Exception("could not read Username for 'https://github.com'"),
+      ),
+      true,
+    );
+    expect(looksLikeAuthFailure(Exception('terminal prompts disabled')), true);
     expect(looksLikeAuthFailure(Exception('could not resolve host')), false);
   });
 

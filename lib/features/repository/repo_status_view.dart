@@ -1661,17 +1661,28 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           final statusArea = Expanded(
             child: statusAsync.when(
               loading: () => const Center(child: ProgressCircle()),
-              error: (err, _) => Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Text(
-                    displayError(err),
-                    style: typography.body.copyWith(
-                      color: MacosColors.systemRedColor,
+              error: (err, _) {
+                // Connect-time `gh`/`glab auth login` races the first git
+                // reads; a "not logged in" failure is still in-progress
+                // login, not a broken working tree.
+                final pending = ref.watch(
+                  connectionProvider.select((c) => c.forgeAuthPending),
+                );
+                if (pending && looksLikeAuthFailure(err)) {
+                  return const Center(child: ProgressCircle());
+                }
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      displayError(err),
+                      style: typography.body.copyWith(
+                        color: MacosColors.systemRedColor,
+                      ),
                     ),
                   ),
-                ),
-              ),
+                );
+              },
               data: (status) => _body(
                 context,
                 status,

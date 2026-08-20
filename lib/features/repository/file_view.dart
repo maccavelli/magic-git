@@ -712,17 +712,28 @@ class _FileViewState extends ConsumerState<FileView> {
       // (skipLoadingOnReload) so the pane never flashes to a spinner mid-edit.
       skipLoadingOnReload: true,
       loading: () => const Center(child: ProgressCircle()),
-      error: (err, _) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Text(
-            displayError(err),
-            style: MacosTheme.of(
-              context,
-            ).typography.caption1.copyWith(color: MacosColors.systemRedColor),
+      error: (err, _) {
+        // Same race as the status pane: structure waits on status, so a
+        // pre-login auth failure would otherwise fill this pane with the
+        // same "not logged in" dump.
+        final pending = ref.watch(
+          connectionProvider.select((c) => c.forgeAuthPending),
+        );
+        if (pending && looksLikeAuthFailure(err)) {
+          return const Center(child: ProgressCircle());
+        }
+        return Center(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Text(
+              displayError(err),
+              style: MacosTheme.of(
+                context,
+              ).typography.caption1.copyWith(color: MacosColors.systemRedColor),
+            ),
           ),
-        ),
-      ),
+        );
+      },
       data: (root) {
         // First data for this repo: reveal directories that hold work.
         if (!_autoExpanded) {

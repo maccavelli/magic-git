@@ -1091,6 +1091,54 @@ void main() {
       },
     );
   });
+
+  testWidgets(
+    'a not-logged-in tree error is shown once forge login has settled',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(const {});
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            repoStructureProvider(_repo).overrideWith(
+              (ref) async => throw const GitException(
+                'git ls-files failed',
+                SSHCommandResult(
+                  exitCode: 128,
+                  stdout: '',
+                  stderr: 'glab: not logged in',
+                ),
+              ),
+            ),
+            repoStatusOverlayProvider(_repo).overrideWith((ref) => _overlay),
+          ],
+          child: MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: SizedBox(
+              width: 900,
+              height: 600,
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: FileView(
+                  maxWidth: 900,
+                  repoPath: _repo,
+                  onOpenFile:
+                      (
+                        _, {
+                        required staged,
+                        required untracked,
+                        required conflict,
+                      }) {},
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('not logged in'), findsOneWidget);
+    },
+  );
 }
 
 /// Records the right-click mutation calls (add-to-.gitignore / delete) without

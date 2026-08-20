@@ -8,7 +8,8 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:url_launcher/url_launcher.dart' show launchUrl;
 
 import '../../core/forge/forge_dashboard.dart';
-import '../../core/providers/app_providers.dart' show dashboardVisibleProvider;
+import '../../core/providers/app_providers.dart'
+    show connectionProvider, dashboardVisibleProvider;
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/display_error.dart';
 import '../common/async_views.dart';
@@ -19,6 +20,8 @@ import '../common/label_colors.dart';
 import '../common/section_collapse.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
+
+export '../../core/utils/display_error.dart' show looksLikeAuthFailure;
 
 /// The Forge workspace's shared widget kit: one row idiom, one detail
 /// scaffold, one section-header idiom — used identically by the GitHub and
@@ -157,41 +160,43 @@ class DetailLine extends StatelessWidget {
 }
 
 /// Centered red error text for a failed pane load, humanized via
-/// [displayError].
-class PaneError extends StatelessWidget {
+/// [displayError]. An auth-shaped failure while connect-time forge logins
+/// are still in flight is shown as a spinner instead — the login is why
+/// the command failed, not a broken pane.
+class PaneError extends ConsumerWidget {
   final Object error;
+  final TextStyle? style;
+  final EdgeInsetsGeometry padding;
 
-  const PaneError(this.error, {super.key});
+  const PaneError(
+    this.error, {
+    super.key,
+    this.style,
+    this.padding = const EdgeInsets.all(16),
+  });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final pending = ref.watch(
+      connectionProvider.select((c) => c.forgeAuthPending),
+    );
+    if (pending && looksLikeAuthFailure(error)) {
+      return const Center(child: ProgressCircle());
+    }
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: padding,
         child: Text(
           displayError(error),
-          style: MacosTheme.of(
-            context,
-          ).typography.body.copyWith(color: MacosColors.systemRedColor),
+          style:
+              style ??
+              MacosTheme.of(
+                context,
+              ).typography.body.copyWith(color: MacosColors.systemRedColor),
         ),
       ),
     );
   }
-}
-
-/// Heuristic: does a forge CLI failure read like missing or expired
-/// credentials? Matches the phrasings gh/glab actually emit (HTTP 401, "Bad
-/// credentials", "not logged in", "To get started with GitLab CLI, please run:
-/// glab auth login") rather than exit codes — glab's exit codes are advisory.
-@visibleForTesting
-bool looksLikeAuthFailure(Object error) {
-  final text = displayError(error).toLowerCase();
-  return text.contains('401') ||
-      text.contains('bad credentials') ||
-      text.contains('unauthorized') ||
-      text.contains('authentication') ||
-      text.contains('auth login') ||
-      text.contains('not logged in');
 }
 
 /// [SectionError] plus an actionable sign-in callout when the failure looks

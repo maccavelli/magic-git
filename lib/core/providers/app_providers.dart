@@ -57,6 +57,7 @@ import '../storage/saved_local_repo.dart';
 import '../storage/saved_workspace_set.dart';
 import '../storage/saved_workspace_store.dart';
 import '../undo/undo_journal.dart';
+import '../utils/display_error.dart';
 import '../utils/git_porcelain_parser.dart';
 import 'keep_alive_lru.dart';
 
@@ -699,6 +700,13 @@ class ConnectionState {
   /// Non-fatal warning shown after connect (e.g. GitLab token login failed).
   final String? warning;
 
+  /// True while this SSH session's background `gh`/`glab auth login` is still
+  /// in flight. Repository / file-view panes treat auth-shaped errors as
+  /// loading while this is set, so a "not logged in" failure that races the
+  /// login never paints as a red pane error. False for local sessions and
+  /// once the login step settles (success or failure).
+  final bool forgeAuthPending;
+
   /// While auto-reconnecting after a drop, the 1-based attempt number (0 when
   /// not auto-reconnecting). Drives the "Reconnecting… (attempt N)" UI.
   final int reconnectAttempt;
@@ -744,6 +752,7 @@ class ConnectionState {
     this.connectionLabel,
     this.host,
     this.warning,
+    this.forgeAuthPending = false,
     this.reconnectAttempt = 0,
     this.reconnecting = false,
     this.hostKeyPrompt,
@@ -771,6 +780,7 @@ class ConnectionState {
     String? connectionLabel,
     String? host,
     String? warning,
+    bool? forgeAuthPending,
     bool clearWarning = false,
     int? reconnectAttempt,
     bool? reconnecting,
@@ -790,6 +800,7 @@ class ConnectionState {
       connectionLabel: connectionLabel ?? this.connectionLabel,
       host: host ?? this.host,
       warning: clearWarning ? null : (warning ?? this.warning),
+      forgeAuthPending: forgeAuthPending ?? this.forgeAuthPending,
       reconnectAttempt: reconnectAttempt ?? this.reconnectAttempt,
       reconnecting: reconnecting ?? this.reconnecting,
       hostKeyPrompt: clearHostKeyPrompt
@@ -879,6 +890,11 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// connect shows its ordinary loading state while the login lands instead
   /// of flashing a transient authentication error.
   Future<void> get forgeAuthSettled => _forgeAuthGate.future;
+
+  /// Whether [forgeAuthSettled] has already completed. Git-backed providers
+  /// use this to decide whether an auth-shaped failure is still racing the
+  /// background login (retry after the gate) or is a real, settled failure.
+  bool get isForgeAuthSettled => _forgeAuthGate.isCompleted;
 
   /// Resolved by [acceptHostKeyChange]/[rejectHostKeyChange] — the only way
   /// [_verifyHostKey] ever returns while a mismatch prompt is showing. Null
@@ -1413,6 +1429,9 @@ class ConnectionController extends Notifier<ConnectionState> {
       // git reads, and the logins in particular validate their tokens against
       // the forge's API from the host, historically the slowest connect stage.
       final repos = SavedConnection.dedupePaths([repoPath, ...?repoPaths]);
+      final pendingForgeAuth =
+          (gitlabToken != null && gitlabToken.isNotEmpty) ||
+          (githubToken != null && githubToken.isNotEmpty);
       state = ConnectionState(
         phase: ConnectionPhase.connected,
         repoPath: repoPath,
@@ -1423,6 +1442,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         connectedAt: DateTime.now(),
         sessionEpoch: _attempt,
         scopedGitDirs: scopedGitDirs,
+        forgeAuthPending: pendingForgeAuth,
       );
       ref
           .read(outputLogProvider.notifier)
@@ -1640,6 +1660,13 @@ class ConnectionController extends Notifier<ConnectionState> {
         ref.read(outputLogProvider.notifier).logError('forge login', joined);
       }
     } finally {
+      // Clear the pending flag before releasing the gate so a pane that
+      // rebuilt on the error path sees `forgeAuthPending == false` by the
+      // time a retry lands. Superseded attempts must not touch the successor
+      // session's flag.
+      if (attempt == _attempt && ref.mounted && state.forgeAuthPending) {
+        state = state.copyWith(forgeAuthPending: false);
+      }
       if (!gate.isCompleted) gate.complete();
     }
   }
@@ -2915,7 +2942,11 @@ final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
   ref,
   repoPath,
 ) async {
-  final status = await ref.watch(gitServiceProvider).status(repoPath);
+  final git = ref.watch(gitServiceProvider);
+  final status = await _retryAfterForgeAuthIfNeeded(
+    ref,
+    () => git.status(repoPath),
+  );
   // `parseWarnings` records any porcelain status record that failed its
   // expected field-count check and was dropped (e.g. output truncated by a
   // transport hiccup) — computed so the drop is inspectable instead of
@@ -3065,9 +3096,11 @@ final repoStructureProvider = FutureProvider.autoDispose
     .family<RepoNode, String>((ref, repoPath) async {
       // Re-run only when the tree's shape (not its contents) changes.
       await ref.watch(statusProvider(repoPath).selectAsync(structureSignature));
-      final tree = await ref
-          .watch(gitServiceProvider)
-          .listWorkingTree(repoPath);
+      final git = ref.watch(gitServiceProvider);
+      final tree = await _retryAfterForgeAuthIfNeeded(
+        ref,
+        () => git.listWorkingTree(repoPath),
+      );
       final files = tree.files;
       final ignored = tree.ignored;
       RepoNode build() => buildRepoTree(files: files, ignored: ignored);
@@ -4727,6 +4760,35 @@ final untrackedDiffProvider = FutureProvider.autoDispose
 /// the logins land. See [ConnectionController.forgeAuthSettled].
 Future<void> _forgeAuthReady(Ref ref) =>
     ref.read(connectionProvider.notifier).forgeAuthSettled;
+
+/// Runs [load], but if it fails with an auth-shaped error while connect-time
+/// forge logins are still in flight, waits for those logins and retries once.
+///
+/// Git reads do not themselves need forge credentials. HTTPS remotes — and
+/// any host `credential.helper` that shells out to `gh`/`glab` — can still
+/// fail with "not logged in" if a command talks to the network before the
+/// background login lands. Without this retry, that transient failure
+/// becomes the Repository panel / file-view error state and stays there
+/// even after login succeeds.
+Future<T> _retryAfterForgeAuthIfNeeded<T>(
+  Ref ref,
+  Future<T> Function() load,
+) async {
+  try {
+    return await load();
+  } catch (e) {
+    if (!looksLikeAuthFailure(e)) rethrow;
+    final pending = ref.read(connectionProvider).forgeAuthPending;
+    final controller = ref.read(connectionProvider.notifier);
+    // `forgeAuthPending` is the UI-visible flag; the gate can complete a
+    // tick earlier via `_finishConnectInBackground`'s backstop. Either
+    // "still pending" or "gate not yet released" means login is in flight.
+    if (!pending && controller.isForgeAuthSettled) rethrow;
+    await controller.forgeAuthSettled;
+    if (!ref.mounted) rethrow;
+    return load();
+  }
+}
 
 /// Open merge requests for the connected project.
 final mergeRequestsProvider = FutureProvider.autoDispose
