@@ -21,6 +21,36 @@ String? peerDisconnectReason(Object? error) {
   return null;
 }
 
+/// Whether auto-reconnect should keep trying after [e] failed a connect.
+///
+/// Allowlist, not denylist — matching [SSHCommandExecutor.isTransientTransportError].
+/// Auth / host-key / key-decode failures pause immediately so we do not burn
+/// MaxAuthTries or OpenSSH PerSourcePenalties. Network-shaped errors keep the
+/// 20-attempt schedule.
+bool isRetryableReconnectError(Object e) {
+  if (e is SocketException ||
+      e is SSHSocketError ||
+      e is TimeoutException ||
+      e is SSHHandshakeError ||
+      e is SSHDisconnectError ||
+      e is SSHStateError) {
+    return true;
+  }
+  if (e is SSHAuthAbortError) {
+    final reason = e.reason;
+    return reason != null && isRetryableReconnectError(reason);
+  }
+  final s = e.toString().toLowerCase();
+  if (s.contains('connection closed') ||
+      s.contains('connection reset') ||
+      s.contains('broken pipe') ||
+      (s.contains('socket') && (s.contains('closed') || s.contains('error'))) ||
+      (s.contains('channel') && s.contains('closed'))) {
+    return true;
+  }
+  return false;
+}
+
 /// Lost-session banner. Stable when [error] is null or not a peer disconnect.
 String transportLostMessage(Object? error) {
   final peer = peerDisconnectReason(error);

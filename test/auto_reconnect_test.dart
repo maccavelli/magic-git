@@ -3,8 +3,10 @@
 // cancels the loop. Uses a fake SSHClientManager so no real socket is opened.
 
 import 'dart:async';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -17,6 +19,7 @@ class _FakeManager extends SSHClientManager {
   Completer<void> _done = Completer<void>();
   int connects = 0;
   bool failNext = false;
+  Object? failWith;
 
   /// When set, `connect()` pauses here before finishing — lets a test land a
   /// concurrent action (e.g. `disconnect()`) exactly while a reconnect attempt
@@ -36,7 +39,7 @@ class _FakeManager extends SSHClientManager {
     }
     if (failNext) {
       failNext = false;
-      throw Exception('reconnect failed');
+      throw failWith ?? const SocketException('reconnect failed');
     }
     _done = Completer<void>(); // fresh transport lifetime for this connection
   }
@@ -79,8 +82,9 @@ ProviderContainer _container(_FakeManager mgr) {
 
 const _profile = SSHConnectionProfile(host: 'h', username: 'u');
 
-Future<void> _connect(ProviderContainer c) =>
-    c.read(connectionProvider.notifier).connect(profile: _profile, repoPath: '/r');
+Future<void> _connect(ProviderContainer c) => c
+    .read(connectionProvider.notifier)
+    .connect(profile: _profile, repoPath: '/r');
 
 void main() {
   test('a drop transitions to lost then auto-reconnects', () async {
@@ -217,5 +221,25 @@ void main() {
     await Future<void>.delayed(const Duration(milliseconds: 2200));
     expect(mgr.connects, 3);
     expect(c.read(connectionProvider).isConnected, isTrue);
+  });
+
+  test('an auth failure pauses auto-reconnect immediately', () async {
+    final mgr = _FakeManager();
+    final c = _container(mgr);
+    await _connect(c);
+    mgr.failNext = true;
+    mgr.failWith = SSHAuthFailError('All authentication methods failed');
+
+    mgr.drop();
+    await Future<void>.delayed(Duration.zero);
+
+    await Future<void>.delayed(const Duration(milliseconds: 1300));
+    expect(mgr.connects, 2);
+    expect(c.read(connectionProvider).isLost, isTrue);
+    expect(c.read(connectionProvider).reconnecting, isFalse);
+
+    await Future<void>.delayed(const Duration(milliseconds: 2200));
+    expect(mgr.connects, 2, reason: 'auth failure must not keep retrying');
+    expect(c.read(connectionProvider).isLost, isTrue);
   });
 }

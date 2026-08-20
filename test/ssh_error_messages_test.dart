@@ -73,6 +73,56 @@ void main() {
     );
   });
 
+  test('isRetryableReconnectError allowlist vs auth/host-key', () {
+    expect(
+      isRetryableReconnectError(const SocketException('timed out')),
+      isTrue,
+    );
+    expect(isRetryableReconnectError(SSHSocketError('reset')), isTrue);
+    expect(isRetryableReconnectError(TimeoutException('x')), isTrue);
+    expect(
+      isRetryableReconnectError(SSHHandshakeError('Handshake timed out')),
+      isTrue,
+    );
+    expect(isRetryableReconnectError(SSHDisconnectError(11, 'bye')), isTrue);
+    expect(isRetryableReconnectError(SSHStateError('closed')), isTrue);
+    expect(
+      isRetryableReconnectError(
+        SSHAuthAbortError(
+          'Connection closed before authentication',
+          SSHDisconnectError(11, 'bye'),
+        ),
+      ),
+      isTrue,
+    );
+    expect(
+      isRetryableReconnectError(Exception('connection reset by peer')),
+      isTrue,
+    );
+
+    expect(
+      isRetryableReconnectError(
+        SSHAuthFailError('All authentication methods failed'),
+      ),
+      isFalse,
+    );
+    expect(
+      isRetryableReconnectError(SSHAuthAbortError('no more auth methods')),
+      isFalse,
+    );
+    expect(isRetryableReconnectError(SSHHostkeyError('mismatch')), isFalse);
+    expect(isRetryableReconnectError(SSHKeyDecodeError('bad pem')), isFalse);
+    expect(
+      isRetryableReconnectError(SSHKeyDecryptError('bad passphrase')),
+      isFalse,
+    );
+    expect(isRetryableReconnectError(ArgumentError('no secret')), isFalse);
+    expect(
+      isRetryableReconnectError(SSHInternalError('kex mismatch')),
+      isFalse,
+    );
+  });
+
   test('peerDisconnectReason and transportLostMessage', () {
     expect(peerDisconnectReason(Exception('x')), isNull);
     expect(transportLostMessage(null), 'Connection lost');

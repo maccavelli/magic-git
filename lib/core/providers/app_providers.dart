@@ -1456,15 +1456,18 @@ class ConnectionController extends Notifier<ConnectionState> {
       await ref.read(sshClientManagerProvider).disconnect();
       if (attempt != _attempt || !ref.mounted) return;
       // A failed *reconnect* stays in the reconnecting popup (as `lost`) so
-      // _autoReconnect keeps retrying; a failed *initial* connect surfaces the
-      // error to the landing card as before. Identity fields carried through
-      // from this attempt's own parameters, same reasoning as the connecting
-      // state above — the "Lost contact with X" popup must still name the
-      // right host on a failed retry, not just on the first drop.
+      // _autoReconnect keeps retrying — except deterministic auth/host-key
+      // failures, which pause immediately (T1) so we do not burn MaxAuthTries
+      // or PerSourcePenalties. A failed *initial* connect surfaces the error
+      // to the landing card as before. Identity fields carried through from
+      // this attempt's own parameters, same reasoning as the connecting state
+      // above — the "Lost contact with X" popup must still name the right host
+      // on a failed retry, not just on the first drop.
+      final keepRetrying = reconnecting && isRetryableReconnectError(e);
       state = ConnectionState(
         phase: reconnecting ? ConnectionPhase.lost : ConnectionPhase.error,
         error: humanizeSshError(e),
-        reconnecting: reconnecting,
+        reconnecting: keepRetrying,
         reconnectAttempt: attemptNo,
         repoPath: repoPath,
         connectionId: connectionId,
@@ -2006,6 +2009,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       // forced it back, silently resurrecting the reconnect popup right after
       // the user had cancelled it).
       if (state.phase != ConnectionPhase.lost) return;
+      if (!state.reconnecting) return;
       i++;
     }
   }
