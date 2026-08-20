@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show SocketException, gzip;
+import 'dart:io' show GZipCodec, SocketException, gzip;
+import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -259,6 +260,9 @@ class SSHCommandExecutor implements CommandExecutor {
   /// possibly-slow prepare-commit-msg hook) and remote-sync ops cross a network;
   /// callers can override per command.
   static const Duration defaultTimeout = Duration(seconds: 60);
+
+  /// Compressed stdout larger than this is gunzipped off the UI isolate.
+  static const int gzipOffloadWireBytes = 256 * 1024;
 
   /// Lane-aware scheduler: reads run concurrently (and alongside a fetch/push
   /// on the sync lane), mutations run strictly alone — see [ExecLane] /
@@ -610,6 +614,16 @@ class SSHCommandExecutor implements CommandExecutor {
 
   /// Marks the in-band exit trailer a compressed read appends to its stdout —
   /// see [CommandFormatter.format]'s `compressOutput` and [splitExitTrailer].
+  /// Gunzips [wire] on this isolate below [gzipOffloadWireBytes], otherwise
+  /// off the UI isolate. Budget charging is the caller's job (post-gunzip).
+  @visibleForTesting
+  static Future<List<int>> gunzipStdout(Uint8List wire) async {
+    if (wire.length > gzipOffloadWireBytes) {
+      return Isolate.run(() => GZipCodec().decode(wire));
+    }
+    return gzip.decode(wire);
+  }
+
   static const String _exitMarker = '\u0001EXIT=';
 
   /// Splits `<stdout><\x01EXIT=<n>\x01>` into `(exitCode, stdout)`. Returns a
@@ -768,14 +782,29 @@ class SSHCommandExecutor implements CommandExecutor {
         stdoutWireBytes += chunk.length;
         return chunk;
       });
-      final stdoutFuture = collectBounded(
-        boundedBytes(
-          compressed ? rawStdout.transform(gzip.decoder) : rawStdout,
-          budget,
+      final Future<String> stdoutFuture;
+      if (compressed) {
+        stdoutFuture = () async {
+          final builder = BytesBuilder(copy: false);
+          await for (final chunk in rawStdout) {
+            builder.add(chunk);
+          }
+          final wire = Uint8List.fromList(builder.takeBytes());
+          stdoutWireBytes = wire.length;
+          final raw = await gunzipStdout(wire);
+          budget.charge(raw.length, label);
+          return utf8.decode(raw, allowMalformed: true);
+        }();
+      } else {
+        stdoutFuture = collectBounded(
+          boundedBytes(
+            rawStdout,
+            budget,
+            label,
+          ).transform(const Utf8Decoder(allowMalformed: true)),
           label,
-        ).transform(const Utf8Decoder(allowMalformed: true)),
-        label,
-      );
+        );
+      }
       final stderrFuture = collectBounded(
         boundedBytes(
           s.stderr.cast<List<int>>(),

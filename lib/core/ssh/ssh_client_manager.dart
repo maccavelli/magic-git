@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+import 'dart:isolate';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -300,11 +301,17 @@ class SSHClientManager {
     // store — or, on a mismatch, stack two prompts on the UI's single
     // decision slot and leave one handshake paused forever.
     final verify = serializeHostKeyVerifier(onVerifyHostKey);
+    // Bcrypt KDF for encrypted PEMs runs off this isolate, once per connect.
+    // Both handshakes reuse the decoded identities — three bcrypts would
+    // freeze the chrome (and will freeze it three times after the sync client).
+    final identities = await _identitiesFor(profile);
+    if (gen != _generation) return;
     final cmdFuture = _openAuthenticatedClient(
       profile,
       gen: gen,
       onVerifyHostKey: verify,
       authTimeout: _authTimeout,
+      identities: identities,
     );
     // Best-effort second client for streams. Never fail the whole connect if
     // this fails — degrade to single-client (streams share command client).
@@ -317,6 +324,7 @@ class SSHClientManager {
           gen: gen,
           onVerifyHostKey: verify,
           authTimeout: _streamAuthTimeout,
+          identities: identities,
         ).then<SSHClient?>(
           (c) => c,
           onError: (Object e, StackTrace st) {
@@ -551,6 +559,27 @@ class SSHClientManager {
     };
   }
 
+  /// Decodes [pem] off the UI isolate (bcrypt KDF for encrypted keys) and
+  /// re-parses the exported unencrypted PEM here. [toPem] of an in-memory
+  /// OpenSSH key is unencrypted, so the second [fromPem] is cheap.
+  @visibleForTesting
+  static Future<List<SSHKeyPair>> decodeIdentities(
+    String pem,
+    String? passphrase,
+  ) async {
+    final exported = await Isolate.run(() {
+      final keys = SSHKeyPair.fromPem(pem, passphrase);
+      return [for (final k in keys) k.toPem()];
+    });
+    return [for (final p in exported) ...SSHKeyPair.fromPem(p)];
+  }
+
+  Future<List<SSHKeyPair>?> _identitiesFor(SSHConnectionProfile profile) async {
+    final privateKey = profile.privateKey;
+    if (privateKey == null || privateKey.isEmpty) return null;
+    return decodeIdentities(privateKey, profile.passphrase);
+  }
+
   /// Opens and authenticates one [SSHClient]. Returns null if [gen] was
   /// superseded mid-handshake. Throws on auth/socket failure (caller decides
   /// whether that fails connect or degrades).
@@ -560,23 +589,8 @@ class SSHClientManager {
     FutureOr<bool> Function(String type, Uint8List fingerprint)?
     onVerifyHostKey,
     required Duration authTimeout,
+    List<SSHKeyPair>? identities,
   }) async {
-    final socket = await NativeSshSocket.connect(
-      profile.host,
-      profile.port,
-      timeout: _socketTimeout,
-    );
-
-    // A host-key mismatch pauses on `onVerifyHostKey` awaiting an explicit
-    // human decision (see [ConnectionController._verifyHostKey]), which can
-    // legitimately take far longer than the auth timeout — this flag lets the
-    // timeout below tell "genuinely stuck" apart from "waiting on a person."
-    var awaitingHostKeyDecision = false;
-    // `SSHKeyPair.fromPem` is evaluated eagerly as a constructor argument and
-    // throws on a malformed key / wrong passphrase — before the SSHClient that
-    // would own closing the socket is ever constructed. Close the already-open
-    // socket ourselves on any throw here, or a bad/encrypted key leaks it once
-    // per attempt (and auto-reconnect repeats the attempt).
     // Auth method selection is deliberate: a non-null `onPasswordRequest`
     // *registers* the password method with the server. Returning `''` for a
     // key-only profile would attempt empty-password auth on every connect
@@ -589,11 +603,28 @@ class SSHClientManager {
     final hasPassword = password != null && password.isNotEmpty;
     final hasKey = privateKey != null && privateKey.isNotEmpty;
     if (!hasPassword && !hasKey) {
-      socket.destroy();
       throw ArgumentError(
         'SSHConnectionProfile requires a password or a private key',
       );
     }
+    // Redial of a single client may decode again (rare). Connect passes the
+    // already-decoded list so bcrypt runs once for the whole handshake batch.
+    final resolvedIdentities = hasKey
+        ? (identities ?? await _identitiesFor(profile))
+        : null;
+    if (gen != _generation) return null;
+
+    final socket = await NativeSshSocket.connect(
+      profile.host,
+      profile.port,
+      timeout: _socketTimeout,
+    );
+
+    // A host-key mismatch pauses on `onVerifyHostKey` awaiting an explicit
+    // human decision (see [ConnectionController._verifyHostKey]), which can
+    // legitimately take far longer than the auth timeout — this flag lets the
+    // timeout below tell "genuinely stuck" apart from "waiting on a person."
+    var awaitingHostKeyDecision = false;
 
     final SSHClient client;
     try {
@@ -602,9 +633,7 @@ class SSHClientManager {
         username: profile.username,
         // Only when a password exists — see comment above.
         onPasswordRequest: hasPassword ? () => password : null,
-        identities: hasKey
-            ? SSHKeyPair.fromPem(privateKey, profile.passphrase)
-            : null,
+        identities: resolvedIdentities,
         // Dead-peer detection is owned by [ConnectionHealthMonitor]
         // (which checks whether pings are *answered*). The library's own
         // keepAliveInterval fires-and-forgets without a reply counter, and

@@ -7,6 +7,10 @@
 // since the assertions never depend on a client actually being connected.
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io' show gzip;
+import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -193,6 +197,26 @@ void main() {
         'out\u0001EXIT=abc\u0001',
       );
       expect(code, isNull);
+    });
+  });
+
+  group('gunzipStdout', () {
+    test('decodes a small payload on this isolate', () async {
+      final raw = utf8.encode('hello compressed');
+      final wire = Uint8List.fromList(gzip.encode(raw));
+      expect(wire.length, lessThan(SSHCommandExecutor.gzipOffloadWireBytes));
+      expect(await SSHCommandExecutor.gunzipStdout(wire), raw);
+    });
+
+    test('decodes a payload over the offload threshold off-isolate', () async {
+      final raw = Uint8List(300 * 1024);
+      final rnd = Random(1);
+      for (var i = 0; i < raw.length; i++) {
+        raw[i] = rnd.nextInt(256);
+      }
+      final wire = Uint8List.fromList(gzip.encode(raw));
+      expect(wire.length, greaterThan(SSHCommandExecutor.gzipOffloadWireBytes));
+      expect(await SSHCommandExecutor.gunzipStdout(wire), raw);
     });
   });
 
