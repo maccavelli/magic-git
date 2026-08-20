@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod/misc.dart' show Override;
 
 import '../../core/providers/app_providers.dart';
+import '../../core/providers/provider_retry_policy.dart';
 import '../../core/providers/window_manager_bridge.dart';
 import '../../core/storage/saved_workspace_set.dart';
 import '../../core/storage/saved_workspace_store.dart';
@@ -91,7 +92,7 @@ class TabsController extends ChangeNotifier {
   static TabsController? current;
 
   static ProviderContainer _defaultContainerFactory(List<Override> overrides) =>
-      ProviderContainer(retry: (_, _) => null, overrides: overrides);
+      ProviderContainer(retry: noProviderRetry, overrides: overrides);
 
   /// Upper bound on concurrently open tabs. Each tab is a full live session
   /// (its own SSH client/socket or local access), so this is a resource

@@ -7,10 +7,11 @@
 // PR that the remote still creates.
 
 import 'package:flutter/widgets.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/features/forge/forge_create_sheet_widgets.dart';
+
+import 'helpers/app_scope.dart';
 
 /// [settle] is false wherever a ProgressCircle is on screen: its animation
 /// never settles, so pumpAndSettle would time out.
@@ -20,10 +21,7 @@ Future<void> _pump(
   bool settle = true,
 }) async {
   await tester.pumpWidget(
-    ProviderScope(
-      // Same policy as main.dart: no automatic provider retry, so an error
-      // surfaces instead of sitting in a retry spinner.
-      retry: (_, _) => null,
+    appProviderScope(
       child: MacosApp(
         debugShowCheckedModeBanner: false,
         home: SizedBox(width: 600, height: 400, child: child),

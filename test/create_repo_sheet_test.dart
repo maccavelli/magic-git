@@ -8,7 +8,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
@@ -20,6 +19,8 @@ import 'package:remote_magic_git/core/storage/connection_store.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/workspace/create_repo_sheet.dart';
+
+import 'helpers/app_scope.dart';
 
 class _FakeExecutor extends SSHCommandExecutor {
   final List<List<String>> calls = [];
@@ -115,7 +116,7 @@ Future<(_StubConnection, _FakeExecutor, _FakeStore)> _pumpConnected(
   final exec = _FakeExecutor();
   final store = _FakeStore();
   await tester.pumpWidget(
-    ProviderScope(
+    appProviderScope(
       overrides: [
         connectionProvider.overrideWith(() => stub),
         activeExecutorProvider.overrideWithValue(exec),
@@ -201,7 +202,7 @@ void main() {
         ),
       );
       await tester.pumpWidget(
-        ProviderScope(
+        appProviderScope(
           overrides: [
             connectionProvider.overrideWith(() => stub),
             activeExecutorProvider.overrideWithValue(_FakeExecutor()),

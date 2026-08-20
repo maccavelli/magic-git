@@ -527,15 +527,19 @@ to "degraded is fine".
 ### 9a. Name the policy once (production)
 
 The three sites are byte-identical literals with three hand-written
-comments. Replace the literal with a named function — Riverpod's own
-`Retry` typedef is `Duration? Function(int retryCount, Object error)`, so a
-top-level function is the idiomatic shared form and reads better at the
-call site than a closure:
+comments. Replace the literal with a named top-level function — it reads
+better at the call site than a closure and gives the rationale one home.
+
+**Corrected 2026-08-20:** riverpod 3.3.2 declares
+`typedef Retry = Duration? Function(int retryCount, Object error)` at
+`src/core/provider_container.dart` ~293 but does **not** export it —
+neither `package:flutter_riverpod/flutter_riverpod.dart` nor
+`package:riverpod/misc.dart` re-exports the name. Do not import it. Declare
+the function with that signature directly; it is structurally identical and
+needs no import.
 
 ```dart
-import 'package:riverpod/riverpod.dart' show Retry;
-
-/// The app's provider [Retry] policy: never retry a failed provider.
+/// The app's provider retry policy: never retry a failed provider.
 ///
 /// Riverpod 3 retries by default (exponential backoff to ~6s). Magic Git's
 /// provider failures are overwhelmingly deterministic — a bad path, a signed
@@ -549,6 +553,8 @@ import 'package:riverpod/riverpod.dart' show Retry;
 /// indefinitely. Every scope the app creates must use this, and so must any
 /// test that expects to reach an error branch — see `test/helpers/app_scope.dart`
 /// and `provider_retry_policy_test.dart`.
+///
+/// Signature matches riverpod's (unexported) `Retry` typedef.
 Duration? noProviderRetry(int retryCount, Object error) => null;
 ```
 
@@ -868,12 +874,15 @@ with its tests or they will not compile. Nothing here is depended on by
 5. Phase 9's `lib/` scan finds a scope site this plan did not name → stop
    and report before touching it; a container built somewhere unexpected
    may be deliberate.
-6. Riverpod's observed behaviour disagrees with Phase 9c's table (for
+6. Riverpod exports `Retry` in a future version → the function signature
+   is already correct; annotating it is optional polish, not a change of
+   behaviour. Do not restructure the policy for it.
+7. Riverpod's observed behaviour disagrees with Phase 9c's table (for
    example a future version does emit `AsyncError` under the default
    policy) → the policy is still correct, but update the MADR's U17 table
    and this plan's rationale before writing the test. Never pin a
    behaviour you did not observe on this tree.
-7. Phase 10's wrapper cannot preserve a call site's layout (a label that
+8. Phase 10's wrapper cannot preserve a call site's layout (a label that
    is not a plain string, a control with no label at all) → allowlist that
    site in the scan with a one-line reason, in the style of
    `_bareTapAllowance`. Do not add layout escape hatches to the wrapper,

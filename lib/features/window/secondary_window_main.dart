@@ -33,6 +33,7 @@ import '../../core/exec/proxy_command_executor.dart';
 import '../../core/git/git_service.dart';
 import '../../core/git/watch_event.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/providers/provider_retry_policy.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/settings/pane_layout.dart';
@@ -153,9 +154,7 @@ Future<void> _bootSecondaryWindow() async {
 
   runApp(
     ProviderScope(
-      // Same rationale as the main isolate: git failures are deterministic,
-      // surface them instead of hiding them behind Riverpod's default retry.
-      retry: (_, _) => null,
+      retry: noProviderRetry,
       observers: const [_ProviderFailureLogObserver()],
       overrides: [
         // THE seam: every provider below GitService runs unchanged; only the

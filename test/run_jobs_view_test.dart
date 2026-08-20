@@ -6,7 +6,6 @@
 // through PaneError — the same widget the connect-time auth spinner uses).
 
 import 'package:flutter/cupertino.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/github/models.dart';
@@ -14,6 +13,8 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/features/github/run_jobs_view.dart';
 import 'package:riverpod/misc.dart' show Override;
 import 'package:shared_preferences/shared_preferences.dart';
+
+import 'helpers/app_scope.dart';
 
 const _repo = '/srv/repo';
 const _runId = 77;
@@ -24,12 +25,9 @@ Future<void> _pump(WidgetTester tester, List<Override> overrides) async {
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.reset);
   await tester.pumpWidget(
-    ProviderScope(
-      // Mirror main.dart's scope: the app disables Riverpod 3's automatic
-      // provider retry, so a failed fetch surfaces as an error immediately.
-      // A bare ProviderScope would instead sit in retry-loading forever and
-      // the error branch below would be unreachable.
-      retry: (_, _) => null,
+    appProviderScope(
+      // Not a bare ProviderScope: without the app's retry policy a failed
+      // fetch never emits AsyncError and the error test below is unreachable.
       overrides: overrides,
       child: const MacosApp(
         debugShowCheckedModeBanner: false,

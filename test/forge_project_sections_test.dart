@@ -25,6 +25,8 @@ import 'package:remote_magic_git/features/forge/issue_create_form.dart';
 import 'package:remote_magic_git/features/github/github_panel.dart';
 import 'package:riverpod/misc.dart' show Override;
 
+import 'helpers/app_scope.dart';
+
 const _repo = '/repo';
 
 const _issues = [
@@ -113,7 +115,7 @@ Future<void> _pump(
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(
-    ProviderScope(
+    appProviderScope(
       overrides: overrides,
       child: const MacosApp(
         debugShowCheckedModeBanner: false,
@@ -274,7 +276,7 @@ void main() {
     var active = true;
     late StateSetter setHarness;
     await tester.pumpWidget(
-      ProviderScope(
+      appProviderScope(
         overrides: _overrides(),
         child: MacosApp(
           debugShowCheckedModeBanner: false,

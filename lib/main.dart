@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:window_manager/window_manager.dart';
 import 'core/providers/app_providers.dart';
+import 'core/providers/provider_retry_policy.dart';
 import 'features/tabs/tabs_host.dart';
 import 'features/window/secondary_window_main.dart';
 
@@ -101,16 +102,14 @@ void main() async {
   await WindowManipulator.initialize();
 
   runApp(
-    ProviderScope(
-      // Riverpod 3 retries failed providers by default (exp. backoff to ~6s).
-      // git/glab failures are usually deterministic (bad path, auth, 4xx), so
-      // surface them immediately instead of hiding them behind a retry spinner.
-      // Manual refresh and the remote watcher already re-drive on demand.
-      retry: (_, _) => null,
+    // Const-constructible now that the retry policy is a named tear-off
+    // rather than an inline closure.
+    const ProviderScope(
+      retry: noProviderRetry,
       // TabsHost owns MacosApp: it provides the active tab's container above the
       // root Navigator (so sheets/dialogs read the live session) and keeps the
       // single native-window bridge alive in this root container.
-      child: const TabsHost(),
+      child: TabsHost(),
     ),
   );
 }
