@@ -177,4 +177,22 @@ void main() {
     expect(find.textContaining('could not resolve host'), findsOneWidget);
     expect(find.byType(ProgressCircle), findsNothing);
   });
+
+  testWidgets('PaneError shows a spinner for a not-ready transport', (
+    tester,
+  ) async {
+    // No forgeAuthPending gate here, deliberately: a not-ready transport is
+    // never a user-actionable failure, whatever the connection phase.
+    await _pumpPane(
+      tester,
+      const SSHTransportNotReady('git status'),
+      forgeAuthPending: false,
+    );
+
+    expect(find.byType(ProgressCircle), findsWidgets);
+    expect(find.textContaining('not ready'), findsNothing);
+    expect(find.textContaining('Still connecting'), findsNothing);
+
+    await _unmount(tester);
+  });
 }

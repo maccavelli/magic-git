@@ -68,6 +68,11 @@ String humanizeSshError(Object error) {
   if (error is SSHCommandSuperseded) {
     return 'The connection changed before this command could run. Try again.';
   }
+  if (error is SSHTransportNotReady) {
+    // Not a failure the user can act on: the session simply is not up yet, and
+    // the work re-runs on its own once it is.
+    return 'Still connecting to the host — this will refresh on its own.';
+  }
   if (error is SSHOutputExceeded) {
     return 'The remote command produced more output than this app will buffer.';
   }

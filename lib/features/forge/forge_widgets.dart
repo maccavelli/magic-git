@@ -21,7 +21,8 @@ import '../common/section_collapse.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 
-export '../../core/utils/display_error.dart' show looksLikeAuthFailure;
+export '../../core/utils/display_error.dart'
+    show isTransportNotReady, looksLikeAuthFailure;
 
 /// The Forge workspace's shared widget kit: one row idiom, one detail
 /// scaffold, one section-header idiom — used identically by the GitHub and
@@ -180,7 +181,8 @@ class PaneError extends ConsumerWidget {
     final pending = ref.watch(
       connectionProvider.select((c) => c.forgeAuthPending),
     );
-    if (pending && looksLikeAuthFailure(error)) {
+    if (isTransportNotReady(error) ||
+        (pending && looksLikeAuthFailure(error))) {
       return const Center(child: ProgressCircle());
     }
     return Center(

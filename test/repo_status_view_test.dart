@@ -2432,6 +2432,22 @@ void main() {
     },
   );
 
+  testWidgets('a not-ready transport shows a spinner, not an error', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      status: _statusWith(),
+      statusError: const SSHTransportNotReady('git status'),
+      settle: false,
+    );
+
+    expect(find.byType(ProgressCircle), findsWidgets);
+    expect(find.textContaining('not ready'), findsNothing);
+
+    await _unmount(tester);
+  });
+
   testWidgets(
     'a non-auth status error is shown even while forge login is pending',
     (tester) async {

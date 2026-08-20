@@ -83,6 +83,23 @@ class SSHCommandSuperseded implements Exception {
       'SSH command superseded by a new connection before it could run: $command';
 }
 
+/// Thrown when a command is issued before a client is attached — during a
+/// connect, or after a drop cleared it.
+///
+/// Distinct from [SSHCommandSuperseded] (a connection *changed* under a queued
+/// command) and from any command failure: nothing ran, and the caller is early
+/// rather than wrong. Typed so the UI can render it as "still connecting"
+/// instead of a red error, and so `humanizeSshError` owns the wording — a bare
+/// Exception here leaked its developer text straight into the Repository panel
+/// (MADR 0018).
+class SSHTransportNotReady implements Exception {
+  final String command;
+  const SSHTransportNotReady(this.command);
+
+  @override
+  String toString() => 'SSH transport is not ready yet: $command';
+}
+
 /// A live handle to a long-running command (e.g. `fswatch`, a CI job trace,
 /// or `git log --follow`) whose output is consumed incrementally.
 ///
@@ -257,6 +274,15 @@ abstract class CommandExecutor {
 
 class SSHCommandExecutor implements CommandExecutor {
   final SSHClientManager _clientManager;
+
+  /// How long a command may wait for a handshake that is already in flight
+  /// before giving up and reporting [SSHTransportNotReady].
+  ///
+  /// Not a correctness mechanism: the app invalidates every repo family on
+  /// connect and disconnect, so a command that gives up is re-run once the
+  /// session settles. This only spares that extra round trip. It must stay
+  /// bounded so a wedged handshake can never pin a command forever.
+  static const Duration attachGrace = Duration(seconds: 10);
 
   /// Default request/response timeout. Generous, because commit (which invokes a
   /// possibly-slow prepare-commit-msg hook) and remote-sync ops cross a network;
@@ -673,11 +699,22 @@ class SSHCommandExecutor implements CommandExecutor {
       // rather than fetching whatever client is current now.
       throw SSHCommandSuperseded(gitArgs.join(' '));
     }
+    // A command issued while a handshake is in flight is early, not wrong:
+    // wait it out rather than failing work that is about to become possible.
+    // When nothing is in flight there is nothing to wait for, so this falls
+    // straight through to the null check below and reports not-ready at once —
+    // which is also what a dead host must do (MADR 0018's readiness contract).
+    //
+    // The attached case costs two field reads and no await: this is the hot
+    // path for every command the app runs.
+    if (!_clientManager.isAttached && !_clientManager.isAttachSettled) {
+      await _clientManager.attachSettled.timeout(attachGrace, onTimeout: () {});
+    }
     final client = lane == ExecLane.sync
         ? _clientManager.syncClient
         : _clientManager.client;
     if (client == null) {
-      throw Exception('SSH connection not established.');
+      throw SSHTransportNotReady(gitArgs.join(' '));
     }
     if (_clientManager.clientGeneration != gen) {
       // The generation matches but the *attached client* belongs to an older
@@ -1010,9 +1047,20 @@ class SSHCommandExecutor implements CommandExecutor {
     // Prefer the dedicated stream client (dual-client mode) so long-lived
     // watchers/traces do not consume MaxSessions on the command connection.
     // Falls back to the command client when stream open degraded.
+    // A command issued while a handshake is in flight is early, not wrong:
+    // wait it out rather than failing work that is about to become possible.
+    // When nothing is in flight there is nothing to wait for, so this falls
+    // straight through to the null check below and reports not-ready at once —
+    // which is also what a dead host must do (MADR 0018's readiness contract).
+    //
+    // The attached case costs two field reads and no await: this is the hot
+    // path for every command the app runs.
+    if (!_clientManager.isAttached && !_clientManager.isAttachSettled) {
+      await _clientManager.attachSettled.timeout(attachGrace, onTimeout: () {});
+    }
     final client = _clientManager.streamClient;
     if (client == null) {
-      throw Exception('SSH connection not established.');
+      throw SSHTransportNotReady(gitArgs.join(' '));
     }
     if (_clientManager.clientGeneration != gen) {
       // A new connect() is mid-handshake: the attached client belongs to a

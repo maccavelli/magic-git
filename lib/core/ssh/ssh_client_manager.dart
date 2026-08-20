@@ -331,6 +331,29 @@ class SSHClientManager {
   /// [generation] and this equal G — see [_clientGeneration].
   int get clientGeneration => _clientGeneration;
 
+  /// Whether a command can run right now: a client attached, and belonging to
+  /// the current generation rather than a superseded attempt.
+  ///
+  /// This is the transport's own truth, deliberately independent of any UI
+  /// phase. It is already true mid-[connect], the moment the handshake lands
+  /// and before the app publishes `connected` — which matters, because the
+  /// connect path runs its own commands (the environment probe, the repo
+  /// check) through this same executor.
+  bool get isAttached => _client != null && _clientGeneration == _generation;
+
+  /// Completes when the in-flight [connect] settles — attached, failed, or
+  /// superseded. Already complete when nothing is in flight, so awaiting it
+  /// on an idle manager returns at once instead of hanging.
+  Future<void> get attachSettled => _attachGate.future;
+
+  /// Whether nothing is in flight. A `Future` cannot answer this
+  /// synchronously, and a command must tell "wait for the handshake" from
+  /// "there is no handshake" *without* waiting to find out (MADR 0018).
+  bool get isAttachSettled => _attachGate.isCompleted;
+
+  /// Starts completed: before any connect there is nothing to wait for.
+  Completer<void> _attachGate = Completer<void>()..complete();
+
   /// Completes when the primary (command) transport closes — whether from a
   /// remote-side drop, network loss, or our own [disconnect]. Callers use it to
   /// detect an unexpected drop (and offer reconnect). Null when not connected.
@@ -343,6 +366,41 @@ class SSHClientManager {
   /// return true to trust it and proceed, false to reject it and abort the
   /// connection. Omitting it accepts any host key unverified.
   Future<void> connect(
+    SSHConnectionProfile profile, {
+    FutureOr<bool> Function(String type, Uint8List fingerprint)?
+    onVerifyHostKey,
+    void Function(Duration rtt)? onPingSample,
+  }) async {
+    await withAttachGate(
+      () => _connect(
+        profile,
+        onVerifyHostKey: onVerifyHostKey,
+        onPingSample: onPingSample,
+      ),
+    );
+  }
+
+  /// Runs [body] as an attach attempt: opens the gate [attachSettled] waits
+  /// on, and settles it on EVERY exit — success, failure, supersession, or
+  /// throw. [_connect] has several early returns, so this wrapper is what
+  /// makes that a guarantee; a command waiting on the gate must never outlive
+  /// the handshake it is waiting for.
+  ///
+  /// Public to tests so the "handshake in flight" half of the readiness
+  /// contract can be driven without a socket — the same reason
+  /// [bindTestClients] exists.
+  @visibleForTesting
+  Future<T> withAttachGate<T>(Future<T> Function() body) async {
+    if (!_attachGate.isCompleted) _attachGate.complete();
+    _attachGate = Completer<void>();
+    try {
+      return await body();
+    } finally {
+      if (!_attachGate.isCompleted) _attachGate.complete();
+    }
+  }
+
+  Future<void> _connect(
     SSHConnectionProfile profile, {
     FutureOr<bool> Function(String type, Uint8List fingerprint)?
     onVerifyHostKey,

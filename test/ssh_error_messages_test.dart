@@ -143,4 +143,26 @@ void main() {
       '3: no matching key exchange method found',
     );
   });
+
+  test('a not-ready transport reads as still connecting, not as a failure', () {
+    // MADR 0018: this used to be a bare Exception, so humanizeSshError had no
+    // branch for it and displayError handed the raw developer string to the
+    // Repository panel.
+    const error = SSHTransportNotReady('git status');
+    final message = humanizeSshError(error);
+
+    expect(message, contains('Still connecting'));
+    expect(message, isNot(contains('not ready')));
+    expect(message, isNot(contains('SSH transport')));
+    expect(message, isNot(contains('git status')));
+  });
+
+  test('the not-ready message never reads as an error the user caused', () {
+    final message = humanizeSshError(
+      const SSHTransportNotReady('git ls-files'),
+    ).toLowerCase();
+    for (final blame in const ['failed', 'error', 'not established']) {
+      expect(message, isNot(contains(blame)), reason: 'reads as a failure');
+    }
+  });
 }

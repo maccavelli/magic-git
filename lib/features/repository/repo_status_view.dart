@@ -1668,7 +1668,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                 final pending = ref.watch(
                   connectionProvider.select((c) => c.forgeAuthPending),
                 );
-                if (pending && looksLikeAuthFailure(err)) {
+                if (isTransportNotReady(err) ||
+                    (pending && looksLikeAuthFailure(err))) {
                   return const Center(child: ProgressCircle());
                 }
                 return Center(

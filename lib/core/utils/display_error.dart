@@ -46,6 +46,18 @@ bool looksLikeAuthFailure(Object error) {
       text.contains('terminal prompts disabled');
 }
 
+/// True when the failure means "the session is not up yet" rather than "your
+/// command failed" — a command issued during a connect, or after a drop
+/// cleared the client.
+///
+/// The panes render these as a spinner: the work re-runs on its own once the
+/// session settles, so a red error would be both wrong and unactionable. Note
+/// the asymmetry with [looksLikeAuthFailure], which is only transient *while*
+/// a forge login is pending — a settled "not logged in" is a real failure the
+/// user must see. A not-ready transport needs no such gate; it is never
+/// user-actionable, whatever the phase (MADR 0018).
+bool isTransportNotReady(Object error) => error is SSHTransportNotReady;
+
 String _cliFailure(String message, SSHCommandResult result) {
   final stderr = result.stderr.trim();
   if (stderr.isEmpty || message.contains(stderr)) return message;

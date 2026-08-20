@@ -1278,7 +1278,6 @@ class ConnectionController extends Notifier<ConnectionState> {
     // Set once _finishConnectInBackground has been launched — from then on,
     // completing the gate is the background task's job, not the finally's.
     var backgroundLaunched = false;
-    _invalidateRepoState();
     // A fresh connection to a different host/repo shouldn't keep showing the
     // previous session's command output — but an auto-reconnect attempt to
     // the *same* connection should, since that history (including why it
@@ -1314,6 +1313,12 @@ class ConnectionController extends Notifier<ConnectionState> {
       host: profile.host,
       sessionEpoch: _attempt,
     );
+    // Invalidate AFTER publishing the new state, never before. Invalidating a
+    // repo family refetches immediately while the panes are listening; if the
+    // UI still believes the previous session is live, that refetch lands on a
+    // transport that is gone and surfaces as an error in the Repository panel
+    // and the file view (MADR 0018).
+    _invalidateRepoState();
     // Per-stage wall-clock, logged at connected so "why is connecting slow"
     // is answerable from inside the app (Output view) instead of by guesswork:
     // the SSH handshake, the environment probe (which spawns the login shell
@@ -1445,6 +1450,15 @@ class ConnectionController extends Notifier<ConnectionState> {
         scopedGitDirs: scopedGitDirs,
         forgeAuthPending: pendingForgeAuth,
       );
+      // The panes mount on THIS state change, so their fetches must start
+      // here — against a live transport. The earlier invalidate (at the
+      // `connecting` flip) tears the previous session down; without this
+      // second pass a provider that ran during the handshake would keep its
+      // not-ready error cached and the Repository panel would render it on
+      // its very first frame, which is the bug MADR 0018 exists to fix.
+      for (final family in repoScopedFetchFamilies) {
+        ref.invalidate(family);
+      }
       ref
           .read(outputLogProvider.notifier)
           .logInfo(
@@ -2577,8 +2591,11 @@ class ConnectionController extends Notifier<ConnectionState> {
     // logins — their providers are invalidated right below, but an awaiter
     // must never be left hanging on a gate no connect will ever complete.
     if (!_forgeAuthGate.isCompleted) _forgeAuthGate.complete();
-    _invalidateRepoState();
+    // State first, then invalidate — see the note in [connect]. The panes must
+    // be unmounted before their providers refetch, or the refetch races the
+    // transport this method just tore down.
     state = const ConnectionState();
+    _invalidateRepoState();
   }
 }
 
