@@ -17,7 +17,7 @@
 
 ---
 
-## 0.1 Current SSH transport (authoritative, 2026-08-19)
+## 0.1 Current SSH transport (authoritative, 2026-08-20)
 
 - **Library:** `dartssh2` **3.3.0** (exact pin). Stay on the `dartssh2`
   package — the `dartssh3` pub package is a stale fork and is not a
@@ -38,21 +38,25 @@
   calls with a readable error if the main window stops answering, instead of
   letting a pane spin forever; `executeStream` is deliberately not proxied —
   watcher ticks are *pushed* to child windows as events).
-- **Dual `SSHClient` when possible** (`SSHClientManager`): command client for
-  `execute` / sideload / health pings, stream client for `executeStream`
-  (watcher, CI trace). Shared generation pinning so a reconnect never runs work
+- **Triple `SSHClient` when possible** (`SSHClientManager`): command client for
+  reads / exclusive / isolated / sideload / health pings, stream client for
+  `executeStream` (watcher, CI trace), sync client for `ExecLane.sync`
+  (`fetch`/`push`) so pack transfer does not share a TCP connection with
+  interactive reads. Shared generation pinning so a reconnect never runs work
   against the wrong host: commands pin the generation at enqueue time and
   re-check both the attempt counter and the *attached-client* generation at run
-  time (`SSHCommandSuperseded` on mismatch — never retried). The two handshakes
-  open **in parallel** (connect pays max(cmd, stream), not their sum), with
-  host-key verification **serialized** across them (`serializeHostKeyVerifier`)
-  so a TOFU first contact can't double-write the store and a changed key can't
-  stack two prompts on the single decision slot. If the stream client fails to
-  open, **degrade to single client** (streams share the command client) rather
-  than failing connect — and a lost/degraded stream client is **re-dialed in
-  the background** with backoff (15s→120s, 5 consecutive failures then give up
-  for the session), so a NAT idle-drop of the idle stream connection no longer
-  degrades the session permanently.
+  time (`SSHCommandSuperseded` on mismatch — never retried). The three
+  handshakes open **in parallel** (connect pays max(cmd, stream, sync), not
+  their sum), with host-key verification **serialized** across them
+  (`serializeHostKeyVerifier`) so a TOFU first contact can't double-write the
+  store and a changed key can't stack two prompts on the single decision slot.
+  Stream and sync each **fail-open** onto the command client rather than
+  failing connect, and each is **re-dialed in the background** with backoff
+  (15s→120s, 5 consecutive failures then give up for the session). Command-
+  client death still tears the session down. Stream death does not close sync,
+  and vice versa. OpenSSH `MaxSessions` is per TCP connection (default 10):
+  command ≤4 reads + ≤2 isolated; sync 1; stream 1 watcher + 1 CI. Read cap
+  stays **4**. See `docs/0014-MADR-ssh-engine-next-wave-hardening.md`.
 - **Auth:** password and/or PEM private key (file load or paste). No ssh-agent
   client auth in dartssh2; `agentHandler` is agent *forwarding* only and is not
   used for login. Empty password is never attempted for key-only profiles.
@@ -64,42 +68,51 @@
   auth timeout while the user decides; a superseding connect resolves an
   orphaned prompt safely (reject) so nothing awaits a completer nobody holds.
 - **Dead peer:** `ConnectionHealthMonitor` owns keepalive pings (reply-checked,
-  never stacked; 15 s interval, 3 consecutive failures) on **both** clients —
-  the idle-by-design stream client is exactly the connection a NAT idle-drop
-  kills first, and nothing else would notice. Library `keepAliveInterval` is
-  off. **Busy-pause:** while a request/response command is in flight, or a
-  stream has received bytes in the last 30 s, new probes are skipped and
-  accumulated failures are cleared — a saturated fetch/pull/push must not
-  be declared dead because pings queued behind pack data (or dartssh2's
-  still-unbounded rekey buffer). Idle dead-peer detection stays ~45–60 s.
-  Unexpected drops record `TransportDropCause` (`monitor` / `transportError` /
-  `remoteClosed`) plus optional peer `SSHDisconnectError` reason; user
-  disconnect records nothing. The command monitor's answered-ping RTTs feed
-  the dashboard's latency sparkline **and** `AdaptiveReadConcurrency`; `onDead`
-  closes both clients but leaves `_client` set so the drop path can observe
-  `done`.
+  never stacked; 15 s interval, 3 consecutive failures) on **each** attached
+  client. Library `keepAliveInterval` is off. Sockets are `NativeSshSocket`
+  (`TCP_NODELAY` on, Darwin `SO_KEEPALIVE` best-effort). **Busy-pause is
+  split:** command monitor sees non-sync in-flight work; sync monitor sees
+  fetch/push; stream monitor sees bytes in the last 30 s. Idle dead-peer
+  detection stays ~45–60 s. Unexpected drops record `TransportDropCause`
+  (`monitor` / `transportError` / `remoteClosed`) plus optional peer
+  `SSHDisconnectError` reason; user disconnect records nothing. Command
+  monitor RTTs feed the dashboard sparkline **and** `AdaptiveReadConcurrency`.
+  Command `onDead` closes all three clients but leaves `_client` set so the
+  drop path can observe `done`. dartssh2's `_rekeyPendingPackets` is still
+  unbounded (bypass only IDs 20–49 and ≤ 4); busy-pause remains the
+  mitigation.
 - **Remote host recommendations:** `ClientAliveInterval` ≤ 60 s with
-  `ClientAliveCountMax` ≥ 3; leave `RekeyLimit` at default or higher
-  (smaller limits multiply mid-transfer rekey stalls). NAT/LB idle timeouts
-  (AWS NLB 350 s, many corporate firewalls 60–300 s) are covered by 15 s
-  client probes when the session is idle.
+  `ClientAliveCountMax` ≥ 3 (OpenSSH 10.5 fixed ClientAlive math — do not
+  require 10.5). Leave `RekeyLimit` without a time component unless you
+  understand idle rekey vs our ping. Do not set a short `ChannelTimeout` on
+  `session` if `fswatch` should live. `MaxSessions` 10 is enough for triple-
+  client at read cap 4; do not lower it to 1. `PerSourcePenalties`: the
+  client pauses auto-reconnect on auth/host-key failure so a laptop is not
+  hammered. NAT/LB idle timeouts (AWS NLB 350 s, many corporate firewalls
+  60–300 s) are covered by 15 s client probes when the session is idle.
 - **Reconnect:** `ConnectionController` watches the command client's `done`
   (normal *or* error completion) → `lost` phase → auto-reconnect with bounded
-  backoff (1/2/4/8/15 s, then 15 s repeated), pausing after 20 attempts
-  (~4 min) until the user explicitly resumes. Every step is guarded by the
+  backoff (1/2/4/8/15 s, then 15 s repeated), pausing after 20 **retryable**
+  attempts (~4 min) or immediately on an allowlist-miss (auth / host-key /
+  key-decode — `isRetryableReconnectError`). Every step is guarded by the
   controller's `_attempt` counter, kept in lockstep with the manager's
   generation (`stopReconnect` bumps both and force-closes in-flight
-  handshakes).
+  handshakes). Same-host auto-reconnect reuses the last `RemoteEnvironment`;
+  a user `disconnect()` or a different profile invalidates that cache.
 - **Scheduling:** `CommandLaneScheduler` — concurrent reads (hard ceiling **4**;
   starts at the no-sample cap **3** until RTT arrives, then RTT-banded by
   `AdaptiveReadConcurrency`: <80 ms→4, 80–200 ms→3, >200 ms→2, with 3-sample
-  hysteresis), one sync, exclusive mutations as a FIFO barrier, isolated
-  long-running side work (hooks, sideloads; cap 2) exempt from the barrier in
-  both directions. A **watchdog** (command timeout + 30 s margin) reclaims the
-  slot of any body that never settles — a backstop, not a timeout. Retries are
-  transient-transport-only (allowlist), and each attempt is a separate enqueue
-  with the 400 ms backoff taken *between* enqueues, so a retry wait never
-  head-of-line-blocks the lane.
+  hysteresis; a `SSHChannelOpenError` drops an error floor, a clean streak
+  raises it). One sync (on the sync client when attached), exclusive mutations
+  as a FIFO barrier, isolated long-running side work (hooks, sideloads; cap 2)
+  exempt from the barrier in both directions. A **watchdog** (command timeout
+  + 30 s margin) reclaims the slot of any body that never settles. Network ops
+  (`fetch`/`pull`/`push` and the other `networkTimeout` sites) use an
+  **activity deadline**: settings Network seconds is the stall budget (default
+  3 min); a slow transfer that still emits stdout/stderr may run up to
+  `max(that, 30 min)`. Retries are transient-transport-only (allowlist), and
+  each attempt is a separate enqueue with the 400 ms backoff taken *between*
+  enqueues, so a retry wait never head-of-line-blocks the lane.
 - **Compression:** dartssh2 has no transport compression; large git text reads
   *and* forge-CLI JSON reads (`glab`/`gh` GETs) use application `gzip -c -1`
   (absolute path, honored only when discovery found gzip) + an in-band
@@ -112,11 +125,15 @@
   the login shell's PATH, captured in the background and killed after ~3 s if a
   shellrc hangs → system dirs; per-user ahead of `/usr/local/bin` is
   load-bearing — a system shim must not shadow the user's real CLI) and
-  `command -v`s the whole tool catalog. `argv[0]` is rewritten to the resolved
-  absolute path; tool versions are probed in a separate background pass off the
-  connect critical path. Forge-token env vars are neutralized per connection
-  (`unset` prelude over SSH, empty env entries locally) so Magic Git's managed
-  identity beats ambient tokens.
+  `command -v`s the whole tool catalog. Encrypted PEM bcrypt runs **once per
+  connect, off the UI isolate**; identities are reused by all three clients.
+  Compressed stdout larger than 256 KiB is gunzipped off the UI isolate.
+  Sideload stdin uses `addStream` + `flush()`. `argv[0]` is rewritten to the
+  resolved absolute path; tool versions are probed in a separate background
+  pass off the connect critical path. Forge-token env vars are neutralized per
+  connection (`unset` prelude over SSH, empty env entries locally) so Magic
+  Git's managed identity beats ambient tokens. Same-host auto-reconnect
+  reuses this probe result.
 - **Streams:** `executeStream` off-queue (they never return; queuing one would
   wedge the lane), generation-guarded at open and re-checked after, bounded by
   an open-timeout; prefers the stream client when dual mode is active. Watcher
@@ -132,7 +149,8 @@
   gzip wire savings, channel-open errors (MaxSessions evidence), and open/peak
   stream counts (epoch-guarded so a reconnect can't misattribute a closing
   handle). The dashboard surfaces commands/avg/p95, gzip savings, the keepalive
-  latency sparkline, and dual-vs-single client state.
+  latency sparkline, single/dual/triple client count, the adaptive read cap,
+  and channel-open errors.
 - **Safety:** `exec` so TERM/KILL hit the real process (compressed reads forgo
   `exec` for the trailer shell — acceptable because they're read-only and die
   on SIGPIPE); TERM→KILL escalation with a 400 ms grace; a combined
@@ -141,15 +159,11 @@
   *killed* — not just closed — on overrun; sideload upload (exec-channel `cat`,
   generation-pinned, isolated lane) with a timeout that **scales with payload
   size** (`uploadTimeoutFor`: flat default + 64 KiB/s floor).
-- **Known gaps (2026-07-17 audit — accepted, not yet built):** after a
-  stream-client redial, already-running long-lived streams stay on the command
-  client until their next restart (nothing migrates them back); auto-reconnect
-  re-runs the environment probe on the critical path instead of reusing the
-  same-host result; the adaptive read cap reacts only to RTT (channel-open
-  errors are recorded but not fed back); channel-open/stream counters and the
-  current adaptive cap aren't on the dashboard; the login-shell PATH capture
-  mis-parses under fish (space-joined list → one bogus PATH entry, common dirs
-  still covered).
+- **Known gaps:** after a stream-client redial, already-running long-lived
+  streams stay on the command client until their next restart (T12); dartssh2
+  `_rekeyPendingPackets` is still unbounded (D3); RTT-adaptive ping timeout
+  (T9), compression admission (T10), and `waitForExit(timeout:)` (T11) are
+  deferred; the login-shell PATH capture mis-parses under fish (D8).
 
 ---
 
