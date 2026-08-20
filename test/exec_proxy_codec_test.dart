@@ -7,7 +7,29 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
 import 'package:remote_magic_git/core/exec/operation_activity.dart';
+import 'package:remote_magic_git/core/ssh/shell_escaper.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+
+/// The ObjC StandardMethodCodec the window relay hops through truncates a
+/// String at its first NUL; typed data is length-prefixed and immune.
+/// Applying this to an encoded payload reproduces what the native hop does to
+/// it, so any field carrying command text as a String fails the round-trip —
+/// including a field nobody remembered to write a test for.
+Object? throughNulLossyCodec(Object? value) => switch (value) {
+  // Typed data first: Uint8List is also a List<Object?>, so the list arm
+  // below would rebuild it as a plain list and strip the very typing that
+  // makes it immune.
+  final Uint8List bytes => bytes,
+  final String text => text.split('\u0000').first,
+  final Map<Object?, Object?> map => {
+    for (final entry in map.entries)
+      entry.key: throughNulLossyCodec(entry.value),
+  },
+  final List<Object?> list => [
+    for (final element in list) throughNulLossyCodec(element),
+  ],
+  _ => value,
+};
 
 void main() {
   group('execute request', () {
@@ -158,6 +180,23 @@ void main() {
       );
     });
 
+    test('NUL-bearing stderr travels as bytes on the wire', () {
+      // Sibling of the stdout case: a git failure message can carry
+      // NUL-delimited paths (`clean -n -z`, `check-ignore -z`), so stderr is
+      // exposed to exactly the same truncation.
+      const result = SSHCommandResult(
+        exitCode: 128,
+        stdout: '',
+        stderr: 'fatal: pathspec\u0000lib/a.dart\u0000did not match',
+      );
+      final wire = encodeExecuteResult(result);
+      expect(wire['stderr'], isA<Uint8List>());
+      expect(
+        decodeExecuteResponse(wire).stderr,
+        'fatal: pathspec\u0000lib/a.dart\u0000did not match',
+      );
+    });
+
     test('each typed executor exception survives with its command', () {
       expect(
         () => decodeExecuteResponse(
@@ -269,5 +308,70 @@ void main() {
     final bareDecoded = ConnectionEventPayload.decode(bare.encode());
     expect(bareDecoded.repoPath, isNull);
     expect(bareDecoded.host, isNull);
+  });
+
+  group('NUL-lossy transport', () {
+    test('an execute request survives the native codec', () {
+      // The structural guard: any field carrying command text as a String is
+      // beheaded here, and only typed data comes through whole.
+      const request = ExecuteRequest(
+        repoPath: '/srv/repo',
+        gitArgs: ['git', 'check-ignore', '-z', '--stdin'],
+        stdin: 'build\u0000lib/a.dart\u0000.dart_tool',
+        timeout: Duration(seconds: 30),
+        retries: 0,
+        lane: ExecLane.read,
+        compress: false,
+      );
+
+      final hopped =
+          throughNulLossyCodec(encodeExecuteRequest(request))
+              as Map<Object?, Object?>;
+      final survived = decodeExecuteRequest(hopped.cast<String, Object?>());
+
+      expect(survived.stdin, request.stdin);
+      expect(survived.gitArgs, request.gitArgs);
+      expect(survived.repoPath, request.repoPath);
+      expect(survived.lane, request.lane);
+    });
+
+    test('an execute response survives the native codec', () {
+      const result = SSHCommandResult(
+        exitCode: 0,
+        stdout: '# branch.oid abc\u0000?? a.txt\u0000RMGSNAP0',
+        stderr: 'warning:\u0000path skipped',
+      );
+
+      final hopped =
+          throughNulLossyCodec(encodeExecuteResult(result))
+              as Map<Object?, Object?>;
+      final survived = decodeExecuteResponse(hopped.cast<String, Object?>());
+
+      expect(survived.stdout, result.stdout);
+      expect(survived.stderr, result.stderr);
+      expect(survived.exitCode, 0);
+    });
+
+    test('argv stays strings by contract', () {
+      // The codec deliberately leaves argv/env as strings: a NUL cannot reach
+      // them, because ShellEscaper refuses one long before the wire. Pinned so
+      // the structural guard above is never "fixed" by turning every field
+      // into bytes.
+      final wire = encodeExecuteRequest(
+        const ExecuteRequest(
+          repoPath: '/srv/repo',
+          gitArgs: ['git', 'status'],
+          timeout: Duration(seconds: 5),
+          retries: 0,
+          lane: ExecLane.read,
+          compress: false,
+        ),
+      );
+      expect(wire['gitArgs'], isA<List<String>>());
+      expect(
+        () => ShellEscaper.escape('a\u0000b'),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
   });
 }
