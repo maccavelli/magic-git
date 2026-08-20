@@ -4,7 +4,13 @@ date: 2026-08-16
 decision-makers: maccavelli (maintainer)
 consulted: 21593a0 and 9a385da (the two commits that produced the defect), live NSUserDefaults records from com.example.remoteMagicGit, git state of magic-git and magic-cli-remote on wonder.lallygag.net, 0008-MADR unified repository chrome
 informed: implementers of RepositoryWorkspacePrefs and the repository context bar
+verified: 2026-08-20
 ---
+
+> **Number collision.** Two unrelated records share `0011`: this one and
+> [0011-MADR-ssh-transport-stability-hardening.md](0011-MADR-ssh-transport-stability-hardening.md), which covers SSH transport stability hardening. `AGENTS.md` forbids renumbering an
+> existing file, so both keep the number and this note disambiguates them.
+> Cite records by full filename, never by number alone.
 
 # Version the workspace-preferences schema and migrate v1 toolbar-slot sets instead of decoding them literally
 

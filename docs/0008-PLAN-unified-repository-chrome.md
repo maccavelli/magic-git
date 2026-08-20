@@ -1,8 +1,15 @@
+---
+status: "executed"
+date: 2026-08-14
+verified: 2026-08-20
+---
 # Implement the unified repository chrome
 
 Associated MADR: [0008-MADR-unified-repository-chrome.md](0008-MADR-unified-repository-chrome.md)
 
-- Status: **proposed, for review.** No code written.
+- Status: **executed.** `menu_bar_spec.dart` / `menu_bar_bridge.dart` ship the Dart-declared native menu bar, `chrome_budget_test.dart`, `chrome_correctness_test.dart`, `chrome_reachability_test.dart` and `menu_bar_spec_test.dart` pin it, and `repository_workspace_prefs.dart` cites "MADR 0008, Phase 1" in production source.
+
+  *Status corrected 2026-08-20:* this line read "proposed, for review. No code written," which was false against the tree.
 - Date: 2026-08-14
 - Owner: implementation agent + maintainer review
 - Delivery: six independently shippable phases, each analyzer-clean and

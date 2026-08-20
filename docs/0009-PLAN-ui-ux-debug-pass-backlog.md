@@ -1,8 +1,17 @@
+---
+status: "executed"
+date: 2026-08-15
+verified: 2026-08-20
+---
 # Implement the 2026-08-15 UI/UX debug-pass backlog
 
 Associated MADR: [0009-MADR-ui-ux-debug-pass-backlog.md](0009-MADR-ui-ux-debug-pass-backlog.md)
 
-- Status: **proposed, for review.** No production code written by this
+- Status: **executed.** 45+ distinct backlog ids (H1–H20, M1–M34, L1–L18) are cited by `lib/` source comments as the reason for the code that implements them.
+
+  *Status corrected 2026-08-20:* this line read "proposed, for review. No production code written," which was false against the tree. The original wording, and the residuals it lists, follow. Anything still open is a residual of an executed plan, not an unstarted one. Superseded text:
+
+  > No production code written by this
   document. Citations re-verified against `master` `c79977c` on 2026-08-15
   by a six-agent pass; corrections are folded into the text below.
 - Date: 2026-08-15

@@ -1,3 +1,8 @@
+---
+status: accepted
+date: 2026-08-06
+verified: 2026-08-20
+---
 # Treat the 2026-08 UI/UX deep-debug audit as the prioritized remediation backlog
 
 - Status: accepted (HIGH + locked MED delivered; Phase 10 LOW L1–L5 closed;

@@ -5,6 +5,7 @@ executed: 2026-08-20
 associated-madr: "0017-MADR-provider-retry-policy-on-providers.md"
 owner: [Maintainer]
 target-milestone: Next work cycle (post-review)
+verified: 2026-08-20
 ---
 
 # Implement: enforce four conventions in source

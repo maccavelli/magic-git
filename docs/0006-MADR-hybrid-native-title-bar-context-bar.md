@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-08-13
+verified: 2026-08-20
 ---
 
 # Use a hybrid native title bar with the existing repository context bar

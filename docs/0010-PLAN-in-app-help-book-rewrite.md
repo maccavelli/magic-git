@@ -1,10 +1,19 @@
 ---
-status: in_progress
+status: executed
 date: 2026-08-15
 associated-madr: "0010-MADR-in-app-help-book-rewrite.md"
 owner: [implementation agent + maintainer review]
 target-milestone: after MADR 0010 acceptance (Option B)
+verified: 2026-08-20
 ---
+
+> **Status note (2026-08-20).** Executed through **Phase 6**: the shipped
+> `macos/Runner/help_book.json` is version `2.0` with the plan's six
+> categories and 24 topics, and `test/help_book_json_test.dart` enforces the
+> Phase 6 contract (version pin, `actionId` binding to `kKeymapActionsById`).
+> **Phase 7 — maintainer verification — is open by nature**: it needs Mac in
+> front of a running `.app`, not an engineer. `status: executed` above refers
+> to the engineering phases.
 
 # Plan: Rewrite the in-app Help Book against the current workspace
 

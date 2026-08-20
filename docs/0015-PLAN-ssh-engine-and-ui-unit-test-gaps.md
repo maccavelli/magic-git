@@ -5,6 +5,7 @@ executed: 2026-08-20
 associated-madr: "0015-MADR-ssh-engine-and-ui-unit-test-gaps.md"
 owner: [Maintainer]
 target-milestone: Next work cycle (post-review)
+verified: 2026-08-20
 ---
 
 # Implement Treat the 2026-08 SSH engine and UI/UX unit-test gap assessment as the coverage backlog

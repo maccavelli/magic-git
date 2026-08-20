@@ -1,9 +1,10 @@
 ---
-status: proposed
+status: accepted
 date: 2026-08-19
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
+verified: 2026-08-20
 ---
 
 # Treat the 2026-08 SSH engine assessment as the next-wave hardening backlog

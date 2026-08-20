@@ -1,3 +1,8 @@
+---
+status: "executed"
+date: 2026-08-02
+verified: 2026-08-20
+---
 # Implementation plan: forge change-request models and merge UX
 
 - Status: implemented **for Phases 0–5**. Phase 6 (labelled "opportunistic")

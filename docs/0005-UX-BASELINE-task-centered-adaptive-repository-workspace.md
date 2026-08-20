@@ -1,3 +1,9 @@
+---
+status: "partial"
+date: 2026-08-13
+verified: 2026-08-20
+---
+
 # UX baseline for the task-centered adaptive repository workspace
 
 Associated decision:

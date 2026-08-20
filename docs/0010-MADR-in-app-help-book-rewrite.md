@@ -4,6 +4,7 @@ date: 2026-08-15
 decision-makers: maccavelli (maintainer)
 consulted: current help_book.json v1.1, kKeymapActions, kMenuBarMenus, 0005/0008/0009 workspace and chrome records
 informed: implementers of the Help Book rewrite
+verified: 2026-08-20
 ---
 
 # Rewrite the in-app Help Book against the current workspace and bind taught shortcuts to the keymap

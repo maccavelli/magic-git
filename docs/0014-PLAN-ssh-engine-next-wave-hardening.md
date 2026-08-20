@@ -1,9 +1,10 @@
 ---
-status: "draft"
+status: "executed"
 date: 2026-08-20
 associated-madr: "0014-MADR-ssh-engine-next-wave-hardening.md"
 owner: [Maintainer]
 target-milestone: Next work cycle (post-review)
+verified: 2026-08-20
 ---
 
 # Implement Treat the 2026-08 SSH engine assessment as the next-wave hardening backlog

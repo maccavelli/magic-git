@@ -1,9 +1,10 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-08-19
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
+verified: 2026-08-20
 ---
 
 # Prefer dartssh2 3.3.0 over the dartssh3 package

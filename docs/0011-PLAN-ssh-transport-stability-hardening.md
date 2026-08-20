@@ -1,9 +1,10 @@
 ---
-status: "draft"
+status: "executed"
 date: 2026-08-18
 associated-madr: "0011-MADR-ssh-transport-stability-hardening.md"
 owner: [Maintainer]
 target-milestone: Next work cycle (post-review)
+verified: 2026-08-20
 ---
 
 # Plan: Harden the SSH transport against false-positive session kills during fetch/pull/push

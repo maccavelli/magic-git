@@ -1,10 +1,11 @@
 ---
-status: "draft"
+status: "executed"
 date: 2026-08-19
 associated-madr: "0013-MADR-prefer-dartssh2-v3-over-dartssh3.md"
 owner: [Maintainer]
 target-milestone: Next work cycle (post-review)
 reassessed: "2026-08-19 against dartssh2 3.3.0 (pub.dev changelog, GitHub v3.3.0 / 8585dc4, API docs)"
+verified: 2026-08-20
 ---
 
 # Implement Prefer dartssh2 3.3.0 over the dartssh3 package

@@ -1,3 +1,8 @@
+---
+status: "executed"
+date: 2026-08-05
+verified: 2026-08-20
+---
 # Implementation plan: base-relative branches workspace
 
 - Status: **implementation complete (Phases 0–7)**. Trust foundation (0–3),

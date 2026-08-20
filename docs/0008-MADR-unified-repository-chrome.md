@@ -3,6 +3,7 @@ status: accepted
 date: 2026-08-14
 decision-makers: maccavelli (maintainer)
 consulted: Apple HIG (toolbars, pull-down buttons, segmented controls, menus, sidebars, windows); GitHub Desktop, Tower, Fork, Sublime Merge, GitKraken, Sourcetree, Xcode
+verified: 2026-08-20
 ---
 
 # Collapse the repository workspace to one customizable toolbar backed by a real menu bar

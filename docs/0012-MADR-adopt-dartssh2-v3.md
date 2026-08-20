@@ -1,10 +1,16 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-08-18
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
+verified: 2026-08-20
 ---
+
+> **Number collision.** Two unrelated records share `0012`: this one and
+> [0012-MADR-commit-composer-focused-sheet.md](0012-MADR-commit-composer-focused-sheet.md), which covers the focused commit composer sheet. `AGENTS.md` forbids renumbering an
+> existing file, so both keep the number and this note disambiguates them.
+> Cite records by full filename, never by number alone.
 
 # Adopt dartssh2 3.x (pin 3.3.0) for transport hardening and disconnect diagnostics
 

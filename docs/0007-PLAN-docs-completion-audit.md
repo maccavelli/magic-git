@@ -1,3 +1,8 @@
+---
+status: "executed"
+date: 2026-08-14
+verified: 2026-08-20
+---
 # Implement the docs completion audit remediation
 
 Associated MADR: [0007-MADR-docs-completion-audit.md](0007-MADR-docs-completion-audit.md)

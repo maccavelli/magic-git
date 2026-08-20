@@ -1,3 +1,8 @@
+---
+status: rejected
+date: 2026-07-07
+verified: 2026-08-20
+---
 # Do not adopt libgit2/git2dart to replace the git binary
 
 - Status: rejected

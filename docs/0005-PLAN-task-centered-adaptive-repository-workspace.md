@@ -1,3 +1,8 @@
+---
+status: "executed"
+date: 2026-08-13
+verified: 2026-08-20
+---
 # Implement the task-centered adaptive repository workspace
 
 Associated MADR:

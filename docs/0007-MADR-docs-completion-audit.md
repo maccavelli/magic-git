@@ -1,7 +1,8 @@
 ---
-status: proposed
+status: accepted
 date: 2026-08-14
 decision-makers: maccavelli (maintainer)
+verified: 2026-08-20
 ---
 
 # Correct decision-record status claims against verified codebase state and adopt a verified remediation backlog

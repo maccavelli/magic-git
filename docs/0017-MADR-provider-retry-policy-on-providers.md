@@ -5,6 +5,7 @@ decided: 2026-08-20
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
+verified: 2026-08-20
 ---
 
 # Enforce conventions in source: carry the retry policy on the providers, and close the three tier-5 gaps

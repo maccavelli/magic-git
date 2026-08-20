@@ -5,6 +5,7 @@ executed: 2026-08-20
 associated-madr: "0015-MADR-ssh-engine-and-ui-unit-test-gaps.md"
 owner: [Maintainer]
 target-milestone: Next work cycle (post-review)
+verified: 2026-08-20
 ---
 
 # Implement the deferred tail of the 2026-08 coverage backlog (U9–U19)

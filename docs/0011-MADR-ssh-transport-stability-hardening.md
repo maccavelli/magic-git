@@ -1,10 +1,16 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-08-18
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
+verified: 2026-08-20
 ---
+
+> **Number collision.** Two unrelated records share `0011`: this one and
+> [0011-MADR-toolbar-slot-schema-migration.md](0011-MADR-toolbar-slot-schema-migration.md), which covers the toolbar slot schema migration. `AGENTS.md` forbids renumbering an
+> existing file, so both keep the number and this note disambiguates them.
+> Cite records by full filename, never by number alone.
 
 # Harden the SSH transport against false-positive session kills during fetch/pull/push
 

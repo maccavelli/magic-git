@@ -1,3 +1,8 @@
+---
+status: "executed"
+date: 2026-08-06
+verified: 2026-08-20
+---
 # Implement UI/UX deep-debug audit remediation
 
 Associated MADR: [0004-MADR-ui-ux-deep-debug-audit.md](0004-MADR-ui-ux-deep-debug-audit.md)

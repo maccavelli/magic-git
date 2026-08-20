@@ -1,8 +1,13 @@
+---
+status: "executed"
+date: 2026-08-14
+verified: 2026-08-20
+---
 # Implement the hybrid native title bar + context bar
 
 Associated MADR: [0006-MADR-hybrid-native-title-bar-context-bar.md](0006-MADR-hybrid-native-title-bar-context-bar.md)
 
-- Status: **ready to execute, gated on live macOS verification** — every step
+- Status: **executed.** `RepositoryContextBar` (`lib/features/common/repository_context_bar.dart`) ships and is mounted by `repo_status_view.dart`; the work landed as [0007-PLAN](0007-PLAN-docs-completion-audit.md) Phase 6. The original line below said "ready to execute, gated on live macOS verification" — true when written, stale since. Every step
   below is grounded in the current tree, but the acceptance criteria include
   three things only a running `.app` can answer (§Verification). Do not mark
   this plan done from a green test suite.

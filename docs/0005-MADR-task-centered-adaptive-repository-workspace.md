@@ -1,6 +1,7 @@
 ---
 status: accepted
 date: 2026-08-13
+verified: 2026-08-20
 ---
 
 # Evolve the repository screens into a task-centered adaptive workspace

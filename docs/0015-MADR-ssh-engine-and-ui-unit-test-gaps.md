@@ -5,6 +5,7 @@ decided: 2026-08-20
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
+verified: 2026-08-20
 ---
 
 # Treat the 2026-08 SSH engine and UI/UX unit-test gap assessment as the coverage backlog

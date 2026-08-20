@@ -89,7 +89,17 @@ Numbering rules:
   kebab-title too. A standalone plan with no associated MADR takes the next
   free number.
 - Never renumber existing files, and never reuse a number except for the
-  MADR↔PLAN pairing.
+  MADR↔PLAN pairing. Two numbers (`0011`, `0012`) already carry unrelated
+  records from before this rule was enforced; each notes its twin, and the
+  rule stands — **cite records by full filename, never by number alone**.
+
+Every record carries YAML frontmatter with a `status:` and a `verified:` date
+(when the status was last checked *against the code*, not when it was
+written): `proposed` · `accepted` · `rejected` for decisions, `executed` ·
+`partial` for plans. `executed` means the engineering phases shipped, not that
+nothing is left — where the body names a residual or a maintainer-only step,
+the body wins. [`docs/README.md`](docs/README.md) is the index and the one
+place to see live state.
 
 ## Working style
 

@@ -1,3 +1,8 @@
+---
+status: accepted
+date: 2026-08-02
+verified: 2026-08-20
+---
 # Expand forge change-request (PR/MR) models and merge UX
 
 - Status: accepted (phases 1–2 shipped; 3–5 follow-ons landed in the same

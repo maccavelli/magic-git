@@ -1,9 +1,10 @@
 ---
-status: "draft"
+status: "executed"
 date: 2026-08-18
 associated-madr: "0012-MADR-adopt-dartssh2-v3.md"
 owner: [Maintainer]
 target-milestone: Next work cycle (post-review)
+verified: 2026-08-20
 ---
 
 # Plan: Adopt dartssh2 3.3.0 (migration + disconnect-reason telemetry)

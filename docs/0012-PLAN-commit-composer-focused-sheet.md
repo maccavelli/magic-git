@@ -1,3 +1,8 @@
+---
+status: "executed"
+date: 2026-08-16
+verified: 2026-08-20
+---
 # Implement the focused commit sheet as the primary commit surface
 
 Associated MADR: [0012-MADR-commit-composer-focused-sheet.md](0012-MADR-commit-composer-focused-sheet.md)

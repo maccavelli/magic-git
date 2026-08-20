@@ -4,7 +4,13 @@ date: 2026-08-16
 decision-makers: maccavelli (maintainer)
 consulted: 0005-MADR decision P1 and 0005-PLAN §Commit, commit 7bc3802, 0008-PLAN finding B9, 0009-MADR finding H8 and 0009-PLAN G-H8, docs/window_sizing_proposal.md, live code in commit_dialog.dart / commit_composer.dart / repo_status_view.dart
 informed: implementers of the Repository workspace and the commit loop
+verified: 2026-08-20
 ---
+
+> **Number collision.** Two unrelated records share `0012`: this one and
+> [0012-MADR-adopt-dartssh2-v3.md](0012-MADR-adopt-dartssh2-v3.md), which covers adopting dartssh2 v3. `AGENTS.md` forbids renumbering an
+> existing file, so both keep the number and this note disambiguates them.
+> Cite records by full filename, never by number alone.
 
 # Restore the focused commit sheet as the primary commit surface, keeping the docked composer as the secondary one
 

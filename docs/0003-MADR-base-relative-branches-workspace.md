@@ -1,3 +1,8 @@
+---
+status: accepted
+date: 2026-08-03
+verified: 2026-08-20
+---
 # Evolve the Branches tab into a base-relative branch workspace
 
 - Status: **accepted; implemented through companion plan Phase 7 except Phase
