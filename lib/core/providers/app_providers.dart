@@ -850,6 +850,12 @@ class ConnectionController extends Notifier<ConnectionState> {
   // `_lastFsmonitorPaths`.
   Map<String, String> _lastScopedGitDirs = const {};
 
+  String? _envCacheKey;
+  RemoteEnvironment? _envCache;
+
+  static String _envKey(SSHConnectionProfile p) =>
+      '${p.host}|${p.port}|${p.username}';
+
   /// Per-session memo of forge CLI logins keyed by (forge, host), so browsing
   /// a forge's repos authenticates its host at most once. Deliberately *not*
   /// cleared by [_invalidateRepoState] (a repo switch keeps the same host
@@ -1102,8 +1108,24 @@ class ConnectionController extends Notifier<ConnectionState> {
 
   Future<void> _resolveEnvironment(String repoPath, {int? attempt}) async {
     try {
-      final overrides = ref.read(appSettingsProvider).binaryOverrides;
       final executor = _activeExecutor;
+      final profile = _lastProfile;
+      if (state.backend == ConnectionBackend.ssh &&
+          state.reconnecting &&
+          profile != null &&
+          _envCache != null &&
+          _envCacheKey == _envKey(profile)) {
+        if (attempt != null && attempt != _attempt) return;
+        final cached = _envCache!;
+        executor.configureEnvironment(
+          path: cached.path,
+          binaries: cached.found,
+        );
+        executor.setForgeTokenNeutralization(_forgeTokenVarsToNeutralize());
+        ref.read(binaryEnvironmentProvider.notifier).set(cached);
+        return;
+      }
+      final overrides = ref.read(appSettingsProvider).binaryOverrides;
       final env = await EnvironmentResolver(
         executor,
       ).resolve(repoPath, overrides: overrides);
@@ -1117,6 +1139,10 @@ class ConnectionController extends Notifier<ConnectionState> {
       executor.configureEnvironment(path: env.path, binaries: env.found);
       executor.setForgeTokenNeutralization(_forgeTokenVarsToNeutralize());
       ref.read(binaryEnvironmentProvider.notifier).set(env);
+      if (state.backend == ConnectionBackend.ssh && profile != null) {
+        _envCache = env;
+        _envCacheKey = _envKey(profile);
+      }
     } catch (e) {
       // Same supersession check as the success path above: a probe left
       // running on a since-abandoned attempt must not log its failure as if
@@ -2514,6 +2540,8 @@ class ConnectionController extends Notifier<ConnectionState> {
     } else {
       ref.read(executorProvider).resetEnvironment();
       await ref.read(sshClientManagerProvider).disconnect();
+      _envCache = null;
+      _envCacheKey = null;
     }
     ref.read(binaryEnvironmentProvider.notifier).clear();
     _hostLogins.clear();

@@ -70,7 +70,10 @@ class _SpyExecutor extends SSHCommandExecutor {
       return const SSHCommandResult(exitCode: 0, stdout: 'true\n', stderr: '');
     }
     if (gitArgs.isNotEmpty && gitArgs.first == 'sh') {
-      events.add('probe');
+      // Connect-time OS/PATH probe (uname) vs later --version pass.
+      if (gitArgs.join(' ').contains('uname')) {
+        events.add('probe');
+      }
       return SSHCommandResult(exitCode: 0, stdout: probeOut, stderr: '');
     }
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
@@ -240,4 +243,59 @@ void main() {
       reason: 'a superseded probe must skip configureEnvironment entirely',
     );
   });
+
+  test(
+    'same-host auto-reconnect reuses the env cache; disconnect invalidates',
+    () async {
+      final spy = _SpyExecutor();
+      final container = ProviderContainer(
+        overrides: [
+          sshClientManagerProvider.overrideWithValue(_OkManager()),
+          executorProvider.overrideWithValue(spy),
+          gitServiceProvider.overrideWithValue(GitService(spy)),
+        ],
+      );
+      addTearDown(container.dispose);
+      final controller = container.read(connectionProvider.notifier);
+
+      spy.probeOut =
+          'OS=Darwin\nPATH=/opt/homebrew/bin:/usr/bin\n'
+          'BIN=git=/opt/homebrew/bin/git\n';
+      await controller.connect(profile: macProfile, repoPath: '/repo');
+      expect(spy.events.where((e) => e == 'probe').length, 1);
+
+      spy.events.clear();
+      await controller.connect(
+        profile: macProfile,
+        repoPath: '/repo',
+        reconnecting: true,
+      );
+      expect(
+        spy.events.where((e) => e == 'probe'),
+        isEmpty,
+        reason: 'same-host reconnect must reuse the cached environment',
+      );
+      expect(spy.events, contains('configure'));
+
+      spy.events.clear();
+      await controller.disconnect();
+      await controller.connect(profile: macProfile, repoPath: '/repo');
+      expect(
+        spy.events.where((e) => e == 'probe').length,
+        1,
+        reason: 'disconnect must invalidate the cache',
+      );
+
+      spy.events.clear();
+      await controller.connect(
+        profile: const SSHConnectionProfile(host: 'mac', username: 'other'),
+        repoPath: '/repo',
+      );
+      expect(
+        spy.events.where((e) => e == 'probe').length,
+        1,
+        reason: 'a different username must not hit the cache',
+      );
+    },
+  );
 }
