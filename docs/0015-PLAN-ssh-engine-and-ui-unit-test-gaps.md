@@ -12,11 +12,16 @@ Associated MADR:
 [0015-MADR-ssh-engine-and-ui-unit-test-gaps.md](./0015-MADR-ssh-engine-and-ui-unit-test-gaps.md)
 
 This plan is the **single execution vehicle** for that decision's first
-tranche **U1–U8**. It does not implement U9–U15, does not reopen 0011 / 0013
+tranche **U1–U8**. It does not implement U9–U16, does not reopen 0011 / 0013
 / 0014 product choices, and does not restart
 [TEST_COVERAGE_PLAN.md](./TEST_COVERAGE_PLAN.md). A second engineer
-following only this file, against the tree as of 2026-08-20, must produce
-the same diff.
+following only this file, against the tree at `e4c1c25` (2026-08-20), must
+produce the same diff.
+
+**One phase is already complete.** `e4c1c25` landed the forge-auth-pending
+production fix and Phase 1's four tests in the same commit that added this
+plan. Phase 1 is therefore a re-verification step, not new work; execution
+starts at Phase 2. Every other phase is untouched.
 
 ## Goal
 
@@ -26,9 +31,13 @@ only as source or as leaf-level unit tests.
 
 **Acceptance criteria**
 
-1. `LocalCommandExecutor.execute(..., activityIdle: …)` completes when
+1. **(a) Already met by `e4c1c25`** —
+   `LocalCommandExecutor.execute(..., activityIdle: …)` completes when
    stdout or stderr keeps pulsing past the idle budget, and throws
-   `SSHCommandTimeout` on silence. Ceiling still kills a pulsing command.
+   `SSHCommandTimeout` on silence; the ceiling still kills a pulsing
+   command. **(b) Open** — the same four properties hold for
+   `SSHCommandExecutor.execute`, driven through a fake session whose
+   `stdout`/`stderr` pulse or stay silent.
 2. `GitService.fetch` / `pull` / `push` (and the other
    `activityIdle: networkTimeout` call sites listed in Phase 2) pass
    `git.networkTimeout` into the executor; `status` passes `null`.
@@ -58,19 +67,21 @@ only as source or as leaf-level unit tests.
 
 **In scope (U1–U8)**
 
-| ID | Work |
-|---|---|
-| U1 | Activity deadline through `LocalCommandExecutor.execute` |
-| U2 | Sync-lane client routing + topology getters (`attachedClientCount`, `syncClientDegraded`) |
-| U3 | `commandBusy` / `syncBusy` split while a command is in `_run` |
-| U4 | `GitService` records `activityIdle` on network ops, not on status |
-| U5 | Widget: pending auth → spinner, settled auth → dump (`PaneError` + both panes) |
-| U6 | Dashboard `ssh clients` / `read cap` |
-| U7 | Sideload stdin `addStream` + `flush` + `close` |
-| U8 | Encrypted PEM `decodeIdentities` |
+| ID | Work | State |
+|---|---|---|
+| U1a | Activity deadline through `LocalCommandExecutor.execute` | **done** in `e4c1c25`; Phase 1 re-verifies only |
+| U1b | Activity deadline through `SSHCommandExecutor.execute` | open (needs the Phase 3 fake) |
+| U2 | Sync-lane client routing + topology getters (`attachedClientCount`, `syncClientDegraded`) | open |
+| U3 | `commandBusy` / `syncBusy` split while a command is in `_run` | open |
+| U4 | `GitService` records `activityIdle` on network ops, not on status | open |
+| U5 | Widget: pending auth → spinner, settled auth → dump (`PaneError` + both panes) | settled half done; **pending half open** |
+| U6 | Dashboard `ssh clients` / `read cap` | open |
+| U7 | Sideload stdin `addStream` + `flush` + `close` | open |
+| U8 | Encrypted PEM `decodeIdentities` | open |
 
 **Shared test infrastructure (Phase 3)** — `test/helpers/fake_ssh_client.dart`
-and `SSHClientManager.bindTestClients`, used by U2, U3, U7.
+and `SSHClientManager.bindTestClients`, used by U1b, U2, U3, U7. This is
+the plan's **only** production change.
 
 **Out of scope** (do not implement, even if adjacent)
 
@@ -81,6 +92,7 @@ and `SSHClientManager.bindTestClients`, used by U2, U3, U7.
 * U13 history / connection-form / forge-sheet smoke
 * U14 in-session lost popup
 * U15 settings stall-budget copy
+* U16 env-cache key miss on username / port
 * Per-atom chrome widgets, goldens, `HostKeyPrompt` equality
 * dartssh3, read-cap raise, SFTP, `keepAliveInterval`
 * New transport architecture (test seams only, as the MADR allows)
@@ -126,6 +138,22 @@ Read, do not edit:
 * `lib/features/forge/forge_widgets.dart` — `PaneError` same branch.
 * `lib/features/dashboard/dashboard_sheet.dart` — `_latencySection`
   labels `'ssh clients'`, `'read cap'`, `'channel opens'` (~353–391).
+* `test/local_command_executor_test.dart` ~215–270 — the four
+  `activityIdle:` cases Phase 1 specifies **already exist**. Confirm,
+  do not re-add.
+* dartssh2 3.3.0 in `~/.pub-cache/hosted/pub.dev/dartssh2-3.3.0/lib/src/`:
+  - `socket/ssh_socket.dart` — `SSHSocket` is abstract with five members
+    (`stream`, `sink`, `done`, `close()`, `destroy()`; `flush()` has a
+    default body).
+  - `ssh_client.dart` — `SSHClient`'s constructor takes an `SSHSocket`
+    positionally and only builds an `SSHTransport`; `SSHTransport`'s
+    constructor calls `_initSocket()` (one `stream.listen`) and
+    `_startHandshake()` (writes the version banner to `socket.sink`).
+    **No timers** are scheduled unless `handshakeTimeout` / `authTimeout`
+    are non-null, and `_keepAlive` is `late final` so it is never
+    initialised on a client that never becomes ready.
+  - `ssh_session.dart` — `SSHSession`'s constructor requires an
+    `SSHChannel`, so a session fake must `implements SSHSession`.
 * Existing tests named in the MADR “already true” section — do not
   duplicate them.
 
@@ -135,14 +163,21 @@ removed. Update the MADR; do not invent a replacement transport.
 
 ---
 
-## Phase 1 — U1 LocalCommandExecutor activity deadline (commit)
+## Phase 1 — U1a LocalCommandExecutor activity deadline (DONE — verify only, no commit)
+
+**Landed in `e4c1c25`.** All four tests below are already in
+`test/local_command_executor_test.dart` (~215–270) under these exact
+names. Do **not** re-add them; run the file, confirm green, move to
+Phase 2. The specification is retained so the acceptance criterion has a
+definition and so a future revert is detectable.
 
 **Files**
 
-* **Edit** `test/local_command_executor_test.dart`
+* `test/local_command_executor_test.dart` (already edited)
 
 Do **not** change `ActivityDeadline` itself (already unit-tested). Do
-**not** add an SSH fake here — that is Phase 3.
+**not** add an SSH fake here — that is Phase 3, and the SSH half of the
+activity deadline is Phase 3b (U1b).
 
 **Tests** (real `sh` in the existing `tempDir`, same style as the file's
 current `pwd` / timeout tests)
@@ -162,8 +197,9 @@ current `pwd` / timeout tests)
      `timeout: Duration(milliseconds: 150)`
    - Expect `SSHCommandTimeout` (ceiling is the `timeout` argument).
 
-**Verify:** `flutter analyze`;
-`flutter test test/local_command_executor_test.dart`.
+**Verify:** `flutter test test/local_command_executor_test.dart` — green
+with no diff. If any case is missing, the tree is not at `e4c1c25`;
+re-read Phase 0 and treat this phase as live work.
 
 ---
 
@@ -227,7 +263,9 @@ Add, next to the existing `@visibleForTesting` `decodeIdentities` /
 
 ```dart
 /// Test-only: install already-authenticated client slots without a
-/// handshake. Does not start health monitors (no `ping` loop).
+/// handshake. Stops and clears any live health monitors and redial
+/// timers so a previously connected manager leaves nothing pending;
+/// starts none of its own (no `ping` loop against a fake).
 @visibleForTesting
 void bindTestClients({
   SSHClient? command,
@@ -236,8 +274,15 @@ void bindTestClients({
 }) {
   _generation++;
   _health?.stop();
+  _health = null;
   _streamHealth?.stop();
+  _streamHealth = null;
   _syncHealth?.stop();
+  _syncHealth = null;
+  _redialTimer?.cancel();
+  _redialTimer = null;
+  _syncRedialTimer?.cancel();
+  _syncRedialTimer = null;
   _client = command;
   _streamClient = stream;
   _syncClient = sync;
@@ -245,44 +290,105 @@ void bindTestClients({
 }
 ```
 
-Do **not** start `ConnectionHealthMonitor` here. Production `connect()`
-is unchanged.
+Every field named here exists with that exact name
+(`ssh_client_manager.dart` ~151–213). Do **not** start a
+`ConnectionHealthMonitor`; production `connect()` is unchanged.
+
+Generation pinning still holds: `_run` compares
+`_clientManager.clientGeneration` against the `gen` its caller captured,
+and a test that binds before it executes captures the post-bind
+generation.
 
 ### 3b. `FakeSshClient` / `FakeSshSession`
 
 In `test/helpers/fake_ssh_client.dart`:
 
-* `FakeSshSession` **`implements SSHSession`** (cannot `extend` —
-  production constructor needs `SSHChannel`).
-  - `stdin` is a `StreamController<Uint8List>.sink` plus a
-    `List<String> stdinOps` recording `'addStream'`, `'add'`,
-    `'flush'`, `'close'` in order. Wrap the sink if needed so
-    `addStream` is distinguishable from `add`.
-  - `flush()` appends `'flush'` and completes.
-  - `stdout` / `stderr` default to empty streams that close
-    immediately (or to injected controllers).
-  - `waitForExit()` completes with `0` once stdout and stderr
-    are done, unless a `Completer<int?> exit` is supplied.
-  - `close()` / `kill()` complete any pending exit.
-  - Unused getters (`channel`, `exitSignal`) throw
-    `UnimplementedError`.
-* `FakeSshClient` **`implements SSHClient`**.
-  - Public members dartssh2 3.3.0 requires (from
-    `ssh_client.dart`): `done`, `isClosed`, `authenticated`,
-    `remoteVersion`, `strictKex`, `forwardRemote`,
-    `cancelForwardRemote`, `forwardLocal`, `forwardDynamic`,
-    `forwardLocalUnix`, `execute`, `shell`, `subsystem`, `sftp`,
-    `run`, `runWithResult`, `ping`, `close`, `flush`.
-  - Default: `UnimplementedError` except:
-    - `execute` → returns a new `FakeSshSession` (or a hung
-      `Completer<SSHSession>.future` when `hangExecute` is true)
-    - `ping` / `close` / `flush` / `done` complete immediately
-    - `isClosed` false until `close`
-  - Field `List<String> executeCommands` records the command
-    string passed to `execute`.
+**`FakeSshClient` `extends SSHClient`, it does not implement it.**
+`implements SSHClient` would require ~45 public members — 22 final
+fields (`socket`, `username`, `algorithms`, `ident`,
+`keepAliveInterval`, and the whole handler-callback set), 6 getters
+(`done`, `isClosed`, `authenticated`, `remoteVersion`, `strictKex`,
+`serverSigAlgs`), and 17 methods including `httpClient`, `handlePacket`
+and the `sessionId` setter. Extending inherits all of them:
 
-If `implements SSHClient` grows extra public members in a future
-3.3.x (this plan pins 3.3.0), add stubs; do **not** bump dartssh2.
+```dart
+/// A socket that accepts the handshake bytes dartssh2 writes on
+/// construction and never answers. `done` never completes, so the
+/// transport neither closes nor errors — the client just sits
+/// un-negotiated while the overridden members below do the work.
+class _NullSocket implements SSHSocket {
+  final _incoming = StreamController<Uint8List>();
+  final _outgoing = StreamController<List<int>>();
+  final _done = Completer<void>();
+
+  @override
+  Stream<Uint8List> get stream => _incoming.stream;
+  @override
+  StreamSink<List<int>> get sink => _outgoing.sink;
+  @override
+  Future<void> get done => _done.future;
+  @override
+  Future<void> close() async => destroy();
+  @override
+  void destroy() {
+    if (!_done.isCompleted) _done.complete();
+  }
+  @override
+  Future<void> flush() async {}
+}
+
+class FakeSshClient extends SSHClient {
+  FakeSshClient({this.hangExecute = false})
+    : super(_NullSocket(), username: 'test', keepAliveInterval: null);
+  ...
+}
+```
+
+`keepAliveInterval: null` matters — the parameter defaults to 10 s, and
+this project's production `connect()` also passes `null` (0013 / 0014).
+
+Override on `FakeSshClient`:
+
+* `execute(String command, {pty, x11, environment})` — record
+  `command` into `List<String> executeCommands`, then return a new
+  `FakeSshSession` (exposed as `List<FakeSshSession> sessions`). When
+  `hangExecute` is true, return a stored `Completer<SSHSession>.future`
+  instead, completed later by `completeExecute()`.
+* `ping()`, `close()`, `flush()` — complete immediately; `close()`
+  flips `isClosed` and destroys the socket.
+* `done` — a `Completer<void>` the test can complete to simulate a
+  transport death; `isClosed` — false until `close()`.
+
+Everything else stays inherited. Nothing else is called on a client by
+`SSHCommandExecutor` (`rg 'client\.' lib/core/ssh/ssh_command_executor.dart`
+finds only `execute`).
+
+**`FakeSshSession` `implements SSHSession`** — its production constructor
+requires an `SSHChannel`, so extending is not available. The full public
+surface is 13 members:
+
+* `stdin` — a recording `StreamSink<Uint8List>` that appends to
+  `List<String> stdinOps`: `'addStream'`, `'add'`, `'close'`.
+  `addStream` must be distinguishable from `add`, which is the whole
+  point of U7.
+* `flush()` — appends `'flush'`, completes. (Production calls
+  `session.flush()`, not `stdin.flush()`; both land in the same list.)
+* `stdout` / `stderr` — `Stream<Uint8List>`; default to controllers
+  that close immediately, or take injected ones (U1b pulses through
+  these).
+* `waitForExit({timeout})` — completes with `0`, or with an injected
+  `Completer<int?>`. The executor drains both streams first and then
+  awaits this, so a session whose streams never close never settles.
+* `close()` / `kill(SSHSignal)` — complete any pending exit; these are
+  the timeout-path cleanup.
+* `write(Uint8List)` — appends `'write'` (so a regression to the old
+  buffered path is *recorded*, not silently ignored).
+* `exitCode`, `exitSignal`, `done`, `channel`, `resizeTerminal` — not
+  read by the executor; `channel` throws `UnimplementedError`, the rest
+  return null / no-op.
+
+If dartssh2 grows a member in a future 3.3.x (this plan pins 3.3.0),
+add the stub; do **not** bump dartssh2.
 
 **Test in this phase** (so the helper is not dead code):
 
@@ -290,8 +396,53 @@ If `implements SSHClient` grows extra public members in a future
   `'bindTestClients makes execute see an established connection'`
   - Bind a `FakeSshClient` as `command`
   - `execute(repoPath: '/r', gitArgs: ['true'])` returns success
-    (empty session stdout, exit 0)
+    (empty session stdout, `waitForExit` 0)
   - Does not throw `'SSH connection not established.'`
+
+**Verify:** `flutter analyze`;
+`flutter test test/ssh_command_executor_test.dart`.
+
+---
+
+## Phase 3b — U1b activity deadline through `SSHCommandExecutor` (commit)
+
+**Files**
+
+* **Edit** `test/ssh_command_executor_test.dart`
+
+MADR U1 asks for the deadline proven through *both* executors. The local
+half shipped in `e4c1c25` (Phase 1); this is the SSH half, and it is the
+one 0014 T2 was written for. It sits here because it is the first phase
+the Phase 3 fake makes possible.
+
+The production pulses are inside the drain — `deadline?.pulse()` at
+`ssh_command_executor.dart` ~818 (stdout chunks) and ~847 (stderr
+chunks) — so they only fire on bytes arriving from the session.
+
+**Tests**
+
+1. `'activityIdle: a session pulsing stderr past the idle budget completes'`
+   - `FakeSshSession` with an injected `stderr` controller; a periodic
+     emit every 40 ms for ~8 ticks, then close both streams and exit 0
+   - `execute(..., activityIdle: Duration(milliseconds: 120),
+     timeout: Duration(seconds: 2))`
+   - Expect `isSuccess`
+   - **Deletion check:** removing the `deadline?.pulse()` on the stderr
+     map (~847) makes this throw
+2. `'activityIdle: a session pulsing stdout past the idle budget completes'`
+   - Same through `stdout` (guards the ~818 pulse)
+3. `'activityIdle: a silent session throws SSHCommandTimeout'`
+   - Streams open and quiet, no exit
+   - `activityIdle: Duration(milliseconds: 80)`,
+     `timeout: Duration(seconds: 2)`
+   - Expect `throwsA(isA<SSHCommandTimeout>())`
+4. `'activityIdle: the ceiling still kills a pulsing session'`
+   - Pulse every 20 ms forever, `activityIdle: Duration(seconds: 5)`,
+     `timeout: Duration(milliseconds: 150)`
+   - Expect `SSHCommandTimeout`
+
+Close the injected controllers in a `tearDown` / `addTearDown` so a
+timed-out test leaves no periodic timer behind.
 
 **Verify:** `flutter analyze`;
 `flutter test test/ssh_command_executor_test.dart`.
@@ -308,29 +459,43 @@ If `implements SSHClient` grows extra public members in a future
   → `'SSHClientManager generation + client slots'`
   (MADR LOW; do it here so the name matches triple-client).
 
+**`executeCommands` holds formatted shell strings, not argv.** `_runBody`
+passes `CommandFormatter.format(...)` output to `client.execute` — a
+`cd '<repo>' && … <args>` string. So assert with a substring search, not
+list membership:
+
+```dart
+bool ran(FakeSshClient c, String marker) =>
+    c.executeCommands.any((cmd) => cmd.contains(marker));
+```
+
+Use markers that cannot collide with the `cd`/env prefix — `'zz-read'`,
+`'zz-sync'`, `'zz-mut'`, not `'cmd'`/`'syn'`/`'mut'`.
+
 **Tests**
 
 1. `'ExecLane.sync uses syncClient; other lanes use command client'`
    - Two `FakeSshClient` instances (`cmd`, `sync`), distinct
      identities.
    - `bindTestClients(command: cmd, sync: sync)`
-   - `execute(..., gitArgs: ['cmd'], lane: ExecLane.read)`
-   - `execute(..., gitArgs: ['syn'], lane: ExecLane.sync)`
-   - `execute(..., gitArgs: ['mut'], lane: ExecLane.exclusive)`
-   - Expect `cmd.executeCommands` contains `'cmd'` and `'mut'`,
-     not `'syn'`.
-   - Expect `sync.executeCommands` contains `'syn'` only.
+   - `execute(..., gitArgs: ['zz-read'], lane: ExecLane.read)`
+   - `execute(..., gitArgs: ['zz-sync'], lane: ExecLane.sync)`
+   - `execute(..., gitArgs: ['zz-mut'], lane: ExecLane.exclusive)`
+   - Expect `ran(cmd, 'zz-read')` and `ran(cmd, 'zz-mut')` true,
+     `ran(cmd, 'zz-sync')` false.
+   - Expect `ran(sync, 'zz-sync')` true and the other two false.
    - **Deletion check:** removing the `lane == ExecLane.sync`
-     ternary in `_run` and always using `client` fails this test.
+     ternary in `_run` (~676) and always using `client` fails this
+     test.
 2. `'degraded sync shares the command client'`
-   - `bindTestClients(command: cmd, sync: null)`
-   - Expect `manager.syncClientDegraded` is true
-   - Expect `manager.attachedClientCount` is 1 (command only) or 2
-     if you also bind `stream` — be explicit: bind
-     `command: cmd, stream: stream, sync: null` and expect
-     `attachedClientCount == 2` and `syncClientDegraded == true`
-   - `execute(lane: ExecLane.sync)` records on `cmd`, not on a
-     third client.
+   - `bindTestClients(command: cmd, stream: stream, sync: null)`
+   - Expect `manager.syncClientDegraded` is true (the getter is
+     `_client != null && _syncClient == null`, ~284)
+   - Expect `manager.attachedClientCount == 2`
+   - `execute(..., gitArgs: ['zz-sync'], lane: ExecLane.sync)` records
+     on `cmd` — `syncClient` falls back to `_client` (~281), so this
+     also proves the fallback is the *command* client and not a
+     silently-null one.
 3. `'attachedClientCount is 3 when all slots are bound'`
    - Bind three distinct fakes; expect `3`.
    - Bind none; expect `0` (already true for a fresh manager;
@@ -394,6 +559,12 @@ already in `connection_health_monitor_test.dart`.
   **no production extract** if `FakeSshSession.stdinOps` already
   records the order.
 
+`uploadBytes` (~401) runs `sh -c 'cat > <escaped>'` on
+**`ExecLane.isolated`** through `runWithRetries`, and throws unless the
+result is exit 0 — so bind the fake in the **command** slot (isolated is
+not the sync lane) and make sure `waitForExit()` yields `0`, or the
+upload throws before the assertion is reached.
+
 **Test**
 
 `'uploadBytes feeds stdin via addStream, flush, then close'`
@@ -402,14 +573,15 @@ already in `connection_health_monitor_test.dart`.
 * `await executor.uploadBytes('/tmp/x', Uint8List.fromList([1, 2, 3]))`
 * On the session created for that execute:
   - `stdinOps` is `['addStream', 'flush', 'close']` (allow
-    `'addStream', 'close'` only if `flush` is a no-op on an empty
-    controller — **fail the test if `ops` contains `'add'` of the
-    whole buffer without `'addStream'`**, which is the 0014 T7
+    `['addStream', 'close']` only if `flush` is a no-op on an empty
+    controller — **fail the test if `stdinOps` contains `'write'` or a
+    bare `'add'` without `'addStream'`**, which is the 0014 T7
     regression)
-  - `executeCommands` contains `cat >` and the escaped path
+  - `executeCommands.single` contains `cat >` and the escaped path
 
 **Deletion check:** changing `_runBody` back to `s.write(stdin);
-await s.stdin.close();` must fail this test.
+await s.stdin.close();` must fail this test — which is why
+`FakeSshSession.write` records `'write'` rather than throwing.
 
 **Verify:** `flutter analyze`;
 `flutter test test/ssh_command_executor_test.dart`.
@@ -543,6 +715,9 @@ Dashboard reads `ref.read(sshClientManagerProvider)` and
 `ref.read(executorProvider)` inside `_latencySection` — not
 watched. Override both.
 
+`SSHClientManager` declares no constructor, so the default no-arg one
+applies and this subclass compiles as written:
+
 ```dart
 class _TripleManager extends SSHClientManager {
   @override
@@ -550,11 +725,13 @@ class _TripleManager extends SSHClientManager {
 }
 ```
 
-Use a real `SSHCommandExecutor(_TripleManager())` for
-`executorProvider` so `adaptiveReadCap` is the no-sample cap
-(3). Or subclass and override `adaptiveReadCap` if the getter
-is overridable — it is an instance getter on
-`SSHCommandExecutor`; overriding requires a subclass.
+Use a real `SSHCommandExecutor(_TripleManager())` (one positional
+argument) for `executorProvider`. Its `adaptiveReadCap` then reports
+`AdaptiveReadConcurrency.noSampleCap`, which is **3** — the *ceiling*
+is 4 and stays 4 (acceptance criterion 9). Assert the label, not the
+number, so a future band change does not break this test. Overriding
+`adaptiveReadCap` instead is possible (a plain instance getter,
+`ssh_command_executor.dart` ~339) but unnecessary.
 
 **Test** (extend `'renders the session sections from live providers'`
 or add a sibling)
@@ -607,7 +784,8 @@ introduced the break.
 |---|---|
 | 1 | `flutter analyze` exit 0 |
 | 2 | Phase 10 listed tests + full `flutter test` exit 0 |
-| 3 | U1: pulsing local `sh` survives `activityIdle`; silence throws `SSHCommandTimeout` |
+| 3 | U1a (already green): pulsing local `sh` survives `activityIdle`; silence throws `SSHCommandTimeout` |
+| 3b | U1b: a session pulsing stdout **or** stderr survives `activityIdle` through `SSHCommandExecutor.execute`; a silent session throws; the ceiling still kills a pulser |
 | 4 | U4: fetch `activityIdle == networkTimeout`; status is `null` |
 | 5 | U2: sync lane records on the sync fake; degraded sync records on the command fake; count 3 / 2 |
 | 6 | U3: hung read ⇒ `commandBusy && !syncBusy` |
@@ -615,7 +793,8 @@ introduced the break.
 | 8 | U8: passphrase PEM decodes; `toPem()` parses without passphrase (or skip without ssh-keygen) |
 | 9 | U5: pending ⇒ `ProgressCircle`, no dump; settled ⇒ dump; no pending timers |
 | 10 | U6: Dashboard shows `ssh clients` and `read cap` |
-| 11 | No `keepAliveInterval:` other than `null`; dartssh2 exact `3.3.0`; read cap default still 4 |
+| 11 | No `keepAliveInterval:` other than `null` (the `FakeSshClient` super-call included); dartssh2 exact `3.3.0`; `AdaptiveReadConcurrency.ceiling` still 4 |
+| 12 | `bindTestClients` is the only production change; it is `@visibleForTesting`, starts no monitor, and leaves no timer |
 
 A HIGH ID is **not** closed by creating a file with a similar name.
 Each test above must fail if the cited production branch is deleted.
@@ -626,14 +805,18 @@ Each test above must fail if the cited production branch is deleted.
 in production). No settings schema, no unsigned `.app` unless the
 user asks after the suite is green.
 
-**Rollback.** Revert phase commits in reverse order. Phase 3's
-`bindTestClients` must revert with U2/U3/U7 or those tests will
-not compile.
+**Rollback.** Revert phase commits in reverse order, down to but not
+including `e4c1c25` (Phase 1 and the production auth fix are not part of
+this rollout). Phase 3's `bindTestClients` must revert with
+U1b/U2/U3/U7 or those tests will not compile.
 
 **Risks**
 
-* `implements SSHClient` may need extra stubs if a field was
-  missed — add the stub, do not wrap the fake in `dynamic`.
+* `extends SSHClient` runs dartssh2's real constructor against
+  `_NullSocket`. It writes a version banner and a KEXINIT into a
+  `StreamController` nobody drains — harmless, but close the
+  controllers in `tearDown` so the analyzer's `unawaited_futures` and
+  the test binding both stay quiet.
 * Widget teardown (`ProgressCircle` + Riverpod retry) is the
   only known flake mode; Phase 8 halt handles it.
 * Encrypted PEM test skips on machines without `ssh-keygen`
@@ -641,12 +824,15 @@ not compile.
 
 ## Halt conditions (do not improvise)
 
-1. `SSHClient` / `SSHSession` cannot be `implemented` without a
-   native channel (analyzer error on `channel` type) → stop U3/U7
-   fakes; extract `@visibleForTesting` `feedSessionStdin` for U7
-   and `@visibleForTesting String clientSlotFor(ExecLane)` **used
-   by `_run`** for U2; update this plan with the extract. Do not
-   skip U2.
+1. `extends SSHClient` against `_NullSocket` throws, hangs, or leaves a
+   pending timer at teardown (it should not — `SSHTransport`'s
+   constructor schedules none) → fall back to
+   `implements SSHClient` with the full ~45-member stub set, **not**
+   to `dynamic`. Only if that is also impossible: extract
+   `@visibleForTesting` `feedSessionStdin` for U7 and
+   `@visibleForTesting SSHClient? clientFor(ExecLane)` **called by
+   `_run`** for U2, and update this plan with the extract. Do not skip
+   U2.
 2. `bindTestClients` would start health monitors that ping the
    fake forever → do not start them (as specified).
 3. Phase 8 teardown still fails `!timersPending` after a 3 s pump

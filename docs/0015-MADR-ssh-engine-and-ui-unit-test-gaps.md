@@ -34,7 +34,9 @@ its SSH/UI slice with evidence from 2026-08-20.
 
 This MADR does **not** reopen 0011 (busy-pause), 0013 (dartssh2 pin), or
 0014’s product choices. It does not authorise implementation; a paired PLAN
-is required before any source or test file is added.
+is required before any further source or test file is added. (One slice —
+the connect-time auth fix and U1's local half — shipped alongside this
+record in `e4c1c25`; see “Tranche status” under Decision Outcome.)
 
 ### Audit method
 
@@ -59,6 +61,11 @@ forge-auth-pending fix were already green in the preceding work cycle.
 
 * `ActivityDeadline` idle vs ceiling as a pure timer
   (`test/activity_deadline_test.dart`, three cases).
+* `ActivityDeadline` **through `LocalCommandExecutor.execute`**: stdout and
+  stderr pulses both beat the idle budget, silence throws
+  `SSHCommandTimeout`, and the ceiling still kills a pulsing command
+  (`test/local_command_executor_test.dart` ~215–270). Landed in `e4c1c25`,
+  the same commit as this record — see U1.
 * Reconnect allowlist vs `SSHAuthFailError` pause
   (`test/ssh_error_messages_test.dart`, `test/auto_reconnect_test.dart`
   `'an auth failure pauses auto-reconnect immediately'`).
@@ -157,6 +164,15 @@ The recommended **first tranche** (implement only after a paired PLAN is
 approved) is **U1–U8** below. Everything else is recorded so it is not
 re-discovered, not so it is built in the same cycle.
 
+**Tranche status at the time of writing.** `e4c1c25` — the commit that
+carried this record and its PLAN into the tree — also landed the
+forge-auth-pending production fix (`display_error.dart`,
+`repo_status_view.dart` ~1671, `file_view.dart` ~722,
+`forge_widgets.dart` ~183), its provider-level tests
+(`connection_race_test.dart`), the *settled*-auth widget tests, and
+**U1's local half**. So U1 is partly closed before this record was
+accepted; U2–U8 are untouched. The PLAN's phase list reflects that.
+
 This record does not change product architecture. Filling a gap may
 require a `@visibleForTesting` hook (for example, which `SSHClient` a
 lane used); that is a test seam, not a new transport.
@@ -171,13 +187,13 @@ lane used); that is a test seam, not a new transport.
 | Degrade-to-dual / sync redial | Getters null when disconnected | No test that a failed sync handshake still connects, sets `syncClientDegraded`, routes `ExecLane.sync` onto `client`, or redials |
 | `ExecLane.sync` → `syncClient` | `ssh_command_executor.dart` ~676–678 | No test spies which client object `execute` used |
 | Busy-pause split | `commandBusy` / `syncBusy` / stream window in source; live test only `transportBusy` | No unit test that a sync fetch pauses the **sync** monitor and leaves the command monitor probing |
-| `ActivityDeadline` class | 3 unit tests | **Not** exercised through `SSHCommandExecutor.execute` or `LocalCommandExecutor.execute` (no `activityIdle` cases in those files) |
+| `ActivityDeadline` class | 3 pure-timer tests, plus 4 end-to-end cases through `LocalCommandExecutor.execute` | **Not** exercised through `SSHCommandExecutor.execute` — `rg activityIdle test/ssh_command_executor_test.dart` is empty, and the SSH path is the one 0014 shipped for |
 | GitService network ops | `activityIdle: networkTimeout` at 7 call sites (`git_service.dart` fetch/pull/push/…) | Fakes accept `activityIdle` and never assert it was the settings duration |
 | Channel-open → adaptive cap | Adaptive unit tests | Executor records `SSHChannelOpenError` into telemetry (`ssh_command_executor_test`); Dashboard does not read the number |
 | Native socket | `tcpNoDelay` round-trip | Darwin `SO_KEEPALIVE` `setRawOption` path is unasserted (best-effort `catch` in `native_ssh_socket.dart` ~30–40) |
 | PEM offload | Unencrypted ed25519 only | Encrypted bcrypt PEM, and “decode once, reuse on three clients,” untested |
 | Sideload stdin | `uploadTimeoutFor` scaling | `addStream` + `flush` in `ssh_command_executor.dart` ~793–795 has **zero** tests (`rg addStream test/` is empty) |
-| Env cache | Same-host reconnect vs disconnect | Username/port key miss is described in 0014 PLAN; confirm the test names the username case |
+| Env cache | Same-host reconnect reuses; disconnect invalidates; a superseded probe cannot reconfigure the shared executor (`connection_env_reset_test.dart`) | The key is `'${host}\|${port}\|${username}'` (`app_providers.dart` ~867), but every test varies only the **host** (`'mac'` vs `'bastion'`). A same-host / different-username or different-port profile has no cache-**miss** proof — see U16 |
 | Live topology | Skips without sshd | 0014 Phase 10 `attachedClientCount == 3` and “echo on read during long sync” are not in `ssh_live_transport_test.dart` |
 | Stale names | `ssh_command_executor_test.dart` group `'SSHClientManager generation + dual-client surface'` | Comments still say dual; getters already include `syncClient` |
 
@@ -225,12 +241,21 @@ test-file size.
 
 **U1. Activity deadline through the executors.**
 `ActivityDeadline` can pass while `execute(..., activityIdle: …)` still
-uses a flat wall clock. Fake a channel that emits a stderr byte every
-100 ms past the idle budget and assert the command **completes**; fake
-silence and assert `TimeoutException` / `SSHCommandTimeout`. Repeat for
-`LocalCommandExecutor` (same `ActivityDeadline` construct at
-`local_command_executor.dart` ~199). Without this, 0014 T2 is a class
-plus a parameter nobody checks.
+uses a flat wall clock.
+
+*Local half — **closed** in `e4c1c25`.* Four cases drive real `sh` through
+`LocalCommandExecutor.execute` (`local_command_executor.dart` ~199, pulses
+at ~272/~284): stdout pulses, stderr pulses, silence throws
+`SSHCommandTimeout`, ceiling still kills a pulser.
+
+*SSH half — **open**, and it is the half 0014 shipped for.* No test in
+`test/ssh_command_executor_test.dart` passes `activityIdle` at all. The
+production pulses sit inside the drain (`ssh_command_executor.dart` ~818
+on stdout, ~847 on stderr) behind `client.execute`, so this needs the
+fake session from U2's infrastructure: a session whose `stderr` emits a
+byte every 100 ms past the idle budget must **complete**; a silent
+session must throw `SSHCommandTimeout`. Until then 0014 T2 is a class
+plus a parameter nobody checks on the transport that uses it.
 
 **U2. Sync-lane client routing and degrade-to-dual.**
 A fake `SSHClientManager` with distinct command/sync client objects (or a
@@ -310,6 +335,14 @@ vs the landing card. `link_status_chip_test` is not that overlay.
 `find.textContaining` on the Network field help, so a copy revert cannot
 silently restore “command timeout” language.
 
+**U16. Env-cache key misses on username and port.**
+`_envKey` is `'${host}|${port}|${username}'` (`app_providers.dart` ~867),
+but `connection_env_reset_test.dart` only ever varies the host. Two
+profiles on the same host with different usernames (a bastion `root` vs
+`deploy`) or a non-22 port would share a cached `RemoteEnvironment` if
+the key ever degraded to host-only, and nothing would fail. One test:
+connect as `u@mac`, reconnect as `admin@mac`, assert the probe re-ran.
+
 ### LOW — polish / do not prioritize
 
 * Per-atom tests for `field_styles`, `sheet_chrome`, `sidebar_branding`.
@@ -374,13 +407,23 @@ silently restore “command timeout” language.
   follow-up instead of hoping the provider retry is enough.
 * Neutral, because this record is proposed until the maintainer accepts
   it; no tests are added by accepting the MADR.
-* Bad, because U2 may require a non-trivial `SSHClient` fake if dartssh2
-  clients cannot be constructed without a socket.
+* Neutral, because the `SSHClient` fake U2/U3/U7 need is smaller than it
+  looks. `implements SSHClient` would mean stubbing ~45 public members
+  (22 final fields including `socket`, `algorithms` and the handler
+  callbacks, 6 getters, and 17 methods — `handlePacket` and the
+  `sessionId` setter among them). `extends SSHClient` over a stub
+  `SSHSocket` (a 5-member abstract class:
+  `stream`/`sink`/`done`/`close`/`destroy`) inherits all of them and
+  needs `execute` overridden and little else — dartssh2 3.3.0's
+  constructor only calls `SSHTransport(...)`, which listens on the
+  socket stream and writes a version banner. It schedules **no** timers,
+  so nothing is left pending at teardown.
 
 ### Confirmation
 
 * Each HIGH ID is closed when a test **fails if the production branch is
-  deleted** (not when a file named like the source exists).
+  deleted** (not when a file named like the source exists). U1's local
+  half is already closed on that standard; its SSH half is not.
 * `flutter analyze` and ordinary `flutter test` stay green. Do not run
   `live-forge`. Do not require sshd for U1–U8.
 * A companion PLAN (`0015-PLAN-ssh-engine-and-ui-unit-test-gaps.md`)
