@@ -1919,15 +1919,30 @@ class ConnectionController extends Notifier<ConnectionState> {
     // with an ugly dialog and no reconnect).
     done
         .then((_) => _onTransportClosed(attempt))
-        .catchError((Object _) => _onTransportClosed(attempt));
+        .catchError((Object e) => _onTransportClosed(attempt, error: e));
   }
 
-  void _onTransportClosed(int attempt) {
+  void _onTransportClosed(int attempt, {Object? error}) {
     if (attempt != _attempt || !ref.mounted) return;
     if (state.phase != ConnectionPhase.connected) return; // intentional close
+    final manager = ref.read(sshClientManagerProvider);
+    if (manager.lastDropCause == null) {
+      CommandTelemetry.instance.recordTransportDrop(
+        TransportDropSample(
+          cause: error != null
+              ? TransportDropCause.transportError
+              : TransportDropCause.remoteClosed,
+          failures: 0,
+          busy: ref.read(executorProvider).transportBusy,
+          connectionAge: Duration.zero,
+          at: DateTime.now(),
+          peerReason: peerDisconnectReason(error),
+        ),
+      );
+    }
     state = state.copyWith(
       phase: ConnectionPhase.lost,
-      error: 'Connection lost',
+      error: transportLostMessage(error),
       reconnecting: true,
     );
     _autoReconnect();

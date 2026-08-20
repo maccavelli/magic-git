@@ -86,12 +86,14 @@ class AppShell extends ConsumerStatefulWidget {
 class _ReconnectingOverlay extends StatefulWidget {
   final String? host;
   final int attempt;
+  final String? reason;
   final VoidCallback onStopRetrying;
   final VoidCallback onCancel;
 
   const _ReconnectingOverlay({
     required this.host,
     required this.attempt,
+    this.reason,
     required this.onStopRetrying,
     required this.onCancel,
   });
@@ -170,6 +172,17 @@ class _ReconnectingOverlayState extends State<_ReconnectingOverlay> {
                   color: MacosColors.systemGrayColor,
                 ),
               ),
+              if (widget.reason != null &&
+                  widget.reason != 'Connection lost') ...[
+                const SizedBox(height: 6),
+                Text(
+                  widget.reason!,
+                  textAlign: TextAlign.center,
+                  style: typography.body.copyWith(
+                    color: MacosColors.systemGrayColor,
+                  ),
+                ),
+              ],
               const SizedBox(height: 18),
               Row(
                 mainAxisSize: MainAxisSize.min,
@@ -1100,6 +1113,7 @@ class _AppShellState extends ConsumerState<AppShell> {
             return _ReconnectingOverlay(
               host: connection.host,
               attempt: connection.reconnectAttempt,
+              reason: connection.error,
               onStopRetrying: () =>
                   ref.read(connectionProvider.notifier).stopReconnect(),
               onCancel: () => unawaited(_cancelReconnect()),

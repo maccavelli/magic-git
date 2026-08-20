@@ -29,6 +29,29 @@ class CommandSample {
   });
 }
 
+/// Why an unexpected SSH session drop was recorded.
+enum TransportDropCause { monitor, transportError, remoteClosed }
+
+/// One unexpected transport drop — see [CommandTelemetry.recordTransportDrop].
+@immutable
+class TransportDropSample {
+  final TransportDropCause cause;
+  final int failures;
+  final bool busy;
+  final Duration connectionAge;
+  final DateTime at;
+  final String? peerReason;
+
+  const TransportDropSample({
+    required this.cause,
+    required this.failures,
+    required this.busy,
+    required this.connectionAge,
+    required this.at,
+    this.peerReason,
+  });
+}
+
 /// Session-wide command measurements, recorded by both executors (SSH and
 /// local) and read by the Dashboard. A process-wide singleton rather than a
 /// provider: the executors are plain classes with no Riverpod access, and
@@ -42,8 +65,10 @@ class CommandTelemetry extends ChangeNotifier {
   static final CommandTelemetry instance = CommandTelemetry._();
 
   static const int _ringCapacity = 200;
+  static const int _dropRingCapacity = 20;
 
   final List<CommandSample> _ring = [];
+  final List<TransportDropSample> _dropRing = [];
   int _commandCount = 0;
   int _totalBytes = 0;
   int _totalWireBytes = 0;
@@ -80,6 +105,28 @@ class CommandTelemetry extends ChangeNotifier {
   /// Peak concurrent long-lived streams this session.
   int get peakOpenStreams => _peakOpenStreams;
 
+  /// Unexpected drops, oldest first (bounded at [_dropRingCapacity]).
+  /// Survives [reset] so the dashboard can still answer "why did it just
+  /// drop" after the reconnect that follows.
+  List<TransportDropSample> get drops => List.unmodifiable(_dropRing);
+
+  /// Monitor-declared deaths in [drops]. Target is 0 in a healthy session.
+  int get monitorKillCount =>
+      _dropRing.where((d) => d.cause == TransportDropCause.monitor).length;
+
+  void recordTransportDrop(TransportDropSample sample) {
+    _dropRing.add(sample);
+    if (_dropRing.length > _dropRingCapacity) _dropRing.removeAt(0);
+    notifyListeners();
+  }
+
+  /// Test isolation only — production [reset] deliberately leaves [drops].
+  @visibleForTesting
+  void clearDrops() {
+    _dropRing.clear();
+    notifyListeners();
+  }
+
   /// Mean duration across the recent ring; zero when empty.
   Duration get averageDuration {
     if (_ring.isEmpty) return Duration.zero;
@@ -91,8 +138,10 @@ class CommandTelemetry extends ChangeNotifier {
   Duration get p95Duration {
     if (_ring.isEmpty) return Duration.zero;
     final sorted = [for (final s in _ring) s.duration.inMicroseconds]..sort();
-    return Duration(microseconds: sorted[(sorted.length * 95 ~/ 100)
-        .clamp(0, sorted.length - 1)]);
+    return Duration(
+      microseconds:
+          sorted[(sorted.length * 95 ~/ 100).clamp(0, sorted.length - 1)],
+    );
   }
 
   void record(CommandSample sample) {

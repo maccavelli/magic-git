@@ -34,15 +34,17 @@ void main() {
       expect(manager.done, isNull);
     });
 
-    test('disconnect clears clientGeneration and keeps streamClient null',
-        () async {
-      final manager = SSHClientManager();
-      await manager.disconnect();
-      expect(manager.client, isNull);
-      expect(manager.streamClient, isNull);
-      expect(manager.clientGeneration, -1);
-      expect(manager.streamClientDegraded, isFalse);
-    });
+    test(
+      'disconnect clears clientGeneration and keeps streamClient null',
+      () async {
+        final manager = SSHClientManager();
+        await manager.disconnect();
+        expect(manager.client, isNull);
+        expect(manager.streamClient, isNull);
+        expect(manager.clientGeneration, -1);
+        expect(manager.streamClientDegraded, isFalse);
+      },
+    );
   });
 
   group('SSHCommandExecutor adaptive read concurrency', () {
@@ -90,11 +92,11 @@ void main() {
     });
   });
 
-  group('SSHCommandExecutor pins each command to its enqueue-time generation', () {
-    test(
-      'a command already queued when a disconnect happens is refused, '
-      'not silently run against the new state',
-      () async {
+  group(
+    'SSHCommandExecutor pins each command to its enqueue-time generation',
+    () {
+      test('a command already queued when a disconnect happens is refused, '
+          'not silently run against the new state', () async {
         final manager = SSHClientManager();
         final executor = SSHCommandExecutor(manager);
 
@@ -116,7 +118,10 @@ void main() {
         // generation bump below is guaranteed to happen before the queued
         // command's `_run` gets a chance to execute.
         final genAtEnqueue = manager.generation;
-        final second = executor.execute(repoPath: '/r', gitArgs: ['git', 'log']);
+        final second = executor.execute(
+          repoPath: '/r',
+          gitArgs: ['git', 'log'],
+        );
         // Deliberately not awaited: the assertion right below depends on the
         // generation bump having already happened *synchronously* (see the
         // comment above), before this test function itself next awaits
@@ -125,13 +130,10 @@ void main() {
         expect(manager.generation, isNot(genAtEnqueue));
 
         await expectLater(second, throwsA(isA<SSHCommandSuperseded>()));
-      },
-    );
+      });
 
-    test(
-      'a command queued while the generation is unchanged still runs '
-      '(sanity check against a false positive)',
-      () async {
+      test('a command queued while the generation is unchanged still runs '
+          '(sanity check against a false positive)', () async {
         final manager = SSHClientManager();
         final executor = SSHCommandExecutor(manager);
 
@@ -141,9 +143,9 @@ void main() {
           executor.execute(repoPath: '/r', gitArgs: ['git', 'status']),
           throwsA(isNot(isA<SSHCommandSuperseded>())),
         );
-      },
-    );
-  });
+      });
+    },
+  );
 
   group('splitExitTrailer recovers a compressed read\'s real exit code', () {
     test('a clean success trailer', () {
@@ -155,22 +157,25 @@ void main() {
     });
 
     test('a non-zero exit survives the round trip', () {
-      final (code, body) =
-          SSHCommandExecutor.splitExitTrailer('\u0001EXIT=128\u0001');
+      final (code, body) = SSHCommandExecutor.splitExitTrailer(
+        '\u0001EXIT=128\u0001',
+      );
       expect(code, 128);
       expect(body, isEmpty);
     });
 
     test('a missing trailer (killed/truncated stream) yields a null code', () {
-      final (code, body) =
-          SSHCommandExecutor.splitExitTrailer('partial output...');
+      final (code, body) = SSHCommandExecutor.splitExitTrailer(
+        'partial output...',
+      );
       expect(code, isNull);
       expect(body, 'partial output...');
     });
 
     test('a trailer cut off mid-digits is not trusted', () {
-      final (code, body) =
-          SSHCommandExecutor.splitExitTrailer('out\u0001EXIT=12');
+      final (code, body) = SSHCommandExecutor.splitExitTrailer(
+        'out\u0001EXIT=12',
+      );
       expect(code, isNull);
       expect(body, 'out\u0001EXIT=12');
     });
@@ -184,8 +189,9 @@ void main() {
     });
 
     test('non-digit trailer content is rejected', () {
-      final (code, _) =
-          SSHCommandExecutor.splitExitTrailer('out\u0001EXIT=abc\u0001');
+      final (code, _) = SSHCommandExecutor.splitExitTrailer(
+        'out\u0001EXIT=abc\u0001',
+      );
       expect(code, isNull);
     });
   });
@@ -214,9 +220,7 @@ void main() {
 
     test('never retries deterministic client errors', () {
       expect(
-        SSHCommandExecutor.isTransientTransportError(
-          ArgumentError('bad path'),
-        ),
+        SSHCommandExecutor.isTransientTransportError(ArgumentError('bad path')),
         isFalse,
       );
       expect(
@@ -242,6 +246,30 @@ void main() {
       );
     });
 
+    test(
+      'never retries peer disconnect, handshake timeout, or malformed packet',
+      () {
+        expect(
+          SSHCommandExecutor.isTransientTransportError(
+            SSHDisconnectError(3, 'no matching key exchange method found'),
+          ),
+          isFalse,
+        );
+        expect(
+          SSHCommandExecutor.isTransientTransportError(
+            SSHHandshakeError('Handshake timed out'),
+          ),
+          isFalse,
+        );
+        expect(
+          SSHCommandExecutor.isTransientTransportError(
+            SSHPacketError('truncated'),
+          ),
+          isFalse,
+        );
+      },
+    );
+
     test('runWithRetries does not re-issue a FormatException', () async {
       var calls = 0;
       await expectLater(
@@ -262,11 +290,7 @@ void main() {
           if (calls == 1) {
             throw Exception('connection closed unexpectedly');
           }
-          return const SSHCommandResult(
-            exitCode: 0,
-            stdout: 'ok',
-            stderr: '',
-          );
+          return const SSHCommandResult(exitCode: 0, stdout: 'ok', stderr: '');
         },
         1,
         backoff: Duration.zero,
@@ -313,5 +337,4 @@ void main() {
       expect(CommandTelemetry.instance.channelOpenErrors, 1);
     });
   });
-
 }

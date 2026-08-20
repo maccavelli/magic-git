@@ -31,7 +31,7 @@ class ToolAuth {
   final bool checkFailed;
 
   /// The host the tool is signed in to (e.g. `github.com`,
-  /// `gitlab.lkqdev.com`), or null when signed out / not applicable.
+  /// `gitlab.example.com`), or null when signed out / not applicable.
   final String? host;
 
   /// The signed-in account/user name, when the CLI reported one.

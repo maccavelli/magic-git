@@ -209,7 +209,7 @@ void main() {
             gitServiceProvider.overrideWithValue(GitService(_FakeExecutor())),
             forgeAuthHostProvider.overrideWith(
               (ref, key) async =>
-                  key.$1 == Forge.gitlab ? 'gitlab.lkqdev.com' : null,
+                  key.$1 == Forge.gitlab ? 'gitlab.example.com' : null,
             ),
           ],
           child: const MacosApp(
@@ -228,7 +228,7 @@ void main() {
         (w) => w is MacosTextField && w.controller?.text != '',
       );
       expect(
-        find.text('gitlab.lkqdev.com'),
+        find.text('gitlab.example.com'),
         findsOneWidget,
         reason: 'stock default replaced by the CLI sign-in host',
       );
@@ -238,14 +238,14 @@ void main() {
       await tester.enterText(
         find.byWidgetPredicate(
           (w) =>
-              w is MacosTextField && w.controller?.text == 'gitlab.lkqdev.com',
+              w is MacosTextField && w.controller?.text == 'gitlab.example.com',
         ),
         'gitlab.other.example',
       );
       await tester.pumpAndSettle();
       expect(find.text('gitlab.other.example'), findsOneWidget);
       expect(
-        find.text('gitlab.lkqdev.com'),
+        find.text('gitlab.example.com'),
         findsNothing,
         reason: 'typed host was not overwritten by the prefill',
       );

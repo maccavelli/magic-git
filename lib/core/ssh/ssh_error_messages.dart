@@ -5,6 +5,29 @@ import 'package:dartssh2/dartssh2.dart';
 
 import 'ssh_command_executor.dart';
 
+/// Peer `SSH_MSG_DISCONNECT` reason, or null when [error] is not one.
+///
+/// dartssh2 3.3.0 surfaces the peer message as [SSHDisconnectError] on
+/// [SSHClient.done]. The same event *before* auth completes
+/// [SSHClient.authenticated] as [SSHAuthAbortError] whose
+/// [SSHAuthAbortError.reason] is that [SSHDisconnectError].
+String? peerDisconnectReason(Object? error) {
+  if (error is SSHDisconnectError) {
+    return '${error.reasonCode}: ${error.message}';
+  }
+  if (error is SSHAuthAbortError) {
+    return peerDisconnectReason(error.reason);
+  }
+  return null;
+}
+
+/// Lost-session banner. Stable when [error] is null or not a peer disconnect.
+String transportLostMessage(Object? error) {
+  final peer = peerDisconnectReason(error);
+  if (peer == null) return 'Connection lost';
+  return 'Connection lost ($peer)';
+}
+
 /// Maps raw SSH/transport exceptions to short, actionable copy for dialogs and
 /// the connection landing card. Host-key mismatches are handled by
 /// [HostKeyPrompt] and are not rewritten here.
@@ -17,6 +40,22 @@ String humanizeSshError(Object error) {
   }
   if (error is SSHOutputExceeded) {
     return 'The remote command produced more output than this app will buffer.';
+  }
+  if (error is SSHDisconnectError) {
+    return 'The host closed the connection '
+        '(${error.reasonCode}: ${error.message}).';
+  }
+  final abortedPeer = error is SSHAuthAbortError
+      ? peerDisconnectReason(error.reason)
+      : null;
+  if (abortedPeer != null) {
+    return 'The host closed the connection ($abortedPeer).';
+  }
+  if (error is SSHHandshakeError) {
+    return 'Timed out during the SSH handshake.';
+  }
+  if (error is SSHPacketError) {
+    return 'The SSH session received a malformed packet.';
   }
   if (error is SSHAuthFailError || error is SSHAuthAbortError) {
     return 'Authentication failed — check the username, password, or private key.';

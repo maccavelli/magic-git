@@ -103,14 +103,14 @@ ghe.internal:8443:
   group('parseGlabAuthStatus', () {
     test('signed in to a self-hosted instance', () {
       const out = '''
-gitlab.lkqdev.com
-  ✓ Logged in to gitlab.lkqdev.com as saxsmith (/Users/x/config.yml)
-  ✓ Git operations for gitlab.lkqdev.com configured to use https protocol.
+gitlab.example.com
+  ✓ Logged in to gitlab.example.com as saxsmith (/Users/x/config.yml)
+  ✓ Git operations for gitlab.example.com configured to use https protocol.
   ✓ Token found: **************************
 ''';
       final a = parseGlabAuthStatus(out, present: true);
       expect(a.authenticated, isTrue);
-      expect(a.host, 'gitlab.lkqdev.com');
+      expect(a.host, 'gitlab.example.com');
       expect(a.account, 'saxsmith');
       expect(a.level, ToolAuthLevel.ok);
     });
@@ -129,18 +129,18 @@ gitlab.com
 
     test('a stale secondary host does not mask a working login', () {
       // Judgment is per host block: the gitlab.com 401 must not mark the
-      // whole tool signed out when gitlab.lkqdev.com is validly logged in.
+      // whole tool signed out when gitlab.example.com is validly logged in.
       const out = '''
 gitlab.com
   x gitlab.com: API call failed: GET https://gitlab.com/api/v4/user: 401 {message: 401 Unauthorized}
 
-gitlab.lkqdev.com
-  ✓ Logged in to gitlab.lkqdev.com as saxsmith (/Users/x/config.yml)
+gitlab.example.com
+  ✓ Logged in to gitlab.example.com as saxsmith (/Users/x/config.yml)
   ✓ Token found: **************************
 ''';
       final a = parseGlabAuthStatus(out, present: true);
       expect(a.authenticated, isTrue);
-      expect(a.host, 'gitlab.lkqdev.com');
+      expect(a.host, 'gitlab.example.com');
       expect(a.account, 'saxsmith');
       expect(a.level, ToolAuthLevel.ok);
     });
@@ -173,13 +173,13 @@ gitbox
 
     test('Logged in to line before bare hostname (alternate glab output)', () {
       const out = '''
-✓ Logged in to gitlab.lkqdev.com as saxsmith
-  ✓ Git operations for gitlab.lkqdev.com configured to use https protocol.
+✓ Logged in to gitlab.example.com as saxsmith
+  ✓ Git operations for gitlab.example.com configured to use https protocol.
   ✓ Token found: **************************
 ''';
       final a = parseGlabAuthStatus(out, present: true);
       expect(a.authenticated, isTrue);
-      expect(a.host, 'gitlab.lkqdev.com');
+      expect(a.host, 'gitlab.example.com');
       expect(a.account, 'saxsmith');
       expect(a.level, ToolAuthLevel.ok);
     });
@@ -236,7 +236,7 @@ gitbox
         git: parseGitVersion('git version 2.48.1', present: true),
         gh: parseGhAuthStatus('signed out', present: true),
         glab: parseGlabAuthStatus(
-          'gitlab.lkqdev.com\n  ✓ Logged in to gitlab.lkqdev.com as x (c)',
+          'gitlab.example.com\n  ✓ Logged in to gitlab.example.com as x (c)',
           present: true,
         ),
       );

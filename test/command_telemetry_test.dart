@@ -109,4 +109,62 @@ void main() {
     expect(t.openStreams, 0);
     expect(t.peakOpenStreams, 3);
   });
+
+  test('drop ring records causes and monitorKillCount', () {
+    final t = CommandTelemetry.instance..clearDrops();
+    t.recordTransportDrop(
+      TransportDropSample(
+        cause: TransportDropCause.monitor,
+        failures: 3,
+        busy: false,
+        connectionAge: const Duration(seconds: 10),
+        at: DateTime.now(),
+      ),
+    );
+    t.recordTransportDrop(
+      TransportDropSample(
+        cause: TransportDropCause.transportError,
+        failures: 0,
+        busy: true,
+        connectionAge: Duration.zero,
+        at: DateTime.now(),
+        peerReason: '3: no matching key exchange method found',
+      ),
+    );
+    expect(t.drops, hasLength(2));
+    expect(t.monitorKillCount, 1);
+    expect(t.drops.last.peerReason, contains('no matching'));
+  });
+
+  test('reset does not clear drops', () {
+    final t = CommandTelemetry.instance..clearDrops();
+    t.recordTransportDrop(
+      TransportDropSample(
+        cause: TransportDropCause.remoteClosed,
+        failures: 0,
+        busy: false,
+        connectionAge: Duration.zero,
+        at: DateTime.now(),
+      ),
+    );
+    t.reset();
+    expect(t.drops, hasLength(1));
+    expect(t.monitorKillCount, 0);
+  });
+
+  test('drop ring is bounded at 20', () {
+    final t = CommandTelemetry.instance..clearDrops();
+    for (var i = 0; i < 25; i++) {
+      t.recordTransportDrop(
+        TransportDropSample(
+          cause: TransportDropCause.remoteClosed,
+          failures: 0,
+          busy: false,
+          connectionAge: Duration.zero,
+          at: DateTime.now(),
+        ),
+      );
+    }
+    expect(t.drops, hasLength(20));
+  });
 }

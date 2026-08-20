@@ -82,6 +82,17 @@ class ConnectionLanding extends ConsumerWidget {
                   color: MacosColors.systemGrayColor,
                 ),
               ),
+              if (connectionError != null &&
+                  connectionError != 'Connection lost') ...[
+                const SizedBox(height: 6),
+                Text(
+                  connectionError,
+                  textAlign: TextAlign.center,
+                  style: typography.body.copyWith(
+                    color: MacosColors.systemGrayColor,
+                  ),
+                ),
+              ],
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,

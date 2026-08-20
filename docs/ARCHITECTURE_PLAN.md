@@ -17,8 +17,11 @@
 
 ---
 
-## 0.1 Current SSH transport (authoritative, 2026-07-17)
+## 0.1 Current SSH transport (authoritative, 2026-08-19)
 
+- **Library:** `dartssh2` **3.3.0** (exact pin). Stay on the `dartssh2`
+  package — the `dartssh3` pub package is a stale fork and is not a
+  dependency. See `docs/0013-MADR-prefer-dartssh2-v3-over-dartssh3.md`.
 - **POSIX remotes only** — no Windows shell dialect; `ShellEscaper` is POSIX-only.
   Every script sent via `sh -c` must additionally be **dash-clean** (Debian-family
   remotes run `sh` as dash): no `read -d ''`, and `set -o pipefail` only via the
@@ -53,6 +56,10 @@
 - **Auth:** password and/or PEM private key (file load or paste). No ssh-agent
   client auth in dartssh2; `agentHandler` is agent *forwarding* only and is not
   used for login. Empty password is never attempted for key-only profiles.
+  Library `handshakeTimeout` matches the 15 s socket timeout; auth stays on
+  the pausable wrapper so a host-key prompt does not trip it. Peer
+  `SSH_MSG_DISCONNECT` is `SSHDisconnectError` on `SSHClient.done` (wrapped
+  as `SSHAuthAbortError.reason` if it lands before auth).
 - **Host keys:** app-scoped TOFU (`KnownHostsStore`) + mismatch prompt; pausable
   auth timeout while the user decides; a superseding connect resolves an
   orphaned prompt safely (reject) so nothing awaits a completer nobody holds.
@@ -60,9 +67,22 @@
   never stacked; 15 s interval, 3 consecutive failures) on **both** clients —
   the idle-by-design stream client is exactly the connection a NAT idle-drop
   kills first, and nothing else would notice. Library `keepAliveInterval` is
-  off. The command monitor's answered-ping RTTs feed the dashboard's latency
-  sparkline **and** `AdaptiveReadConcurrency`; `onDead` closes both clients but
-  leaves `_client` set so the drop path can observe `done`.
+  off. **Busy-pause:** while a request/response command is in flight, or a
+  stream has received bytes in the last 30 s, new probes are skipped and
+  accumulated failures are cleared — a saturated fetch/pull/push must not
+  be declared dead because pings queued behind pack data (or dartssh2's
+  still-unbounded rekey buffer). Idle dead-peer detection stays ~45–60 s.
+  Unexpected drops record `TransportDropCause` (`monitor` / `transportError` /
+  `remoteClosed`) plus optional peer `SSHDisconnectError` reason; user
+  disconnect records nothing. The command monitor's answered-ping RTTs feed
+  the dashboard's latency sparkline **and** `AdaptiveReadConcurrency`; `onDead`
+  closes both clients but leaves `_client` set so the drop path can observe
+  `done`.
+- **Remote host recommendations:** `ClientAliveInterval` ≤ 60 s with
+  `ClientAliveCountMax` ≥ 3; leave `RekeyLimit` at default or higher
+  (smaller limits multiply mid-transfer rekey stalls). NAT/LB idle timeouts
+  (AWS NLB 350 s, many corporate firewalls 60–300 s) are covered by 15 s
+  client probes when the session is idle.
 - **Reconnect:** `ConnectionController` watches the command client's `done`
   (normal *or* error completion) → `lost` phase → auto-reconnect with bounded
   backoff (1/2/4/8/15 s, then 15 s repeated), pausing after 20 attempts

@@ -8,6 +8,12 @@ target-milestone: Next work cycle (post-review)
 
 # Plan: Adopt dartssh2 3.3.0 (migration + disconnect-reason telemetry)
 
+> **Execution note (2026-08-19).** Do not execute this plan. The review and
+> execution vehicle is
+> [0013-PLAN-prefer-dartssh2-v3-over-dartssh3.md](./0013-PLAN-prefer-dartssh2-v3-over-dartssh3.md),
+> which absorbs this bump and extends it. This file remains the 0012-era
+> draft.
+
 ## Executive Summary & Goal
 
 Companion to [0012-MADR-adopt-dartssh2-v3.md](./0012-MADR-adopt-dartssh2-v3.md).

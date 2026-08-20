@@ -296,7 +296,7 @@ void main() {
           // to the GitLab tab.
           forgeAuthHostProvider.overrideWith((ref, key) async {
             final (forge, _) = key;
-            return forge == Forge.gitlab ? 'gitlab.lkqdev.com' : null;
+            return forge == Forge.gitlab ? 'gitlab.example.com' : null;
           }),
         ],
         child: const MacosApp(
@@ -320,7 +320,7 @@ void main() {
       (w) =>
           w is MacosTextField &&
           w.controller != null &&
-          w.controller!.text == 'gitlab.lkqdev.com',
+          w.controller!.text == 'gitlab.example.com',
     );
     expect(
       hostField,

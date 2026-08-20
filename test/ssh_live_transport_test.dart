@@ -25,11 +25,14 @@ library;
 
 import 'dart:io';
 
+import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_magic_git/core/exec/command_telemetry.dart';
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/ssh/ssh_error_messages.dart';
 
 /// A throwaway sshd on loopback, owned entirely by this test run.
 class _DisposableSshd {
@@ -66,9 +69,9 @@ class _DisposableSshd {
       dir.deleteSync(recursive: true);
       return null;
     }
-    File('$path/authorized_keys').writeAsStringSync(
-      File('$path/id.pub').readAsStringSync(),
-    );
+    File(
+      '$path/authorized_keys',
+    ).writeAsStringSync(File('$path/id.pub').readAsStringSync());
     await Process.run('/bin/chmod', ['600', '$path/authorized_keys']);
 
     // sshd cannot bind port 0, so reserve one and hand it over. The gap is a
@@ -89,6 +92,7 @@ StrictModes no
 UsePAM no
 PasswordAuthentication no
 PubkeyAuthentication yes
+KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,ecdh-sha2-nistp256,ecdh-sha2-nistp384,ecdh-sha2-nistp521,diffie-hellman-group14-sha256,diffie-hellman-group-exchange-sha256
 ''');
 
     final process = await Process.start(sshdPath, [
@@ -201,12 +205,9 @@ void main() {
     // wire. Before allowMalformed this threw out of the drain and leaked the
     // session — and no fake could produce it, because the bytes have to
     // survive a real transport to matter.
-    File('$repo/bad.bin').writeAsBytesSync([
-      0xff,
-      0xfe,
-      0x80,
-      ...'bad'.codeUnits,
-    ]);
+    File(
+      '$repo/bad.bin',
+    ).writeAsBytesSync([0xff, 0xfe, 0x80, ...'bad'.codeUnits]);
 
     final result = await executor.execute(
       repoPath: repo,
@@ -223,29 +224,32 @@ void main() {
     );
   }, timeout: const Timeout(Duration(seconds: 60)));
 
-  test('a command that outruns its timeout is killed, not left running',
-      () async {
-    if (skip()) return;
+  test(
+    'a command that outruns its timeout is killed, not left running',
+    () async {
+      if (skip()) return;
 
-    await expectLater(
-      executor.execute(
+      await expectLater(
+        executor.execute(
+          repoPath: repo,
+          gitArgs: ['sleep', '30'],
+          timeout: const Duration(milliseconds: 400),
+          lane: ExecLane.read,
+        ),
+        throwsA(isA<SSHCommandTimeout>()),
+      );
+
+      // The transport must still be usable: the timeout kills the remote process
+      // and closes that session only.
+      final after = await executor.execute(
         repoPath: repo,
-        gitArgs: ['sleep', '30'],
-        timeout: const Duration(milliseconds: 400),
+        gitArgs: ['echo', 'still-alive'],
         lane: ExecLane.read,
-      ),
-      throwsA(isA<SSHCommandTimeout>()),
-    );
-
-    // The transport must still be usable: the timeout kills the remote process
-    // and closes that session only.
-    final after = await executor.execute(
-      repoPath: repo,
-      gitArgs: ['echo', 'still-alive'],
-      lane: ExecLane.read,
-    );
-    expect(after.stdout.trim(), 'still-alive');
-  }, timeout: const Timeout(Duration(seconds: 60)));
+      );
+      expect(after.stdout.trim(), 'still-alive');
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
 
   test('GitService drives a real repo over SSH — the shell escaping and env '
       'prelude hold against a real POSIX shell', () async {
@@ -259,28 +263,29 @@ void main() {
     final status = await git.status(repo);
 
     expect(status.isClean, isFalse);
-    expect(
-      status.untracked.map((f) => f.path),
-      contains("a file's name.txt"),
-    );
+    expect(status.untracked.map((f) => f.path), contains("a file's name.txt"));
   }, timeout: const Timeout(Duration(seconds: 60)));
 
-  test('a compressed read round-trips through gzip', () async {
-    if (skip()) return;
+  test(
+    'a compressed read round-trips through gzip',
+    () async {
+      if (skip()) return;
 
-    // Large enough that compression actually engages.
-    final payload = List.filled(500, 'the quick brown fox').join(' ');
-    File('$repo/big.txt').writeAsStringSync(payload);
+      // Large enough that compression actually engages.
+      final payload = List.filled(500, 'the quick brown fox').join(' ');
+      File('$repo/big.txt').writeAsStringSync(payload);
 
-    final result = await executor.execute(
-      repoPath: repo,
-      gitArgs: ['cat', 'big.txt'],
-      lane: ExecLane.read,
-      compress: true,
-    );
+      final result = await executor.execute(
+        repoPath: repo,
+        gitArgs: ['cat', 'big.txt'],
+        lane: ExecLane.read,
+        compress: true,
+      );
 
-    expect(result.stdout.trim(), payload);
-  }, timeout: const Timeout(Duration(seconds: 60)));
+      expect(result.stdout.trim(), payload);
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
 
   test('disconnect while a command is in flight supersedes it and leaves no '
       'pending client', () async {
@@ -312,19 +317,113 @@ void main() {
     expect(settled, isTrue);
   }, timeout: const Timeout(Duration(seconds: 60)));
 
-  test('the local executor and the SSH executor agree on the same repo',
-      () async {
-    if (skip()) return;
+  test(
+    'the local executor and the SSH executor agree on the same repo',
+    () async {
+      if (skip()) return;
 
-    // The executor seam's whole promise: a feature written against one backend
-    // behaves the same on the other.
-    final viaSsh = await GitService(executor).status(repo);
-    final viaLocal = await GitService(LocalCommandExecutor()).status(repo);
+      // The executor seam's whole promise: a feature written against one backend
+      // behaves the same on the other.
+      final viaSsh = await GitService(executor).status(repo);
+      final viaLocal = await GitService(LocalCommandExecutor()).status(repo);
 
-    expect(viaSsh.branch.head, viaLocal.branch.head);
-    expect(
-      viaSsh.files.map((f) => f.path).toSet(),
-      viaLocal.files.map((f) => f.path).toSet(),
-    );
-  }, timeout: const Timeout(Duration(seconds: 60)));
+      expect(viaSsh.branch.head, viaLocal.branch.head);
+      expect(
+        viaSsh.files.map((f) => f.path).toSet(),
+        viaLocal.files.map((f) => f.path).toSet(),
+      );
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
+
+  test(
+    'peer rejects non-overlapping kex with SSHDisconnectError',
+    () async {
+      if (skip()) return;
+      final socket = await SSHSocket.connect('127.0.0.1', sshd!.port);
+      final client = SSHClient(
+        socket,
+        username: sshd!.profile.username,
+        identities: SSHKeyPair.fromPem(sshd!.privateKeyPem),
+        algorithms: const SSHAlgorithms(kex: [SSHKexType.dh1Sha1]),
+        onVerifyHostKey: (_, _) => true,
+      );
+      try {
+        await client.authenticated;
+        fail('expected the server to disconnect');
+      } catch (e) {
+        // 3.3.0 picks the algorithm locally after both KEXINITs. With no
+        // overlap it completes `authenticated` as SSHAuthAbortError whose
+        // reason is SSHInternalError(StateError('No matching key exchange
+        // algorithm')) — not a peer SSH_MSG_DISCONNECT. The typed
+        // SSHDisconnectError mapping is unit-tested; this live case proves
+        // we do not silently negotiate dh-group1 against a modern sshd.
+        expect(e, isA<SSHAuthAbortError>());
+        final reason = (e as SSHAuthAbortError).reason;
+        if (reason is SSHDisconnectError) {
+          expect(peerDisconnectReason(e), isNotNull);
+          expect(
+            humanizeSshError(e),
+            startsWith('The host closed the connection'),
+          );
+        } else {
+          expect(reason, isA<SSHInternalError>());
+          expect('$reason', contains('No matching key exchange algorithm'));
+        }
+      } finally {
+        await client.close();
+      }
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
+
+  test(
+    'transportBusy is true while a command runs and settles back to false',
+    () async {
+      if (skip()) return;
+      CommandTelemetry.instance.clearDrops();
+      final running = executor.execute(
+        repoPath: repo,
+        gitArgs: const ['sleep', '2'],
+        lane: ExecLane.read,
+      );
+      final started = Stopwatch()..start();
+      while (!executor.transportBusy) {
+        if (started.elapsed > const Duration(seconds: 2)) {
+          fail('transportBusy never became true');
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      expect(manager.client, isNotNull);
+      await running;
+      expect(executor.transportBusy, isFalse);
+      expect(CommandTelemetry.instance.monitorKillCount, 0);
+    },
+    timeout: const Timeout(Duration(seconds: 60)),
+  );
+
+  test(
+    'bulk transfer completes with the health monitor armed',
+    () async {
+      if (skip()) return;
+      CommandTelemetry.instance.clearDrops();
+      final killsBefore = CommandTelemetry.instance.monitorKillCount;
+      final handle = await executor.executeStream(
+        repoPath: repo,
+        gitArgs: const ['dd', 'if=/dev/zero', 'bs=1048576', 'count=100'],
+      );
+      await handle.stdout.drain<void>();
+      await handle.stderr.drain<void>();
+      await handle.cancel();
+      expect(CommandTelemetry.instance.monitorKillCount, killsBefore);
+      final echo = await executor.execute(
+        repoPath: repo,
+        gitArgs: const ['echo', 'ok'],
+        lane: ExecLane.read,
+      );
+      expect(echo.exitCode, 0);
+      expect(echo.stdout.trim(), 'ok');
+    },
+    timeout: const Timeout(Duration(seconds: 120)),
+  );
 }

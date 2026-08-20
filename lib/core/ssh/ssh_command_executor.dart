@@ -119,10 +119,16 @@ typedef SSHStreamHandle = CommandStreamHandle;
 /// coexists with request/response commands without blocking them.
 class _SshSessionStreamHandle implements CommandStreamHandle {
   final SSHSession _session;
+  final void Function() onByte;
+  final void Function() onClosed;
   late final int _telemetryEpoch;
   bool _closed = false;
 
-  _SshSessionStreamHandle(this._session) {
+  _SshSessionStreamHandle(
+    this._session, {
+    required this.onByte,
+    required this.onClosed,
+  }) {
     _telemetryEpoch = CommandTelemetry.instance.streamOpened();
     // Count natural channel death the same as cancel (watcher restart path).
     unawaited(
@@ -134,18 +140,22 @@ class _SshSessionStreamHandle implements CommandStreamHandle {
     if (_closed) return;
     _closed = true;
     CommandTelemetry.instance.streamClosed(_telemetryEpoch);
+    onClosed();
   }
+
+  Stream<String> _decode(Stream<List<int>> raw) => raw
+      .map((chunk) {
+        onByte();
+        return chunk;
+      })
+      .transform(const Utf8Decoder(allowMalformed: true));
 
   /// The stream transform carries decoder state across chunk boundaries, so
   /// multi-byte sequences split across packets decode correctly.
   @override
-  late final Stream<String> stdout = _session.stdout
-      .cast<List<int>>()
-      .transform(const Utf8Decoder(allowMalformed: true));
+  late final Stream<String> stdout = _decode(_session.stdout.cast<List<int>>());
   @override
-  late final Stream<String> stderr = _session.stderr
-      .cast<List<int>>()
-      .transform(const Utf8Decoder(allowMalformed: true));
+  late final Stream<String> stderr = _decode(_session.stderr.cast<List<int>>());
 
   /// Backed by [SSHSession.waitForExit], which is safe to await more than
   /// once.
@@ -274,9 +284,43 @@ class SSHCommandExecutor implements CommandExecutor {
   /// [CommandExecutor.setForgeTokenNeutralization]). Empty by default.
   List<String> _neutralizeTokens = const [];
 
+  int _activeCommands = 0;
+  int _activeStreams = 0;
+  DateTime? _lastStreamByteAt;
+  DateTime? _lastStreamNoteAt;
+
+  static const Duration streamBusyWindow = Duration(seconds: 30);
+
+  bool get transportBusy => _activeCommands > 0;
+
+  /// Stream client is busy only while bytes have flowed recently.
+  bool get streamBusy =>
+      _activeStreams > 0 &&
+      _lastStreamByteAt != null &&
+      DateTime.now().difference(_lastStreamByteAt!) < streamBusyWindow;
+
   SSHCommandExecutor(this._clientManager) {
+    _clientManager.registerBusyProbes(
+      command: () => transportBusy,
+      stream: () => streamBusy,
+    );
     // Start at the adaptive no-sample cap (3) until RTT samples arrive.
     _scheduler.setMaxConcurrentReads(_adaptiveReads.effectiveCap);
+  }
+
+  void _noteStreamByte() {
+    final now = DateTime.now();
+    _lastStreamByteAt = now;
+    if (_lastStreamNoteAt != null &&
+        now.difference(_lastStreamNoteAt!) < const Duration(seconds: 1)) {
+      return;
+    }
+    _lastStreamNoteAt = now;
+    _clientManager.noteStreamActivity();
+  }
+
+  void _noteStreamClosed() {
+    if (_activeStreams > 0) _activeStreams--;
   }
 
   /// Current adaptive read ceiling (for tests / diagnostics).
@@ -524,7 +568,15 @@ class SSHCommandExecutor implements CommandExecutor {
       return false;
     }
     // dartssh2 auth / host-key / key-decode are deterministic for this attempt.
-    if (e is SSHAuthError || e is SSHHostkeyError || e is SSHKeyDecodeError) {
+    // Peer disconnect, handshake timeout, and malformed packets are protocol
+    // failures, not blips — 3.3.0 types them as SSHError so handlers can
+    // refuse to retry the same peer.
+    if (e is SSHAuthError ||
+        e is SSHHostkeyError ||
+        e is SSHKeyDecodeError ||
+        e is SSHDisconnectError ||
+        e is SSHHandshakeError ||
+        e is SSHPacketError) {
       return false;
     }
     // Capacity blip or mid-flight channel drop — worth one retry after backoff.
@@ -532,7 +584,6 @@ class SSHCommandExecutor implements CommandExecutor {
         e is SSHChannelRequestError ||
         e is SSHSocketError ||
         e is SSHStateError ||
-        e is SSHPacketError ||
         e is SocketException) {
       return true;
     }
@@ -590,7 +641,6 @@ class SSHCommandExecutor implements CommandExecutor {
   ) async {
     // Started before the channel open so the sample's duration reflects the
     // full user-perceived cost of the command, not just the drain.
-    final sw = Stopwatch()..start();
     if (_clientManager.generation != gen) {
       // A reconnect or a fresh connect() to a different host happened while
       // this command was waiting in the scheduler. Refuse to run
@@ -610,6 +660,35 @@ class SSHCommandExecutor implements CommandExecutor {
       throw SSHCommandSuperseded(gitArgs.join(' '));
     }
 
+    _activeCommands++;
+    try {
+      return await _runBody(
+        client,
+        gitArgs,
+        extraEnv,
+        stdin,
+        timeout,
+        compress,
+        lane,
+        repoPath,
+      );
+    } finally {
+      _activeCommands--;
+      _clientManager.noteCommandSettled();
+    }
+  }
+
+  Future<SSHCommandResult> _runBody(
+    SSHClient client,
+    List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    Uint8List? stdin,
+    Duration timeout,
+    bool compress,
+    ExecLane lane,
+    String repoPath,
+  ) async {
+    final sw = Stopwatch()..start();
     // Compression is honored only when the probe actually found gzip on the
     // host (configureEnvironment's binaries map) — otherwise the command runs
     // uncompressed exactly as before, so a minimal host degrades gracefully.
@@ -892,7 +971,15 @@ class SSHCommandExecutor implements CommandExecutor {
         await killAndCloseSession(session);
         throw SSHCommandSuperseded(gitArgs.join(' '));
       }
-      return _ActivityStreamHandle(_SshSessionStreamHandle(session), lifecycle);
+      _activeStreams++;
+      return _ActivityStreamHandle(
+        _SshSessionStreamHandle(
+          session,
+          onByte: _noteStreamByte,
+          onClosed: _noteStreamClosed,
+        ),
+        lifecycle,
+      );
     } on TimeoutException {
       // If the open eventually does resolve in the background, don't leak the
       // session it produces — terminate and close it, mirroring `_run`'s

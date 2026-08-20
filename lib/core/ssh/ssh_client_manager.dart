@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 
+import '../exec/command_telemetry.dart';
 import '../utils/pausable_timeout.dart';
 
 class SSHConnectionProfile {
@@ -53,6 +54,7 @@ class ConnectionHealthMonitor {
     this.interval = const Duration(seconds: 15),
     this.pingTimeout = const Duration(seconds: 15),
     this.failureThreshold = 3,
+    this.isBusy,
   });
 
   /// Sends one keepalive round trip; the returned future completes when the
@@ -71,6 +73,10 @@ class ConnectionHealthMonitor {
   final Duration pingTimeout;
   final int failureThreshold;
 
+  /// When true, skip new probes and do not count in-flight failures.
+  /// Null means always probe (idle-only behavior).
+  final bool Function()? isBusy;
+
   Timer? _timer;
   int _failures = 0;
   bool _probeInFlight = false;
@@ -78,6 +84,9 @@ class ConnectionHealthMonitor {
 
   /// Consecutive failed probes so far — for tests/diagnostics.
   int get failures => _failures;
+
+  /// Clears accumulated failures (command settle / stream byte activity).
+  void resetFailures() => _failures = 0;
 
   void start() {
     _timer ??= Timer.periodic(interval, (_) => _probe());
@@ -93,6 +102,10 @@ class ConnectionHealthMonitor {
     // Never stack probes: a ping still awaiting its reply when the next tick
     // fires would double-count one slow round trip as two failures.
     if (_probeInFlight || _stopped) return;
+    if (isBusy?.call() ?? false) {
+      _failures = 0;
+      return;
+    }
     _probeInFlight = true;
     try {
       final sw = Stopwatch()..start();
@@ -101,6 +114,9 @@ class ConnectionHealthMonitor {
       if (!_stopped) onPingSample?.call(sw.elapsed);
     } catch (_) {
       if (_stopped) return;
+      // A probe that started idle and timed out after work began must not
+      // count: the transfer is the liveness signal.
+      if (isBusy?.call() ?? false) return;
       if (++_failures >= failureThreshold) {
         stop();
         onDead();
@@ -122,6 +138,7 @@ class ConnectionHealthMonitor {
 class SSHClientManager {
   static const Duration _socketTimeout = Duration(seconds: 15);
   static const Duration _authTimeout = Duration(seconds: 15);
+
   /// Stream client is best-effort; fail open to single-client quickly.
   static const Duration _streamAuthTimeout = Duration(seconds: 10);
 
@@ -187,6 +204,40 @@ class SSHClientManager {
   /// past this the session simply stays degraded until the next reconnect.
   static const int _maxRedialFailures = 5;
 
+  bool Function()? _commandBusyProbe;
+  bool Function()? _streamBusyProbe;
+  TransportDropCause? _lastDropCause;
+  DateTime? _connectedAt;
+
+  TransportDropCause? get lastDropCause => _lastDropCause;
+
+  void registerBusyProbes({bool Function()? command, bool Function()? stream}) {
+    _commandBusyProbe = command;
+    _streamBusyProbe = stream;
+  }
+
+  void noteCommandSettled() => _health?.resetFailures();
+
+  void noteStreamActivity() => _streamHealth?.resetFailures();
+
+  void _recordMonitorDrop({
+    required ConnectionHealthMonitor monitor,
+    required bool Function()? busy,
+  }) {
+    _lastDropCause = TransportDropCause.monitor;
+    CommandTelemetry.instance.recordTransportDrop(
+      TransportDropSample(
+        cause: TransportDropCause.monitor,
+        failures: monitor.failures,
+        busy: busy?.call() ?? false,
+        connectionAge: DateTime.now().difference(
+          _connectedAt ?? DateTime.now(),
+        ),
+        at: DateTime.now(),
+      ),
+    );
+  }
+
   /// Backoff for stream-client redial attempt number [failures] (0-based):
   /// 15s, 30s, 60s, 120s, 120s.
   @visibleForTesting
@@ -201,8 +252,7 @@ class SSHClientManager {
   SSHClient? get streamClient => _streamClient ?? _client;
 
   /// True when streams share the command client (stream open failed).
-  bool get streamClientDegraded =>
-      _client != null && _streamClient == null;
+  bool get streamClientDegraded => _client != null && _streamClient == null;
 
   /// Current attempt generation. Bumped by every [connect]/[disconnect].
   /// Exposed so callers that queue work against the *current* connection
@@ -292,7 +342,7 @@ class SSHClientManager {
       // loop, invisible and unusable, until some later connect or disconnect.
       // Retire it so the transport agrees with what commands can reach. Gen-
       // guarded: if a newer attempt started meanwhile, cleanup is its call.
-      if (gen == _generation) _closeClient();
+      if (gen == _generation) await _closeClient();
       rethrow;
     }
     if (cmdClient == null) {
@@ -310,8 +360,8 @@ class SSHClientManager {
     final streamClient = await streamFuture;
     // Superseded after the handshakes — drop both new clients.
     if (gen != _generation) {
-      cmdClient.close();
-      streamClient?.close();
+      await cmdClient.close();
+      if (streamClient != null) await streamClient.close();
       return;
     }
 
@@ -321,15 +371,17 @@ class SSHClientManager {
     _streamHealth = null;
     _redialTimer?.cancel();
     _redialTimer = null;
-    previousCmd?.close();
+    unawaited(previousCmd?.close());
     // Avoid double-close when previous was already degraded (stream == null)
     // or when stream shared nothing with cmd.
     if (previousStream != null && !identical(previousStream, previousCmd)) {
-      previousStream.close();
+      unawaited(previousStream.close());
     }
     _client = cmd;
     _streamClient = streamClient;
     _clientGeneration = gen;
+    _connectedAt = DateTime.now();
+    _lastDropCause = null;
     // What a mid-session stream redial dials with (see [_onStreamClientLost]).
     // The raw verify callback, not this connect's serialized wrapper: a redial
     // is a single handshake, and the wrapper would needlessly chain it behind
@@ -342,15 +394,18 @@ class SSHClientManager {
     // clients but *not* null [_client]: ConnectionController listens to
     // [done] on the primary client to drive reconnect — nulling it would
     // drop that Future before the drop path observes it.
-    final monitor = ConnectionHealthMonitor(
+    late final ConnectionHealthMonitor monitor;
+    monitor = ConnectionHealthMonitor(
       ping: () => cmd.ping(),
+      isBusy: () => _commandBusyProbe?.call() ?? false,
       onDead: () {
+        _recordMonitorDrop(monitor: monitor, busy: _commandBusyProbe);
         final stream = _streamClient;
         if (stream != null && !identical(stream, cmd)) {
-          stream.close();
+          unawaited(stream.close());
         }
         _streamClient = null;
-        cmd.close();
+        unawaited(cmd.close());
       },
       onPingSample: onPingSample,
     )..start();
@@ -383,11 +438,14 @@ class SSHClientManager {
     _redialTimer?.cancel();
     _redialTimer = null;
     _streamClient = stream;
-    final streamMonitor = ConnectionHealthMonitor(
+    late final ConnectionHealthMonitor streamMonitor;
+    streamMonitor = ConnectionHealthMonitor(
       ping: () => stream.ping(),
+      isBusy: () => _streamBusyProbe?.call() ?? false,
       onDead: () {
+        _recordMonitorDrop(monitor: streamMonitor, busy: _streamBusyProbe);
         if (identical(_streamClient, stream)) _streamClient = null;
-        stream.close();
+        unawaited(stream.close());
       },
     )..start();
     _streamHealth = streamMonitor;
@@ -451,7 +509,7 @@ class SSHClientManager {
       // as a failure.
       if (stream == null) return;
       if (gen != _generation || _client == null) {
-        stream.close();
+        await stream.close();
         return;
       }
       _redialFailures = 0;
@@ -552,6 +610,7 @@ class SSHClientManager {
         // stacking both doubles global-request traffic during bulk reads —
         // so leave the library keepalive off.
         keepAliveInterval: null,
+        handshakeTimeout: _socketTimeout,
         onVerifyHostKey: onVerifyHostKey == null
             ? null
             : (type, fingerprint) async {
@@ -570,7 +629,7 @@ class SSHClientManager {
 
     // Superseded while the socket was connecting.
     if (gen != _generation) {
-      client.close();
+      await client.close();
       return null;
     }
 
@@ -584,7 +643,7 @@ class SSHClientManager {
         isPaused: () => awaitingHostKeyDecision,
       );
     } catch (_) {
-      client.close();
+      await client.close();
       rethrow;
     } finally {
       _pending.remove(client);
@@ -592,9 +651,13 @@ class SSHClientManager {
 
     // Superseded while authenticating — don't leak the live connection.
     if (gen != _generation) {
-      client.close();
+      await client.close();
       return null;
     }
+    developer.log(
+      'SSH handshake remote=${client.remoteVersion} strictKex=${client.strictKex}',
+      name: 'SSHClientManager',
+    );
     return client;
   }
 
@@ -603,14 +666,12 @@ class SSHClientManager {
     // Force-close every in-flight auth handshake immediately rather than
     // leaving them to run unbounded in the background until the generation
     // check (or the auth timeout) eventually notices they were superseded.
-    for (final client in _pending) {
-      client.close();
-    }
+    final pending = [for (final client in _pending) client.close()];
     _pending.clear();
-    _closeClient();
+    await Future.wait([...pending, _closeClient()]);
   }
 
-  void _closeClient() {
+  Future<void> _closeClient() async {
     _health?.stop();
     _health = null;
     _streamHealth?.stop();
@@ -620,14 +681,16 @@ class SSHClientManager {
     _redialProfile = null;
     _redialVerify = null;
     _redialFailures = 0;
+    _lastDropCause = null;
+    _connectedAt = null;
     final cmd = _client;
     final stream = _streamClient;
     _client = null;
     _streamClient = null;
     _clientGeneration = -1;
-    cmd?.close();
-    if (stream != null && !identical(stream, cmd)) {
-      stream.close();
-    }
+    await Future.wait([
+      if (cmd != null) cmd.close(),
+      if (stream != null && !identical(stream, cmd)) stream.close(),
+    ]);
   }
 }

@@ -77,15 +77,15 @@ void main() {
 
   group('authStatusListsHost', () {
     const glabStatus =
-        'gitlab.lkqdev.com\n'
-        '  ✓ Logged in to gitlab.lkqdev.com as saxsmith (config.yml)\n'
-        '  ✓ API calls for gitlab.lkqdev.com are made over https protocol.';
+        'gitlab.example.com\n'
+        '  ✓ Logged in to gitlab.example.com as saxsmith (config.yml)\n'
+        '  ✓ API calls for gitlab.example.com are made over https protocol.';
     const ghStatus =
         'github.com\n'
         '  ✓ Logged in to github.com account maccavelli (keyring)';
 
     test('matches a column-0 host header', () {
-      expect(authStatusListsHost(glabStatus, 'gitlab.lkqdev.com'), isTrue);
+      expect(authStatusListsHost(glabStatus, 'gitlab.example.com'), isTrue);
     });
 
     test('matches a "Logged in to <host>" line (gh "account" phrasing too)', () {

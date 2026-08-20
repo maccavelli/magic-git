@@ -146,10 +146,7 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
     ConnectionState connection,
   ) {
     final rows = <(String, String)>[
-      (
-        'Backend',
-        connection.isLocal ? 'Local (this Mac)' : 'SSH',
-      ),
+      ('Backend', connection.isLocal ? 'Local (this Mac)' : 'SSH'),
       if (!connection.isLocal && connection.host != null)
         ('Host', connection.host!),
       if (connection.connectionLabel != null)
@@ -177,6 +174,8 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
             'Reconnecting',
             'attempt ${connection.reconnectAttempt}',
           ),
+        if (connection.error != null && connection.error!.isNotEmpty)
+          _kvRow(typography, 'Last drop', connection.error!),
       ],
     );
   }
@@ -215,7 +214,8 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
           _authTargetTile(
             typography,
             ref.watch(sessionAuthStatusProvider),
-            fallbackLabel: connection.connectionLabel ??
+            fallbackLabel:
+                connection.connectionLabel ??
                 connection.host ??
                 'Connected host',
           ),
@@ -226,8 +226,9 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
 
   Widget _authTargetTile(
     MacosTypography typography,
-    AsyncValue<TargetAuth?> value,
-    {required String fallbackLabel}) {
+    AsyncValue<TargetAuth?> value, {
+    required String fallbackLabel,
+  }) {
     return value.when(
       loading: () => _authTargetHeaderRow(
         typography,
@@ -348,9 +349,7 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
     // Read fresh on every rebuild (each ping sample, ≤15 s): dual-client can
     // degrade mid-session when the stream connection dies and its slot falls
     // back to the command client — a state that was previously invisible.
-    final degraded = ref
-        .read(sshClientManagerProvider)
-        .streamClientDegraded;
+    final degraded = ref.read(sshClientManagerProvider).streamClientDegraded;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -391,8 +390,7 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
                       )
                     : _Sparkline(
                         values: [
-                          for (final s in samples)
-                            s.inMicroseconds.toDouble(),
+                          for (final s in samples) s.inMicroseconds.toDouble(),
                         ],
                         color: MacosColors.systemBlueColor,
                       ),
@@ -424,21 +422,21 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
             MacosTooltip(
               message: !branch.hasUpstream
                   ? 'This branch has no upstream — publish it to a remote '
-                      'to track divergence'
+                        'to track divergence'
                   : branch.ahead > 0 || branch.behind > 0
-                      ? '${branch.ahead} commit${branch.ahead == 1 ? '' : 's'} '
-                          'ahead of, ${branch.behind} behind ${branch.upstream}'
-                      : 'Even with ${branch.upstream} — nothing to push or pull',
+                  ? '${branch.ahead} commit${branch.ahead == 1 ? '' : 's'} '
+                        'ahead of, ${branch.behind} behind ${branch.upstream}'
+                  : 'Even with ${branch.upstream} — nothing to push or pull',
               child: _stat(
                 typography,
                 !branch.hasUpstream
                     ? 'no upstream'
                     : branch.ahead > 0 || branch.behind > 0
-                        ? [
-                            if (branch.ahead > 0) '↑${branch.ahead}',
-                            if (branch.behind > 0) '↓${branch.behind}',
-                          ].join(' ')
-                        : 'in sync',
+                    ? [
+                        if (branch.ahead > 0) '↑${branch.ahead}',
+                        if (branch.behind > 0) '↓${branch.behind}',
+                      ].join(' ')
+                    : 'in sync',
                 'ahead / behind',
               ),
             ),
@@ -585,8 +583,19 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
                   'gzip saved',
                   color: saved > 0 ? MacosColors.systemGreenColor : null,
                 ),
+                const SizedBox(width: 24),
+                _stat(
+                  typography,
+                  '${t.monitorKillCount}',
+                  'monitor kills',
+                  color: t.monitorKillCount > 0
+                      ? MacosColors.systemOrangeColor
+                      : null,
+                ),
               ],
             ),
+            if (t.drops.isNotEmpty)
+              _kvRow(typography, 'Last drop', _fmtDrop(t.drops.last)),
           ],
         );
       },
@@ -637,7 +646,10 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _sectionTitle(typography, 'Tools on the ${env.os == 'unknown' ? 'host' : env.os} target'),
+        _sectionTitle(
+          typography,
+          'Tools on the ${env.os == 'unknown' ? 'host' : env.os} target',
+        ),
         Row(
           children: [
             _stat(typography, tool('git'), 'git'),
@@ -663,10 +675,7 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _sectionTitle(
-          typography,
-          forge == Forge.github ? 'GitHub' : 'GitLab',
-        ),
+        _sectionTitle(typography, forge == Forge.github ? 'GitHub' : 'GitLab'),
         Row(
           children: [
             _stat(
@@ -765,9 +774,7 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
       _sectionTitle(typography, title),
       Text(
         'Loading…',
-        style: typography.caption1.copyWith(
-          color: MacosColors.systemGrayColor,
-        ),
+        style: typography.caption1.copyWith(color: MacosColors.systemGrayColor),
       ),
     ],
   );
@@ -808,6 +815,22 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
     if (h > 0) return '${h}h ${m}m ${s}s';
     if (m > 0) return '${m}m ${s}s';
     return '${s}s';
+  }
+
+  static String _fmtDrop(TransportDropSample s) {
+    final age = DateTime.now().difference(s.at);
+    final cause = switch (s.cause) {
+      TransportDropCause.monitor => 'monitor',
+      TransportDropCause.transportError => 'transport',
+      TransportDropCause.remoteClosed => 'remote closed',
+    };
+    final extra = <String>[
+      '${_fmtDuration(age)} ago',
+      if (s.cause == TransportDropCause.monitor) '${s.failures} failed pings',
+      if (s.busy) 'busy',
+      if (s.peerReason != null) s.peerReason!,
+    ];
+    return '$cause (${extra.join(', ')})';
   }
 
   static String _fmtBytes(int bytes) {

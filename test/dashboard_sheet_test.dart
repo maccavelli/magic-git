@@ -67,7 +67,7 @@ Future<void> _pump(
               present: true,
             ),
             glab: parseGlabAuthStatus(
-              'gitlab.lkqdev.com\n  ✓ Logged in to gitlab.lkqdev.com as sax (c)',
+              'gitlab.example.com\n  ✓ Logged in to gitlab.example.com as sax (c)',
               present: true,
             ),
           ),
@@ -79,7 +79,7 @@ Future<void> _pump(
             git: parseGitVersion('git version 2.43.0', present: true),
             gh: parseGhAuthStatus('signed out', present: true),
             glab: parseGlabAuthStatus(
-              'gitlab.lkqdev.com\n  ✓ Logged in to gitlab.lkqdev.com as sax (c)',
+              'gitlab.example.com\n  ✓ Logged in to gitlab.example.com as sax (c)',
               present: true,
             ),
           ),

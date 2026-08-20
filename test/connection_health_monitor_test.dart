@@ -126,4 +126,135 @@ void main() {
       expect(dead, isFalse);
     });
   });
+
+  test('busy connection: probes skipped, failures never reach threshold', () {
+    fakeAsync((async) {
+      var dead = false;
+      final monitor = ConnectionHealthMonitor(
+        ping: () => Future<void>.error('should not ping'),
+        onDead: () => dead = true,
+        isBusy: () => true,
+        interval: const Duration(milliseconds: 10),
+        pingTimeout: const Duration(milliseconds: 10),
+        failureThreshold: 3,
+      )..start();
+
+      async.elapse(const Duration(milliseconds: 200));
+      expect(dead, isFalse);
+      expect(monitor.failures, 0);
+      monitor.stop();
+    });
+  });
+
+  test('idle connection dies at exactly failureThreshold failures', () {
+    fakeAsync((async) {
+      var deaths = 0;
+      final monitor = ConnectionHealthMonitor(
+        ping: () => Completer<void>().future,
+        onDead: () => deaths++,
+        isBusy: () => false,
+        interval: const Duration(milliseconds: 10),
+        pingTimeout: const Duration(milliseconds: 10),
+        failureThreshold: 3,
+      )..start();
+
+      async.elapse(const Duration(milliseconds: 21));
+      expect(deaths, 0);
+      expect(monitor.failures, 1);
+      async.elapse(const Duration(milliseconds: 20));
+      expect(deaths, 0);
+      expect(monitor.failures, 2);
+      async.elapse(const Duration(milliseconds: 20));
+      expect(deaths, 1);
+      async.elapse(const Duration(milliseconds: 200));
+      expect(deaths, 1);
+    });
+  });
+
+  test('busy→idle transition resumes probing and kills a dead peer', () {
+    fakeAsync((async) {
+      var busy = true;
+      var deaths = 0;
+      final monitor = ConnectionHealthMonitor(
+        ping: () => Completer<void>().future,
+        onDead: () => deaths++,
+        isBusy: () => busy,
+        interval: const Duration(milliseconds: 10),
+        pingTimeout: const Duration(milliseconds: 10),
+        failureThreshold: 3,
+      )..start();
+
+      async.elapse(const Duration(milliseconds: 50));
+      expect(deaths, 0);
+      busy = false;
+      async.elapse(const Duration(milliseconds: 70));
+      expect(deaths, 1);
+      monitor.stop();
+    });
+  });
+
+  test('failure during a probe that crossed into busy does not count', () {
+    fakeAsync((async) {
+      var busy = false;
+      var dead = false;
+      final monitor = ConnectionHealthMonitor(
+        ping: () => Completer<void>().future,
+        onDead: () => dead = true,
+        isBusy: () => busy,
+        interval: const Duration(milliseconds: 10),
+        pingTimeout: const Duration(milliseconds: 20),
+        failureThreshold: 3,
+      )..start();
+
+      async.elapse(const Duration(milliseconds: 15)); // probe in flight
+      busy = true;
+      async.elapse(const Duration(milliseconds: 20)); // timeout while busy
+      expect(monitor.failures, 0);
+      expect(dead, isFalse);
+      monitor.stop();
+    });
+  });
+
+  test('resetFailures clears accumulated failures', () {
+    fakeAsync((async) {
+      var deaths = 0;
+      final monitor = ConnectionHealthMonitor(
+        ping: () => Completer<void>().future,
+        onDead: () => deaths++,
+        interval: const Duration(milliseconds: 10),
+        pingTimeout: const Duration(milliseconds: 10),
+        failureThreshold: 3,
+      )..start();
+
+      async.elapse(const Duration(milliseconds: 41)); // 2 failures
+      expect(monitor.failures, 2);
+      monitor.resetFailures();
+      async.elapse(const Duration(milliseconds: 40)); // 2 more
+      expect(deaths, 0);
+      expect(monitor.failures, 2);
+      async.elapse(const Duration(milliseconds: 20));
+      expect(deaths, 1);
+    });
+  });
+
+  test('stale failures clear when the connection goes busy', () {
+    fakeAsync((async) {
+      var busy = false;
+      final monitor = ConnectionHealthMonitor(
+        ping: () => Completer<void>().future,
+        onDead: () {},
+        isBusy: () => busy,
+        interval: const Duration(milliseconds: 10),
+        pingTimeout: const Duration(milliseconds: 10),
+        failureThreshold: 3,
+      )..start();
+
+      async.elapse(const Duration(milliseconds: 41));
+      expect(monitor.failures, 2);
+      busy = true;
+      async.elapse(const Duration(milliseconds: 15));
+      expect(monitor.failures, 0);
+      monitor.stop();
+    });
+  });
 }

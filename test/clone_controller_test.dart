@@ -401,7 +401,7 @@ void main() {
     test('self-hosted GitLab URL injects glab credential helper', () async {
       exec.results.add(_ok('absent'));
       const req = CloneRequest(
-        source: UrlCloneSource('https://gitlab.lkqdev.com/group/project.git'),
+        source: UrlCloneSource('https://gitlab.example.com/group/project.git'),
         parentDir: '/srv',
         name: 'project',
       );
@@ -413,7 +413,7 @@ void main() {
         '-c',
         'credential.helper=!glab auth git-credential',
       ]);
-      exec.results.add(_ok('https://gitlab.lkqdev.com/group/project.git\n'));
+      exec.results.add(_ok('https://gitlab.example.com/group/project.git\n'));
       await exec.handle.finish(0);
       await fut;
     });
