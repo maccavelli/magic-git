@@ -132,11 +132,10 @@ class ConnectionHealthMonitor {
 /// Owns the long-lived SSH connection(s). POSIX remotes only (a native
 /// Windows port lives in a separate codebase), so there is no shell probing.
 ///
-/// **Dual client:** when connect succeeds, a second [SSHClient] is opened for
-/// long-lived streams (watcher, CI trace) so request/response traffic and
-/// streams each get their own OpenSSH `MaxSessions` budget. If the stream
-/// client fails to authenticate, the session **degrades** to a single client
-/// (streams share the command client) rather than failing connect.
+/// **Triple client:** when connect succeeds, extra [SSHClient]s are opened for
+/// long-lived streams (watcher, CI trace) and for [ExecLane.sync] (fetch/push)
+/// so bulk pack transfer does not share a TCP connection with interactive
+/// reads. Stream and sync each fail-open onto the command client.
 class SSHClientManager {
   static const Duration _socketTimeout = Duration(seconds: 15);
   static const Duration _authTimeout = Duration(seconds: 15);
@@ -144,11 +143,18 @@ class SSHClientManager {
   /// Stream client is best-effort; fail open to single-client quickly.
   static const Duration _streamAuthTimeout = Duration(seconds: 10);
 
+  /// Sync client is best-effort; fail open so fetch/push share the command
+  /// client (today's dual-client behaviour).
+  static const Duration _syncAuthTimeout = _streamAuthTimeout;
+
   /// Command / SFTP / health-monitor client (primary).
   SSHClient? _client;
 
   /// Long-lived stream client; null when degraded to single-client mode.
   SSHClient? _streamClient;
+
+  /// Sync-lane client (`fetch`/`push`); null when degraded onto [_client].
+  SSHClient? _syncClient;
 
   /// Active dead-peer monitor for [_client] (see [ConnectionHealthMonitor]).
   /// Started when a connect succeeds, stopped when that client is retired.
@@ -162,6 +168,10 @@ class SSHClientManager {
   /// stays green while external changes go unseen for the rest of the
   /// session. Null when running degraded (single client).
   ConnectionHealthMonitor? _streamHealth;
+
+  /// Dead-peer monitor for [_syncClient]. The sync TCP is idle except during
+  /// fetch/push, so a NAT drop would otherwise only surface on the next sync.
+  ConnectionHealthMonitor? _syncHealth;
 
   /// Every client currently being authenticated by an in-flight [connect].
   /// Tracked separately from [_client] (which is only assigned once auth
@@ -199,6 +209,8 @@ class SSHClientManager {
   /// consecutive-failure count. The counter resets on a successful attach.
   Timer? _redialTimer;
   int _redialFailures = 0;
+  Timer? _syncRedialTimer;
+  int _syncRedialFailures = 0;
 
   /// Consecutive failed stream redials before giving up for the session. A
   /// host that structurally refuses a second session (MaxSessions 1, auth
@@ -208,19 +220,27 @@ class SSHClientManager {
 
   bool Function()? _commandBusyProbe;
   bool Function()? _streamBusyProbe;
+  bool Function()? _syncBusyProbe;
   TransportDropCause? _lastDropCause;
   DateTime? _connectedAt;
 
   TransportDropCause? get lastDropCause => _lastDropCause;
 
-  void registerBusyProbes({bool Function()? command, bool Function()? stream}) {
+  void registerBusyProbes({
+    bool Function()? command,
+    bool Function()? stream,
+    bool Function()? sync,
+  }) {
     _commandBusyProbe = command;
     _streamBusyProbe = stream;
+    _syncBusyProbe = sync;
   }
 
   void noteCommandSettled() => _health?.resetFailures();
 
   void noteStreamActivity() => _streamHealth?.resetFailures();
+
+  void noteSyncSettled() => _syncHealth?.resetFailures();
 
   void _recordMonitorDrop({
     required ConnectionHealthMonitor monitor,
@@ -255,6 +275,19 @@ class SSHClientManager {
 
   /// True when streams share the command client (stream open failed).
   bool get streamClientDegraded => _client != null && _streamClient == null;
+
+  /// Client for [ExecLane.sync]. Falls back to [client] when the dedicated
+  /// sync handshake failed or has not been re-dialed yet.
+  SSHClient? get syncClient => _syncClient ?? _client;
+
+  /// True when sync-lane work shares the command client.
+  bool get syncClientDegraded => _client != null && _syncClient == null;
+
+  /// 0 disconnected, 1 single, 2 dual, 3 triple.
+  int get attachedClientCount =>
+      (_client == null ? 0 : 1) +
+      (_streamClient != null ? 1 : 0) +
+      (_syncClient != null ? 1 : 0);
 
   /// Current attempt generation. Bumped by every [connect]/[disconnect].
   /// Exposed so callers that queue work against the *current* connection
@@ -291,6 +324,7 @@ class SSHClientManager {
     // the new command client actually succeeds, at the very end of this method.
     final previousCmd = _client;
     final previousStream = _streamClient;
+    final previousSync = _syncClient;
 
     // Both handshakes run CONCURRENTLY, so a connect pays max(cmd, stream)
     // rather than their sum — a full extra TCP+KEX+auth round trip on every
@@ -302,8 +336,7 @@ class SSHClientManager {
     // decision slot and leave one handshake paused forever.
     final verify = serializeHostKeyVerifier(onVerifyHostKey);
     // Bcrypt KDF for encrypted PEMs runs off this isolate, once per connect.
-    // Both handshakes reuse the decoded identities — three bcrypts would
-    // freeze the chrome (and will freeze it three times after the sync client).
+    // All three handshakes reuse the decoded identities.
     final identities = await _identitiesFor(profile);
     if (gen != _generation) return;
     final cmdFuture = _openAuthenticatedClient(
@@ -337,14 +370,34 @@ class SSHClientManager {
             return null;
           },
         );
+    final syncFuture =
+        _openAuthenticatedClient(
+          profile,
+          gen: gen,
+          onVerifyHostKey: verify,
+          authTimeout: _syncAuthTimeout,
+          identities: identities,
+        ).then<SSHClient?>(
+          (c) => c,
+          onError: (Object e, StackTrace st) {
+            developer.log(
+              'sync SSH client failed; degrading to dual client: $e',
+              name: 'SSHClientManager',
+              error: e,
+              stackTrace: st,
+            );
+            return null;
+          },
+        );
 
     final SSHClient? cmdClient;
     try {
       cmdClient = await cmdFuture;
     } catch (_) {
-      // The stream handshake may still succeed in the background — close
-      // whatever it produces, since no session exists for it to serve.
+      // The stream/sync handshakes may still succeed in the background — close
+      // whatever they produce, since no session exists for them to serve.
       unawaited(streamFuture.then((c) => c?.close()));
+      unawaited(syncFuture.then((c) => c?.close()));
       // This attempt already bumped the generation past the previous session,
       // so every command pinned from here on refuses to run against it —
       // "keeping" it on failure would keep only its sockets and its ping
@@ -360,6 +413,7 @@ class SSHClientManager {
       // the same generation checks and self-closes, but close defensively in
       // case it finished before the supersession landed.
       unawaited(streamFuture.then((c) => c?.close()));
+      unawaited(syncFuture.then((c) => c?.close()));
       return;
     }
     // Non-nullable rebind: `cmdClient` was assigned inside a try, which bars
@@ -367,10 +421,12 @@ class SSHClientManager {
     final cmd = cmdClient;
 
     final streamClient = await streamFuture;
-    // Superseded after the handshakes — drop both new clients.
+    final syncClient = await syncFuture;
+    // Superseded after the handshakes — drop all new clients.
     if (gen != _generation) {
       await cmdClient.close();
       if (streamClient != null) await streamClient.close();
+      if (syncClient != null) await syncClient.close();
       return;
     }
 
@@ -378,16 +434,26 @@ class SSHClientManager {
     _health?.stop();
     _streamHealth?.stop();
     _streamHealth = null;
+    _syncHealth?.stop();
+    _syncHealth = null;
     _redialTimer?.cancel();
     _redialTimer = null;
+    _syncRedialTimer?.cancel();
+    _syncRedialTimer = null;
     unawaited(previousCmd?.close());
     // Avoid double-close when previous was already degraded (stream == null)
     // or when stream shared nothing with cmd.
     if (previousStream != null && !identical(previousStream, previousCmd)) {
       unawaited(previousStream.close());
     }
+    if (previousSync != null &&
+        !identical(previousSync, previousCmd) &&
+        !identical(previousSync, previousStream)) {
+      unawaited(previousSync.close());
+    }
     _client = cmd;
     _streamClient = streamClient;
+    _syncClient = syncClient;
     _clientGeneration = gen;
     _connectedAt = DateTime.now();
     _lastDropCause = null;
@@ -398,6 +464,7 @@ class SSHClientManager {
     _redialProfile = profile;
     _redialVerify = onVerifyHostKey;
     _redialFailures = 0;
+    _syncRedialFailures = 0;
 
     // Health monitor on the command client only. onDead must close both
     // clients but *not* null [_client]: ConnectionController listens to
@@ -414,6 +481,11 @@ class SSHClientManager {
           unawaited(stream.close());
         }
         _streamClient = null;
+        final sync = _syncClient;
+        if (sync != null && !identical(sync, cmd) && !identical(sync, stream)) {
+          unawaited(sync.close());
+        }
+        _syncClient = null;
         unawaited(cmd.close());
       },
       onPingSample: onPingSample,
@@ -434,6 +506,11 @@ class SSHClientManager {
       _attachStreamClient(streamClient, gen);
     } else {
       _onStreamClientLost(gen);
+    }
+    if (syncClient != null) {
+      _attachSyncClient(syncClient, gen);
+    } else {
+      _onSyncClientLost(gen);
     }
   }
 
@@ -525,6 +602,79 @@ class SSHClientManager {
       _attachStreamClient(stream, gen);
       developer.log(
         'stream SSH client re-established after mid-session loss',
+        name: 'SSHClientManager',
+      );
+    });
+  }
+
+  void _attachSyncClient(SSHClient sync, int gen) {
+    _syncRedialTimer?.cancel();
+    _syncRedialTimer = null;
+    _syncClient = sync;
+    late final ConnectionHealthMonitor syncMonitor;
+    syncMonitor = ConnectionHealthMonitor(
+      ping: () => sync.ping(),
+      isBusy: () => _syncBusyProbe?.call() ?? false,
+      onDead: () {
+        _recordMonitorDrop(monitor: syncMonitor, busy: _syncBusyProbe);
+        if (identical(_syncClient, sync)) _syncClient = null;
+        unawaited(sync.close());
+      },
+    )..start();
+    _syncHealth = syncMonitor;
+    unawaited(
+      sync.done.then((_) {}, onError: (_) {}).whenComplete(() {
+        syncMonitor.stop();
+        if (identical(_syncClient, sync)) _syncClient = null;
+        _onSyncClientLost(gen);
+      }),
+    );
+  }
+
+  void _onSyncClientLost(int gen) {
+    if (gen != _generation || _client == null) return;
+    final profile = _redialProfile;
+    if (profile == null) return;
+    if (_syncRedialFailures >= _maxRedialFailures) {
+      developer.log(
+        'sync SSH client gave out $_syncRedialFailures times; staying '
+        'degraded to the command client for the rest of this session',
+        name: 'SSHClientManager',
+      );
+      return;
+    }
+    _syncRedialTimer?.cancel();
+    _syncRedialTimer = Timer(streamRedialDelay(_syncRedialFailures), () async {
+      _syncRedialTimer = null;
+      if (gen != _generation || _client == null || _syncClient != null) {
+        return;
+      }
+      SSHClient? sync;
+      try {
+        sync = await _openAuthenticatedClient(
+          profile,
+          gen: gen,
+          onVerifyHostKey: _redialVerify,
+          authTimeout: _syncAuthTimeout,
+        );
+      } catch (e) {
+        developer.log(
+          'sync SSH client redial failed: $e',
+          name: 'SSHClientManager',
+        );
+        _syncRedialFailures++;
+        _onSyncClientLost(gen);
+        return;
+      }
+      if (sync == null) return;
+      if (gen != _generation || _client == null) {
+        await sync.close();
+        return;
+      }
+      _syncRedialFailures = 0;
+      _attachSyncClient(sync, gen);
+      developer.log(
+        'sync SSH client re-established after mid-session loss',
         name: 'SSHClientManager',
       );
     });
@@ -706,21 +856,30 @@ class SSHClientManager {
     _health = null;
     _streamHealth?.stop();
     _streamHealth = null;
+    _syncHealth?.stop();
+    _syncHealth = null;
     _redialTimer?.cancel();
     _redialTimer = null;
+    _syncRedialTimer?.cancel();
+    _syncRedialTimer = null;
     _redialProfile = null;
     _redialVerify = null;
     _redialFailures = 0;
+    _syncRedialFailures = 0;
     _lastDropCause = null;
     _connectedAt = null;
     final cmd = _client;
     final stream = _streamClient;
+    final sync = _syncClient;
     _client = null;
     _streamClient = null;
+    _syncClient = null;
     _clientGeneration = -1;
     await Future.wait([
       if (cmd != null) cmd.close(),
       if (stream != null && !identical(stream, cmd)) stream.close(),
+      if (sync != null && !identical(sync, cmd) && !identical(sync, stream))
+        sync.close(),
     ]);
   }
 }

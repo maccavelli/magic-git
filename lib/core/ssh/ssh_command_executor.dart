@@ -290,14 +290,19 @@ class SSHCommandExecutor implements CommandExecutor {
   /// [CommandExecutor.setForgeTokenNeutralization]). Empty by default.
   List<String> _neutralizeTokens = const [];
 
-  int _activeCommands = 0;
+  int _activeNonSync = 0;
+  int _activeSync = 0;
   int _activeStreams = 0;
   DateTime? _lastStreamByteAt;
   DateTime? _lastStreamNoteAt;
 
   static const Duration streamBusyWindow = Duration(seconds: 30);
 
-  bool get transportBusy => _activeCommands > 0;
+  bool get transportBusy => _activeNonSync > 0 || _activeSync > 0;
+
+  bool get commandBusy => _activeNonSync > 0;
+
+  bool get syncBusy => _activeSync > 0;
 
   /// Stream client is busy only while bytes have flowed recently.
   bool get streamBusy =>
@@ -307,8 +312,9 @@ class SSHCommandExecutor implements CommandExecutor {
 
   SSHCommandExecutor(this._clientManager) {
     _clientManager.registerBusyProbes(
-      command: () => transportBusy,
+      command: () => commandBusy,
       stream: () => streamBusy,
+      sync: () => syncBusy,
     );
     // Start at the adaptive no-sample cap (3) until RTT samples arrive.
     _scheduler.setMaxConcurrentReads(_adaptiveReads.effectiveCap);
@@ -667,7 +673,9 @@ class SSHCommandExecutor implements CommandExecutor {
       // rather than fetching whatever client is current now.
       throw SSHCommandSuperseded(gitArgs.join(' '));
     }
-    final client = _clientManager.client;
+    final client = lane == ExecLane.sync
+        ? _clientManager.syncClient
+        : _clientManager.client;
     if (client == null) {
       throw Exception('SSH connection not established.');
     }
@@ -680,7 +688,12 @@ class SSHCommandExecutor implements CommandExecutor {
       throw SSHCommandSuperseded(gitArgs.join(' '));
     }
 
-    _activeCommands++;
+    final isSync = lane == ExecLane.sync;
+    if (isSync) {
+      _activeSync++;
+    } else {
+      _activeNonSync++;
+    }
     try {
       return await _runBody(
         client,
@@ -694,8 +707,13 @@ class SSHCommandExecutor implements CommandExecutor {
         activityIdle,
       );
     } finally {
-      _activeCommands--;
-      _clientManager.noteCommandSettled();
+      if (isSync) {
+        _activeSync--;
+        _clientManager.noteSyncSettled();
+      } else {
+        _activeNonSync--;
+        _clientManager.noteCommandSettled();
+      }
     }
   }
 

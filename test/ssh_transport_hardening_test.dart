@@ -97,11 +97,11 @@ void main() {
   });
 
   test(
-    'connect opens both handshakes in parallel, and disconnect force-closes '
+    'connect opens three handshakes in parallel, and disconnect force-closes '
     'them and fails the connect promptly',
     () async {
-      // A server that accepts TCP but never speaks SSH: both handshakes stall
-      // right after their sockets open, so socket arrival order tells us
+      // A server that accepts TCP but never speaks SSH: all three handshakes
+      // stall right after their sockets open, so socket arrival order tells us
       // exactly how connect() schedules them.
       final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
       final accepted = <Socket>[];
@@ -123,17 +123,17 @@ void main() {
           password: 'p',
         ),
       );
-      // Both sockets must arrive while the handshakes are still stalled —
-      // sequential dual-client (the old behavior) would never open the second
-      // socket before the first client authenticated.
+      // All three sockets must arrive while the handshakes are still stalled —
+      // sequential clients would never open the later sockets before the first
+      // client authenticated.
       final deadline = DateTime.now().add(const Duration(seconds: 5));
-      while (accepted.length < 2 && DateTime.now().isBefore(deadline)) {
+      while (accepted.length < 3 && DateTime.now().isBefore(deadline)) {
         await Future<void>.delayed(const Duration(milliseconds: 10));
       }
       expect(
         accepted.length,
-        2,
-        reason: 'command + stream handshakes must run concurrently',
+        3,
+        reason: 'command + stream + sync handshakes must run concurrently',
       );
 
       // Force-close every pending handshake; the stalled connect must fail
@@ -142,6 +142,8 @@ void main() {
       await expectLater(connecting, throwsA(anything));
       expect(manager.client, isNull);
       expect(manager.streamClient, isNull);
+      expect(manager.syncClient, isNull);
+      expect(manager.attachedClientCount, 0);
     },
   );
 }

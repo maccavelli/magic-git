@@ -33,7 +33,10 @@ void main() {
       final manager = SSHClientManager();
       expect(manager.client, isNull);
       expect(manager.streamClient, isNull);
+      expect(manager.syncClient, isNull);
       expect(manager.streamClientDegraded, isFalse);
+      expect(manager.syncClientDegraded, isFalse);
+      expect(manager.attachedClientCount, 0);
       expect(manager.clientGeneration, -1);
       expect(manager.done, isNull);
     });
