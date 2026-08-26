@@ -111,6 +111,16 @@ void main() {
     );
     expect(looksLikeAuthFailure(Exception('terminal prompts disabled')), true);
     expect(looksLikeAuthFailure(Exception('could not resolve host')), false);
+    expect(
+      looksLikeAuthFailure(
+        Exception(
+          'GitLab reports no project at "g/p" — the origin path may be '
+          'wrong, or this token may lack access '
+          '(GitLab returns an empty result, not an error, in both cases)',
+        ),
+      ),
+      isFalse,
+    );
   });
 
   testWidgets('an auth-looking failure shows the sign-in callout and a '

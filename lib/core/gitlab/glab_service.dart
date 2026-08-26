@@ -785,9 +785,9 @@ query($path: ID!) {
       // origin or a missing glab login indistinguishable from a genuinely
       // empty project.
       throw GlabException(
-        'GitLab reports no project at "$fullPath" — the path may be wrong, '
-        'or glab may not be logged in with access to it '
-        '(GitLab answers with an empty result, not an error, in both cases)',
+        'GitLab reports no project at "$fullPath" — the origin path may be '
+        'wrong, or this token may lack access '
+        '(GitLab returns an empty result, not an error, in both cases)',
         const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
       );
     }

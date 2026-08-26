@@ -1197,9 +1197,19 @@ void main() {
       );
       final service = _svc(executor);
 
-      expect(
-        () => service.projectDashboard(_repo),
-        throwsA(isA<GlabException>()),
+      await expectLater(
+        service.projectDashboard(_repo),
+        throwsA(
+          isA<GlabException>().having(
+            (e) => e.message,
+            'message',
+            allOf(
+              contains('no project at'),
+              isNot(contains('not logged in')),
+              isNot(contains('auth login')),
+            ),
+          ),
+        ),
       );
     });
 
