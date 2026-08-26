@@ -1711,7 +1711,7 @@ void main() {
 
     setUp(() {
       exec = _FakeExecutor();
-      glab = GlabService(exec);
+      glab = GlabService(exec)..debugOriginHostOverride = 'gitlab.com';
     });
 
     test('approveMergeRequest posts to the approve endpoint', () async {

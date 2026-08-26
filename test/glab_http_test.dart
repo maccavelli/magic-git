@@ -71,7 +71,7 @@ void main() {
 
     setUp(() {
       exec = _FakeExecutor();
-      glab = GlabService(exec);
+      glab = GlabService(exec)..debugOriginHostOverride = 'gitlab.com';
     });
 
     test('paginated calls drop -i (which is incompatible with --paginate); '
@@ -311,7 +311,7 @@ void main() {
 
     setUp(() {
       exec = _FakeExecutor();
-      glab = GlabService(exec);
+      glab = GlabService(exec)..debugOriginHostOverride = 'gitlab.com';
     });
 
     // Real gitlab.com response shape (captured 2026-07). The load-bearing

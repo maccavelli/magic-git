@@ -57,7 +57,7 @@ void main() {
   setUp(() {
     exec = _FakeExecutor();
     gh = GhService(exec);
-    glab = GlabService(exec);
+    glab = GlabService(exec)..debugOriginHostOverride = 'gitlab.com';
   });
 
   group('model factories', () {

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../forge/forge.dart';
 import '../forge/forge_dashboard.dart';
 import '../forge/forge_json.dart';
@@ -41,6 +42,39 @@ class GlabService {
   final CommandExecutor _executor;
 
   GlabService(this._executor);
+
+  /// When non-null, [_originHost] returns this and does not shell git.
+  /// Production stays null. Argv tests set `'gitlab.com'` (no pin flags).
+  /// Pin tests leave this null and stub get-url.
+  @visibleForTesting
+  String? debugOriginHostOverride;
+
+  final Map<String, String?> _originHostCache = {};
+
+  Future<String?> _originHost(String repoPath) async {
+    if (debugOriginHostOverride != null) return debugOriginHostOverride;
+    if (_originHostCache.containsKey(repoPath)) {
+      return _originHostCache[repoPath];
+    }
+    final remote = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['git', 'remote', 'get-url', 'origin'],
+      timeout: const Duration(seconds: 20),
+      lane: ExecLane.read,
+    );
+    final host = remote.isSuccess
+        ? forgeHostFromRemoteUrl(remote.stdout.trim())
+        : null;
+    _originHostCache[repoPath] = host;
+    return host;
+  }
+
+  @visibleForTesting
+  Future<String?> debugLookupOriginHost(String repoPath) =>
+      _originHost(repoPath);
+
+  @visibleForTesting
+  void debugClearOriginHostCache() => _originHostCache.clear();
 
   /// Non-fatal warning from the most recent [graphql] call, or null when that
   /// call had none. Set when GitLab's GraphQL response carried a non-empty
@@ -406,6 +440,20 @@ class GlabService {
   /// ignored by whichever glab is installed.
   static Map<String, String>? hostEnv(String host) =>
       host == 'gitlab.com' ? null : {'GITLAB_HOST': host, 'GITLAB_URI': host};
+
+  /// `--hostname` argv fragment for `glab api` / GraphQL.
+  /// Empty for null, blank, and `gitlab.com`.
+  static List<String> hostnameFlag(String? host) {
+    final h = host?.trim();
+    if (h == null || h.isEmpty || h == 'gitlab.com') return const [];
+    return ['--hostname', h];
+  }
+
+  Map<String, String>? _hostExtraEnv(String? host) =>
+      host == null ? null : hostEnv(host);
+
+  @visibleForTesting
+  Map<String, String>? debugHostExtraEnv(String? host) => _hostExtraEnv(host);
 
   /// Calls a REST v4 endpoint, e.g. `projects/:id/merge_requests`.
   ///

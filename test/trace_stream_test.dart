@@ -71,7 +71,7 @@ void main() {
 
   setUp(() {
     exec = _StreamExecutor();
-    glab = GlabService(exec);
+    glab = GlabService(exec)..debugOriginHostOverride = 'gitlab.com';
   });
 
   Future<(_Trace, _FakeHandle)> subscribe() async {

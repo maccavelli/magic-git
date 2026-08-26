@@ -12,6 +12,9 @@ void main() {
   const _host = 'gitlab.example.com';
   const _notDefaultHost = 'gitlab.example.com';
 
+  GlabService _svc(MockExecutor e) =>
+      GlabService(e)..debugOriginHostOverride = 'gitlab.com';
+
   SSHCommandResult _ok({String stdout = '', String stderr = ''}) =>
       SSHCommandResult(exitCode: 0, stdout: stdout, stderr: stderr);
 
@@ -27,6 +30,30 @@ void main() {
   group('static utilities', () {
     test('hostEnv returns null for gitlab.com', () {
       expect(GlabService.hostEnv('gitlab.com'), isNull);
+    });
+
+    test('hostnameFlag is empty for null, blank, and gitlab.com', () {
+      expect(GlabService.hostnameFlag(null), isEmpty);
+      expect(GlabService.hostnameFlag(''), isEmpty);
+      expect(GlabService.hostnameFlag('  '), isEmpty);
+      expect(GlabService.hostnameFlag('gitlab.com'), isEmpty);
+    });
+
+    test('hostnameFlag returns --hostname for a self-hosted instance', () {
+      expect(GlabService.hostnameFlag('gitlab.example.com'), [
+        '--hostname',
+        'gitlab.example.com',
+      ]);
+    });
+
+    test('host extra env is null for a null or gitlab.com host', () {
+      final service = _svc(MockExecutor());
+      expect(service.debugHostExtraEnv(null), isNull);
+      expect(service.debugHostExtraEnv('gitlab.com'), isNull);
+      expect(service.debugHostExtraEnv('gitlab.example.com'), {
+        'GITLAB_HOST': 'gitlab.example.com',
+        'GITLAB_URI': 'gitlab.example.com',
+      });
     });
 
     test('hostEnv returns env map for non-default host', () {
@@ -112,7 +139,7 @@ void main() {
   group('loginWithToken', () {
     test('throws on blank token', () async {
       final executor = MockExecutor();
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.loginWithToken(_repo, '  '),
@@ -139,7 +166,7 @@ void main() {
           return _ok();
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       await service.loginWithToken(_repo, 'valid_token');
 
@@ -152,7 +179,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (call) => _ok(stdout: 'origin\t'),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.loginWithToken(_repo, 'valid_token'),
@@ -167,7 +194,7 @@ void main() {
   group('loginWithTokenHost', () {
     test('throws on blank token', () async {
       final executor = MockExecutor();
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       await expectLater(
         () => service.loginWithTokenHost(host: _host, token: '  '),
@@ -186,7 +213,7 @@ void main() {
           return _ok();
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.loginWithTokenHost(host: _host, token: 'valid_token');
 
       expect(
@@ -204,7 +231,7 @@ void main() {
           return _ok();
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.loginWithTokenHost(host: _host, token: 'valid_token'),
@@ -226,7 +253,7 @@ void main() {
         ]'''),
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final repos = await service.listRepos(cwd: _repo, host: _host);
 
       expect(repos.length, 2);
@@ -239,7 +266,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (call) => _ok(stdout: _withHeaders('{"not": "a list"}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.listRepos(cwd: _repo, host: _host),
@@ -251,7 +278,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (call) => _ok(stdout: _withHeaders('[]')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.listRepos(cwd: _repo, host: _notDefaultHost);
 
       expect(
@@ -271,7 +298,7 @@ void main() {
           stdout: '✓ Created project on GitLab: … - https://example.com/p',
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       final result = await service.createRepoInExisting(
         repoPath: _repo,
@@ -285,7 +312,7 @@ void main() {
 
     test('throws on failure', () async {
       final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'error'));
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.createRepoInExisting(
@@ -307,7 +334,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (call) => _ok(stdout: _withHeaders('{"message": "ok"}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       await service.api(_repo, 'projects/:id', method: 'GET');
       expect(executor.calls.first.gitArgs, contains('-i'));
@@ -318,7 +345,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (call) => _ok(stdout: '[{"id": 1}]'),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       await service.api(_repo, 'projects/:id/pipelines', paginate: true);
       expect(executor.calls.first.gitArgs, contains('--paginate'));
@@ -329,7 +356,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (call) => _ok(stdout: _withHeaders('{"message": "ok"}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       await service.api(_repo, 'projects/:id/merge', method: 'PUT');
       expect(executor.calls.first.lane, ExecLane.sync);
@@ -339,7 +366,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (call) => _ok(stdout: _withHeaders('[{"id": 1}]')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       await service.api(
         _repo,
@@ -355,7 +382,7 @@ void main() {
         onExecute: (_) =>
             _ok(stdout: _withHeaders('{"error": "not found"}', status: 404)),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.api(_repo, 'projects/:id'),
@@ -367,7 +394,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _fail(exitCode: 1, stderr: 'error'),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.api(_repo, 'projects/:id/pipelines', paginate: true),
@@ -382,7 +409,7 @@ void main() {
   group('mergeRequests', () {
     test('returns empty list from empty JSON array', () async {
       final executor = MockExecutor(onExecute: (_) => _ok(stdout: '[]'));
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final mrs = await service.mergeRequests(_repo);
       expect(mrs, isEmpty);
     });
@@ -396,7 +423,7 @@ void main() {
         ]''',
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final mrs = await service.mergeRequests(_repo, perPage: 30);
       expect(mrs.length, 2);
       expect(mrs[0].iid, 1);
@@ -413,7 +440,7 @@ void main() {
           return _ok(stdout: '[{"iid": 1}, {"iid": 2}]');
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final mrs = await service.mergeRequests(_repo, perPage: 2);
       // First page returned 2 (== perPage), second page returned 1 (< perPage) → stops
       expect(mrs.length, 3);
@@ -433,7 +460,7 @@ void main() {
         ]'''),
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final pipes = await service.pipelines(_repo);
       expect(pipes.length, 1);
       expect(pipes[0].id, 1);
@@ -448,7 +475,7 @@ void main() {
           return _ok(stdout: _withHeaders('[{"id": 1}]'));
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final pipes = await service.pipelines(
         _repo,
         allHistory: true,
@@ -461,7 +488,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('[]')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       expect(await service.pipelines(_repo), isEmpty);
     });
   });
@@ -478,7 +505,7 @@ void main() {
         ]'''),
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final js = await service.jobs(_repo, 42);
       expect(js.length, 1);
       expect(js[0].id, 10);
@@ -497,7 +524,7 @@ void main() {
           );
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final js = await service.jobs(_repo, 42);
       expect(js.length, 1);
     });
@@ -516,7 +543,7 @@ void main() {
           return _ok();
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final result = await service.resolveOriginUrl(
         repoPath: _repo,
         name: 'project',
@@ -554,7 +581,7 @@ void main() {
           return _ok();
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final result = await service.resolveOriginUrl(
         repoPath: _repo,
         name: 'project',
@@ -591,7 +618,7 @@ void main() {
           return _ok();
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final result = await service.resolveOriginUrl(
         repoPath: _repo,
         name: 'project',
@@ -612,7 +639,7 @@ void main() {
           return _ok();
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final result = await service.resolveOriginUrl(
         repoPath: _repo,
         name: 'project',
@@ -638,7 +665,7 @@ void main() {
           return _ok();
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final result = await service.resolveOriginUrl(
         repoPath: _repo,
         name: 'group/subgroup/project',
@@ -664,7 +691,7 @@ void main() {
         onExecute: (_) =>
             _ok(stdout: _withHeaders('{"data": {"project": {"id": "1"}}}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final data = await service.graphql(_repo, 'query { project { id } }');
       expect(data, {
         'project': {'id': '1'},
@@ -680,7 +707,7 @@ void main() {
         }'''),
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final data = await service.graphql(_repo, 'query { project { id } }');
       expect(data, {
         'project': {'id': '1'},
@@ -694,7 +721,7 @@ void main() {
           stdout: _withHeaders('{"errors": [{"message": "total failure"}]}'),
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.graphql(_repo, 'query { project { id } }'),
@@ -706,7 +733,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{"data": {"ok": true}}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       service.lastGraphqlWarning = 'stale';
       await service.graphql(_repo, 'query { x }');
       expect(service.lastGraphqlWarning, isNull);
@@ -716,7 +743,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('not json', status: 401)),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.graphql(_repo, 'query { x }'),
@@ -728,7 +755,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('not json at all')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.graphql(_repo, 'query { x }'),
@@ -742,7 +769,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('["a", "b"]')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final data = await service.graphql(_repo, 'query { x }');
       expect(data, <String, dynamic>{});
     });
@@ -772,7 +799,7 @@ void main() {
           );
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final dash = await service.projectDashboard(_repo);
       expect(dash.issues.length, 1);
       expect(dash.issuesTotal, 5);
@@ -790,7 +817,7 @@ void main() {
           return _ok(stdout: _withHeaders('{"data": {"project": null}}'));
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.projectDashboard(_repo),
@@ -802,7 +829,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: 'origin\tgit@github.com:user/repo.git'),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.projectDashboard(_repo),
@@ -818,7 +845,7 @@ void main() {
     test('emits stdout chunks', () async {
       final handle = MockStreamHandle();
       final executor = MockExecutor(onStream: (_) => handle);
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final emitted = <String>[];
 
       service.traceStream(_repo, 42).listen(emitted.add, onError: (_) {});
@@ -836,7 +863,7 @@ void main() {
     test('emits empty tick when no output and clean exit', () async {
       final handle = MockStreamHandle();
       final executor = MockExecutor(onStream: (_) => handle);
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final emitted = <String>[];
 
       service.traceStream(_repo, 42).listen(emitted.add, onError: (_) {});
@@ -851,7 +878,7 @@ void main() {
     test('adds error when stderr present but no stdout', () async {
       final handle = MockStreamHandle();
       final executor = MockExecutor(onStream: (_) => handle);
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final errors = <Object>[];
 
       service.traceStream(_repo, 42).listen((_) {}, onError: errors.add);
@@ -873,7 +900,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.approveMergeRequest(_repo, 5);
 
       final call = executor.calls.first;
@@ -885,7 +912,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.retryPipeline(_repo, 10);
 
       expect(
@@ -896,7 +923,7 @@ void main() {
 
     test('createMergeRequest succeeds', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       await service.createMergeRequest(
         _repo,
@@ -928,7 +955,7 @@ void main() {
 
     test('createMergeRequest throws on failure', () async {
       final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'error'));
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.createMergeRequest(
@@ -945,7 +972,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.mergeMergeRequest(
         _repo,
         1,
@@ -962,7 +989,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.mergeMergeRequest(_repo, 1, sha: 'abcdef01');
       expect(executor.calls.first.gitArgs, containsAll(['-f', 'sha=abcdef01']));
     });
@@ -971,7 +998,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.mergeMergeRequest(_repo, 1);
       final fields = executor.calls.first.gitArgs.where(
         (a) => a.startsWith('sha='),
@@ -983,7 +1010,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.enableMergeRequestAutoMerge(
         _repo,
         3,
@@ -1002,7 +1029,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.cancelMergeRequestAutoMerge(_repo, 3);
       expect(
         executor.calls.first.gitArgs,
@@ -1016,7 +1043,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.rebaseMergeRequest(_repo, 3);
       expect(
         executor.calls.first.gitArgs,
@@ -1036,7 +1063,7 @@ void main() {
           }'''),
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final p = await service.repoMergePolicy(_repo);
       expect(p.defaultBranch, 'develop');
       expect(p.mergeMethod, 'ff');
@@ -1048,7 +1075,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.closeMergeRequest(_repo, 1);
 
       expect(
@@ -1061,7 +1088,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: _withHeaders('{}')),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.reopenMergeRequest(_repo, 1);
 
       expect(
@@ -1072,7 +1099,7 @@ void main() {
 
     test('setMergeRequestDraft sets draft flag', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.setMergeRequestDraft(_repo, 1, draft: true);
 
       expect(executor.calls.first.gitArgs, contains('--draft'));
@@ -1080,7 +1107,7 @@ void main() {
 
     test('setMergeRequestDraft clears draft flag', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.setMergeRequestDraft(_repo, 1, draft: false);
 
       expect(executor.calls.first.gitArgs, contains('--ready'));
@@ -1088,7 +1115,7 @@ void main() {
 
     test('setMergeRequestDraft throws on failure', () async {
       final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'error'));
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.setMergeRequestDraft(_repo, 1, draft: true),
@@ -1105,7 +1132,7 @@ void main() {
               '"author":{"username":"sam"},"created_at":"2026-08-02T00:00:00Z"}]',
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final comments = await service.listMergeRequestNotes(_repo, 7);
 
       expect(
@@ -1119,7 +1146,7 @@ void main() {
 
     test('commentOnMergeRequest sends message', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.commentOnMergeRequest(_repo, 1, 'Nice work');
 
       expect(
@@ -1130,7 +1157,7 @@ void main() {
 
     test('commentOnMergeRequest throws on failure', () async {
       final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'error'));
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.commentOnMergeRequest(_repo, 1, 'text'),
@@ -1140,7 +1167,7 @@ void main() {
 
     test('editMergeRequest passes title and description', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.editMergeRequest(
         _repo,
         1,
@@ -1160,7 +1187,7 @@ void main() {
 
     test('editMergeRequest omits null fields', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.editMergeRequest(_repo, 1, title: 'Only title');
 
       final args = executor.calls.first.gitArgs;
@@ -1170,7 +1197,7 @@ void main() {
 
     test('editMergeRequest throws on failure', () async {
       final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'error'));
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.editMergeRequest(_repo, 1, title: 't'),
@@ -1180,7 +1207,7 @@ void main() {
 
     test('checkoutMergeRequest uses exclusive lane', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.checkoutMergeRequest(_repo, 1);
 
       expect(executor.calls.first.lane, ExecLane.exclusive);
@@ -1188,7 +1215,7 @@ void main() {
 
     test('checkoutMergeRequest throws on failure', () async {
       final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'error'));
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.checkoutMergeRequest(_repo, 1),
@@ -1212,7 +1239,7 @@ void main() {
           }''',
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final mr = await service.mergeRequestDetail(_repo, 17);
       expect(mr.iid, 17);
       expect(mr.sha, startsWith('abcdef01'));
@@ -1226,7 +1253,7 @@ void main() {
           stdout: '{"title": "MR Title", "description": "MR Desc", "iid": 1}',
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final fields = await service.mergeRequestFields(_repo, 1);
 
       expect(fields.title, 'MR Title');
@@ -1237,7 +1264,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: '["not", "a", "map"]'),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.mergeRequestFields(_repo, 1),
@@ -1259,7 +1286,7 @@ void main() {
         ]''',
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final issues = await service.listIssues(_repo);
       expect(issues.length, 2);
       expect(issues[0].id, 1);
@@ -1280,7 +1307,7 @@ void main() {
           return _ok(stdout: '[$page1]');
         },
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final issues = await service.listIssues(_repo, allHistory: true);
       expect(issues.length, 30);
       expect(callCount, 2);
@@ -1291,7 +1318,7 @@ void main() {
         onExecute: (_) =>
             _ok(stdout: '{"iid": 5, "title": "Detail", "description": "body"}'),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final issue = await service.issueDetail(_repo, 5);
       expect(issue.id, 5);
       expect(issue.title, 'Detail');
@@ -1301,7 +1328,7 @@ void main() {
       final executor = MockExecutor(
         onExecute: (_) => _ok(stdout: '"just a string"'),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.issueDetail(_repo, 1),
@@ -1317,7 +1344,7 @@ void main() {
         ]'''),
         ),
       );
-      final service = GlabService(executor);
+      final service = _svc(executor);
       final milestones = await service.listMilestones(_repo);
       expect(milestones.length, 1);
       expect(milestones[0].title, 'v1.0');
@@ -1325,7 +1352,7 @@ void main() {
 
     test('createIssue passes args', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.createIssue(
         _repo,
         title: 'Bug',
@@ -1344,7 +1371,7 @@ void main() {
 
     test('createIssue throws on failure', () async {
       final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'error'));
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.createIssue(_repo, title: 't'),
@@ -1354,7 +1381,7 @@ void main() {
 
     test('closeIssue calls glab issue close', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.closeIssue(_repo, 1);
 
       expect(
@@ -1365,14 +1392,14 @@ void main() {
 
     test('closeIssue throws on failure', () async {
       final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'error'));
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(() => service.closeIssue(_repo, 1), throwsA(isA<GlabException>()));
     });
 
     test('reopenIssue calls glab issue reopen', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.reopenIssue(_repo, 1);
 
       expect(
@@ -1383,7 +1410,7 @@ void main() {
 
     test('reopenIssue throws on failure', () async {
       final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'error'));
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.reopenIssue(_repo, 1),
@@ -1393,7 +1420,7 @@ void main() {
 
     test('commentOnIssue sends message', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.commentOnIssue(_repo, 1, 'Comment body');
 
       expect(
@@ -1404,7 +1431,7 @@ void main() {
 
     test('commentOnIssue throws on failure', () async {
       final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'error'));
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.commentOnIssue(_repo, 1, 'text'),
@@ -1414,7 +1441,7 @@ void main() {
 
     test('editIssue passes title and description', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.editIssue(
         _repo,
         1,
@@ -1434,7 +1461,7 @@ void main() {
 
     test('editIssue omits null fields', () async {
       final executor = MockExecutor(onExecute: (_) => _ok());
-      final service = GlabService(executor);
+      final service = _svc(executor);
       await service.editIssue(_repo, 1, title: 'Only title');
 
       expect(executor.calls.first.gitArgs, isNot(contains('--description')));
@@ -1442,7 +1469,7 @@ void main() {
 
     test('editIssue throws on failure', () async {
       final executor = MockExecutor(onExecute: (_) => _fail(stderr: 'error'));
-      final service = GlabService(executor);
+      final service = _svc(executor);
 
       expect(
         () => service.editIssue(_repo, 1, title: 't'),
