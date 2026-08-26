@@ -39,7 +39,9 @@ gap. No code is changed until a paired plan is approved.
   send, not a captured `.app` trace.
 
 Facts below are tagged **(host)** when observed on `admdevops`, **(code)**
-when read from this tree. Assumptions are called out as such.
+when read from this tree. Assumptions are called out as such. Self-hosted
+GitLab hostnames from that investigation are written as
+`gitlab.example.com` / `ssh-gitlab.example.com` in this public record.
 
 ### Host facts (`admdevops`)
 
