@@ -73,6 +73,10 @@ void main() {
       expect(classifyForgeHost('git.github.io'), Forge.github);
       expect(classifyForgeHost('gitlab.mycorp.com'), Forge.gitlab);
     });
+
+    test('ssh-gitlab.example.com is not a gitlab telltale', () {
+      expect(classifyForgeHost('ssh-gitlab.example.com'), Forge.unknown);
+    });
   });
 
   group('authStatusListsHost', () {
@@ -116,6 +120,19 @@ void main() {
     test('a blank host never matches', () {
       expect(authStatusListsHost(glabStatus, ''), isFalse);
     });
+
+    test(
+      'authStatusListsHost does not equate ssh-gitlab with gitlab.example.com',
+      () {
+        expect(
+          authStatusListsHost(
+            'gitlab.example.com\n  ✓ Logged in to gitlab.example.com as u\n',
+            'ssh-gitlab.example.com',
+          ),
+          isFalse,
+        );
+      },
+    );
   });
 
   group('remotePathFromUrl', () {

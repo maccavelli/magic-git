@@ -152,6 +152,52 @@ void main() {
       expect(result.gh.level, ToolAuthLevel.unknown);
       expect(result.git.checkFailed, isFalse);
     });
+
+    test('glabHostname pins glab auth status --hostname', () async {
+      final argsSeen = <List<String>>[];
+      final executor = _FakeExecutor(
+        onExecute: (argv) {
+          argsSeen.add(List.of(argv));
+          if (argv.last == '--version') {
+            return const SSHCommandResult(
+              exitCode: 0,
+              stdout: 'git version 2.48.1\n',
+              stderr: '',
+            );
+          }
+          if (argv.first == 'gh') {
+            return const SSHCommandResult(
+              exitCode: 0,
+              stdout:
+                  'github.com\n  ✓ Logged in to github.com account u (k)'
+                  '\n  - Active account: true\n',
+              stderr: '',
+            );
+          }
+          return const SSHCommandResult(
+            exitCode: 0,
+            stdout:
+                'gitlab.example.com\n'
+                '  ✓ Logged in to gitlab.example.com as sax (config.yml)\n',
+            stderr: '',
+          );
+        },
+      );
+      final service = AuthProbeService(executor);
+
+      final result = await service.probe(
+        label: 'x',
+        isLocal: true,
+        glabHostname: 'gitlab.example.com',
+      );
+
+      expect(
+        argsSeen.map((a) => a.join(' ')),
+        contains('glab auth status --hostname gitlab.example.com'),
+      );
+      expect(result.glab.authenticated, isTrue);
+      expect(result.glab.host, 'gitlab.example.com');
+    });
   });
 
   group('AuthProbeService.probeForgeCli', () {
@@ -198,6 +244,29 @@ void main() {
       expect(calledWith, ['glab', 'auth', 'status']);
       expect(result.authenticated, isTrue);
       expect(result.host, 'gitlab.com');
+    });
+
+    test('Forge.gitlab with hostname pins --hostname', () async {
+      var calledWith = <String>[];
+      final executor = _FakeExecutor(
+        onExecute: (argv) {
+          calledWith = List.of(argv);
+          return const SSHCommandResult(
+            exitCode: 0,
+            stdout:
+                'gitlab.example.com\n'
+                '  ✓ Logged in to gitlab.example.com as u (/x/config.yml)\n',
+            stderr: '',
+          );
+        },
+      );
+      final service = AuthProbeService(executor);
+
+      final result = await service.probeForgeCli(Forge.gitlab, hostname: 'x');
+
+      expect(calledWith, ['glab', 'auth', 'status', '--hostname', 'x']);
+      expect(result.authenticated, isFalse);
+      expect(result.detail, contains('Not authenticated to'));
     });
 
     test('non-present CLI returns missing', () async {

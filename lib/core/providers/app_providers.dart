@@ -5087,12 +5087,22 @@ final sessionAuthStatusProvider = FutureProvider.autoDispose<TargetAuth?>((
   final display = isLocal
       ? 'This Mac (active session)'
       : (label ?? host ?? 'Connected host');
+  String? glabHostname;
+  final path = repoPath;
+  if (path != null) {
+    final url = await ref.watch(originRemoteUrlProvider(path).future);
+    final h = url == null ? null : forgeHostFromRemoteUrl(url);
+    if (h != null && classifyForgeHost(h) == Forge.gitlab) {
+      glabHostname = h;
+    }
+  }
   return AuthProbeService(ref.read(activeExecutorProvider)).probe(
     label: display,
     isLocal: isLocal,
     // Run from the repo when there is one so a repo-scoped gh/glab host
     // (an Enterprise remote) resolves; falls back to the home dir otherwise.
-    cwd: repoPath ?? '.',
+    cwd: path ?? '.',
+    glabHostname: glabHostname,
   );
 }, retry: noProviderRetry);
 

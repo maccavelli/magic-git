@@ -279,6 +279,62 @@ ToolAuth parseGlabAuthStatus(String output, {required bool present}) {
   );
 }
 
+/// Like [parseGlabAuthStatus], but only the block for [host] counts.
+///
+/// A mixed dump (gitlab.com 401 + a working self-hosted block) no longer
+/// reports the first working host — the dashboard glab row follows the
+/// requested instance. Missing that host is not a fallback to another block.
+ToolAuth parseGlabAuthStatusForHost(
+  String output, {
+  required bool present,
+  required String host,
+}) {
+  if (!present) return ToolAuth.missing('glab');
+  final wanted = host.trim().toLowerCase();
+  _HostBlock? match;
+  for (final b in _hostBlocks(output)) {
+    if (b.host.toLowerCase() == wanted) {
+      match = b;
+      break;
+    }
+  }
+  if (match == null) {
+    return ToolAuth(
+      tool: 'glab',
+      present: true,
+      authenticated: false,
+      host: host,
+      detail:
+          'Not authenticated to $host — run `glab auth login --hostname $host` '
+          'on the target.',
+    );
+  }
+  if (!_blockLoggedIn(match)) {
+    return ToolAuth(
+      tool: 'glab',
+      present: true,
+      authenticated: false,
+      host: match.host,
+      detail:
+          'Token for ${match.host} is expired or invalid — run '
+          '`glab auth login` on the target.',
+    );
+  }
+  final account = RegExp(
+    r'Logged in to \S+ as (\S+)',
+  ).firstMatch(match.body)?.group(1);
+  return ToolAuth(
+    tool: 'glab',
+    present: true,
+    authenticated: true,
+    host: match.host,
+    account: account,
+    detail: account == null
+        ? 'Signed in to ${match.host}'
+        : 'Signed in to ${match.host} as $account',
+  );
+}
+
 /// Parses `git --version` into a [ToolAuth] (git needs no login, so it is
 /// "authenticated" whenever present). [present] false ⇒ missing. Output with
 /// no version token at all (the probe ran but printed nothing usable) is

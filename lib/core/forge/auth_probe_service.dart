@@ -22,30 +22,69 @@ class AuthProbeService {
     required String label,
     required bool isLocal,
     String cwd = '.',
+    String? glabHostname,
   }) async {
+    final pin = (glabHostname == null || glabHostname.isEmpty)
+        ? null
+        : glabHostname;
     // Run the three independent probes concurrently — they share the read lane
     // and don't touch the index, so overlapping is safe and much faster.
     final results = await Future.wait([
       _run(cwd, ['git', '--version']),
       _run(cwd, ['gh', 'auth', 'status']),
-      _run(cwd, ['glab', 'auth', 'status']),
+      _run(
+        cwd,
+        pin == null
+            ? ['glab', 'auth', 'status']
+            : ['glab', 'auth', 'status', '--hostname', pin],
+      ),
     ]);
     return TargetAuth(
       label: label,
       isLocal: isLocal,
       git: _fold('git', results[0], parseGitVersion),
       gh: _fold('gh', results[1], parseGhAuthStatus),
-      glab: _fold('glab', results[2], parseGlabAuthStatus),
+      glab: _fold(
+        'glab',
+        results[2],
+        pin == null
+            ? parseGlabAuthStatus
+            : (output, {required bool present}) => parseGlabAuthStatusForHost(
+                output,
+                present: present,
+                host: pin,
+              ),
+      ),
     );
   }
 
   /// Probes just one forge CLI's auth state — the create/clone flows' guard
   /// and host prefill, where only the selected forge matters and spawning the
   /// other two checks would be wasted round-trips.
-  Future<ToolAuth> probeForgeCli(Forge forge, {String cwd = '.'}) async {
+  Future<ToolAuth> probeForgeCli(
+    Forge forge, {
+    String cwd = '.',
+    String? hostname,
+  }) async {
     final isGithub = forge == Forge.github;
     final cli = isGithub ? 'gh' : 'glab';
-    final result = await _run(cwd, [cli, 'auth', 'status']);
+    final pin = (!isGithub && hostname != null && hostname.isNotEmpty)
+        ? hostname
+        : null;
+    final result = await _run(
+      cwd,
+      pin == null
+          ? [cli, 'auth', 'status']
+          : [cli, 'auth', 'status', '--hostname', pin],
+    );
+    if (pin != null) {
+      return _fold(
+        cli,
+        result,
+        (output, {required bool present}) =>
+            parseGlabAuthStatusForHost(output, present: present, host: pin),
+      );
+    }
     return _fold(
       cli,
       result,

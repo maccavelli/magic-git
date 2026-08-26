@@ -202,6 +202,78 @@ gitbox
     });
   });
 
+  group('parseGlabAuthStatusForHost', () {
+    const mixed = '''
+gitlab.com
+  x gitlab.com: API call failed: GET https://gitlab.com/api/v4/user: 401 {message: 401 Unauthorized}
+
+gitlab.example.com
+  ✓ Logged in to gitlab.example.com as saxsmith (/Users/x/config.yml)
+  ✓ Token found: **************************
+''';
+
+    test('mixed dump + gitlab.example.com is authenticated to that host', () {
+      final a = parseGlabAuthStatusForHost(
+        mixed,
+        present: true,
+        host: 'gitlab.example.com',
+      );
+      expect(a.authenticated, isTrue);
+      expect(a.host, 'gitlab.example.com');
+      expect(a.account, 'saxsmith');
+    });
+
+    test('mixed dump + gitlab.com is not authenticated (expired detail)', () {
+      final a = parseGlabAuthStatusForHost(
+        mixed,
+        present: true,
+        host: 'gitlab.com',
+      );
+      expect(a.authenticated, isFalse);
+      expect(a.host, 'gitlab.com');
+      expect(a.detail, contains('expired or invalid'));
+    });
+
+    test('dump without that host is not authenticated', () {
+      final a = parseGlabAuthStatusForHost(
+        mixed,
+        present: true,
+        host: 'gitlab.other.example',
+      );
+      expect(a.authenticated, isFalse);
+      expect(a.host, 'gitlab.other.example');
+      expect(a.detail, contains('Not authenticated to'));
+    });
+
+    test('present: false is missing', () {
+      final a = parseGlabAuthStatusForHost(
+        mixed,
+        present: false,
+        host: 'gitlab.example.com',
+      );
+      expect(a.present, isFalse);
+      expect(a.level, ToolAuthLevel.bad);
+    });
+
+    test('1.109 single-block dump matching host is authenticated', () {
+      const out = '''
+gitlab.example.com
+  ✓ Logged in to gitlab.example.com as saxsmith (/home/x/.config/glab-cli/config.yml)
+  ✓ Git operations for gitlab.example.com configured to use https protocol.
+  ✓ API calls for gitlab.example.com are made over https protocol
+  ✓ Token found: **************************
+''';
+      final a = parseGlabAuthStatusForHost(
+        out,
+        present: true,
+        host: 'gitlab.example.com',
+      );
+      expect(a.authenticated, isTrue);
+      expect(a.host, 'gitlab.example.com');
+      expect(a.account, 'saxsmith');
+    });
+  });
+
   group('ToolAuth.unknown', () {
     test('a timed-out check is unknown — never signed-out or missing', () {
       final a = ToolAuth.unknown('gh');
