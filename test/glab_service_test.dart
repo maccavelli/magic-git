@@ -55,7 +55,101 @@ void main() {
         'GITLAB_URI': 'gitlab.example.com',
       });
     });
+  });
 
+  group('origin host lookup', () {
+    bool _isOriginLookup(MockExecCall call) =>
+        call.gitArgs.length >= 4 &&
+        call.gitArgs[0] == 'git' &&
+        call.gitArgs[1] == 'remote' &&
+        call.gitArgs[2] == 'get-url' &&
+        call.gitArgs[3] == 'origin';
+
+    test('returns the origin host and shells git once', () async {
+      final executor = MockExecutor(
+        onExecute: (call) {
+          if (_isOriginLookup(call)) {
+            return _ok(stdout: 'git@gitlab.example.com:group/proj.git');
+          }
+          return _fail(stderr: 'unexpected ${call.gitArgs}');
+        },
+      );
+      final service = GlabService(executor);
+      expect(await service.debugLookupOriginHost(_repo), 'gitlab.example.com');
+      expect(executor.calls, hasLength(1));
+      expect(executor.calls.single.gitArgs, [
+        'git',
+        'remote',
+        'get-url',
+        'origin',
+      ]);
+      expect(executor.calls.single.lane, ExecLane.read);
+    });
+
+    test('caches the host so a second call does not shell git', () async {
+      var lookups = 0;
+      final executor = MockExecutor(
+        onExecute: (call) {
+          if (_isOriginLookup(call)) {
+            lookups++;
+            return _ok(stdout: 'git@gitlab.example.com:group/proj.git');
+          }
+          return _fail(stderr: 'unexpected ${call.gitArgs}');
+        },
+      );
+      final service = GlabService(executor);
+      expect(await service.debugLookupOriginHost(_repo), 'gitlab.example.com');
+      expect(await service.debugLookupOriginHost(_repo), 'gitlab.example.com');
+      expect(lookups, 1);
+    });
+
+    test('debugClearOriginHostCache forces a new lookup', () async {
+      var lookups = 0;
+      final executor = MockExecutor(
+        onExecute: (call) {
+          if (_isOriginLookup(call)) {
+            lookups++;
+            return _ok(stdout: 'git@gitlab.example.com:group/proj.git');
+          }
+          return _fail(stderr: 'unexpected ${call.gitArgs}');
+        },
+      );
+      final service = GlabService(executor);
+      await service.debugLookupOriginHost(_repo);
+      service.debugClearOriginHostCache();
+      await service.debugLookupOriginHost(_repo);
+      expect(lookups, 2);
+    });
+
+    test('a failed get-url caches null and does not retry', () async {
+      var lookups = 0;
+      final executor = MockExecutor(
+        onExecute: (call) {
+          if (_isOriginLookup(call)) {
+            lookups++;
+            return _fail(stderr: 'no origin');
+          }
+          return _fail(stderr: 'unexpected ${call.gitArgs}');
+        },
+      );
+      final service = GlabService(executor);
+      expect(await service.debugLookupOriginHost(_repo), isNull);
+      expect(await service.debugLookupOriginHost(_repo), isNull);
+      expect(lookups, 1);
+    });
+
+    test('debugOriginHostOverride short-circuits without shelling', () async {
+      final executor = MockExecutor(
+        onExecute: (_) => _fail(stderr: 'must not shell'),
+      );
+      final service = GlabService(executor)
+        ..debugOriginHostOverride = 'other.example';
+      expect(await service.debugLookupOriginHost(_repo), 'other.example');
+      expect(executor.calls, isEmpty);
+    });
+  });
+
+  group('static utilities (rest)', () {
     test('hostEnv returns env map for non-default host', () {
       expect(GlabService.hostEnv(_notDefaultHost), {
         'GITLAB_HOST': _notDefaultHost,
