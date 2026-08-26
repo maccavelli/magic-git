@@ -133,7 +133,13 @@ void main() {
       exec.results.add(_ok('')); // glab config set user
       await glab.loginWithTokenHost(host: 'gitlab.corp', token: 'glpat-x');
       // The token that authenticates the API also names the identity to record.
-      expect(exec.calls[1], ['glab', 'api', 'user']);
+      expect(exec.calls[1], [
+        'glab',
+        'api',
+        '--hostname',
+        'gitlab.corp',
+        'user',
+      ]);
       expect(exec.envs[1], {
         'GITLAB_HOST': 'gitlab.corp',
         'GITLAB_URI': 'gitlab.corp',
@@ -160,7 +166,13 @@ void main() {
         // Must not throw, and must not attempt `glab config set` with no username.
         await glab.loginWithTokenHost(host: 'gitlab.corp', token: 'glpat-x');
         expect(exec.calls, hasLength(2));
-        expect(exec.calls[1], ['glab', 'api', 'user']);
+        expect(exec.calls[1], [
+          'glab',
+          'api',
+          '--hostname',
+          'gitlab.corp',
+          'user',
+        ]);
       },
     );
 
@@ -229,8 +241,14 @@ void main() {
         final repos = await glab.listRepos();
         final argv = exec.calls.single;
         expect(argv.take(2), ['glab', 'api']);
-        expect(argv[2], contains('projects?membership=true'));
-        expect(argv[2], contains('per_page=100'));
+        expect(
+          argv.firstWhere((a) => a.startsWith('projects?')),
+          contains('projects?membership=true'),
+        );
+        expect(
+          argv.firstWhere((a) => a.startsWith('projects?')),
+          contains('per_page=100'),
+        );
         expect(argv, containsAllInOrder(['--method', 'GET']));
         expect(argv, contains('-i'));
         expect(exec.envs.single, isNull);

@@ -182,7 +182,7 @@ class GlabService {
     try {
       final who = await _executor.execute(
         repoPath: cwd,
-        gitArgs: ['glab', 'api', 'user'],
+        gitArgs: ['glab', 'api', ...hostnameFlag(host), 'user'],
         extraEnv: hostEnv(host),
         timeout: const Duration(seconds: 20),
         lane: ExecLane.read,
@@ -219,6 +219,7 @@ class GlabService {
       [
         'glab',
         'api',
+        ...hostnameFlag(host),
         'projects?membership=true&order_by=last_activity_at&sort=desc'
             '&simple=true&per_page=$perPage',
         '--method',
@@ -341,7 +342,7 @@ class GlabService {
         } else {
           final who = await _runJson(
             repoPath,
-            ['glab', 'api', 'user', '-i'],
+            ['glab', 'api', ...hostnameFlag(host), 'user', '-i'],
             'glab api user',
             expectHeaders: true,
             extraEnv: hostEnv(host),
@@ -358,7 +359,7 @@ class GlabService {
         final encoded = full.split('/').map(Uri.encodeComponent).join('%2F');
         final project = await _runJson(
           repoPath,
-          ['glab', 'api', 'projects/$encoded', '-i'],
+          ['glab', 'api', ...hostnameFlag(host), 'projects/$encoded', '-i'],
           'glab api projects',
           expectHeaders: true,
           extraEnv: hostEnv(host),
@@ -547,19 +548,25 @@ class GlabService {
     String repoPath, {
     int perPage = 30,
   }) async {
+    final extra = _hostExtraEnv(await _originHost(repoPath));
     final all = <MergeRequest>[];
     for (var page = 1; page <= _maxListPages; page++) {
-      final decoded = await _runJson(repoPath, [
-        'glab',
-        'mr',
-        'list',
-        '--output',
-        'json',
-        '--per-page',
-        '$perPage',
-        '--page',
-        '$page',
-      ], 'glab mr list');
+      final decoded = await _runJson(
+        repoPath,
+        [
+          'glab',
+          'mr',
+          'list',
+          '--output',
+          'json',
+          '--per-page',
+          '$perPage',
+          '--page',
+          '$page',
+        ],
+        'glab mr list',
+        extraEnv: extra,
+      );
       final batch = _mapList(
         decoded,
         MergeRequest.fromJson,
@@ -882,6 +889,7 @@ query($path: ID!) {
       final newHandle = await _executor.executeStream(
         repoPath: repoPath,
         gitArgs: ['glab', 'ci', 'trace', '$jobId'],
+        extraEnv: _hostExtraEnv(await _originHost(repoPath)),
       );
       if (cancelled) {
         await newHandle.cancel();
@@ -1127,6 +1135,7 @@ query($path: ID!) {
       repoPath: repoPath,
       gitArgs: args,
       lane: ExecLane.sync,
+      extraEnv: _hostExtraEnv(await _originHost(repoPath)),
     );
     if (!result.isSuccess) {
       throw GlabException('glab mr create failed', result);
@@ -1146,19 +1155,25 @@ query($path: ID!) {
     int perPage = 30,
     bool allHistory = false,
   }) async {
+    final extra = _hostExtraEnv(await _originHost(repoPath));
     final all = <ForgeIssue>[];
     for (var page = 1; page <= _maxListPages; page++) {
-      final decoded = await _runJson(repoPath, [
-        'glab',
-        'issue',
-        'list',
-        '--output',
-        'json',
-        '--per-page',
-        '$perPage',
-        '--page',
-        '$page',
-      ], 'glab issue list');
+      final decoded = await _runJson(
+        repoPath,
+        [
+          'glab',
+          'issue',
+          'list',
+          '--output',
+          'json',
+          '--per-page',
+          '$perPage',
+          '--page',
+          '$page',
+        ],
+        'glab issue list',
+        extraEnv: extra,
+      );
       final batch = _mapList(
         decoded,
         ForgeIssue.fromGlabCli,
@@ -1176,14 +1191,12 @@ query($path: ID!) {
   /// (the list queries omit the body); `--output json` is the same machine
   /// contract every other glab list/view call here uses.
   Future<ForgeIssue> issueDetail(String repoPath, int iid) async {
-    final decoded = await _runJson(repoPath, [
-      'glab',
-      'issue',
-      'view',
-      '$iid',
-      '--output',
-      'json',
-    ], 'glab issue view');
+    final decoded = await _runJson(
+      repoPath,
+      ['glab', 'issue', 'view', '$iid', '--output', 'json'],
+      'glab issue view',
+      extraEnv: _hostExtraEnv(await _originHost(repoPath)),
+    );
     if (decoded is Map<String, dynamic>) return ForgeIssue.fromGlabCli(decoded);
     throw const GlabException(
       'glab issue view: expected a JSON object',
@@ -1355,6 +1368,7 @@ query($path: ID!) {
       repoPath: repoPath,
       gitArgs: args,
       lane: ExecLane.sync,
+      extraEnv: _hostExtraEnv(await _originHost(repoPath)),
     );
     if (!result.isSuccess) {
       throw GlabException('glab issue create failed', result);
@@ -1370,6 +1384,7 @@ query($path: ID!) {
       repoPath: repoPath,
       gitArgs: ['glab', 'issue', 'close', '$iid'],
       lane: ExecLane.sync,
+      extraEnv: _hostExtraEnv(await _originHost(repoPath)),
     );
     if (!result.isSuccess) {
       throw GlabException('glab issue close failed', result);
@@ -1382,6 +1397,7 @@ query($path: ID!) {
       repoPath: repoPath,
       gitArgs: ['glab', 'issue', 'reopen', '$iid'],
       lane: ExecLane.sync,
+      extraEnv: _hostExtraEnv(await _originHost(repoPath)),
     );
     if (!result.isSuccess) {
       throw GlabException('glab issue reopen failed', result);
@@ -1390,10 +1406,17 @@ query($path: ID!) {
 
   /// Lists issue notes (conversation comments) via REST; skips system notes.
   Future<List<ForgeComment>> listIssueComments(String repoPath, int iid) async {
+    final host = await _originHost(repoPath);
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: ['glab', 'api', 'projects/:fullpath/issues/$iid/notes'],
+      gitArgs: [
+        'glab',
+        'api',
+        ...hostnameFlag(host),
+        'projects/:fullpath/issues/$iid/notes',
+      ],
       lane: ExecLane.read,
+      extraEnv: _hostExtraEnv(host),
     );
     if (!result.isSuccess) {
       throw GlabException('glab api issue notes failed', result);
@@ -1410,10 +1433,17 @@ query($path: ID!) {
     String repoPath,
     int iid,
   ) async {
+    final host = await _originHost(repoPath);
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: ['glab', 'api', 'projects/:fullpath/merge_requests/$iid/notes'],
+      gitArgs: [
+        'glab',
+        'api',
+        ...hostnameFlag(host),
+        'projects/:fullpath/merge_requests/$iid/notes',
+      ],
       lane: ExecLane.read,
+      extraEnv: _hostExtraEnv(host),
     );
     if (!result.isSuccess) {
       throw GlabException('glab api merge request notes failed', result);
@@ -1447,6 +1477,7 @@ query($path: ID!) {
       repoPath: repoPath,
       gitArgs: ['glab', 'issue', 'note', '$iid', '--message', body],
       lane: ExecLane.sync,
+      extraEnv: _hostExtraEnv(await _originHost(repoPath)),
     );
     if (!result.isSuccess) {
       throw GlabException('glab issue note failed', result);
@@ -1473,6 +1504,7 @@ query($path: ID!) {
       repoPath: repoPath,
       gitArgs: args,
       lane: ExecLane.sync,
+      extraEnv: _hostExtraEnv(await _originHost(repoPath)),
     );
     if (!result.isSuccess) {
       throw GlabException('glab issue update failed', result);
@@ -1491,6 +1523,7 @@ query($path: ID!) {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: ['glab', 'mr', 'checkout', '$iid'],
+      extraEnv: _hostExtraEnv(await _originHost(repoPath)),
       // Exclusive: this switches the working tree (fetch + checkout), so it
       // must never overlap a concurrent read or another mutation.
       lane: ExecLane.exclusive,
@@ -1624,6 +1657,7 @@ query($path: ID!) {
         if (draft) '--draft' else '--ready',
       ],
       lane: ExecLane.sync,
+      extraEnv: _hostExtraEnv(await _originHost(repoPath)),
     );
     if (!result.isSuccess) {
       throw GlabException('glab mr update (draft) failed', result);
@@ -1643,6 +1677,7 @@ query($path: ID!) {
       repoPath: repoPath,
       gitArgs: ['glab', 'mr', 'note', '$iid', '--message', body],
       lane: ExecLane.sync,
+      extraEnv: _hostExtraEnv(await _originHost(repoPath)),
     );
     if (!result.isSuccess) {
       throw GlabException('glab mr note failed', result);
@@ -1670,6 +1705,7 @@ query($path: ID!) {
       repoPath: repoPath,
       gitArgs: args,
       lane: ExecLane.sync,
+      extraEnv: _hostExtraEnv(await _originHost(repoPath)),
     );
     if (!result.isSuccess) {
       throw GlabException('glab mr update failed', result);
@@ -1691,14 +1727,12 @@ query($path: ID!) {
   /// A single MR including mergeability and head SHA, via
   /// `glab mr view <iid> --output json`. Powers the detail pane and merge plan.
   Future<MergeRequest> mergeRequestDetail(String repoPath, int iid) async {
-    final decoded = await _runJson(repoPath, [
-      'glab',
-      'mr',
-      'view',
-      '$iid',
-      '--output',
-      'json',
-    ], 'glab mr view');
+    final decoded = await _runJson(
+      repoPath,
+      ['glab', 'mr', 'view', '$iid', '--output', 'json'],
+      'glab mr view',
+      extraEnv: _hostExtraEnv(await _originHost(repoPath)),
+    );
     if (decoded is Map<String, dynamic>) {
       return MergeRequest.fromJson(decoded);
     }

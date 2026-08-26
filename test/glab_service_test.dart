@@ -626,6 +626,164 @@ void main() {
     });
   });
 
+  group('subcommand host pin', () {
+    bool _isOriginLookup(MockExecCall call) =>
+        call.gitArgs.length >= 4 &&
+        call.gitArgs[0] == 'git' &&
+        call.gitArgs[1] == 'remote' &&
+        call.gitArgs[2] == 'get-url' &&
+        call.gitArgs[3] == 'origin';
+
+    MockExecutor _pinned([SSHCommandResult Function(MockExecCall)? glab]) =>
+        MockExecutor(
+          onExecute: (call) {
+            if (_isOriginLookup(call)) {
+              return _ok(stdout: 'git@gitlab.example.com:g/p.git');
+            }
+            return glab?.call(call) ?? _ok(stdout: '[]');
+          },
+        );
+
+    MockExecCall _glabCall(MockExecutor e) =>
+        e.calls.singleWhere((c) => c.gitArgs.first == 'glab');
+
+    test('mergeRequests extraEnv is pinned and argv has no --hostname', () async {
+      var mrPages = 0;
+      final executor = MockExecutor(
+        onExecute: (call) {
+          if (_isOriginLookup(call)) {
+            return _ok(stdout: 'git@gitlab.example.com:g/p.git');
+          }
+          mrPages++;
+          if (mrPages == 1) {
+            return _ok(
+              stdout:
+                  '[{"iid":1,"title":"a","source_branch":"a","target_branch":"main","web_url":""},'
+                  '{"iid":2,"title":"b","source_branch":"b","target_branch":"main","web_url":""}]',
+            );
+          }
+          return _ok(
+            stdout:
+                '[{"iid":3,"title":"c","source_branch":"c","target_branch":"main","web_url":""}]',
+          );
+        },
+      );
+      final service = GlabService(executor);
+      final mrs = await service.mergeRequests(_repo, perPage: 2);
+      expect(mrs, hasLength(3));
+      expect(executor.calls.where(_isOriginLookup), hasLength(1));
+      final glabCalls = executor.calls
+          .where((c) => c.gitArgs.first == 'glab')
+          .toList();
+      expect(glabCalls, hasLength(2));
+      for (final c in glabCalls) {
+        expect(c.extraEnv?['GITLAB_HOST'], 'gitlab.example.com');
+        expect(c.gitArgs, isNot(contains('--hostname')));
+      }
+    });
+
+    test('mergeRequests with gitlab.com override has null extraEnv', () async {
+      final executor = MockExecutor(onExecute: (_) => _ok(stdout: '[]'));
+      final service = _svc(executor);
+      await service.mergeRequests(_repo);
+      expect(_glabCall(executor).extraEnv, isNull);
+    });
+
+    test('createMergeRequest extraEnv is pinned', () async {
+      final executor = _pinned(
+        (_) => _ok(stdout: 'https://x/g/p/-/merge_requests/1'),
+      );
+      final service = GlabService(executor);
+      await service.createMergeRequest(
+        _repo,
+        sourceBranch: 's',
+        targetBranch: 't',
+        title: 'T',
+      );
+      expect(
+        _glabCall(executor).extraEnv?['GITLAB_HOST'],
+        'gitlab.example.com',
+      );
+      expect(_glabCall(executor).gitArgs, isNot(contains('--hostname')));
+    });
+
+    test('listIssues extraEnv is pinned', () async {
+      final executor = _pinned();
+      final service = GlabService(executor);
+      await service.listIssues(_repo);
+      expect(
+        _glabCall(executor).extraEnv?['GITLAB_HOST'],
+        'gitlab.example.com',
+      );
+      expect(_glabCall(executor).gitArgs, isNot(contains('--hostname')));
+    });
+
+    test('createIssue extraEnv is pinned', () async {
+      final executor = _pinned((_) => _ok(stdout: 'https://x/g/p/-/issues/1'));
+      final service = GlabService(executor);
+      await service.createIssue(_repo, title: 'T');
+      expect(
+        _glabCall(executor).extraEnv?['GITLAB_HOST'],
+        'gitlab.example.com',
+      );
+      expect(_glabCall(executor).gitArgs, isNot(contains('--hostname')));
+    });
+
+    test('checkoutMergeRequest extraEnv is pinned', () async {
+      final executor = _pinned((_) => _ok());
+      final service = GlabService(executor);
+      await service.checkoutMergeRequest(_repo, 1);
+      expect(
+        _glabCall(executor).extraEnv?['GITLAB_HOST'],
+        'gitlab.example.com',
+      );
+      expect(_glabCall(executor).gitArgs, isNot(contains('--hostname')));
+    });
+
+    test('listIssueComments pins --hostname after api', () async {
+      final executor = _pinned((_) => _ok(stdout: '[]'));
+      final service = GlabService(executor);
+      await service.listIssueComments(_repo, 1);
+      expect(_glabCall(executor).gitArgs, [
+        'glab',
+        'api',
+        '--hostname',
+        'gitlab.example.com',
+        'projects/:fullpath/issues/1/notes',
+      ]);
+      expect(
+        _glabCall(executor).extraEnv?['GITLAB_HOST'],
+        'gitlab.example.com',
+      );
+    });
+
+    test('traceStream extraEnv is pinned', () async {
+      final handle = MockStreamHandle();
+      final executor = MockExecutor(
+        onExecute: (call) {
+          if (_isOriginLookup(call)) {
+            return _ok(stdout: 'git@gitlab.example.com:g/p.git');
+          }
+          return _ok();
+        },
+        onStream: (_) => handle,
+      );
+      final service = GlabService(executor);
+      final sub = service.traceStream(_repo, 9).listen((_) {});
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        executor.streamCalls.single.extraEnv?['GITLAB_HOST'],
+        'gitlab.example.com',
+      );
+      expect(
+        executor.streamCalls.single.gitArgs,
+        isNot(contains('--hostname')),
+      );
+      await sub.cancel();
+      handle.close();
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // mergeRequests (pagination)
   // ---------------------------------------------------------------------------
@@ -786,11 +944,10 @@ void main() {
           if (call.gitArgs.any((a) => a.contains('config'))) {
             return _ok(stdout: 'ssh');
           }
-          if (call.gitArgs.length > 2 && call.gitArgs[2] == 'user') {
+          if (call.gitArgs.contains('api') && call.gitArgs.contains('user')) {
             return _ok(stdout: _withHeaders('{"username": "myuser"}'));
           }
-          if (call.gitArgs.length > 2 &&
-              call.gitArgs[2].startsWith('projects/')) {
+          if (call.gitArgs.any((a) => a.startsWith('projects/'))) {
             callCount++;
             if (callCount == 1) {
               return _ok(
@@ -823,11 +980,10 @@ void main() {
           if (call.gitArgs.any((a) => a.contains('config'))) {
             return _ok(stdout: 'https');
           }
-          if (call.gitArgs.length > 2 && call.gitArgs[2] == 'user') {
+          if (call.gitArgs.contains('api') && call.gitArgs.contains('user')) {
             return _ok(stdout: _withHeaders('{"username": "myuser"}'));
           }
-          if (call.gitArgs.length > 2 &&
-              call.gitArgs[2].startsWith('projects/')) {
+          if (call.gitArgs.any((a) => a.startsWith('projects/'))) {
             callCount++;
             if (callCount < 2) {
               return _ok(stdout: _withHeaders('{}', status: 500));
@@ -856,7 +1012,7 @@ void main() {
           if (call.gitArgs.any((a) => a.contains('config'))) {
             return _ok(stdout: 'https');
           }
-          if (call.gitArgs.length > 2 && call.gitArgs[2] == 'user') {
+          if (call.gitArgs.contains('api') && call.gitArgs.contains('user')) {
             return _ok(stdout: _withHeaders('{}'));
           }
           return _ok();
@@ -877,8 +1033,7 @@ void main() {
           if (call.gitArgs.any((a) => a.contains('config'))) {
             return _ok(stdout: 'https');
           }
-          if (call.gitArgs.length > 2 &&
-              call.gitArgs[2].startsWith('projects/')) {
+          if (call.gitArgs.any((a) => a.startsWith('projects/'))) {
             return _ok(
               stdout: _withHeaders(
                 '{"http_url_to_repo": "https://example.com/group/project"}',
@@ -898,7 +1053,7 @@ void main() {
       // Should not have called api user — check index 2 of each call
       expect(
         executor.calls.where(
-          (c) => c.gitArgs.length > 2 && c.gitArgs[2] == 'user',
+          (c) => c.gitArgs.contains('api') && c.gitArgs.contains('user'),
         ),
         isEmpty,
       );

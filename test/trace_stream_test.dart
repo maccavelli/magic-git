@@ -42,6 +42,35 @@ class _StreamExecutor extends SSHCommandExecutor {
   _StreamExecutor() : super(SSHClientManager());
   _FakeHandle? handle;
   List<String>? lastArgs;
+  Map<String, String>? lastExtraEnv;
+
+  @override
+  Future<SSHCommandResult> execute({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    String? stdin,
+    Duration timeout = SSHCommandExecutor.defaultTimeout,
+    int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
+    Duration? activityIdle,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+  }) async {
+    if (gitArgs.length >= 4 &&
+        gitArgs[0] == 'git' &&
+        gitArgs[1] == 'remote' &&
+        gitArgs[2] == 'get-url' &&
+        gitArgs[3] == 'origin') {
+      return const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'git@gitlab.example.com:g/p.git',
+        stderr: '',
+      );
+    }
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
 
   @override
   Future<SSHStreamHandle> executeStream({
@@ -53,6 +82,7 @@ class _StreamExecutor extends SSHCommandExecutor {
     OperationEventCallback? onOperationEvent,
   }) async {
     lastArgs = gitArgs;
+    lastExtraEnv = extraEnv;
     return handle = _FakeHandle();
   }
 }
@@ -168,5 +198,18 @@ void main() {
   test('the trace targets the job id via `glab ci trace`', () async {
     final (_, _) = await subscribe();
     expect(exec.lastArgs, ['glab', 'ci', 'trace', '900']);
+  });
+
+  test('traceStream extraEnv is pinned from origin', () async {
+    final unpinned = GlabService(exec);
+    final t = _Trace();
+    unpinned.traceStream('/repo', 900).listen(t.events.add);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      exec.lastExtraEnv,
+      containsPair('GITLAB_HOST', 'gitlab.example.com'),
+    );
+    expect(exec.lastArgs, isNot(contains('--hostname')));
+    await exec.handle?.cancel();
   });
 }
