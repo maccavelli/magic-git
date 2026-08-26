@@ -214,14 +214,22 @@ void main() {
   test(
     'activityIdle: stderr pulses past the idle budget still complete',
     () async {
+      // Piped `sh` `echo` is fully buffered, and Process.stdout coalesces
+      // live writes (~100ms). A 50ms sleep + 120ms idle is a race; the SSH
+      // fake never hits that pipe. Flushed perl for ~0.9s with idle 400ms
+      // finishes only if pulses reset the stall timer.
       final result = await executor.execute(
         repoPath: tempDir.path,
         gitArgs: [
-          'sh',
-          '-c',
-          'i=0; while [ \$i -lt 8 ]; do echo p >&2; i=\$((i+1)); sleep 0.05; done; echo ok',
+          'perl',
+          '-e',
+          r'use Time::HiRes qw(time sleep); '
+              r'select(STDERR); $| = 1; select(STDOUT); $| = 1; '
+              r'my $end = time() + 0.9; '
+              r'while (time() < $end) { print STDERR "p\n"; sleep(0.03) } '
+              r'print "ok\n"',
         ],
-        activityIdle: const Duration(milliseconds: 120),
+        activityIdle: const Duration(milliseconds: 400),
         timeout: const Duration(seconds: 2),
       );
       expect(result.isSuccess, isTrue);
@@ -235,11 +243,14 @@ void main() {
       final result = await executor.execute(
         repoPath: tempDir.path,
         gitArgs: [
-          'sh',
-          '-c',
-          'i=0; while [ \$i -lt 8 ]; do echo p; i=\$((i+1)); sleep 0.05; done; echo ok',
+          'perl',
+          '-e',
+          r'use Time::HiRes qw(time sleep); $| = 1; '
+              r'my $end = time() + 0.9; '
+              r'while (time() < $end) { print "p\n"; sleep(0.03) } '
+              r'print "ok\n"',
         ],
-        activityIdle: const Duration(milliseconds: 120),
+        activityIdle: const Duration(milliseconds: 400),
         timeout: const Duration(seconds: 2),
       );
       expect(result.isSuccess, isTrue);

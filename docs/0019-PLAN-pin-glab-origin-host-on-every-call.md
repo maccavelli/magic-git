@@ -1,12 +1,19 @@
 ---
-status: proposed
+status: executed
 date: 2026-08-26
+executed: 2026-08-26
 verified: 2026-08-26
 approved: 2026-08-26
 associated-madr: 0019-MADR-pin-glab-origin-host-on-every-call.md
 owner: [Maintainer]
 target-milestone: This work cycle
 ---
+
+> **Status note (2026-08-26).** Engineering phases 0–7 shipped (`flutter
+> analyze` clean, full `flutter test` green). **Phase 8 — maintainer live
+> check on admdevops / glab 1.109 — is open by nature.** `status: executed`
+> above refers to the engineering phases. A Phase 7 deviation (pre-existing
+> `activityIdle` tests) is recorded under Phase 7.
 
 # Implement: pin every glab invocation to the repo origin host
 
@@ -752,7 +759,25 @@ construction site, do not drop the assertion.
 If `provider_retry_policy_test.dart` fails, a new async provider lacks
 `retry: noProviderRetry`. This plan must not add providers.
 
-**Commit** only leftover format/analyze fixes.
+~~**Commit** only leftover format/analyze fixes.~~
+
+**Deviation (2026-08-26).** Full `flutter test` failed on two pre-existing
+tests in `test/local_command_executor_test.dart` (untouched vs `b1c8aa5`):
+
+* `activityIdle: stderr pulses past the idle budget still complete`
+* `activityIdle: stdout pulses past the idle budget still complete`
+
+Both threw `SSHCommandTimeout`. Two stacked effects: piped `sh` `echo` is
+fully buffered, and Dart's `Process.stdout` coalesces live writes to
+~100ms — so a 50ms `sleep` plus a 120ms idle is a race (the SSH twins
+inject bytes on a fake stream and do not hit the pipe). Production already
+pulses per chunk; fetch/push idle is 17s. Decision: flushed perl
+(`Time::HiRes`, `$|=1`) for ~0.9s, idle 400ms, ceiling 2s — completes only
+if pulses reset idle, fails if they do not. File added to this phase:
+`test/local_command_executor_test.dart`. Do not skip or drop the
+`isSuccess` / `contains('ok')` assertions.
+
+**Commit** leftover format/analyze fixes and the activityIdle test fix.
 
 ---
 
