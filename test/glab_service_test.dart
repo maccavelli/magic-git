@@ -497,6 +497,135 @@ void main() {
     });
   });
 
+  group('api/graphql host pin', () {
+    bool _isOriginLookup(MockExecCall call) =>
+        call.gitArgs.length >= 4 &&
+        call.gitArgs[0] == 'git' &&
+        call.gitArgs[1] == 'remote' &&
+        call.gitArgs[2] == 'get-url' &&
+        call.gitArgs[3] == 'origin';
+
+    MockExecCall _glabCall(MockExecutor e) =>
+        e.calls.singleWhere((c) => c.gitArgs.first == 'glab');
+
+    test('api GET self-hosted pins --hostname and extraEnv', () async {
+      final executor = MockExecutor(
+        onExecute: (call) {
+          if (_isOriginLookup(call)) {
+            return _ok(stdout: 'https://gitlab.example.com/group/proj.git');
+          }
+          return _ok(stdout: _withHeaders('{}'));
+        },
+      );
+      final service = GlabService(executor);
+      await service.api(_repo, 'projects/:id', method: 'GET');
+      expect(_glabCall(executor).gitArgs, [
+        'glab',
+        'api',
+        '--hostname',
+        'gitlab.example.com',
+        'projects/:id',
+        '--method',
+        'GET',
+        '-i',
+      ]);
+      expect(_glabCall(executor).extraEnv, {
+        'GITLAB_HOST': 'gitlab.example.com',
+        'GITLAB_URI': 'gitlab.example.com',
+      });
+      expect(executor.calls.where((c) => _isOriginLookup(c)), hasLength(1));
+    });
+
+    test('api GET with gitlab.com override has no --hostname', () async {
+      final executor = MockExecutor(
+        onExecute: (call) => _ok(stdout: _withHeaders('{}')),
+      );
+      final service = _svc(executor);
+      await service.api(_repo, 'projects/:id', method: 'GET');
+      expect(_glabCall(executor).gitArgs, isNot(contains('--hostname')));
+      expect(_glabCall(executor).extraEnv, isNull);
+    });
+
+    test('jobs page walk looks up origin once and pins every page', () async {
+      String jobRow(int id) =>
+          '{"id":$id,"name":"j$id","stage":"build","status":"success"}';
+      var apiPages = 0;
+      final executor = MockExecutor(
+        onExecute: (call) {
+          if (_isOriginLookup(call)) {
+            return _ok(stdout: 'https://gitlab.example.com/group/proj.git');
+          }
+          apiPages++;
+          final count = apiPages == 1 ? 100 : 1;
+          final start = apiPages == 1 ? 1 : 101;
+          final body =
+              '[${List.generate(count, (i) => jobRow(start + i)).join(',')}]';
+          return _ok(stdout: _withHeaders(body));
+        },
+      );
+      final service = GlabService(executor);
+      final jobs = await service.jobs(_repo, 7);
+      expect(jobs, hasLength(101));
+      expect(executor.calls.where((c) => _isOriginLookup(c)), hasLength(1));
+      final glabCalls = executor.calls
+          .where((c) => c.gitArgs.first == 'glab')
+          .toList();
+      expect(glabCalls, hasLength(2));
+      for (final c in glabCalls) {
+        expect(
+          c.gitArgs,
+          containsAllInOrder(['api', '--hostname', 'gitlab.example.com']),
+        );
+        expect(c.extraEnv?['GITLAB_HOST'], 'gitlab.example.com');
+      }
+    });
+
+    test(
+      'graphql pins --hostname extraEnv and keeps query -f and -i',
+      () async {
+        final executor = MockExecutor(
+          onExecute: (call) {
+            if (_isOriginLookup(call)) {
+              return _ok(stdout: 'https://gitlab.example.com/group/proj.git');
+            }
+            return _ok(
+              stdout: _withHeaders('{"data": {"project": {"id": "1"}}}'),
+            );
+          },
+        );
+        final service = GlabService(executor);
+        await service.graphql(_repo, 'query { project { id } }');
+        final args = _glabCall(executor).gitArgs;
+        expect(args.take(5).toList(), [
+          'glab',
+          'api',
+          '--hostname',
+          'gitlab.example.com',
+          'graphql',
+        ]);
+        expect(args, contains('query=query { project { id } }'));
+        expect(args, contains('-i'));
+        expect(_glabCall(executor).extraEnv, {
+          'GITLAB_HOST': 'gitlab.example.com',
+          'GITLAB_URI': 'gitlab.example.com',
+        });
+      },
+    );
+
+    test('get-url failure still runs api without a pin', () async {
+      final executor = MockExecutor(
+        onExecute: (call) {
+          if (_isOriginLookup(call)) return _fail(stderr: 'no origin');
+          return _ok(stdout: _withHeaders('{}'));
+        },
+      );
+      final service = GlabService(executor);
+      await service.api(_repo, 'projects/:id');
+      expect(_glabCall(executor).gitArgs, isNot(contains('--hostname')));
+      expect(_glabCall(executor).extraEnv, isNull);
+    });
+  });
+
   // ---------------------------------------------------------------------------
   // mergeRequests (pagination)
   // ---------------------------------------------------------------------------

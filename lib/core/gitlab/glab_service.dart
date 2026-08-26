@@ -466,11 +466,20 @@ class GlabService {
     List<String> fields = const [],
     bool paginate = false,
     String method = 'GET',
+    String? host,
   }) async {
+    final resolved = host ?? await _originHost(repoPath);
     // Always pass --method explicitly. glab treats a request with any `-f`
     // field as a POST unless the method is stated, so an implicit GET with
     // query params (per_page, state, …) would POST to a read endpoint and 400.
-    final args = <String>['glab', 'api', endpoint, '--method', method];
+    final args = <String>[
+      'glab',
+      'api',
+      ...hostnameFlag(resolved),
+      endpoint,
+      '--method',
+      method,
+    ];
     if (paginate) {
       args.add('--paginate');
     }
@@ -499,6 +508,7 @@ class GlabService {
       // forge-side state and rides the single-width sync lane — never the
       // exclusive lane, since no glab api call touches the index/worktree.
       lane: method == 'GET' ? ExecLane.read : ExecLane.sync,
+      extraEnv: _hostExtraEnv(resolved),
     );
   }
 
@@ -673,21 +683,22 @@ query($path: ID!) {
     String query, {
     Map<String, String> variables = const {},
     String label = 'glab api graphql',
+    String? host,
   }) async {
     // Reset up front so no return/throw path can leak the previous call's
     // warning into this one — the empty-body and non-map early returns below
     // used to skip the assignment entirely, leaving a stale warning from an
     // earlier repo's query on the instance.
     lastGraphqlWarning = null;
+    final resolved = host ?? await _originHost(repoPath);
+    final gql = graphqlArgs(query, variables: variables);
     final result = await _executor.execute(
       repoPath: repoPath,
-      gitArgs: [
-        ...graphqlArgs(query, variables: variables),
-        '-i',
-      ],
+      gitArgs: ['glab', 'api', ...hostnameFlag(resolved), ...gql.skip(2), '-i'],
       // Every GraphQL call this app issues is a query (the dashboard read).
       lane: ExecLane.read,
       compress: true,
+      extraEnv: _hostExtraEnv(resolved),
     );
     // GraphQL always rides `-i`, so the HTTP status is authoritative — glab's
     // advisory exit code (glab #911) must not preempt it. A GraphQL 200 that
@@ -737,7 +748,11 @@ query($path: ID!) {
       timeout: const Duration(seconds: 20),
       lane: ExecLane.read,
     );
-    final fullPath = projectPathFromRemote(remote.stdout.trim());
+    final url = remote.stdout.trim();
+    if (remote.isSuccess) {
+      _originHostCache[repoPath] = forgeHostFromRemoteUrl(url);
+    }
+    final fullPath = projectPathFromRemote(url);
     if (fullPath == null) {
       throw GlabException(
         'could not resolve a GitLab project path from origin',
