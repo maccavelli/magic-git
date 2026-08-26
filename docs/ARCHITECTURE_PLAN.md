@@ -298,9 +298,14 @@ patchwork of subcommands [1]:
 
 - Hits **REST v4** (`glab api projects/:id/merge_requests`) **and GraphQL**
   (`glab api graphql -f query=…`) [1].
-- **Auto-resolves host + auth from the repo CWD** — because we `cd` into the
-  remote repo, glab inherits the right GitLab instance and token automatically
-  (override with `--hostname`) [1].
+- **Host pin is explicit; CWD is a backstop.** Magic Git always derives the
+  origin host from `git remote get-url origin` and passes `GITLAB_HOST` /
+  `GITLAB_URI` on `glab` subcommands (`mr`, `issue`, `ci`) and `--hostname`
+  on `glab api` / GraphQL (see
+  [0019-MADR-pin-glab-origin-host-on-every-call.md](0019-MADR-pin-glab-origin-host-on-every-call.md)).
+  CWD auto-resolution remains if a call is unpinned, but repo-scoped
+  `GlabService` methods do not rely on it. Stdin login
+  (`glab auth login --hostname <host> --stdin`) is unchanged.
 - Machine-readable by design: `--output json` (default, pretty array) or
   `--output ndjson` (newline-delimited, memory-efficient, streams line-by-line —
   **prefer for large paginated collections over SSH**) [2].

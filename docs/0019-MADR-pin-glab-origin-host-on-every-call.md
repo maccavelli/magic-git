@@ -382,6 +382,9 @@ An executor decorator, analogous to `ScopedCommandExecutor`, injects
 
 ## More Information
 
+The host binary stays **glab 1.109.0** — 1.111's keyring-by-default is why
+this work does not bump it (see Host binary freeze below).
+
 ### Missing wiring (inventory)
 
 | Call | Host pin today | What 1.109 accepts |
