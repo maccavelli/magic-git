@@ -1,3 +1,4 @@
+import 'package:clock/clock.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -23,6 +24,13 @@ OperationEvent _event(
   occurredAt: DateTime.utc(2026, 1, 1),
   undoable: undoable,
 );
+
+/// Live operations run a 1 s elapsed ticker and a repeating icon spin, so
+/// [WidgetTester.pumpAndSettle] never returns. Pump discretely instead.
+Future<void> _pumpSheet(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 300));
+}
 
 void main() {
   testWidgets('activity list explains empty state', (tester) async {
@@ -78,21 +86,21 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpSheet(tester);
 
     await tester.tap(find.byType(ActivityCenterButton));
-    await tester.pumpAndSettle();
+    await _pumpSheet(tester);
     expect(find.text('Operation fetch'), findsOneWidget);
 
     // A new operation lands while the sheet is open — it must appear.
     container
         .read(operationActivityProvider.notifier)
         .report(_event('push', OperationPhase.queued));
-    await tester.pumpAndSettle();
+    await tester.pump();
     expect(find.text('Operation push'), findsOneWidget);
 
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-    await tester.pumpAndSettle();
+    await _pumpSheet(tester);
     expect(find.text('Operation push'), findsNothing);
   });
 
@@ -114,12 +122,85 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _pumpSheet(tester);
     await tester.tap(find.byType(ActivityCenterButton));
-    await tester.pumpAndSettle();
+    await _pumpSheet(tester);
 
     expect(find.text('Operation newer'), findsOneWidget);
     expect(find.text('Operation older'), findsOneWidget);
     expect(find.text('Undo'), findsOneWidget);
+  });
+
+  testWidgets('elapsed text ticks while a record is running', (tester) async {
+    final now = clock.now();
+    final record = OperationRecord(
+      id: const OperationId('op'),
+      descriptor: const OperationDescriptor(
+        repositoryPath: '/repo',
+        label: 'Fetch',
+        kind: OperationKind.synchronization,
+        lane: ExecLane.sync,
+      ),
+      phase: OperationPhase.running,
+      queuedAt: now,
+      startedAt: now,
+    );
+    await tester.pumpWidget(
+      MacosApp(
+        theme: MacosThemeData.dark(),
+        home: ActivityCenterList(records: [record]),
+      ),
+    );
+    expect(find.textContaining('0s'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 2));
+    expect(find.textContaining('2s'), findsOneWidget);
+  });
+
+  testWidgets('Activity Center icon spins while an operation is running', (
+    tester,
+  ) async {
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final now = DateTime.now();
+    container
+        .read(operationActivityProvider.notifier)
+        .report(
+          OperationEvent(
+            id: const OperationId('fetch'),
+            descriptor: const OperationDescriptor(
+              repositoryPath: '/repo',
+              label: 'Fetch',
+              kind: OperationKind.synchronization,
+              lane: ExecLane.sync,
+            ),
+            phase: OperationPhase.queued,
+            occurredAt: now,
+          ),
+        );
+    container
+        .read(operationActivityProvider.notifier)
+        .report(
+          OperationEvent(
+            id: const OperationId('fetch'),
+            descriptor: const OperationDescriptor(
+              repositoryPath: '/repo',
+              label: 'Fetch',
+              kind: OperationKind.synchronization,
+              lane: ExecLane.sync,
+            ),
+            phase: OperationPhase.running,
+            occurredAt: now,
+          ),
+        );
+    await tester.pumpWidget(
+      UncontrolledProviderScope(
+        container: container,
+        child: const MacosApp(
+          home: Center(child: ActivityCenterButton(repositoryPath: '/repo')),
+        ),
+      ),
+    );
+    await tester.pump();
+    expect(find.byType(RotationTransition), findsOneWidget);
   });
 }

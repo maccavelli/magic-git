@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:clock/clock.dart';
 import 'package:flutter/cupertino.dart' show CupertinoIcons;
 import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -10,7 +13,7 @@ import 'inline_action_button.dart';
 import 'menu_bar_bridge.dart';
 import 'tool_icon_button.dart';
 
-class ActivityCenterButton extends ConsumerWidget {
+class ActivityCenterButton extends ConsumerStatefulWidget {
   final String? repositoryPath;
   final ValueChanged<OperationId>? onRevealOutput;
   final ValueChanged<OperationId>? onUndo;
@@ -25,10 +28,28 @@ class ActivityCenterButton extends ConsumerWidget {
   });
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ActivityCenterButton> createState() =>
+      _ActivityCenterButtonState();
+}
+
+class _ActivityCenterButtonState extends ConsumerState<ActivityCenterButton>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _spin = AnimationController(
+    vsync: this,
+    duration: const Duration(seconds: 2),
+  );
+
+  @override
+  void dispose() {
+    _spin.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final records = ref.watch(operationActivityProvider).where((record) {
-      return repositoryPath == null ||
-          record.descriptor.repositoryPath == repositoryPath;
+      return widget.repositoryPath == null ||
+          record.descriptor.repositoryPath == widget.repositoryPath;
     }).toList();
     final active = records.where((record) => !record.isTerminal).length;
     final failed = records
@@ -40,33 +61,51 @@ class ActivityCenterButton extends ConsumerWidget {
         ? '$failed failed operation${failed == 1 ? '' : 's'}'
         : 'Activity';
 
-    return Semantics(
-      button: true,
-      label: label,
-      child: ToolIconButton(
-        icon: active > 0
-            ? CupertinoIcons.arrow_2_circlepath
-            : CupertinoIcons.bell,
-        tooltip: label,
-        onPressed: () => showMacosSheet<void>(
-          context: context,
-          builder: (context) => EscapeDismissible(
-            child: MacosSheet(
-              child: SizedBox(
-                width: 520,
-                height: 420,
-                // A live sheet, not a tap-time snapshot (0009 M3): the sheet
-                // itself watches the provider, so a fetch that finishes while
-                // it is open updates in place.
-                child: ActivityCenterSheet(
-                  repositoryPath: repositoryPath,
-                  onRevealOutput: onRevealOutput,
-                ),
+    final shouldSpin = active > 0;
+    if (shouldSpin != _spin.isAnimating) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        if (shouldSpin) {
+          if (!_spin.isAnimating) unawaited(_spin.repeat());
+        } else if (_spin.isAnimating || _spin.value != 0) {
+          _spin
+            ..stop()
+            ..reset();
+        }
+      });
+    }
+
+    final iconButton = ToolIconButton(
+      icon: active > 0
+          ? CupertinoIcons.arrow_2_circlepath
+          : CupertinoIcons.bell,
+      tooltip: label,
+      onPressed: () => showMacosSheet<void>(
+        context: context,
+        builder: (context) => EscapeDismissible(
+          child: MacosSheet(
+            child: SizedBox(
+              width: 520,
+              height: 420,
+              // A live sheet, not a tap-time snapshot (0009 M3): the sheet
+              // itself watches the provider, so a fetch that finishes while
+              // it is open updates in place.
+              child: ActivityCenterSheet(
+                repositoryPath: widget.repositoryPath,
+                onRevealOutput: widget.onRevealOutput,
               ),
             ),
           ),
         ),
       ),
+    );
+
+    return Semantics(
+      button: true,
+      label: label,
+      child: active > 0
+          ? RotationTransition(turns: _spin, child: iconButton)
+          : iconButton,
     );
   }
 }
@@ -122,7 +161,7 @@ class ActivityCenterSheet extends ConsumerWidget {
   }
 }
 
-class ActivityCenterList extends StatelessWidget {
+class ActivityCenterList extends StatefulWidget {
   final List<OperationRecord> records;
   final ValueChanged<OperationId>? onRevealOutput;
   final ValueChanged<OperationId>? onUndo;
@@ -142,40 +181,83 @@ class ActivityCenterList extends StatelessWidget {
   });
 
   @override
+  State<ActivityCenterList> createState() => _ActivityCenterListState();
+}
+
+class _ActivityCenterListState extends State<ActivityCenterList> {
+  Timer? _elapsedTicker;
+
+  bool get _hasLive => widget.records.any((record) => !record.isTerminal);
+
+  @override
+  void initState() {
+    super.initState();
+    _syncTicker();
+  }
+
+  @override
+  void didUpdateWidget(ActivityCenterList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _syncTicker();
+  }
+
+  void _syncTicker() {
+    if (_hasLive) {
+      _elapsedTicker ??= Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) setState(() {});
+      });
+    } else {
+      _elapsedTicker?.cancel();
+      _elapsedTicker = null;
+    }
+  }
+
+  @override
+  void dispose() {
+    _elapsedTicker?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
-    return Padding(
-      padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text('Activity', style: typography.title2),
-          const SizedBox(height: 12),
-          if (records.isEmpty)
-            Expanded(
-              child: Center(
-                child: Text(
-                  'No repository operations yet.',
-                  style: typography.body.copyWith(
-                    color: MacosColors.systemGrayColor,
+    return TickerMode(
+      enabled: _hasLive,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('Activity', style: typography.title2),
+            const SizedBox(height: 12),
+            if (widget.records.isEmpty)
+              Expanded(
+                child: Center(
+                  child: Text(
+                    'No repository operations yet.',
+                    style: typography.body.copyWith(
+                      color: MacosColors.systemGrayColor,
+                    ),
+                  ),
+                ),
+              )
+            else
+              Expanded(
+                child: ListView.separated(
+                  itemCount: widget.records.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  itemBuilder: (context, index) => _ActivityRow(
+                    record: widget.records[index],
+                    onRevealOutput: widget.onRevealOutput,
+                    onUndo: widget.records[index].id == widget.undoableRecordId
+                        ? widget.onUndo
+                        : null,
+                    onOpenRecovery: widget.onOpenRecovery,
                   ),
                 ),
               ),
-            )
-          else
-            Expanded(
-              child: ListView.separated(
-                itemCount: records.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 8),
-                itemBuilder: (context, index) => _ActivityRow(
-                  record: records[index],
-                  onRevealOutput: onRevealOutput,
-                  onUndo: records[index].id == undoableRecordId ? onUndo : null,
-                  onOpenRecovery: onOpenRecovery,
-                ),
-              ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -204,7 +286,7 @@ class _ActivityRow extends StatelessWidget {
       OperationPhase.failed => 'Failed',
       OperationPhase.canceled => 'Canceled',
     };
-    final elapsed = record.elapsed(DateTime.now());
+    final elapsed = record.elapsed(clock.now());
     final elapsedLabel = elapsed.inMinutes > 0
         ? '${elapsed.inMinutes}m ${elapsed.inSeconds.remainder(60)}s'
         : '${elapsed.inSeconds}s';

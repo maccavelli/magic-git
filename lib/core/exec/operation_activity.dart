@@ -5,7 +5,18 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'command_lanes.dart';
 
-enum OperationPhase { queued, running, succeeded, failed, canceled }
+enum OperationPhase {
+  queued,
+  running,
+  succeeded,
+  failed,
+  canceled;
+
+  bool get isTerminal => switch (this) {
+    succeeded || failed || canceled => true,
+    queued || running => false,
+  };
+}
 
 enum OperationKind {
   gitMutation,
@@ -241,12 +252,7 @@ class OperationRecord {
     this.recoveryAvailable = false,
   });
 
-  bool get isTerminal => switch (phase) {
-    OperationPhase.succeeded ||
-    OperationPhase.failed ||
-    OperationPhase.canceled => true,
-    OperationPhase.queued || OperationPhase.running => false,
-  };
+  bool get isTerminal => phase.isTerminal;
 
   Duration elapsed(DateTime now) =>
       (finishedAt ?? now).difference(startedAt ?? queuedAt);
@@ -366,6 +372,16 @@ class OperationActivityStore {
     _records = [...active, ...terminal.take(maxTerminalRecords)];
     return _records;
   }
+
+  List<OperationRecord> drop(OperationId id) {
+    final next = [
+      for (final record in _records)
+        if (record.id != id) record,
+    ];
+    if (next.length == _records.length) return _records;
+    _records = next;
+    return _records;
+  }
 }
 
 class OperationActivityNotifier extends Notifier<List<OperationRecord>> {
@@ -378,8 +394,11 @@ class OperationActivityNotifier extends Notifier<List<OperationRecord>> {
   }
 
   void report(OperationEvent event) {
-    if (event.descriptor.visibility == OperationVisibility.background) return;
-    final next = _store.apply(event);
+    var next = _store.apply(event);
+    if (event.descriptor.visibility == OperationVisibility.background &&
+        event.phase.isTerminal) {
+      next = _store.drop(event.id);
+    }
     if (!identical(next, state)) state = next;
   }
 

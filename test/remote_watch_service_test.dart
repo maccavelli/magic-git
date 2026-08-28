@@ -202,4 +202,35 @@ void main() {
       sub.cancel();
     });
   });
+
+  test('inotifywait argv excludes git objects, logs, locks, and fsmonitor', () {
+    final args = remoteWatcherArgs(RemoteWatcherTool.inotifywait, null);
+    expect(args.take(2), ['sh', '-c']);
+    final script = args.last;
+    const excludes = [
+      r"--exclude '/\.git/objects/'",
+      r"--exclude '/\.git/logs/'",
+      r"--exclude '\.lock$'",
+      r"--exclude '/\.git/fsmonitor--daemon/'",
+    ];
+    for (final flag in excludes) {
+      expect(script, contains(flag));
+      expect(
+        flag.allMatches(script),
+        hasLength(2),
+        reason: '$flag must appear on both the stdbuf and fallback arms',
+      );
+    }
+    expect(
+      script,
+      contains(
+        '-e modify,create,delete,move '
+        r"--exclude '/\.git/objects/' "
+        r"--exclude '/\.git/logs/' "
+        r"--exclude '\.lock$' "
+        r"--exclude '/\.git/fsmonitor--daemon/' "
+        '--format',
+      ),
+    );
+  });
 }

@@ -169,25 +169,58 @@ void main() {
     },
   );
 
-  test('background visibility is omitted from the visible notifier', () {
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final reporter = container.read(operationActivityProvider.notifier);
-    final now = DateTime.utc(2026, 1, 1);
-    reporter.report(
-      OperationEvent(
-        id: const OperationId('background'),
-        descriptor: const OperationDescriptor(
-          repositoryPath: '/repo',
-          label: 'Auto-fetch',
-          kind: OperationKind.background,
-          lane: ExecLane.sync,
-          visibility: OperationVisibility.background,
+  test(
+    'background queued and running appear; terminal background is dropped',
+    () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+      final reporter = container.read(operationActivityProvider.notifier);
+      final now = DateTime.utc(2026, 1, 1);
+      const id = OperationId('background');
+      const descriptor = OperationDescriptor(
+        repositoryPath: '/repo',
+        label: 'Auto-fetch',
+        kind: OperationKind.background,
+        lane: ExecLane.sync,
+        visibility: OperationVisibility.background,
+      );
+      reporter.report(
+        OperationEvent(
+          id: id,
+          descriptor: descriptor,
+          phase: OperationPhase.queued,
+          occurredAt: now,
         ),
-        phase: OperationPhase.queued,
-        occurredAt: now,
-      ),
-    );
-    expect(container.read(operationActivityProvider), isEmpty);
-  });
+      );
+      expect(container.read(operationActivityProvider), hasLength(1));
+      expect(
+        container.read(operationActivityProvider).single.phase,
+        OperationPhase.queued,
+      );
+
+      reporter.report(
+        OperationEvent(
+          id: id,
+          descriptor: descriptor,
+          phase: OperationPhase.running,
+          occurredAt: now.add(const Duration(seconds: 1)),
+        ),
+      );
+      expect(
+        container.read(operationActivityProvider).single.phase,
+        OperationPhase.running,
+      );
+
+      reporter.report(
+        OperationEvent(
+          id: id,
+          descriptor: descriptor,
+          phase: OperationPhase.succeeded,
+          occurredAt: now.add(const Duration(seconds: 2)),
+          result: 'Completed',
+        ),
+      );
+      expect(container.read(operationActivityProvider), isEmpty);
+    },
+  );
 }

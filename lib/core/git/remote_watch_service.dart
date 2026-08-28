@@ -6,7 +6,74 @@ import 'watch_event.dart';
 import 'watch_lifecycle.dart';
 import 'watch_path_filter.dart';
 
-enum _WatcherTool { fswatch, inotifywait, none }
+enum RemoteWatcherTool { fswatch, inotifywait, none }
+
+/// Exclude git internals that flood a recursive watch during fetch/gc.
+/// Shared by both sides of the `stdbuf` / bare `inotifywait` fork.
+const _inotifyExcludeFlags =
+    r"--exclude '/\.git/objects/' "
+    r"--exclude '/\.git/logs/' "
+    r"--exclude '\.lock$' "
+    r"--exclude '/\.git/fsmonitor--daemon/' ";
+
+/// Argv for the remote watcher process. Extracted so tests can assert
+/// inotifywait excludes without arming an SSH stream.
+List<String> remoteWatcherArgs(
+  RemoteWatcherTool tool,
+  BoundedWatchSpec? bounded,
+) {
+  // Scoped work-tree repo: watch the explicit, non-recursive bounded surface
+  // (git-dir points + tracked-file dirs) instead of the whole work tree.
+  if (bounded != null) {
+    switch (tool) {
+      case RemoteWatcherTool.fswatch:
+        return boundedFswatchArgs(bounded.watchDirs);
+      case RemoteWatcherTool.inotifywait:
+        return ['sh', '-c', boundedInotifyScript(bounded.watchDirs)];
+      case RemoteWatcherTool.none:
+        return const [];
+    }
+  }
+  switch (tool) {
+    case RemoteWatcherTool.fswatch:
+      return [
+        'fswatch',
+        '-0',
+        '--latency',
+        '0.5',
+        '--exclude',
+        r'\.git/.*\.lock$',
+        '--exclude',
+        r'\.git/objects/',
+        '--exclude',
+        r'\.git/logs/',
+        '--exclude',
+        r'\.git/fsmonitor--daemon/',
+        '.',
+      ];
+    case RemoteWatcherTool.inotifywait:
+      // inotifywait writes events with stdio, which **block-buffers** when
+      // stdout is a pipe (our SSH channel has no TTY). A single change (~a few
+      // bytes) would then sit unflushed in the ~4KB buffer and never reach the
+      // app, so the live watcher looks dead. `stdbuf -oL` forces line-buffered
+      // output so each event flushes immediately; fall back to bare
+      // inotifywait if stdbuf is unavailable. (fswatch flushes per batch on
+      // its own, so it needs no such wrapper.)
+      return [
+        'sh',
+        '-c',
+        'if command -v stdbuf >/dev/null 2>&1; then '
+            'exec stdbuf -oL inotifywait -m -r '
+            '-e modify,create,delete,move $_inotifyExcludeFlags'
+            '--format %w%f .; '
+            'else exec inotifywait -m -r '
+            '-e modify,create,delete,move $_inotifyExcludeFlags'
+            '--format %w%f .; fi',
+      ];
+    case RemoteWatcherTool.none:
+      return const [];
+  }
+}
 
 /// Watches a remote repository for filesystem changes and emits a coalesced
 /// [RepoWatchEvent] per settled burst, carrying the active [WatchMode] so the UI
@@ -52,7 +119,7 @@ class RemoteWatchService {
     // change between one blip's retries, so there's no need to re-probe the
     // remote for it every time. Cleared while recovering from polling, since
     // enough time has passed there that it's worth re-checking.
-    _WatcherTool? cachedTool;
+    RemoteWatcherTool? cachedTool;
 
     return watchLifecycle(
       trailing: trailing,
@@ -65,11 +132,11 @@ class RemoteWatchService {
         final tool = cachedTool ??= await _detectWatcher(repoPath);
         if (hooks.isCancelled()) return const WatchAborted();
 
-        if (tool == _WatcherTool.none) return const WatchUnavailable();
+        if (tool == RemoteWatcherTool.none) return const WatchUnavailable();
 
         final handle = await _executor.executeStream(
           repoPath: repoPath,
-          gitArgs: _watcherArgs(tool, bounded),
+          gitArgs: remoteWatcherArgs(tool, bounded),
         );
         if (hooks.isCancelled()) {
           await handle.cancel();
@@ -77,7 +144,7 @@ class RemoteWatchService {
         }
 
         var buffer = '';
-        final delimiter = tool == _WatcherTool.fswatch ? '\u0000' : '\n';
+        final delimiter = tool == RemoteWatcherTool.fswatch ? '\u0000' : '\n';
         final sub = handle.stdout.listen(
           (chunk) {
             hooks.noteActivity();
@@ -124,7 +191,7 @@ class RemoteWatchService {
     );
   }
 
-  Future<_WatcherTool> _detectWatcher(String repoPath) async {
+  Future<RemoteWatcherTool> _detectWatcher(String repoPath) async {
     final result = await _executor.execute(
       repoPath: repoPath,
       gitArgs: [
@@ -138,63 +205,11 @@ class RemoteWatchService {
     );
     switch (result.stdout.trim()) {
       case 'fswatch':
-        return _WatcherTool.fswatch;
+        return RemoteWatcherTool.fswatch;
       case 'inotifywait':
-        return _WatcherTool.inotifywait;
+        return RemoteWatcherTool.inotifywait;
       default:
-        return _WatcherTool.none;
-    }
-  }
-
-  List<String> _watcherArgs(_WatcherTool tool, BoundedWatchSpec? bounded) {
-    // Scoped work-tree repo: watch the explicit, non-recursive bounded surface
-    // (git-dir points + tracked-file dirs) instead of the whole work tree.
-    if (bounded != null) {
-      switch (tool) {
-        case _WatcherTool.fswatch:
-          return boundedFswatchArgs(bounded.watchDirs);
-        case _WatcherTool.inotifywait:
-          return ['sh', '-c', boundedInotifyScript(bounded.watchDirs)];
-        case _WatcherTool.none:
-          return const [];
-      }
-    }
-    switch (tool) {
-      case _WatcherTool.fswatch:
-        return [
-          'fswatch',
-          '-0',
-          '--latency',
-          '0.5',
-          '--exclude',
-          r'\.git/.*\.lock$',
-          '--exclude',
-          r'\.git/objects/',
-          '--exclude',
-          r'\.git/logs/',
-          '--exclude',
-          r'\.git/fsmonitor--daemon/',
-          '.',
-        ];
-      case _WatcherTool.inotifywait:
-        // inotifywait writes events with stdio, which **block-buffers** when
-        // stdout is a pipe (our SSH channel has no TTY). A single change (~a few
-        // bytes) would then sit unflushed in the ~4KB buffer and never reach the
-        // app, so the live watcher looks dead. `stdbuf -oL` forces line-buffered
-        // output so each event flushes immediately; fall back to bare
-        // inotifywait if stdbuf is unavailable. (fswatch flushes per batch on
-        // its own, so it needs no such wrapper.)
-        return [
-          'sh',
-          '-c',
-          'if command -v stdbuf >/dev/null 2>&1; then '
-              'exec stdbuf -oL inotifywait -m -r '
-              '-e modify,create,delete,move --format %w%f .; '
-              'else exec inotifywait -m -r '
-              '-e modify,create,delete,move --format %w%f .; fi',
-        ];
-      case _WatcherTool.none:
-        return const [];
+        return RemoteWatcherTool.none;
     }
   }
 }
