@@ -39,6 +39,7 @@ class FakeExecutor implements ScopedCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     if (gitArgs.first == 'hash-object') {
       final path = gitArgs.last;

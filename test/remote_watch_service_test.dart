@@ -23,6 +23,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     return const SSHCommandResult(exitCode: 0, stdout: 'none\n', stderr: '');
   }
@@ -48,6 +49,7 @@ class _ThrowingStreamExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     return const SSHCommandResult(exitCode: 0, stdout: 'fswatch\n', stderr: '');
   }
@@ -106,6 +108,7 @@ class _RecoveringExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     final tool = probes++ == 0 ? 'none' : 'fswatch';
     return SSHCommandResult(exitCode: 0, stdout: '$tool\n', stderr: '');

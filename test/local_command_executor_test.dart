@@ -78,6 +78,27 @@ void main() {
     },
   );
 
+  test('onOutput is invoked before execute completes', () async {
+    final chunks = <({String chunk, bool stderr})>[];
+    var completed = false;
+    final result = await executor.execute(
+      repoPath: tempDir.path,
+      gitArgs: ['sh', '-c', 'printf hello; printf err >&2'],
+      onOutput: (chunk, {required stderr}) {
+        expect(
+          completed,
+          isFalse,
+          reason: 'chunk arrived after execute returned',
+        );
+        chunks.add((chunk: chunk, stderr: stderr));
+      },
+    );
+    completed = true;
+    expect(result.isSuccess, isTrue);
+    expect(chunks.any((c) => !c.stderr && c.chunk.contains('hello')), isTrue);
+    expect(chunks.any((c) => c.stderr && c.chunk.contains('err')), isTrue);
+  });
+
   test('a deterministic spawn failure is not retried', () async {
     // With retries requested, a missing binary must NOT spin (it returns a
     // result now, which runWithRetries treats as success-shaped, not a throw).

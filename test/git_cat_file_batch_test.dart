@@ -57,6 +57,7 @@ class _RecordingExecutor implements CommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     calls.add(List<String>.from(gitArgs));
     compressFlags.add(compress);

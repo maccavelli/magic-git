@@ -32,6 +32,7 @@ class _RecordingExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     commands.add(gitArgs);
     // Echo the context back, so two different -U values yield two different

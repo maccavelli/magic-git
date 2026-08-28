@@ -30,6 +30,7 @@ class _CannedExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async => SSHCommandResult(exitCode: 0, stdout: stdout, stderr: '');
 }
 

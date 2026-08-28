@@ -11,6 +11,7 @@ import '../../core/forge/forge_urls.dart';
 import '../../core/git/branch_comparison.dart';
 import '../../core/git/branch_review_query.dart';
 import '../../core/git/git_service.dart';
+import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
@@ -1611,7 +1612,26 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           ref.read(ownMutationTrackerProvider),
           repoPath,
           () async {
-            log.logResult('git fetch --all --prune', await git.fetch(repoPath));
+            final session = log.startStream('git fetch --all --prune');
+            try {
+              final result = await git.fetch(
+                repoPath,
+                onOutput: (chunk, {required stderr}) {
+                  session.append(
+                    chunk,
+                    stderr ? OutputLineKind.stderr : OutputLineKind.stdout,
+                  );
+                },
+              );
+              session.close(exitCode: result.exitCode);
+            } catch (e) {
+              if (e is GitException) {
+                session.close(exitCode: e.result.exitCode);
+              } else {
+                session.fail(e.toString());
+              }
+              rethrow;
+            }
           },
         );
       },
@@ -1619,7 +1639,6 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       holdBusy: false,
       refresh: () => refreshAfterFetch(ref, repoPath),
     );
-    if (mounted) refreshRemoteTags(ref, repoPath);
   }
 
   Future<void> _renameBranch(GitService git, String oldName) async {

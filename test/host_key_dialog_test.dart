@@ -71,6 +71,7 @@ class _NoopExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     return const SSHCommandResult(exitCode: 0, stdout: 'true\n', stderr: '');
   }

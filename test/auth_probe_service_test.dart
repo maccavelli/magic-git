@@ -24,6 +24,7 @@ class _FakeExecutor extends CommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     if (onExecute != null) return onExecute!(gitArgs);
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

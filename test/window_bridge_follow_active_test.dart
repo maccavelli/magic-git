@@ -41,6 +41,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     repos.add(repoPath);
     return SSHCommandResult(exitCode: 0, stdout: 'served-by-$tag', stderr: '');

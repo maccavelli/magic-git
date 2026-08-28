@@ -54,6 +54,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     calls.add(gitArgs);
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

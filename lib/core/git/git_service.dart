@@ -1056,6 +1056,11 @@ class GitService {
   /// can't bleed into another's.
   final Map<String, Map<String, String>> _repoScopeEnv = {};
 
+  /// Session-scoped caches for the pull/push auth probes. A new [GitService]
+  /// per connection is the invalidation.
+  final _upstreamRemoteByRepo = <String, String>{};
+  final _remoteUrlByRepo = <String, Map<String, String>>{};
+
   // Field/record separators for log output: ASCII Unit/Record Separators, which
   // cannot appear in commit metadata, so they parse unambiguously without the
   // NUL collision that `-z` + `%00` would cause.
@@ -4828,17 +4833,22 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     String remote = 'origin',
   }) async {
     try {
-      final result = await _executor.execute(
-        repoPath: repoPath,
-        extraEnv: _scopeEnvFor(repoPath),
-        gitArgs: ['git', 'remote', 'get-url', remote],
-        timeout: const Duration(seconds: 15),
-        lane: ExecLane.read,
-        retries: 0,
-      );
-      if (!result.isSuccess) return const [];
+      var url = _remoteUrlByRepo[repoPath]?[remote];
+      if (url == null) {
+        final result = await _executor.execute(
+          repoPath: repoPath,
+          extraEnv: _scopeEnvFor(repoPath),
+          gitArgs: ['git', 'remote', 'get-url', remote],
+          timeout: const Duration(seconds: 15),
+          lane: ExecLane.read,
+          retries: 0,
+        );
+        if (!result.isSuccess) return const [];
+        url = result.stdout.trim();
+        (_remoteUrlByRepo[repoPath] ??= {})[remote] = url;
+      }
       return forgeGitAuthConfigArgs(
-        forgeFromRemoteUrl(result.stdout.trim()),
+        forgeFromRemoteUrl(url),
         ghPath: _executor.resolvedBinaryPath('gh'),
         glabPath: _executor.resolvedBinaryPath('glab'),
       );
@@ -4857,6 +4867,8 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
   /// empty args) and HTTPS auth failed exactly where the origin-named case
   /// succeeded.
   Future<String> _upstreamRemote(String repoPath) async {
+    final cached = _upstreamRemoteByRepo[repoPath];
+    if (cached != null) return cached;
     try {
       final result = await _executor.execute(
         repoPath: repoPath,
@@ -4877,11 +4889,13 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       final r = result.stdout.trim();
       // `.` names the local repository itself (a branch tracking a local
       // branch) — no network remote, nothing to authenticate.
-      if (result.isSuccess && r.isNotEmpty && r != '.') return r;
+      if (result.isSuccess && r.isNotEmpty && r != '.') {
+        return _upstreamRemoteByRepo[repoPath] = r;
+      }
     } catch (_) {
       // Fall through — auth degradation, never a blocked pull/push.
     }
-    return 'origin';
+    return _upstreamRemoteByRepo[repoPath] = 'origin';
   }
 
   /// Fetches remotes and prunes deleted refs. Returns the command result so
@@ -4905,28 +4919,39 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     String repoPath, {
     bool background = false,
     FetchScope scope = FetchScope.allRemotes,
-  }) => _run(
-    repoPath,
-    [
-      'git',
-      ...forgeGitAuthConfigArgsAll(
+    CommandOutputCallback? onOutput,
+  }) async {
+    final List<String> auth;
+    if (scope == FetchScope.defaultRemote) {
+      final remote = await _upstreamRemote(repoPath);
+      auth = await _forgeAuthArgs(repoPath, remote: remote);
+    } else {
+      auth = forgeGitAuthConfigArgsAll(
         ghPath: _executor.resolvedBinaryPath('gh'),
         glabPath: _executor.resolvedBinaryPath('glab'),
-      ),
-      'fetch',
-      '--progress',
-      '--prune',
-      '--recurse-submodules=no',
-      if (scope == FetchScope.allRemotes) ...['--jobs=4', '--all'],
-    ],
-    'git fetch',
-    timeout: _networkCeiling,
-    activityIdle: networkTimeout,
-    lane: ExecLane.sync,
-    visibility: background
-        ? OperationVisibility.background
-        : OperationVisibility.normal,
-  );
+      );
+    }
+    return _run(
+      repoPath,
+      [
+        'git',
+        ...auth,
+        'fetch',
+        '--progress',
+        '--prune',
+        '--recurse-submodules=no',
+        if (scope == FetchScope.allRemotes) ...['--jobs=4', '--all'],
+      ],
+      'git fetch',
+      timeout: _networkCeiling,
+      activityIdle: networkTimeout,
+      lane: ExecLane.sync,
+      visibility: background
+          ? OperationVisibility.background
+          : OperationVisibility.normal,
+      onOutput: onOutput,
+    );
+  }
 
   /// Pulls upstream work. Defaults to fast-forward-only (never creates a
   /// surprise merge commit); [mode] can request a rebase or an explicit merge,
@@ -4940,6 +4965,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     PullMode mode = PullMode.ffOnly,
     String? remote,
     String? branch,
+    CommandOutputCallback? onOutput,
   }) async {
     // No explicit remote → git follows the tracked upstream, so the auth
     // lookup must too (see [_upstreamRemote]).
@@ -4963,6 +4989,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       timeout: _networkCeiling,
       activityIdle: networkTimeout,
       lane: ExecLane.sync,
+      onOutput: onOutput,
     );
     final target = remote != null ? 'FETCH_HEAD' : '@{upstream}';
     return _run(repoPath, [
@@ -4990,6 +5017,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     bool setUpstream = false,
     PushForce force = PushForce.none,
     bool followTags = false,
+    CommandOutputCallback? onOutput,
   }) async {
     // No explicit remote → git follows the tracked upstream (or push.default),
     // so the auth lookup must too (see [_upstreamRemote]).
@@ -5018,6 +5046,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       // Sync lane: push updates the remote (and local tracking refs) but never
       // the index/worktree — safe alongside reads, exclusive among sync ops.
       lane: ExecLane.sync,
+      onOutput: onOutput,
     );
   }
 
@@ -6157,6 +6186,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     bool compress = false,
     Duration? activityIdle,
     OperationVisibility visibility = OperationVisibility.normal,
+    CommandOutputCallback? onOutput,
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
@@ -6168,6 +6198,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       lane: lane,
       compress: compress,
       activityIdle: activityIdle,
+      onOutput: onOutput,
       operation: lane == ExecLane.read
           ? null
           : OperationDescriptor(

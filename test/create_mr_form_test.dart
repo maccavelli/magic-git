@@ -73,6 +73,7 @@ class _FakeGit extends GitService {
     bool setUpstream = false,
     PushForce force = PushForce.none,
     bool followTags = false,
+    CommandOutputCallback? onOutput,
   }) async {
     pushes.add((remote, branch, setUpstream));
     if (pushGate != null) await pushGate!.future;

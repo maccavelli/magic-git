@@ -90,6 +90,7 @@ class _CountingExecutor implements CommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     commands.add(gitArgs.join(' '));
     // Return empty success for any command — we're just counting invocations.

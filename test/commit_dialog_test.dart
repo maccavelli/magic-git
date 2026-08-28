@@ -38,6 +38,7 @@ class _FakeGit extends GitService {
     String repoPath, {
     bool background = false,
     FetchScope scope = FetchScope.allRemotes,
+    CommandOutputCallback? onOutput,
   }) async {
     fetchCalls++;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

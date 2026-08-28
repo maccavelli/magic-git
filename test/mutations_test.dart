@@ -40,6 +40,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     calls.add(gitArgs);
     envs.add(extraEnv);
@@ -625,14 +626,12 @@ void main() {
         '--end-of-options',
         '@{upstream}',
       ]);
-      expect(exec.calls[5], upstreamProbe);
-      expect(exec.calls[6], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[7], ['git', 'push', '--progress']);
+      expect(exec.calls[5], ['git', 'push', '--progress']);
 
       expect(exec.activityIdles[0], git.networkTimeout);
       expect(exec.activityIdles[3], git.networkTimeout);
       expect(exec.activityIdles[4], isNull);
-      expect(exec.activityIdles[7], git.networkTimeout);
+      expect(exec.activityIdles[5], git.networkTimeout);
       final probe = exec.calls.indexWhere((c) => c.contains('get-url'));
       expect(exec.activityIdles[probe], isNull);
     });
@@ -684,21 +683,55 @@ void main() {
 
     test('defaultRemote fetch omits --all and --jobs', () async {
       await git.fetch('/repo', scope: FetchScope.defaultRemote);
-      expect(exec.calls.single, [
+      expect(exec.calls[0], upstreamProbe);
+      expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[2], [
         'git',
-        '-c',
-        'credential.helper=',
-        '-c',
-        'credential.helper=!gh auth git-credential',
-        '-c',
-        'credential.helper=!glab auth git-credential',
         'fetch',
         '--progress',
         '--prune',
         '--recurse-submodules=no',
       ]);
-      expect(exec.calls.single, isNot(contains('--all')));
-      expect(exec.calls.single, isNot(contains('--jobs=4')));
+      expect(exec.calls[2], isNot(contains('--all')));
+      expect(exec.calls[2], isNot(contains('--jobs=4')));
+    });
+
+    test('defaultRemote fetch uses the matching helper', () async {
+      exec.results.addAll(const [
+        SSHCommandResult(exitCode: 1, stdout: '', stderr: ''),
+        SSHCommandResult(
+          exitCode: 0,
+          stdout: 'https://github.com/me/r.git\n',
+          stderr: '',
+        ),
+      ]);
+      await git.fetch('/repo', scope: FetchScope.defaultRemote);
+      expect(exec.calls.last, [
+        'git',
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!gh auth git-credential',
+        'fetch',
+        '--progress',
+        '--prune',
+        '--recurse-submodules=no',
+      ]);
+      expect(exec.calls.last.join(' '), isNot(contains('glab')));
+    });
+
+    test('pull/push reuse cached upstream and get-url', () async {
+      await git.push('/repo');
+      await git.push('/repo');
+      expect(
+        exec.calls.map((c) => c.join(' ')).toList(),
+        [
+          'sh -c ${upstreamProbe[2]}',
+          'git remote get-url origin',
+          'git push --progress',
+          'git push --progress',
+        ],
+      );
     });
 
     test('a custom networkTimeout reaches fetch', () async {
@@ -778,23 +811,20 @@ void main() {
         '--end-of-options',
         '@{upstream}',
       ]);
-      expect(exec.calls[4], upstreamProbe);
-      expect(exec.calls[5], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[6], [
+      expect(exec.calls[4], [
         'git',
         'fetch',
         '--progress',
         '--recurse-submodules=no',
       ]);
-      expect(exec.calls[7], [
+      expect(exec.calls[5], [
         'git',
         'merge',
         '--no-edit',
         '--end-of-options',
         '@{upstream}',
       ]);
-      expect(exec.calls[8], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[9], [
+      expect(exec.calls[6], [
         'git',
         'fetch',
         '--progress',
@@ -803,7 +833,7 @@ void main() {
         'origin',
         'main',
       ]);
-      expect(exec.calls[10], [
+      expect(exec.calls[7], [
         'git',
         'merge',
         '--no-edit',
@@ -917,20 +947,15 @@ void main() {
         '--progress',
         '--force-with-lease',
       ]);
-      expect(exec.calls[3], upstreamProbe);
-      expect(exec.calls[4], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[5], ['git', 'push', '--progress', '--force']);
-      expect(exec.calls[6], upstreamProbe);
-      expect(exec.calls[7], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[8], [
+      expect(exec.calls[3], ['git', 'push', '--progress', '--force']);
+      expect(exec.calls[4], [
         'git',
         'push',
         '--progress',
         '-u',
         '--follow-tags',
       ]);
-      expect(exec.calls[9], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[10], [
+      expect(exec.calls[5], [
         'git',
         'push',
         '--progress',

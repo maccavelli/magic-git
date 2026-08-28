@@ -37,6 +37,7 @@ class _FakeLocalExecutor extends LocalCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async => const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
 }
 
@@ -55,6 +56,7 @@ class _FetchCountingGit extends GitService {
     String repoPath, {
     bool background = false,
     FetchScope scope = FetchScope.allRemotes,
+    CommandOutputCallback? onOutput,
   }) async {
     fetchCalls++;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

@@ -43,6 +43,7 @@ class _QueueExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     calls.add(gitArgs);
     return results.isNotEmpty

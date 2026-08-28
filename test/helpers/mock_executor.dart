@@ -159,6 +159,7 @@ class MockExecutor extends CommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     final call = MockExecCall(
       repoPath: repoPath,

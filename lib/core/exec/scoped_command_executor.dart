@@ -52,6 +52,7 @@ class ScopedCommandExecutor implements CommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) => _inner.execute(
     repoPath: repoPath,
     gitArgs: gitArgs,
@@ -64,6 +65,7 @@ class ScopedCommandExecutor implements CommandExecutor {
     activityIdle: activityIdle,
     operation: operation,
     onOperationEvent: onOperationEvent,
+    onOutput: onOutput,
   );
 
   @override

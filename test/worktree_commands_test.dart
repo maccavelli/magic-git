@@ -11,12 +11,9 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:remote_magic_git/core/exec/command_lanes.dart';
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
-import 'package:remote_magic_git/core/exec/operation_activity.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
-import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart'
-    show SSHCommandExecutor, SSHCommandResult;
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
 /// Captures the lane and timeout each command was scheduled with — the one
 /// thing the real-git tests above cannot see.
@@ -37,6 +34,7 @@ class _LaneCapturingExecutor extends LocalCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     lastLane = lane;
     lastTimeout = timeout;

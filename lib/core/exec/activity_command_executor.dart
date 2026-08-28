@@ -37,6 +37,7 @@ class ActivityCommandExecutor implements CommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) => _inner.execute(
     repoPath: repoPath,
     gitArgs: gitArgs,
@@ -51,6 +52,7 @@ class ActivityCommandExecutor implements CommandExecutor {
         operation ??
         resolveDescriptor(repositoryPath: repoPath, lane: lane, argv: gitArgs),
     onOperationEvent: onOperationEvent ?? this.onOperationEvent,
+    onOutput: onOutput,
   );
 
   /// Note the asymmetry with [execute]: no [resolveDescriptor] call.

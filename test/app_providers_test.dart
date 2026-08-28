@@ -27,6 +27,7 @@ class _RecordingLocalExecutor extends LocalCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     executeCalled = true;
     return const SSHCommandResult(

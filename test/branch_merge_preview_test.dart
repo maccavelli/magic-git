@@ -461,6 +461,7 @@ class _GatedExecutor extends CommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     final args = gitArgs.join(' ');
     if (args.contains('merge-base')) {

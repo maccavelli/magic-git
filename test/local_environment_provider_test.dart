@@ -26,6 +26,7 @@ class _ProbeExecutor extends LocalCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     executions++;
     return const SSHCommandResult(

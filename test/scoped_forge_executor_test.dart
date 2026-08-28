@@ -27,6 +27,7 @@ class _RecordingExecutor implements CommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     lastEnv = extraEnv;
     lastEnvWasPassed = true;

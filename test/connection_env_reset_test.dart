@@ -64,6 +64,7 @@ class _SpyExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     if (gitArgs.contains('rev-parse')) {
       events.add('validate');
@@ -116,6 +117,7 @@ class _GatedProbeExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     if (gitArgs.contains('rev-parse')) {
       return const SSHCommandResult(exitCode: 0, stdout: 'true\n', stderr: '');

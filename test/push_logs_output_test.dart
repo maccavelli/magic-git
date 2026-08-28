@@ -32,13 +32,12 @@ class _FakeGitService extends GitService {
     bool setUpstream = false,
     PushForce force = PushForce.none,
     bool followTags = false,
+    CommandOutputCallback? onOutput,
   }) async {
     pushed = true;
-    return const SSHCommandResult(
-      exitCode: 0,
-      stdout: '',
-      stderr: 'To gitlab:me/repo.git\n   abc123..def456  main -> main',
-    );
+    const stderr = 'To gitlab:me/repo.git\n   abc123..def456  main -> main';
+    onOutput?.call(stderr, stderr: true);
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: stderr);
   }
 
   // With no files, report no base (skips the file list); otherwise return

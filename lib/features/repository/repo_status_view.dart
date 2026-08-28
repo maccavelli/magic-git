@@ -13,6 +13,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
+import '../../core/ssh/ssh_command_executor.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
@@ -175,6 +176,31 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   bool _diffPrefsHydrated = false;
 
   /// Seeds the diff toggles from [prefs] exactly once per mount.
+  Future<SSHCommandResult> _streamGitOp(
+    OutputLogNotifier log,
+    String label,
+    Future<SSHCommandResult> Function(CommandOutputCallback onOutput) run,
+  ) async {
+    final session = log.startStream(label);
+    try {
+      final result = await run((chunk, {required stderr}) {
+        session.append(
+          chunk,
+          stderr ? OutputLineKind.stderr : OutputLineKind.stdout,
+        );
+      });
+      session.close(exitCode: result.exitCode);
+      return result;
+    } catch (e) {
+      if (e is GitException) {
+        session.close(exitCode: e.result.exitCode);
+      } else {
+        session.fail(e.toString());
+      }
+      rethrow;
+    }
+  }
+
   void _hydrateDiffPrefs(RepositoryWorkspacePrefs prefs) {
     if (_diffPrefsHydrated) return;
     _diffPrefsHydrated = true;
@@ -827,9 +853,10 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             ref.read(ownMutationTrackerProvider),
             repoPath,
             () async {
-              log.logResult(
+              await _streamGitOp(
+                log,
                 'git fetch --all --prune',
-                await git.fetch(repoPath),
+                (onOutput) => git.fetch(repoPath, onOutput: onOutput),
               );
             },
           );
@@ -841,9 +868,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     } finally {
       if (mounted) setState(() => _syncOps--);
     }
-    // The fetch talked to the remote anyway — mark the cached remote-tag
-    // listing refetchable (lazy: the ls-remote runs on the next actual read).
-    if (mounted) refreshRemoteTags(ref, repoPath);
   }
 
   Future<void> _stashPush() async {
@@ -871,11 +895,24 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   Future<void> _pull([PullMode mode = PullMode.ffOnly]) async {
     final git = ref.read(gitServiceProvider);
     final label = _pullLabel(mode);
-    await runLogged(label, (log) async {
-      final before = await git.revParse(repoPath, 'HEAD');
-      log.logResult(label, await git.pull(repoPath, mode: mode));
-      await _logPulled(log, git, before);
+    String? before;
+    final ok = await runLogged(label, (log) async {
+      before = await git.revParse(repoPath, 'HEAD');
+      await _streamGitOp(
+        log,
+        label,
+        (onOutput) => git.pull(repoPath, mode: mode, onOutput: onOutput),
+      );
     }, dock: true);
+    if (ok && mounted) {
+      try {
+        await _logPulled(ref.read(outputLogProvider.notifier), git, before);
+      } catch (e) {
+        ref
+            .read(outputLogProvider.notifier)
+            .logError('pulled files', e.toString());
+      }
+    }
   }
 
   Future<bool> _push({
@@ -940,29 +977,39 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       if (followTags) '--follow-tags',
     ].join(' ');
     if (mounted) setState(() => _syncOps++);
+    String? base;
     final bool success;
     try {
       success = await runLogged(
         label,
         (log) async {
-          // Capture the old remote tip before the push advances the tracking ref.
-          final base = await git.revParse(repoPath, '@{upstream}');
-          log.logResult(
+          base = await git.revParse(repoPath, '@{upstream}');
+          await _streamGitOp(
+            log,
             label,
-            await git.push(
+            (onOutput) => git.push(
               repoPath,
               force: force,
               setUpstream: setUpstream,
               followTags: followTags,
+              onOutput: onOutput,
             ),
           );
-          await _logPushed(log, git, base);
         },
         dock: true,
         holdBusy: false,
       );
     } finally {
       if (mounted) setState(() => _syncOps--);
+    }
+    if (success && mounted) {
+      try {
+        await _logPushed(ref.read(outputLogProvider.notifier), git, base);
+      } catch (e) {
+        ref
+            .read(outputLogProvider.notifier)
+            .logError('pushed files', e.toString());
+      }
     }
     // A --follow-tags push may have just put local tags on the remote — the
     // cached remote-tag listing is stale.
@@ -975,14 +1022,35 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     final pullLabel = _pullLabel(mode);
     // Inlined pull-then-push (rather than git.sync) so each phase can report the
     // files it moved: the push base is @{upstream} *after* the pull advanced it.
-    await runLogged('git sync', (log) async {
-      final before = await git.revParse(repoPath, 'HEAD');
-      log.logResult(pullLabel, await git.pull(repoPath, mode: mode));
-      await _logPulled(log, git, before);
-      final pushBase = await git.revParse(repoPath, '@{upstream}');
-      log.logResult('git push', await git.push(repoPath));
-      await _logPushed(log, git, pushBase);
+    String? before;
+    String? pushBase;
+    final ok = await runLogged('git sync', (log) async {
+      before = await git.revParse(repoPath, 'HEAD');
+      await _streamGitOp(
+        log,
+        pullLabel,
+        (onOutput) => git.pull(repoPath, mode: mode, onOutput: onOutput),
+      );
+      pushBase = await git.revParse(repoPath, '@{upstream}');
+      await _streamGitOp(
+        log,
+        'git push',
+        (onOutput) => git.push(repoPath, onOutput: onOutput),
+      );
     }, dock: true);
+    if (ok && mounted) {
+      final out = ref.read(outputLogProvider.notifier);
+      try {
+        await _logPulled(out, git, before);
+      } catch (e) {
+        out.logError('pulled files', e.toString());
+      }
+      try {
+        await _logPushed(out, git, pushBase);
+      } catch (e) {
+        out.logError('pushed files', e.toString());
+      }
+    }
   }
 
   // Logs the files a pull brought in (HEAD moved from [before] to now).

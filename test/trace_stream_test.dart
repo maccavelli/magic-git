@@ -57,6 +57,7 @@ class _StreamExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     if (gitArgs.length >= 4 &&
         gitArgs[0] == 'git' &&

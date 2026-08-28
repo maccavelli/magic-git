@@ -193,6 +193,11 @@ class _SshSessionStreamHandle implements CommandStreamHandle {
 /// (`LocalCommandExecutor`, in `lib/core/exec/local_command_executor.dart`).
 /// `GitService`/`GlabService`/`RemoteWatchService` depend on this interface,
 /// not a concrete transport, so they work unchanged against either backend.
+/// Decoded stdout/stderr chunk from an in-flight [CommandExecutor.execute].
+/// Fetch/push pass this so the output log can tail `--progress` on-queue.
+typedef CommandOutputCallback =
+    void Function(String chunk, {required bool stderr});
+
 abstract class CommandExecutor {
   /// Runs [gitArgs] against [repoPath]. Implementations schedule commands by
   /// [lane] (see [ExecLane]): reads overlap each other and remote-sync
@@ -206,6 +211,10 @@ abstract class CommandExecutor {
   /// SSH backend honors it when the host has `gzip` (see
   /// [CommandFormatter.format]'s `compressOutput`); the local backend ignores
   /// it — there is no wire to save.
+  ///
+  /// [onOutput] is invoked with each decoded stdout/stderr chunk as it
+  /// arrives (compressed stdout: once, after gunzip). The proxy executor
+  /// ignores it — pop-out windows still receive one buffered result.
   Future<SSHCommandResult> execute({
     required String repoPath,
     required List<String> gitArgs,
@@ -218,6 +227,7 @@ abstract class CommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   });
 
   /// Starts a long-running command and returns a live handle for incremental
@@ -443,6 +453,7 @@ class SSHCommandExecutor implements CommandExecutor {
         false,
         ExecLane.isolated,
         null,
+        null,
       ),
       0,
       enqueue: (attempt) => _scheduler.run(
@@ -495,6 +506,7 @@ class SSHCommandExecutor implements CommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     // Pin this command to the connection generation active *right now*, at
     // enqueue time — not whatever generation happens to be active once its
@@ -525,6 +537,7 @@ class SSHCommandExecutor implements CommandExecutor {
           compress,
           lane,
           activityIdle,
+          onOutput,
         ),
         retries,
         // One enqueued job per *attempt*, and an attempt is bounded by `timeout`
@@ -690,6 +703,7 @@ class SSHCommandExecutor implements CommandExecutor {
     bool compress,
     ExecLane lane,
     Duration? activityIdle,
+    CommandOutputCallback? onOutput,
   ) async {
     // Started before the channel open so the sample's duration reflects the
     // full user-perceived cost of the command, not just the drain.
@@ -742,6 +756,7 @@ class SSHCommandExecutor implements CommandExecutor {
         lane,
         repoPath,
         activityIdle,
+        onOutput,
       );
       _adaptiveReads.onSuccess();
       return result;
@@ -769,6 +784,7 @@ class SSHCommandExecutor implements CommandExecutor {
     ExecLane lane,
     String repoPath,
     Duration? activityIdle,
+    CommandOutputCallback? onOutput,
   ) async {
     final sw = Stopwatch()..start();
     // Compression is honored only when the probe actually found gzip on the
@@ -866,7 +882,9 @@ class SSHCommandExecutor implements CommandExecutor {
           stdoutWireBytes = wire.length;
           final raw = await gunzipStdout(wire);
           budget.charge(raw.length, label);
-          return utf8.decode(raw, allowMalformed: true);
+          final text = utf8.decode(raw, allowMalformed: true);
+          onOutput?.call(text, stderr: false);
+          return text;
         }();
       } else {
         stdoutFuture = collectBounded(
@@ -874,7 +892,10 @@ class SSHCommandExecutor implements CommandExecutor {
             rawStdout,
             budget,
             label,
-          ).transform(const Utf8Decoder(allowMalformed: true)),
+          ).transform(const Utf8Decoder(allowMalformed: true)).map((chunk) {
+            onOutput?.call(chunk, stderr: false);
+            return chunk;
+          }),
           label,
         );
       }
@@ -886,7 +907,10 @@ class SSHCommandExecutor implements CommandExecutor {
           }),
           budget,
           label,
-        ).transform(const Utf8Decoder(allowMalformed: true)),
+        ).transform(const Utf8Decoder(allowMalformed: true)).map((chunk) {
+          onOutput?.call(chunk, stderr: true);
+          return chunk;
+        }),
         label,
       );
 

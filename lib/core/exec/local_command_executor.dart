@@ -114,6 +114,7 @@ class LocalCommandExecutor implements CommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     final lifecycle = OperationLifecycleEmitter.begin(
       operation,
@@ -132,6 +133,7 @@ class LocalCommandExecutor implements CommandExecutor {
           timeout,
           lane,
           activityIdle,
+          onOutput,
         ),
         retries,
         // See SSHCommandExecutor.execute: the deadline is the attempt's own
@@ -164,6 +166,7 @@ class LocalCommandExecutor implements CommandExecutor {
     Duration timeout,
     ExecLane lane,
     Duration? activityIdle,
+    CommandOutputCallback? onOutput,
   ) async {
     final sw = Stopwatch()..start();
     final argv = _rewriteArgv(gitArgs);
@@ -274,7 +277,10 @@ class LocalCommandExecutor implements CommandExecutor {
           }),
           budget,
           label,
-        ).transform(const Utf8Decoder(allowMalformed: true)),
+        ).transform(const Utf8Decoder(allowMalformed: true)).map((chunk) {
+          onOutput?.call(chunk, stderr: false);
+          return chunk;
+        }),
         label,
       );
       final stderrFuture = collectBounded(
@@ -285,7 +291,10 @@ class LocalCommandExecutor implements CommandExecutor {
           }),
           budget,
           label,
-        ).transform(const Utf8Decoder(allowMalformed: true)),
+        ).transform(const Utf8Decoder(allowMalformed: true)).map((chunk) {
+          onOutput?.call(chunk, stderr: true);
+          return chunk;
+        }),
         label,
       );
 

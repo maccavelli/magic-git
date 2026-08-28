@@ -113,6 +113,7 @@ class ProxyCommandExecutor implements CommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     final request = ExecuteRequest(
       repoPath: repoPath,

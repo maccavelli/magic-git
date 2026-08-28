@@ -43,6 +43,7 @@ class _RetryCapturingExecutor extends SSHCommandExecutor {
     Duration? activityIdle,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
   }) async {
     retriesSeen.add(retries);
     if (gitArgs.length == 3 && gitArgs[0] == 'sh' && gitArgs[1] == '-c') {
