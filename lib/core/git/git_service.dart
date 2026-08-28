@@ -4931,6 +4931,10 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
   /// Pulls upstream work. Defaults to fast-forward-only (never creates a
   /// surprise merge commit); [mode] can request a rebase or an explicit merge,
   /// and [remote]/[branch] override the tracked upstream.
+  ///
+  /// Split into fetch (sync lane, pack transfer on the sync SSH client) then
+  /// merge/rebase (exclusive, typically sub-second). Not [merge] /
+  /// [rebaseInteractive] — those are journaled; a pull is not.
   Future<SSHCommandResult> pull(
     String repoPath, {
     PullMode mode = PullMode.ffOnly,
@@ -4943,29 +4947,33 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       repoPath,
       remote: remote ?? await _upstreamRemote(repoPath),
     );
-    return _run(
+    await _run(
       repoPath,
       [
         'git',
         ...auth,
-        'pull',
+        'fetch',
         '--progress',
         '--recurse-submodules=no',
-        switch (mode) {
-          PullMode.ffOnly => '--ff-only',
-          PullMode.rebase => '--rebase',
-          PullMode.merge => '--no-rebase',
-        },
         if (remote != null) '--end-of-options',
         ?remote,
         if (remote != null && branch != null) branch,
       ],
-      'git pull',
+      'git fetch',
       timeout: _networkCeiling,
       activityIdle: networkTimeout,
-      // Exclusive: pull can rewrite the index/worktree (merge/rebase), so it
-      // must never overlap concurrent reads or mutations.
+      lane: ExecLane.sync,
     );
+    final target = remote != null ? 'FETCH_HEAD' : '@{upstream}';
+    return _run(repoPath, [
+      'git',
+      ..._idArgs,
+      if (mode == PullMode.rebase) 'rebase' else 'merge',
+      if (mode != PullMode.rebase) '--no-edit',
+      if (mode == PullMode.ffOnly) '--ff-only',
+      '--end-of-options',
+      target,
+    ], mode == PullMode.rebase ? 'git rebase' : 'git merge');
   }
 
   /// Pushes the current branch. HTTPS GitHub/GitLab remotes authenticate via

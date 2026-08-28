@@ -14,6 +14,7 @@ class _FakeExecutor extends SSHCommandExecutor {
   /// carry [GitService.networkTimeout] here or the activity deadline built in
   /// the executor (0014 T2) never applies to fetch/pull/push.
   final List<Duration?> activityIdles = [];
+  final List<ExecLane> lanes = [];
 
   /// Result for the next call. When [results] is non-empty it is consumed in
   /// order (for multi-call flows like loginWithToken); otherwise [next] is used.
@@ -44,6 +45,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     envs.add(extraEnv);
     stdins.add(stdin);
     activityIdles.add(activityIdle);
+    lanes.add(lane);
     return results.isNotEmpty ? results.removeAt(0) : next;
   }
 }
@@ -606,32 +608,31 @@ void main() {
         '--all',
       ]);
       // pull/push resolve the tracked remote, then probe it; empty URL → no
-      // forge auth args.
+      // forge auth args. Pull is fetch (sync) + merge --ff-only (exclusive).
       expect(exec.calls[1], upstreamProbe);
       expect(exec.calls[2], ['git', 'remote', 'get-url', 'origin']);
       expect(exec.calls[3], [
         'git',
-        'pull',
+        'fetch',
         '--progress',
         '--recurse-submodules=no',
-        '--ff-only',
       ]);
-      expect(exec.calls[4], upstreamProbe);
-      expect(exec.calls[5], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[6], ['git', 'push', '--progress']);
+      expect(exec.calls[4], [
+        'git',
+        'merge',
+        '--no-edit',
+        '--ff-only',
+        '--end-of-options',
+        '@{upstream}',
+      ]);
+      expect(exec.calls[5], upstreamProbe);
+      expect(exec.calls[6], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[7], ['git', 'push', '--progress']);
 
-      // The stall budget rides the network commands themselves, not the
-      // local probes that precede them. Indexed by argv content so an added
-      // probe cannot silently shift the assertion onto the wrong call.
-      for (final verb in ['fetch', 'pull', 'push']) {
-        final i = exec.calls.indexWhere((c) => c.contains(verb));
-        expect(i, isNonNegative, reason: 'no $verb call recorded');
-        expect(
-          exec.activityIdles[i],
-          git.networkTimeout,
-          reason: '$verb must carry the stall budget',
-        );
-      }
+      expect(exec.activityIdles[0], git.networkTimeout);
+      expect(exec.activityIdles[3], git.networkTimeout);
+      expect(exec.activityIdles[4], isNull);
+      expect(exec.activityIdles[7], git.networkTimeout);
       final probe = exec.calls.indexWhere((c) => c.contains('get-url'));
       expect(exec.activityIdles[probe], isNull);
     });
@@ -652,7 +653,7 @@ void main() {
         // Parsing an empty snapshot is not what this test is about.
       }
 
-      const networkVerbs = {'fetch', 'pull', 'push', 'ls-remote'};
+      const networkVerbs = {'fetch', 'push', 'ls-remote'};
       var networkCalls = 0;
       var localCalls = 0;
       for (var i = 0; i < exec.calls.length; i++) {
@@ -673,8 +674,8 @@ void main() {
           );
         }
       }
-      // fetch, pull, push, push --delete, push tags, push --delete tag,
-      // ls-remote: every network op in the list above reached the executor.
+      // --all fetch, pull's fetch, push, push --delete, push tags,
+      // push --delete tag, ls-remote. The integrate merge is local.
       expect(networkCalls, 7);
       // The upstream/get-url probes and the status snapshot are the local
       // side; without them the loop above would be vacuously true.
@@ -767,30 +768,48 @@ void main() {
       expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
       expect(exec.calls[2], [
         'git',
-        'pull',
+        'fetch',
         '--progress',
         '--recurse-submodules=no',
-        '--rebase',
       ]);
-      expect(exec.calls[3], upstreamProbe);
-      expect(exec.calls[4], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[5], [
+      expect(exec.calls[3], [
         'git',
-        'pull',
+        'rebase',
+        '--end-of-options',
+        '@{upstream}',
+      ]);
+      expect(exec.calls[4], upstreamProbe);
+      expect(exec.calls[5], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[6], [
+        'git',
+        'fetch',
         '--progress',
         '--recurse-submodules=no',
-        '--no-rebase',
       ]);
-      expect(exec.calls[6], ['git', 'remote', 'get-url', 'origin']);
       expect(exec.calls[7], [
         'git',
-        'pull',
+        'merge',
+        '--no-edit',
+        '--end-of-options',
+        '@{upstream}',
+      ]);
+      expect(exec.calls[8], ['git', 'remote', 'get-url', 'origin']);
+      expect(exec.calls[9], [
+        'git',
+        'fetch',
         '--progress',
         '--recurse-submodules=no',
-        '--ff-only',
         '--end-of-options',
         'origin',
         'main',
+      ]);
+      expect(exec.calls[10], [
+        'git',
+        'merge',
+        '--no-edit',
+        '--ff-only',
+        '--end-of-options',
+        'FETCH_HEAD',
       ]);
     });
 
@@ -800,11 +819,30 @@ void main() {
       expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
       expect(exec.calls[2], [
         'git',
-        'pull',
+        'fetch',
         '--progress',
         '--recurse-submodules=no',
-        '--ff-only',
       ]);
+      expect(exec.calls[3], [
+        'git',
+        'merge',
+        '--no-edit',
+        '--ff-only',
+        '--end-of-options',
+        '@{upstream}',
+      ]);
+    });
+
+    test('pull fetch is sync; integrate is exclusive', () async {
+      await git.pull('/repo');
+      final fetchI = exec.calls.indexWhere(
+        (c) => c.contains('fetch') && !c.contains('--all'),
+      );
+      final mergeI = exec.calls.indexWhere((c) => c.contains('merge'));
+      expect(fetchI, isNonNegative);
+      expect(mergeI, isNonNegative);
+      expect(exec.lanes[fetchI], ExecLane.sync);
+      expect(exec.lanes[mergeI], ExecLane.exclusive);
     });
 
     test(
