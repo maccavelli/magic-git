@@ -1,11 +1,19 @@
 ---
-status: proposed
+status: executed
 date: 2026-08-28
+executed: 2026-08-28
+verified: 2026-08-28
 associated-madr: 0020-MADR-fetch-pull-push-lag.md
 owner: [Maintainer]
 target-milestone: Next work cycle (post-review)
-verified: 2026-08-28
 ---
+
+> **Status note (2026-08-28).** Engineering phases 1–6 shipped (`flutter
+> analyze` clean, full `flutter test` green). Commits: `9294e3c` (1),
+> `c0de555` (2), `1ffb1cf` (3), `3713ffb` (4), `5ebb81d` (5),
+> `9cc17ac` (6). Residuals remain maintainer-only (see "What this plan
+> will not do"). A Phase 6 deviation (`clock` + discrete pumps) is
+> recorded under Phase 6.
 
 # Implement fetch, pull, and push responsiveness
 
@@ -772,6 +780,16 @@ flutter test test/remote_watch_service_test.dart \
   test/operation_activity_test.dart
 flutter test
 ```
+
+**Deviation (2026-08-28).** L1's elapsed ticker cannot follow
+`tester.pump(Duration(seconds: 2))` via `DateTime.now()` — widget-test
+`FakeAsync` patches `package:clock`'s `clock.now()`, not `DateTime.now()`.
+`_ActivityRow` uses `clock.now()`. `clock: ^1.1.2` added to
+`pubspec.yaml` (already locked as transitive `1.1.2`). Repeating spin
+plus `Timer.periodic` made existing `pumpAndSettle` calls hang; those
+two sheet tests now pump discretely (same pattern as
+`test/app_shell_test.dart`). Files added to this phase: `pubspec.yaml`,
+`pubspec.lock`.
 
 Commit.
 

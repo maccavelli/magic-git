@@ -45,7 +45,7 @@ residuals or maintainer-only steps — 0010's Phase 7 is the standing example.
 | 0017 | [Enforce conventions in source](0017-MADR-provider-retry-policy-on-providers.md) | `accepted` | [plan](0017-PLAN-provider-retry-policy-on-providers.md) | `executed` |
 | 0018 | [Transport readiness is not an error](0018-MADR-transport-readiness-is-not-an-error.md) | `proposed` | [plan](0018-PLAN-transport-readiness-is-not-an-error.md) | `proposed` |
 | 0019 | [Pin glab to the repo origin host](0019-MADR-pin-glab-origin-host-on-every-call.md) | `accepted` | [plan](0019-PLAN-pin-glab-origin-host-on-every-call.md) | `executed` through Phase 7; **Phase 8 open** |
-| 0020 | [Fetch/pull/push lag](0020-MADR-fetch-pull-push-lag.md) | `proposed` | [plan](0020-PLAN-fetch-pull-push-lag.md) | `proposed` |
+| 0020 | [Fetch/pull/push lag](0020-MADR-fetch-pull-push-lag.md) | `accepted` | [plan](0020-PLAN-fetch-pull-push-lag.md) | `executed` |
 
 ⚠ **0011 and 0012 each carry two unrelated records.** `AGENTS.md` forbids
 renumbering an existing file, so both keep the number and each carries a note

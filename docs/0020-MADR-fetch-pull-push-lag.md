@@ -1,5 +1,5 @@
 ---
-status: proposed
+status: accepted
 date: 2026-08-28
 verified: 2026-08-28
 decision-makers: [Maintainer]
@@ -527,3 +527,9 @@ Fetch All vs Fetch Upstream as two buttons.
   — sync client, activity deadline, read cap 4.
 * [ARCHITECTURE_PLAN.md](ARCHITECTURE_PLAN.md) §0.1 — transport truth
   this audit measured against.
+
+### Remediation log
+
+| Date | Change |
+| --- | --- |
+| 2026-08-28 | Phases 1–6 shipped: `9294e3c`, `c0de555`, `1ffb1cf`, `3713ffb`, `5ebb81d`, `9cc17ac`. Status `accepted`. |

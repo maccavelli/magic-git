@@ -107,12 +107,18 @@
   as a FIFO barrier, isolated long-running side work (hooks, sideloads; cap 2)
   exempt from the barrier in both directions. A **watchdog** (command timeout
   + 30 s margin) reclaims the slot of any body that never settles. Network ops
-  (`fetch`/`pull`/`push` and the other `networkTimeout` sites) use an
-  **activity deadline**: settings Network seconds is the stall budget (default
-  3 min); a slow transfer that still emits stdout/stderr may run up to
-  `max(that, 30 min)`. Retries are transient-transport-only (allowlist), and
-  each attempt is a separate enqueue with the 400 ms backoff taken *between*
-  enqueues, so a retry wait never head-of-line-blocks the lane.
+  (`fetch`/`push`, pull's fetch half, and the other `networkTimeout` sites)
+  use an **activity deadline**: settings Network seconds is the stall budget
+  (default 3 min); a slow transfer that still emits stdout/stderr may run up
+  to `max(that, 30 min)`. `--progress` is required on those git invocations so
+  a non-TTY executor emits stderr during pack transfer and `ActivityDeadline`
+  sees bytes. Pull is `git fetch` (`ExecLane.sync`, `--progress`) then
+  `git merge` / `git rebase` (`ExecLane.exclusive`); it is not a single
+  `git pull`. `git fetch --all` passes `--jobs=4`; post-commit fetch is
+  default-remote (no `--all`). Retries are transient-transport-only
+  (allowlist), and each attempt is a separate enqueue with the 400 ms backoff
+  taken *between* enqueues, so a retry wait never head-of-line-blocks the
+  lane.
 - **Compression:** dartssh2 has no transport compression; large git text reads
   *and* forge-CLI JSON reads (`glab`/`gh` GETs) use application `gzip -c -1`
   (absolute path, honored only when discovery found gzip) + an in-band
