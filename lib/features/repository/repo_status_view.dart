@@ -814,9 +814,17 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     final git = ref.read(gitServiceProvider);
     await runLogged(
       'git fetch --all --prune',
-      (log) async =>
-          log.logResult('git fetch --all --prune', await git.fetch(repoPath)),
+      (log) async {
+        await withOwnMutation(
+          ref.read(ownMutationTrackerProvider),
+          repoPath,
+          () async {
+            log.logResult('git fetch --all --prune', await git.fetch(repoPath));
+          },
+        );
+      },
       dock: true,
+      refresh: () => refreshAfterFetch(ref, repoPath),
     );
     // The fetch talked to the remote anyway — mark the cached remote-tag
     // listing refetchable (lazy: the ls-remote runs on the next actual read).

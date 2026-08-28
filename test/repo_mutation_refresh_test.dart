@@ -282,6 +282,27 @@ void main() {
           '${offenders.join('\n')}',
     );
   });
+
+  test('fetch refresh uses repoFetchFamilies, not history families', () {
+    final src = File(
+      'lib/core/providers/app_providers.dart',
+    ).readAsStringSync();
+    final fetchFn = src.substring(
+      src.indexOf('Future<void> fetchInBackground'),
+      src.indexOf('Future<void> connect('),
+    );
+    expect(fetchFn, contains('repoFetchFamilies'));
+    expect(fetchFn, isNot(contains('repoMutationFamilies')));
+    expect(fetchFn, isNot(contains('logProvider')));
+    expect(fetchFn, isNot(contains('invalidate(remoteTagsProvider')));
+
+    final autoStart = src.indexOf('final autoFetchProvider');
+    expect(autoStart, greaterThan(0));
+    final auto = src.substring(autoStart, autoStart + 3500);
+    expect(auto, contains('repoFetchFamilies'));
+    expect(auto, isNot(contains('repoMutationFamilies')));
+    expect(auto, isNot(contains('invalidate(remoteTagsProvider')));
+  });
 }
 
 Finder _icon(IconData d) =>

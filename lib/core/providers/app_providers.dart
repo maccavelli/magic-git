@@ -1203,15 +1203,15 @@ class ConnectionController extends Notifier<ConnectionState> {
     // connection is active *now*, not the one this fetch was meant for.
     final attempt = _attempt;
     try {
-      await ref
-          .read(gitServiceProvider)
-          .fetch(repoPath, background: true, scope: FetchScope.defaultRemote);
+      await withOwnMutation(ref.read(ownMutationTrackerProvider), repoPath, () {
+        return ref
+            .read(gitServiceProvider)
+            .fetch(repoPath, background: true, scope: FetchScope.defaultRemote);
+      });
       if (attempt != _attempt || !ref.mounted) return;
-      ref.read(ownMutationTrackerProvider).mark(repoPath);
-      // A fetch moves the remote-tracking refs and can bring commits down with
-      // them, so it is a change to the repo like any other — the shared set,
-      // not a hand-picked pair (see [repoMutationFamilies]).
-      for (final p in repoMutationFamilies(repoPath)) {
+      // Remote-tracking refs / ahead-behind only — HEAD did not move
+      // (see [repoFetchFamilies]).
+      for (final p in repoFetchFamilies(repoPath)) {
         ref.invalidate(p);
       }
     } catch (e) {
@@ -2639,21 +2639,47 @@ final binaryEnvironmentProvider =
 ///
 /// Plain mutable state, not reactive — nothing needs to watch a mark, only
 /// read the latest timestamp when a watch tick arrives.
+///
+/// [begin]/[end] refcount an in-flight own op (a fetch whose pack transfer
+/// outlives the 3 s echo window). [isRecent] is true while in-flight *and*
+/// for [within] after the last [end] (which [mark]s). Nested begin/end is
+/// refcounted so auto-fetch + a manual fetch on the same repo stay covered.
 class OwnMutationTracker {
+  OwnMutationTracker({DateTime Function()? now}) : _now = now ?? DateTime.now;
+
+  final DateTime Function() _now;
   final _lastByRepo = <String, DateTime>{};
+  final _inFlight = <String, int>{};
 
   /// Well beyond any real suppression window (a few seconds) — entries older
   /// than this are dead weight, evicted so a session that connects to many
   /// distinct ad-hoc repo paths over time doesn't grow this map unbounded.
   static const _staleAfter = Duration(minutes: 1);
 
+  void begin(String repoPath) {
+    _inFlight[repoPath] = (_inFlight[repoPath] ?? 0) + 1;
+  }
+
+  /// Decrement; at zero, drop the in-flight entry and [mark] so the echo
+  /// window covers the post-command watcher tick.
+  void end(String repoPath) {
+    final n = (_inFlight[repoPath] ?? 0) - 1;
+    if (n <= 0) {
+      _inFlight.remove(repoPath);
+      mark(repoPath);
+    } else {
+      _inFlight[repoPath] = n;
+    }
+  }
+
   void mark(String repoPath) {
-    final now = DateTime.now();
+    final now = _now();
     _lastByRepo[repoPath] = now;
     _lastByRepo.removeWhere((_, at) => now.difference(at) > _staleAfter);
   }
 
   bool isRecent(String repoPath, DateTime at, Duration within) {
+    if ((_inFlight[repoPath] ?? 0) > 0) return true;
     final last = _lastByRepo[repoPath];
     return last != null && at.difference(last) < within;
   }
@@ -2663,7 +2689,26 @@ class OwnMutationTracker {
   /// [ConnectionController._invalidateRepoState]) so a mark recorded against
   /// a previous connection can never suppress a genuinely external change
   /// reported by a new one.
-  void clear() => _lastByRepo.clear();
+  void clear() {
+    _lastByRepo.clear();
+    _inFlight.clear();
+  }
+}
+
+/// Runs [body] with [repoPath] marked in-flight on [tracker]. [end] (and
+/// the 3 s echo [OwnMutationTracker.mark]) always runs, including when
+/// [body] throws.
+Future<T> withOwnMutation<T>(
+  OwnMutationTracker tracker,
+  String repoPath,
+  Future<T> Function() body,
+) async {
+  tracker.begin(repoPath);
+  try {
+    return await body();
+  } finally {
+    tracker.end(repoPath);
+  }
 }
 
 final ownMutationTrackerProvider = Provider<OwnMutationTracker>((ref) {
@@ -2838,6 +2883,26 @@ List<ProviderOrFamily> repoMutationFamilies(String repoPath) => [
   // (`git ls-remote`), and this list runs after every stage/commit. Only
   // operations that touched the remote invalidate it — [refreshRemoteTags].
 ];
+
+/// Providers a fetch or push can stale: remote-tracking refs, ahead/behind,
+/// remotes, and the branch-review summaries that key off those refs. Not
+/// History, stashes, reflog, snapshots, or worktrees — those do not move
+/// when HEAD and the worktree do not.
+List<ProviderOrFamily> repoFetchFamilies(String repoPath) => [
+  statusProvider(repoPath),
+  refsProvider,
+  remotesProvider,
+  branchBaseProvider,
+  branchReviewProvider,
+];
+
+/// Post-fetch / post-push refresh: the fetch set only. Does not [mark] —
+/// [withOwnMutation]'s [OwnMutationTracker.end] already did.
+void refreshAfterFetch(WidgetRef ref, String repoPath) {
+  for (final p in repoFetchFamilies(repoPath)) {
+    ref.invalidate(p);
+  }
+}
 
 /// THE post-mutation refresh — the one thing a feature calls after mutating a
 /// repo, instead of hand-rolling the two steps it wraps:
@@ -3063,23 +3128,19 @@ final autoFetchProvider = Provider.autoDispose<void>((ref) {
 
   final timer = Timer.periodic(Duration(minutes: minutes), (_) async {
     try {
-      await ref.read(gitServiceProvider).fetch(repoPath, background: true);
+      await withOwnMutation(ref.read(ownMutationTrackerProvider), repoPath, () {
+        return ref.read(gitServiceProvider).fetch(repoPath, background: true);
+      });
       // The provider can be disposed mid-fetch (disconnect, repo switch, or the
       // interval set to 0 while this round-trip is outstanding). Touching `ref`
       // after disposal throws; onDispose(timer.cancel) only stops *future* ticks.
       if (!ref.mounted) return;
-      ref.read(ownMutationTrackerProvider).mark(repoPath);
-      // Same reasoning as the post-commit fetch: new remote refs, and possibly
-      // new commits behind them, are a change to the repo (see
-      // [repoMutationFamilies]).
-      for (final p in repoMutationFamilies(repoPath)) {
+      // Fetch set only — not History / reflog / snapshots (see
+      // [repoFetchFamilies]). Auto-fetch does not invalidate
+      // [remoteTagsProvider]: that is an ls-remote on the sync lane.
+      for (final p in repoFetchFamilies(repoPath)) {
         ref.invalidate(p);
       }
-      // The fetch just talked to the remote anyway — mark the cached
-      // remote-tag listing refetchable too (the actual ls-remote happens
-      // lazily, on the next read, so this costs nothing when no tags UI is
-      // showing).
-      ref.invalidate(remoteTagsProvider(repoPath));
     } catch (e) {
       // Best-effort — the next tick just retries — but a persistent failure
       // (expired credentials, revoked key) should be discoverable instead of

@@ -104,11 +104,15 @@ mixin BusyActionState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
   ///
   /// [dock] marks a network operation: the macOS Dock icon shows an
   /// indeterminate progress bar for [body]'s whole span (see [DockProgress]).
+  ///
+  /// [refresh], when given, replaces [refreshAfterAction] in `finally` —
+  /// fetch/push use the narrower fetch-family refresh set.
   Future<bool> runLogged(
     String title,
     Future<void> Function(OutputLogNotifier log) body, {
     String? Function(Object error)? describeError,
     bool dock = false,
+    void Function()? refresh,
   }) async {
     // See [runGuarded]: `ref.read` below is as unsafe post-dispose as
     // `setState`, and most callers arrive here from an awaited dialog.
@@ -138,7 +142,7 @@ mixin BusyActionState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
       }
     } finally {
       if (mounted) {
-        refreshAfterAction();
+        (refresh ?? refreshAfterAction)();
         setState(() => _busy = false);
       }
     }

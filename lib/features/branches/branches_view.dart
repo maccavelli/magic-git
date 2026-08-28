@@ -1604,9 +1604,20 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   }
 
   Future<void> _fetchPrune(GitService git) async {
-    await runLogged('git fetch --all --prune', (log) async {
-      log.logResult('git fetch --all --prune', await git.fetch(repoPath));
-    }, dock: true);
+    await runLogged(
+      'git fetch --all --prune',
+      (log) async {
+        await withOwnMutation(
+          ref.read(ownMutationTrackerProvider),
+          repoPath,
+          () async {
+            log.logResult('git fetch --all --prune', await git.fetch(repoPath));
+          },
+        );
+      },
+      dock: true,
+      refresh: () => refreshAfterFetch(ref, repoPath),
+    );
     if (mounted) refreshRemoteTags(ref, repoPath);
   }
 

@@ -141,6 +141,22 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('runLogged custom refresh replaces refreshAfterAction', (
+    tester,
+  ) async {
+    final host = await pumpHost(tester);
+    var custom = 0;
+    final ok = await host.runLogged(
+      'git fetch',
+      (log) async {},
+      refresh: () => custom++,
+    );
+    await tester.pump();
+    expect(ok, isTrue);
+    expect(custom, 1);
+    expect(host.refreshes, 0);
+  });
+
   testWidgets('runLogged on a disposed view does not run and does not throw', (
     tester,
   ) async {
