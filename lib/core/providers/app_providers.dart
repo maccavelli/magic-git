@@ -1203,7 +1203,9 @@ class ConnectionController extends Notifier<ConnectionState> {
     // connection is active *now*, not the one this fetch was meant for.
     final attempt = _attempt;
     try {
-      await ref.read(gitServiceProvider).fetch(repoPath, background: true);
+      await ref
+          .read(gitServiceProvider)
+          .fetch(repoPath, background: true, scope: FetchScope.defaultRemote);
       if (attempt != _attempt || !ref.mounted) return;
       ref.read(ownMutationTrackerProvider).mark(repoPath);
       // A fetch moves the remote-tracking refs and can bring commits down with

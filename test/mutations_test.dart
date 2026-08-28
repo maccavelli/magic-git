@@ -235,6 +235,7 @@ void main() {
       expect(exec.calls[1], [
         'git',
         'push',
+        '--progress',
         '--delete',
         '--end-of-options',
         'origin',
@@ -598,17 +599,26 @@ void main() {
         '-c',
         'credential.helper=!glab auth git-credential',
         'fetch',
-        '--all',
+        '--progress',
         '--prune',
+        '--recurse-submodules=no',
+        '--jobs=4',
+        '--all',
       ]);
       // pull/push resolve the tracked remote, then probe it; empty URL → no
       // forge auth args.
       expect(exec.calls[1], upstreamProbe);
       expect(exec.calls[2], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[3], ['git', 'pull', '--ff-only']);
+      expect(exec.calls[3], [
+        'git',
+        'pull',
+        '--progress',
+        '--recurse-submodules=no',
+        '--ff-only',
+      ]);
       expect(exec.calls[4], upstreamProbe);
       expect(exec.calls[5], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[6], ['git', 'push']);
+      expect(exec.calls[6], ['git', 'push', '--progress']);
 
       // The stall budget rides the network commands themselves, not the
       // local probes that precede them. Indexed by argv content so an added
@@ -671,6 +681,25 @@ void main() {
       expect(localCalls, isNonZero);
     });
 
+    test('defaultRemote fetch omits --all and --jobs', () async {
+      await git.fetch('/repo', scope: FetchScope.defaultRemote);
+      expect(exec.calls.single, [
+        'git',
+        '-c',
+        'credential.helper=',
+        '-c',
+        'credential.helper=!gh auth git-credential',
+        '-c',
+        'credential.helper=!glab auth git-credential',
+        'fetch',
+        '--progress',
+        '--prune',
+        '--recurse-submodules=no',
+      ]);
+      expect(exec.calls.single, isNot(contains('--all')));
+      expect(exec.calls.single, isNot(contains('--jobs=4')));
+    });
+
     test('a custom networkTimeout reaches fetch', () async {
       final custom = GitService(
         exec,
@@ -701,8 +730,11 @@ void main() {
         '-c',
         'credential.helper=!/home/u/.local/bin/glab auth git-credential',
         'fetch',
-        '--all',
+        '--progress',
         '--prune',
+        '--recurse-submodules=no',
+        '--jobs=4',
+        '--all',
       ]);
 
       exec.results.addAll(const [
@@ -721,6 +753,7 @@ void main() {
         '-c',
         'credential.helper=!/home/u/.local/bin/glab auth git-credential',
         'push',
+        '--progress',
       ]);
     });
 
@@ -732,14 +765,28 @@ void main() {
       // an explicit remote skips the resolve.
       expect(exec.calls[0], upstreamProbe);
       expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[2], ['git', 'pull', '--rebase']);
+      expect(exec.calls[2], [
+        'git',
+        'pull',
+        '--progress',
+        '--recurse-submodules=no',
+        '--rebase',
+      ]);
       expect(exec.calls[3], upstreamProbe);
       expect(exec.calls[4], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[5], ['git', 'pull', '--no-rebase']);
+      expect(exec.calls[5], [
+        'git',
+        'pull',
+        '--progress',
+        '--recurse-submodules=no',
+        '--no-rebase',
+      ]);
       expect(exec.calls[6], ['git', 'remote', 'get-url', 'origin']);
       expect(exec.calls[7], [
         'git',
         'pull',
+        '--progress',
+        '--recurse-submodules=no',
         '--ff-only',
         '--end-of-options',
         'origin',
@@ -751,7 +798,13 @@ void main() {
       await git.pull('/repo', branch: 'main');
       expect(exec.calls[0], upstreamProbe);
       expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[2], ['git', 'pull', '--ff-only']);
+      expect(exec.calls[2], [
+        'git',
+        'pull',
+        '--progress',
+        '--recurse-submodules=no',
+        '--ff-only',
+      ]);
     });
 
     test(
@@ -776,6 +829,7 @@ void main() {
           '-c',
           'credential.helper=!gh auth git-credential',
           'push',
+          '--progress',
         ]);
       },
     );
@@ -806,6 +860,7 @@ void main() {
         '-c',
         'credential.helper=!gh auth git-credential',
         'push',
+        '--progress',
       ]);
     });
 
@@ -818,17 +873,29 @@ void main() {
       // the explicit-remote push skips the resolve.
       expect(exec.calls[0], upstreamProbe);
       expect(exec.calls[1], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[2], ['git', 'push', '--force-with-lease']);
+      expect(exec.calls[2], [
+        'git',
+        'push',
+        '--progress',
+        '--force-with-lease',
+      ]);
       expect(exec.calls[3], upstreamProbe);
       expect(exec.calls[4], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[5], ['git', 'push', '--force']);
+      expect(exec.calls[5], ['git', 'push', '--progress', '--force']);
       expect(exec.calls[6], upstreamProbe);
       expect(exec.calls[7], ['git', 'remote', 'get-url', 'origin']);
-      expect(exec.calls[8], ['git', 'push', '-u', '--follow-tags']);
+      expect(exec.calls[8], [
+        'git',
+        'push',
+        '--progress',
+        '-u',
+        '--follow-tags',
+      ]);
       expect(exec.calls[9], ['git', 'remote', 'get-url', 'origin']);
       expect(exec.calls[10], [
         'git',
         'push',
+        '--progress',
         '--end-of-options',
         'origin',
         'feat',
@@ -897,6 +964,7 @@ void main() {
       expect(exec.calls[2], [
         'git',
         'push',
+        '--progress',
         '--end-of-options',
         'origin',
         'refs/tags/v1.0.0',
@@ -911,6 +979,7 @@ void main() {
       expect(exec.calls[1], [
         'git',
         'push',
+        '--progress',
         '--end-of-options',
         'origin',
         'refs/tags/v1.0.0',
@@ -943,6 +1012,7 @@ void main() {
       expect(exec.calls[1], [
         'git',
         'push',
+        '--progress',
         '--delete',
         '--end-of-options',
         'origin',

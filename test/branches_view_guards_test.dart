@@ -80,6 +80,7 @@ class _SpyGit extends GitService {
   Future<SSHCommandResult> fetch(
     String repoPath, {
     bool background = false,
+    FetchScope scope = FetchScope.allRemotes,
   }) async {
     fetches++;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

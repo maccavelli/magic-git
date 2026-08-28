@@ -17,6 +17,13 @@ import 'repo_tree.dart';
 /// How `git pull` integrates upstream work.
 enum PullMode { ffOnly, rebase, merge }
 
+/// Which remotes `git fetch` contacts.
+///
+/// [allRemotes] is the Fetch button / auto-fetch (`--all --jobs=4`).
+/// [defaultRemote] is the post-commit ahead/behind path (git's default
+/// remote, no `--all`).
+enum FetchScope { allRemotes, defaultRemote }
+
 /// How aggressively `git push` overwrites the remote.
 enum PushForce { none, withLease, force }
 
@@ -4103,7 +4110,16 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     final auth = await _forgeAuthArgs(repoPath, remote: remote);
     return _run(
       repoPath,
-      ['git', ...auth, 'push', '--delete', '--end-of-options', remote, branch],
+      [
+        'git',
+        ...auth,
+        'push',
+        '--progress',
+        '--delete',
+        '--end-of-options',
+        remote,
+        branch,
+      ],
       'git push --delete',
       timeout: _networkCeiling,
       activityIdle: networkTimeout,
@@ -4868,36 +4884,49 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     return 'origin';
   }
 
-  /// Fetches all remotes and prunes deleted refs. Returns the command result so
+  /// Fetches remotes and prunes deleted refs. Returns the command result so
   /// callers can surface its output. Sync lane: a fetch touches refs and the
   /// network but never the index/worktree, so reads keep flowing while a slow
   /// fetch (up to [networkTimeout]) runs — but only one sync op at a time, so
   /// an auto-fetch can never race a manual fetch on ref locks.
   ///
+  /// [FetchScope.allRemotes] (`--all --jobs=4`) is the Fetch button and
+  /// auto-fetch. [FetchScope.defaultRemote] is the post-commit ahead/behind
+  /// path (git's default remote, no `--all`).
+  ///
+  /// `--progress` forces stderr progress without a TTY so the activity
+  /// deadline sees bytes. `--recurse-submodules=no` pins host config until
+  /// a submodule UI exists.
+  ///
   /// Installs both forge CLI credential helpers for the duration of the
   /// command ([forgeGitAuthConfigArgsAll]) because `--all` may touch remotes
   /// of either forge.
-  Future<SSHCommandResult> fetch(String repoPath, {bool background = false}) =>
-      _run(
-        repoPath,
-        [
-          'git',
-          ...forgeGitAuthConfigArgsAll(
-            ghPath: _executor.resolvedBinaryPath('gh'),
-            glabPath: _executor.resolvedBinaryPath('glab'),
-          ),
-          'fetch',
-          '--all',
-          '--prune',
-        ],
-        'git fetch',
-        timeout: _networkCeiling,
-        activityIdle: networkTimeout,
-        lane: ExecLane.sync,
-        visibility: background
-            ? OperationVisibility.background
-            : OperationVisibility.normal,
-      );
+  Future<SSHCommandResult> fetch(
+    String repoPath, {
+    bool background = false,
+    FetchScope scope = FetchScope.allRemotes,
+  }) => _run(
+    repoPath,
+    [
+      'git',
+      ...forgeGitAuthConfigArgsAll(
+        ghPath: _executor.resolvedBinaryPath('gh'),
+        glabPath: _executor.resolvedBinaryPath('glab'),
+      ),
+      'fetch',
+      '--progress',
+      '--prune',
+      '--recurse-submodules=no',
+      if (scope == FetchScope.allRemotes) ...['--jobs=4', '--all'],
+    ],
+    'git fetch',
+    timeout: _networkCeiling,
+    activityIdle: networkTimeout,
+    lane: ExecLane.sync,
+    visibility: background
+        ? OperationVisibility.background
+        : OperationVisibility.normal,
+  );
 
   /// Pulls upstream work. Defaults to fast-forward-only (never creates a
   /// surprise merge commit); [mode] can request a rebase or an explicit merge,
@@ -4920,6 +4949,8 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         'git',
         ...auth,
         'pull',
+        '--progress',
+        '--recurse-submodules=no',
         switch (mode) {
           PullMode.ffOnly => '--ff-only',
           PullMode.rebase => '--rebase',
@@ -4964,6 +4995,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         'git',
         ...auth,
         'push',
+        '--progress',
         if (force == PushForce.withLease) '--force-with-lease',
         if (force == PushForce.force) '--force',
         if (setUpstream) '-u',
@@ -5077,6 +5109,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         'git',
         ...auth,
         'push',
+        '--progress',
         '--end-of-options',
         remote,
         for (final n in names) 'refs/tags/$n',
@@ -5105,6 +5138,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         'git',
         ...auth,
         'push',
+        '--progress',
         '--delete',
         '--end-of-options',
         remote,
