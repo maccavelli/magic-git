@@ -107,17 +107,24 @@ mixin BusyActionState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
   ///
   /// [refresh], when given, replaces [refreshAfterAction] in `finally` —
   /// fetch/push use the narrower fetch-family refresh set.
+  ///
+  /// [holdBusy] (default true) is the index/worktree mutation gate. Fetch and
+  /// push pass false so staging stays available while the transfer runs.
   Future<bool> runLogged(
     String title,
     Future<void> Function(OutputLogNotifier log) body, {
     String? Function(Object error)? describeError,
     bool dock = false,
+    bool holdBusy = true,
     void Function()? refresh,
   }) async {
     // See [runGuarded]: `ref.read` below is as unsafe post-dispose as
     // `setState`, and most callers arrive here from an awaited dialog.
-    if (_busy || !mounted) return false;
-    setState(() => _busy = true);
+    if (!mounted) return false;
+    if (holdBusy) {
+      if (_busy) return false;
+      setState(() => _busy = true);
+    }
     final log = ref.read(outputLogProvider.notifier);
     var success = false;
     try {
@@ -143,7 +150,7 @@ mixin BusyActionState<T extends ConsumerStatefulWidget> on ConsumerState<T> {
     } finally {
       if (mounted) {
         (refresh ?? refreshAfterAction)();
-        setState(() => _busy = false);
+        if (holdBusy) setState(() => _busy = false);
       }
     }
     return success;

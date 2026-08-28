@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import '../../core/exec/operation_activity.dart';
 import '../../core/git/git_service.dart';
 import '../../core/git/unified_diff.dart';
 import '../../core/git/watch_event.dart';
@@ -281,6 +282,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   // DiffPopoutWindow. Relocates where the diff is shown; _selected still
   // tracks which file it's for.
   bool _popout = false;
+
+  // In-flight fetch/push count for this view. Tests stub GitService so
+  // [operationActivityProvider] never sees those ops; this counter still
+  // dims the sync group without holding [busy] (staging stays enabled).
+  int _syncOps = 0;
 
   // How long after this app's own mutation a watch tick is assumed to be
   // reporting that same change (SSH round trip + the watcher's own
@@ -812,20 +818,29 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
 
   Future<void> _fetch() async {
     final git = ref.read(gitServiceProvider);
-    await runLogged(
-      'git fetch --all --prune',
-      (log) async {
-        await withOwnMutation(
-          ref.read(ownMutationTrackerProvider),
-          repoPath,
-          () async {
-            log.logResult('git fetch --all --prune', await git.fetch(repoPath));
-          },
-        );
-      },
-      dock: true,
-      refresh: () => refreshAfterFetch(ref, repoPath),
-    );
+    if (mounted) setState(() => _syncOps++);
+    try {
+      await runLogged(
+        'git fetch --all --prune',
+        (log) async {
+          await withOwnMutation(
+            ref.read(ownMutationTrackerProvider),
+            repoPath,
+            () async {
+              log.logResult(
+                'git fetch --all --prune',
+                await git.fetch(repoPath),
+              );
+            },
+          );
+        },
+        dock: true,
+        holdBusy: false,
+        refresh: () => refreshAfterFetch(ref, repoPath),
+      );
+    } finally {
+      if (mounted) setState(() => _syncOps--);
+    }
     // The fetch talked to the remote anyway — mark the cached remote-tag
     // listing refetchable (lazy: the ls-remote runs on the next actual read).
     if (mounted) refreshRemoteTags(ref, repoPath);
@@ -924,20 +939,31 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       if (setUpstream) '-u',
       if (followTags) '--follow-tags',
     ].join(' ');
-    final success = await runLogged(label, (log) async {
-      // Capture the old remote tip before the push advances the tracking ref.
-      final base = await git.revParse(repoPath, '@{upstream}');
-      log.logResult(
+    if (mounted) setState(() => _syncOps++);
+    final bool success;
+    try {
+      success = await runLogged(
         label,
-        await git.push(
-          repoPath,
-          force: force,
-          setUpstream: setUpstream,
-          followTags: followTags,
-        ),
+        (log) async {
+          // Capture the old remote tip before the push advances the tracking ref.
+          final base = await git.revParse(repoPath, '@{upstream}');
+          log.logResult(
+            label,
+            await git.push(
+              repoPath,
+              force: force,
+              setUpstream: setUpstream,
+              followTags: followTags,
+            ),
+          );
+          await _logPushed(log, git, base);
+        },
+        dock: true,
+        holdBusy: false,
       );
-      await _logPushed(log, git, base);
-    }, dock: true);
+    } finally {
+      if (mounted) setState(() => _syncOps--);
+    }
     // A --follow-tags push may have just put local tags on the remote — the
     // cached remote-tag listing is stale.
     if (followTags && mounted) refreshRemoteTags(ref, repoPath);
@@ -1546,10 +1572,19 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     // The four sync verbs are always on screen with fixed meanings; the ladder
     // above only decides which one is emphasized. Unavailability is stated per
     // verb, with the reason, so a dimmed button explains itself.
+    final activitySync = ref
+        .watch(operationActivityProvider)
+        .any(
+          (record) =>
+              !record.isTerminal &&
+              record.descriptor.repositoryPath == repoPath &&
+              record.descriptor.kind == OperationKind.synchronization,
+        );
     final syncGroup = RepositorySyncGroup(
       onInvoke: _invokeSyncCommand,
       unavailable: _syncUnavailability(
         busy: busy,
+        syncRunning: _syncOps > 0 || activitySync,
         connected: connection.isConnected,
         hasRemote:
             (remotes?.isNotEmpty ?? false) || (branch?.hasUpstream ?? false),
@@ -1816,6 +1851,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   /// already running), not of the widgets.
   Map<RepositorySyncCommand, String> _syncUnavailability({
     required bool busy,
+    required bool syncRunning,
     required bool connected,
     required bool hasRemote,
     required bool hasUpstream,
@@ -1826,6 +1862,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         ? 'Another repository operation is running'
         : !hasRemote
         ? 'No remote is configured'
+        : syncRunning
+        ? 'A fetch or push is already running'
         : null;
     if (blanket != null) {
       return {

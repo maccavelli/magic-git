@@ -104,6 +104,53 @@ void main() {
     );
   });
 
+  testWidgets('runLogged holdBusy: false does not set busy', (tester) async {
+    final host = await pumpHost(tester);
+    final gate = Completer<void>();
+
+    final first = host.runLogged(
+      'git fetch',
+      (log) => gate.future,
+      holdBusy: false,
+    );
+    await tester.pump();
+    expect(host.busy, isFalse);
+
+    var guardedRan = false;
+    final guarded = host.runGuarded(() async => guardedRan = true);
+    await tester.pump();
+    expect(guardedRan, isTrue);
+    expect(await guarded, isTrue);
+
+    gate.complete();
+    expect(await first, isTrue);
+    await tester.pump();
+    expect(host.busy, isFalse);
+  });
+
+  testWidgets('runLogged holdBusy: false is allowed while a mutation is busy', (
+    tester,
+  ) async {
+    final host = await pumpHost(tester);
+    final gate = Completer<void>();
+
+    final mutation = host.runGuarded(() => gate.future);
+    await tester.pump();
+    expect(host.busy, isTrue);
+
+    var fetchRan = false;
+    final fetch = await host.runLogged(
+      'git fetch',
+      (log) async => fetchRan = true,
+      holdBusy: false,
+    );
+    expect(fetch, isTrue);
+    expect(fetchRan, isTrue);
+
+    gate.complete();
+    expect(await mutation, isTrue);
+  });
+
   testWidgets('holdBusyWhile holds the gate without refreshing', (
     tester,
   ) async {

@@ -706,9 +706,16 @@ void main() {
 
     await tester.tap(find.text('Fetch'));
     await tester.pump();
-    // In flight: every sync verb goes inert, so none can fire a second time.
+    // In flight: sync verbs go inert so none can fire a second time. Staging
+    // and Stash stay available — fetch does not hold the mutation busy gate.
     expect(fetchButton().onPressed, isNull);
     expect(git.fetchCalls, 1);
+    final stash = tester.widget<ToolIconButton>(
+      find.byWidgetPredicate(
+        (w) => w is ToolIconButton && w.tooltip == 'Stash changes',
+      ),
+    );
+    expect(stash.onPressed, isNotNull);
 
     git.fetchGate!.complete();
     await tester.pumpAndSettle();

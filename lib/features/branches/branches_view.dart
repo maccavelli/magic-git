@@ -1616,6 +1616,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         );
       },
       dock: true,
+      holdBusy: false,
       refresh: () => refreshAfterFetch(ref, repoPath),
     );
     if (mounted) refreshRemoteTags(ref, repoPath);
