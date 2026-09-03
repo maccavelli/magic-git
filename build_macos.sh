@@ -150,7 +150,7 @@ APP_NAME="${PRODUCT_NAME}.app"
 
 # Echoes an SDK's tag (e.g. "3.44.8"), or nothing if it can't be determined.
 sdk_version() {
-  git -C "$1" describe --tags 2>/dev/null | head -1
+  git -C "$1" describe --tags 2>/dev/null | head -1 || true
 }
 
 FLUTTER_ROOT_DIR=""
