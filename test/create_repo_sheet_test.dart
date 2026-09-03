@@ -352,6 +352,30 @@ void main() {
       reason: 'an implausible email stays outlined',
     );
 
+    await tester.enterText(_authorEmailField(), '@x');
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNull,
+      reason: 'email must have a local part before @',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorEmailField()).decoration,
+      kAppTextFieldErrorDecoration,
+    );
+
+    await tester.enterText(_authorEmailField(), 'x@');
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNull,
+      reason: 'email must have a domain after @',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorEmailField()).decoration,
+      kAppTextFieldErrorDecoration,
+    );
+
     await tester.enterText(_authorEmailField(), _testAuthorEmail);
     await tester.pumpAndSettle();
     expect(
@@ -668,6 +692,16 @@ void main() {
       );
       expect(stub.repoPathsSet, ['/srv/new-proj']);
       expect(find.byType(CreateRepositorySheet), findsNothing);
+      expect(
+        exec.calls.map((c) => c.join(' ')),
+        isNot(contains(_identityCommit)),
+        reason: 'README off — no initial commit',
+      );
+      expect(
+        exec.calls.any((c) => c.take(3).join(' ') == 'git remote add'),
+        isFalse,
+        reason: 'Remote None — no origin',
+      );
       expect(
         settings.preferenceWrites,
         0,

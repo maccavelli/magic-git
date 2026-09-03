@@ -305,7 +305,7 @@ only updates the ones listed there.
 
 | # | Exact name | Asserts | Negative observation |
 |---|---|---|---|
-| T1 | `Add a README gates Continue until a git identity is filled` | Optional identity: Continue enabled, stock outline. README on, empty: Continue disabled, both fields `kAppTextFieldErrorDecoration`. Name filled: name stock, email still error. `not-an-email`: email still error, Continue disabled. Valid email: Continue enabled, both stock. | Continue is **null** and both fields error after README on with empty identity. Email `not-an-email` keeps Continue null and email error. |
+| T1 | `Add a README gates Continue until a git identity is filled` | Optional identity: Continue enabled, stock outline. README on, empty: Continue disabled, both fields `kAppTextFieldErrorDecoration`. Name filled: name stock, email still error. `not-an-email`, `@x`, `x@`: email still error, Continue disabled. Valid email: Continue enabled, both stock. | Continue is **null** and both fields error after README on with empty identity. `not-an-email` / `@x` / `x@` keep Continue null and email error. |
 | T2 | `git identity prefills from Settings` | With `_PrefillSettings` (Jane Developer / jane@example.com), Details controllers hold those strings. Read `controller?.text`, not `find.text`. | — |
 | T3 | `Settings-prefilled identity is not marked required when README is on` | Same override as T2. Details, valid repo name, tap README. Continue **enabled**. Both fields `kAppTextFieldDecoration`. | — (T4 is the empty-first counterpart) |
 | T4 | `identity required outline clears when Settings loads after open` | `_LateSettings` `build()`s empty, then `arrive()` publishes Jane / jane@example.com. After README on, **first** assert name error outline and Continue null; then `arrive()` + `pumpAndSettle`; controllers match, stock outline, Continue enabled. | The first assert is the instrument: required still fires when Settings is still the empty default. |
@@ -464,6 +464,8 @@ In `test/create_repo_sheet_test.dart`:
      email stays red.
    * Email `not-an-email`. Still disabled. (This is the negative
      observation for the email predicate.)
+   * Email `@x`. Still disabled.
+   * Email `x@`. Still disabled.
    * Email `ada@example.com`. Continue enabled.
    * Tap README via `ensureVisible` on the tooltip whose message starts
      with `Add a README` — the toggle can sit under the fold.
@@ -842,6 +844,7 @@ hosts without global git config, origin pipeline unchanged.
 | 2026-09-03 | **Deviation (requested):** outline identity fields in red when they are required and invalid. Added `kAppTextFieldErrorDecoration` / `kAppTextFieldErrorFocusedDecoration` in `lib/features/common/field_styles.dart`. Per-field: name red iff `_needsIdentity && name empty`; email red iff `_needsIdentity && !_looksLikeEmail`. Optional identity never uses the error outline. Gating test asserts the decoration swap. Frozen Details layout step 5 is this outline; `field_styles.dart` added to Phase 1's file list. |
 | 2026-09-03 | **Deviation (requested):** required/red must not fire when identity is prepopulated from Settings. `AppSettingsNotifier` emits empty defaults first, then disk; initState alone saw the empty snapshot. `_applyIdentityPrefill` copies non-empty Settings name/email into un-edited fields, from initState and from a `ref.listen(appSettingsProvider)` in build. User edits are sticky (`_authorNameEdited` / `_authorEmailEdited`). Tests: prefilled Settings + README keeps stock outline and Continue enabled; empty-then-arrive Settings is first shown red (required), then clears. |
 | 2026-09-03 | Maintainer accepted the MADR and approved this PLAN. T5 (`Commit all gates Continue…`), T6 (`Review lists the git identity`), T7 (`typed identity is not overwritten…`), and T10 (`existing repo with history does not rewrite identity…`) written. `flutter analyze` clean on touched Dart; `flutter test test/create_repo_sheet_test.dart test/help_book_json_test.dart` green. Engineering commit `69e784d`. Phases 1–3 not split (pre-approval mixed tree). `analysis_options.yaml` / `pubspec.lock` left uncommitted. |
+| 2026-09-03 | Re-execute: Goal criterion 2 named `@x` and `x@` as invalid emails a test must observe; T1 only had `not-an-email`. T8 named “no git commit, no git remote add” without those asserts. Both added. `rg` finds no `setPreferences` and no `git commit -m Initial commit` in the sheet. Analyze + `create_repo_sheet_test` / `help_book_json_test` green. |
 
 The two 2026-09-03 deviations are now in Frozen UI / acceptance
 criteria 1–2 / Phase 1e tests 3–4. The execution-record rows stay as
