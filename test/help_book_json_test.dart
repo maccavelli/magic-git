@@ -382,6 +382,7 @@ void main() {
           'Destination',
           'Review',
           'partial folder',
+          'git identity',
         ],
         'tabs_workspaces': [
           '⌘T',

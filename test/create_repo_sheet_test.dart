@@ -1,4 +1,5 @@
 // CreateRepositorySheet: submit gating, plain git init argv + registration,
+// git identity (local user.name/user.email + authored initial commit),
 // the GitHub forge-first mechanism (branch field disabled, gh argv), the
 // GitLab init-then-create path where a forge failure still registers the
 // local repo with a warning, the custom-URL mode (init + git remote add),
@@ -13,12 +14,15 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/settings/app_settings.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/storage/connection_store.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
+import 'package:remote_magic_git/features/common/field_styles.dart';
 import 'package:remote_magic_git/features/workspace/create_repo_sheet.dart';
+import 'package:riverpod/misc.dart' show Override;
 
 import 'helpers/app_scope.dart';
 
@@ -85,6 +89,51 @@ class _FakeStore extends ConnectionStore {
   Future<void> touch(String id, {DateTime? when}) async {}
 }
 
+class _PrefillSettings extends AppSettingsNotifier {
+  @override
+  AppSettings build() => const AppSettings(
+    committerName: 'Jane Developer',
+    committerEmail: 'jane@example.com',
+  );
+}
+
+/// Starts empty (the real notifier's first frame) then can publish a stored
+/// identity, matching Settings' async disk load.
+class _LateSettings extends AppSettingsNotifier {
+  @override
+  AppSettings build() => const AppSettings();
+
+  void arrive({
+    String committerName = 'Jane Developer',
+    String committerEmail = 'jane@example.com',
+  }) {
+    state = AppSettings(
+      committerName: committerName,
+      committerEmail: committerEmail,
+    );
+  }
+}
+
+/// Counts [setPreferences] calls so a create cannot silently write identity
+/// into Settings (empty there is intentional).
+class _GuardSettings extends AppSettingsNotifier {
+  int preferenceWrites = 0;
+
+  @override
+  AppSettings build() => const AppSettings();
+
+  @override
+  Future<void> setPreferences({
+    String? committerName,
+    String? committerEmail,
+    PullMode? defaultPullMode,
+    bool? pushFollowTags,
+    int? autoFetchMinutes,
+  }) async {
+    preferenceWrites++;
+  }
+}
+
 SSHCommandResult _ok(String stdout) =>
     SSHCommandResult(exitCode: 0, stdout: stdout, stderr: '');
 
@@ -99,8 +148,9 @@ const _conn = SavedConnection(
 );
 
 Future<(_StubConnection, _FakeExecutor, _FakeStore)> _pumpConnected(
-  WidgetTester tester,
-) async {
+  WidgetTester tester, {
+  List<Override> extraOverrides = const [],
+}) async {
   // Room for the wizard + completed-warning footer (cloneUrl failure copy
   // can be long; a tight surface overflows the step breadcrumb).
   await tester.binding.setSurfaceSize(const Size(1200, 900));
@@ -124,6 +174,7 @@ Future<(_StubConnection, _FakeExecutor, _FakeStore)> _pumpConnected(
         connectionStoreProvider.overrideWithValue(store),
         savedConnectionsProvider.overrideWith((ref) async => [_conn]),
         gitServiceProvider.overrideWithValue(GitService(_FakeExecutor())),
+        ...extraOverrides,
       ],
       child: const MacosApp(
         debugShowCheckedModeBanner: false,
@@ -157,6 +208,49 @@ Finder _nameField() => find.byWidgetPredicate(
   (w) => w is MacosTextField && w.placeholder == 'my-project',
 );
 
+Finder _authorNameField() => find.byWidgetPredicate(
+  (w) => w is MacosTextField && w.placeholder == 'Your name',
+);
+
+Finder _authorEmailField() => find.byWidgetPredicate(
+  (w) => w is MacosTextField && w.placeholder == 'you@example.com',
+);
+
+const _testAuthorName = 'Ada Lovelace';
+const _testAuthorEmail = 'ada@example.com';
+
+/// Fills the Details-step identity fields. Required when an initial
+/// commit is on (README / commit-all); optional otherwise.
+Future<void> _fillIdentity(WidgetTester tester) async {
+  await tester.ensureVisible(_authorNameField());
+  await tester.pumpAndSettle();
+  await tester.enterText(_authorNameField(), _testAuthorName);
+  await tester.enterText(_authorEmailField(), _testAuthorEmail);
+  await tester.pumpAndSettle();
+}
+
+Finder _readmeToggle() => find.byWidgetPredicate(
+  (w) => w is MacosTooltip && w.message.startsWith('Add a README'),
+);
+
+Future<void> _tapReadme(WidgetTester tester) async {
+  await tester.ensureVisible(_readmeToggle());
+  await tester.pumpAndSettle();
+  await tester.tap(_readmeToggle());
+  await tester.pumpAndSettle();
+}
+
+/// Queues the two local `git config` writes that follow init when identity
+/// is filled.
+void _queueIdentityConfig(_FakeExecutor exec) {
+  exec.results.add(_ok('')); // git config --local user.name
+  exec.results.add(_ok('')); // git config --local user.email
+}
+
+String get _identityCommit =>
+    'git -c user.name=$_testAuthorName -c user.email=$_testAuthorEmail '
+    'commit --no-gpg-sign -m Initial commit';
+
 /// Advances the wizard one step (the current step must be valid).
 Future<void> _next(WidgetTester tester) async {
   await tester.tap(_continueButton());
@@ -186,6 +280,255 @@ void main() {
     await tester.enterText(_nameField(), '../evil');
     await tester.pumpAndSettle();
     expect(tester.widget<AppPushButton>(_continueButton()).onPressed, isNull);
+  });
+
+  testWidgets('Add a README gates Continue until a git identity is filled', (
+    tester,
+  ) async {
+    await _pumpConnected(tester);
+    await _next(tester); // Source
+    await _next(tester); // Remote
+    await tester.enterText(_nameField(), 'new-proj');
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNotNull,
+      reason: 'identity is optional until an initial commit is on',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorNameField()).decoration,
+      kAppTextFieldDecoration,
+      reason: 'optional identity is not outlined as an error',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorEmailField()).decoration,
+      kAppTextFieldDecoration,
+    );
+
+    await _tapReadme(tester);
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNull,
+      reason: 'README commit requires name + email',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorNameField()).decoration,
+      kAppTextFieldErrorDecoration,
+      reason: 'required empty name is outlined in red',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorEmailField()).decoration,
+      kAppTextFieldErrorDecoration,
+      reason: 'required empty email is outlined in red',
+    );
+
+    await tester.enterText(_authorNameField(), _testAuthorName);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNull,
+      reason: 'email still missing',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorNameField()).decoration,
+      kAppTextFieldDecoration,
+      reason: 'a filled name drops the error outline',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorEmailField()).decoration,
+      kAppTextFieldErrorDecoration,
+    );
+
+    await tester.enterText(_authorEmailField(), 'not-an-email');
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNull,
+      reason: 'email must contain an @ with both sides',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorEmailField()).decoration,
+      kAppTextFieldErrorDecoration,
+      reason: 'an implausible email stays outlined',
+    );
+
+    await tester.enterText(_authorEmailField(), _testAuthorEmail);
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNotNull,
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorNameField()).decoration,
+      kAppTextFieldDecoration,
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorEmailField()).decoration,
+      kAppTextFieldDecoration,
+    );
+  });
+
+  testWidgets('git identity prefills from Settings', (tester) async {
+    final stub = _StubConnection(
+      const ConnectionState(
+        phase: ConnectionPhase.connected,
+        repoPath: '/srv/repo',
+        repoPaths: ['/srv/repo'],
+        connectionId: 'c1',
+        connectionLabel: 'Prod',
+        host: 'h',
+      ),
+    );
+    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    await tester.pumpWidget(
+      appProviderScope(
+        overrides: [
+          connectionProvider.overrideWith(() => stub),
+          activeExecutorProvider.overrideWithValue(_FakeExecutor()),
+          connectionStoreProvider.overrideWithValue(_FakeStore()),
+          savedConnectionsProvider.overrideWith((ref) async => [_conn]),
+          gitServiceProvider.overrideWithValue(GitService(_FakeExecutor())),
+          appSettingsProvider.overrideWith(_PrefillSettings.new),
+        ],
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: CreateRepositorySheet.connected(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await _next(tester); // Source
+    await _next(tester); // Remote
+    expect(
+      tester.widget<MacosTextField>(_authorNameField()).controller?.text,
+      'Jane Developer',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorEmailField()).controller?.text,
+      'jane@example.com',
+    );
+  });
+
+  testWidgets(
+    'Settings-prefilled identity is not marked required when README is on',
+    (tester) async {
+      await _pumpConnected(
+        tester,
+        extraOverrides: [
+          appSettingsProvider.overrideWith(_PrefillSettings.new),
+        ],
+      );
+      await _next(tester); // Source
+      await _next(tester); // Remote
+      await tester.enterText(_nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await _tapReadme(tester);
+
+      expect(
+        tester.widget<AppPushButton>(_continueButton()).onPressed,
+        isNotNull,
+        reason: 'prefilled name+email already satisfy the commit identity',
+      );
+      expect(
+        tester.widget<MacosTextField>(_authorNameField()).decoration,
+        kAppTextFieldDecoration,
+        reason: 'a Settings-populated name must not outline as required',
+      );
+      expect(
+        tester.widget<MacosTextField>(_authorEmailField()).decoration,
+        kAppTextFieldDecoration,
+        reason: 'a Settings-populated email must not outline as required',
+      );
+    },
+  );
+
+  testWidgets(
+    'identity required outline clears when Settings loads after open',
+    (tester) async {
+      final settings = _LateSettings();
+      await _pumpConnected(
+        tester,
+        extraOverrides: [appSettingsProvider.overrideWith(() => settings)],
+      );
+      await _next(tester); // Source
+      await _next(tester); // Remote
+      await tester.enterText(_nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await _tapReadme(tester);
+
+      expect(
+        tester.widget<MacosTextField>(_authorNameField()).decoration,
+        kAppTextFieldErrorDecoration,
+        reason: 'empty identity is required while Settings is still default',
+      );
+      expect(tester.widget<AppPushButton>(_continueButton()).onPressed, isNull);
+
+      settings.arrive();
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<MacosTextField>(_authorNameField()).controller?.text,
+        'Jane Developer',
+      );
+      expect(
+        tester.widget<MacosTextField>(_authorEmailField()).controller?.text,
+        'jane@example.com',
+      );
+      expect(
+        tester.widget<MacosTextField>(_authorNameField()).decoration,
+        kAppTextFieldDecoration,
+      );
+      expect(
+        tester.widget<MacosTextField>(_authorEmailField()).decoration,
+        kAppTextFieldDecoration,
+      );
+      expect(
+        tester.widget<AppPushButton>(_continueButton()).onPressed,
+        isNotNull,
+        reason: 'arriving Settings identity satisfies the required gate',
+      );
+    },
+  );
+
+  testWidgets('Review lists the git identity', (tester) async {
+    await _pumpConnected(tester);
+    await _next(tester); // Source
+    await _next(tester); // Remote
+    await tester.enterText(_nameField(), 'new-proj');
+    await tester.pumpAndSettle();
+    await _fillIdentity(tester);
+    await _next(tester); // Details → Review
+    expect(find.text('Git identity'), findsOneWidget);
+    expect(find.text('Ada Lovelace · ada@example.com'), findsOneWidget);
+  });
+
+  testWidgets('typed identity is not overwritten when Settings loads', (
+    tester,
+  ) async {
+    final settings = _LateSettings();
+    await _pumpConnected(
+      tester,
+      extraOverrides: [appSettingsProvider.overrideWith(() => settings)],
+    );
+    await _next(tester); // Source
+    await _next(tester); // Remote
+    await tester.enterText(_nameField(), 'new-proj');
+    await tester.pumpAndSettle();
+    await _fillIdentity(tester);
+
+    settings.arrive();
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<MacosTextField>(_authorNameField()).controller?.text,
+      _testAuthorName,
+      reason: 'a typed name must not snap back to Settings',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorEmailField()).controller?.text,
+      _testAuthorEmail,
+      reason: 'a typed email must not snap back to Settings',
+    );
   });
 
   testWidgets(
@@ -285,6 +628,53 @@ void main() {
     expect(store.updated.single.allRepoPaths, contains('/srv/new-proj'));
     expect(find.byType(CreateRepositorySheet), findsNothing, reason: 'popped');
   });
+
+  testWidgets(
+    'a filled git identity is written into the new repo even without a README',
+    (tester) async {
+      final settings = _GuardSettings();
+      // The spy itself must be seen to fire, or a 0-write assert is noise.
+      await settings.setPreferences(
+        committerName: 'should-count',
+        committerEmail: 'x@y',
+      );
+      expect(settings.preferenceWrites, 1);
+      settings.preferenceWrites = 0;
+
+      final (stub, exec, _) = await _pumpConnected(
+        tester,
+        extraOverrides: [appSettingsProvider.overrideWith(() => settings)],
+      );
+      await _next(tester); // Source
+      await _next(tester); // Remote (None)
+      await tester.enterText(_nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await _fillIdentity(tester);
+      await _next(tester); // Details → Review
+
+      exec.results.add(_ok('absent')); // probe
+      exec.results.add(_ok('')); // git init
+      _queueIdentityConfig(exec);
+      await tester.tap(_createButton());
+      await tester.pumpAndSettle();
+
+      expect(
+        exec.calls.map((c) => c.join(' ')),
+        containsAllInOrder([
+          'git init -b main -- new-proj',
+          'git config --local user.name $_testAuthorName',
+          'git config --local user.email $_testAuthorEmail',
+        ]),
+      );
+      expect(stub.repoPathsSet, ['/srv/new-proj']);
+      expect(find.byType(CreateRepositorySheet), findsNothing);
+      expect(
+        settings.preferenceWrites,
+        0,
+        reason: 'create must not write identity into Settings',
+      );
+    },
+  );
 
   testWidgets('an existing destination fails with a clear error', (
     tester,
@@ -464,16 +854,13 @@ void main() {
       await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'new-proj');
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byWidgetPredicate(
-          (w) => w is MacosTooltip && w.message.startsWith('Add a README'),
-        ),
-      );
-      await tester.pumpAndSettle();
+      await _tapReadme(tester);
+      await _fillIdentity(tester);
       await _next(tester); // Details → Review
 
       exec.results.add(_ok('absent')); // probe
       exec.results.add(_ok('')); // git init
+      _queueIdentityConfig(exec);
       exec.results.add(_ok('')); // git add
       exec.results.add(_ok('')); // git commit
       queueGithubOriginWire(exec, name: 'new-proj', push: true);
@@ -485,8 +872,10 @@ void main() {
         exec.calls.map((c) => c.join(' ')),
         containsAllInOrder([
           'git init -b main -- new-proj',
+          'git config --local user.name $_testAuthorName',
+          'git config --local user.email $_testAuthorEmail',
           'git add -- README.md',
-          'git commit -m Initial commit',
+          _identityCommit,
           'gh repo create new-proj --private',
           'git remote add origin https://github.com/me/new-proj.git',
           'git -c credential.helper= -c credential.helper=!gh auth git-credential '
@@ -559,16 +948,13 @@ void main() {
       await _next(tester); // Remote → Details
       await tester.enterText(_nameField(), 'new-proj');
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byWidgetPredicate(
-          (w) => w is MacosTooltip && w.message.startsWith('Add a README'),
-        ),
-      );
-      await tester.pumpAndSettle();
+      await _tapReadme(tester);
+      await _fillIdentity(tester);
       await _next(tester); // Details → Review
 
       exec.results.add(_ok('absent')); // probe
       exec.results.add(_ok('')); // git init
+      _queueIdentityConfig(exec);
       exec.results.add(_ok('')); // git add
       exec.results.add(_ok('')); // git commit
       queueGitlabOriginWire(exec, name: 'new-proj', push: true);
@@ -579,7 +965,9 @@ void main() {
         exec.calls.map((c) => c.join(' ')),
         containsAllInOrder([
           'git init -b main -- new-proj',
-          'git commit -m Initial commit',
+          'git config --local user.name $_testAuthorName',
+          'git config --local user.email $_testAuthorEmail',
+          _identityCommit,
           'glab repo create new-proj --private --skipGitInit',
           'git remote get-url origin',
           'git remote add origin https://gitlab.com/me/new-proj.git',
@@ -649,16 +1037,13 @@ void main() {
     await _next(tester); // Remote → Details
     await tester.enterText(_nameField(), 'new-proj');
     await tester.pumpAndSettle();
-    await tester.tap(
-      find.byWidgetPredicate(
-        (w) => w is MacosTooltip && w.message.startsWith('Add a README'),
-      ),
-    );
-    await tester.pumpAndSettle();
+    await _tapReadme(tester);
+    await _fillIdentity(tester);
     await _next(tester); // Details → Review
 
     exec.results.add(_ok('absent')); // probe
     exec.results.add(_ok('')); // git init
+    _queueIdentityConfig(exec);
     exec.results.add(_ok('')); // git add
     exec.results.add(_ok('')); // git commit
     // Create exits non-zero after the API project already exists (classic
@@ -764,6 +1149,62 @@ void main() {
   );
   const unbornHead = SSHCommandResult(exitCode: 1, stdout: '', stderr: '');
 
+  testWidgets('Commit all gates Continue until a git identity is filled', (
+    tester,
+  ) async {
+    await _pumpConnected(tester);
+    await toExistingFolder(tester, '/srv/app');
+    await _next(tester); // Source
+    await _next(tester); // Remote (None)
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNotNull,
+      reason: 'identity is optional until commit-all is on',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorNameField()).decoration,
+      kAppTextFieldDecoration,
+    );
+
+    final commitAll = find.byWidgetPredicate(
+      (w) =>
+          w is MacosTooltip &&
+          w.message.startsWith('Commit all existing contents'),
+    );
+    await tester.ensureVisible(commitAll);
+    await tester.pumpAndSettle();
+    await tester.tap(commitAll);
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNull,
+      reason: 'commit-all requires name + email',
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorNameField()).decoration,
+      kAppTextFieldErrorDecoration,
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorEmailField()).decoration,
+      kAppTextFieldErrorDecoration,
+    );
+
+    await _fillIdentity(tester);
+    expect(
+      tester.widget<AppPushButton>(_continueButton()).onPressed,
+      isNotNull,
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorNameField()).decoration,
+      kAppTextFieldDecoration,
+    );
+    expect(
+      tester.widget<MacosTextField>(_authorEmailField()).decoration,
+      kAppTextFieldDecoration,
+    );
+  });
+
   testWidgets(
     'existing folder that is not a repo yet: init in place, publish to '
     'GitHub without push',
@@ -838,6 +1279,42 @@ void main() {
     expect(stub.repoPathsSet, ['/srv/app']);
     expect(find.byType(CreateRepositorySheet), findsNothing);
   });
+
+  testWidgets(
+    'existing repo with history does not rewrite identity unless commit-all is on',
+    (tester) async {
+      final (stub, exec, _) = await _pumpConnected(tester);
+      await toExistingFolder(tester, '/srv/app');
+      await _next(tester); // Source
+      await _next(tester); // Remote (None)
+      await _fillIdentity(tester);
+      await _next(tester); // Details → Review
+
+      exec.results.add(_ok('/srv/app\n')); // classify: repo root
+      exec.results.add(_ok('abc123\n')); // HEAD resolves
+      await tester.tap(_createButton());
+      await tester.pumpAndSettle();
+
+      final joined = exec.calls.map((c) => c.join(' ')).toList();
+      expect(
+        joined,
+        isNot(contains('git config --local user.name $_testAuthorName')),
+        reason: 'alreadyRepo without commit-all must not write user.name',
+      );
+      expect(
+        joined,
+        isNot(contains('git config --local user.email $_testAuthorEmail')),
+        reason: 'alreadyRepo without commit-all must not write user.email',
+      );
+      expect(
+        exec.calls.map((c) => c.take(2).join(' ')),
+        isNot(contains('git init')),
+        reason: 'already a repository — never re-inited',
+      );
+      expect(stub.repoPathsSet, ['/srv/app']);
+      expect(find.byType(CreateRepositorySheet), findsNothing);
+    },
+  );
 
   testWidgets(
     'an existing origin blocks the publish until "Replace existing origin" '
@@ -946,18 +1423,21 @@ void main() {
       );
       await tester.pumpAndSettle();
       await _next(tester); // Remote → Details
-      await tester.tap(
-        find.byWidgetPredicate(
-          (w) =>
-              w is MacosTooltip &&
-              w.message.startsWith('Commit all existing contents'),
-        ),
+      final commitAll = find.byWidgetPredicate(
+        (w) =>
+            w is MacosTooltip &&
+            w.message.startsWith('Commit all existing contents'),
       );
+      await tester.ensureVisible(commitAll);
       await tester.pumpAndSettle();
+      await tester.tap(commitAll);
+      await tester.pumpAndSettle();
+      await _fillIdentity(tester);
       await _next(tester); // Details → Review
 
       exec.results.add(notARepo); // classify: not a repo
       exec.results.add(_ok('')); // git init (in place)
+      _queueIdentityConfig(exec);
       exec.results.add(_ok('')); // git add --all
       exec.results.add(_ok('')); // git commit
       exec.results.add(_ok('')); // git remote add
@@ -970,8 +1450,10 @@ void main() {
         exec.calls.map((c) => c.join(' ')),
         containsAllInOrder([
           'git init -b main',
+          'git config --local user.name $_testAuthorName',
+          'git config --local user.email $_testAuthorEmail',
           'git add --all',
-          'git commit -m Initial commit',
+          _identityCommit,
           'git remote add origin $url',
           'git push -u origin HEAD',
           'git remote get-url origin',

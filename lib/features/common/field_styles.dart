@@ -21,6 +21,22 @@ const kAppTextFieldFocusedDecoration = BoxDecoration(
   borderRadius: kAppTextFieldRadius,
 );
 
+/// Outline for a field that is required right now and not yet valid.
+/// Same fill as [kAppTextFieldDecoration]; macOS dark-mode system red
+/// (`#FF453A`) so it reads as the same danger as `MacosColors.systemRedColor`
+/// without importing macos_ui into this file.
+const kAppTextFieldErrorDecoration = BoxDecoration(
+  color: Color(0xFF2C2C2E),
+  border: Border.fromBorderSide(BorderSide(color: Color(0xFFFF453A))),
+  borderRadius: kAppTextFieldRadius,
+);
+
+const kAppTextFieldErrorFocusedDecoration = BoxDecoration(
+  color: Color(0xFF2C2C2E),
+  border: Border.fromBorderSide(BorderSide(color: Color(0xFFFF453A), width: 2)),
+  borderRadius: kAppTextFieldRadius,
+);
+
 /// Placeholder (hint) text style for `MacosTextField`s. macos_ui's default is a
 /// `CupertinoDynamicColor` (`CupertinoColors.placeholderText`) that resolves
 /// against the *system* brightness — so on this dark-only app running under a

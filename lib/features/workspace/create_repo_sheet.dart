@@ -12,6 +12,7 @@ import '../../core/github/gh_service.dart';
 import '../../core/gitlab/glab_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/app_settings.dart';
 import '../../core/ssh/ssh_command_executor.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/utils/display_error.dart';
@@ -59,7 +60,11 @@ enum _SourceMode { newFolder, existingFolder }
 ///
 /// Every mode is init-first — `git init -b <branch> -- <name>` in the parent,
 /// so the user's chosen initial branch is always authoritative — followed by
-/// an optional README + initial commit, then mode-specific origin wiring:
+/// writing local `user.name` / `user.email` when the wizard collected a git
+/// identity (required for an initial commit; otherwise optional, prefilled
+/// from Settings), an optional README + initial commit authored with that
+/// identity (`-c user.name/-c user.email` and `--no-gpg-sign`, matching
+/// every other Magic Git commit), then mode-specific origin wiring:
 ///  * None       — nothing further.
 ///  * GitHub     — API-only `gh repo create <name>` (no `--source`/`--remote`/
 ///    `--push`), then Magic Git wires `origin` via
@@ -106,6 +111,8 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   final _host = TextEditingController(text: 'github.com');
   final _description = TextEditingController();
   final _remoteUrl = TextEditingController();
+  final _authorName = TextEditingController();
+  final _authorEmail = TextEditingController();
 
   _RemoteMode _remote = _RemoteMode.none;
   _SourceMode _source = _SourceMode.newFolder;
@@ -120,6 +127,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   /// publish to a destination the Review step never showed. Clearing the
   /// field hands control back to the prefill.
   bool _hostEdited = false;
+
+  /// True once the user has typed in that identity field. Prefill from
+  /// Settings only ever fills an un-edited field — a value they cleared
+  /// or replaced must not snap back when Settings finishes loading.
+  bool _authorNameEdited = false;
+  bool _authorEmailEdited = false;
 
   // Existing-folder source options.
   final _folder = TextEditingController();
@@ -199,7 +212,8 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       id: 'details',
       title: 'Details',
       intro:
-          'Name the repository, choose its initial branch, and pick the '
+          'Name the repository, choose its initial branch, set the git '
+          'identity for commits in this repository, and pick the '
           'first-commit and workspace options.',
       valid: _detailsValid,
       body: _detailsStep,
@@ -238,8 +252,38 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   bool _detailsValid() {
     if (_branch.text.trim().isEmpty) return false;
     final needName = _source == _SourceMode.newFolder || _onForge;
-    return !needName || HostFsService.isValidRepoDirName(_name.text.trim());
+    if (needName && !HostFsService.isValidRepoDirName(_name.text.trim())) {
+      return false;
+    }
+    // An initial commit (README or commit-all) needs a real identity —
+    // git refuses `commit` without user.name / user.email, and that used
+    // to leave the forge project created with nothing to push.
+    if (_needsIdentity && !_identityValid) return false;
+    return true;
   }
+
+  bool get _needsIdentity => _addReadme || _commitAll;
+
+  String get _authorNameText => _authorName.text.trim();
+
+  String get _authorEmailText => _authorEmail.text.trim();
+
+  bool get _identityValid =>
+      _authorNameText.isNotEmpty && _looksLikeEmail(_authorEmailText);
+
+  /// Git is lenient, but it does require an `@` with something on both
+  /// sides. Spaces never appear in a usable email.
+  static bool _looksLikeEmail(String email) {
+    final at = email.indexOf('@');
+    return at > 0 && at < email.length - 1 && !email.contains(' ');
+  }
+
+  /// `-c user.name=… -c user.email=…` for the initial commit, so it is
+  /// authored even if writing the local config failed.
+  List<String> get _identityArgs => [
+    if (_authorNameText.isNotEmpty) ...['-c', 'user.name=$_authorNameText'],
+    if (_authorEmailText.isNotEmpty) ...['-c', 'user.email=$_authorEmailText'],
+  ];
 
   void _goBack() {
     if (_stepIndex == 0 || _submitting) return;
@@ -267,6 +311,26 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       return true;
     });
     _recomputeTarget();
+    _applyIdentityPrefill(ref.read(appSettingsProvider));
+  }
+
+  /// Copies non-empty Settings identity into un-edited fields. Empty
+  /// Settings values are ignored — empty there is intentional and must
+  /// not wipe a typed (or still-empty) field. Returns whether a
+  /// controller changed, so a listener can `setState`.
+  bool _applyIdentityPrefill(AppSettings settings) {
+    var changed = false;
+    final name = settings.committerName.trim();
+    final email = settings.committerEmail.trim();
+    if (!_authorNameEdited && name.isNotEmpty && _authorName.text != name) {
+      _authorName.text = name;
+      changed = true;
+    }
+    if (!_authorEmailEdited && email.isNotEmpty && _authorEmail.text != email) {
+      _authorEmail.text = email;
+      changed = true;
+    }
+    return changed;
   }
 
   @override
@@ -282,6 +346,8 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     _host.dispose();
     _description.dispose();
     _remoteUrl.dispose();
+    _authorName.dispose();
+    _authorEmail.dispose();
     _folder.dispose();
     _localLabel.dispose();
     _remoteLabel.dispose();
@@ -582,6 +648,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         if (!mounted) return;
       }
 
+      // --- Identity: local user.name / user.email --------------------------
+      // A brand-new repo (or an in-place init) gets the identity written
+      // into its own config so later commits — including ones not made
+      // through Magic Git — have an author. An existing repo is only
+      // rewritten when the user opted into commit-all (they confirmed the
+      // fields). Failures are warnings; the commit still carries `-c`.
+      if (_identityValid && (!alreadyRepo || _commitAll)) {
+        await _writeIdentityConfig(executor, log, dest, warnings);
+        if (!mounted) return;
+      }
+
       // --- Step 2: optional initial commit --------------------------------
       // Before the forge publish, so GitHub's --push (and the git push below)
       // has something to push and the branch is born on the forge too.
@@ -795,6 +872,37 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     }
   }
 
+  /// Writes `user.name` / `user.email` into [dest]'s local git config.
+  /// Failures append to [warnings]; the repo is kept. Caller only invokes
+  /// this when both fields are valid.
+  Future<void> _writeIdentityConfig(
+    CommandExecutor executor,
+    OutputLogNotifier log,
+    String dest,
+    List<String> warnings,
+  ) async {
+    for (final argv in [
+      ['git', 'config', '--local', 'user.name', _authorNameText],
+      ['git', 'config', '--local', 'user.email', _authorEmailText],
+    ]) {
+      final result = await executor.execute(
+        repoPath: dest,
+        gitArgs: argv,
+        lane: ExecLane.exclusive,
+        retries: 0,
+      );
+      log.logResult(argv.join(' '), result);
+      if (!result.isSuccess) {
+        warnings.add(
+          'Could not write git identity into the new repository '
+          '(${argv.join(' ')}). '
+          '(${result.stderr.trim().isEmpty ? 'exited with code ${result.exitCode}' : result.stderr.trim()})',
+        );
+        return;
+      }
+    }
+  }
+
   /// Writes a README.md into [dest] and creates the initial commit, so the
   /// new repo (and, after the push, the forge) isn't empty and the initial
   /// branch is actually born. Returns true when the commit exists; failures
@@ -815,7 +923,14 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       );
       for (final argv in [
         ['git', 'add', '--', 'README.md'],
-        ['git', 'commit', '-m', 'Initial commit'],
+        [
+          'git',
+          ..._identityArgs,
+          'commit',
+          '--no-gpg-sign',
+          '-m',
+          'Initial commit',
+        ],
       ]) {
         final result = await executor.execute(
           repoPath: dest,
@@ -826,8 +941,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         log.logResult(argv.join(' '), result);
         if (!result.isSuccess) {
           warnings.add(
-            'The README initial commit failed — commit manually (is '
-            'user.name / user.email configured on the target?). '
+            'The README initial commit failed — commit manually. '
             '(${result.stderr.trim().isEmpty ? '${argv.join(' ')} exited with code ${result.exitCode}' : result.stderr.trim()})',
           );
           return false;
@@ -853,7 +967,14 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   ) async {
     for (final argv in [
       ['git', 'add', '--all'],
-      ['git', 'commit', '-m', 'Initial commit'],
+      [
+        'git',
+        ..._identityArgs,
+        'commit',
+        '--no-gpg-sign',
+        '-m',
+        'Initial commit',
+      ],
     ]) {
       final result = await executor.execute(
         repoPath: dest,
@@ -869,8 +990,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           return false;
         }
         warnings.add(
-          'Committing the folder contents failed — commit manually (is '
-          'user.name / user.email configured on the target?). '
+          'Committing the folder contents failed — commit manually. '
           '(${result.stderr.trim().isEmpty ? '${argv.join(' ')} exited with code ${result.exitCode}' : result.stderr.trim()})',
         );
         return false;
@@ -1123,6 +1243,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
+    // Settings load asynchronously (defaults first, then disk). Prefill
+    // here so a stored identity lands before README/commit-all marks the
+    // fields required — initState only sees the empty default.
+    ref.listen(appSettingsProvider, (previous, next) {
+      if (_applyIdentityPrefill(next)) setState(() {});
+    });
     if (_onForge) {
       // Prefill the host with the instance the target's gh/glab is actually
       // signed in to (e.g. a self-hosted GitLab) the moment it resolves —
@@ -1387,6 +1513,51 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
             'is set up — so the repository (and the forge) isn\'t empty.',
           ),
         ],
+        const SizedBox(height: 10),
+        Text('Git identity', style: typography.caption1),
+        const SizedBox(height: 4),
+        MacosTextField(
+          controller: _authorName,
+          placeholder: 'Your name',
+          placeholderStyle: kAppPlaceholderStyle,
+          decoration: _needsIdentity && _authorNameText.isEmpty
+              ? kAppTextFieldErrorDecoration
+              : kAppTextFieldDecoration,
+          focusedDecoration: _needsIdentity && _authorNameText.isEmpty
+              ? kAppTextFieldErrorFocusedDecoration
+              : kAppTextFieldFocusedDecoration,
+          onChanged: (_) {
+            _authorNameEdited = true;
+            setState(() {});
+          },
+        ),
+        const SizedBox(height: 8),
+        MacosTextField(
+          controller: _authorEmail,
+          placeholder: 'you@example.com',
+          placeholderStyle: kAppPlaceholderStyle,
+          decoration: _needsIdentity && !_looksLikeEmail(_authorEmailText)
+              ? kAppTextFieldErrorDecoration
+              : kAppTextFieldDecoration,
+          focusedDecoration:
+              _needsIdentity && !_looksLikeEmail(_authorEmailText)
+              ? kAppTextFieldErrorFocusedDecoration
+              : kAppTextFieldFocusedDecoration,
+          onChanged: (_) {
+            _authorEmailEdited = true;
+            setState(() {});
+          },
+        ),
+        WizardHint(
+          _needsIdentity
+              ? 'Written into this repository as user.name / user.email, '
+                    'and used for the initial commit. Prefills from Settings '
+                    'when set there.'
+              : 'Written into this repository as user.name / user.email so '
+                    'later commits have an author. Optional until you create '
+                    'an initial commit. Prefills from Settings when set '
+                    'there.',
+        ),
         const SizedBox(height: 8),
         if (_isLocalTarget) ...[
           WorkspaceToggleRow(
@@ -1795,6 +1966,15 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           sourceText,
         ),
         _reviewRow(typography, 'Initial branch', _branch.text.trim()),
+        if (_authorNameText.isNotEmpty || _authorEmailText.isNotEmpty)
+          _reviewRow(
+            typography,
+            'Git identity',
+            [
+              if (_authorNameText.isNotEmpty) _authorNameText,
+              if (_authorEmailText.isNotEmpty) _authorEmailText,
+            ].join(' · '),
+          ),
         _reviewRow(typography, 'Remote', remoteText),
         if (!_isLocalTarget && _remoteLabel.text.trim().isNotEmpty)
           _reviewRow(typography, 'Label', _remoteLabel.text.trim()),

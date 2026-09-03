@@ -104,9 +104,23 @@ void main() {
       '$dest/README.md',
       Uint8List.fromList(utf8.encode('# $name\n')),
     );
+    const authorName = 'Magic Git Live Test';
+    const authorEmail = 'livetest@magic-git.invalid';
     for (final argv in [
+      ['git', 'config', '--local', 'user.name', authorName],
+      ['git', 'config', '--local', 'user.email', authorEmail],
       ['git', 'add', '--', 'README.md'],
-      ['git', 'commit', '-m', 'Initial commit'],
+      [
+        'git',
+        '-c',
+        'user.name=$authorName',
+        '-c',
+        'user.email=$authorEmail',
+        'commit',
+        '--no-gpg-sign',
+        '-m',
+        'Initial commit',
+      ],
     ]) {
       final r = await executor.execute(
         repoPath: dest,
@@ -119,158 +133,153 @@ void main() {
   }
 
   group('GitLab live create wire', () {
-    test(
-      'create → cloneUrl → remote add → push → verify → delete',
-      () async {
-        if (!await _cliReady('glab')) {
-          markTestSkipped('glab not installed/authenticated');
-          return;
-        }
-        final host = await _glabHost() ?? 'gitlab.com';
-        final name =
-            'magicgit-livetest-${DateTime.now().millisecondsSinceEpoch}';
-        final dest = await initLocalRepo(name);
-        final glab = GlabService(executor);
-        String? projectPathForCleanup;
+    test('create → cloneUrl → remote add → push → verify → delete', () async {
+      if (!await _cliReady('glab')) {
+        markTestSkipped('glab not installed/authenticated');
+        return;
+      }
+      final host = await _glabHost() ?? 'gitlab.com';
+      final name = 'magicgit-livetest-${DateTime.now().millisecondsSinceEpoch}';
+      final dest = await initLocalRepo(name);
+      final glab = GlabService(executor);
+      String? projectPathForCleanup;
 
-        try {
-          // --- the sheet's exact forge steps -------------------------------
-          final created = await glab.createRepoInExisting(
+      try {
+        // --- the sheet's exact forge steps -------------------------------
+        final created = await glab.createRepoInExisting(
+          repoPath: dest,
+          name: name,
+          private: true,
+          host: host,
+        );
+
+        final resolved = await glab.resolveOriginUrl(
+          repoPath: dest,
+          name: name,
+          host: host,
+          createOutput: created.stdout,
+        );
+        final url = resolved.url;
+        expect(
+          url,
+          isNotNull,
+          reason:
+              'origin URL must resolve right after create '
+              '(${resolved.detail})',
+        );
+        expect(url, contains(name));
+
+        // Track the namespace/name for cleanup regardless of later failures.
+        final m = RegExp('([^/:]+)/$name').firstMatch(url!);
+        projectPathForCleanup = m == null ? name : '${m.group(1)}/$name';
+
+        final add = await executor.execute(
+          repoPath: dest,
+          gitArgs: ['git', 'remote', 'add', 'origin', url],
+          retries: 0,
+        );
+        expect(add.isSuccess, isTrue, reason: 'remote add: ${add.stderr}');
+
+        // Same argv the create-repo sheet uses: forge CLI credential helper
+        // for this one command so ambient host helpers can't feed a wrong
+        // password over HTTPS.
+        final push = await executor.execute(
+          repoPath: dest,
+          gitArgs: [
+            'git',
+            ...forgeGitAuthConfigArgs(Forge.gitlab),
+            'push',
+            '-u',
+            'origin',
+            'main',
+          ],
+          timeout: const Duration(minutes: 2),
+          retries: 0,
+        );
+        expect(
+          push.isSuccess,
+          isTrue,
+          reason: 'push: ${push.stderr}\n${push.stdout}',
+        );
+
+        // --- the sheet's verification ------------------------------------
+        final verify = await executor.execute(
+          repoPath: dest,
+          gitArgs: ['git', 'remote', 'get-url', 'origin'],
+          retries: 0,
+        );
+        expect(verify.isSuccess, isTrue);
+        expect(verify.stdout.trim(), url);
+
+        final lsRemote = await executor.execute(
+          repoPath: dest,
+          gitArgs: [
+            'git',
+            ...forgeGitAuthConfigArgs(Forge.gitlab),
+            'ls-remote',
+            '--heads',
+            'origin',
+          ],
+          timeout: const Duration(minutes: 2),
+          retries: 0,
+        );
+        expect(lsRemote.isSuccess, isTrue);
+        expect(
+          lsRemote.stdout,
+          contains('refs/heads/main'),
+          reason: 'the pushed branch must exist on the forge',
+        );
+
+        // --- name-collision recovery (the classic partial-success path) --
+        // A re-run against a name that already exists on the forge: create
+        // throws, and the sheet must still be able to wire origin from the
+        // lookup chain alone (no create output).
+        await expectLater(
+          glab.createRepoInExisting(
             repoPath: dest,
             name: name,
             private: true,
             host: host,
-          );
-
-          final resolved = await glab.resolveOriginUrl(
+          ),
+          throwsA(isA<GlabException>()),
+          reason: 'the project already exists — create must fail loudly',
+        );
+        final recovered = await glab.resolveOriginUrl(
+          repoPath: dest,
+          name: name,
+          host: host,
+        );
+        expect(
+          recovered.url,
+          url,
+          reason:
+              'lookup-only resolution must recover the same URL '
+              '(${recovered.detail})',
+        );
+      } finally {
+        // Always delete the live project, even when an expect above failed.
+        if (projectPathForCleanup != null) {
+          final encoded = projectPathForCleanup
+              .split('/')
+              .map(Uri.encodeComponent)
+              .join('%2F');
+          final del = await executor.execute(
             repoPath: dest,
-            name: name,
-            host: host,
-            createOutput: created.stdout,
-          );
-          final url = resolved.url;
-          expect(
-            url,
-            isNotNull,
-            reason:
-                'origin URL must resolve right after create '
-                '(${resolved.detail})',
-          );
-          expect(url, contains(name));
-
-          // Track the namespace/name for cleanup regardless of later failures.
-          final m = RegExp('([^/:]+)/$name').firstMatch(url!);
-          projectPathForCleanup = m == null ? name : '${m.group(1)}/$name';
-
-          final add = await executor.execute(
-            repoPath: dest,
-            gitArgs: ['git', 'remote', 'add', 'origin', url],
+            gitArgs: ['glab', 'api', 'projects/$encoded', '-X', 'DELETE'],
+            extraEnv: GlabService.hostEnv(host),
             retries: 0,
           );
-          expect(add.isSuccess, isTrue, reason: 'remote add: ${add.stderr}');
-
-          // Same argv the create-repo sheet uses: forge CLI credential helper
-          // for this one command so ambient host helpers can't feed a wrong
-          // password over HTTPS.
-          final push = await executor.execute(
-            repoPath: dest,
-            gitArgs: [
-              'git',
-              ...forgeGitAuthConfigArgs(Forge.gitlab),
-              'push',
-              '-u',
-              'origin',
-              'main',
-            ],
-            timeout: const Duration(minutes: 2),
-            retries: 0,
-          );
-          expect(
-            push.isSuccess,
-            isTrue,
-            reason: 'push: ${push.stderr}\n${push.stdout}',
-          );
-
-          // --- the sheet's verification ------------------------------------
-          final verify = await executor.execute(
-            repoPath: dest,
-            gitArgs: ['git', 'remote', 'get-url', 'origin'],
-            retries: 0,
-          );
-          expect(verify.isSuccess, isTrue);
-          expect(verify.stdout.trim(), url);
-
-          final lsRemote = await executor.execute(
-            repoPath: dest,
-            gitArgs: [
-              'git',
-              ...forgeGitAuthConfigArgs(Forge.gitlab),
-              'ls-remote',
-              '--heads',
-              'origin',
-            ],
-            timeout: const Duration(minutes: 2),
-            retries: 0,
-          );
-          expect(lsRemote.isSuccess, isTrue);
-          expect(
-            lsRemote.stdout,
-            contains('refs/heads/main'),
-            reason: 'the pushed branch must exist on the forge',
-          );
-
-          // --- name-collision recovery (the classic partial-success path) --
-          // A re-run against a name that already exists on the forge: create
-          // throws, and the sheet must still be able to wire origin from the
-          // lookup chain alone (no create output).
-          await expectLater(
-            glab.createRepoInExisting(
-              repoPath: dest,
-              name: name,
-              private: true,
-              host: host,
-            ),
-            throwsA(isA<GlabException>()),
-            reason: 'the project already exists — create must fail loudly',
-          );
-          final recovered = await glab.resolveOriginUrl(
-            repoPath: dest,
-            name: name,
-            host: host,
-          );
-          expect(
-            recovered.url,
-            url,
-            reason:
-                'lookup-only resolution must recover the same URL '
-                '(${recovered.detail})',
-          );
-        } finally {
-          // Always delete the live project, even when an expect above failed.
-          if (projectPathForCleanup != null) {
-            final encoded = projectPathForCleanup
-                .split('/')
-                .map(Uri.encodeComponent)
-                .join('%2F');
-            final del = await executor.execute(
-              repoPath: dest,
-              gitArgs: ['glab', 'api', 'projects/$encoded', '-X', 'DELETE'],
-              extraEnv: GlabService.hostEnv(host),
-              retries: 0,
+          // Surface (not fail) cleanup problems so a leaked project is loud.
+          if (!del.isSuccess) {
+            // ignore: avoid_print
+            print(
+              'WARNING: could not delete $projectPathForCleanup: '
+              '${del.stderr}',
             );
-            // Surface (not fail) cleanup problems so a leaked project is loud.
-            if (!del.isSuccess) {
-              // ignore: avoid_print
-              print(
-                'WARNING: could not delete $projectPathForCleanup: '
-                '${del.stderr}',
-              );
-            }
           }
         }
-      },
-      timeout: const Timeout(Duration(minutes: 5)),
-    );
+      }
+    }, timeout: const Timeout(Duration(minutes: 5)));
   });
 
   group('GitHub live wire (non-mutating half)', () {

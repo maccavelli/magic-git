@@ -137,7 +137,7 @@
                 "Destination — local Mac or an SSH host.",
                 "Source — empty folder or an existing folder.",
                 "Remote — create on GitHub or GitLab, a custom URL, or none.",
-                "Details — name, initial branch, first commit.",
+                "Details — name, initial branch, git identity (name and email), first commit.",
                 "Review — confirm and activate the session."
               ]
             }
