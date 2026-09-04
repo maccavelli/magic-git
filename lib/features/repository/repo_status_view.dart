@@ -179,16 +179,24 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   Future<SSHCommandResult> _streamGitOp(
     OutputLogNotifier log,
     String label,
-    Future<SSHCommandResult> Function(CommandOutputCallback onOutput) run,
+    Future<SSHCommandResult> Function(
+      CommandOutputCallback onOutput,
+      OperationId operationId,
+    )
+    run,
   ) async {
-    final session = log.startStream(label);
+    // ONE id for the transcript and the operation, so the Activity Center row
+    // can reveal the very lines this session writes. The executor would
+    // otherwise mint its own and the two would never correlate (0023 P1).
+    final operationId = OperationId.next();
+    final session = log.startStream(label, operationId: operationId);
     try {
       final result = await run((chunk, {required stderr}) {
         session.append(
           chunk,
           stderr ? OutputLineKind.stderr : OutputLineKind.stdout,
         );
-      });
+      }, operationId);
       session.close(exitCode: result.exitCode);
       return result;
     } catch (e) {
@@ -856,7 +864,8 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               await _streamGitOp(
                 log,
                 'git fetch --all --prune',
-                (onOutput) => git.fetch(repoPath, onOutput: onOutput),
+                (onOutput, opId) =>
+                    git.fetch(repoPath, onOutput: onOutput, operationId: opId),
               );
             },
           );
@@ -901,7 +910,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       await _streamGitOp(
         log,
         label,
-        (onOutput) => git.pull(repoPath, mode: mode, onOutput: onOutput),
+        (onOutput, opId) => git.pull(
+          repoPath,
+          mode: mode,
+          onOutput: onOutput,
+          operationId: opId,
+        ),
       );
     }, dock: true);
     if (ok && mounted) {
@@ -987,12 +1001,13 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           await _streamGitOp(
             log,
             label,
-            (onOutput) => git.push(
+            (onOutput, opId) => git.push(
               repoPath,
               force: force,
               setUpstream: setUpstream,
               followTags: followTags,
               onOutput: onOutput,
+              operationId: opId,
             ),
           );
         },
@@ -1029,13 +1044,19 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       await _streamGitOp(
         log,
         pullLabel,
-        (onOutput) => git.pull(repoPath, mode: mode, onOutput: onOutput),
+        (onOutput, opId) => git.pull(
+          repoPath,
+          mode: mode,
+          onOutput: onOutput,
+          operationId: opId,
+        ),
       );
       pushBase = await git.revParse(repoPath, '@{upstream}');
       await _streamGitOp(
         log,
         'git push',
-        (onOutput) => git.push(repoPath, onOutput: onOutput),
+        (onOutput, opId) =>
+            git.push(repoPath, onOutput: onOutput, operationId: opId),
       );
     }, dock: true);
     if (ok && mounted) {

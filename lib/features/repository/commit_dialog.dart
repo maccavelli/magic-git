@@ -58,9 +58,13 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    // Swallow Escape only while the COMMIT is in flight — a moment, and one
+    // that must not be interrupted halfway. It used to stay swallowed for the
+    // push too, so the one key that should dismiss a stuck-looking sheet did
+    // nothing for the entire wait (0023 P1).
     _escInterceptorDisposer ??= EscapeInterceptor.of(
       context,
-      () => _controller.committing,
+      () => _controller.committing && !_controller.localCommitLanded,
     );
   }
 
@@ -72,6 +76,25 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
 
   Future<void> _accept(bool push) async {
     final controller = _controller;
+    // Closed as soon as the COMMIT lands, not when the push finishes. The
+    // push keeps running behind the workspace and reports through the output
+    // log (which `_push` streams `--progress` into live) and the Activity
+    // Center. Holding this modal across the push is what made a network wait
+    // read as a frozen app: every control disabled, Escape swallowed, and no
+    // indicator (0023 P1).
+    var closed = false;
+    void closeOnCommit() {
+      if (closed || !mounted) return;
+      closed = true;
+      // The refresh for the COMMIT. Not redundant with `_push`'s: that one is
+      // the narrow fetch-family set for the push, and this surface commits
+      // through a raw `git.commit` with no runGuarded/runLogged refresh of its
+      // own — so without this the sheet's commit would leave History, stashes,
+      // reflog and snapshots stale (0023 Amendment A1).
+      refreshAfterMutation(ref, widget.repoPath);
+      if (context.mounted) Navigator.of(context).pop(true);
+    }
+
     final outcome = await controller.submit(
       // Deliberately NOT wrapped in `runAction`: that reports by stacking a
       // modal alert on top of this sheet, which puts the failure somewhere the
@@ -85,21 +108,21 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
         return true;
       },
       push: push ? widget.onPush : null,
+      onLocalCommitted: closeOnCommit,
     );
     // A commit that did not land leaves the sheet open with the message
     // intact; `submit` has already recorded the reason on the controller.
-    if (!mounted || !outcome.localCommitted) return;
-    refreshAfterMutation(ref, widget.repoPath);
-    if (!push) {
+    if (!outcome.localCommitted) return;
+    // Belt and braces: if the seam somehow did not fire (a future refactor of
+    // `submit`), the sheet must still close and refresh rather than stay up.
+    closeOnCommit();
+    if (!push && mounted) {
       unawaited(
         ref
             .read(connectionProvider.notifier)
             .fetchInBackground(widget.repoPath),
       );
     }
-    // The push already ran inside `submit`, so the result reports only that
-    // the commit landed — no caller has follow-up work to do.
-    if (context.mounted) Navigator.of(context).pop(true);
   }
 
   /// Sizing follows the app's other content sheets (Blame, Rebase): a fraction

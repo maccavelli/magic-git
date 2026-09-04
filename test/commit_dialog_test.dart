@@ -39,6 +39,7 @@ class _FakeGit extends GitService {
     bool background = false,
     FetchScope scope = FetchScope.allRemotes,
     CommandOutputCallback? onOutput,
+    OperationId? operationId,
   }) async {
     fetchCalls++;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
@@ -457,6 +458,66 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(CommitDialog), findsNothing, reason: 'commit finished');
     expect(git.committed, 'feat: add widget');
+  });
+
+  testWidgets('the sheet closes when the COMMIT lands, not when the push does', (
+    tester,
+  ) async {
+    // 0023 P1. Holding this modal across the push is what made a working app
+    // read as frozen: every control disabled, Escape swallowed, no indicator,
+    // for the whole network wait — while `git push --progress` was already
+    // streaming its transcript to the output log underneath.
+    final git = _FakeGit('feat: add widget');
+    final pushGate = Completer<bool>();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [gitServiceProvider.overrideWithValue(git)],
+        child: MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: Builder(
+            builder: (context) => Center(
+              child: AppPushButton(
+                controlSize: ControlSize.large,
+                child: const Text('open'),
+                onPressed: () => showMacosSheet<bool>(
+                  context: context,
+                  builder: (_) => CommitDialog(
+                    repoPath: '/srv/repo',
+                    stagedCount: 2,
+                    branchLabel: 'master',
+                    onPush: () => pushGate.future,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    _seedStaged(tester);
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Accept + Push'));
+    // Frames, not pumpAndSettle: the committing spinner animates forever while
+    // the push is outstanding, so settling would time out. These let the pop's
+    // route transition finish.
+    await tester.pump();
+    for (var i = 0; i < 6; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    // The commit has landed; the push is still outstanding.
+    expect(git.committed, 'feat: add widget');
+    expect(pushGate.isCompleted, isFalse);
+    expect(
+      find.byType(CommitDialog),
+      findsNothing,
+      reason: 'the sheet must not outlive the commit it was opened for',
+    );
+
+    pushGate.complete(true);
+    await tester.pumpAndSettle();
   });
 }
 

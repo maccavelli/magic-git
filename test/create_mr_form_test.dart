@@ -74,6 +74,7 @@ class _FakeGit extends GitService {
     PushForce force = PushForce.none,
     bool followTags = false,
     CommandOutputCallback? onOutput,
+    OperationId? operationId,
   }) async {
     pushes.add((remote, branch, setUpstream));
     if (pushGate != null) await pushGate!.future;
@@ -166,11 +167,10 @@ void main() {
       await tester.enterText(targetField, 'develop');
       await tester.pumpAndSettle();
 
-      expect(
-        git.ranges,
-        ['main...feature', 'develop...feature'],
-        reason: 'the preview must refresh to match the new target branch',
-      );
+      expect(git.ranges, [
+        'main...feature',
+        'develop...feature',
+      ], reason: 'the preview must refresh to match the new target branch');
     },
   );
 

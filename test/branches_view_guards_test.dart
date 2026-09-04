@@ -82,6 +82,7 @@ class _SpyGit extends GitService {
     bool background = false,
     FetchScope scope = FetchScope.allRemotes,
     CommandOutputCallback? onOutput,
+    OperationId? operationId,
   }) async {
     fetches++;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

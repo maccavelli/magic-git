@@ -33,6 +33,7 @@ class _FakeGitService extends GitService {
     PushForce force = PushForce.none,
     bool followTags = false,
     CommandOutputCallback? onOutput,
+    OperationId? operationId,
   }) async {
     pushed = true;
     const stderr = 'To gitlab:me/repo.git\n   abc123..def456  main -> main';

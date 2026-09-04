@@ -5011,6 +5011,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     bool background = false,
     FetchScope scope = FetchScope.allRemotes,
     CommandOutputCallback? onOutput,
+    OperationId? operationId,
   }) async {
     final List<String> auth;
     if (scope == FetchScope.defaultRemote) {
@@ -5041,6 +5042,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
           ? OperationVisibility.background
           : OperationVisibility.normal,
       onOutput: onOutput,
+      operationId: operationId,
     );
   }
 
@@ -5057,6 +5059,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     String? remote,
     String? branch,
     CommandOutputCallback? onOutput,
+    OperationId? operationId,
   }) async {
     // No explicit remote → git follows the tracked upstream, so the auth
     // lookup must too (see [_upstreamRemote]).
@@ -5081,6 +5084,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       activityIdle: networkTimeout,
       lane: ExecLane.sync,
       onOutput: onOutput,
+      operationId: operationId,
     );
     final target = remote != null ? 'FETCH_HEAD' : '@{upstream}';
     return _run(repoPath, [
@@ -5109,6 +5113,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     PushForce force = PushForce.none,
     bool followTags = false,
     CommandOutputCallback? onOutput,
+    OperationId? operationId,
   }) async {
     // No explicit remote → git follows the tracked upstream (or push.default),
     // so the auth lookup must too (see [_upstreamRemote]).
@@ -5138,6 +5143,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       // the index/worktree — safe alongside reads, exclusive among sync ops.
       lane: ExecLane.sync,
       onOutput: onOutput,
+      operationId: operationId,
     );
   }
 
@@ -6297,6 +6303,11 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     Duration? activityIdle,
     OperationVisibility visibility = OperationVisibility.normal,
     CommandOutputCallback? onOutput,
+    // Lets a caller that is ALSO writing this command's transcript to the
+    // output log use one id for both, so the Activity Center row can reveal
+    // the matching lines. Without it the executor mints its own and the two
+    // identifiers never line up (0023 P1).
+    OperationId? operationId,
   }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
@@ -6312,6 +6323,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       operation: lane == ExecLane.read
           ? null
           : OperationDescriptor(
+              id: operationId,
               repositoryPath: repoPath,
               label: label,
               kind: lane == ExecLane.sync

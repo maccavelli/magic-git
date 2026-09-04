@@ -511,6 +511,106 @@ seam) — revert as a pair.
 
 ## Execution Record
 
+### Phase 0 — Baseline (2026-09-03)
+
+Taken on a pristine `git clone --local` at HEAD `8971b7d`, clean, nothing
+edited during the run.
+
+* **Analyzer: 2 issues** — the two known pre-existing
+  `unawaited_return_in_try_block` warnings (`pinned_branches.dart:29`,
+  `image_diff_view.dart:105`).
+* **Suite: `+3340 ~2 -48`** — all 48 failures in `workspace_golden_test.dart`
+  (the known un-accepted goldens), 2 skipped (`live-forge`).
+* Gate for every phase: that failing **set**, and a passing count not below
+  3340.
+
+### Phase 1 — P1: the app stops looking frozen (2026-09-03) — **COMPLETE**
+
+**Done.**
+* **Post-dispose guards.** `clearDraft` and `submit()`'s `finally` used raw
+  `notifyListeners()`; both now use the `_disposed`-guarded `_notifyListeners()`.
+  Necessary because the sheet now closes while `submit()` is still awaiting the
+  push, and a controller rebuild in that window would otherwise throw.
+* **`onLocalCommitted` seam** on `submit()`, fired after `clearDraft()` and
+  before the push branch — the callback the two-phase contract never offered.
+* **`localCommitLanded`** on the controller: `committing` alone cannot tell the
+  two halves apart, and they want opposite treatment — the commit is brief and
+  must not be interrupted, the push is a long wait the user must be able to
+  walk away from.
+* **The sheet closes on the commit**, not the push. `closeOnCommit()` refreshes
+  for the commit and pops; a belt-and-braces call after `submit()` returns
+  covers a future refactor that drops the seam.
+* **Escape narrowed** to `committing && !localCommitLanded`.
+* **Real feedback**: a `ProgressCircle` gated on `committing` — previously the
+  only spinner was gated on `loadingPreview` — and `_statusText` now says
+  "Committing…" then "Committed. Pushing… you can close this; it continues in
+  the background", instead of "Review, Edit, or Accept", which had been
+  instructing the user to press a button the same state disabled.
+
+**Deviation (a) executed** — see above: `operationId` plumbed through
+`_run`/`fetch`/`pull`/`push`, `_streamGitOp` mints one id for both the
+transcript and the operation, and `outputAnchorId` is now emitted for
+`running` so a push is reachable from the Activity Center *while* it runs
+rather than only after it ends.
+
+**Collateral, caught by the analyzer:** seven test fakes override
+`fetch`/`pull`/`push` and needed the new parameter (`auto_fetch_test`,
+`branches_view_guards_test`, `commit_dialog_test`, `create_mr_form_test`,
+`create_pr_form_test`, `push_logs_output_test`, `repo_status_view_test`). Left
+unfixed these fail to **compile**, which reports as one "loading" failure while
+silently not running the whole file — the exact miss the hardened gate exists
+to catch.
+
+**Test added.** `commit_dialog_test.dart`: with the push gated open, the commit
+lands, the push is still outstanding, and `CommitDialog` is **gone**. Note it
+pumps explicit frames rather than `pumpAndSettle` — the committing spinner
+animates for as long as the push is outstanding, so settling would time out.
+The pre-existing "Escape is blocked while a commit is in flight" still passes,
+so narrowing Escape did not weaken it.
+
+**Negative test — seen to fail.** Seam disconnected in a scratch clone (with an
+assert that the wiring existed first): `Expected: no matching candidates /
+Actual: Found 1 widget with type "CommitDialog"` — the sheet still up while the
+push hangs, which is the reported symptom exactly.
+
+**Verification.** Analyzer: 2, the baseline's. Suite: `+3341 ~2 -48`, failing
+set **identical** to baseline.
+
+### DEVIATION 2026-09-03 (a) — Phase 1's prerequisite #2 was wrong as written
+
+**What the plan said.** "Thread an `operationId` through `_streamGitOp`.
+`startStream` **already** accepts `{OperationId? operationId}` … no caller
+passes one." — implying a one-line wiring.
+
+**Why it is wrong.** `startStream` does accept one, but the id has to *match*
+the Activity Center row's, and it cannot:
+
+* `_run` builds its `OperationDescriptor` with **no id**, so the executor mints
+  one internally (`OperationLifecycleEmitter.begin` → `descriptor.id ??
+  OperationId.next()`). Only `_runCaptured` sets an explicit id
+  (`git_service.dart:5948`). An id minted in `_streamGitOp` would simply be a
+  *different* id, so revealing by the row's id would find nothing in the log —
+  worse than leaving it unwired.
+* `outputAnchorId` is emitted **only on terminal phases**
+  (`operation_activity.dart:267-272`), so a *running* row has no Output button
+  regardless of ids.
+
+Doing it properly needs an optional `OperationId` on the network methods →
+`_run` → the descriptor, **plus** a running-phase anchor. That is a GitService
+signature change the plan did not cost.
+
+**Decision (maintainer, 2026-09-03): option 2 — do it now.** The alternative
+offered was deferring it as a follow-up, since Phase 1's core value was already
+delivered and the shipped copy ("you can close this; it continues in the
+background") does not promise navigation. Chosen instead to complete the
+feature so a running push is reachable from the Activity Center rather than
+only from a docked view the user may have hidden.
+
+**Scope added to Phase 1:** `git_service.dart` (`_run`, `fetch`, `pull`,
+`push`), `operation_activity.dart` (running-phase anchor).
+
+
+
 Not yet executed. This plan is `proposed`.
 
 **Corrections C1 and C2 were applied to the MADR on 2026-09-03**, before any

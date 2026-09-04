@@ -265,6 +265,12 @@ class OperationLifecycleEmitter {
         occurredAt: _now(),
         result: result,
         outputAnchorId: switch (phase) {
+          // `running` included so a long network op is reachable from the
+          // Activity Center WHILE it runs — which is the only time the user
+          // actually wants to go and look at it. Emitting only on terminal
+          // phases meant a push that had been streaming for 30 s offered no
+          // way to reach its own transcript (0023 P1).
+          OperationPhase.running ||
           OperationPhase.succeeded ||
           OperationPhase.failed ||
           OperationPhase.canceled => id.value,

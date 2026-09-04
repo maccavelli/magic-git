@@ -86,6 +86,15 @@ class CommitComposerController extends ChangeNotifier {
   bool editable = true;
   bool previewStale = false;
   bool committing = false;
+
+  /// True once the commit has landed and only the push is still running.
+  ///
+  /// [committing] alone cannot distinguish the two halves, and they want
+  /// opposite treatment: the commit is brief and must not be interrupted, the
+  /// push is a long network wait the user must be able to walk away from. The
+  /// sheet uses this to stop swallowing Escape once the repository has already
+  /// changed (0023 P1).
+  bool localCommitLanded = false;
   bool gpgDisclosureLoaded = false;
   bool gpgSignConfigured = false;
   bool assistanceExpanded = false;
@@ -159,7 +168,7 @@ class CommitComposerController extends ChangeNotifier {
     previewStale = false;
     error = null;
     _previewedSignatures.clear();
-    notifyListeners();
+    _notifyListeners();
   }
 
   void toggleAssistance() {
@@ -317,6 +326,16 @@ class CommitComposerController extends ChangeNotifier {
   Future<CommitComposerOutcome> submit({
     required Future<bool> Function(String message) commit,
     Future<bool> Function()? push,
+    // Fires the moment the commit has landed, BEFORE the push starts.
+    //
+    // The commit and the push are one gesture but two very different waits:
+    // the commit is ~100 ms of local work, the push is a network round trip
+    // behind whatever hooks the user has installed. A surface that waits for
+    // both looks hung for the second one. This is the seam that lets the sheet
+    // close on the commit — and lets the caller refresh for the commit — while
+    // the push runs on, reporting through the output log and Activity Center
+    // it already streams to (0023 P1/P2).
+    void Function()? onLocalCommitted,
   }) async {
     if (committing) {
       return const CommitComposerOutcome(
@@ -329,6 +348,7 @@ class CommitComposerController extends ChangeNotifier {
       return const CommitComposerOutcome(localCommitted: false);
     }
     committing = true;
+    localCommitLanded = false;
     error = null;
     notifyListeners();
     try {
@@ -345,6 +365,8 @@ class CommitComposerController extends ChangeNotifier {
       // the caller down the retry path holding a draft that `clearDraft` had
       // just emptied, so the surface stayed open with nothing in it.
       clearDraft();
+      localCommitLanded = true;
+      onLocalCommitted?.call();
       if (push == null) {
         return const CommitComposerOutcome(localCommitted: true);
       }
@@ -362,7 +384,13 @@ class CommitComposerController extends ChangeNotifier {
       }
     } finally {
       committing = false;
-      notifyListeners();
+      localCommitLanded = false;
+      // Guarded: the sheet now closes as soon as the commit lands, so this
+      // runs after the push with the surface already gone. A controller
+      // rebuild (the provider watches gitServiceProvider) can dispose this
+      // instance in that window, and the raw form throws on a disposed
+      // ChangeNotifier.
+      _notifyListeners();
     }
   }
 }

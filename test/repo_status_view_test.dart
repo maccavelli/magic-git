@@ -89,6 +89,7 @@ class _FakeGitService extends GitService {
     bool background = false,
     FetchScope scope = FetchScope.allRemotes,
     CommandOutputCallback? onOutput,
+    OperationId? operationId,
   }) async {
     fetchCalls++;
     if (fetchGate != null) await fetchGate!.future;
