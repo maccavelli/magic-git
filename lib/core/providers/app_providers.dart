@@ -2203,10 +2203,16 @@ class ConnectionController extends Notifier<ConnectionState> {
     }
 
     // Construct the service from [_activeExecutor] directly rather than via
-    // ghServiceProvider/glabServiceProvider: those watch activeExecutorProvider
-    // → connectionProvider, and reading them from within this notifier trips
-    // Riverpod's circular-dependency guard. Same reason [_activeExecutor]
-    // exists (see its doc).
+    // ghServiceProvider/glabServiceProvider. This is a HOST login: it takes an
+    // explicit `host` and never touches a repoPath, so it needs no git-dir
+    // scoping and gains nothing from the scoped providers.
+    //
+    // (The previous rationale here — that those providers watch
+    // activeExecutorProvider → connectionProvider and would trip Riverpod's
+    // circular-dependency guard — was false. activeExecutorProvider hangs off
+    // backendProvider precisely so it does NOT depend on connectionProvider;
+    // see backendProvider's doc. `_connectForgeLogins` reads those providers
+    // from inside this same notifier and ships. Corrected per 0022 N3.)
     // Async body so a failed login always evicts its memo entry before the
     // error surfaces — `catchError` + rethrow left a completed-error Future
     // that some callers still treated as memoized depending on timing.
@@ -2489,11 +2495,29 @@ class ConnectionController extends Notifier<ConnectionState> {
     // authenticates a private clone-by-URL whose host was never typed into a
     // browse field. Best-effort → non-fatal warnings, exactly like connect().
     String? warning;
-    // Services built from [_activeExecutor] directly — see ensureForgeHostLogin
-    // for why not the providers.
+    // Built on [_activeExecutor] rather than glab/ghServiceProvider — NOT for
+    // the reason ensureForgeHostLogin gives (that comment is wrong; see it),
+    // but because of ordering: those providers resolve their scope overlay from
+    // `connectionProvider.scopedGitDirs`, and this method does not publish the
+    // new state until the very end. Reading them here would resolve an empty
+    // map and scope nothing.
+    //
+    // So wrap explicitly from the arguments we already hold. Without this, a
+    // scoped (bare/dotfiles) repo's `loginWithToken` runs `git remote get-url
+    // origin` with no GIT_DIR, finds no repository, and the failure is
+    // swallowed into the warning below — the connection "succeeds" with the
+    // stored token never logged in, and every forge panel is dead (0022 H2).
+    final forgeExec = gitDir.isEmpty
+        ? _activeExecutor
+        : ScopedCommandExecutor(
+            _activeExecutor,
+            (p) => p == repoPath
+                ? {'GIT_DIR': gitDir, 'GIT_WORK_TREE': repoPath}
+                : null,
+          );
     final loginWarnings = await Future.wait([
       if ((_lastGitlabToken ?? '').isNotEmpty)
-        GlabService(_activeExecutor)
+        GlabService(forgeExec)
             .loginWithToken(repoPath, _lastGitlabToken!)
             .then<String?>(
               (_) => null,
@@ -2502,7 +2526,7 @@ class ConnectionController extends Notifier<ConnectionState> {
                   'until the remote is authenticated. ($e)',
             ),
       if ((_lastGithubToken ?? '').isNotEmpty)
-        GhService(_activeExecutor)
+        GhService(forgeExec)
             .loginWithToken(repoPath, _lastGithubToken!)
             .then<String?>(
               (_) => null,
@@ -4964,7 +4988,11 @@ final projectDashboardProvider = FutureProvider.autoDispose
 /// releases are constructed from it — see `core/forge/forge_urls.dart`).
 final originRemoteUrlProvider = FutureProvider.autoDispose
     .family<String?, String>((ref, repoPath) async {
-      final executor = ref.watch(activeExecutorProvider);
+      // Scoped, not raw: on a bare/dotfiles repo an unscoped `get-url` runs in
+      // a work tree that holds no git-dir and resolves nothing, so the Forge
+      // tab's browser links come back null (0022 H2). Read lane resolves no
+      // activity descriptor, so wrapping adds no Activity Center noise.
+      final executor = ref.watch(scopedForgeExecutorProvider);
       final remote = await executor.execute(
         repoPath: repoPath,
         gitArgs: ['git', 'remote', 'get-url', 'origin'],
@@ -4986,7 +5014,11 @@ final forgeProvider = FutureProvider.autoDispose.family<Forge, String>((
   ref,
   repoPath,
 ) async {
-  final executor = ref.watch(activeExecutorProvider);
+  // Scoped, not raw: the `git remote get-url origin` below is what classifies
+  // the repo's forge, and unscoped it fails outright on a bare/dotfiles repo —
+  // so a repo with a perfectly good GitHub/GitLab remote reported Forge.none
+  // and got no panel at all (0022 H2).
+  final executor = ref.watch(scopedForgeExecutorProvider);
   // The self-hosted fallback below consults `gh/glab auth status` — let the
   // background login land first so a custom-domain forge classifies on the
   // first probe instead of burning a three-round-trip re-probe on remount.
@@ -5061,9 +5093,16 @@ final forgeProvider = FutureProvider.autoDispose.family<Forge, String>((
 final forgeRepoListProvider = FutureProvider.autoDispose
     .family<List<ForgeRepoSummary>, (Forge, String, bool)>((ref, key) async {
       final (forge, host, local) = key;
+      // The remote branch goes through the scoped wrapper for consistency with
+      // glab/ghServiceProvider. Inert today — `listRepos(host:)` is
+      // account-level and passes no repoPath, so the resolver never matches —
+      // but this provider is shaped exactly like the scoped ones, and a future
+      // edit threading a repoPath through would otherwise silently reintroduce
+      // 0022 H2. The local branch deliberately stays on localExecutorProvider:
+      // a This-Mac browse targets this machine regardless of session backend.
       final executor = local
           ? ref.read(localExecutorProvider)
-          : ref.read(activeExecutorProvider);
+          : ref.read(scopedForgeExecutorProvider);
       if (local) {
         // A This-Mac browse can run before any local session exists — make
         // sure the executor's PATH can actually see the Mac's gh/glab.
@@ -5175,7 +5214,11 @@ final sessionAuthStatusProvider = FutureProvider.autoDispose<TargetAuth?>((
       glabHostname = h;
     }
   }
-  return AuthProbeService(ref.read(activeExecutorProvider)).probe(
+  // Scoped, not raw: `cwd` below is the repo path, which AuthProbeService
+  // passes straight through as the command's repoPath — the same key the scope
+  // overlay is registered under. Unscoped, an Enterprise host could not be
+  // resolved from a bare/dotfiles repo (0022 H2).
+  return AuthProbeService(ref.read(scopedForgeExecutorProvider)).probe(
     label: display,
     isLocal: isLocal,
     // Run from the repo when there is one so a repo-scoped gh/glab host

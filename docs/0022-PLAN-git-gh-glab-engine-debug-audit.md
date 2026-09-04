@@ -1335,6 +1335,53 @@ Using "ref" …` stack quoted in that entry).
 suite: `+3311 ~2 -48`, failing set **identical** to the Phase 0 baseline. The
 `+4` over baseline is exactly the four tests added.
 
+### Phase 3 — H2 + L6 + N3(b): scope-aware forge (2026-09-03) — **COMPLETE**
+
+**Done.**
+* `finalizeProvisioned`'s token login now builds an ad-hoc
+  `ScopedCommandExecutor` from its own `gitDir`/`repoPath` arguments. As the
+  phase predicted, substituting `glabServiceProvider` here would have been a
+  silent no-op — those providers resolve their overlay from
+  `connectionProvider.scopedGitDirs`, which this method does not publish until
+  its final lines.
+* `originRemoteUrlProvider`, `forgeProvider`, and `sessionAuthStatusProvider`
+  now build on `scopedForgeExecutorProvider`. No cycle resulted, as predicted:
+  they are leaves, and the wrapper's dependency set is unchanged.
+* `forgeRepoListProvider` (L6) aligned to the scoped wrapper on its remote
+  branch; the `local` branch deliberately stays on `localExecutorProvider`.
+* N3(b): the stale comment claiming `activeExecutorProvider` watches
+  `connectionProvider` is replaced with the true rationale (a host login takes
+  an explicit host and needs no git-dir), and notes why the old claim was
+  false.
+
+**Deliberately NOT changed:** `forgeAuthProvider`. It shares the same
+executor-selection shape and was matched by my first (over-broad) edit — the
+script's count assertion caught it and wrote nothing. It probes with
+`cwd: '.'` and no repoPath, so the overlay could never apply; scoping it would
+have been noise implying a scope-sensitivity it does not have.
+
+**Tests added.** New `test/scoped_forge_providers_test.dart` (4 tests) asserts
+the overlay reaches the actual command for all three providers, plus a control
+that an ordinary repo stays unscoped — a stray `GIT_DIR` would break every
+command it touched. This is precisely what `scoped_forge_executor_test.dart`
+could not catch: it unit-tests the wrapper in isolation, so a provider that
+never uses the wrapper passes it.
+
+**Negative test — seen to fail.** All three providers reverted to
+`activeExecutorProvider` in a scratch clone (with a per-target assertion that
+the text existed): all three scoped tests failed with
+`Expected: {'GIT_DIR': …} / Actual: <null>` — no overlay reaching the command.
+The "ordinary repo" control correctly passed in both states, since it asserts
+absence.
+
+**Verification.** Analyzer: 2 issues, the baseline's pre-existing pair. Suite:
+`+3315 ~2 -48`, failing set **identical** to baseline (+8 over baseline = the
+4 tests from Phase 2 and 4 from Phase 3).
+
+**Still open from H2, by design:** the live check on a real bare/dotfiles repo
+with a forge remote. Static tests prove the env reaches the command; only a
+live host proves the Forge tab populates. Carried to Phase 15's live pass.
+
 ### Phase 1 negative-test detail (retained)
 
 Run against a scratch `git clone` in the
