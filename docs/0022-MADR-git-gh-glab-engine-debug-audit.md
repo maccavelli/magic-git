@@ -340,6 +340,29 @@ is no trap, no PID file, no reconnect-time sweep. Systemic rather than
 watch-specific: the same path backs CI trace streaming. **Requires a live host
 to settle.**
 
+> **Settled 2026-09-04 — REFUTED, with evidence.** Run against a throwaway
+> OpenSSH **10.3p1** sshd on loopback, where the "remote" process is directly
+> observable (`test/ssh_live_transport_test.dart`, tests tagged *0022 M5*):
+>
+> * Cancelling a live stream **kills the remote process**, within the 400 ms
+>   `killGrace` escalation. Same for a command killed by its own timeout.
+> * The suspicion's premise is out of date. A mechanism probe isolating the two
+>   halves of `killAndCloseSession` recorded
+>   `died from signal=true, died after close=true` — sshd **honours the RFC 4254
+>   `signal` request** on a non-pty exec channel. OpenSSH added that in **7.9**
+>   (2018); the "widely documented as not honoring it" claim describes sshd as
+>   it was before then.
+> * Channel close is a second, independent kill (sshd tears down the session's
+>   process group), so the cleanup holds even on an sshd older than 7.9.
+>
+> The result is trusted because the detector was seen to observe the opposite: a
+> **CONTROL** test leaves a stream uncancelled and asserts the process is still
+> alive after 3 s. Without it, "process is gone" would be indistinguishable from
+> a probe that always says so.
+>
+> No trap, PID file or reconnect-time sweep is needed. M5 is closed.
+
+
 **M6 — Bounded-watch arming fails silently in two different ways.**
 `boundedFswatchArgs` (`bounded_watch.dart:148-154`) passes `watchDirs` straight
 to fswatch with **no existence guard**, and fswatch errors on a nonexistent

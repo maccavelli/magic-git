@@ -1861,7 +1861,26 @@ pop-out relay dropping the typed exception).
 "last audited" date moved to 2026-09-03 with a note on what this pass
 corrected.
 
-### Phase 15 — M5: remote watcher teardown — **OPEN (maintainer, needs a live host)**
+### Phase 15 — M5: remote watcher teardown — **EXECUTED 2026-09-04, M5 REFUTED**
+
+Closed against a throwaway OpenSSH 10.3p1 sshd on loopback rather than a remote
+host — the process is directly observable there, which is what the question
+needed. Six tests added to `test/ssh_live_transport_test.dart`:
+
+* a cancelled stream's remote process dies inside the 400 ms `killGrace`;
+* so does a command killed by its own timeout;
+* **CONTROL** — an uncancelled stream's process is still alive after 3 s, so
+  the detector demonstrably observes living processes (without this the two
+  above prove nothing);
+* **MECHANISM** — `died from signal=true, died after close=true`: sshd honours
+  the `signal` channel request, which OpenSSH has supported since **7.9**
+  (2018). The finding's premise was simply out of date, and channel close is an
+  independent second kill for anything older.
+
+No trap, PID file or reconnect-time sweep is needed. Suite `+3430 ~2`, 0
+failing. Original text of this phase follows.
+
+### Phase 15 (as originally planned) — M5: verify the remote watcher teardown claim
 
 Not executed, and deliberately not guessed at. M5 is the one finding whose
 premise cannot be checked from this tree: whether the target sshd honours the

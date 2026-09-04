@@ -475,6 +475,21 @@ reason, rather than letting the whole session contract).
 **Confirmation requires a live host** — set `MaxSessions 4` on a test sshd,
 open three watched repos, and observe. This is stated as Read, not measured.
 
+> **Confirmed 2026-09-04, and the number stands.** Measured against a throwaway
+> sshd started with `MaxSessions 4`
+> (`test/ssh_live_transport_test.dart`, *0024 M2*):
+>
+> * `MaxSessions` is per **TCP connection**, as the budget assumed.
+> * With the host stricter than us, the host's ceiling binds first and surfaces
+>   as a typed `SSHChannelOpenError` — not a hang, and still distinguishable
+>   from our own `SSHStreamBudgetExhausted`, which is what lets the retry
+>   allowlist treat the two differently.
+> * Our budget is therefore correct in both directions: it protects a
+>   default-configured host (10) at 8, and defers cleanly to a stricter one
+>   through the transient-error path that already existed.
+>
+> M2 is closed.
+
 #### M3 — `_detectWatcher` reads a failed command as "this host has no watcher", and caches it
 
 **Evidence: Read.** `remote_watch_service.dart:244-268` runs a
@@ -607,6 +622,20 @@ the 30 `sleep` forks, and — with it — M4's temp file.
 typically ~0.1–0.5 s on a fast host with a light shellrc, the full 3 s on a
 heavy one. Measurable directly: `timings.elapsedMilliseconds` is already
 captured at `app_providers.dart:1367` (`envMs`).
+
+> **Measured 2026-09-04 over a real SSH channel** (`test/ssh_live_transport_test.dart`,
+> *0024 P1*), against a light `/bin/bash` login shell:
+>
+> ```
+> removed prelude 625 ms  vs  whole current probe 110 ms
+> ```
+>
+> The deleted prelude alone cost **5.7x the entire current probe** — and the
+> current probe does strictly more work (OS detection, PATH assembly, and
+> `command -v` for all seven catalog binaries), where the prelude did none of
+> it. This is the floor: the busy-wait capped at 3 s, and a heavy `zsh`
+> (nvm/rbenv/`brew shellenv`) approaches it, re-paid on each of up to 20
+> auto-reconnect attempts.
 
 ### P2 — Batch same-window read commands into one channel: every `execute()` costs two round trips before the command starts
 
