@@ -62,43 +62,55 @@ void main() {
       expect(executor.adaptiveReadCap, 3);
     });
 
-    test('noteLinkRtt lowers the cap after hysteresis', () {
+    test('a sustained queueing sequence lowers the cap', () {
       final executor = SSHCommandExecutor(SSHClientManager());
-      for (var i = 0; i < 3; i++) {
-        executor.noteLinkRtt(const Duration(milliseconds: 300));
+      // Unqueued reads first: the controller has to have a best-case to
+      // measure against before "queueing" means anything.
+      for (var i = 0; i < 12; i++) {
+        executor.noteReadSample(const Duration(milliseconds: 40));
+      }
+      expect(executor.adaptiveReadCap, 4);
+
+      for (var i = 0; i < 6; i++) {
+        executor.noteReadSample(const Duration(seconds: 4));
       }
       expect(executor.adaptiveReadCap, 2);
     });
 
     test('resetAdaptiveReads and resetEnvironment restore no-sample cap', () {
       final executor = SSHCommandExecutor(SSHClientManager());
-      for (var i = 0; i < 3; i++) {
-        executor.noteLinkRtt(const Duration(milliseconds: 300));
+      for (var i = 0; i < 12; i++) {
+        executor.noteReadSample(const Duration(milliseconds: 40));
+      }
+      for (var i = 0; i < 6; i++) {
+        executor.noteReadSample(const Duration(seconds: 4));
       }
       expect(executor.adaptiveReadCap, 2);
 
       executor.resetAdaptiveReads();
       expect(executor.adaptiveReadCap, 3);
 
-      for (var i = 0; i < 3; i++) {
-        executor.noteLinkRtt(const Duration(milliseconds: 300));
+      for (var i = 0; i < 13; i++) {
+        executor.noteReadSample(const Duration(milliseconds: 40));
       }
-      expect(executor.adaptiveReadCap, 2);
+      expect(executor.adaptiveReadCap, 4);
       executor.resetEnvironment();
       expect(executor.adaptiveReadCap, 3);
     });
 
-    test('low RTT raises cap back to the production ceiling of 4', () {
-      final executor = SSHCommandExecutor(SSHClientManager());
-      // First settle at 2, then recover.
-      for (var i = 0; i < 3; i++) {
-        executor.noteLinkRtt(const Duration(milliseconds: 300));
-      }
-      for (var i = 0; i < 3; i++) {
-        executor.noteLinkRtt(const Duration(milliseconds: 20));
-      }
-      expect(executor.adaptiveReadCap, 4);
-    });
+    test(
+      'an unqueued sequence raises the cap to the production ceiling of 4',
+      () {
+        final executor = SSHCommandExecutor(SSHClientManager());
+        // Deliberately slow, and deliberately steady: 250 ms with no queueing is
+        // a satellite link that is perfectly happy at the full ceiling. The RTT
+        // band table this replaced pinned exactly this case to 2 (0024 M1).
+        for (var i = 0; i < 13; i++) {
+          executor.noteReadSample(const Duration(milliseconds: 250));
+        }
+        expect(executor.adaptiveReadCap, 4);
+      },
+    );
   });
 
   group(

@@ -1,112 +1,99 @@
-// AdaptiveReadConcurrency: RTT bands + hysteresis for the SSH read lane.
+// AdaptiveReadConcurrency: a closed-loop read-lane limiter driven by command
+// durations (0024 M1/A2). The RTT band table it replaced is gone, and so are
+// the five tests that asserted only that table's thresholds.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/ssh/adaptive_read_concurrency.dart';
 
 void main() {
-  test('band thresholds map RTT to cap', () {
-    expect(
-      AdaptiveReadConcurrency.bandForRtt(const Duration(milliseconds: 40)),
-      4,
-    );
-    expect(
-      AdaptiveReadConcurrency.bandForRtt(const Duration(milliseconds: 100)),
-      3,
-    );
-    expect(
-      AdaptiveReadConcurrency.bandForRtt(const Duration(milliseconds: 250)),
-      2,
-    );
-  });
-
-  test('band boundaries are inclusive at 80ms and 200ms edges', () {
-    // < 80 → ceiling; 80–200 inclusive upper → 3; > 200 → 2
-    expect(
-      AdaptiveReadConcurrency.bandForRtt(const Duration(milliseconds: 79)),
-      4,
-    );
-    expect(
-      AdaptiveReadConcurrency.bandForRtt(const Duration(milliseconds: 80)),
-      3,
-    );
-    expect(
-      AdaptiveReadConcurrency.bandForRtt(const Duration(milliseconds: 200)),
-      3,
-    );
-    expect(
-      AdaptiveReadConcurrency.bandForRtt(const Duration(milliseconds: 201)),
-      2,
-    );
-  });
-
-  test('bandForRtt never exceeds the given ceiling', () {
-    expect(
-      AdaptiveReadConcurrency.bandForRtt(
-        const Duration(milliseconds: 10),
-        ceiling: 2,
-      ),
-      2,
-    );
-  });
-
-  test(
-    'starts at no-sample cap and requires consecutive samples to change',
-    () {
-      final caps = <int>[];
-      final a = AdaptiveReadConcurrency(
-        consecutiveRequired: 3,
-        onCapChanged: caps.add,
-      );
-      expect(a.effectiveCap, 3);
-
-      // Two high-RTT samples are not enough.
-      a.onRtt(const Duration(milliseconds: 300));
-      a.onRtt(const Duration(milliseconds: 300));
-      expect(a.effectiveCap, 3);
-      expect(caps, isEmpty);
-
-      // Third consecutive lands the change.
-      a.onRtt(const Duration(milliseconds: 300));
-      expect(a.effectiveCap, 2);
-      expect(caps, [2]);
-    },
-  );
-
-  test('mixed intermediate band (80–200ms) settles at 3', () {
-    final a = AdaptiveReadConcurrency(consecutiveRequired: 2);
-    a.onRtt(const Duration(milliseconds: 120));
-    a.onRtt(const Duration(milliseconds: 150));
-    expect(a.effectiveCap, 3);
-  });
-
-  test('returning to current band clears pending hysteresis', () {
-    final a = AdaptiveReadConcurrency(consecutiveRequired: 3);
-    // Drive to 2.
-    for (var i = 0; i < 3; i++) {
-      a.onRtt(const Duration(milliseconds: 300));
-    }
-    expect(a.effectiveCap, 2);
-
-    // Two low-RTT samples, then one high again — must not leave pending at 4.
-    a.onRtt(const Duration(milliseconds: 20));
-    a.onRtt(const Duration(milliseconds: 20));
-    a.onRtt(const Duration(milliseconds: 300));
-    expect(a.effectiveCap, 2);
-
-    // Three low samples raise to ceiling.
-    for (var i = 0; i < 3; i++) {
-      a.onRtt(const Duration(milliseconds: 20));
+  // 0024 M1/A2: the discriminating case. A 250 ms link with no queueing is a
+  // satellite hop that is perfectly happy at the full ceiling; the band table
+  // pins it to 2 unconditionally, because absolute latency is not congestion.
+  test('a uniformly slow but unqueued link keeps its full read cap', () {
+    final a = AdaptiveReadConcurrency();
+    for (var i = 0; i < 20; i++) {
+      a.onReadSample(const Duration(milliseconds: 250));
     }
     expect(a.effectiveCap, 4);
+  });
+
+  test('latency rising with concurrency sheds the cap', () {
+    final a = AdaptiveReadConcurrency();
+    // Establish a floor of ~50 ms...
+    for (var i = 0; i < 12; i++) {
+      a.onReadSample(const Duration(milliseconds: 50));
+    }
+    expect(a.effectiveCap, 4);
+    // ...then the same host under load: 3x inflation, queueing.
+    for (var i = 0; i < 12; i++) {
+      a.onReadSample(const Duration(milliseconds: 150));
+    }
+    expect(a.effectiveCap, lessThan(4));
+  });
+
+  test('holds the no-sample cap through warm-up, then steps once', () {
+    final caps = <int>[];
+    final a = AdaptiveReadConcurrency(onCapChanged: caps.add);
+    expect(a.effectiveCap, 3);
+
+    // Below warmupSamples the gradient is noise and nothing may move.
+    for (var i = 0; i < 9; i++) {
+      a.onReadSample(const Duration(milliseconds: 40));
+    }
+    expect(a.effectiveCap, 3);
+    expect(caps, isEmpty);
+
+    // Past warm-up, an unqueued link takes consecutiveRequired samples in the
+    // same direction before it steps — one step, not a jump.
+    for (var i = 0; i < 3; i++) {
+      a.onReadSample(const Duration(milliseconds: 40));
+    }
+    expect(a.effectiveCap, 4);
+    expect(caps, [4]);
+  });
+
+  test('hysteresis: two samples in a direction are not enough', () {
+    final a = AdaptiveReadConcurrency();
+    for (var i = 0; i < 12; i++) {
+      a.onReadSample(const Duration(milliseconds: 40));
+    }
+    expect(a.effectiveCap, 4);
+
+    // A burst of queueing has to persist before the cap moves — a couple of
+    // slow reads is what a passing hiccup looks like, and shedding on that
+    // would thrash the read lane.
+    a.onReadSample(const Duration(milliseconds: 400));
+    a.onReadSample(const Duration(milliseconds: 400));
+    expect(a.effectiveCap, 4, reason: 'two is not a trend');
+
+    a.onReadSample(const Duration(milliseconds: 400));
+    expect(a.effectiveCap, 3, reason: 'the third confirms it');
+  });
+
+  test('a step is one at a time, never a jump to the floor', () {
+    final a = AdaptiveReadConcurrency();
+    for (var i = 0; i < 12; i++) {
+      a.onReadSample(const Duration(milliseconds: 40));
+    }
+    expect(a.effectiveCap, 4);
+    // Sustained, severe queueing walks down one step per confirmation.
+    for (var i = 0; i < 3; i++) {
+      a.onReadSample(const Duration(seconds: 4));
+    }
+    expect(a.effectiveCap, 3);
+    for (var i = 0; i < 3; i++) {
+      a.onReadSample(const Duration(seconds: 4));
+    }
+    expect(a.effectiveCap, 2);
   });
 
   test('reset returns to no-sample cap', () {
     final caps = <int>[];
     final a = AdaptiveReadConcurrency(onCapChanged: caps.add);
-    for (var i = 0; i < 3; i++) {
-      a.onRtt(const Duration(milliseconds: 300));
+    for (var i = 0; i < 13; i++) {
+      a.onReadSample(const Duration(milliseconds: 40));
     }
-    expect(a.effectiveCap, 2);
+    expect(a.effectiveCap, 4);
     a.reset();
     expect(a.effectiveCap, 3);
     expect(caps.last, 3);
@@ -121,9 +108,9 @@ void main() {
   });
 
   test('channel-open error drops the cap immediately, floor 1', () {
-    final a = AdaptiveReadConcurrency(consecutiveRequired: 1);
-    for (var i = 0; i < 1; i++) {
-      a.onRtt(const Duration(milliseconds: 20));
+    final a = AdaptiveReadConcurrency();
+    for (var i = 0; i < 13; i++) {
+      a.onReadSample(const Duration(milliseconds: 20));
     }
     expect(a.effectiveCap, 4);
     a.onChannelOpenError();
@@ -136,35 +123,23 @@ void main() {
     expect(a.effectiveCap, 1);
   });
 
-  test('three successes raise the error floor toward the RTT band', () {
-    final a = AdaptiveReadConcurrency(consecutiveRequired: 3);
-    for (var i = 0; i < 3; i++) {
-      a.onRtt(const Duration(milliseconds: 20));
-    }
-    expect(a.effectiveCap, 4);
-    a.onChannelOpenError();
-    expect(a.effectiveCap, 3);
-    a.onSuccess();
-    a.onSuccess();
-    expect(a.effectiveCap, 3);
-    a.onSuccess();
-    expect(a.effectiveCap, 4);
-  });
-
-  test('RTT band 2 wins over a high error floor', () {
-    final a = AdaptiveReadConcurrency(consecutiveRequired: 3);
-    a.onChannelOpenError(); // floor 2 from no-sample 3
-    expect(a.effectiveCap, 2);
-    for (var i = 0; i < 3; i++) {
-      a.onRtt(const Duration(milliseconds: 300));
-    }
-    expect(a.effectiveCap, 2);
-    for (var i = 0; i < 3; i++) {
+  test(
+    'three successes raise the error floor back to what the gradient wants',
+    () {
+      final a = AdaptiveReadConcurrency();
+      for (var i = 0; i < 13; i++) {
+        a.onReadSample(const Duration(milliseconds: 20));
+      }
+      expect(a.effectiveCap, 4);
+      a.onChannelOpenError();
+      expect(a.effectiveCap, 3);
       a.onSuccess();
-    }
-    // Floor rises but last RTT band is 2.
-    expect(a.effectiveCap, 2);
-  });
+      a.onSuccess();
+      expect(a.effectiveCap, 3);
+      a.onSuccess();
+      expect(a.effectiveCap, 4);
+    },
+  );
 
   test('reset restores no-sample cap and clears the error floor', () {
     final a = AdaptiveReadConcurrency();
@@ -172,8 +147,8 @@ void main() {
     expect(a.effectiveCap, 2);
     a.reset();
     expect(a.effectiveCap, 3);
-    for (var i = 0; i < 3; i++) {
-      a.onRtt(const Duration(milliseconds: 20));
+    for (var i = 0; i < 13; i++) {
+      a.onReadSample(const Duration(milliseconds: 20));
     }
     expect(a.effectiveCap, 4);
   });

@@ -375,9 +375,12 @@ class SSHCommandExecutor implements CommandExecutor {
   /// Current adaptive read ceiling (for tests / diagnostics).
   int get adaptiveReadCap => _adaptiveReads.effectiveCap;
 
-  /// Feed a keepalive RTT sample so the read lane can soft-throttle under
-  /// high latency. Wired from [ConnectionHealthMonitor.onPingSample].
-  void noteLinkRtt(Duration rtt) => _adaptiveReads.onRtt(rtt);
+  /// Feed one read-lane duration directly. Production feeds these from [_run]
+  /// as commands complete; this exists so a test can drive the controller's
+  /// wiring — the cap plumbing and the reset paths — without a transport.
+  @visibleForTesting
+  void noteReadSample(Duration duration) =>
+      _adaptiveReads.onReadSample(duration);
 
   /// Reset adaptive concurrency to the no-sample cap (on connect/disconnect).
   void resetAdaptiveReads() {
@@ -771,6 +774,10 @@ class SSHCommandExecutor implements CommandExecutor {
     } else {
       _activeNonSync++;
     }
+    // Timed here rather than inside _runBody so the sample covers the whole
+    // user-perceived cost of the command, channel open included — which is
+    // what queueing actually shows up in.
+    final sw = Stopwatch()..start();
     try {
       final result = await _runBody(
         client,
@@ -785,6 +792,10 @@ class SSHCommandExecutor implements CommandExecutor {
         onOutput,
       );
       _adaptiveReads.onSuccess();
+      // Only the read lane: this is the lane whose concurrency is being
+      // controlled, and a fetch or a commit says nothing about how many
+      // parallel reads the host will serve happily (0024 M1/A2).
+      if (lane == ExecLane.read) _adaptiveReads.onReadSample(sw.elapsed);
       return result;
     } on SSHChannelOpenError {
       _adaptiveReads.onChannelOpenError();

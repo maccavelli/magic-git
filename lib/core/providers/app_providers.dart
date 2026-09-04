@@ -1347,13 +1347,16 @@ class ConnectionController extends Notifier<ConnectionState> {
               type,
               fingerprintBytes,
             ),
-            // Feed keepalive RTTs to the dashboard's latency sparkline and to
-            // the SSH executor's adaptive read concurrency — guarded so a
-            // retired session's monitor can't pollute a newer session.
+            // Feed keepalive RTTs to the dashboard's latency sparkline.
+            // NOT to the read-concurrency controller: this probe is suppressed
+            // while the transport is busy, so it can only ever sample an idle
+            // link — the one condition under which read concurrency does not
+            // matter. That controller reads command durations instead
+            // (0024 M1/A2). Guarded so a retired session's monitor can't
+            // pollute a newer session.
             onPingSample: (rtt) {
               if (attempt != _attempt || !ref.mounted) return;
               ref.read(pingSamplesProvider.notifier).add(rtt);
-              ref.read(executorProvider).noteLinkRtt(rtt);
             },
           );
       // Superseded by a newer connect or a disconnect while we were resolving —
@@ -2398,13 +2401,16 @@ class ConnectionController extends Notifier<ConnectionState> {
               type,
               fingerprintBytes,
             ),
-            // Feed keepalive RTTs to the dashboard's latency sparkline and to
-            // the SSH executor's adaptive read concurrency — guarded so a
-            // retired session's monitor can't pollute a newer session.
+            // Feed keepalive RTTs to the dashboard's latency sparkline.
+            // NOT to the read-concurrency controller: this probe is suppressed
+            // while the transport is busy, so it can only ever sample an idle
+            // link — the one condition under which read concurrency does not
+            // matter. That controller reads command durations instead
+            // (0024 M1/A2). Guarded so a retired session's monitor can't
+            // pollute a newer session.
             onPingSample: (rtt) {
               if (attempt != _attempt || !ref.mounted) return;
               ref.read(pingSamplesProvider.notifier).add(rtt);
-              ref.read(executorProvider).noteLinkRtt(rtt);
             },
           );
       if (attempt != _attempt || !ref.mounted) return null;
