@@ -36,6 +36,23 @@ class Coalescer {
   DateTime? _firstPending;
   DateTime? _lastFire;
 
+  /// When the pending [_timer] is currently due to fire, or null when none is
+  /// scheduled. Tracked so [signal] can tell "the target moved" from "the
+  /// target moved by a few microseconds", which is what a tight burst does.
+  DateTime? _scheduledFor;
+
+  /// How much later than the pending target a new target may be before the
+  /// timer is actually rebuilt.
+  ///
+  /// Inside a burst the trailing debounce's target advances by microseconds per
+  /// event, and rebuilding the timer for that cost 295 ms of the 333 ms a
+  /// 20,000-event `git checkout` burst spent on the UI isolate (0024 A1.1).
+  /// Well under any [trailing] worth debouncing, and strictly one-sided: an
+  /// *earlier* target always reschedules, so [maxWait] and [minInterval] are
+  /// never missed. The only relaxation is that [trailing] may resolve up to
+  /// this much early — never late.
+  static const Duration rescheduleTolerance = Duration(milliseconds: 8);
+
   Coalescer({
     required this.trailing,
     required this.maxWait,
@@ -48,7 +65,6 @@ class Coalescer {
   void signal() {
     final now = _now();
     _firstPending ??= now;
-    _timer?.cancel();
 
     // Trailing debounce, capped so total wait since the first pending event
     // never exceeds maxWait.
@@ -69,6 +85,20 @@ class Coalescer {
     if (delay < Duration.zero) {
       delay = Duration.zero;
     }
+
+    // Rebuild the timer only when it would actually change when we fire. See
+    // [rescheduleTolerance]: an earlier target always wins (so neither ceiling
+    // can slip), a later one has to clear the tolerance to be worth the churn.
+    final target = now.add(delay);
+    final scheduled = _scheduledFor;
+    if (_timer != null &&
+        scheduled != null &&
+        !target.isBefore(scheduled) &&
+        target.difference(scheduled) <= rescheduleTolerance) {
+      return;
+    }
+    _timer?.cancel();
+    _scheduledFor = target;
     _timer = Timer(delay, _fire);
   }
 
@@ -76,12 +106,14 @@ class Coalescer {
     _lastFire = _now();
     _firstPending = null;
     _timer = null;
+    _scheduledFor = null;
     onFire();
   }
 
   void cancel() {
     _timer?.cancel();
     _timer = null;
+    _scheduledFor = null;
     // Reset the burst start too — a freshly constructed instance has no
     // pending burst (both null), and leaving this stale would make a later
     // signal() compute `remainingToCap` against a burst that no longer

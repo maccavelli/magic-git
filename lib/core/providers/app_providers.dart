@@ -358,7 +358,15 @@ final installServiceProvider = Provider<InstallService>((ref) {
 });
 
 final remoteWatchServiceProvider = Provider<RemoteWatchService>((ref) {
-  return RemoteWatchService(ref.watch(executorProvider));
+  return RemoteWatchService(
+    ref.watch(executorProvider),
+    // The watcher's own stderr. `inotifywait` reports its per-directory
+    // failures here — "upper limit on inotify watches reached" above all —
+    // and dropping them left a silent polling fallback with nothing to chase
+    // (0024 H3).
+    onDiagnostic: (line) =>
+        ref.read(outputLogProvider.notifier).logInfo('watcher: $line'),
+  );
 });
 
 /// Native-filesystem-event equivalent of [remoteWatchServiceProvider] for a

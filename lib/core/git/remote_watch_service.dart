@@ -92,7 +92,13 @@ List<String> remoteWatcherArgs(
 class RemoteWatchService {
   final CommandExecutor _executor;
 
-  RemoteWatchService(this._executor);
+  RemoteWatchService(this._executor, {this.onDiagnostic});
+
+  /// Where a watcher's own stderr goes.
+  final void Function(String line)? onDiagnostic;
+
+  /// Diagnostic lines reported per arm.
+  static const int maxDiagnosticLines = 20;
 
   /// Cap on the un-delimited stdout buffer. A watcher tool that streams partial
   /// output without ever emitting the record delimiter (a wedged or misbehaving
@@ -186,10 +192,17 @@ class RemoteWatchService {
           (chunk) {
             hooks.noteActivity();
             buffer += chunk;
-            var idx = buffer.indexOf(delimiter);
+            // Cursor, not repeated re-slicing. `buffer = buffer.substring(...)`
+            // per record copies the whole remainder AND restarts the scan at 0,
+            // which is quadratic in the arriving chunk — measured at 522 ms of
+            // UI-isolate time for a 20k-event `git checkout` burst at
+            // dartssh2's 32 KiB packet size, against ~1 ms here (0024 A1).
+            // One remainder copy per chunk instead of one per record.
+            var start = 0;
+            var idx = buffer.indexOf(delimiter, start);
             while (idx >= 0) {
-              final event = buffer.substring(0, idx);
-              buffer = buffer.substring(idx + 1);
+              final event = buffer.substring(start, idx);
+              start = idx + 1;
               // Bounded mode watches absolute paths; remap them to the
               // repo-relative (`.git/…` for git-dir) shape the filter expects.
               // Recursive mode already emits repo-relative paths (cwd = repo).
@@ -210,8 +223,9 @@ class RemoteWatchService {
                   });
                 }
               }
-              idx = buffer.indexOf(delimiter);
+              idx = buffer.indexOf(delimiter, start);
             }
+            if (start > 0) buffer = buffer.substring(start);
             // Whatever remains is an unterminated partial record. If it has
             // grown past a sane bound, the watcher is emitting output that
             // never completes a record — drop it and resync on the next
@@ -229,12 +243,44 @@ class RemoteWatchService {
           onError: (Object _) => hooks.scheduleRestart(),
         );
 
+        // Read stderr even when no one is listening to the diagnostics.
+        //
+        // Two reasons, and both bite. `inotifywait` reports per-directory
+        // failures here — canonically "upper limit on inotify watches reached"
+        // — which is the one message that says WHY a watcher died and names
+        // the sysctl to raise; it used to be dropped, leaving a silent polling
+        // fallback. And dartssh2's `SSHSession._stderrController` is a
+        // single-subscription controller with no listener
+        // (ssh_session.dart:74), so unread stderr is queued in the Dart heap
+        // for the life of the channel — and the watcher's channel is the
+        // longest-lived one in the app (0024 H3).
+        var diagnosticsSeen = 0;
+        var errBuffer = '';
+        final errSub = handle.stderr.listen((chunk) {
+          errBuffer += chunk;
+          var start = 0;
+          var i = errBuffer.indexOf('\n', start);
+          while (i >= 0) {
+            final line = errBuffer.substring(start, i).trim();
+            start = i + 1;
+            if (line.isNotEmpty && diagnosticsSeen < maxDiagnosticLines) {
+              diagnosticsSeen++;
+              developer.log(line, name: 'RemoteWatchService');
+              onDiagnostic?.call(line);
+            }
+            i = errBuffer.indexOf('\n', start);
+          }
+          if (start > 0) errBuffer = errBuffer.substring(start);
+          if (errBuffer.length > _maxBufferChars) errBuffer = '';
+        }, onError: (Object _) {});
+
         return WatchArmed(() async {
           rearmTimer?.cancel();
           rearmTimer = null;
           // Cancel the stdout subscription *before* the handle, mirroring the
           // engine's source-before-coalescer ordering.
           await sub.cancel();
+          await errSub.cancel();
           await handle.cancel();
         });
       },
@@ -252,7 +298,21 @@ class RemoteWatchService {
             'else echo none; fi',
       ],
       lane: ExecLane.read,
+      // Idempotent and read-only, so a blip is worth one re-issue.
+      retries: 1,
     );
+    // A failed command is not evidence about the host's tooling. Reading it as
+    // `none` cached that verdict for the stream's life and bought three
+    // minutes of five-second polling on a host with a perfectly good fswatch
+    // (0024 M3). Throwing lets watchLifecycle's restart budget retry in
+    // seconds — which is what it is for — and nothing is cached, because the
+    // assignment at the call site never completes.
+    if (!result.isSuccess) {
+      throw StateError(
+        'watcher probe failed (exit ${result.exitCode}): '
+        '${result.stderr.trim()}',
+      );
+    }
     switch (result.stdout.trim()) {
       case 'fswatch':
         return RemoteWatcherTool.fswatch;
