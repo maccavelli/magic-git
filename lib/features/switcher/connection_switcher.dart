@@ -908,25 +908,33 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     SavedConnection conn,
     String repo,
   ) async {
-    final result = await showMacosSheet<(String, String, bool)?>(
+    final result = await showMacosSheet<EditRemoteRepoResult?>(
       context: context,
       builder: (_) => EscapeDismissible(
         child: EditRemoteRepoSheet(conn: conn, repo: repo),
       ),
     );
     if (result == null || !context.mounted) return;
-    final (label, newPath, fsmonitor) = result;
+    final label = result.label;
+    final newPath = result.path;
+    final fsmonitor = result.fsmonitor;
+    final editedGitDir = result.gitDir;
     final pathChanged = newPath != repo;
     final labelChanged = label != conn.repoLabelFor(repo);
     final fsmonitorChanged = fsmonitor != conn.fsmonitorEnabledFor(repo);
-    if (!pathChanged && !labelChanged && !fsmonitorChanged) return;
+    final gitDirChanged = editedGitDir != conn.scopedGitDirFor(repo);
+    if (!pathChanged && !labelChanged && !fsmonitorChanged && !gitDirChanged) {
+      return;
+    }
 
     // Preserve the repo's scoped (dotfiles) git-dir across a repoint. The
     // external git-dir (e.g. ~/.home.git) is independent of the work-tree path
     // the user is editing, so it carries to the new path unchanged; '' when the
     // repo is ordinary. Without this a repoint silently turns a scoped repo
     // into an ordinary one (scope lost) and orphans the old scopedGitDirs entry.
-    final scopedGitDir = conn.scopedGitDirFor(repo);
+    // The edited value, not the stored one — this is what L1 makes editable
+    // (0022 L1). Applies on the next connect, like the path and fsmonitor.
+    final scopedGitDir = editedGitDir;
     var updated = conn;
     if (pathChanged) {
       // Repoint the entry and clear the old path's per-repo metadata — it no

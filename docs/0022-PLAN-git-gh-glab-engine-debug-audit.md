@@ -1771,6 +1771,40 @@ through in Phase 9 before the check was tightened.
 **Verification.** Analyzer: 2 pre-existing. Suite: `+3337 ~2 -48`, failing set
 identical to baseline.
 
+### Phase 13 — L1: scoped repos get an editable git-dir (2026-09-03) — **COMPLETE**
+
+**Done.** `EditRemoteRepoSheet` gained a Git directory field, shown only for a
+scoped entry (the field is meaningless for a repo whose `.git` is where git
+expects it, and an input that means nothing invites a value that breaks
+things). Save is blocked when a scoped entry's git-dir is blank — blank means
+"not scoped", which for that entry is false and would make every command run
+unscoped. The Path hint is now scope-aware: it previously said "the one
+containing .git", which is exactly wrong for a dotfiles repo.
+
+The sheet's result changed from a positional `(String, String, bool)` tuple to
+a **named record** — it grew a fourth member, and positional members are how a
+caller silently swaps two same-typed fields. `_editRepo` now carries the edited
+git-dir instead of unconditionally re-applying the stored one, and treats a
+git-dir change as a reason to save. It applies on the next connect, matching
+the contract the path and fsmonitor already state.
+
+**A layout bug I introduced, fixed rather than tested around.** Adding the
+field overflowed the fixed-height sheet by 5px for scoped repos. The remedy is
+the one `AddExistingRepoSheet` already took when it grew scoped rows — the body
+scrolls — not a widened viewport or a loosened assertion.
+
+**Tests added** (`test/edit_remote_repo_sheet_test.dart`, 3) — the sheet had
+**no** test of any kind before: the field appears for a scoped repo and not for
+an ordinary one, and Save is disabled on a blank git-dir. Note the repo gotcha
+this hit: `find.byType(PushButton)` does not match `AppPushButton`.
+
+**`EditLocalRepoSheet` deliberately unchanged.** Its folder is fixed by the
+security-scoped access grant, so there is no equivalent correction to offer —
+changing it means re-granting through the picker.
+
+**Verification.** Analyzer: 2 pre-existing. Suite: `+3340 ~2 -48`, failing set
+identical to baseline.
+
 ### Phase 1 negative-test detail (retained)
 
 Run against a scratch `git clone` in the

@@ -270,6 +270,16 @@ class _EditConnectionSheetState extends State<EditConnectionSheet> {
 /// entry is just a path string, so the path itself is editable here: repointing
 /// it at a moved/renamed directory carries the label and fsmonitor across.
 /// Pops `(label, path, fsmonitor)`; the caller persists and applies fsmonitor.
+/// What [EditRemoteRepoSheet] returns. A named record rather than a positional
+/// tuple: it grew a fourth member (gitDir), and positional members are exactly
+/// how a caller silently swaps two same-typed fields.
+typedef EditRemoteRepoResult = ({
+  String label,
+  String path,
+  bool fsmonitor,
+  String gitDir,
+});
+
 class EditRemoteRepoSheet extends StatefulWidget {
   final SavedConnection conn;
   final String repo;
@@ -289,25 +299,42 @@ class _EditRemoteRepoSheetState extends State<EditRemoteRepoSheet> {
     text: widget.conn.repoLabelFor(widget.repo),
   );
   late final _path = TextEditingController(text: widget.repo);
+  late final _gitDir = TextEditingController(
+    text: widget.conn.scopedGitDirFor(widget.repo),
+  );
   late bool _fsmonitor = widget.conn.fsmonitorEnabledFor(widget.repo);
+
+  /// Whether this entry is a scoped (bare/dotfiles) repo. Only such an entry
+  /// has a git-dir to edit, so the field is hidden otherwise rather than
+  /// offering an input that would mean nothing.
+  bool get _scoped => widget.conn.scopedGitDirFor(widget.repo).isNotEmpty;
 
   @override
   void dispose() {
     _label.dispose();
     _path.dispose();
+    _gitDir.dispose();
     super.dispose();
   }
 
   // A repo entry must point at an absolute path on the host, same rule the
   // old path-only prompt enforced.
-  bool get _canSave => _path.text.trim().startsWith('/');
+  bool get _canSave {
+    if (!_path.text.trim().startsWith('/')) return false;
+    // A scoped entry without a git-dir is not scoped at all — every command
+    // for it would run unscoped and fail "not a git repository". Blank is only
+    // valid for an ordinary repo.
+    if (_scoped && !_gitDir.text.trim().startsWith('/')) return false;
+    return true;
+  }
 
   void _save() {
     if (!_canSave) return;
-    Navigator.of(context).pop<(String, String, bool)>((
-      _label.text.trim(),
-      _path.text.trim(),
-      _fsmonitor,
+    Navigator.of(context).pop<EditRemoteRepoResult>((
+      label: _label.text.trim(),
+      path: _path.text.trim(),
+      fsmonitor: _fsmonitor,
+      gitDir: _gitDir.text.trim(),
     ));
   }
 
@@ -318,85 +345,112 @@ class _EditRemoteRepoSheetState extends State<EditRemoteRepoSheet> {
       width: kSheetWidth,
       child: Padding(
         padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('Edit repository', style: typography.title2),
-            const SheetDescription(
-              'Changes apply to the saved connection. Repointing the path aims '
-              'this entry at a different directory on the host — nothing is '
-              'moved or renamed there, and an active session keeps running '
-              'until the next connect.',
-            ),
-            const SizedBox(height: 12),
-            LabeledTextField(
-              label: 'Label',
-              controller: _label,
-              placeholder: widget.conn.repoDisplayName(widget.repo),
-              onChanged: () => setState(() {}),
-              padding: EdgeInsets.zero,
-            ),
-            const FieldHint(
-              'Shown in the Connections list; falls back to the folder name '
-              'when empty.',
-            ),
-            const SizedBox(height: 12),
-            LabeledTextField(
-              label: 'Path on the host',
-              controller: _path,
-              placeholder: '/srv/git/my-project',
-              onChanged: () => setState(() {}),
-              padding: EdgeInsets.zero,
-            ),
-            const FieldHint(
-              'Absolute path to the repository\'s root folder on the host '
-              '(the one containing .git).',
-            ),
-            const SizedBox(height: 14),
-            Row(
-              children: [
-                ToolIconButton(
-                  icon: _fsmonitor
-                      ? CupertinoIcons.bolt_fill
-                      : CupertinoIcons.bolt,
-                  tooltip: _fsmonitor
-                      ? 'Git fsmonitor on (click to disable)'
-                      : 'Git fsmonitor off (click to enable)',
-                  size: 15,
-                  color: _fsmonitor
-                      ? MacosColors.systemBlueColor
-                      : MacosColors.systemGrayColor,
-                  onPressed: () => setState(() => _fsmonitor = !_fsmonitor),
+        // Scrolls because this sheet grew a conditional git-dir field and
+        // overflowed its fixed height for scoped repos. Same remedy
+        // AddExistingRepoSheet took when it gained its scoped rows — the
+        // sheet keeps one size and the content fits inside it.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('Edit repository', style: typography.title2),
+              const SheetDescription(
+                'Changes apply to the saved connection. Repointing the path aims '
+                'this entry at a different directory on the host — nothing is '
+                'moved or renamed there, and an active session keeps running '
+                'until the next connect.',
+              ),
+              const SizedBox(height: 12),
+              LabeledTextField(
+                label: 'Label',
+                controller: _label,
+                placeholder: widget.conn.repoDisplayName(widget.repo),
+                onChanged: () => setState(() {}),
+                padding: EdgeInsets.zero,
+              ),
+              const FieldHint(
+                'Shown in the Connections list; falls back to the folder name '
+                'when empty.',
+              ),
+              const SizedBox(height: 12),
+              LabeledTextField(
+                label: 'Path on the host',
+                controller: _path,
+                placeholder: '/srv/git/my-project',
+                onChanged: () => setState(() {}),
+                padding: EdgeInsets.zero,
+              ),
+              FieldHint(
+                _scoped
+                    // Scope-aware: for a dotfiles repo the work tree does NOT
+                    // contain .git, so the old wording described the wrong thing.
+                    ? 'Absolute path to the work tree on the host — for this '
+                          'scoped repo, the folder the tracked files live in.'
+                    : 'Absolute path to the repository\'s root folder on the '
+                          'host (the one containing .git).',
+              ),
+              if (_scoped) ...[
+                const SizedBox(height: 12),
+                LabeledTextField(
+                  label: 'Git directory',
+                  controller: _gitDir,
+                  placeholder: '/home/you/.home.git',
+                  onChanged: () => setState(() {}),
+                  padding: EdgeInsets.zero,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Enable git fsmonitor (faster status on large repos)',
-                    style: typography.caption1,
+                const FieldHint(
+                  'Absolute path to this scoped repo\'s git directory. Applies '
+                  'on the next connect, like the path itself. Previously a '
+                  'git-dir that had genuinely moved could only be corrected by '
+                  'deleting the entry and adding it again.',
+                ),
+              ],
+              const SizedBox(height: 14),
+              Row(
+                children: [
+                  ToolIconButton(
+                    icon: _fsmonitor
+                        ? CupertinoIcons.bolt_fill
+                        : CupertinoIcons.bolt,
+                    tooltip: _fsmonitor
+                        ? 'Git fsmonitor on (click to disable)'
+                        : 'Git fsmonitor off (click to enable)',
+                    size: 15,
+                    color: _fsmonitor
+                        ? MacosColors.systemBlueColor
+                        : MacosColors.systemGrayColor,
+                    onPressed: () => setState(() => _fsmonitor = !_fsmonitor),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                AppPushButton(
-                  controlSize: ControlSize.large,
-                  secondary: true,
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                const SizedBox(width: 8),
-                AppPushButton(
-                  controlSize: ControlSize.large,
-                  onPressed: _canSave ? _save : null,
-                  child: const Text('Save'),
-                ),
-              ],
-            ),
-          ],
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Enable git fsmonitor (faster status on large repos)',
+                      style: typography.caption1,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  AppPushButton(
+                    controlSize: ControlSize.large,
+                    secondary: true,
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  AppPushButton(
+                    controlSize: ControlSize.large,
+                    onPressed: _canSave ? _save : null,
+                    child: const Text('Save'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
