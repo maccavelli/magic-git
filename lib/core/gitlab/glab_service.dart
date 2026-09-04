@@ -458,9 +458,23 @@ class GlabService {
 
   /// Calls a REST v4 endpoint, e.g. `projects/:id/merge_requests`.
   ///
-  /// [fields] are `key=value` pairs sent via `-f` (`--field`); when any are
-  /// present and [method] is GET, glab still issues a GET with query params.
-  /// [paginate] walks all pages in one invocation.
+  /// [fields] are `key=value` pairs sent via `-f`, which is glab's
+  /// **`--raw-field`** — a plain string parameter with NO value
+  /// interpretation. It is emphatically not `--field`, which is `-F` and DOES
+  /// substitute: a `-F` value beginning with `@` is read from a file on the
+  /// host, and `-` from stdin.
+  ///
+  /// That distinction is load-bearing, because exactly one call site passes
+  /// user-typed free text through this ([mergeMergeRequest]'s commit
+  /// messages). With `-f` a message beginning with `@` is transmitted
+  /// literally; "correcting" this to `-F`, or adding a typed field, would turn
+  /// it into an arbitrary host file read. This comment previously named `-f`
+  /// as `--field` — the wrong way round — which is precisely the trap a future
+  /// edit would have fallen into (0022 H1'). `glab_service_test` pins the flag
+  /// so the guarantee lives in a test, not in prose.
+  ///
+  /// When any fields are present and [method] is GET, glab still issues a GET
+  /// with query params. [paginate] walks all pages in one invocation.
   Future<dynamic> api(
     String repoPath,
     String endpoint, {

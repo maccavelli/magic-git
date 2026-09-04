@@ -2063,6 +2063,36 @@ void main() {
       expect(exec.calls.single, ['glab', 'mr', 'checkout', '42']);
     });
 
+    test('api() sends fields as -f (raw string), never -F', () async {
+      // 0022 H1'. `-f` is glab's --raw-field: no value interpretation. `-F` is
+      // --field, which reads a value beginning with `@` from a FILE on the
+      // host and `-` from stdin. Exactly one call site puts user-typed free
+      // text through this path (mergeMergeRequest's commit messages), so the
+      // day someone "corrects" the flag — the source comment used to name -f
+      // as --field, inviting exactly that — a merge message starting with an
+      // @mention becomes an arbitrary host file read.
+      //
+      // Pinned in a test rather than a comment because a comment cannot fail.
+      await glab.mergeMergeRequest(
+        '/repo',
+        12,
+        squash: true,
+        squashMessage: '@release-team please review',
+      );
+      final argv = exec.calls.single;
+      expect(argv, contains('-f'));
+      expect(
+        argv,
+        isNot(contains('-F')),
+        reason: '-F would make a leading @ read a file off the host',
+      );
+      expect(
+        argv,
+        contains('squash_commit_message=@release-team please review'),
+        reason: 'the value must ride verbatim, not be interpreted',
+      );
+    });
+
     test('mergeMergeRequest PUTs to the merge endpoint', () async {
       await glab.mergeMergeRequest('/repo', 12);
       expect(exec.calls.single, [

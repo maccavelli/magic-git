@@ -1631,6 +1631,44 @@ executed.
 the `invalid_override` above). Suite: `+3326 ~2 -48`; failing set identical to
 baseline and passing count up 19, not down.
 
+### Phase 10 — H1' + N2 + L5: glab field handling (2026-09-03) — **COMPLETE**
+
+**Decision executed: option (b)** — keep REST `-f` and pin it with a test,
+rather than rewriting the two merge mutations onto `glab mr merge`
+subcommand flags. Rationale as recorded at approval: `-f` is verified correct
+on current glab, and (a) would have traded a *proven* hardening (the `-i`
+HTTP-status cross-check against glab's advisory exit codes) for an *unproven*
+risk, while inverting two assertions that deliberately pin the anti-subcommand
+invariant.
+
+**H1' — the trap is closed at the source.** `glab_service.dart`'s `api()` doc
+said `-f` was `--field`. It is `--raw-field`; `--field` is `-F`, and `-F` is
+the flag that reads an `@`-prefixed value from a file on the host. The comment
+is corrected and now states why the distinction is load-bearing.
+
+**And pinned in a test, because a comment cannot fail.** New assertion: `api()`
+emits `-f`, never `-F`, and a field value beginning with `@` rides verbatim.
+The negative test flips the emitter to `-F` and the test fails — i.e. it
+catches precisely the "correction" that would have created the vulnerability
+the original H1 wrongly claimed already existed.
+
+**N2 — merge messages.** Both `squash_commit_message` and
+`merge_commit_message` were sent on every merge regardless of method, and
+`body ?? subject` silently reused the subject as the merge commit's *body*
+when the body was blank. Now only the field the chosen method uses is sent.
+**Caught while fixing it:** my first patch passed `options.subject` alone,
+which would have *dropped the body entirely* on a plain merge — GitLab takes
+one message per method, unlike `gh pr merge -t/-b`. A `_composeMessage` helper
+now joins subject and body with the conventional blank line, and returns null
+when the user typed neither so GitLab's own default stands.
+
+**L5 — no code change, by design.** glab subcommand paths trusting the exit
+code alone is a residual 0019 already documents; it is recorded in the MADR for
+completeness of the engine picture, not re-litigated here.
+
+**Verification.** Analyzer: 2 pre-existing. Suite: `+3327 ~2 -48`, failing set
+identical to baseline, passing count up.
+
 ### Phase 1 negative-test detail (retained)
 
 Run against a scratch `git clone` in the

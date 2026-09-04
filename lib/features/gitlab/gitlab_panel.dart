@@ -1304,8 +1304,20 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         squash: options.method == MergeMethod.squash,
         removeSourceBranch: options.deleteSource,
         sha: plan.pinHeadSha ? plan.headSha : null,
-        squashMessage: options.subject,
-        mergeCommitMessage: options.body ?? options.subject,
+        // Only the field the chosen method actually uses, and the whole
+        // message in it. Previously BOTH fields went on every merge — a
+        // squash_commit_message on a plain merge and vice versa — and
+        // `body ?? subject` silently reused the subject as the merge commit's
+        // BODY whenever the body was blank (0022 N2).
+        //
+        // GitLab takes one message per method, unlike `gh pr merge -t/-b`, so
+        // subject and body are composed here with the usual blank line.
+        squashMessage: options.method == MergeMethod.squash
+            ? _composeMessage(options)
+            : null,
+        mergeCommitMessage: options.method == MergeMethod.squash
+            ? null
+            : _composeMessage(options),
       ),
     );
     if (!mounted) return;
@@ -1325,6 +1337,18 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
 
   /// Reopens a closed MR — GitLab twin of GitHubPanel._reopenPr. No confirm;
   /// reopening is not destructive.
+  /// Joins the merge sheet's subject and body into the single commit message
+  /// GitLab's REST merge takes, or null when the user typed neither (which
+  /// leaves GitLab's own default in place).
+  static String? _composeMessage(MergeOptionsResult options) {
+    final subject = options.subject?.trim() ?? '';
+    final body = options.body?.trim() ?? '';
+    if (subject.isEmpty && body.isEmpty) return null;
+    if (body.isEmpty) return subject;
+    if (subject.isEmpty) return body;
+    return '$subject\n\n$body';
+  }
+
   Future<void> _reopenMr(int iid) async {
     if (_busyMrs.contains(iid)) return;
     final repoPath = this.repoPath;
