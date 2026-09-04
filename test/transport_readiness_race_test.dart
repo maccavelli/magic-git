@@ -151,4 +151,67 @@ void main() {
       );
     });
   });
+
+  // Two connects overlapping is ordinary, not exotic: the reconnect popup is
+  // up, an auto-reconnect attempt is mid-handshake, and the user picks another
+  // saved connection. The superseded attempt then returns immediately through
+  // one of _connect's generation early-returns — and used to settle the gate
+  // belonging to the attempt that superseded it (0024 H1).
+  group('overlapping attaches', () {
+    test('a superseded attach does not settle its successor gate', () async {
+      final manager = SSHClientManager();
+      final firstBody = Completer<void>();
+      final secondBody = Completer<void>();
+
+      final first = manager.withAttachGate<void>(() => firstBody.future);
+      expect(manager.isAttachSettled, isFalse);
+
+      final second = manager.withAttachGate<void>(() => secondBody.future);
+      expect(manager.isAttachSettled, isFalse);
+
+      // The first attempt gives up (superseded). The second is still running.
+      firstBody.complete();
+      await first;
+
+      expect(
+        manager.isAttachSettled,
+        isFalse,
+        reason: 'the second handshake is still in flight',
+      );
+
+      secondBody.complete();
+      await second;
+      expect(manager.isAttachSettled, isTrue);
+    });
+
+    test('a command still waits while the successor handshakes', () async {
+      // The consequence the gate state stands for: MADR 0018 exists so this
+      // command waits instead of caching SSHTransportNotReady into a pane.
+      final manager = SSHClientManager();
+      final executor = SSHCommandExecutor(manager);
+      final firstBody = Completer<void>();
+      final secondBody = Completer<void>();
+
+      final first = manager.withAttachGate<void>(() => firstBody.future);
+      final second = manager.withAttachGate<void>(() => secondBody.future);
+      firstBody.complete();
+      await first;
+
+      var settled = false;
+      final pending = executor
+          .execute(repoPath: '/r', gitArgs: const ['true'])
+          .whenComplete(() => settled = true);
+
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        settled,
+        isFalse,
+        reason: 'it must wait out the handshake that is actually running',
+      );
+
+      secondBody.complete();
+      await second;
+      await expectLater(pending, throwsA(isA<SSHTransportNotReady>()));
+    });
+  });
 }

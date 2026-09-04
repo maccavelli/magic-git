@@ -391,12 +391,22 @@ class SSHClientManager {
   /// [bindTestClients] exists.
   @visibleForTesting
   Future<T> withAttachGate<T>(Future<T> Function() body) async {
+    // Settle whatever attempt this one supersedes...
     if (!_attachGate.isCompleted) _attachGate.complete();
-    _attachGate = Completer<void>();
+    // ...then hold THIS invocation's gate in a local. The `finally` must settle
+    // the gate this attempt installed, never whatever the field happens to hold
+    // by then: with two connects overlapping — the reconnect popup up, an
+    // auto-reconnect mid-handshake, and the user picking another connection —
+    // the field already belongs to the successor. Completing it declares a
+    // handshake settled while it is still running, which makes
+    // `isAttachSettled` true and sends every command straight to
+    // `SSHTransportNotReady`: MADR 0018's exact failure, in the one state it
+    // exists to handle (0024 H1).
+    final gate = _attachGate = Completer<void>();
     try {
       return await body();
     } finally {
-      if (!_attachGate.isCompleted) _attachGate.complete();
+      if (!gate.isCompleted) gate.complete();
     }
   }
 
