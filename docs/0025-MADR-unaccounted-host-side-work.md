@@ -7,7 +7,7 @@ informed: [Magic Git contributors]
 verified: 2026-09-04
 ---
 
-# Treat unaccounted host-side work as one workstream: leaked watchers and refresh amplification
+# Bound the host process economy: leaked watchers, refresh amplification, and a process-per-command stack
 
 ## Context and Problem Statement
 
@@ -89,12 +89,17 @@ broken, and two of them failed *silently*, returning zero rather than an error.
 
 ## Scope
 
-In scope: the lifetime of host-side processes the app starts, and the volume of
-commands one user gesture causes.
+In scope: the lifetime of host-side processes the app starts, the volume of
+commands one user gesture causes, and — added 2026-09-04 — the **process
+economy** as a whole: how many long-lived processes a connection should hold,
+what enforces that, and where the concurrency primitives (host processes, SSH
+channels, Dart isolates) are each accounted for. See *Extended scope* below.
 
 Out of scope: transport correctness (0024 closed that), the perceived-freeze
-work (0023 shipped it), and anything requiring a change to how the forge CLIs
-themselves behave.
+work (0023 shipped it), anything requiring a change to how the forge CLIs
+themselves behave, and any redesign of the Riverpod provider graph — the
+proposals here change *what is asked for and how often*, not how the app is
+wired.
 
 ## Decision Drivers
 
@@ -110,6 +115,14 @@ themselves behave.
 * **Fix causes, not symptoms** (`AGENTS.md`). For A in particular, the entire
   teardown path is already correct; a fix that touches it would be fixing the
   half that works.
+* **A ceiling that is not enforced is not a ceiling.** 0024 M2 found the
+  `MaxSessions` budget existed only as a comment, and that the comment had
+  forgotten streams. Host processes today have no budget at all, in any form.
+* **Prefer what is already in the tree.** Three of the proposals below are
+  extensions of patterns this codebase already contains — `setFsmonitorMany`'s
+  bundled `sh -c`, `GitCatFileBatch`'s fail-open batching, and
+  `highlight_worker.dart`'s long-lived isolate. That is a much shorter path
+  than importing an architecture.
 
 ## Considered Options
 
@@ -143,6 +156,13 @@ Adopted with it:
    *what causes it* is one grounded hypothesis and one open question. Changing
    refresh behaviour on a hypothesis is how a fan-out becomes a stale pane.
 3. **Both confirmations are live-host.** Neither may be closed on a unit test.
+4. **Every long-lived host process gets a named ceiling, enforced by a counter
+   and asserted by a test** — the treatment 0024 M2 gave SSH channels. A budget
+   that lives only in a comment is how this record's two findings both escaped
+   notice.
+5. **Reduce demand before adding machinery.** F1/F2/F3 remove work; D1/D3 make
+   the remaining work cheaper. The former are smaller, are testable without a
+   host, and make the latter's payoff easier to measure — so they go first.
 
 No code changes accompany this record. Implementation waits on
 `0025-PLAN-unaccounted-host-side-work.md` and explicit approval.
@@ -316,6 +336,346 @@ multiplier sitting underneath this one, and it is unexplained.
 that does not move the number down has not worked, regardless of what a unit
 test says.
 
+
+---
+
+# Extended scope, 2026-09-04: process economy
+
+Added at the maintainer's direction. The two findings above are symptoms of a
+structural question this record now also has to answer: **how many host
+processes should one repository cost, and what keeps that number bounded?**
+
+Today, measured rather than estimated: one commit+push costs **123 git
+processes**, and a session accumulates orphaned watchers indefinitely. The
+target is a small, *named*, monitored set of long-lived processes with hard
+ceilings — not a smaller number of short-lived ones.
+
+## Prior art
+
+Researched because every problem here is solved somewhere, and two of the
+solutions are already half-present in this codebase.
+
+### Git already ships the daemon we are duplicating
+
+`git fsmonitor--daemon` is a built-in filesystem monitor: **one long-lived
+daemon per working directory**, using inotify on Linux, which git commands
+query over a **Unix domain socket** instead of scanning the disk. It exists
+precisely so `git status` need not walk the tree, and it requires no
+third-party tools.
+
+**This app already turns it on.** `_applyFsmonitorTuning`
+(`app_providers.dart:1606`) calls `setFsmonitorMany(paths, enabled: true)`
+(`git_service.dart:2319`) at connect, and the host confirms it:
+
+```
+systems-workspace:  core.fsmonitor=true
+lkq-apache-spark:   core.fsmonitor=true
+```
+
+So for every repo the app opens, there are **two independent inotify watch
+trees over the same working directory**: git's daemon, and the app's own
+`inotifywait -m -r`. The app pays twice for the same information, and only one
+of the two leaks. `bounded_watch.dart` and `remote_watch_service.dart` even
+exclude `.git/fsmonitor--daemon/` from their own watch — the app is filtering
+out the noise of the daemon it started.
+
+### A single host-side server is the standard answer
+
+VS Code's remote architecture runs **one long-lived server process on the
+host** which owns sessions and remains active across many client connections,
+speaking JSON-RPC over a single transport, rather than spawning per command.
+The 2026 Agent Host work generalised this further: a dedicated host process
+that outlives the editor connected to it.
+
+That is the shape this app does not have. Every `execute()` opens a channel,
+forks `sh`, `exec`s one command, and tears the whole thing down.
+
+### The per-command round trip is the known cost
+
+Published measurements for OpenSSH connection reuse put a fresh handshake at
+roughly **300–500 ms through a bastion at ~100 ms RTT**, against **~8 ms** for
+a reused session, with automation that opens a connection per task cited as
+where multiplexing recovers most of its wall clock. Magic Git already keeps
+its TCP connections alive, so it does not pay the handshake — but
+[0024 P2](0024-MADR-ssh-and-remote-repo-engine-debug-audit.md) measured the
+analogous per-**channel** cost from the dartssh2 source: `CHANNEL_OPEN` +
+confirmation, then `exec` with `wantReply`, i.e. **two round trips before the
+command starts**, every time.
+
+At 123 processes, that is 246 round trips of pure protocol for one commit.
+
+### The watcher leak is a documented upstream limitation
+
+`inotifywait` blocks in `select()` on its inotify fd. On a quiet repository it
+never returns, never writes to stdout, and therefore **never discovers that the
+reader of its pipe is gone** — there is no `SIGPIPE` without a write. The
+inotify-tools project discusses exactly this: a watcher that can no longer
+receive events "will never know that it should exit."
+
+0022's M5 text guessed at this (*"cleanup rests on channel close causing SIGPIPE
+at the watcher's next write, which on a quiet repo may be far away or never"*)
+and was right about the consequence while wrong about the signal path. It is an
+upstream property of the tool, not a defect in this app's teardown — which is
+why no teardown fix can address it, and why `-t/--timeout` is the documented
+lever.
+
+### Linux gives a primitive for exactly this
+
+`prctl(PR_SET_PDEATHSIG)` delivers a signal to a child when its parent dies,
+and `PR_SET_CHILD_SUBREAPER` stops orphans reparenting to init. Both are
+per-process Linux calls, not shell features, so reaching them from an arming
+script means a wrapper — but they bound the problem at the kernel rather than
+by convention.
+
+### Dart's own guidance argues against what the client does
+
+Flutter's concurrency documentation is explicit that `Isolate.run` **spawns and
+tears down an isolate per call**, that this carries real overhead, and that
+repeated identical work should use a long-lived `Isolate.spawn` worker with
+ports instead. Each isolate costs its own heap and an OS thread. This app has **13 `Isolate.run` call sites** — status and refs parsing, log,
+file history, reflog, blame, NUL-path splitting, gunzip offload, key decode,
+forge JSON, diff parsing, the commit graph — each spawning and tearing down an
+isolate per invocation. The same "spawn per unit of work" shape as the
+host-side problem, one layer up.
+
+**And this codebase has already solved it once.**
+`lib/features/viewer/highlight_worker.dart` is *"a single long-lived isolate
+that syntax-highlights large files, shared by every open CodeView"*, written
+precisely because the per-file `Isolate.run` it replaced re-registered ~39
+grammars on every spawn. Its docstring even records the trade-off that a
+general worker has to make — serial processing, superseded results dropped by
+the caller's token. The pattern is proven in-tree; it simply was not applied to
+the other twelve.
+
+## C — Process and watchdog management (3)
+
+### C1 — Make the watcher self-terminating, and stop relying on the client
+
+**Grounded in:** the inotify-tools `select()` limitation above; Finding A's
+narrowing table, which shows every client-side teardown path already works.
+
+Arm with a bounded wait and a lease the watcher re-checks, so a watcher whose
+client is gone dies on its own:
+
+* `inotifywait -t <interval>` instead of an unbounded `-m`, in a re-arm loop —
+  the timeout is what forces `select()` to return, which is what lets the
+  process ever notice anything.
+* On each wake, verify a **lease file** under the git-dir whose mtime the app
+  refreshes over the live channel. Stale lease ⇒ exit. This is the part that
+  survives a dropped TCP, because it needs nothing from the client *at the
+  moment of failure* — only its earlier absence.
+* Wrap the arm so the process is also `PR_SET_PDEATHSIG`-guarded where
+  available, as a second, kernel-level backstop.
+
+The client-side teardown stays exactly as it is; it is correct and it is fast.
+This adds the path that covers its absence.
+
+### C2 — Consume git's daemon instead of running a second watch tree
+
+**Grounded in:** `core.fsmonitor=true` already being set by this app, confirmed
+live on both host repos.
+
+Where the fsmonitor daemon is available and enabled, the app's own recursive
+`inotifywait` is redundant surveillance of a tree already under surveillance.
+Options, in increasing order of ambition:
+
+1. **Stop double-watching.** For a repo with `core.fsmonitor=true`, the app's
+   watch can shrink to the git-dir signal points alone (index, HEAD,
+   `refs/heads`, `refs/tags`) — the bounded-watch surface that
+   `bounded_watch.dart` already computes — and let `git status` be fast because
+   the daemon makes it so. Work-tree events stop being the app's problem.
+2. **Query the daemon.** It speaks over a Unix domain socket; a host-side
+   shim could subscribe and forward, giving one watcher process per host
+   instead of per repo.
+
+Option 1 is a scope reduction of existing code, not new machinery, and it
+removes the leaking surface for the repos most exposed to it — large work
+trees, which is exactly where `$HOME`-scoped dotfiles repos live.
+
+### C3 — A registry with determinate ceilings, enforced not assumed
+
+**Grounded in:** 0024 M2, which turned the `MaxSessions` budget from a comment
+into a counter and found the comment had omitted streams entirely.
+
+The same treatment for host processes:
+
+* **A lease/PID registry** per repo under the git-dir, written at arm time.
+* **A sweep at connect** that reclaims any recorded PID still alive and not
+  ours — the "no reconnect-time sweep" 0022 named and never built.
+* **A hard, named ceiling per connection**, refused rather than exceeded, with
+  the refusal surfaced (0024 H3's `onDiagnostic` already carries watcher
+  diagnostics to the output log, so the channel exists).
+
+Proposed ceilings, to be pinned as constants and asserted by a test the way
+`maxConcurrentStreams` now is:
+
+| resource | ceiling | why |
+|---|---|---|
+| watcher processes per connection | **2** | one active repo + one background; beyond that, poll and say so |
+| `cat-file --batch` per connection | **1** | it is a multiplexer by design |
+| command-session shells (C-D1) | **1** | plus the existing read-lane bound |
+| total host processes attributable to one connection | **≤ 6** | against ~40 observed watchers alone |
+| inotify instances held | **≤ 8** | against `max_user_instances = 1024` measured on this host |
+
+The point is not the specific numbers. It is that today **there is no number at
+all**, which is how 19 orphans and 123 processes both went unnoticed.
+
+## D — The process stack (3)
+
+### D1 — One persistent command session per connection
+
+**Grounded in:** the VS Code host-server precedent; 0024 P2's measured two
+round trips per `execute()`.
+
+Replace channel-per-command with a single long-lived `sh` on one channel,
+reading length-prefixed requests and writing length-prefixed framed responses.
+Every command then costs a write and a read rather than `CHANNEL_OPEN` +
+`exec` + teardown, and the host forks one process per *command* rather than one
+shell *plus* one command.
+
+This subsumes 0024's Phase 8 (P2), which proposed batching within a window;
+a session is the same idea with the window removed. Its constraints carry over
+unchanged and are non-negotiable: reads only at first, one deadline per
+request, per-request byte budgets, and a fail-open path to the current
+per-command executor. It also needs an answer for a wedged session that the
+batching proposal did not: a session is a single point of failure in a way that
+N independent channels are not.
+
+### D2 — Bundle the refresh triple into one invocation
+
+**Grounded in:** the measurement — `status`, `for-each-ref` and `remote` appear
+15 times *each*, always together; and on existing precedent in this codebase.
+
+`setFsmonitorMany` (`git_service.dart:2319`) already composes a multi-command
+`sh -c` script with per-part isolation and framed error reporting. The refresh
+triple is the same shape with a simpler failure mode. One process, one channel,
+one round trip, three answers — turning 45 processes into 15 before any
+deduplication work is done.
+
+### D3 — Promote `cat-file --batch` from one-shot to session
+
+**Grounded in:** `git_cat_file_batch.dart` already exists and already
+fails open to per-key `showOne`.
+
+`git cat-file --batch` is git's own long-lived query interface. The app spawns
+it per batch and discards it. Holding one per repo over the persistent session
+(D1) makes blob reads a write/read on an existing process — the same move git
+itself made for `fsmonitor`.
+
+## E — Threads, channels, routines
+
+The three concurrency layers here are distinct and only one of them is
+currently accounted for.
+
+| layer | unit | bounded today? |
+|---|---|---|
+| host | OS processes | **no** — this record exists because of that |
+| transport | SSH channels | partly — reads capped at 4, isolated at 2, streams at 8 since 0024 M2; **no unified total** |
+| client | Dart isolates | **no** — spawned per call site |
+
+**Transport.** Channels are the real concurrency primitive: dartssh2
+multiplexes them over one TCP with independent flow-control windows, which is
+why reads can overlap a fetch at all. What is missing is a single accounting
+across lanes *and* streams *and* the sideload path, checked against the host's
+actual `MaxSessions` — 0024 M2 proved the host's ceiling binds first when it is
+lower, so the app can discover the real limit rather than assume 10.
+
+**Client.** Per Flutter's own guidance, repeated `Isolate.run` should be a
+long-lived `Isolate.spawn` worker — and `highlight_worker.dart` is the in-tree
+proof, with its rationale already written down. Extending that one worker (or
+adding a second, for parsing) to cover the hot repeated parses — status, refs,
+log, blame, diff — replaces per-call spawn cost with a message round trip on a
+warm isolate.
+
+The documented constraints apply and are worth stating so the plan does not
+trip on them: no Flutter APIs or `rootBundle` in a spawned isolate, closures
+and sockets are not sendable, and every isolate costs its own heap plus an OS
+thread — so this is **one or two named workers**, never a pool sized to cores.
+`highlight_worker` also records the cost honestly: serial processing means a
+very large payload briefly delays another view's, which is the right trade for
+one warm isolate over N cold ones but must be a deliberate choice per worker.
+
+## F — Algorithms and heuristics (3)
+
+### F1 — Fingerprint the repo and short-circuit the refresh
+
+**Grounded in:** 15 identical refresh triples for one gesture.
+
+Most of those 15 waves observed a repository that had not changed since the
+previous wave. Compute a cheap fingerprint in **one** command — `HEAD` oid,
+`.git/index` size+mtime, `packed-refs` mtime, and the count of loose refs —
+and short-circuit the whole triple when it is unchanged since the last
+completed refresh.
+
+This is content-addressing applied to a refresh: the expensive work is keyed on
+a cheap, exact witness of the state it derives from. It converts 15 waves into
+15 one-command probes plus one real refresh, and it degrades safely — a
+fingerprint collision costs a missed refresh only if the index changes with
+identical size *and* mtime, which the watcher tick would catch anyway.
+
+### F2 — Invalidate by path, not by family set
+
+**Grounded in:** `RepoWatchEvent.paths`, `isScoped` and `touchesGitState`
+already exist and are already documented as the mechanism for answering a
+change "in proportion to it".
+
+`refreshAfterMutation` invalidates all 12 families unconditionally. But the
+watcher already knows what moved. A change under `refs/` need not re-run
+`status`; a work-tree file edit need not re-run `for-each-ref` or `remote`.
+The classification helpers are written; nothing consumes them for invalidation
+scope. This is the largest available reduction that requires no new host-side
+machinery at all.
+
+### F3 — Suppress echoes by bracketing, and collapse superseded waves
+
+**Grounded in:** the `withOwnMutation` / `refreshAfterMutation` asymmetry
+established in Finding B — 4 bracketing call sites in `repo_status_view.dart`,
+**0** in `commit_dialog.dart`.
+
+Two parts:
+
+* **Bracket every mutation surface**, so writes made *during* a gesture are
+  suppressed rather than stamped after the fact. A point-in-time `mark()`
+  cannot suppress an echo that has already arrived.
+* **Give refreshes a generation counter.** When wave *n+1* is requested while
+  wave *n* is still in flight and nothing has changed between them, wave *n*
+  should be superseded rather than both completing. The lane scheduler already
+  proves this pattern is workable here; `CommandLaneScheduler` reclaims and
+  supersedes work by design.
+
+## What "success" means for the extended scope
+
+Deliberately expressed as measurements, all of which are now cheap to take
+because the instruments exist and have been validated:
+
+| measure | today | target |
+|---|---|---|
+| git processes, one one-file commit+push | **123** | **≤ 15** |
+| refresh triples per commit+push | **15** | **1–2** |
+| long-lived host processes per connection | unbounded (≈40 observed) | **≤ 6, enforced** |
+| orphaned watchers after a week incl. sleep/VPN drop | 19 over ~17 days | **0** |
+| round trips per command | 2 (`CHANNEL_OPEN` + `exec`) | ~0 amortised (D1) |
+| repeated `Isolate.run` call sites | **13** | hot parses on 1–2 warm workers |
+
+Each is measurable with a method already used in this record: `trace2` for
+command counts, `/proc` enumeration for host processes, dartssh2 source for
+round trips.
+
+## Sources
+
+* [git-fsmonitor--daemon documentation](https://git-scm.com/docs/git-fsmonitor--daemon)
+* [git-fsmonitor--daemon(1), man7](https://www.man7.org/linux/man-pages/man1/git-fsmonitor--daemon.1.html)
+* [VS Code Agent Host architecture](https://code.visualstudio.com/docs/agents/concepts/agent-host)
+* [Introducing the Agent Host for persistent, portable agent sessions](https://code.visualstudio.com/blogs/2026/08/26/agent-host-architecture)
+* [Flutter — Concurrency and isolates](https://docs.flutter.dev/perf/isolates)
+* [Dart — Isolates](https://github.com/dart-lang/site-www/blob/main/src/content/language/isolates.md)
+* [inotify-tools #117 — inotifywait and a closed reader](https://github.com/inotify-tools/inotify-tools/issues/117)
+* [inotifywait(1) manual](https://man.archlinux.org/man/inotifywait.1)
+* [PR_SET_PDEATHSIG(2const), man7](https://man7.org/linux/man-pages/man2/pr_set_pdeathsig.2const.html)
+* [Using PR_SET_PDEATHSIG to reap child processes](http://smackerelofopinion.blogspot.com/2015/11/using-prsetpdeathsig-to-reap-child.html)
+* [SSH connection multiplexing with ControlMaster](https://stackharbor.com/en/knowledge-base/ssh-connection-multiplexing-controlmaster/)
+* [How to reuse SSH connections with multiplexing](https://www.cyberciti.biz/faq/linux-unix-reuse-openssh-connection/)
+
 ## Confirmation
 
 This record is confirmed when `0025-PLAN-unaccounted-host-side-work.md` exists
@@ -327,6 +687,17 @@ that, for each finding:
 3. states the live-host confirmation, since **neither finding may be closed on
    a unit test** — A needs a real dropped TCP, B needs the real provider graph;
 4. and, for B, completes attribution **before** proposing a behavioural change.
+
+For the extended scope, additionally:
+
+5. every ceiling in C3 is a named constant with a test that fails when it is
+   exceeded — not a comment;
+6. the success table under *What "success" means for the extended scope* is
+   re-measured with the same instruments and recorded, including any target
+   that was **not** reached;
+7. D1 (persistent command session) is gated behind a flag, defaults off, and
+   retains the per-command path verbatim — it is the one proposal here that
+   introduces a new single point of failure.
 
 Baseline at the time of writing: `flutter analyze` clean,
 `flutter test` **3430 passing / 2 skipped / 0 failing** under the pinned

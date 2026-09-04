@@ -50,7 +50,7 @@ residuals or maintainer-only steps — 0010's Phase 7 is the standing example.
 | 0022 | [git/gh/glab engine debug audit](0022-MADR-git-gh-glab-engine-debug-audit.md) | `accepted` | [plan](0022-PLAN-git-gh-glab-engine-debug-audit.md) | `executed`; Phase 15 run 2026-09-04 — **M5 CONFIRMED on the real host and reopened** (19 orphaned watchers, oldest 16.9 days; cleared, defect open) |
 | 0023 | [Commit-and-push perceived freeze](0023-MADR-commit-and-push-perceived-freeze.md) | `accepted` (amended) | [plan](0023-PLAN-commit-and-push-perceived-freeze.md) | `executed`; live-app measurement done 2026-09-04 — **123 git processes vs the ≈22–40 assumed**; refresh-repetition open |
 | 0024 | [SSH / remote-repo engine debug audit](0024-MADR-ssh-and-remote-repo-engine-debug-audit.md) | `accepted` (amended A1.1, A2.1, L2) | [plan](0024-PLAN-ssh-and-remote-repo-engine-debug-audit.md) | `complete`; M2 confirmed and P1 measured live 2026-09-04. **Phase 8 (P2) not executed** |
-| 0025 | [Unaccounted host-side work](0025-MADR-unaccounted-host-side-work.md) | `proposed` | — | awaiting review; **2 live defects** (leaked watchers, 123-process commit+push) |
+| 0025 | [Host process economy](0025-MADR-unaccounted-host-side-work.md) | `proposed` | — | awaiting review; 2 live defects (leaked watchers, 123-process commit+push) + process/isolate/channel budgets |
 
 ⚠ **0011 and 0012 each carry two unrelated records.** `AGENTS.md` forbids
 renumbering an existing file, so both keep the number and each carries a note
