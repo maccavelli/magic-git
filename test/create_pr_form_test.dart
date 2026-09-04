@@ -53,6 +53,7 @@ class _FakeGit extends GitService {
     bool followTags = false,
     CommandOutputCallback? onOutput,
     OperationId? operationId,
+    String? upstreamRemote,
   }) async {
     _calls.add('push $remote/$branch u=$setUpstream');
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

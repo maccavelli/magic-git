@@ -15,6 +15,7 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
+import '../../core/ssh/ssh_command_executor.dart';
 import '../../core/utils/display_error.dart';
 import '../common/actions.dart';
 import '../common/adaptive_workspace_layout.dart';
@@ -1473,10 +1474,44 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     }
   }
 
+  /// Streams a network op's output into the log as it arrives, instead of
+  /// buffering it until the command exits. These are pushes: they run the
+  /// user's pre-push hooks, so "nothing on screen until it finishes" can mean
+  /// a blank pane for as long as those take (0023 B5).
+  Future<SSHCommandResult> _streamNetworkOp(
+    OutputLogNotifier log,
+    String label,
+    Future<SSHCommandResult> Function(CommandOutputCallback onOutput) run,
+  ) async {
+    final session = log.startStream(label);
+    try {
+      final result = await run((chunk, {required stderr}) {
+        session.append(
+          chunk,
+          stderr ? OutputLineKind.stderr : OutputLineKind.stdout,
+        );
+      });
+      session.close(exitCode: result.exitCode);
+      return result;
+    } catch (e) {
+      if (e is GitException) {
+        session.close(exitCode: e.result.exitCode);
+      } else {
+        session.fail(e.toString());
+      }
+      rethrow;
+    }
+  }
+
   Future<void> _pushTag(GitService git, String name, String remote) async {
     final label = 'git push $remote refs/tags/$name';
     await runLogged(label, (log) async {
-      log.logResult(label, await git.pushTag(repoPath, name, remote: remote));
+      await _streamNetworkOp(
+        log,
+        label,
+        (onOutput) =>
+            git.pushTag(repoPath, name, remote: remote, onOutput: onOutput),
+      );
     }, dock: true);
     if (mounted) refreshRemoteTags(ref, repoPath);
   }
@@ -1513,9 +1548,11 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       );
       if (deletedLocally && choice == TagDeleteScope.both && mounted) {
         await runLogged('git push --delete', (log) async {
-          log.logResult(
+          await _streamNetworkOp(
+            log,
             'git push --delete $remote refs/tags/$name',
-            await git.deleteRemoteTag(repoPath, remote, name),
+            (onOutput) =>
+                git.deleteRemoteTag(repoPath, remote, name, onOutput: onOutput),
           );
         }, dock: true);
         if (mounted) refreshRemoteTags(ref, repoPath);
@@ -1550,9 +1587,11 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     );
     if (!ok || !mounted) return;
     await runLogged('git push tags', (log) async {
-      log.logResult(
+      await _streamNetworkOp(
+        log,
         'git push $remote ${names.map((n) => 'refs/tags/$n').join(' ')}',
-        await git.pushTags(repoPath, names, remote: remote),
+        (onOutput) =>
+            git.pushTags(repoPath, names, remote: remote, onOutput: onOutput),
       );
     }, dock: true);
     if (mounted) refreshRemoteTags(ref, repoPath);
@@ -1574,9 +1613,15 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     );
     if (!ok || !mounted) return;
     await runLogged('git push --delete', (log) async {
-      log.logResult(
+      await _streamNetworkOp(
+        log,
         'git push --delete $remote $branch',
-        await git.deleteRemoteBranch(repoPath, remote, branch),
+        (onOutput) => git.deleteRemoteBranch(
+          repoPath,
+          remote,
+          branch,
+          onOutput: onOutput,
+        ),
       );
     }, dock: true);
   }

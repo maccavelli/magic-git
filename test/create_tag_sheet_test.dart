@@ -44,6 +44,7 @@ class _RecordingGit extends GitService {
     String repoPath,
     String name, {
     String remote = 'origin',
+    CommandOutputCallback? onOutput,
   }) async {
     pushCalls.add((name, remote));
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

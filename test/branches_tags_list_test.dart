@@ -36,8 +36,9 @@ class _FakeGit extends GitService {
   Future<SSHCommandResult> deleteRemoteTag(
     String repoPath,
     String remote,
-    String name,
-  ) async {
+    String name, {
+    CommandOutputCallback? onOutput,
+  }) async {
     deletedRemote.add((remote, name));
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
@@ -47,6 +48,7 @@ class _FakeGit extends GitService {
     String repoPath,
     List<String> names, {
     String remote = 'origin',
+    CommandOutputCallback? onOutput,
   }) async {
     pushedBulk.add(names);
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

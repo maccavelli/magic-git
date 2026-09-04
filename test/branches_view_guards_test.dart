@@ -83,6 +83,7 @@ class _SpyGit extends GitService {
     FetchScope scope = FetchScope.allRemotes,
     CommandOutputCallback? onOutput,
     OperationId? operationId,
+    String? upstreamRemote,
   }) async {
     fetches++;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
@@ -156,8 +157,9 @@ class _SpyGit extends GitService {
   Future<SSHCommandResult> deleteRemoteTag(
     String repoPath,
     String remote,
-    String name,
-  ) async {
+    String name, {
+    CommandOutputCallback? onOutput,
+  }) async {
     remoteTagDeletes.add('$remote/$name');
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }

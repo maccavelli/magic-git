@@ -58,6 +58,7 @@ class _FetchCountingGit extends GitService {
     FetchScope scope = FetchScope.allRemotes,
     CommandOutputCallback? onOutput,
     OperationId? operationId,
+    String? upstreamRemote,
   }) async {
     fetchCalls++;
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

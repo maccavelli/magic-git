@@ -672,6 +672,65 @@ two markers inverts here, because `_fetchSnapshotSeparately` is defined *before*
 **Verification.** Analyzer: 2, the baseline's. Suite: `+3345 ~2 -48`, failing
 set identical to baseline.
 
+### Phase 4 — P3: delete the fixed per-operation overhead (2026-09-04) — **COMPLETE**
+
+**4a — the upstream probe, done the way Amendment A2 requires.** New
+`GitService.remoteFromUpstream(upstream, remotes)` does a **longest-prefix
+match** against the configured remotes, and `fetch`/`pull`/`push` take an
+optional `upstreamRemote` hint that `repo_status_view._upstreamRemoteHint()`
+fills from the status snapshot already in RAM. The probe remains as the
+fallback when the hint is absent, so nothing regresses on a path that cannot
+supply one. `GitService` is never asked for a snapshot it does not hold — the
+mistake the MADR's original wording would have led to, which would have cost a
+full round trip to save 37.6 ms.
+
+The hint is `ref.read`, not watched: it must be the state as it stood when the
+operation started, and a watch tick mid-push must not change the answer under
+it.
+
+**4b — credential helpers gated on scheme.** Written as "is HTTP(S)" so an
+unfamiliar scheme keeps the previous safe behaviour of no helper. `ssh://`,
+`git://`, `file://` and the scp-like `git@host:owner/repo` form (no `://` at
+all) now skip the helper git would never consult — and with it a `gh auth
+git-credential` spawn measured at 102 ms.
+
+**4c — pull's integrate half gets `commitTimeout`** instead of the 60 s
+default. "Local" does not mean "quick": a long rebase, or a merge invoking a
+merge driver or `post-merge` hook, was being SIGTERM'd partway and leaving
+`.git/rebase-merge` behind.
+**Explicitly NOT widened:** `merge` and `cherryPick` carry the same 60 s
+default and the same exposure. They are named here as a follow-up rather than
+folded in, because each is a separate public entry point with its own callers
+and tests, and quietly re-timing them is scope this phase did not cost.
+
+**4d — `onOutput` on `pushTag`/`pushTags`/`deleteRemoteTag`/`deleteRemoteBranch`,
+and the four `branches_view` call sites now stream** through a local
+`_streamNetworkOp` helper instead of buffering with `logResult`. These are
+pushes, so they run the user's pre-push hooks — "nothing on screen until it
+exits" meant a blank pane for however long those take.
+**`lsRemoteTags` deliberately skipped:** its only caller is
+`remoteTagsProvider`, which has no `OutputLogNotifier`, so the parameter would
+be accepted and ignored — the exact pattern 0022 M3 was written to clean up.
+
+**Tests added.** `remoteFromUpstream` against a remote containing `/`, a
+longest-match case, a branch tracking a LOCAL branch, no upstream, and an
+upstream naming a remote the repo lacks; a supplied hint skipping the probe
+entirely; and SSH/scp-like remotes getting no helper while HTTPS still does.
+
+**Negative test — seen to fail.** `remoteFromUpstream` replaced with
+`split('/').first` in a scratch clone (with an `assert s != before`
+post-condition): `Expected: 'team/fork' / Actual: 'team'` — precisely the
+silent mis-derivation Amendment A2 predicted.
+
+**Collateral: twelve fake overrides across ten test files.** Left unfixed they
+fail to **compile**, and the run reported `+3222 -58` with ten "loading"
+failures — caught immediately by the passing-count half of the gate, which is
+the check added after Phase 9 of 0022 missed exactly this.
+
+**Verification.** Analyzer: 2, the baseline's (it briefly went to 3 on a
+`directives_ordering` info from the new import). Suite: `+3348 ~2 -48`, failing
+set identical to baseline.
+
 ### DEVIATION 2026-09-03 (a) — Phase 1's prerequisite #2 was wrong as written
 
 **What the plan said.** "Thread an `operationId` through `_streamGitOp`.

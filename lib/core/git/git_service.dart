@@ -4190,8 +4190,9 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
   Future<SSHCommandResult> deleteRemoteBranch(
     String repoPath,
     String remote,
-    String branch,
-  ) async {
+    String branch, {
+    CommandOutputCallback? onOutput,
+  }) async {
     final auth = await _forgeAuthArgs(repoPath, remote: remote);
     return _run(
       repoPath,
@@ -4208,6 +4209,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       'git push --delete',
       timeout: _networkCeiling,
       activityIdle: networkTimeout,
+      onOutput: onOutput,
       // Sync lane, like every push: updates the remote and the local tracking
       // ref, never the index/worktree.
       lane: ExecLane.sync,
@@ -4926,6 +4928,42 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
   /// [forgeGitAuthConfigArgs]. Looks up [remote]'s URL (default `origin`);
   /// returns empty when the remote is missing or not a known forge so custom
   /// remotes keep the host's ordinary helpers. Never throws.
+  /// The remote name inside an upstream shorthand (`origin/main` → `origin`),
+  /// resolved against the repo's CONFIGURED remotes.
+  ///
+  /// A longest-prefix match, deliberately not `split('/').first`, for two
+  /// reasons that both end in a silently wrong answer:
+  ///
+  ///  * a remote name may legally contain `/` (`team/fork`), which a split
+  ///    truncates to `team`;
+  ///  * a branch tracking a LOCAL branch has no remote prefix at all — git
+  ///    reports the bare branch shorthand — so a split would hand back `main`
+  ///    as if it were a remote. The probe this replaces special-cases that as
+  ///    `.`; porcelain never prints `.`, so the prefix match is what stands in
+  ///    for it: no configured remote matches, and the caller falls back to
+  ///    `origin` exactly as the probe does.
+  ///
+  /// Returns null when nothing matches, which callers read as "fall back".
+  static String? remoteFromUpstream(String? upstream, List<String> remotes) {
+    if (upstream == null || upstream.isEmpty) return null;
+    String? best;
+    for (final r in remotes) {
+      if (r.isEmpty) continue;
+      if (upstream == r || upstream.startsWith('$r/')) {
+        if (best == null || r.length > best.length) best = r;
+      }
+    }
+    return best;
+  }
+
+  /// Whether [url] is a scheme git will actually consult a credential helper
+  /// for. The scp-like form (`git@host:owner/repo.git`) has no `://` at all,
+  /// so it correctly falls through as non-HTTP.
+  static bool _isHttpRemote(String url) {
+    final u = url.trim().toLowerCase();
+    return u.startsWith('https://') || u.startsWith('http://');
+  }
+
   Future<List<String>> _forgeAuthArgs(
     String repoPath, {
     String remote = 'origin',
@@ -4945,6 +4983,13 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         url = result.stdout.trim();
         (_remoteUrlByRepo[repoPath] ??= {})[remote] = url;
       }
+      // Credential helpers are an HTTP(S) concept — git ignores them for
+      // ssh://, git://, file:// and the scp-like `git@host:owner/repo` form.
+      // Installing them anyway made every push and fetch on an SSH remote pay
+      // a `gh auth git-credential` spawn (measured 102 ms) for a lookup git
+      // would never consult. Written as "is HTTP(S)" rather than "is SSH" so an
+      // unfamiliar scheme keeps the previous, safe behaviour of no helper.
+      if (!_isHttpRemote(url)) return const [];
       return forgeGitAuthConfigArgs(
         forgeFromRemoteUrl(url),
         ghPath: _executor.resolvedBinaryPath('gh'),
@@ -4964,7 +5009,15 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
   /// anything else got no forge credential helper (`get-url origin` fails →
   /// empty args) and HTTPS auth failed exactly where the origin-named case
   /// succeeded.
-  Future<String> _upstreamRemote(String repoPath) async {
+  Future<String> _upstreamRemote(String repoPath, {String? hint}) async {
+    // A caller that already has the landed status snapshot in RAM can answer
+    // this without a round trip — the whole point of the hint. GitService
+    // itself holds no snapshot (`_snapshotInFlight` keeps in-flight futures
+    // only), so asking for one here would cost a fresh combined fetch: strictly
+    // worse than the probe it replaces (0023 Amendment A2).
+    if (hint != null && hint.isNotEmpty) {
+      return _upstreamRemoteByRepo[repoPath] = hint;
+    }
     final cached = _upstreamRemoteByRepo[repoPath];
     if (cached != null) return cached;
     try {
@@ -5019,10 +5072,11 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     FetchScope scope = FetchScope.allRemotes,
     CommandOutputCallback? onOutput,
     OperationId? operationId,
+    String? upstreamRemote,
   }) async {
     final List<String> auth;
     if (scope == FetchScope.defaultRemote) {
-      final remote = await _upstreamRemote(repoPath);
+      final remote = await _upstreamRemote(repoPath, hint: upstreamRemote);
       auth = await _forgeAuthArgs(repoPath, remote: remote);
     } else {
       auth = forgeGitAuthConfigArgsAll(
@@ -5067,12 +5121,13 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     String? branch,
     CommandOutputCallback? onOutput,
     OperationId? operationId,
+    String? upstreamRemote,
   }) async {
     // No explicit remote → git follows the tracked upstream, so the auth
     // lookup must too (see [_upstreamRemote]).
     final auth = await _forgeAuthArgs(
       repoPath,
-      remote: remote ?? await _upstreamRemote(repoPath),
+      remote: remote ?? await _upstreamRemote(repoPath, hint: upstreamRemote),
     );
     await _run(
       repoPath,
@@ -5094,15 +5149,25 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       operationId: operationId,
     );
     final target = remote != null ? 'FETCH_HEAD' : '@{upstream}';
-    return _run(repoPath, [
-      'git',
-      ..._idArgs,
-      if (mode == PullMode.rebase) 'rebase' else 'merge',
-      if (mode != PullMode.rebase) '--no-edit',
-      if (mode == PullMode.ffOnly) '--ff-only',
-      '--end-of-options',
-      target,
-    ], mode == PullMode.rebase ? 'git rebase' : 'git merge');
+    return _run(
+      repoPath,
+      [
+        'git',
+        ..._idArgs,
+        if (mode == PullMode.rebase) 'rebase' else 'merge',
+        if (mode != PullMode.rebase) '--no-edit',
+        if (mode == PullMode.ffOnly) '--ff-only',
+        '--end-of-options',
+        target,
+      ],
+      mode == PullMode.rebase ? 'git rebase' : 'git merge',
+      // Not the 60 s default. This half is local, but "local" does not mean
+      // "quick": a rebase of many commits, or a merge that invokes a merge
+      // driver or a post-merge hook, runs for as long as it runs — and being
+      // SIGTERM'd partway leaves `.git/rebase-merge` behind for the user to
+      // clean up by hand (0023 B4).
+      timeout: commitTimeout,
+    );
   }
 
   /// Pushes the current branch. HTTPS GitHub/GitLab remotes authenticate via
@@ -5121,12 +5186,13 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     bool followTags = false,
     CommandOutputCallback? onOutput,
     OperationId? operationId,
+    String? upstreamRemote,
   }) async {
     // No explicit remote → git follows the tracked upstream (or push.default),
     // so the auth lookup must too (see [_upstreamRemote]).
     final auth = await _forgeAuthArgs(
       repoPath,
-      remote: remote ?? await _upstreamRemote(repoPath),
+      remote: remote ?? await _upstreamRemote(repoPath, hint: upstreamRemote),
     );
     return _run(
       repoPath,
@@ -5226,7 +5292,8 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     String repoPath,
     String name, {
     String remote = 'origin',
-  }) => pushTags(repoPath, [name], remote: remote);
+    CommandOutputCallback? onOutput,
+  }) => pushTags(repoPath, [name], remote: remote, onOutput: onOutput);
 
   /// Pushes every tag in [names] to [remote] in a single invocation, so the
   /// "push N local-only tags" affordance costs one round trip. Deliberately
@@ -5237,6 +5304,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     String repoPath,
     List<String> names, {
     String remote = 'origin',
+    CommandOutputCallback? onOutput,
   }) async {
     if (names.isEmpty) {
       // Without refspecs the argv degenerates to a plain `git push <remote>`
@@ -5259,6 +5327,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       timeout: _networkCeiling,
       activityIdle: networkTimeout,
       lane: ExecLane.sync,
+      onOutput: onOutput,
     );
   }
 
@@ -5270,8 +5339,9 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
   Future<SSHCommandResult> deleteRemoteTag(
     String repoPath,
     String remote,
-    String name,
-  ) async {
+    String name, {
+    CommandOutputCallback? onOutput,
+  }) async {
     final auth = await _forgeAuthArgs(repoPath, remote: remote);
     return _run(
       repoPath,
@@ -5288,6 +5358,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       'git push --delete',
       timeout: _networkCeiling,
       activityIdle: networkTimeout,
+      onOutput: onOutput,
       lane: ExecLane.sync,
     );
   }

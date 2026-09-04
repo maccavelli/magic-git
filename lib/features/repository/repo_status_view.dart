@@ -850,6 +850,21 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   @override
   void refreshAfterAction() => _refresh();
 
+  /// The upstream's remote name from the status snapshot already in RAM, or
+  /// null when it cannot be derived — in which case GitService falls back to
+  /// its own probe. Saves a `sh -c` round trip (measured 37.6 ms locally, one
+  /// SSH round trip remotely) on every push/pull that would otherwise run it.
+  ///
+  /// Read, not watched: this must be the state as it stands when the operation
+  /// starts, and a watch tick mid-operation must not change the answer under
+  /// it.
+  String? _upstreamRemoteHint() {
+    final snapshot = ref.read(statusProvider(repoPath)).value;
+    final remotes = ref.read(remotesProvider(repoPath)).value;
+    if (snapshot == null || remotes == null) return null;
+    return GitService.remoteFromUpstream(snapshot.branch.upstream, remotes);
+  }
+
   Future<void> _fetch() async {
     final git = ref.read(gitServiceProvider);
     if (mounted) setState(() => _syncOps++);
@@ -1000,6 +1015,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       if (followTags) '--follow-tags',
     ].join(' ');
     if (mounted) setState(() => _syncOps++);
+    final hint = _upstreamRemoteHint();
     String? base;
     final bool success;
     try {
@@ -1026,6 +1042,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   followTags: followTags,
                   onOutput: onOutput,
                   operationId: opId,
+                  upstreamRemote: hint,
                 ),
               );
             },

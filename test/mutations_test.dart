@@ -899,6 +899,88 @@ void main() {
       },
     );
 
+    test('remoteFromUpstream: prefix match, not split', () {
+      // 0023 Amendment A2. The naive `split('/').first` gets three of these
+      // wrong, and every wrong answer means the WRONG forge credential helper
+      // (or none) for the branch actually being pushed.
+      const remotes = ['origin', 'team/fork', 'upstream'];
+
+      // Ordinary case.
+      expect(GitService.remoteFromUpstream('origin/main', remotes), 'origin');
+      // A remote name containing a slash — split would yield 'team'.
+      expect(
+        GitService.remoteFromUpstream('team/fork/feature', remotes),
+        'team/fork',
+      );
+      // Longest match wins where one remote prefixes another.
+      expect(
+        GitService.remoteFromUpstream('origin/feature/x', remotes),
+        'origin',
+      );
+      // A branch tracking a LOCAL branch: git reports the bare shorthand, so
+      // nothing matches and the caller falls back to origin — the behaviour
+      // the probe spelled as the `.` special case. Split would return 'main'.
+      expect(GitService.remoteFromUpstream('main', remotes), isNull);
+      // No upstream at all.
+      expect(GitService.remoteFromUpstream(null, remotes), isNull);
+      expect(GitService.remoteFromUpstream('', remotes), isNull);
+      // An upstream naming a remote this repo does not have.
+      expect(GitService.remoteFromUpstream('ghost/main', remotes), isNull);
+    });
+
+    test('a supplied upstream hint replaces the probe round trip', () async {
+      // The probe is a `sh -c` running two gits (measured 37.6 ms locally, one
+      // SSH round trip remotely). With the caller supplying the answer from the
+      // snapshot it already has, it must not run at all.
+      exec.calls.clear();
+      exec.results.add(
+        const SSHCommandResult(
+          exitCode: 0,
+          stdout: 'https://github.com/me/r.git\n',
+          stderr: '',
+        ),
+      );
+      await GitService(exec).push('/repo', upstreamRemote: 'upstream');
+
+      expect(
+        exec.calls.any((c) => c.join(' ').contains('symbolic-ref')),
+        isFalse,
+        reason: 'the upstream probe must be skipped entirely',
+      );
+      expect(exec.calls.first, ['git', 'remote', 'get-url', 'upstream']);
+    });
+
+    test('an SSH remote gets no credential helper; an HTTPS one does', () async {
+      // 0023 P3. Credential helpers are an HTTP(S) concept — git never
+      // consults them for ssh://, git:// or the scp-like form. Installing them
+      // anyway made every push on an SSH remote pay a `gh auth git-credential`
+      // spawn (measured 102 ms) for a lookup that could not be used.
+      Future<List<String>> pushWithRemoteUrl(String url) async {
+        exec.calls.clear();
+        exec.results.addAll([
+          const SSHCommandResult(exitCode: 1, stdout: '', stderr: ''),
+          SSHCommandResult(exitCode: 0, stdout: '$url\n', stderr: ''),
+        ]);
+        await GitService(exec).push('/repo');
+        return exec.calls.last;
+      }
+
+      // scp-like: no scheme at all.
+      expect(
+        await pushWithRemoteUrl('git@github.com:me/r.git'),
+        isNot(contains('credential.helper=')),
+      );
+      // explicit ssh://
+      expect(
+        await pushWithRemoteUrl('ssh://git@github.com/me/r.git'),
+        isNot(contains('credential.helper=')),
+      );
+      // https:// still gets the matching forge helper.
+      final https = await pushWithRemoteUrl('https://github.com/me/r.git');
+      expect(https, contains('credential.helper='));
+      expect(https, contains('credential.helper=!gh auth git-credential'));
+    });
+
     test('a branch tracking a non-origin remote routes auth through THAT '
         'remote', () async {
       exec.results.addAll(const [

@@ -61,8 +61,9 @@ class _FakeGit extends GitService {
   Future<SSHCommandResult> deleteRemoteBranch(
     String repoPath,
     String remote,
-    String branch,
-  ) async {
+    String branch, {
+    CommandOutputCallback? onOutput,
+  }) async {
     remoteDeletes.add((remote, branch));
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
