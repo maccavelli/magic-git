@@ -3007,6 +3007,48 @@ List<ProviderOrFamily> repoMutationFamilies(String repoPath) => [
   // operations that touched the remote invalidate it — [refreshRemoteTags].
 ];
 
+/// The subset of [repoMutationFamilies] a change in [areas] can actually have
+/// invalidated.
+///
+/// One definition, beside the set it narrows — the same rule
+/// `repoMutationFamilies` exists to enforce, and pinned by a scan test for the
+/// same reason. Staging writes only the index, so re-reading the log, the
+/// refs, the stashes and the worktree list for it is work the change could not
+/// have caused (0025 F2).
+///
+/// A refs move still re-reads status: status carries the branch name and the
+/// ahead/behind counts. And it re-reads the reflog, because `.git/logs/` is
+/// excluded from the watch surface — the log write is invisible, so the ref
+/// move has to stand in for it.
+List<ProviderOrFamily> familiesFor(Set<GitArea> areas, String repoPath) {
+  if (areas.isEmpty || areas.contains(GitArea.unknown)) {
+    return repoMutationFamilies(repoPath);
+  }
+  final out = <ProviderOrFamily>{};
+  for (final area in areas) {
+    out.addAll(switch (area) {
+      GitArea.gitIndex => [statusProvider(repoPath)],
+      GitArea.worktree => [statusProvider(repoPath)],
+      GitArea.refs => [
+        statusProvider(repoPath),
+        refsProvider,
+        logProvider,
+        logSearchProvider,
+        branchBaseProvider,
+        branchReviewProvider,
+        remotesProvider,
+        magicSnapshotsProvider,
+        reflogProvider,
+      ],
+      GitArea.stash => [stashesProvider],
+      GitArea.reflog => [reflogProvider],
+      GitArea.worktrees => [gitWorktreesProvider],
+      GitArea.unknown => repoMutationFamilies(repoPath),
+    });
+  }
+  return out.toList();
+}
+
 /// Providers a fetch or push can stale: remote-tracking refs, ahead/behind,
 /// remotes, and the branch-review summaries that key off those refs. Not
 /// History, stashes, reflog, snapshots, or worktrees — those do not move

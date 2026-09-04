@@ -346,9 +346,15 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   /// The one way this panel invalidates the shared post-mutation provider set
   /// — flags the refetch it causes so the head-move detector stands down for
   /// exactly that landing.
-  void _invalidateMutationFamilies() {
+  /// Invalidates the families a change in [areas] can actually have staled.
+  ///
+  /// Defaults to the whole set, which is what an explicit mutation of our own
+  /// means. A *watch tick* passes what it actually saw: staging writes only
+  /// the index, and re-reading the log, refs, stashes and worktree list for
+  /// that is work the change could not have caused (0025 F2).
+  void _invalidateMutationFamilies([Set<GitArea>? areas]) {
     _familiesRefetchPending = true;
-    for (final p in repoMutationFamilies(repoPath)) {
+    for (final p in familiesFor(areas ?? const {GitArea.unknown}, repoPath)) {
       ref.invalidate(p);
     }
   }
@@ -1526,7 +1532,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       // round trip per poll for nothing. (Polling-mode external commits are
       // still caught — by [_detectExternalHeadMove], off the status refetch.)
       if (event.mode == WatchMode.eventDriven && event.touchesGitState) {
-        _invalidateMutationFamilies();
+        _invalidateMutationFamilies(event.touchedAreas);
         return;
       }
       // While this page is hidden (another tab is up) don't fire a `git status`

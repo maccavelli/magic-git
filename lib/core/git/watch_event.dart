@@ -11,6 +11,14 @@ enum WatchMode {
   stopped,
 }
 
+/// Which part of a repository a watch tick touched.
+///
+/// [unknown] is not "nothing": a polling tick, a watcher restart, or a burst
+/// too large to enumerate all carry no path information, and the only safe
+/// reading of that is "anything may have changed" — the same contract
+/// [RepoWatchEvent.paths] already documents.
+enum GitArea { gitIndex, refs, stash, reflog, worktree, worktrees, unknown }
+
 /// A coalesced "repo may have changed" tick: the active watch mode, plus
 /// **which paths** the burst touched.
 ///
@@ -58,6 +66,44 @@ class RepoWatchEvent {
   /// repo-wide invalidation for it costs nothing in the case that matters.
   bool get touchesGitState =>
       paths.any((p) => p == '.git' || p.startsWith('.git/'));
+
+  /// Which parts of the repository this tick touched.
+  ///
+  /// The watcher already knows what moved; nothing consumed it for
+  /// invalidation scope, so a change under `refs/` re-read the working tree and
+  /// a file edit re-read the log (0025 F2). An unclassified path under `.git`
+  /// yields [GitArea.unknown] deliberately — the conservative answer is the
+  /// safe one, and the same one the paths contract already documents.
+  Set<GitArea> get touchedAreas {
+    if (paths.isEmpty) return const {GitArea.unknown};
+    return {for (final p in paths) _areaFor(p)};
+  }
+
+  static GitArea _areaFor(String path) {
+    final String rest;
+    if (path.startsWith('.git/')) {
+      rest = path.substring(5);
+    } else {
+      final i = path.indexOf('/.git/');
+      if (i < 0) return GitArea.worktree;
+      rest = path.substring(i + 6);
+    }
+    if (rest == 'index') return GitArea.gitIndex;
+    if (rest == 'stash' || rest.startsWith('refs/stash')) return GitArea.stash;
+    if (rest.startsWith('logs/')) return GitArea.reflog;
+    if (rest.startsWith('worktrees/')) return GitArea.worktrees;
+    if (rest.startsWith('refs/') ||
+        rest == 'HEAD' ||
+        rest == 'ORIG_HEAD' ||
+        rest == 'MERGE_HEAD' ||
+        rest == 'FETCH_HEAD' ||
+        rest == 'CHERRY_PICK_HEAD' ||
+        rest == 'REBASE_HEAD' ||
+        rest == 'packed-refs') {
+      return GitArea.refs;
+    }
+    return GitArea.unknown;
+  }
 
   RepoWatchEvent withPaths(Set<String> paths) =>
       RepoWatchEvent(at: at, mode: mode, paths: paths);

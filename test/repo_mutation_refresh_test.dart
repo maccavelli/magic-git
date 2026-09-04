@@ -349,6 +349,103 @@ void main() {
     );
     expect(syncFn, contains('withOwnMutation'));
   });
+  // 0025 F2. `refreshAfterMutation` invalidates all 12 families for ANY
+  // `.git/` path, though the watcher already carries what moved and
+  // repo_status_view already consumes that classification for worktree edits.
+  // One commit+push caused 15 refresh triples; most of those waves re-read
+  // things the change could not have touched.
+  group('path-scoped invalidation', () {
+    RepoWatchEvent ev(Set<String> paths) => RepoWatchEvent(
+      at: DateTime.now(),
+      mode: WatchMode.eventDriven,
+      paths: paths,
+    );
+
+    test('an index write is an index change, nothing more', () {
+      expect(ev({'.git/index'}).touchedAreas, {GitArea.gitIndex});
+    });
+
+    test('a ref write is a refs change', () {
+      expect(ev({'.git/refs/heads/main'}).touchedAreas, {GitArea.refs});
+      expect(ev({'.git/HEAD'}).touchedAreas, {GitArea.refs});
+      expect(ev({'.git/packed-refs'}).touchedAreas, {GitArea.refs});
+    });
+
+    test('a work-tree edit is a worktree change', () {
+      expect(ev({'lib/main.dart'}).touchedAreas, {GitArea.worktree});
+    });
+
+    test(
+      'an unscoped tick is unknown — "empty means unknown, not nothing"',
+      () {
+        expect(ev(const {}).touchedAreas, {GitArea.unknown});
+      },
+    );
+
+    test('staging re-reads status and nothing else', () {
+      // The common case during a commit gesture: `git add` writes the index.
+      // Re-reading the log, the refs, the stashes and the worktree list for it
+      // is work the change could not have invalidated.
+      final f = familiesFor({GitArea.gitIndex}, '/r');
+      expect(f, contains(statusProvider('/r')));
+      expect(f, isNot(contains(logProvider)));
+      expect(f, isNot(contains(refsProvider)));
+      expect(f.length, lessThan(repoMutationFamilies('/r').length));
+    });
+
+    test('a refs move still re-reads the history surfaces', () {
+      // A commit or checkout moves HEAD: History, the branch chip and the
+      // ahead/behind counts are all downstream of it.
+      final f = familiesFor({GitArea.refs}, '/r');
+      expect(f, contains(logSearchProvider));
+      expect(f, contains(refsProvider));
+      expect(
+        f,
+        contains(statusProvider('/r')),
+        reason: 'status carries the branch and ahead/behind',
+      );
+    });
+
+    test('unknown still means everything', () {
+      expect(
+        familiesFor({GitArea.unknown}, '/r').length,
+        repoMutationFamilies('/r').length,
+      );
+    });
+  });
+
+  test('no feature hand-rolls the area→family mapping either', () {
+    // Same rule as the set above, for the same reason: one definition. A site
+    // that maps areas to providers itself will drift out of step with the set.
+    final offenders = <String>[];
+    for (final entity in Directory('lib').listSync(recursive: true)) {
+      if (entity is! File || !entity.path.endsWith('.dart')) continue;
+      if (entity.path.endsWith('app_providers.dart')) continue;
+      final source = entity.readAsStringSync();
+      if (source.contains('GitArea.refs =>') ||
+          source.contains('GitArea.gitIndex =>')) {
+        offenders.add(entity.path);
+      }
+    }
+    expect(offenders, isEmpty);
+  });
+  test('the watch tick passes what it saw, not the whole set (0025 F2)', () {
+    // Pins the WIRING, like the watcher lease test does. A narrowed
+    // `familiesFor` that nothing calls is a no-op every unit test still passes.
+    final src = File(
+      'lib/features/repository/repo_status_view.dart',
+    ).readAsStringSync();
+    expect(
+      src,
+      contains('_invalidateMutationFamilies(event.touchedAreas)'),
+      reason: 'the watch tick must narrow by area, not invalidate everything',
+    );
+    expect(
+      src,
+      contains('familiesFor('),
+      reason: 'and it must go through the one shared mapping',
+    );
+  });
 }
 
 Finder _icon(IconData d) =>
