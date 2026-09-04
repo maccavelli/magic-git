@@ -2,6 +2,7 @@ import 'dart:convert';
 import '../forge/forge.dart';
 import '../forge/forge_dashboard.dart';
 import '../forge/forge_json.dart';
+import '../forge/forge_rate_limit.dart';
 import '../forge/forge_repo_summary.dart';
 import '../forge/forge_urls.dart' show createdForgeItemNumber;
 import '../forge/merge_plan.dart';
@@ -915,7 +916,7 @@ class GhService {
     if (!result.isSuccess) {
       throw GhException('gh api issue comments failed', result);
     }
-    return _parseIssueComments(result.stdout);
+    return await _parseIssueComments(result.stdout);
   }
 
   /// Conversation comments on a pull request. GitHub stores these on the
@@ -925,10 +926,13 @@ class GhService {
     int number,
   ) => listIssueComments(repoPath, number);
 
-  List<ForgeComment> _parseIssueComments(String stdout) {
+  Future<List<ForgeComment>> _parseIssueComments(String stdout) async {
     final raw = stdout.trim();
     if (raw.isEmpty) return const [];
-    final decoded = jsonDecode(raw);
+    // Off the UI isolate above the size threshold — a long PR/issue thread is
+    // the large payload the convention exists for, and this backed BOTH the
+    // issue and PR comment lists (0022 M8).
+    final decoded = await decodeJsonMaybeOffThread(raw);
     final List<dynamic> list = decoded is List
         ? decoded
         : decoded is Map && decoded['items'] is List
@@ -1393,6 +1397,12 @@ query($owner: String!, $name: String!) {
       extraEnv: extraEnv,
     );
     if (!result.isSuccess) {
+      // gh answers 403 for its primary rate limit, so the text is what
+      // distinguishes "wait" from "you lack the scope" (0022 M9).
+      final output = '${result.stderr}\n${result.stdout}';
+      if (isForgeRateLimited(output: output)) {
+        throw GhException(forgeRateLimitMessage(label, output: output), result);
+      }
       throw GhException('$label failed', result);
     }
     final body = result.stdout.trim();

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../forge/forge.dart';
 import '../forge/forge_dashboard.dart';
 import '../forge/forge_json.dart';
+import '../forge/forge_rate_limit.dart';
 import '../forge/forge_repo_summary.dart';
 import '../forge/forge_urls.dart' show createdForgeItemNumber;
 import '../forge/merge_plan.dart';
@@ -735,6 +736,12 @@ query($path: ID!) {
     final status = parseHttpStatus(result.stdout);
     if (status != null) {
       if (status >= 400) {
+        if (isForgeRateLimited(status: status, output: result.stdout)) {
+          throw GlabException(
+            forgeRateLimitMessage(label, output: result.stdout),
+            result,
+          );
+        }
         throw GlabException('$label failed with HTTP $status', result);
       }
     } else if (!result.isSuccess) {
@@ -1443,7 +1450,11 @@ query($path: ID!) {
     }
     final raw = result.stdout.trim();
     if (raw.isEmpty) return const [];
-    final decoded = jsonDecode(raw);
+    // Off the UI isolate above the size threshold, like every other decode in
+    // this service. A busy thread is exactly the large payload that rule
+    // exists for; these two were the last sites still decoding inline
+    // (0022 M8).
+    final decoded = await decodeJsonMaybeOffThread(raw);
     if (decoded is! List) return const [];
     return _parseNotes(decoded);
   }
@@ -1470,7 +1481,11 @@ query($path: ID!) {
     }
     final raw = result.stdout.trim();
     if (raw.isEmpty) return const [];
-    final decoded = jsonDecode(raw);
+    // Off the UI isolate above the size threshold, like every other decode in
+    // this service. A busy thread is exactly the large payload that rule
+    // exists for; these two were the last sites still decoding inline
+    // (0022 M8).
+    final decoded = await decodeJsonMaybeOffThread(raw);
     if (decoded is! List) return const [];
     return _parseNotes(decoded);
   }

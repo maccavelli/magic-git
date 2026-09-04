@@ -1669,6 +1669,45 @@ completeness of the engine picture, not re-litigated here.
 **Verification.** Analyzer: 2 pre-existing. Suite: `+3327 ~2 -48`, failing set
 identical to baseline, passing count up.
 
+### Phase 11 — M8 + M9: off-thread decodes and honest rate-limit errors (2026-09-03) — **COMPLETE**
+
+**M8.** The three remaining inline `jsonDecode` calls now go through
+`decodeJsonMaybeOffThread`: `GlabService.listIssueComments`,
+`GlabService.listMergeRequestNotes`, and `GhService._parseIssueComments`
+(which backs **both** the issue and PR comment lists). A long thread is
+exactly the payload the 32 KiB threshold exists for. `_parseIssueComments`
+became async, and its one caller awaits it.
+
+**M9.** New `lib/core/forge/forge_rate_limit.dart` detects a limiter's answer
+and produces an actionable message, wired into `GlabService`'s HTTP-status
+failure path and `GhService._runJson`.
+
+The asymmetry is the whole point and is encoded deliberately: **GitLab answers
+429, GitHub answers 403** for its primary limit and explains in the text. So a
+bare 403 is *not* treated as a rate limit — GitHub also uses 403 for genuine
+permission failures, and telling the user to wait out a missing token scope
+sends them to wait for something waiting cannot fix. `Retry-After` is read only
+in its numeric form; the HTTP-date form is ignored rather than approximated,
+since a wrong wait time is worse than none.
+
+**Retry/backoff deliberately NOT implemented**, per the phase: automatically
+re-issuing requests at a limiter is how a short throttle becomes a long one,
+and choosing a policy is a design decision rather than a bug fix. If it is
+wanted, it needs its own record.
+
+**Tests added** (`test/forge_rate_limit_test.dart`, 7): 429 with and without
+text; 403 **only** when the text says so; a genuine permission 403 rejected;
+ordinary 404/500 rejected; text-only detection when no status was parsed; the
+wait hint; and the HTTP-date form ignored.
+
+**Negative test — seen to fail.** Broadening the 403 arm to the naive
+`if (status == 403) return true` makes the permission-error case fail
+(`Expected: false / Actual: <true>`) — i.e. the test catches exactly the
+oversimplification that would misreport a scope problem as a rate limit.
+
+**Verification.** Analyzer: 2 pre-existing. Suite: `+3334 ~2 -48`, failing set
+identical to baseline.
+
 ### Phase 1 negative-test detail (retained)
 
 Run against a scratch `git clone` in the
