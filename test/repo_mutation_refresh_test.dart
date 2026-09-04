@@ -303,6 +303,52 @@ void main() {
     expect(auto, isNot(contains('repoMutationFamilies')));
     expect(auto, isNot(contains('invalidate(remoteTagsProvider')));
   });
+
+  test('push refreshes the fetch set, and marks its own writes', () {
+    // 0020 H5 and H6 both shipped for fetch and neither for push, so every
+    // push re-walked History, logSearch, stashes, reflog, snapshots and
+    // worktrees — none of which can move when HEAD, the index and the worktree
+    // do not — and the push's own ref writes then triggered a SECOND full
+    // refresh through the watcher.
+    final src = File(
+      'lib/features/repository/repo_status_view.dart',
+    ).readAsStringSync();
+    final pushFn = src.substring(
+      src.indexOf('Future<bool> _push({'),
+      src.indexOf('Future<void> _sync('),
+    );
+    expect(
+      pushFn,
+      contains('refresh: () => refreshAfterFetch(ref, repoPath)'),
+      reason:
+          'without an explicit refresh, runLogged falls back to the '
+          'full mutation set',
+    );
+    expect(pushFn, isNot(contains('repoMutationFamilies')));
+    expect(
+      pushFn,
+      contains('withOwnMutation'),
+      reason:
+          'a push writes refs/remotes/**; unmarked, the watcher echoes it '
+          'back as an external change',
+    );
+  });
+
+  test('pull and sync mark their own writes too', () {
+    final src = File(
+      'lib/features/repository/repo_status_view.dart',
+    ).readAsStringSync();
+    final pullFn = src.substring(
+      src.indexOf('Future<void> _pull(['),
+      src.indexOf('Future<bool> _push({'),
+    );
+    expect(pullFn, contains('withOwnMutation'));
+    final syncFn = src.substring(
+      src.indexOf('Future<void> _sync('),
+      src.indexOf('Future<void> _logPulled('),
+    );
+    expect(syncFn, contains('withOwnMutation'));
+  });
 }
 
 Finder _icon(IconData d) =>

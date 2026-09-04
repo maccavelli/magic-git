@@ -24,7 +24,16 @@ bool shouldTriggerWatch(String path) {
     if (path.endsWith('.lock') ||
         path.contains('/objects/') ||
         path.contains('/logs/') ||
-        path.contains('/fsmonitor--daemon/')) {
+        path.contains('/fsmonitor--daemon/') ||
+        // Git writes COMMIT_EDITMSG early in every commit — before the hook
+        // runs, and long before the index and refs move. Letting it through
+        // fired a full git-state refresh partway through the app's own commit,
+        // which then queued behind that commit's exclusive lane and landed as
+        // a redundant burst the moment it finished. Nothing in the app reads
+        // this file (the commit preview deliberately uses its own mktemp
+        // file), and ARCHITECTURE_PLAN §watch already lists it as an ignore
+        // that was never implemented.
+        path.endsWith('/COMMIT_EDITMSG')) {
       return false;
     }
   }

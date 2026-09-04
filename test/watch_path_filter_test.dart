@@ -34,6 +34,10 @@ void main() {
         '.git/logs/HEAD',
         '.git/fsmonitor--daemon/cookies/x',
         'nested/.git/objects/ab/cd',
+        // Written early in every commit, before the index/refs move; the
+        // app's own commit would otherwise refresh partway through itself.
+        '.git/COMMIT_EDITMSG',
+        'sub/.git/COMMIT_EDITMSG',
       ]) {
         expect(shouldTriggerWatch(path), isFalse, reason: path);
       }

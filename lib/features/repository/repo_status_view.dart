@@ -907,15 +907,24 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     String? before;
     final ok = await runLogged(label, (log) async {
       before = await git.revParse(repoPath, 'HEAD');
-      await _streamGitOp(
-        log,
-        label,
-        (onOutput, opId) => git.pull(
-          repoPath,
-          mode: mode,
-          onOutput: onOutput,
-          operationId: opId,
-        ),
+      // See _push: the mark must precede runLogged's refresh. A pull's fetch
+      // half writes refs/remotes/** while still running, so without this the
+      // watcher fires a full refresh mid-pull.
+      await withOwnMutation(
+        ref.read(ownMutationTrackerProvider),
+        repoPath,
+        () async {
+          await _streamGitOp(
+            log,
+            label,
+            (onOutput, opId) => git.pull(
+              repoPath,
+              mode: mode,
+              onOutput: onOutput,
+              operationId: opId,
+            ),
+          );
+        },
       );
     }, dock: true);
     if (ok && mounted) {
@@ -998,21 +1007,38 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         label,
         (log) async {
           base = await git.revParse(repoPath, '@{upstream}');
-          await _streamGitOp(
-            log,
-            label,
-            (onOutput, opId) => git.push(
-              repoPath,
-              force: force,
-              setUpstream: setUpstream,
-              followTags: followTags,
-              onOutput: onOutput,
-              operationId: opId,
-            ),
+          // Wrapped INSIDE the body, not around runLogged: `end()` (which
+          // marks) must land before runLogged's finally invalidates, or the
+          // watcher echo arriving moments later is not suppressed. Wrapping
+          // outside would also hold the in-flight mark for as long as an error
+          // dialog stays open, suppressing genuinely external changes.
+          await withOwnMutation(
+            ref.read(ownMutationTrackerProvider),
+            repoPath,
+            () async {
+              await _streamGitOp(
+                log,
+                label,
+                (onOutput, opId) => git.push(
+                  repoPath,
+                  force: force,
+                  setUpstream: setUpstream,
+                  followTags: followTags,
+                  onOutput: onOutput,
+                  operationId: opId,
+                ),
+              );
+            },
           );
         },
         dock: true,
         holdBusy: false,
+        // A push moves neither HEAD, the index, nor the worktree — so History,
+        // stashes, reflog, snapshots and worktrees cannot have changed. The
+        // full mutation set re-walked all of them after every push; this is the
+        // set `repoFetchFamilies` documents itself as being for ("a fetch OR
+        // push"), and the half of 0020 H5 that only ever landed for fetch.
+        refresh: () => refreshAfterFetch(ref, repoPath),
       );
     } finally {
       if (mounted) setState(() => _syncOps--);
@@ -1041,22 +1067,31 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     String? pushBase;
     final ok = await runLogged('git sync', (log) async {
       before = await git.revParse(repoPath, 'HEAD');
-      await _streamGitOp(
-        log,
-        pullLabel,
-        (onOutput, opId) => git.pull(
-          repoPath,
-          mode: mode,
-          onOutput: onOutput,
-          operationId: opId,
-        ),
-      );
-      pushBase = await git.revParse(repoPath, '@{upstream}');
-      await _streamGitOp(
-        log,
-        'git push',
-        (onOutput, opId) =>
-            git.push(repoPath, onOutput: onOutput, operationId: opId),
+      // One mark spanning both phases: a sync's own writes (refs from the
+      // fetch, then the push's tracking refs) must not each trigger a refresh
+      // while the other half is still running.
+      await withOwnMutation(
+        ref.read(ownMutationTrackerProvider),
+        repoPath,
+        () async {
+          await _streamGitOp(
+            log,
+            pullLabel,
+            (onOutput, opId) => git.pull(
+              repoPath,
+              mode: mode,
+              onOutput: onOutput,
+              operationId: opId,
+            ),
+          );
+          pushBase = await git.revParse(repoPath, '@{upstream}');
+          await _streamGitOp(
+            log,
+            'git push',
+            (onOutput, opId) =>
+                git.push(repoPath, onOutput: onOutput, operationId: opId),
+          );
+        },
       );
     }, dock: true);
     if (ok && mounted) {

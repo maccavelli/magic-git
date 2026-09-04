@@ -576,6 +576,71 @@ push hangs, which is the reported symptom exactly.
 **Verification.** Analyzer: 2, the baseline's. Suite: `+3341 ~2 -48`, failing
 set **identical** to baseline.
 
+### Phase 2 — P2: one refresh per commit+push (2026-09-03) — **COMPLETE**
+
+**Done.**
+* **`_push` refreshes the fetch set**, not all 11 families. The delta no longer
+  re-walked on every push: `logProvider`, `logSearchProvider`, `stashesProvider`,
+  `reflogProvider`, `magicSnapshotsProvider`, `gitWorktreesProvider` — none of
+  which can move when HEAD, the index and the worktree do not. This is the half
+  of 0020 H5 that only ever landed for fetch.
+* **`withOwnMutation` on `_push`, `_pull`, `_sync`**, wrapped **inside** each
+  `runLogged` body closure. Placement is load-bearing and is commented at each
+  site: `end()`/`mark()` must land before `runLogged`'s `finally` invalidates,
+  and wrapping outside would hold the in-flight mark for as long as an error
+  dialog stayed open — suppressing genuinely external changes indefinitely.
+  `_sync` takes one mark spanning both phases so the pull's ref writes do not
+  trigger a refresh while the push is still running.
+* **`COMMIT_EDITMSG` filtered** in `watch_path_filter.dart`. Git writes it
+  early in every commit, so it fired a full git-state refresh partway through
+  the app's own commit, which then queued behind that commit's exclusive lane.
+  Nothing in the app reads it, and `ARCHITECTURE_PLAN` already listed it as an
+  ignore that was never implemented.
+
+**Amendment A1 satisfied — and it was satisfied in Phase 1, not here.** The
+sheet's commit now refreshes through `closeOnCommit()`, which fires when the
+commit lands. So the sheet keeps a full-set refresh for its *commit* while
+`_push` narrows to the fetch set for the *push* — exactly the corrected shape.
+Had the MADR's original "drop `commit_dialog.dart:92`" been followed, narrowing
+`_push` in this phase would have left the sheet's commit with **no refresh at
+all**.
+
+**Tests added.** `repo_mutation_refresh_test.dart`: `_push` carries the
+`refreshAfterFetch` override and `withOwnMutation`, and never names
+`repoMutationFamilies`; `_pull`/`_sync` mark their own writes.
+`watch_path_filter_test.dart`: `.git/COMMIT_EDITMSG` and
+`sub/.git/COMMIT_EDITMSG` are suppressed.
+
+**Negative tests — and one of them caught a broken check.** Reverting `_push`'s
+`refresh:` failed the scan test as expected. The **first** COMMIT_EDITMSG
+sabotage, however, **passed** — the script asserted the target text existed but
+never asserted the replacement changed anything, and the explanatory comment I
+had inserted between `||` and the clause meant the pattern never matched. A
+no-op edit reported as a successful sabotage, which would have certified a test
+that does nothing. Redone with an explicit `assert s != before` post-condition:
+the test then failed correctly with `Expected: false / Actual: <true>`.
+**Every negative test from here carries that post-condition.**
+
+**Not done in this phase, deliberately:** moving `_logPushed` off the awaited
+span, and the B9 forge-call decision. Both are carried forward — see the note
+below.
+
+### Carried forward from Phase 2
+
+* **`_logPushed`/`_logPulled` still run inside the awaited span.** Phase 1
+  removed the modal, so this no longer blocks the UI; what remains is that the
+  push's future (and its Activity Center row) resolves two reads later than it
+  needs to. Lower value than when the plan was written; still worth doing.
+* **B9 — the Review-mode forge call on the post-commit path.**
+  `branchBaseProvider` sits in both family lists and, with
+  `allowForgeFetch: true`, awaits a `gh`/`glab` call the cache does not
+  short-circuit. This is a behaviour decision (make the forge branch
+  non-blocking, or drop it from the mutation set), not a mechanical edit, and
+  it is deferred rather than decided unilaterally.
+
+**Verification.** Analyzer: 2, the baseline's. Suite: `+3343 ~2 -48`, failing
+set **identical** to baseline.
+
 ### DEVIATION 2026-09-03 (a) — Phase 1's prerequisite #2 was wrong as written
 
 **What the plan said.** "Thread an `operationId` through `_streamGitOp`.
