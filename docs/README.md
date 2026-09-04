@@ -75,5 +75,13 @@ and the plan carries a late-recorded deviation — what shipped is an inline
 readiness gate, not the `ReadinessGatedExecutor` decorator its Phase 1c
 specified.
 
+The 2026-09-04 pass (0024) corrected a second, wider one: `0022-PLAN` and
+`0023-PLAN` both record a baseline of **48 failing goldens and 2 analyzer
+warnings** as a known pre-existing set. Neither was real — both were artifacts
+of running a Flutter that did not match `build_macos.sh`'s pin, which also
+explains the `pubspec.lock` churn in `bd93c18`/`21721ef`. The pin is now
+`3.47.2`, the suite is fully green, and both plans carry a correction block at
+the top rather than a rewrite.
+
 Documents also record their own residuals. Where a status says `executed` and
 the body names something outstanding, the body wins — it is more specific.

@@ -69,10 +69,12 @@ These are binding for every phase.
 6. **Read whole test output**, never through `head`/`tail`/a narrow `grep`, when
    judging whether a check failed for the reason expected.
 0. **Every `flutter` invocation in this plan means `.flutter-sdk/bin/flutter`.**
-   See deviation (a): Homebrew's `flutter` on PATH is 3.47.2 while
-   `build_macos.sh:41` pins `FLUTTER_VERSION="3.44.8"`, and the two SDKs pin
+   See deviation (a): Homebrew's `flutter` on PATH was 3.47.2 while
+   `build_macos.sh:41` pinned `FLUTTER_VERSION="3.44.8"`, and the two SDKs pin
    different transitive versions. Running the wrong one rewrites
    `pubspec.lock` and reports two lints that do not exist on the pinned SDK.
+   **Superseded 2026-09-04:** the pin is now `3.47.2` and matches the machine's
+   Flutter, so bare `flutter` is correct again — see the follow-up below.
 7. **Per-phase commit** once `flutter analyze` and `flutter test` are clean for
    that phase, using exactly `git commit --no-edit` — the global
    `prepare-commit-msg` hook writes the message (`AGENTS.md`). No `-m`, no
@@ -1364,12 +1366,23 @@ $ git status --short          # pubspec.lock restored to HEAD by the SDK's own p
 plan is `.flutter-sdk/bin/flutter`. `21721ef`'s lock is correct and is left
 alone. The two lints are a 3.47.2-only rule and are **not** in scope.
 
-**Left open for the maintainer** (not actioned, not blocking): `AGENTS.md`'s
-Commands section says bare `flutter analyze` / `flutter test`, which is what
-led here; and `FLUTTER_VERSION` is three minors behind the machine's Flutter.
-Either making `AGENTS.md` name the vendored binary, or bumping the pin to
-3.47.2 and re-locking once, would end the churn. Both are dependency/tooling
-policy and belong to the maintainer.
+**Followed up 2026-09-04 (maintainer chose the bump).** `FLUTTER_VERSION` is
+now `3.47.2`, matching the machine's Flutter. `flutter pub get
+--enforce-lockfile` succeeds where it previously reported "Unable to satisfy",
+so the `bd93c18`/`21721ef` lock churn is over. The 48 goldens were regenerated
+— max 40 bytes changed per file, none over 1% of file size, i.e. sub-pixel
+antialiasing on one rounded control, no layout movement — and the suite is
+**3424 passing / 2 skipped / 0 failing**, identical to the result under 3.44.8,
+so the bump is behaviourally inert.
+
+The two `unawaited_return_in_try_block` sites turned out to be **real bugs**,
+not lint noise: a `Future` returned from inside a `try` settles outside it, so
+`pinnedBranchesProvider` violated its own documented "Empty on any error"
+contract (an error state in the Branches pane, with `noProviderRetry`), and
+`image_diff_view`'s `on GitException` never covered the call it wrapped. Both
+fixed. `AGENTS.md` now opens its Commands section with the version check that
+would have caught all of this. The stale baselines in `0022-PLAN` and
+`0023-PLAN` are annotated rather than rewritten.
 
 ### Deviation (d) — 2026-09-04 — P1's new probe trusted its own stdout
 

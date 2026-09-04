@@ -7,6 +7,39 @@ associated-madr: "0022-MADR-git-gh-glab-engine-debug-audit.md"
 
 Associated MADR: [0022-MADR-git-gh-glab-engine-debug-audit.md](0022-MADR-git-gh-glab-engine-debug-audit.md)
 
+> ## Correction — 2026-09-04: the recorded baseline was an SDK artifact
+>
+> This plan records a baseline of **48 failing tests** (all of
+> `test/workspace_golden_test.dart`) and **2 `unawaited_return_in_try_block`
+> analyzer warnings**, treated throughout as a known pre-existing set to be
+> diffed against. **Neither was real.** Both were artifacts of running
+> Homebrew's Flutter **3.47.2** while `build_macos.sh` pinned **3.44.8**:
+>
+> * Flutter pins `test_api`, `matcher`, `meta` and `vector_math` *exactly*, so
+>   the two SDKs disagreed and every command rewrote `pubspec.lock` — which is
+>   what commits `bd93c18` (bump) and `21721ef` (downgrade) were fighting.
+> * Golden images are Flutter-version-sensitive; under the pinned SDK all 48
+>   passed. The difference was sub-pixel antialiasing on one rounded control's
+>   border — max 40 bytes per file, none over 1% of file size.
+> * `unawaited_return_in_try_block` is a lint that only exists in 3.47.2.
+>
+> The observations in this document were accurate for the SDK actually in use
+> when they were taken; the *interpretation* — "pre-existing, unrelated, safe to
+> ignore" — was wrong. Where this plan says a phase's failing set was "identical
+> to baseline", read that as "identical to the same artifact", which remains a
+> valid same-vs-same comparison.
+>
+> **Resolved 2026-09-04.** `FLUTTER_VERSION` is now `3.47.2`, matching the
+> machine's Flutter; `flutter pub get --enforce-lockfile` succeeds; the goldens
+> are regenerated; and both lint sites turned out to be **real bugs** — a
+> `Future` returned from inside a `try` settles outside it, so
+> `pinnedBranchesProvider` violated its documented "Empty on any error" contract
+> and `image_diff_view`'s `on GitException` never covered the call it wrapped.
+> Both are fixed. Discovered while establishing the baseline for
+> [0024](0024-PLAN-ssh-and-remote-repo-engine-debug-audit.md); see its deviation
+> (a). The current suite is **3424 passing, 2 skipped, 0 failing**.
+
+
 ## Goal
 
 Close every finding in 0022 — 5 HIGH, 11 MEDIUM, 6 LOW, 3 new (N1–N3), plus
