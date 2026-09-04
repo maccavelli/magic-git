@@ -1861,7 +1861,7 @@ pop-out relay dropping the typed exception).
 "last audited" date moved to 2026-09-03 with a note on what this pass
 corrected.
 
-### Phase 15 — M5: remote watcher teardown — **EXECUTED 2026-09-04, M5 REFUTED**
+### Phase 15 — M5: remote watcher teardown — **EXECUTED 2026-09-04; M5 CONFIRMED (see correction)**
 
 Closed against a throwaway OpenSSH 10.3p1 sshd on loopback rather than a remote
 host — the process is directly observable there, which is what the question
@@ -1877,8 +1877,15 @@ needed. Six tests added to `test/ssh_live_transport_test.dart`:
   (2018). The finding's premise was simply out of date, and channel close is an
   independent second kill for anything older.
 
-No trap, PID file or reconnect-time sweep is needed. Suite `+3430 ~2`, 0
-failing. Original text of this phase follows.
+**Corrected the same day.** Those six tests are right about the *clean*
+teardown path and they stay. But measured on the real host the app runs
+against, **22 `inotifywait` processes are orphaned to init, the oldest 19 days
+old**, seven of them predating an app upgrade, and one created after the
+current session started. Losing the channel — a NAT idle-drop on the
+by-design-idle stream client — leaves nothing to send TERM on, and there is no
+reconnect-time sweep. M5 is a real defect and is **reopened**; see the MADR's
+correction block. Suite `+3430 ~2`, 0 failing. Original text of this phase
+follows.
 
 ### Phase 15 (as originally planned) — M5: verify the remote watcher teardown claim
 

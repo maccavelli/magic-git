@@ -47,7 +47,7 @@ residuals or maintainer-only steps — 0010's Phase 7 is the standing example.
 | 0019 | [Pin glab to the repo origin host](0019-MADR-pin-glab-origin-host-on-every-call.md) | `accepted` | [plan](0019-PLAN-pin-glab-origin-host-on-every-call.md) | `executed` through Phase 7; **Phase 8 open** |
 | 0020 | [Fetch/pull/push lag](0020-MADR-fetch-pull-push-lag.md) | `accepted` | [plan](0020-PLAN-fetch-pull-push-lag.md) | `executed` |
 | 0021 | [Create-repo identity stays per-repo](0021-MADR-create-repo-identity-and-origin.md) | `accepted` | [plan](0021-PLAN-create-repo-identity-and-origin.md) | `executed` |
-| 0022 | [git/gh/glab engine debug audit](0022-MADR-git-gh-glab-engine-debug-audit.md) | `accepted` | [plan](0022-PLAN-git-gh-glab-engine-debug-audit.md) | `executed`; Phase 15 closed 2026-09-04 — **M5 refuted** against a live sshd |
+| 0022 | [git/gh/glab engine debug audit](0022-MADR-git-gh-glab-engine-debug-audit.md) | `accepted` | [plan](0022-PLAN-git-gh-glab-engine-debug-audit.md) | `executed`; Phase 15 run 2026-09-04 — **M5 CONFIRMED on the real host and reopened** (22 orphaned watchers, oldest 19 days) |
 | 0023 | [Commit-and-push perceived freeze](0023-MADR-commit-and-push-perceived-freeze.md) | `accepted` (amended) | [plan](0023-PLAN-commit-and-push-perceived-freeze.md) | `executed`; **live-app measurement open** |
 | 0024 | [SSH / remote-repo engine debug audit](0024-MADR-ssh-and-remote-repo-engine-debug-audit.md) | `accepted` (amended A1.1, A2.1, L2) | [plan](0024-PLAN-ssh-and-remote-repo-engine-debug-audit.md) | `complete`; M2 confirmed and P1 measured live 2026-09-04. **Phase 8 (P2) not executed** |
 

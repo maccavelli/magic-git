@@ -362,6 +362,53 @@ to settle.**
 >
 > No trap, PID file or reconnect-time sweep is needed. M5 is closed.
 
+> ### Correction, 2026-09-04 (same day): M5 is **CONFIRMED**, not refuted
+>
+> The refutation above is **wrong**, and was wrong because it tested only the
+> happy path on a loopback sshd. Measured on the real host (`admdevops`, the
+> connection this app actually runs against):
+>
+> ```
+> orphaned (ppid=1): 22    parented (live app): 18
+> oldest orphan: 19 days   fds held by orphans: 128
+> inotify instances in use: 29 of max_user_instances 1024
+> 7 of the 22 orphans carry the pre-`--exclude` command line
+> ```
+>
+> Twenty-two `inotifywait` processes reparented to init, the oldest running
+> since **19 days ago**, seven of them predating a version of this app — they
+> survived an upgrade. Three appeared **today**, one of them *after* the current
+> app session started, so this is not only a crash-time leak: it happens during
+> normal operation.
+>
+> **Both findings are true, and they are about different paths:**
+>
+> * **Clean teardown works.** `killAndCloseSession` really does kill the remote
+>   process, and sshd really does honour the `signal` request (OpenSSH ≥ 7.9).
+>   The loopback tests that establish this are correct and stay.
+> * **Nothing survives losing the channel itself.** When the stream client's TCP
+>   dies without a clean close — a NAT/firewall idle-drop, which
+>   `ssh_client_manager.dart` explicitly documents as the fate the *idle by
+>   design* stream connection is most exposed to — there is no channel left to
+>   send TERM on. sshd's session child is orphaned to init and `inotifywait`
+>   runs forever. The redial then arms a **new** watcher beside it.
+>
+> That is precisely the gap the original finding named and this record's own
+> text still states: *"There is no trap, no PID file, no reconnect-time sweep."*
+> The suspicion was right; only its stated mechanism (signals being ignored) was
+> wrong.
+>
+> **Consequence.** Monotonic accumulation, bounded by
+> `fs.inotify.max_user_instances` (1024). Past that, no watcher can arm at all
+> and every repo silently falls back to polling — the class of invisible
+> degradation 0024 H3 exists to make visible. At 29 instances after weeks of
+> use this is not urgent, but it never self-heals.
+>
+> **M5 is reopened as a real defect and needs a remediation plan.** Candidate
+> shapes, none yet chosen: a PID file plus a reconnect-time sweep; `--timeout`
+> or a heartbeat so an orphan self-terminates; or arming under a process
+> supervisor that dies with its parent. Not actioned here.
+
 
 **M6 — Bounded-watch arming fails silently in two different ways.**
 `boundedFswatchArgs` (`bounded_watch.dart:148-154`) passes `watchDirs` straight
