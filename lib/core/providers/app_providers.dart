@@ -3064,6 +3064,7 @@ List<ProviderOrFamily> repoFetchFamilies(String repoPath) => [
 /// Post-fetch / post-push refresh: the fetch set only. Does not [mark] —
 /// [withOwnMutation]'s [OwnMutationTracker.end] already did.
 void refreshAfterFetch(WidgetRef ref, String repoPath) {
+  mgTraceRefresh(ref, repoPath, 'refreshAfterFetch');
   for (final p in repoFetchFamilies(repoPath)) {
     ref.invalidate(p);
   }
@@ -3080,7 +3081,34 @@ void refreshAfterFetch(WidgetRef ref, String repoPath) {
 /// This used to be copy-pasted across five features, and the copies drifted:
 /// the branch and history panels forgot step 1, so every branch switch —
 /// which rewrites much of the working tree — paid for its refresh twice.
+// TEMPORARY DIAGNOSTIC (0025 Phase 7 attribution). NOT FOR COMMIT.
+// Records why a refresh happened, on the host, so 15 waves can be attributed
+// to their triggers instead of guessed at.
+void mgTraceRefresh(WidgetRef ref, String repoPath, String reason) {
+  try {
+    final exec = ref.read(executorProvider);
+    unawaited(
+      exec
+          .execute(
+            repoPath: repoPath,
+            gitArgs: [
+              'sh',
+              '-c',
+              'date +%s%3N | tr -d "\\n" >> /tmp/mg_refresh.log; '
+                  'printf " %s\\n" "\$MGREASON" >> /tmp/mg_refresh.log',
+            ],
+            extraEnv: {'MGREASON': reason},
+            lane: ExecLane.isolated,
+            timeout: const Duration(seconds: 10),
+          )
+          .then((_) {}, onError: (_) {}),
+    );
+  } catch (_) {}
+}
+
+
 void refreshAfterMutation(WidgetRef ref, String repoPath) {
+  mgTraceRefresh(ref, repoPath, 'refreshAfterMutation');
   ref.read(ownMutationTrackerProvider).mark(repoPath);
   for (final p in repoMutationFamilies(repoPath)) {
     ref.invalidate(p);
