@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: executed
 date: 2026-09-03
 associated-madr: "0022-MADR-git-gh-glab-engine-debug-audit.md"
 ---
@@ -1827,6 +1827,50 @@ pop-out relay dropping the typed exception).
 **0022 added to the index** as `accepted` / `in-progress`, and the index's
 "last audited" date moved to 2026-09-03 with a note on what this pass
 corrected.
+
+### Phase 15 — M5: remote watcher teardown — **OPEN (maintainer, needs a live host)**
+
+Not executed, and deliberately not guessed at. M5 is the one finding whose
+premise cannot be checked from this tree: whether the target sshd honours the
+`signal` channel request at all, and therefore whether `fswatch`/`inotifywait`
+processes outlive their SSH channel.
+
+**What the maintainer needs to do:** on a real target host, arm a watcher
+(open a repo), close the tab/window, then check server-side with
+`pgrep -af 'fswatch|inotifywait'`.
+
+* **If nothing persists** — `session.close()` → SIGPIPE is sufficient in
+  practice; close M5 as a non-issue and record the evidence.
+* **If a process persists** — the fix is **not** more signal escalation.
+  `SSHSignal.KILL` travels the same channel-request path an sshd that ignored
+  TERM will also ignore. It needs a real teardown (e.g. the remote script
+  trapping and killing its own child on stdin EOF), which is a deviation to
+  bring back with options.
+
+Systemic, not watch-specific: the same `killAndCloseSession` path backs GitLab
+CI trace streaming.
+
+### Phase 16 — Final verification (2026-09-03)
+
+* `flutter analyze` — **2 issues**, exactly the Phase 0 baseline's two
+  pre-existing `unawaited_return_in_try_block` warnings in
+  `pinned_branches.dart` and `image_diff_view.dart`. No new issue introduced by
+  any phase.
+* `flutter test` — **`+3340 ~2 -48`**. Failing set **identical** to the Phase 0
+  baseline (all 48 `workspace_golden_test.dart` golden comparisons, attributed
+  and pre-existing); passing count **3307 → 3340**, i.e. 33 tests added and
+  none lost.
+* Every phase's negative test was run against a **scratch clone** and observed
+  failing, with an assertion that the sabotage target existed first — a
+  precaution that paid off twice (Phase 7's checkout-invalidation text matched
+  two sites; Phase 12's `PendingOp` blast radius was larger than I had
+  assessed).
+* Commits: one per phase, each independently revertable, on `master`.
+  **Not pushed** — the branch is ahead and the push is the maintainer's call.
+
+**Status set to `executed`, not `complete`**, because Phase 15 is genuinely
+open and needs a live host. Per this repository's vocabulary that is the honest
+state: the engineering phases shipped, and the body names what remains.
 
 ### Phase 1 negative-test detail (retained)
 
