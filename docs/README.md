@@ -43,10 +43,11 @@ residuals or maintainer-only steps — 0010's Phase 7 is the standing example.
 | 0014 | [SSH engine next-wave hardening](0014-MADR-ssh-engine-next-wave-hardening.md) | `accepted` | [plan](0014-PLAN-ssh-engine-next-wave-hardening.md) | `executed` |
 | 0015 | [SSH engine and UI unit-test gaps](0015-MADR-ssh-engine-and-ui-unit-test-gaps.md) | `accepted` | [plan](0015-PLAN-ssh-engine-and-ui-unit-test-gaps.md) · [tail](0016-PLAN-ssh-engine-and-ui-coverage-tail.md) | both `executed` |
 | 0017 | [Enforce conventions in source](0017-MADR-provider-retry-policy-on-providers.md) | `accepted` | [plan](0017-PLAN-provider-retry-policy-on-providers.md) | `executed` |
-| 0018 | [Transport readiness is not an error](0018-MADR-transport-readiness-is-not-an-error.md) | `proposed` | [plan](0018-PLAN-transport-readiness-is-not-an-error.md) | `proposed` |
+| 0018 | [Transport readiness is not an error](0018-MADR-transport-readiness-is-not-an-error.md) | `accepted` | [plan](0018-PLAN-transport-readiness-is-not-an-error.md) | `executed` (deviation recorded) |
 | 0019 | [Pin glab to the repo origin host](0019-MADR-pin-glab-origin-host-on-every-call.md) | `accepted` | [plan](0019-PLAN-pin-glab-origin-host-on-every-call.md) | `executed` through Phase 7; **Phase 8 open** |
 | 0020 | [Fetch/pull/push lag](0020-MADR-fetch-pull-push-lag.md) | `accepted` | [plan](0020-PLAN-fetch-pull-push-lag.md) | `executed` |
 | 0021 | [Create-repo identity stays per-repo](0021-MADR-create-repo-identity-and-origin.md) | `accepted` | [plan](0021-PLAN-create-repo-identity-and-origin.md) | `executed` |
+| 0022 | [git/gh/glab engine debug audit](0022-MADR-git-gh-glab-engine-debug-audit.md) | `accepted` | [plan](0022-PLAN-git-gh-glab-engine-debug-audit.md) | `in-progress` |
 
 ⚠ **0011 and 0012 each carry two unrelated records.** `AGENTS.md` forbids
 renumbering an existing file, so both keep the number and each carries a note
@@ -58,12 +59,19 @@ free number because `0015-PLAN-*` was taken.
 
 ## What "verified" means here
 
-Statuses were last audited on **2026-08-20** against the tree, in the manner
+Statuses were last audited on **2026-09-03** against the tree, in the manner
 0007 established: each claim checked against code rather than taken from the
 document. Three plans were found asserting the opposite of reality —
 0006-PLAN ("ready to execute"), 0008-PLAN and 0009-PLAN ("proposed … no code
 written") — while their work was demonstrably shipped. Those lines are
 corrected in place and marked, not deleted.
+
+The 2026-09-03 pass (0022) corrected one more: **0018 stood at `proposed`
+while its decision was live in the code**, so the index was telling readers a
+fixed bug class was still open. Both its files are now `accepted`/`executed`,
+and the plan carries a late-recorded deviation — what shipped is an inline
+readiness gate, not the `ReadinessGatedExecutor` decorator its Phase 1c
+specified.
 
 Documents also record their own residuals. Where a status says `executed` and
 the body names something outstanding, the body wins — it is more specific.

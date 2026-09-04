@@ -1,13 +1,26 @@
 ---
-status: proposed
+status: accepted
 date: 2026-08-20
-verified: 2026-08-20
+verified: 2026-09-03
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
 ---
 
 # Model "the transport is not ready yet" as a state, not as a failed command
+
+> **Status corrected 2026-09-03** (0022 M11). This record sat at `proposed`
+> while its decision was demonstrably live in the code: the typed
+> `SSHTransportNotReady`, the humanizer branch, the readiness gate ahead of
+> every command, and the three panes that render it as a spinner all shipped.
+> A reader trusting `docs/README.md` would have concluded this class of bug was
+> still fully open. See the plan's execution record for what was built and how
+> it differs from what the plan specified.
+>
+> One genuine gap remained and was closed by
+> [0022](0022-MADR-git-gh-glab-engine-debug-audit.md) Phase 1: the typed
+> exception lost its identity crossing the pop-out window relay, so secondary
+> windows still showed the raw developer string this record exists to prevent.
 
 ## Context and Problem Statement
 

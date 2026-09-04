@@ -1805,6 +1805,29 @@ changing it means re-granting through the picker.
 **Verification.** Analyzer: 2 pre-existing. Suite: `+3340 ~2 -48`, failing set
 identical to baseline.
 
+### Phase 14 — M11 + N3: documentation truth (2026-09-03) — **COMPLETE**
+
+**0018's status corrected.** Both files moved `proposed` → `accepted`/
+`executed`, and `docs/README.md` with them. The index had been telling readers
+that a bug class which demonstrably shipped was still fully open.
+
+**Its deviation recorded late, and deliberately not reversed.** Phase 1c
+specified a standalone `ReadinessGatedExecutor` decorator composed at the
+provider seam; what shipped is an inline gate inside `SSHCommandExecutor`
+coupled to `SSHClientManager`. Equivalent in effect for the SSH backend,
+architecturally different from the plan, and never written down. The entry
+states plainly that reversing it is a design change rather than a bug fix — if
+the decorator is still wanted it needs its own record. Both 0018 files also
+now point at Phase 1 of this plan, which closed the one genuine residual (the
+pop-out relay dropping the typed exception).
+
+**N3 confirmed landed:** `glab_service.dart`'s `-f`/`--field` comment (Phase
+10) and `app_providers.dart`'s false circular-dependency claim (Phase 3).
+
+**0022 added to the index** as `accepted` / `in-progress`, and the index's
+"last audited" date moved to 2026-09-03 with a note on what this pass
+corrected.
+
 ### Phase 1 negative-test detail (retained)
 
 Run against a scratch `git clone` in the

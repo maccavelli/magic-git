@@ -1,7 +1,7 @@
 ---
-status: "proposed"
-date: 2026-08-20
-verified: 2026-08-20
+status: "executed"
+date: 2026-09-03
+verified: 2026-09-03
 associated-madr: "0018-MADR-transport-readiness-is-not-an-error.md"
 owner: [Maintainer]
 target-milestone: This work cycle
@@ -651,3 +651,43 @@ Phase 2's type; Phase 3 stands alone.
    `isSettled` callback, never lengthen the grace to compensate.
 6. `CircularDependencyError` appears → a callback became a `watch`. Revert
    to the callback; do not "solve" it by moving the decorator.
+
+---
+
+## Execution record — reconstructed 2026-09-03 (0022 M11)
+
+This plan was left at `proposed` after its work had shipped, so this record is
+written from the code rather than from notes taken at the time.
+
+**Landed, and verified present on 2026-09-03:** the typed
+`SSHTransportNotReady` (`ssh_command_executor.dart:95-101`), the
+`humanizeSshError` branch (`ssh_error_messages.dart:71-75`), the
+`isTransportNotReady` predicate (`display_error.dart:59`), the three panes that
+render it as a spinner rather than an error, and a readiness gate ahead of
+every command.
+
+### DEVIATION (recorded late) — the gate is inline, not the specified decorator
+
+Phase 1c of this plan specified a standalone `ReadinessGatedExecutor`
+decorator at `lib/core/exec/readiness_gated_executor.dart`, composed into
+`gitServiceProvider` around `activeExecutorProvider`, with
+`isTransportReady`/`transportSettled` callbacks on `ConnectionController`.
+
+**That file does not exist.** What shipped instead is a readiness gate *inside*
+`SSHCommandExecutor._run`/`executeStream`, coupled to
+`SSHClientManager.isAttached`/`attachSettled`. Functionally equivalent for the
+SSH backend; architecturally different from what this plan describes — a
+transport-agnostic decorator applied at the provider-composition seam.
+
+The deviation was never recorded at the time, which is the failure this entry
+corrects. **It is not being reversed here**: the shipped gate works and is
+tested, and rewriting it as a decorator is a design change, not a bug fix. If
+the decorator architecture is still wanted, it needs its own record.
+
+### Residual closed elsewhere
+
+The plan's coverage did not extend to the pop-out window relay, where the typed
+exception degraded to a generic `ProxyExecuteException` and the panes therefore
+showed the raw string. Fixed in
+[0022-PLAN](0022-PLAN-git-gh-glab-engine-debug-audit.md) Phase 1, with the
+round-trip pinned by a test.
