@@ -103,6 +103,20 @@ Future<void> _openSheet(WidgetTester tester, _FakeGit git) async {
   await tester.pumpAndSettle();
 }
 
+/// Samples the own-mutation tracker from *inside* the commit, which is the
+/// only place the difference between bracketing and stamping shows up.
+class _TrackerProbeGit extends _FakeGit {
+  _TrackerProbeGit(super.generated);
+  bool Function()? probe;
+  bool? suppressedDuringCommit;
+
+  @override
+  Future<void> commit(String repoPath, {String? message}) async {
+    suppressedDuringCommit = probe?.call();
+    await super.commit(repoPath, message: message);
+  }
+}
+
 /// A commit that hangs until the test releases it, counting entries — used to
 /// prove a second activation while one is in flight can't start a second
 /// commit.
@@ -519,6 +533,39 @@ void main() {
 
     pushGate.complete(true);
     await tester.pumpAndSettle();
+  });
+
+  // 0025 F3a. repo_status_view.dart brackets its mutations with
+  // withOwnMutation (4 call sites); this sheet had none and relied on
+  // refreshAfterMutation, which only mark()s AFTER the command returns. A
+  // point-in-time stamp cannot suppress an echo that already arrived — and
+  // `git add -A`, the commit's index/ref writes and the push all generate
+  // watcher events *while the gesture is still running*. Each surviving event
+  // buys a full refresh wave (0025 Finding B).
+  testWidgets('the commit sheet suppresses the echo of its own commit', (
+    tester,
+  ) async {
+    final git = _TrackerProbeGit('feat: x');
+    await _openSheet(tester, git);
+    final container = ProviderScope.containerOf(
+      tester.element(find.text('open')),
+    );
+    final tracker = container.read(ownMutationTrackerProvider);
+    git.probe = () => tracker.isRecent(
+      '/srv/repo',
+      DateTime.now(),
+      const Duration(seconds: 3),
+    );
+
+    await tester.tap(find.text('Accept'));
+    await tester.pumpAndSettle();
+
+    expect(git.committed, isNotNull, reason: 'sanity: it committed');
+    expect(
+      git.suppressedDuringCommit,
+      isTrue,
+      reason: 'the mutation must be bracketed, not stamped after it returns',
+    );
   });
 }
 

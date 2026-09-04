@@ -102,9 +102,23 @@ class _CommitDialogState extends ConsumerState<CommitDialog> {
       // `submit` records it on the controller, and the composer renders it in
       // the sheet's own status line beside the draft that is still there.
       commit: (message) async {
-        await ref
-            .read(gitServiceProvider)
-            .commit(widget.repoPath, message: message);
+        // Bracketed, not stamped afterwards. `refreshAfterMutation` marks only
+        // once the command has returned, so every index and ref write the
+        // commit makes *while it runs* reached the watcher unsuppressed and
+        // bought a full refresh wave each — one commit+push measured 15 of
+        // them (0025 Finding B / F3a). The inline composer in
+        // repo_status_view.dart has always bracketed; this surface, which 0023
+        // made the primary path, never did.
+        //
+        // The push half is bracketed by its own caller (`_push`), and the
+        // tracker refcounts, so the two nest safely.
+        await withOwnMutation(
+          ref.read(ownMutationTrackerProvider),
+          widget.repoPath,
+          () => ref
+              .read(gitServiceProvider)
+              .commit(widget.repoPath, message: message),
+        );
         return true;
       },
       push: push ? widget.onPush : null,
