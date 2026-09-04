@@ -723,15 +723,12 @@ void main() {
     test('pull/push reuse cached upstream and get-url', () async {
       await git.push('/repo');
       await git.push('/repo');
-      expect(
-        exec.calls.map((c) => c.join(' ')).toList(),
-        [
-          'sh -c ${upstreamProbe[2]}',
-          'git remote get-url origin',
-          'git push --progress',
-          'git push --progress',
-        ],
-      );
+      expect(exec.calls.map((c) => c.join(' ')).toList(), [
+        'sh -c ${upstreamProbe[2]}',
+        'git remote get-url origin',
+        'git push --progress',
+        'git push --progress',
+      ]);
     });
 
     test('a custom networkTimeout reaches fetch', () async {
@@ -1586,6 +1583,98 @@ void main() {
         '--',
         ':(literal)lib/a.dart',
       ]);
+    });
+
+    test(
+      'generateCommitMessage runs isolated, not on the exclusive barrier',
+      () async {
+        // 0022 M2. The default lane is exclusive — a FIFO barrier that blocks
+        // every read until it completes — and this call carries the 5-minute
+        // commit timeout while running a user hook the docstring expects to be
+        // slow. Previewing a message must not be able to freeze status, diff and
+        // blame for the hook's whole duration.
+        exec.next = const SSHCommandResult(
+          exitCode: 0,
+          stdout: 'generated message\n',
+          stderr: '',
+        );
+        await git.generateCommitMessage('/repo');
+        expect(exec.lanes.single, ExecLane.isolated);
+      },
+    );
+
+    test('setUpstream invalidates the cached upstream remote', () async {
+      // 0022 M1, deviation (d). checkout covers the common case; this covers
+      // the one it cannot — the upstream changing while HEAD stays put, which
+      // is exactly when the fallback cache used to answer stale forever.
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'upstream\n',
+        stderr: '',
+      );
+      await git.push('/repo');
+      expect(
+        exec.calls.any((c) => c.join(' ').contains('remote get-url upstream')),
+        isTrue,
+      );
+
+      exec.calls.clear();
+      await git.setUpstream('/repo', 'main', 'origin/main');
+
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'origin\n',
+        stderr: '',
+      );
+      await git.push('/repo');
+      expect(
+        exec.calls.any((c) => c.join(' ').contains('remote get-url origin')),
+        isTrue,
+        reason: 'the newly set upstream must drive the auth lookup',
+      );
+    });
+
+    test('a checkout invalidates the cached upstream remote', () async {
+      // 0022 M1. The cache is keyed by repoPath, but the upstream remote is a
+      // property of the CURRENT BRANCH. A stale entry does not misdirect the
+      // push — git resolves its own upstream — it misdirects
+      // _forgeAuthArgs, which installs the credential helper of whichever
+      // forge that remote belongs to. Wrong forge CLI, failed HTTPS auth.
+
+      // First pull: the branch tracks `upstream`, so that is what the auth
+      // lookup resolves the URL for.
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'upstream\n',
+        stderr: '',
+      );
+      await git.pull('/repo');
+      expect(
+        exec.calls.any((c) => c.join(' ').contains('remote get-url upstream')),
+        isTrue,
+        reason: 'the first pull should resolve the tracked upstream',
+      );
+
+      // Switch to a branch tracking `origin`.
+      exec.calls.clear();
+      await git.checkout('/repo', 'other');
+
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'origin\n',
+        stderr: '',
+      );
+      await git.pull('/repo');
+      expect(
+        exec.calls.any((c) => c.join(' ').contains('remote get-url origin')),
+        isTrue,
+        reason: 'the new branch tracks origin, so auth must resolve origin',
+      );
+      expect(
+        exec.calls.any((c) => c.join(' ').contains('remote get-url upstream')),
+        isFalse,
+        reason: 'the previous branch\'s remote must not survive the checkout',
+      );
     });
 
     test('generateCommitMessage creates its preview file with mktemp, not a '

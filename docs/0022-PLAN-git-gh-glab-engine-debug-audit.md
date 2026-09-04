@@ -1210,6 +1210,40 @@ skip the abort (both leave the stranded session shipped and hidden).
 
 **Files added to Phase 2's scope:** `lib/features/connection/local_repo_form.dart`.
 
+### DEVIATION 2026-09-03 (d) — Phase 7's M1(b) step was wrong as written
+
+**What the plan said.** M1(b): "Do not cache the fallback — only cache a
+genuine lookup (`:4893`)."
+
+**Why it is wrong.** Doing that broke four existing tests, one of which pins
+the behaviour deliberately: `test/mutations_test.dart:723`, *"pull/push reuse
+cached upstream and get-url"*, asserts that two consecutive pushes issue the
+upstream probe exactly once. Dropping the fallback cache re-runs
+`git config --get branch.<x>.remote` on **every** pull/push for any repo with
+no configured upstream — deleting an intentional optimization to fix a much
+narrower problem, and requiring four pinned tests to be rewritten to suit the
+patch. Rewriting a pinned invariant to make my own change pass is precisely
+the move the working-style rules forbid.
+
+**Also established:** the finding is fixed *without* that step. The staleness
+that actually bites is across a branch switch, and both checkout paths now
+invalidate. Verified: with the fallback cache restored and invalidation kept,
+all 121 `mutations_test.dart` tests pass.
+
+**Decision (maintainer, 2026-09-03): option 3.** Keep the fallback cached, keep
+the checkout invalidation, **and** close the residual by invalidating on the
+upstream-changing commands too — `setUpstream` and `unsetUpstream`. The plan's
+original M1(b) wording is struck: *~~do not cache the `'origin'` fallback~~* →
+invalidate wherever the upstream can change instead.
+
+**Scope note discovered while doing it:** `GitService` has no
+remote-add/rename/set-url methods at all. Those argv are issued directly
+through the executor by `create_repo_sheet.dart` (`:562`, `:760`, `:1039`),
+bypassing `GitService` and therefore its caches. That is safe today — they run
+against a repo being created, whose session is finalized immediately after —
+but it means `_remoteUrlByRepo` has one theoretical staleness path this phase
+cannot reach from inside `GitService`. Recorded, not silently ignored.
+
 ### Phase 0 — Baseline (2026-09-03) — **COMPLETE**
 
 Taken on a pristine `git clone --local` at HEAD `433a9a6`, confirmed clean
@@ -1468,6 +1502,42 @@ identical to baseline.
 
 **Not addressed here (M5):** whether the remote watcher *process* survives
 channel teardown is a live-host question, deferred to Phase 15 as planned.
+
+### Phase 7 — M1 + M2: GitService caches and lane (2026-09-03) — **COMPLETE**
+
+**M1.** New `_invalidateRemoteCaches(repoPath)` drops both
+`_upstreamRemoteByRepo` and `_remoteUrlByRepo`, called from `checkout`,
+`checkoutTrackingBranch` (where the cached value is wrong *by construction* —
+it creates the tracking relationship), `setUpstream` and `unsetUpstream`. The
+plan's "don't cache the fallback" step was **not** taken; see deviation (d) for
+why and what replaced it.
+
+**M2.** `generateCommitMessage` now runs on `ExecLane.isolated`. The comment at
+the call site records both the reason (it previews only — a `mktemp` scratch
+file under the git-dir, no index/work-tree/refs/network — while carrying the
+5-minute commit timeout and running a hook the docstring expects to be slow)
+and the residual risk (git does not *enforce* that a `prepare-commit-msg` hook
+leaves the index alone).
+
+**Tests added** — M1 had **zero** coverage of any kind before this:
+* a checkout invalidates the cached upstream (pull tracking `upstream`, switch,
+  pull again → auth must resolve `origin`, and must not still resolve
+  `upstream`);
+* `setUpstream` invalidates it too — the case a checkout cannot cover;
+* `generateCommitMessage` runs on the isolated lane.
+
+**Negative tests — all three seen to fail.** In scratch clones, each with an
+assertion that the target text existed first. One of those assertions earned
+its keep: reverting the checkout invalidation by its body text matched **two**
+sites (both checkout paths), the assert refused, and nothing was written —
+without it I would have reverted one, seen the test still fail for the wrong
+reason, and drawn a false conclusion. With unique anchors:
+`Expected: ExecLane:<isolated> / Actual: <exclusive>`,
+`Expected: true / Actual: <false>` (stale `upstream` surviving the checkout),
+and the same for `setUpstream`.
+
+**Verification.** Analyzer: 2 pre-existing. Suite: `+3320 ~2 -48`, failing set
+identical to baseline.
 
 ### Phase 1 negative-test detail (retained)
 

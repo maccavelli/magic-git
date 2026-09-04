@@ -1061,6 +1061,18 @@ class GitService {
   final _upstreamRemoteByRepo = <String, String>{};
   final _remoteUrlByRepo = <String, Map<String, String>>{};
 
+  /// Drops the per-repo remote caches.
+  ///
+  /// Both are keyed by repoPath alone, but the upstream remote is a property of
+  /// the CURRENT BRANCH — so a checkout invalidates it. This matters beyond
+  /// tidiness: [_forgeAuthArgs] picks which forge CLI's credential helper to
+  /// install from that remote's URL, so a stale entry installs the wrong CLI's
+  /// helper for the new branch's remote and HTTPS auth fails (0022 M1).
+  void _invalidateRemoteCaches(String repoPath) {
+    _upstreamRemoteByRepo.remove(repoPath);
+    _remoteUrlByRepo.remove(repoPath);
+  }
+
   // Field/record separators for log output: ASCII Unit/Record Separators, which
   // cannot appear in commit metadata, so they parse unambiguously without the
   // NUL collision that `-z` + `%00` would cause.
@@ -3294,6 +3306,19 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
       extraEnv: _scopeEnvFor(repoPath),
       gitArgs: ['sh', '-c', script],
       timeout: commitTimeout,
+      // Isolated, not the default exclusive: this only PREVIEWS a message. It
+      // writes a mktemp scratch file under the git-dir and deletes it, touching
+      // neither the index, the work tree, refs, nor the network — while the
+      // hook it runs may be slow by design (the docstring above anticipates an
+      // AI generator) and carries the 5-minute commit timeout. On the exclusive
+      // lane that held the FIFO barrier for the hook's whole duration, freezing
+      // status, diff and blame across the app (0022 M2).
+      //
+      // Residual risk, stated rather than defended against: git's contract for
+      // `prepare-commit-msg` is "edit the message file", but nothing enforces
+      // it, so a user hook that ran index-touching git commands would not be
+      // serialized against a concurrent mutation.
+      lane: ExecLane.isolated,
     );
     if (result.exitCode == 3) return null; // no prepare-commit-msg hook
     if (!result.isSuccess) {
@@ -3308,6 +3333,7 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
   /// being parsed as a flag — plain `--` isn't safe here since checkout gives
   /// it pathspec-separator meaning, not just "end of options".
   Future<void> checkout(String repoPath, String ref) async {
+    _invalidateRemoteCaches(repoPath);
     await _runCaptured(
       repoPath,
       ['git', 'checkout', '--end-of-options', ref],
@@ -3339,6 +3365,9 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     required String localName,
     required String remoteRef,
   }) async {
+    // Sharper than [checkout]: this CREATES the tracking relationship, so any
+    // cached upstream for this repo is wrong by construction.
+    _invalidateRemoteCaches(repoPath);
     await _runCaptured(
       repoPath,
       // `--create <name>` consumes [localName] as its value verbatim (like the
@@ -4086,22 +4115,39 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
   /// `.merge`): nothing is destroyed, so not journaled — setting it back IS
   /// the undo. The `=` form keeps a leading-dash [upstream] out of option
   /// position; `--end-of-options` guards the branch positional.
-  Future<void> setUpstream(String repoPath, String branch, String upstream) =>
-      _runVoid(repoPath, [
-        'git',
-        'branch',
-        '--set-upstream-to=$upstream',
-        '--end-of-options',
-        branch,
-      ], 'git branch --set-upstream-to');
+  Future<void> setUpstream(
+    String repoPath,
+    String branch,
+    String upstream,
+  ) async {
+    // Changes exactly what [_upstreamRemote] caches, so the cache cannot
+    // survive it (0022 M1). Without this, a repo whose upstream was set while
+    // HEAD was detached — the one case a checkout does not cover — kept
+    // answering the pre-set remote for the rest of the session.
+    _invalidateRemoteCaches(repoPath);
+    await _runVoid(repoPath, [
+      'git',
+      'branch',
+      '--set-upstream-to=$upstream',
+      '--end-of-options',
+      branch,
+    ], 'git branch --set-upstream-to');
+  }
 
   /// Removes [branch]'s upstream config (`git branch --unset-upstream`) —
   /// the counterpart of [setUpstream], same not-journaled reasoning.
-  Future<void> unsetUpstream(String repoPath, String branch) => _runVoid(
-    repoPath,
-    ['git', 'branch', '--unset-upstream', '--end-of-options', branch],
-    'git branch --unset-upstream',
-  );
+  Future<void> unsetUpstream(String repoPath, String branch) async {
+    // Counterpart of [setUpstream]: removing the upstream changes what the
+    // next auth lookup must resolve, so the cache goes with it.
+    _invalidateRemoteCaches(repoPath);
+    await _runVoid(repoPath, [
+      'git',
+      'branch',
+      '--unset-upstream',
+      '--end-of-options',
+      branch,
+    ], 'git branch --unset-upstream');
+  }
 
   /// Deletes [branch] on [remote] (`git push --delete`) — the remote sibling
   /// of [deleteBranch]. Deliberately NOT journaled: the commits may exist
