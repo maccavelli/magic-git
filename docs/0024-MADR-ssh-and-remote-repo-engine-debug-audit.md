@@ -722,6 +722,38 @@ timing bound on a 20,000-event burst. The correctness half passes today —
 which is the point: this is a pure performance defect behind a correct
 implementation, and only the timing assertion can fail first.
 
+#### Amendment A1.1 — 2026-09-04: the split was not the largest cost on this path
+
+Found while executing the fix, and measured rather than reasoned. Replacing the
+quadratic split took the 20,000-event burst from **522 ms to 333 ms** — real,
+but far short of the ~1 ms the isolated benchmark predicted, because a second
+per-event cost sits on the same path and is larger than the first.
+
+`Coalescer.signal()` (`lib/core/git/coalescer.dart:48-73`) runs a
+`DateTime.now()`, a `Timer.cancel()` and a `new Timer()` on **every** event.
+Measured over the same 20,000 events:
+
+```
+Coalescer.signal x20000 : 295 ms
+guarded reschedule x20000:   9 ms
+```
+
+So the original 522 ms decomposes as ~189 ms of split, **~295 ms of timer
+churn**, and ~38 ms of everything else. During a tight burst the trailing
+debounce's target fire time moves by microseconds per event, and the timer is
+destroyed and rebuilt anyway.
+
+The fix keeps the debounce exactly and stops rebuilding a timer that is already
+scheduled for effectively the right moment: track the absolute target, and
+reschedule only when the new target is *earlier* than the pending one (so
+`maxWait` and `minInterval` are never missed) or *later* by more than a small
+tolerance (so `trailing` may resolve at most that much early, never late).
+
+`coalescer.dart` is untouched since the initial commit and was not in this
+record's original scope; it is folded into A1 because it is the same burst, the
+same hot path and the same user-visible jank, and fixing only the split would
+have left A1's headline claim unearned. See the plan's deviation (b).
+
 ### A2 — Replace the open-loop RTT-band lookup with a closed-loop limiter driven by data the app already collects under load
 
 **Evidence: Read.** `AdaptiveReadConcurrency` is a three-bucket lookup table

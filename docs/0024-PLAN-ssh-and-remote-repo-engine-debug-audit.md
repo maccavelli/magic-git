@@ -1371,6 +1371,39 @@ Either making `AGENTS.md` name the vendored binary, or bumping the pin to
 3.47.2 and re-locking once, would end the churn. Both are dependency/tooling
 policy and belong to the maintainer.
 
+### Deviation (b) — 2026-09-04 — A1 could not reach its target alone
+
+**Found.** Phase 3a's timing gate (`< 50 ms` for a 20,000-event burst) still
+failed after the A1 fix landed: **522 ms → 333 ms**, not the ~1 ms the isolated
+benchmark predicted.
+
+**Evidence.** `Coalescer.signal()` (`lib/core/git/coalescer.dart:48-73`) does a
+`DateTime.now()` + `Timer.cancel()` + `new Timer()` per event. Measured over
+the same 20,000 events: **295 ms**, against **9 ms** for a version that only
+reschedules when the target fire time actually moves. `coalescer.dart` is
+untouched by this work (`git status` showed only the two Phase 3 files) and
+dates to the initial commit — genuinely pre-existing, and absent from MADR 0024.
+
+**Decision (maintainer, 2026-09-04): fix it now, inside Phase 3.** Same burst,
+same hot path, same jank; fixing the split and shipping the larger cost would
+leave A1's claim unearned. Phase 3's file list gains
+`lib/core/git/coalescer.dart` and `test/coalescer_test.dart`. Coalescing
+semantics are load-bearing for MADR 0020, so the guard must never fire *late* —
+only reschedule-on-earlier plus a tolerance on later — and it gets its own
+negative test. MADR 0024 gains Amendment A1.1.
+
+### Two incidental findings from Phase 3, recorded so they are not re-derived
+
+* **Today's record split is correct.** All 60 boundary-straddling records
+  arrive intact. A1 is purely a performance defect behind a correct
+  implementation, exactly as the MADR states.
+* **The A1 test hung because of H3.** With nothing listening to the watcher's
+  stderr, the fake handle's `cancel()` awaited `close()` on a
+  never-listened `StreamController`, whose future never completes. Wiring the
+  H3 listener unblocked it. Two earlier hypotheses (an `onCancel`/`close()`
+  deadlock; a `containsAll` mismatch pathology) were each reproduced
+  standalone and **refuted** before the real cause was instrumented.
+
 | Phase | Status | Commit | Red-test observed | Notes |
 |---|---|---|---|---|
 | 0 | not started | — | — | — |
