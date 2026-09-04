@@ -353,7 +353,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   /// the index, and re-reading the log, refs, stashes and worktree list for
   /// that is work the change could not have caused (0025 F2).
   void _invalidateMutationFamilies([Set<GitArea>? areas]) {
-    mgTraceRefresh(ref, repoPath, 'invalidateFamilies:${areas ?? "all"}');
     _familiesRefetchPending = true;
     for (final p in familiesFor(areas ?? const {GitArea.unknown}, repoPath)) {
       ref.invalidate(p);
@@ -500,7 +499,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   }
 
   void _refresh() {
-    mgTraceRefresh(ref, repoPath, 'repoStatusView._refresh');
     // Guarded centrally here rather than at every call site: several async
     // ops (stage/unstage/push/pull/…) call this right after an await with no
     // further check of their own, and touching `ref` after the widget is
