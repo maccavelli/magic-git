@@ -24,6 +24,13 @@ const int maxCommandOutputChars = 50 * 1024 * 1024;
 /// across a command's stdout+stderr via [OutputByteBudget].
 const int maxCommandOutputBytes = 50 * 1024 * 1024;
 
+/// Ceiling on the **compressed** bytes one command may buffer before it is
+/// decompressed. Equal to [maxCommandOutputBytes] on purpose: gzip output
+/// cannot meaningfully exceed its input, so a wire stream larger than the
+/// decompressed cap could not have decompressed to something under it. Kept as
+/// its own name so the reasoning survives a future change to either number.
+const int maxCommandWireBytes = maxCommandOutputBytes;
+
 /// A mutable byte budget shared across one command's stdout and stderr, so their
 /// *combined* buffered output — not each stream independently — is what the cap
 /// bounds. [charge] is called per raw byte chunk before decoding; the first

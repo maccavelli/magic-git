@@ -223,6 +223,56 @@ void main() {
       expect(wire.length, greaterThan(SSHCommandExecutor.gzipOffloadWireBytes));
       expect(await SSHCommandExecutor.gunzipStdout(wire), raw);
     });
+
+    // 0024 H2. Charging the budget AFTER a full decode bounds what gets
+    // reported, not what gets allocated — by then the allocation the budget
+    // exists to prevent has already happened. gzip's maximum ratio is ~1032:1.
+    test('a gzip bomb is refused during decompression, not after it', () async {
+      final raw = Uint8List(8 * 1024 * 1024); // zeroes: compresses ~1000x
+      final wire = Uint8List.fromList(gzip.encode(raw));
+      expect(
+        wire.length,
+        lessThan(64 * 1024),
+        reason: 'sanity: the fixture has to actually be a bomb',
+      );
+
+      await expectLater(
+        SSHCommandExecutor.gunzipStdout(wire, limit: 1024, label: 'bomb'),
+        throwsA(isA<SSHOutputExceeded>()),
+      );
+    });
+
+    test('a bomb over the offload threshold is refused too', () async {
+      // The off-isolate path is where the allocation actually hurts, and it
+      // returns its refusal across the isolate boundary rather than throwing.
+      //
+      // Zeroes alone cannot build this fixture: they compress ~1000:1, so a
+      // payload big enough to blow the decompressed cap still lands well under
+      // the wire threshold that selects the isolate. An incompressible prefix
+      // sets the wire size; the zero run supplies the expansion.
+      final rnd = Random(7);
+      final prefix = Uint8List(300 * 1024);
+      for (var i = 0; i < prefix.length; i++) {
+        prefix[i] = rnd.nextInt(256);
+      }
+      final raw = Uint8List.fromList([
+        ...prefix,
+        ...Uint8List(8 * 1024 * 1024),
+      ]);
+      final wire = Uint8List.fromList(gzip.encode(raw));
+      expect(wire.length, greaterThan(SSHCommandExecutor.gzipOffloadWireBytes));
+
+      await expectLater(
+        SSHCommandExecutor.gunzipStdout(wire, limit: 4096, label: 'bomb'),
+        throwsA(isA<SSHOutputExceeded>()),
+      );
+    });
+
+    test('a payload inside the limit still decodes whole', () async {
+      final raw = Uint8List.fromList(utf8.encode('hello ' * 1000));
+      final wire = Uint8List.fromList(gzip.encode(raw));
+      expect(await SSHCommandExecutor.gunzipStdout(wire, limit: 1 << 20), raw);
+    });
   });
 
   group('isTransientTransportError / runWithRetries', () {

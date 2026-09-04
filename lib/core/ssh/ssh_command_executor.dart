@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show GZipCodec, SocketException, gzip;
+import 'dart:io' show SocketException, gzip;
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
@@ -23,7 +23,8 @@ export '../exec/command_drain.dart'
         collectBounded,
         boundedBytes,
         maxCommandOutputChars,
-        maxCommandOutputBytes;
+        maxCommandOutputBytes,
+        maxCommandWireBytes;
 export '../exec/command_lanes.dart' show ExecLane;
 export '../exec/operation_activity.dart'
     show OperationDescriptor, OperationEventCallback, OperationId;
@@ -667,11 +668,36 @@ class SSHCommandExecutor implements CommandExecutor {
   /// Gunzips [wire] on this isolate below [gzipOffloadWireBytes], otherwise
   /// off the UI isolate. Budget charging is the caller's job (post-gunzip).
   @visibleForTesting
-  static Future<List<int>> gunzipStdout(Uint8List wire) async {
-    if (wire.length > gzipOffloadWireBytes) {
-      return Isolate.run(() => GZipCodec().decode(wire));
+  static Future<List<int>> gunzipStdout(
+    Uint8List wire, {
+    int limit = maxCommandOutputBytes,
+    String label = '',
+  }) async {
+    final out = wire.length > gzipOffloadWireBytes
+        ? await Isolate.run(() => boundedGunzip(wire, limit))
+        : boundedGunzip(wire, limit);
+    if (out == null) throw SSHOutputExceeded(label);
+    return out;
+  }
+
+  /// Decompresses [wire], or returns null the moment the decompressed size
+  /// would pass [limit].
+  ///
+  /// Null rather than a throw because this runs inside `Isolate.run` on the
+  /// offload path, and a sentinel return needs nothing from exception
+  /// forwarding across the isolate boundary — [gunzipStdout] turns it back
+  /// into [SSHOutputExceeded] on the caller's side.
+  @visibleForTesting
+  static Uint8List? boundedGunzip(Uint8List wire, int limit) {
+    final sink = _CountingBytesSink(limit);
+    try {
+      final conv = gzip.decoder.startChunkedConversion(sink);
+      conv.add(wire);
+      conv.close();
+    } on _BudgetExceeded {
+      return null;
     }
-    return gzip.decode(wire);
+    return sink.takeBytes();
   }
 
   static const String _exitMarker = '\u0001EXIT=';
@@ -874,13 +900,29 @@ class SSHCommandExecutor implements CommandExecutor {
       final Future<String> stdoutFuture;
       if (compressed) {
         stdoutFuture = () async {
+          // Charge the WIRE bytes as they arrive. Without this the builder
+          // below grows with no ceiling at all — the shared `budget` cannot
+          // un-allocate what has already been read, and charging it after the
+          // fact bounds what gets reported rather than what gets buffered
+          // (0024 H2).
+          final wireBudget = OutputByteBudget(maxCommandWireBytes);
           final builder = BytesBuilder(copy: false);
           await for (final chunk in rawStdout) {
+            wireBudget.charge(chunk.length, label);
             builder.add(chunk);
           }
           final wire = Uint8List.fromList(builder.takeBytes());
           stdoutWireBytes = wire.length;
-          final raw = await gunzipStdout(wire);
+          // Bound the decode itself by whatever the shared stdout+stderr
+          // budget has left — stderr drains concurrently and may have spent
+          // some of it. gzip's maximum ratio is ~1032:1, so a bounded wire is
+          // not on its own a bounded decode.
+          final remaining = budget.limit - budget.used;
+          final raw = await gunzipStdout(
+            wire,
+            limit: remaining < 0 ? 0 : remaining,
+            label: label,
+          );
           budget.charge(raw.length, label);
           final text = utf8.decode(raw, allowMalformed: true);
           onOutput?.call(text, stderr: false);
@@ -1170,4 +1212,33 @@ class _ActivityStreamHandle implements CommandStreamHandle {
     _lifecycle?.canceled();
     await _inner.cancel();
   }
+}
+
+/// Raised inside [SSHCommandExecutor.boundedGunzip]'s decode sink and caught
+/// there; never escapes.
+class _BudgetExceeded implements Exception {
+  const _BudgetExceeded();
+}
+
+/// Accumulates decoded bytes and aborts the conversion the moment the running
+/// total passes [limit] — the whole point being that the abort happens *during*
+/// the decode rather than after it, so the allocation never occurs.
+class _CountingBytesSink implements Sink<List<int>> {
+  _CountingBytesSink(this.limit);
+
+  final int limit;
+  final BytesBuilder _builder = BytesBuilder(copy: false);
+  int _used = 0;
+
+  @override
+  void add(List<int> data) {
+    _used += data.length;
+    if (_used > limit) throw const _BudgetExceeded();
+    _builder.add(data);
+  }
+
+  @override
+  void close() {}
+
+  Uint8List takeBytes() => _builder.takeBytes();
 }

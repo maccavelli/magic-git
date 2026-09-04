@@ -4,6 +4,16 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/command_drain.dart';
 
 void main() {
+  group('wire ceiling', () {
+    test('is stated as equal to the decompressed ceiling', () {
+      // Not arbitrary, and not a coincidence to be tidied away: gzip output
+      // cannot meaningfully exceed its input, so a wire stream larger than the
+      // decompressed cap could never have decompressed to something under it.
+      // Pinned so a future edit to one number has to consider the other.
+      expect(maxCommandWireBytes, maxCommandOutputBytes);
+    });
+  });
+
   group('collectBounded', () {
     test('concatenates under the cap', () async {
       final out = await collectBounded(
