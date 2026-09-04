@@ -816,6 +816,20 @@ uniformly-slow-but-unqueued sequence (high `minRtt`, `currentRtt ≈ minRtt`) an
 assert the limit does **not** fall. The second case is precisely what today's
 band table gets wrong, so it must fail against the current implementation.
 
+#### Amendment A2.1 — 2026-09-04: the gradient is applied as a step, not a formula
+
+The record originally proposed the Netflix `concurrency-limits` form,
+`newLimit = limit × gradient + sqrt(limit)`. Evaluated across the range this
+controller actually operates in — a ceiling of 4 — that law **can never reduce
+the limit**, at any gradient down to the floor: at `limit = 4` and a 2x latency
+inflation it still returns 4. The `sqrt(limit)` allowance is designed for limits
+in the hundreds, where it is proportionally small; here it dominates.
+
+The gradient signal is kept, and applied as a step instead: below `0.70`
+(>1.43x inflation) step down one, above `0.90` (<1.11x) step up one, otherwise
+hold — each confirmed over three consecutive samples. Same input, same
+closed-loop property, sized for the range. See the plan's deviation (c).
+
 ## Confirmed working (do not re-open)
 
 Checked and found correct; recorded so a later pass does not spend time here.

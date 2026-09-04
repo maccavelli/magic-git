@@ -1371,6 +1371,52 @@ Either making `AGENTS.md` name the vendored binary, or bumping the pin to
 3.47.2 and re-locking once, would end the churn. Both are dependency/tooling
 policy and belong to the maintainer.
 
+### Deviation (c) — 2026-09-04 — the pinned A2 control law can only grow
+
+**Found.** Before writing any code, evaluating the control law this plan pinned
+in Phase 4b across the range it actually operates in:
+
+```
+limit | gradient(inflation)      -> next
+  4   | 0.50 (2.00x latency) -> 4
+  3   | 0.50 (2.00x latency) -> 3
+  2   | 0.50 (2.00x latency) -> 2
+  1   | 0.50 (2.00x latency) -> 1
+
+Can it EVER shrink in 1..4?  NO
+```
+
+`target = limit * gradient + sqrt(limit)` is Netflix's `concurrency-limits`
+formulation, where limits run to the hundreds and `sqrt(limit)` is small
+relative to the limit. At a ceiling of 4 the allowance dominates, so the
+controller can only ever grow — strictly worse than the band table it replaces,
+which at least could shed load. This is an error in this plan, not a discovery
+about the code.
+
+**Decision (maintainer, 2026-09-04): step controller on the gradient.** The
+pinned-constants table in Phase 4b is superseded by:
+
+| symbol | value | why |
+|---|---|---|
+| `alpha` (EWMA) | `0.2` | unchanged — ~14 samples of memory |
+| `warmupSamples` | `10` | unchanged — hold `noSampleCap` below this |
+| `shrinkBelow` | `0.70` | gradient under this (>1.43x latency inflation) steps the limit **down** by 1 |
+| `growAbove` | `0.90` | gradient over this (<1.11x inflation) steps the limit **up** by 1 |
+| `consecutiveRequired` | `3` | a direction must hold for three samples — reuses the hysteresis the class already has, and its existing tests already pin |
+| `minRttWindow` | `300` samples or `5 min` | unchanged |
+
+`gradient = minRtt / currentRtt`, clamped to `(0, 1]`. Error-floor and `reset`
+semantics are unchanged. MADR 0024 gains Amendment A2.1.
+
+**Coverage note.** Removing `bandForRtt` removes the only thing five of the
+existing eleven tests assert (`band thresholds map RTT to cap`, `band
+boundaries are inclusive`, `bandForRtt never exceeds the given ceiling`, `mixed
+intermediate band settles at 3`, `RTT band 2 wins over a high error floor`).
+Those are deleted rather than rewritten because the mechanism they cover is
+deliberately gone; no *live* behaviour loses coverage. The remaining six —
+warm-up, hysteresis, error floor, floor recovery, and both `reset` cases — are
+rewritten against `onReadSample`.
+
 ### Deviation (b) — 2026-09-04 — A1 could not reach its target alone
 
 **Found.** Phase 3a's timing gate (`< 50 ms` for a 20,000-event burst) still
