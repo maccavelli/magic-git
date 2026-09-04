@@ -108,6 +108,21 @@ void main() {
     expect(socket.options, [(SocketOption.tcpNoDelay, true)]);
     expect(socket.rawAttempts, 1);
   });
+
+  test('a socket whose options are refused is destroyed, not leaked', () {
+    // Socket.connect has already succeeded by the time the options are
+    // applied, and tcpNoDelay sits deliberately outside the best-effort try
+    // that guards SO_KEEPALIVE. A peer that closes in that window makes
+    // setOption throw, and the exception used to leave connect() with the
+    // socket neither closed nor destroyed — one leaked descriptor per attempt,
+    // and _autoReconnect allows twenty (0024 L1).
+    final socket = _OptionRefusingSocket();
+    expect(
+      () => NativeSshSocket.adopt(socket),
+      throwsA(isA<SocketException>()),
+    );
+    expect(socket.destroyed, isTrue, reason: 'the descriptor must not leak');
+  });
 }
 
 /// Accepts [Socket.setOption] and throws on every raw option, standing in for
@@ -128,6 +143,20 @@ class _NoRawOptionSocket implements Socket {
     rawAttempts++;
     throw const SocketException('SO_KEEPALIVE unsupported');
   }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _OptionRefusingSocket implements Socket {
+  bool destroyed = false;
+
+  @override
+  bool setOption(SocketOption option, bool enabled) =>
+      throw const SocketException('closed by peer');
+
+  @override
+  void destroy() => destroyed = true;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

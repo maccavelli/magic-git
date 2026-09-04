@@ -27,7 +27,27 @@ class NativeSshSocket implements SSHSocket {
     // Ownership transfers to NativeSshSocket; close/destroy are the API.
     // ignore: close_sinks
     final socket = await Socket.connect(host, port, timeout: timeout);
-    applyTcpOptions(socket);
+    return adopt(socket);
+  }
+
+  /// Takes ownership of [socket]: applies the TCP options and hands back the
+  /// wrapper.
+  ///
+  /// Separate from [connect] so the failure path is reachable from a test —
+  /// [connect] opens its own socket and cannot be made to fail on demand.
+  @visibleForTesting
+  static SSHSocket adopt(Socket socket) {
+    try {
+      applyTcpOptions(socket);
+    } catch (_) {
+      // The connect has already succeeded, so an exception escaping here left
+      // the socket neither closed nor destroyed: one leaked descriptor per
+      // attempt, and _autoReconnect allows twenty (0024 L1). tcpNoDelay is
+      // load-bearing enough to still fail the connect — but not silently, and
+      // not while holding the descriptor open.
+      socket.destroy();
+      rethrow;
+    }
     return NativeSshSocket._(socket);
   }
 
