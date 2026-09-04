@@ -847,12 +847,51 @@ evidenced today. Recorded as a candidate, not a debt.
 
 **Still outstanding, and named rather than buried:**
 
-1. **The app-level measurement (Phase 7 item 4) has NOT been done.** It needs a
-   live `.app` run: time a one-file commit+push, confirm the workspace stays
-   interactive, and count the git processes against the ≈22–40 baseline. Every
-   number in this plan is from a shell or from source. A plan about *perceived*
-   performance that ships without watching the app is not fully verified, and
-   this one has not been.
+1. ~~**The app-level measurement (Phase 7 item 4) has NOT been done.**~~
+   **Done 2026-09-04 — and the fan-out is far larger than this plan assumed.**
+
+   Measured on the real host (`admdevops`) with git's own `trace2.eventTarget`,
+   which logs every git process exactly — no sampling. One one-file
+   commit+push in the running `.app`, on `systems-workspace`:
+
+   > **123 git processes**, against the **≈22–40** baseline reasoned about here.
+
+   | count | command |
+   |---:|---|
+   | 22 | `rev-parse --git-dir` |
+   | 15 | `status --porcelain=v2` |
+   | 15 | `for-each-ref --format=… refs/heads` |
+   | 15 | `remote` |
+   | 9 | `branch --merged` |
+   | 6 | `remote -v` |
+   | 6 | `config --get-regexp ^remote\..*\.glab-resolved` |
+   | 4 | `log --topo-order` · 4 `check-ignore -z --stdin` |
+   | 1 each | `add -A`, `commit --no-gpg-sign`, `push --progress --follow-tags`, `maintenance run --auto`, assorted `diff` |
+
+   **What the shape says.** The four commands that make up the post-mutation
+   refresh set — `status`, `for-each-ref`, `remote`, plus `rev-parse --git-dir`
+   ahead of each — appear **fifteen times over**, not once. So the refresh is
+   firing repeatedly across the gesture rather than being coalesced into the
+   single wave this plan's Phase 3 assumed. `glab` is a visible contributor in
+   its own right (6 `glab-resolved` config reads, 6 `remote -v`), which is
+   exactly the Review-mode forge call flagged as **B9** below and still
+   undecided.
+
+   **Honest limits of the number.** It counts *git processes*, so a handful are
+   git's own internal children rather than commands the app issued
+   (`remote-https`, `send-pack`, `pack-objects`, `maintenance run --auto`
+   — roughly seven). Removing those still leaves ~116. And the timing half is
+   **not** established: this git build emitted no usable `t_abs`, so the
+   per-phase split and wall-clock duration could not be recovered, and no
+   figure for either is claimed here. Whether the workspace stays interactive
+   was likewise not assessed.
+
+   **This does not undo Phase 1/2's result** — the modal is gone and the sheet
+   closes on the commit, which is what the reported symptom was about. But the
+   *work* behind that surface is several times what this plan believed, and
+   that deserves its own investigation rather than a footnote. Two candidates
+   to start from: why the refresh set repeats ~15x, and whether the forge call
+   belongs on this path at all (B9).
 2. `_logPushed`/`_logPulled` still sit inside `_push`'s awaited span (carried
    from Phase 2; much lower value now the modal is gone).
 3. **B9** — the Review-mode forge call on the post-commit path. A behaviour
