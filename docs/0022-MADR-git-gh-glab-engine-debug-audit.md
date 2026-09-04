@@ -419,6 +419,29 @@ to settle.**
 > back to 9. That is housekeeping, not a fix — the leak will resume until the
 > defect is remediated.
 >
+> **Narrowed the same day, by a natural experiment.** With the orphan count at
+> a verified **0**, the app was quit, rebuilt, reinstalled and restarted. The
+> host then showed **0 orphaned, 2 parented** — so a *clean* application quit
+> tears its watchers down correctly, exactly as the loopback cancel tests
+> predict. The leak is therefore **not** on any normal path:
+>
+> | path | leaks? | evidence |
+> |---|---|---|
+> | explicit stream cancel | no | loopback test, process dies inside `killGrace` |
+> | command timeout | no | loopback test |
+> | clean app quit | no | 0 orphans across a real quit/restart cycle |
+> | re-arm (0022 H5) | no | none observed across a session |
+> | **channel lost without a clean close** | **yes** | 19 orphans accumulated over ~17 days |
+>
+> That leaves abnormal termination — a force-quit, a crash, VPN/NAT dropping
+> the TCP, or a laptop sleeping — where there is no channel left to carry TERM
+> and sshd's own session teardown never runs. It matches the observed shape: a
+> few per day, correlated with disconnections rather than with usage. Any fix
+> therefore has to be **host-side and self-sufficient** (a watcher that dies on
+> its own when nobody is reading it) or **sweep-based at reconnect**; nothing on
+> the teardown path can help, because the teardown path is the one that is
+> already working.
+>
 > **M5 is reopened as a real defect and needs a remediation plan.** Candidate
 > shapes, none yet chosen: a PID file plus a reconnect-time sweep; `--timeout`
 > or a heartbeat so an orphan self-terminates; or arming under a process
