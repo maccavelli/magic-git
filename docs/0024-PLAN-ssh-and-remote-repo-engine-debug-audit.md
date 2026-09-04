@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "complete"
 date: 2026-09-04
 associated-madr: "0024-MADR-ssh-and-remote-repo-engine-debug-audit.md"
 ---
@@ -1371,6 +1371,29 @@ Either making `AGENTS.md` name the vendored binary, or bumping the pin to
 3.47.2 and re-locking once, would end the churn. Both are dependency/tooling
 policy and belong to the maintainer.
 
+### Deviation (d) — 2026-09-04 — P1's new probe trusted its own stdout
+
+**Found.** Phase 7's full-suite run failed
+`connection_env_reset_test.dart: a superseded connect's still-running env probe
+cannot reconfigure the shared executor with the old host's PATH`, with the
+resolved PATH ending `…/bin:OS=Linux\nPATH=/usr/bin:/bin\nBIN=git=/usr/bin/git`.
+
+**Evidence, and what it actually meant.** The test's fake executor answers every
+command with the connect probe's canned output, which is a fixture artifact —
+but it surfaced a real defect in the code this phase *added*:
+`probeLoginShellPath` split raw stdout on `:` and treated every fragment as a
+directory. A login shell is a hostile source: `.zshrc` files print MOTDs,
+version-manager chatter and warnings onto the same stdout as the value, and
+appending that to a PATH whose **ordering is load-bearing** is precisely how a
+`/usr/local/bin` shim ends up shadowing the real `glab` (the
+`glab-wrapper-path-shadowing` failure this repo has already had once).
+
+**Resolution — a fix, not a fixture change.** `parseLoginShellPath` now requires
+each entry to be absolute and single-line, rejects anything containing `=`, and
+caps the list at 64 entries. Four tests pin it, including the exact banner text
+that produced the failure. The pre-existing test passes unmodified, which is the
+point: it was right.
+
 ### Deviation (c) — 2026-09-04 — the pinned A2 control law can only grow
 
 **Found.** Before writing any code, evaluating the control law this plan pinned
@@ -1452,12 +1475,52 @@ negative test. MADR 0024 gains Amendment A1.1.
 
 | Phase | Status | Commit | Red-test observed | Notes |
 |---|---|---|---|---|
-| 0 | not started | — | — | — |
-| 1 | not started | — | — | — |
-| 2 | not started | — | — | — |
-| 3 | not started | — | — | — |
-| 4 | not started | — | — | — |
-| 5 | not started | — | — | — |
-| 6 | not started | — | — | — |
-| 7 | not started | — | — | — |
-| 8 | **not authorized** | — | — | needs separate approval |
+| 0 | complete | `3aa100a` | n/a | `+3398 ~2`, 0 failing, analyzer clean. Deviation (a). |
+| 1 | complete | `17b64d4` | `isAttachSettled` `Expected: false / Actual: <true>`; and the command threw `SSHTransportNotReady` from `_run:731` instead of waiting | +2 tests |
+| 2 | complete | `c955f47` | both bombs: `Expected: throws SSHOutputExceeded / Actual: emitted […]`, on-isolate and off-isolate | +4 tests. Fixture corrected first: zeroes compress ~1000:1, so 16 MiB of them is *under* the offload threshold — an incompressible prefix is needed to exercise the isolate path. |
+| 3 | complete | `afb1cad` | timing `Expected: <50 / Actual: <522>`; stderr `Actual: []`; probe `Expected: eventDriven / Actual: polling` | +7 tests. Deviation (b) — coalescer folded in. |
+| 4 | complete | `87fa9fa` | `Expected: <4> / Actual: <2>` for a slow-but-unqueued link | net **−2** tests (5 band-table tests deleted, 3 added). Deviation (c). |
+| 5 | complete | `d10a334` | 9th stream opened: `Expected: throws SSHStreamBudgetExhausted / Actual: Future<CommandStreamHandle>` | +5 tests (3 budget, 2 humanizer). L2 landed here — its test shares the file. **M2's number is still unconfirmed against a live host.** |
+| 6 | complete | `993996d` | `socket.destroyed` `Expected: true / Actual: <false>` | +1 test |
+| 7 | complete | `e48e5ea` | probe script still contained `sleep`/`SHELL`/`$$`; merge returned its input unchanged | +9 tests. Deviation (d). |
+| 8 | **not executed** | — | — | Requires separate approval, and a live-host measurement before it should be approved at all. |
+
+### Result
+
+`21721ef` → `e48e5ea`, twelve commits, **nothing pushed**.
+
+* Suite: **3398 → 3424 passing, 2 skipped, 0 failing** at every phase gate.
+  Net **+26** tests; each phase's delta matched its added tests exactly, which
+  is what would have caught a file that silently failed to compile (it did, in
+  Phase 4 — `noteLinkRtt` survived in `ssh_command_executor_test.dart` and the
+  gate reported it as a load failure rather than letting 38 tests vanish).
+* `.flutter-sdk/bin/flutter analyze`: `No issues found!` at every phase.
+* Every fix was observed red first. The verbatim failures are in the table.
+
+### Measurements
+
+| what | before | after |
+|---|---|---|
+| 20k-event watcher burst, UI isolate (A1 + A1.1) | 522 ms | <50 ms (test bar); split alone 189 ms → ~1 ms, coalescer 295 ms → 9 ms |
+| `Coalescer.signal()` x20000 | 295 ms | 9 ms |
+| connect-path login-shell prelude (P1) | 140 ms | 10 ms |
+
+The P1 figure is the host-side shell cost measured locally against a light
+`/bin/bash` login shell — it is the **floor**, not the ceiling: the removed
+busy-wait caps at 3 s, a heavy `zsh` (nvm/rbenv/`brew shellenv`) approaches it,
+and it was re-paid on each of up to 20 auto-reconnect attempts. The plan asked
+for an end-to-end `envMs` from a real connect; that needs a live remote host and
+was **not** performed.
+
+### Also observed, not actioned
+
+* **`local_command_executor_test.dart: activityIdle: stderr pulses past the idle
+  budget still complete` is load-flaky.** It failed once during Phase 3's
+  full-suite run and passed in isolation twice and on re-run. It spawns a real
+  `perl` process that must emit for 0.9 s without a 300 ms gap, so a loaded
+  machine can starve it. It touches nothing this plan changed and was green at
+  baseline. Worth a deflake, and out of scope here.
+* **`AGENTS.md` says bare `flutter analyze` / `flutter test`**, which is what
+  produced deviation (a). Naming `.flutter-sdk/bin/flutter`, or bumping
+  `FLUTTER_VERSION` from 3.44.8 to the machine's 3.47.2 and re-locking once,
+  would end the `pubspec.lock` churn behind `bd93c18`/`21721ef`.
