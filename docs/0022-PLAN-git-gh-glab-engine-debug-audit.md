@@ -1539,6 +1539,49 @@ and the same for `setUpstream`.
 **Verification.** Analyzer: 2 pre-existing. Suite: `+3320 ~2 -48`, failing set
 identical to baseline.
 
+### Phase 8 — M3: pop-out mutations report to the right Activity Center (2026-09-03) — **COMPLETE**
+
+All three defects fixed together, as the phase required — fixing only the
+bridge would have left the pop-out's Activity Center just as empty.
+
+1. **`OperationEvent` gained a wire form** (`toWire`/`fromWire` on the class,
+   beside `OperationDescriptor`'s, keeping the codec channel-free). An
+   unrecognized phase yields **null rather than a default**: `apply` drops any
+   operation whose first event is not `queued`, so a guessed phase would either
+   invent a lifecycle or silently discard a real one.
+2. **The bridge pushes to the originating window** (`_pushOperationEvent(id,
+   event)`) instead of reporting into the main isolate's own store. The window
+   id was already in scope; the push uses the established fire-and-forget
+   `_hubs[id]?.invokeMethod(...).catchError` idiom.
+3. **The child handles `operationEvent`** and reports into its own
+   `operationActivityProvider`, guarding `args is Map` and dropping malformed
+   payloads, per that handler's stated posture.
+
+Also: `ProxyCommandExecutor`'s `onOperationEvent` is still accepted and unused,
+but now says **why** — the command runs on the main isolate, and the hub push
+delivers its events to the one place that consumes them; honouring the callback
+would require the child to correlate events it never observes. And the
+`secondary_window_main` comment claiming "identical construction … except undo
+records" was corrected: it was how the missing activity wiring stayed invisible.
+
+**Tests added.** Bridge: a full queued→running→succeeded lifecycle is pushed to
+the issuing window, decodes intact, and **nothing** is filed in the main
+container's store. Child: a relayed lifecycle produces one record labelled
+`Commit`; a malformed push is inert.
+
+**Negative tests — both seen to fail.** With the bridge reverted to local
+reporting and the child's case removed: `Expected: an object with length of <3>
+/ Actual: []` (nothing pushed) and `Expected: <1> / Actual: []` (nothing
+received).
+
+**One self-inflicted issue, caught by the gate.** The first run left the
+analyzer at 3 issues rather than the baseline's 2 — a `directives_ordering`
+info from an import I inserted in the wrong position. Fixed before commit;
+this is exactly what "compare against the baseline, not zero" is for.
+
+**Verification.** Analyzer: back to the baseline's 2. Suite: `+3323 ~2 -48`,
+failing set identical to baseline.
+
 ### Phase 1 negative-test detail (retained)
 
 Run against a scratch `git clone` in the

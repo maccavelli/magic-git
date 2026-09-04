@@ -148,6 +148,55 @@ class OperationEvent {
     this.undoable = false,
     this.recoveryAvailable = false,
   });
+
+  /// StandardMethodCodec-safe wire form, so a lifecycle event can cross the
+  /// window relay to the window that actually started the operation.
+  ///
+  /// Lives on the class, like [OperationDescriptor.toWire], so the codec stays
+  /// free of channel concerns. Enums travel by `.name` and the timestamp as
+  /// epoch milliseconds — the same conventions the bridge's other pushes use.
+  Map<String, Object?> toWire() => {
+    'id': id.value,
+    'descriptor': descriptor.toWire(),
+    'phase': phase.name,
+    'occurredAtMs': occurredAt.millisecondsSinceEpoch,
+    'result': result,
+    'outputAnchorId': outputAnchorId,
+    'undoable': undoable,
+    'recoveryAvailable': recoveryAvailable,
+  };
+
+  /// Inverse of [toWire]; null for anything malformed.
+  ///
+  /// An unrecognized phase yields null rather than a default: there is no safe
+  /// fallback. [OperationActivityStore.apply] drops any event whose first phase
+  /// is not `queued`, so guessing here would either invent a lifecycle the
+  /// sender never reported or silently discard a real one.
+  static OperationEvent? fromWire(Object? raw) {
+    if (raw is! Map) return null;
+    try {
+      final map = Map<Object?, Object?>.from(raw);
+      final id = map['id'] as String? ?? '';
+      final descriptor = OperationDescriptor.fromWire(map['descriptor']);
+      final phase = OperationPhase.values.asNameMap()[map['phase'] as String?];
+      final atMs = map['occurredAtMs'] as int?;
+      if (id.isEmpty || descriptor == null || phase == null || atMs == null) {
+        return null;
+      }
+      return OperationEvent(
+        id: OperationId(id),
+        descriptor: descriptor,
+        phase: phase,
+        occurredAt: DateTime.fromMillisecondsSinceEpoch(atMs),
+        result: map['result'] as String?,
+        outputAnchorId: map['outputAnchorId'] as String?,
+        undoable: map['undoable'] as bool? ?? false,
+        recoveryAvailable: map['recoveryAvailable'] as bool? ?? false,
+      );
+    } on TypeError {
+      return null;
+    }
+  }
 }
 
 typedef OperationEventCallback = void Function(OperationEvent event);

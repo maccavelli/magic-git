@@ -445,6 +445,17 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
   }
 
   /// Pushes one watcher tick to window [id].
+  /// Pushes one operation lifecycle event to the window that started it.
+  ///
+  /// The whole lifecycle must go, in order: [OperationActivityStore.apply]
+  /// drops any event whose first phase is not `queued`, so relaying only the
+  /// terminal event would show nothing at all.
+  void _pushOperationEvent(String id, OperationEvent event) {
+    _hubs[id]
+        ?.invokeMethod<void>('operationEvent', event.toWire())
+        .catchError((_) {});
+  }
+
   void _pushTick(String id, String repoPath, RepoWatchEvent event) {
     _hubs[id]
         ?.invokeMethod<void>('repoTick', {
@@ -607,9 +618,14 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
                 compress: request.compress,
                 activityIdle: request.activityIdle,
                 operation: request.operation,
-                onOperationEvent: execContainer
-                    .read(operationActivityProvider.notifier)
-                    .report,
+                // Back to the window that ISSUED the command, not into this
+                // container's store. `execContainer` is the main isolate's
+                // session container, so reporting here filed every pop-out
+                // mutation in the MAIN window's Activity Center — possibly
+                // against a repo that window isn't even showing — while the
+                // pop-out's own Activity Center stayed empty for work the user
+                // had just done in it (0022 M3).
+                onOperationEvent: (event) => _pushOperationEvent(id, event),
               );
           return encodeExecuteResult(result);
         } catch (e) {

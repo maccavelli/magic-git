@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
+import 'package:remote_magic_git/core/exec/operation_activity.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/providers/window_manager_bridge.dart';
@@ -46,6 +47,10 @@ class _FakeExecutor extends SSHCommandExecutor {
   Object? throwNext;
   String? throwOnlyIfContains;
 
+  /// When set, a call carrying an operation descriptor reports a full
+  /// queued→running→succeeded lifecycle, as a real executor does.
+  bool emitLifecycle = false;
+
   @override
   Future<SSHCommandResult> execute({
     required String repoPath,
@@ -63,6 +68,23 @@ class _FakeExecutor extends SSHCommandExecutor {
   }) async {
     calls.add(gitArgs);
     envs.add(extraEnv);
+    if (emitLifecycle && operation != null && onOperationEvent != null) {
+      final id = operation.id ?? OperationId.next();
+      for (final phase in [
+        OperationPhase.queued,
+        OperationPhase.running,
+        OperationPhase.succeeded,
+      ]) {
+        onOperationEvent(
+          OperationEvent(
+            id: id,
+            descriptor: operation,
+            phase: phase,
+            occurredAt: DateTime.now(),
+          ),
+        );
+      }
+    }
     final error = throwNext;
     final marker = throwOnlyIfContains;
     if (error != null &&
@@ -239,6 +261,65 @@ void main() {
         () => decodeExecuteResponse((other as Map).cast<Object?, Object?>()),
         throwsA(isA<ProxyExecuteException>()),
       );
+    },
+  );
+
+  test(
+    'operation lifecycle events go back to the window that issued the command',
+    () async {
+      // 0022 M3. The events used to be reported into the MAIN isolate's store,
+      // so a commit or push made in a detached-repo pop-out appeared in the
+      // main window's Activity Center — possibly against a repo that window
+      // wasn't showing — while the pop-out's own stayed empty.
+      container = makeContainer(_connected);
+      await openHistory();
+      executor.emitLifecycle = true;
+      hubCalls.clear();
+
+      await deliverHubCall(
+        'execute',
+        encodeExecuteRequest(
+          const ExecuteRequest(
+            repoPath: '/srv/repo',
+            gitArgs: ['git', 'commit', '-m', 'x'],
+            timeout: Duration(seconds: 30),
+            retries: 0,
+            lane: ExecLane.exclusive,
+            compress: false,
+            operation: OperationDescriptor(
+              id: OperationId('op-9'),
+              repositoryPath: '/srv/repo',
+              label: 'Commit',
+              kind: OperationKind.gitMutation,
+              lane: ExecLane.exclusive,
+            ),
+          ),
+        ),
+      );
+
+      final pushed = hubCalls
+          .where((c) => c.method == 'operationEvent')
+          .toList();
+      expect(
+        pushed,
+        hasLength(3),
+        reason:
+            'the WHOLE lifecycle must be relayed — the store drops an '
+            'operation whose first event is not queued',
+      );
+      final decoded = pushed
+          .map((c) => OperationEvent.fromWire(c.arguments))
+          .toList();
+      expect(decoded.every((e) => e != null), isTrue);
+      expect(decoded.map((e) => e!.phase), [
+        OperationPhase.queued,
+        OperationPhase.running,
+        OperationPhase.succeeded,
+      ]);
+      expect(decoded.first!.descriptor.label, 'Commit');
+
+      // And nothing was filed in this (main-isolate) container's own store.
+      expect(container.read(operationActivityProvider), isEmpty);
     },
   );
 

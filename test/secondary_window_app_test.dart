@@ -12,6 +12,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart' show MacosIcon;
 import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
+import 'package:remote_magic_git/core/exec/operation_activity.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
@@ -373,6 +374,67 @@ void main() {
 
     expect(find.text('Checkout aaaaaaa'), findsOneWidget);
     expect(find.text('Cherry-pick aaaaaaa'), findsOneWidget);
+  });
+
+  testWidgets('a relayed operation lifecycle lands in THIS window\'s activity', (
+    tester,
+  ) async {
+    // 0022 M3. The command runs on the main isolate, so its lifecycle is
+    // emitted there and pushed back here. Before this, those events were filed
+    // in the MAIN window's Activity Center and this window — the one the user
+    // actually acted in — showed nothing.
+    mockChannels(_connected('/srv/repo'));
+    await pump(tester, _FakeExecutor());
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(SecondaryWindowShell)),
+    );
+    expect(container.read(operationActivityProvider), isEmpty);
+
+    const descriptor = OperationDescriptor(
+      id: OperationId('op-3'),
+      repositoryPath: '/srv/repo',
+      label: 'Commit',
+      kind: OperationKind.gitMutation,
+      lane: ExecLane.exclusive,
+    );
+    // The whole lifecycle, in order: the store drops an operation whose first
+    // event is not queued.
+    for (final phase in [
+      OperationPhase.queued,
+      OperationPhase.running,
+      OperationPhase.succeeded,
+    ]) {
+      await pushHubEvent(
+        'operationEvent',
+        OperationEvent(
+          id: const OperationId('op-3'),
+          descriptor: descriptor,
+          phase: phase,
+          occurredAt: DateTime.now(),
+        ).toWire(),
+      );
+    }
+    await tester.pumpAndSettle();
+
+    final records = container.read(operationActivityProvider);
+    expect(records, hasLength(1));
+    expect(records.single.descriptor.label, 'Commit');
+  });
+
+  testWidgets('a malformed operationEvent push is dropped, not thrown', (
+    tester,
+  ) async {
+    // Wire data is never hard-cast in this handler; a bad payload must be inert.
+    mockChannels(_connected('/srv/repo'));
+    await pump(tester, _FakeExecutor());
+    final container = ProviderScope.containerOf(
+      tester.element(find.byType(SecondaryWindowShell)),
+    );
+
+    await pushHubEvent('operationEvent', {'phase': 'not-a-phase'});
+    await tester.pumpAndSettle();
+
+    expect(container.read(operationActivityProvider), isEmpty);
   });
 
   testWidgets('a repoTick that echoes our own mutation is suppressed', (

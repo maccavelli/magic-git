@@ -29,6 +29,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/exec/exec_proxy_codec.dart';
+import '../../core/exec/operation_activity.dart';
 import '../../core/exec/proxy_command_executor.dart';
 import '../../core/git/git_service.dart';
 import '../../core/git/watch_event.dart';
@@ -175,10 +176,17 @@ Future<void> _bootSecondaryWindow() async {
           ref.onDispose(executor.dispose);
           return executor;
         }),
-        // Identical construction to the production gitServiceProvider except
-        // undo records are forwarded to the main window's journal — the single
+        // Like the production gitServiceProvider, with two differences.
+        // Undo records are forwarded to the main window's journal — the single
         // source of undo truth (this window's ⌘Z executes against it via
         // `performUndo`; a journal split across isolates would drift).
+        // And there is no ActivityCommandExecutor wrap: the command actually
+        // runs on the main isolate, which emits the lifecycle events and relays
+        // them back to this window's store (see the 'operationEvent' case in
+        // _onHubCall). GitService still builds the descriptor itself for every
+        // non-read command, so those events arrive labelled. The old wording
+        // here claimed the construction was identical apart from undo, which
+        // was how the missing activity wiring stayed invisible (0022 M3).
         gitServiceProvider.overrideWith((ref) {
           final (
             commitTimeout,
@@ -572,6 +580,17 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
         }
       case 'repoTick':
         if (args is Map<Object?, Object?>) _onRepoTick(args);
+      case 'operationEvent':
+        // A mutation this window issued ran on the main isolate's executor;
+        // its lifecycle comes back here so THIS window's Activity Center
+        // reflects the work the user did in it (0022 M3). Malformed payloads
+        // decode to null and are dropped, per this handler's posture.
+        if (args is Map<Object?, Object?>) {
+          final event = OperationEvent.fromWire(args);
+          if (event != null) {
+            ref.read(operationActivityProvider.notifier).report(event);
+          }
+        }
       case 'invalidateAll':
         for (final family in repoScopedFetchFamilies) {
           ref.invalidate(family);

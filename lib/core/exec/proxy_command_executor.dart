@@ -112,6 +112,14 @@ class ProxyCommandExecutor implements CommandExecutor {
     bool compress = false,
     Duration? activityIdle,
     OperationDescriptor? operation,
+    // Deliberately unused, and NOT a forgotten wire-up. The command runs on the
+    // main isolate, so its lifecycle events are emitted there; the relay pushes
+    // them back to this window over the hub channel, where the shell reports
+    // them into this window's own operationActivityProvider (0022 M3). Invoking
+    // this callback here would need the child to correlate events it never
+    // observes to calls it made — the hub push already delivers them to the one
+    // place that consumes them. Kept in the signature because it is part of the
+    // CommandExecutor contract.
     OperationEventCallback? onOperationEvent,
     CommandOutputCallback? onOutput,
   }) async {
