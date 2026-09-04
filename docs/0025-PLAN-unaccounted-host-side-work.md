@@ -730,6 +730,35 @@ it either.
 witness is exact for them. `status` is never gated. MADR 0025 F1 carries the
 correction.
 
+### Deviation (b) — 2026-09-04 — Phase 10 is already implemented, and Phase 6 has no target left
+
+**Found** while looking for Phase 6's gating point.
+`git_service.dart:1366-1391`: `status()`, `refs()` and `pendingOp()` all
+resolve through `_snapshot(repoPath)`, which issues **one** `sh -c` running
+`status --porcelain=v2`, `for-each-ref` and `remote` with framed output — and
+`_snapshot` (`:1958-1970`) already **deduplicates concurrent callers** through
+`_snapshotInFlight`, so three providers asking at once share one command.
+
+Two consequences:
+
+* **Phase 10 (D2) is redundant.** The refresh triple was bundled and deduped
+  before this plan was written. The 15×`status` / 15×`for-each-ref` /
+  15×`remote` in the 123-process trace are therefore **15 invocations of one
+  bundled command**, each spawning three git processes — not three separate
+  reads repeated fifteen times. MADR 0025 D2 and the measurement's reading of
+  the table are both corrected by this.
+* **Phase 6 (F1) has almost no target.** The snapshot cannot be gated, because
+  `status` rides it (deviation (a)). The only separately-invoked refs-derived
+  reads left are `log` (4 in the trace) and `branch --merged` (9) — 13 of 123,
+  and each would pay a fingerprint round trip, making a *single* call worse.
+
+**Decision (maintainer): skip both, and re-measure before continuing.**
+Phases 7–11 are to be decided against the actual remaining command count now
+that Phases 2 and 5 have landed, rather than against the original 123 — which
+is the MADR's own rule that Finding B is not remediated before it is
+attributed. F1 is recorded as **declined on evidence** (the shape 0023 used for
+its A2); D2 as **already implemented**.
+
 ## Execution record
 
 *(Filled in during execution: what each phase did, the verbatim red-test

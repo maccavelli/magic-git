@@ -543,6 +543,19 @@ N independent channels are not.
 
 ### D2 — Bundle the refresh triple into one invocation
 
+> **Already implemented — corrected 2026-09-04 during execution.**
+> `git_service.dart:1366-1391` routes `status()`, `refs()` and `pendingOp()`
+> through `_snapshot(repoPath)`, a single `sh -c` running all three with framed
+> output, and `_snapshot` (`:1958-1970`) deduplicates concurrent callers via
+> `_snapshotInFlight`. This proposal describes work that was done before this
+> record was written.
+>
+> It also corrects how the measurement should be read: the 15×`status` /
+> 15×`for-each-ref` / 15×`remote` are **15 invocations of one bundled
+> command**, each spawning three git processes — not three reads repeated
+> fifteen times. The defect is the *number of waves*, and bundling cannot
+> reduce it.
+
 **Grounded in:** the measurement — `status`, `for-each-ref` and `remote` appear
 15 times *each*, always together; and on existing precedent in this codebase.
 
