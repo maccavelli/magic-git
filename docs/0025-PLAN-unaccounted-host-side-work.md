@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-04
 associated-madr: "0025-MADR-unaccounted-host-side-work.md"
 ---
@@ -761,22 +761,81 @@ its A2); D2 as **already implemented**.
 
 ## Execution record
 
-*(Filled in during execution: what each phase did, the verbatim red-test
-output, verification output rather than a summary, and a dated entry for every
-deviation. Empty until approved.)*
-
 | Phase | Status | Commit | Red-test observed | Live delta |
 |---|---|---|---|---|
-| 0 | not started | — | — | — |
-| 1 | not started | — | — | — |
-| 2 | not started | — | — | — |
-| 3 | not started | — | — | — |
-| 4 | not started | — | — | — |
-| 5 | not started | — | — | — |
-| 6 | not started | — | — | — |
-| 7 | not started | — | — | — |
+| 0 | baseline captured | — | n/a (measurement) | 123 host commands in the reference trace |
+| 1 | executed | `cd659fe` | `countsByLabel` absent → compile error, then `Expected: 3 / Actual: 1` on bucketing | attribution only |
+| 2 | executed | `1ca5863` | commit not bracketed → the echoed watcher tick re-refreshed | one refresh wave removed per commit |
+| 3 | executed | `7735f13` | ceiling absent → 4 watchers armed where 2 are allowed | watcher ceiling = 2; stale sweep on connect |
+| 4 | executed | `3ec893c` | wiring test red once the heartbeat arg was removed from the arm | watchers self-terminate after a 5 min lease gap |
+| 5 | executed | `0dc4cba` | area-scoped invalidation absent → a work-tree tick invalidated ref families | refresh fan-out scoped by `GitArea` |
+| 6 | **declined on evidence** | — | — | see deviation (a): the witness cannot gate `status` |
+| 7 | executed | `84882e2` | `Expected: <1> / Actual: <3>` — three providers, three fetches | one snapshot command per refresh wave instead of ~2.5 |
 | 8 | not started | — | — | — |
 | 9 | not started | — | — | — |
-| 10 | not started | — | — | — |
+| 10 | **already implemented** | — | — | see deviation (b): `_snapshot` bundled the triple before this plan |
 | 11 | not started | — | — | — |
 | 12 | **not authorized** | — | — | needs separate approval |
+
+### Phase 7 as executed — F3 by sharing the fetch, not by superseding waves
+
+The plan's 7b proposed a per-repo refresh **generation**: let each wave issue
+its commands, then drop the result if a later wave had superseded it. That
+suppresses the *effect* of a redundant wave but not the command — the host
+still runs it. Deviation (b) had already established that `_snapshot` bundles
+`status`/`for-each-ref`/`remote` into one `sh -c` and dedupes **strictly
+concurrent** callers, which located the real leak precisely: `statusProvider`,
+`refsProvider` and `pendingOpProvider` were three independent fetches, and
+Riverpod rebuilds them as their listeners settle rather than in one instant, so
+each wave slipped past the in-flight dedup two or three times. Six refresh
+triggers produced fifteen snapshot commands.
+
+So the fix moves the fetch seam instead: a single `repoSnapshotProvider` owns
+the round trip, and `statusProvider` / `refsProvider` / `pendingOpProvider`
+become synchronous views of it. One wave, one command, by construction — no
+generation counter, and nothing to keep in sync. `GitService.snapshot()` is now
+public so it is the seam tests intercept.
+
+**Verification.** `test/repo_snapshot_sharing_test.dart` — three tests: the
+sharing property (red at `Expected: <1> / Actual: <3>`), invalidation reaching
+all three views, and a scan asserting no feature invalidates a derived view
+instead of the fetch. Full suite: **3464 passed, 2 skipped** (the `live-forge`
+pair), analyzer clean.
+
+### Deviation (c) — 2026-09-04 — moving the fetch seam silently hung the suite
+
+**Found** during Phase 7, after the sharing test was already green. The whole
+run hung with no error, no stack and no failing test name — `flutter test`'s
+own `--timeout 30s` did not fire either.
+
+Moving the seam from `status()` to `snapshot()` meant fakes overriding
+`status()` no longer intercepted, so `test/helpers/fake_snapshot.dart` gained a
+mixin supplying a `snapshot()` built from the fake's override — and a twin,
+`FakeRefsSnapshot`, for fakes overriding `refs()` instead. `_FakeGit` in
+`test/secondary_window_app_test.dart:69` overrides `refs()` but was given the
+status-shaped mixin. Its `snapshot()` called `status()`, whose base
+implementation now resolves back through `snapshot()`: unbounded recursion
+through `await`. That floods the microtask queue, and Dart drains every
+microtask before any timer — which is why the test framework's own timeout
+timer could never run. The inability to time out *was* the diagnostic.
+
+**Decision: fix the pairing, and make the wrong pairing loud.** `_FakeGit` moves
+to `FakeRefsSnapshot` (its `_HeadMoveGit` subclass overrides `fakeStatus`
+instead of `status()` so the controllable HEAD still reaches the snapshot), and
+both mixins now detect re-entry and throw a named `StateError` naming the seam
+and the mixin to use instead. Detection is zone-scoped, not a flag, so two
+genuinely concurrent snapshots of one repo — the case `_snapshotInFlight`
+exists to collapse — do not false-positive.
+
+**Instrument verified.** `test/fake_snapshot_guard_test.dart` pins it: both
+wrong pairings throw with the expected message, the correct pairing resolves,
+and concurrent snapshots do not trip the guard. Files added to the phase's
+scope: `test/helpers/fake_snapshot.dart`, `test/fake_snapshot_guard_test.dart`,
+and the 16 test files whose fakes took a mixin.
+
+### Deviation (d) — 2026-09-04 — a diagnostic commit reached the remote
+
+A temporary `mgTraceRefresh` instrumentation commit (`12903f1`) was committed
+and pushed by the maintainer along with the phase work. It was removed with
+`git revert` (`d34e662`) rather than a history rewrite, because the commit was
+already published.
