@@ -87,11 +87,28 @@ class _StubConnection extends ConnectionController {
   final ConnectionState _state;
   final List<String> repoPathsSet = [];
 
+  /// Gates [beginProvisioning] so a test can hold a host "still dialing" while
+  /// it drives the sheet — the window in which 0022 H4 happens.
+  Completer<int?>? dialGate;
+  final List<String> dialed = [];
+  final List<int> aborted = [];
+
   @override
   ConnectionState build() => _state;
 
   @override
   void setRepoPath(String path) => repoPathsSet.add(path);
+
+  @override
+  Future<int?> beginProvisioning(SavedConnection conn) {
+    dialed.add(conn.id);
+    final gate = dialGate;
+    if (gate == null) return Future.value(1);
+    return gate.future;
+  }
+
+  @override
+  Future<void> abortProvisioning(int token) async => aborted.add(token);
 }
 
 class _FakeStore extends ConnectionStore {
@@ -373,6 +390,73 @@ void main() {
     expect(find.text('Parent folder on this Mac'), findsOneWidget);
     expect(find.text('No folder chosen'), findsOneWidget);
     expect(find.text('Parent folder on the host'), findsNothing);
+  });
+
+  testWidgets('the destination cannot be switched while a host is dialing', (
+    tester,
+  ) async {
+    // 0022 H4, UI half. Switching destination mid-dial is what lets a session
+    // dialed for host A be adopted under host B — so the control is dead for
+    // the duration of the dial. (The post-await identity guard in
+    // WorkspaceProvisioning and the controller's own conn-id check are the
+    // backstops, covered in connection_provisioning_test.)
+    //
+    // Note: no pumpAndSettle once the dial starts — the sheet shows an
+    // indeterminate "Connecting…" spinner, which never settles.
+    final stub = _StubConnection(const ConnectionState());
+    stub.dialGate = Completer<int?>();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          connectionProvider.overrideWith(() => stub),
+          activeExecutorProvider.overrideWithValue(_FakeExecutor()),
+          savedConnectionsProvider.overrideWith((ref) async => [_conn]),
+          forgeRepoListProvider.overrideWith((ref, key) async => []),
+          forgeAuthHostProvider.overrideWith((ref, key) async => null),
+        ],
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: CloneRepositorySheet.landing(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    MacosPopupButton<String?> destination() => tester
+        .widgetList<MacosPopupButton<String?>>(
+          find.byType(MacosPopupButton<String?>),
+        )
+        .first;
+
+    expect(
+      destination().onChanged,
+      isNotNull,
+      reason: 'enabled before any dial',
+    );
+
+    // Select the saved connection: this starts the (gated) dial.
+    await tester.tap(find.text('This Mac'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Prod').last);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(stub.dialed, ['c1'], reason: 'the dial should have started');
+
+    expect(
+      destination().onChanged,
+      isNull,
+      reason: 'destination must be inert while the host is still dialing',
+    );
+
+    // Once the dial lands the control comes back, or the sheet is stuck.
+    stub.dialGate!.complete(7);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(
+      destination().onChanged,
+      isNotNull,
+      reason: 'the control must be usable again once the dial resolves',
+    );
   });
 }
 

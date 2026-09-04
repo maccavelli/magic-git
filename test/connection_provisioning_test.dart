@@ -119,6 +119,18 @@ SavedConnection _conn() => const SavedConnection(
   repoPaths: ['/existing'],
 );
 
+/// A DIFFERENT saved connection — the "host B" a sheet's destination can be
+/// switched to while host A is still dialing.
+SavedConnection _conn2() => const SavedConnection(
+  id: 'c2',
+  label: 'Staging',
+  host: 'h2',
+  port: 22,
+  username: 'u',
+  repoPath: '/other',
+  repoPaths: ['/other'],
+);
+
 void main() {
   late _GatedManager manager;
   late _RecordingExecutor executor;
@@ -260,6 +272,53 @@ void main() {
       );
     },
   );
+
+  test('finalize refuses a connection the token was not minted for', () async {
+    // The mid-dial destination switch: the sheet dials host A (c1), the user
+    // picks host B (c2) before A resolves, and A's still-current token is
+    // adopted under B's identity. Without the identity guard this promotes
+    // A's live SSH session while persisting the repo into B's saved
+    // connection and reporting B's host — a silently wrong tree on a host
+    // the user never chose for it.
+    container = build();
+    controller = container.read(connectionProvider.notifier);
+    final token = await begin();
+
+    final ok = await controller.finalizeProvisioned(
+      token: token,
+      conn: _conn2(),
+      repoPath: '/other/newrepo',
+    );
+
+    expect(ok, isFalse, reason: 'token belongs to c1, not c2');
+    expect(
+      store.updated,
+      isEmpty,
+      reason: 'nothing may be persisted into the wrong connection',
+    );
+    expect(
+      state().repoPath,
+      isNot('/other/newrepo'),
+      reason: 'the wrong-host repo must not become the live workspace',
+    );
+  });
+
+  test('finalize still accepts the connection that minted the token', () async {
+    // Guards the guard: the identity check must not reject the ordinary path,
+    // or every clone/create into a saved connection breaks.
+    container = build();
+    controller = container.read(connectionProvider.notifier);
+    final token = await begin();
+
+    final ok = await controller.finalizeProvisioned(
+      token: token,
+      conn: _conn(),
+      repoPath: '/existing/newrepo',
+    );
+
+    expect(ok, isTrue, reason: 'same connection that minted the token');
+    expect(state().repoPath, '/existing/newrepo');
+  });
 
   test('abortProvisioning tears the session down to disconnected', () async {
     container = build();

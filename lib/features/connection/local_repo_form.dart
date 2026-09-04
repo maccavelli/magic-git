@@ -237,6 +237,15 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
   int? _provisionToken;
   bool _provisioning = false;
 
+  /// The controller, captured when a dial starts.
+  ///
+  /// [_resetProvisioning] runs from [dispose], where `ref` is already unsafe
+  /// ("Using \"ref\" when a widget is about to or has been unmounted"), so
+  /// reading the provider there threw instead of hanging up — stranding the
+  /// dialed session at `phase: connecting`. The controller outlives this
+  /// sheet, so holding it is safe. (0022 deviation (c).)
+  ConnectionController? _notifier;
+
   bool get _isLocal => _connectionId == null;
 
   @override
@@ -253,9 +262,10 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
   Future<void> _resetProvisioning() async {
     final token = _provisionToken;
     _provisionToken = null;
-    if (token != null) {
-      await ref.read(connectionProvider.notifier).abortProvisioning(token);
-    }
+    if (token == null) return;
+    // Never `ref` here — see [_notifier]. A null notifier means no dial ever
+    // started, so there is nothing to hang up.
+    await _notifier?.abortProvisioning(token);
   }
 
   /// Resolves the chosen saved connection through the provider *future* — the
@@ -305,7 +315,9 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
     // Capture the notifier BEFORE the (seconds-long) dial so the guard below can
     // still tear the session down if the widget is disposed mid-dial — `ref` is
     // unusable after dispose, but the controller outlives the sheet.
-    final notifier = ref.read(connectionProvider.notifier);
+    final ConnectionController notifier =
+        _notifier ?? ref.read(connectionProvider.notifier);
+    _notifier = notifier;
     final token = await notifier.beginProvisioning(conn);
     if (!mounted || _connectionId != conn.id) {
       // The sheet closed, or the Location switched to a different host, while

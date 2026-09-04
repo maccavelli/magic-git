@@ -1164,6 +1164,52 @@ files because they are attributable by path.
 **Consequence of doing nothing about the warnings:** they remain for the
 maintainer to resolve alongside the dependency bump. Flagged, not absorbed.
 
+### DEVIATION 2026-09-03 (c) — pre-existing: `dispose()` aborts provisioning through `ref`, which is unsafe once unmounted
+
+**Found by** Phase 2's new sheet test, which is the first test to dispose a
+wizard while it holds an adopted provisioning token.
+
+**Evidence.** `dispose()` → `resetProvisioning()` → `ref.read(connectionProvider.notifier)`
+throws:
+
+```
+Bad state: Using "ref" when a widget is about to or has been unmounted is unsafe.
+  WorkspaceProvisioning.resetProvisioning (workspace_provisioning.dart:85)
+  _CloneRepositorySheetState.dispose (clone_sheet.dart:203)
+```
+
+**Genuinely pre-existing, not caused by the Phase 2 refactor.**
+`git show HEAD:lib/features/workspace/clone_sheet.dart` shows the identical
+shape before this plan touched it: `dispose()` calling `_resetProvisioning()`,
+whose body is `ref.read(connectionProvider.notifier).abortProvisioning(token)`.
+Both wizard sheets carry it, and the in-code comment states
+`AddExistingRepoSheet` uses "the same fire-and-forget pattern", so
+`local_repo_form.dart` is exposed identically.
+
+**User-visible consequence.** Dismissing a wizard by its barrier (or any route
+teardown that skips `_requestClose`) after a host has been dialed: `dispose`
+throws, the abort never runs, and a live SSH session is stranded at
+`phase: connecting` — the buttonless "Connecting…" tab that
+`local_repo_form.dart` explicitly guards against elsewhere.
+
+**Decision (maintainer, 2026-09-03): recommended option 1 + 3.**
+
+1. `WorkspaceProvisioning` captures the `ConnectionController` when a dial
+   starts and `resetProvisioning` uses that captured reference rather than
+   `ref`. Sound because `provisionToken` can only become non-null inside
+   `ensureProvisioned`, which captures first — so whenever there is something
+   to abort, the reference exists. Mirrors the pattern
+   `local_repo_form.dart:305-308` already documents ("the controller outlives
+   the sheet").
+3. The same fix is applied to `local_repo_form.dart`, which is **not** in
+   Phase 2's original file list — scope explicitly widened by the maintainer,
+   since it is the identical bug in the very pattern Phase 2 propagates.
+
+Rejected: weakening or deleting the test that found it, and having `dispose`
+skip the abort (both leave the stranded session shipped and hidden).
+
+**Files added to Phase 2's scope:** `lib/features/connection/local_repo_form.dart`.
+
 ### Phase 0 — Baseline (2026-09-03) — **COMPLETE**
 
 Taken on a pristine `git clone --local` at HEAD `433a9a6`, confirmed clean
@@ -1220,6 +1266,78 @@ not-ready envelope case in "serves execute calls: success and each typed error
 as envelopes", exercising the real hub handler end-to-end.
 
 **Negative test — seen to fail.** Run against a scratch `git clone` in the
+session scratchpad, never by dirtying the working tree. The decoder `case` was
+removed by a script that **asserts its target was present before editing**
+(so a no-op edit could not masquerade as a passing check), and the removal was
+verified by re-grepping the file. Result, verbatim:
+
+```
+Expected: throws <Instance of 'SSHTransportNotReady'> with `command`: 'git status'
+  Actual: <Closure: () => CommandResult>
+   Which: threw ProxyExecuteException:<SSH transport is not ready yet: git status>
+          which is not an instance of 'SSHTransportNotReady'
+```
+
+That failure text is the bug itself: the raw developer string that a pop-out
+window rendered in its Repository pane instead of the "still connecting"
+spinner. Note the version-skew test correctly still passed with the decoder
+broken — it exercises only the encoder.
+
+### Phase 2 — H4: mid-dial host switch (2026-09-03) — **COMPLETE**
+
+**Done — controller (the load-bearing half).** `finalizeProvisioned`
+(`app_providers.dart`) now rejects a `conn` whose id is not
+`_lastConnectionId`, alongside the existing token check, with a comment
+explaining why the two are not redundant (the token is a *generation* counter,
+not an identity). Its doc comment was amended, as the phase required, because
+`false` now has a second meaning that both callers surface as
+"cloned/created but could not be opened".
+
+**Done — sheets.** New `lib/features/workspace/workspace_provisioning.dart`
+holds the `WorkspaceProvisioning` mixin (`provisionToken`, `provisioning`,
+`ensureProvisioned`, `resetProvisioning`, `connectionById`), and both wizard
+sheets now use it. The extraction was justified by measurement, not taste: the
+four members were byte-for-byte identical between the two sheets apart from
+doc comments (verified by diffing the extracted ranges). Both sheets'
+Destination dropdowns are now gated on `provisioning` as well as `_submitting`,
+matching `local_repo_form.dart:669-671`.
+
+**Deviation (c) fixed in the same phase** — see its entry above: the mixin (and
+`local_repo_form.dart`, added to scope by the maintainer) capture the
+`ConnectionController` at dial time so `resetProvisioning` never touches `ref`
+from `dispose()`.
+
+**Tests added.** `connection_provisioning_test.dart`: a wrong-connection
+finalize is refused and persists nothing, **plus a positive control** that the
+right connection is still accepted — a guard that rejects everything would
+otherwise pass the first test. `clone_sheet_test.dart`: the Destination control
+is inert while a host dials and usable again once it resolves, driven by a
+gated `beginProvisioning` on the stub.
+
+**A test I rewrote rather than forced.** My first sheet test tried to switch
+destination mid-dial and assert the orphaned session was aborted. It could not
+work, and the reason is the fix: with the dropdown gated, that switch is
+unreachable through the UI. Asserting the gate is the honest test at this
+layer; the post-await identity guard is covered at the controller, where it is
+reachable. (It also timed out on `pumpAndSettle` — the sheet shows an
+indeterminate "Connecting…" spinner, so the test drives `pump()` explicitly.)
+
+**Negative tests — both seen to fail.** In scratch clones, with an assert that
+the target text existed before editing:
+* dropdown gate reverted → `Expected: null / Actual: <Closure: (String?) =>
+  Future<void> from Function '_onDestChanged'>`;
+* controller guard removed → `Expected: false / Actual: <true>` — the
+  wrong-host finalize succeeding, which is the data-corruption path itself.
+Deviation (c) was likewise observed failing before its fix (the `Bad state:
+Using "ref" …` stack quoted in that entry).
+
+**Verification.** `flutter analyze` on the touched directories: clean. Full
+suite: `+3311 ~2 -48`, failing set **identical** to the Phase 0 baseline. The
+`+4` over baseline is exactly the four tests added.
+
+### Phase 1 negative-test detail (retained)
+
+Run against a scratch `git clone` in the
 session scratchpad, never by dirtying the working tree. The decoder `case` was
 removed by a script that **asserts its target was present before editing**
 (so a no-op edit could not masquerade as a passing check), and the removal was

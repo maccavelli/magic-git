@@ -2415,10 +2415,11 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// `connected` state watching for drops.
   ///
   /// Returns false when the session was superseded (a concurrent disconnect /
-  /// new connect) — the caller should just close. Rethrows a validation
-  /// failure so the sheet can show it and offer Close (→ [abortProvisioning]).
-  /// Deliberately does NOT clear the output log, so the clone transcript
-  /// remains as this session's history.
+  /// new connect), **or when [conn] is not the connection this [token] was
+  /// minted for** — in both cases the caller should just close. Rethrows a
+  /// validation failure so the sheet can show it and offer Close
+  /// (→ [abortProvisioning]). Deliberately does NOT clear the output log, so
+  /// the clone transcript remains as this session's history.
   Future<bool> finalizeProvisioned({
     required int token,
     required SavedConnection conn,
@@ -2427,7 +2428,22 @@ class ConnectionController extends Notifier<ConnectionState> {
     String label = '',
     String gitDir = '',
   }) async {
-    if (token != _attempt || !ref.mounted) return false;
+    // The identity check is not redundant with the token check. [_attempt] is a
+    // generation counter — it answers "is this still the newest attempt?", not
+    // "is this the host the caller thinks it is". A sheet that dials host A,
+    // then has its destination switched to host B before A's dial resolves,
+    // adopts A's still-current token under B's identity; without this guard it
+    // promotes A's live SSH session while persisting the repo into B's
+    // SavedConnection and reporting B's host in ConnectionState.
+    //
+    // Sound because [beginProvisioning] sets `_lastConnectionId = conn.id`, and
+    // the only other writer ([connect]) bumps `_attempt` — so whenever the
+    // token still matches, `_lastConnectionId` is necessarily the id that
+    // minted it. Guarding here rather than only in the sheets makes the bug
+    // unrepresentable for every caller, present and future.
+    if (token != _attempt || conn.id != _lastConnectionId || !ref.mounted) {
+      return false;
+    }
 
     // Clear any scope a prior session left on the singleton registry before
     // validating/registering this repo (same reason as connect/connectLocal).

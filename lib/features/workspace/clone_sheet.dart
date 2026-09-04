@@ -7,7 +7,6 @@ import '../../core/forge/forge.dart';
 import '../../core/forge/forge_repo_summary.dart';
 import '../../core/git/host_fs_service.dart';
 import '../../core/providers/app_providers.dart';
-import '../../core/storage/saved_connection.dart';
 import '../../core/utils/display_error.dart';
 import '../../core/workspace/clone_controller.dart';
 import '../common/async_views.dart';
@@ -19,6 +18,7 @@ import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import 'remote_directory_browser.dart';
 import 'wizard.dart';
+import 'workspace_provisioning.dart';
 import 'workspace_registration.dart';
 import 'workspace_targets.dart';
 import 'workspace_widgets.dart';
@@ -53,7 +53,8 @@ class CloneRepositorySheet extends ConsumerStatefulWidget {
 
 enum _SourceTab { github, gitlab, url }
 
-class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
+class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
+    with WorkspaceProvisioning<CloneRepositorySheet> {
   _SourceTab _tab = _SourceTab.github;
   final _host = TextEditingController(text: 'github.com');
   final _filter = TextEditingController();
@@ -93,9 +94,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
   /// before the sheet pops.
   bool _finished = false;
 
-  // Provisioning (landing → saved SSH connection).
-  int? _provisionToken;
-  bool _provisioning = false;
+  // Provisioning state lives in WorkspaceProvisioning.
 
   WorkspaceTarget _target = WorkspaceTarget.sshActive;
   VoidCallback? _unregisterEscape;
@@ -112,7 +111,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           'saved SSH hosts. Picking a host connects to it on demand — the '
           'clone runs there and nothing is copied to this Mac.',
       applicable: () => widget.landing,
-      valid: () => !_provisioning,
+      valid: () => !provisioning,
       body: _destinationSection,
     ),
     WizardStep(
@@ -201,7 +200,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
     // A barrier-dismiss / route teardown skips _requestClose — hang up any
     // still-provisioned session instead of leaking it (0009 M29; same
     // fire-and-forget pattern as AddExistingRepoSheet's dispose).
-    _resetProvisioning();
+    resetProvisioning();
     _host.dispose();
     _filter.dispose();
     _url.dispose();
@@ -242,81 +241,34 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
 
   bool get _isLocalTarget => _target == WorkspaceTarget.localMac;
 
+  @override
+  String? get destConnectionId => _destConnectionId;
+
+  @override
+  bool get needsProvisioning => _target == WorkspaceTarget.sshProvision;
+
+  @override
+  void onProvisioningError(String? message) {
+    if (!mounted) return;
+    setState(() => _error = message);
+  }
+
   /// Whether the forge browse list can query yet: immediate for local and the
   /// active SSH session; for a landing connection, only once provisioned.
   bool get _forgeBrowseReady =>
-      _target != WorkspaceTarget.sshProvision || _provisionToken != null;
+      _target != WorkspaceTarget.sshProvision || provisionToken != null;
 
   Future<void> _onDestChanged(String? connectionId) async {
     // Switching destination abandons any in-flight provisioning.
-    await _resetProvisioning();
+    await resetProvisioning();
     setState(() {
       _destConnectionId = connectionId;
       _error = null;
       _recomputeTarget();
     });
     if (_target == WorkspaceTarget.sshProvision) {
-      await _ensureProvisioned();
+      await ensureProvisioned();
     }
-  }
-
-  Future<void> _resetProvisioning() async {
-    final token = _provisionToken;
-    _provisionToken = null;
-    if (token != null) {
-      await ref.read(connectionProvider.notifier).abortProvisioning(token);
-    }
-  }
-
-  /// Dials the chosen saved connection (once) so the browse/clone can run on
-  /// its host. Returns whether the session is ready.
-  Future<bool> _ensureProvisioned() async {
-    if (_target != WorkspaceTarget.sshProvision) return true;
-    if (_provisionToken != null) return true;
-    if (_provisioning) return false;
-    final conn = await _connectionById(_destConnectionId);
-    if (conn == null) return false;
-    setState(() {
-      _provisioning = true;
-      _error = null;
-    });
-    final token = await ref
-        .read(connectionProvider.notifier)
-        .beginProvisioning(conn);
-    if (!mounted) {
-      // Torn down while dialing — hang up rather than leak the session
-      // (0009 M29); the token was never stored, so dispose can't reach it.
-      if (token != null) {
-        ref.read(connectionProvider.notifier).abortProvisioning(token).ignore();
-      }
-      return false;
-    }
-    setState(() {
-      _provisioning = false;
-      _provisionToken = token;
-      if (token == null) {
-        _error =
-            ref.read(connectionProvider).error ?? 'Could not connect to host.';
-      }
-    });
-    return token != null;
-  }
-
-  /// Resolves a saved connection by id through the provider *future* — the
-  /// sync `.value` is null unless something else happens to be watching the
-  /// provider (true on the landing, not in connected mode).
-  Future<SavedConnection?> _connectionById(String? id) async {
-    if (id == null) return null;
-    final List<SavedConnection> list;
-    try {
-      list = await ref.read(savedConnectionsProvider.future);
-    } catch (_) {
-      return null;
-    }
-    for (final c in list) {
-      if (c.id == id) return c;
-    }
-    return null;
   }
 
   bool get _canSubmit {
@@ -332,8 +284,8 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
     });
     try {
       // Ensure the destination session is live (landing → connection).
-      if (!await _ensureProvisioned()) {
-        return; // _error already set by _ensureProvisioned
+      if (!await ensureProvisioned()) {
+        return; // _error already set by ensureProvisioned
       }
 
       final name = _name.text.trim();
@@ -387,7 +339,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
         return;
       }
       // Provisioning (if any) has been finalized by _register; don't abort it.
-      _provisionToken = null;
+      provisionToken = null;
       // Let the finished (green) progress bar register before the sheet
       // pops — success otherwise vanishes the very frame it happens.
       setState(() => _finished = true);
@@ -421,8 +373,8 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
           label: _remoteLabel.text.trim(),
         );
       case WorkspaceTarget.sshProvision:
-        final conn = await _connectionById(_destConnectionId);
-        final token = _provisionToken;
+        final conn = await connectionById(_destConnectionId);
+        final token = provisionToken;
         if (conn == null || token == null) return false;
         return ref
             .read(connectionProvider.notifier)
@@ -442,7 +394,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
       await ref.read(cloneJobProvider.notifier).cancel();
     }
     ref.read(cloneJobProvider.notifier).reset();
-    await _resetProvisioning();
+    await resetProvisioning();
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -461,7 +413,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
   }
 
   Future<void> _browseRemote() async {
-    if (!await _ensureProvisioned()) return;
+    if (!await ensureProvisioned()) return;
     if (!mounted) return;
     final start = _parent.text.trim();
     final picked = await showMacosSheet<String>(
@@ -570,7 +522,12 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
         const SizedBox(height: 4),
         MacosPopupButton<String?>(
           value: _destConnectionId,
-          onChanged: _submitting ? null : _onDestChanged,
+          // Disabled while a host is still dialing: switching mid-dial
+          // otherwise adopts the in-flight session under the newly selected
+          // connection (0022 H4). The post-await guard in ensureProvisioned is
+          // the backstop; this removes the race at the UI level so it cannot be
+          // triggered at all.
+          onChanged: (_submitting || provisioning) ? null : _onDestChanged,
           items: [
             const MacosPopupMenuItem<String?>(
               value: null,
@@ -589,7 +546,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet> {
               : 'The repository is cloned on the selected host over SSH — '
                     'its own git and forge sign-ins are used.',
         ),
-        if (_provisioning)
+        if (provisioning)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Row(

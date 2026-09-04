@@ -14,7 +14,6 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/ssh/ssh_command_executor.dart';
-import '../../core/storage/saved_connection.dart';
 import '../../core/utils/display_error.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
@@ -23,6 +22,7 @@ import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'remote_directory_browser.dart';
 import 'wizard.dart';
+import 'workspace_provisioning.dart';
 import 'workspace_registration.dart';
 import 'workspace_targets.dart';
 import 'workspace_widgets.dart';
@@ -104,7 +104,8 @@ class CreateRepositorySheet extends ConsumerStatefulWidget {
       _CreateRepositorySheetState();
 }
 
-class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
+class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
+    with WorkspaceProvisioning<CreateRepositorySheet> {
   final _name = TextEditingController();
   final _branch = TextEditingController(text: 'main');
   final _parent = TextEditingController();
@@ -166,9 +167,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   /// (the GitLab forge publish) — the footer becomes a single Close button.
   String? _completedWarning;
 
-  // Provisioning (landing → saved SSH connection).
-  int? _provisionToken;
-  bool _provisioning = false;
+  // Provisioning state lives in WorkspaceProvisioning.
 
   WorkspaceTarget _target = WorkspaceTarget.sshActive;
   VoidCallback? _unregisterEscape;
@@ -185,7 +184,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           'your saved SSH hosts. Picking a host connects to it on demand — '
           'the repository stays on the host, nothing is copied to this Mac.',
       applicable: () => widget.landing,
-      valid: () => !_provisioning,
+      valid: () => !provisioning,
       body: _destinationSection,
     ),
     WizardStep(
@@ -338,7 +337,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     // A barrier-dismiss / route teardown skips _requestClose — hang up any
     // still-provisioned session instead of leaking it (0009 M29; same
     // fire-and-forget pattern as AddExistingRepoSheet's dispose).
-    _resetProvisioning();
+    resetProvisioning();
     _unregisterEscape?.call();
     _name.dispose();
     _branch.dispose();
@@ -374,6 +373,18 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
 
   bool get _isLocalTarget => _target == WorkspaceTarget.localMac;
 
+  @override
+  String? get destConnectionId => _destConnectionId;
+
+  @override
+  bool get needsProvisioning => _target == WorkspaceTarget.sshProvision;
+
+  @override
+  void onProvisioningError(String? message) {
+    if (!mounted) return;
+    setState(() => _error = message);
+  }
+
   bool get _onForge =>
       _remote == _RemoteMode.github || _remote == _RemoteMode.gitlab;
 
@@ -384,66 +395,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       _remote == _RemoteMode.gitlab ? 'gitlab.com' : 'github.com';
 
   Future<void> _onDestChanged(String? connectionId) async {
-    await _resetProvisioning();
+    await resetProvisioning();
     setState(() {
       _destConnectionId = connectionId;
       _error = null;
       _recomputeTarget();
     });
-  }
-
-  Future<void> _resetProvisioning() async {
-    final token = _provisionToken;
-    _provisionToken = null;
-    if (token != null) {
-      await ref.read(connectionProvider.notifier).abortProvisioning(token);
-    }
-  }
-
-  Future<bool> _ensureProvisioned() async {
-    if (_target != WorkspaceTarget.sshProvision) return true;
-    if (_provisionToken != null) return true;
-    if (_provisioning) return false;
-    final conn = await _connectionById(_destConnectionId);
-    if (conn == null) return false;
-    setState(() {
-      _provisioning = true;
-      _error = null;
-    });
-    final token = await ref
-        .read(connectionProvider.notifier)
-        .beginProvisioning(conn);
-    if (!mounted) {
-      // Torn down while dialing — hang up rather than leak the session
-      // (0009 M29); the token was never stored, so dispose can't reach it.
-      if (token != null) {
-        ref.read(connectionProvider.notifier).abortProvisioning(token).ignore();
-      }
-      return false;
-    }
-    setState(() {
-      _provisioning = false;
-      _provisionToken = token;
-      if (token == null) {
-        _error =
-            ref.read(connectionProvider).error ?? 'Could not connect to host.';
-      }
-    });
-    return token != null;
-  }
-
-  Future<SavedConnection?> _connectionById(String? id) async {
-    if (id == null) return null;
-    final List<SavedConnection> list;
-    try {
-      list = await ref.read(savedConnectionsProvider.future);
-    } catch (_) {
-      return null;
-    }
-    for (final c in list) {
-      if (c.id == id) return c;
-    }
-    return null;
   }
 
   bool get _canSubmit {
@@ -462,7 +419,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
       _error = null;
     });
     try {
-      if (!await _ensureProvisioned()) return;
+      if (!await ensureProvisioned()) return;
       if (_isLocalTarget) {
         // Outside a local session (landing → This Mac) the local executor
         // has never been environment-probed; without this, gh/glab in a
@@ -854,7 +811,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         });
         return;
       }
-      _provisionToken = null; // finalized (or not provisioning) — don't abort
+      provisionToken = null; // finalized (or not provisioning) — don't abort
       if (warning != null) {
         setState(() => _completedWarning = warning);
         return; // stay open so the warning is seen; footer becomes Close
@@ -1146,8 +1103,8 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
           label: _remoteLabel.text.trim(),
         );
       case WorkspaceTarget.sshProvision:
-        final conn = await _connectionById(_destConnectionId);
-        final token = _provisionToken;
+        final conn = await connectionById(_destConnectionId);
+        final token = provisionToken;
         if (conn == null || token == null) return false;
         return ref
             .read(connectionProvider.notifier)
@@ -1166,7 +1123,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
     // tear the SSH session down under the in-flight command — the footer
     // Cancel is already disabled for the same reason (0009 H20).
     if (_submitting) return;
-    await _resetProvisioning();
+    await resetProvisioning();
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -1204,7 +1161,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   }
 
   Future<void> _browseRemoteFolder() async {
-    if (!await _ensureProvisioned()) return;
+    if (!await ensureProvisioned()) return;
     if (!mounted) return;
     final start = _folder.text.trim();
     final picked = await showMacosSheet<String>(
@@ -1224,7 +1181,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
   }
 
   Future<void> _browseRemote() async {
-    if (!await _ensureProvisioned()) return;
+    if (!await ensureProvisioned()) return;
     if (!mounted) return;
     final start = _parent.text.trim();
     final picked = await showMacosSheet<String>(
@@ -1350,7 +1307,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
         const SizedBox(height: 4),
         MacosPopupButton<String?>(
           value: _destConnectionId,
-          onChanged: _submitting ? null : _onDestChanged,
+          // Disabled while a host is still dialing: switching mid-dial
+          // otherwise adopts the in-flight session under the newly selected
+          // connection (0022 H4). The post-await guard in ensureProvisioned is
+          // the backstop; this removes the race at the UI level so it cannot be
+          // triggered at all.
+          onChanged: (_submitting || provisioning) ? null : _onDestChanged,
           items: [
             const MacosPopupMenuItem<String?>(
               value: null,
@@ -1368,7 +1330,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet> {
               ? 'The repository is created on this Mac\'s own filesystem.'
               : 'The repository is created on the selected host over SSH.',
         ),
-        if (_provisioning)
+        if (provisioning)
           Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Row(
