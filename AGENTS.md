@@ -39,6 +39,23 @@ UI (macos_ui + Riverpod). macOS is the only target platform.
 
 ## Commands
 
+**The Flutter version is pinned, and it matters.** `build_macos.sh` sets
+`FLUTTER_VERSION` (currently **3.47.2**) and that is the SDK the app ships on.
+Flutter pins several transitive packages *exactly* — `test_api`, `matcher`,
+`meta`, `vector_math` — so running a different `flutter` rewrites
+`pubspec.lock` on every command and fails the 48 `workspace_golden_test.dart`
+goldens on antialiasing alone. Two commits (`bd93c18`, `21721ef`) are that
+churn, and a whole audit baseline was recorded wrong because of it. Check
+before you start, and make it agree:
+
+```sh
+flutter --version | head -1          # must match FLUTTER_VERSION in build_macos.sh
+flutter pub get --enforce-lockfile   # must say "Got dependencies!", not "Unable to satisfy"
+```
+
+If they disagree, use the pinned SDK (`./.flutter-sdk/bin/flutter`, which
+`build_macos.sh` fetches) rather than whatever is on `$PATH`.
+
 ```sh
 flutter pub get
 flutter analyze                      # strict: strict-casts/inference/raw-types, unawaited_futures

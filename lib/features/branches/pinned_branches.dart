@@ -26,7 +26,12 @@ final pinnedBranchesProvider = FutureProvider.autoDispose
     .family<Set<String>, String>((ref, repoPath) async {
       try {
         if (ref.watch(connectionProvider).sessionEpoch <= 0) {
-          return _legacyPins(repoPath);
+          // `await`, not a bare return: a Future returned from inside a try
+          // settles outside it, so _legacyPins' errors escaped the catch below
+          // and this provider errored instead of honouring its documented
+          // "Empty on any error" posture — which, with noProviderRetry, is an
+          // error state in the Branches pane.
+          return await _legacyPins(repoPath);
         }
         final prefs = await ref.watch(
           branchWorkspacePrefsProvider(repoPath).future,

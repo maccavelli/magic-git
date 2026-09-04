@@ -102,7 +102,9 @@ final imageDiffBlobProvider = FutureProvider.autoDispose
                 key.path,
                 maxBytes: kImageDiffMaxEncodedBytes,
               );
-        return inspectImageDiffBytes(base64.decode(encoded));
+        // `await` so the `on GitException` below actually covers this call;
+        // a bare return settles the Future outside the try.
+        return await inspectImageDiffBytes(base64.decode(encoded));
       } on GitException catch (error) {
         if (error.result.exitCode == 75) {
           throw const ImageDiffReadException(
