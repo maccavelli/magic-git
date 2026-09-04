@@ -1382,6 +1382,41 @@ absence.
 with a forge remote. Static tests prove the env reaches the command; only a
 live host proves the Forge tab populates. Carried to Phase 15's live pass.
 
+### Phase 4 — M7: live scope-registry lifecycle (2026-09-03) — **COMPLETE**
+
+**Done.** `setRepoPath` gained the missing negative branch
+(`unregisterRepoScope` when the path is absent from
+`ConnectionState.scopedGitDirs`); `_deleteRepo` and `_editRepo` now drop the
+**live** registry entry as well as the persisted map one, both guarded on the
+live connection still being that connection. `_deleteRepo`'s unregister
+deliberately runs whether or not the deleted repo was the *active* one, since
+connect registers every scope a connection carries. `_editRepo` unregisters the
+old path only and does not register the new one live — matching the contract
+the adjacent fsmonitor branch already states ("across a repoint it applies on
+the next connect").
+
+**Known limitation, recorded rather than silently widened** (as the phase
+required): `ConnectionState.scopedGitDirs` is written only by `connect`,
+`connectLocal`, and `finalizeProvisioned`, so switcher edits do not update the
+live session state until the next connect. These unregisters make the registry
+consistent with the **live session state**, which can itself lag the saved
+connection. Making switcher edits apply live would need a
+`copyWith(scopedGitDirs:)` mutator on the controller that does not exist —
+out of scope, and a deviation if it ever proves necessary.
+
+**Test added.** In `scoped_forge_providers_test.dart`: with two scopes
+registered (as connect would), switching to a repo absent from
+`scopedGitDirs` clears its entry while the genuinely scoped repo keeps its
+own. Exercises the real `setRepoPath`, not a stub — the stub overrides only
+`build()`.
+
+**Negative test — seen to fail.** `else` branch removed in a scratch clone
+(with an assert that the block existed): `Expected: false / Actual: <true>` —
+the stale scope surviving the switch, which is the leak.
+
+**Verification.** Analyzer: 2 pre-existing. Suite: `+3316 ~2 -48`, failing set
+identical to baseline.
+
 ### Phase 1 negative-test detail (retained)
 
 Run against a scratch `git clone` in the

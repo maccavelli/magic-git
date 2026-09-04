@@ -2158,6 +2158,15 @@ class ConnectionController extends Notifier<ConnectionState> {
       ref
           .read(gitServiceProvider)
           .registerRepoScope(path, gitDir: scopedGitDir, workTree: path);
+    } else {
+      // And the converse, which was missing: this registry only ever GREW
+      // within a session, so an ordinary repo opened at a path a scoped repo
+      // had vacated silently inherited its GIT_DIR/GIT_WORK_TREE. That is not
+      // only an env leak — `isRepoScoped` also gates `-uall`, so the stale
+      // entry changed which untracked files the status showed. ConnectionState
+      // is the durable source of truth: a path absent from scopedGitDirs must
+      // not be scoped in the registry (0022 M7).
+      ref.read(gitServiceProvider).unregisterRepoScope(path);
     }
     // The output view otherwise keeps showing the previous repo's command
     // history alongside the newly selected one, which reads as if it came

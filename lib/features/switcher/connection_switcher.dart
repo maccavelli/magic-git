@@ -852,8 +852,17 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
     // Re-read now — the active connection/repo may have changed while the
     // metadata write was in flight.
     final current = ref.read(connectionProvider);
-    if (current.connectionId == conn.id && current.repoPath == repo) {
-      notifier.setRepoPath(newDefault);
+    if (current.connectionId == conn.id) {
+      // Drop the LIVE registry entry too, not just the persisted map above.
+      // GitService is app-lifetime and its registry only ever grew within a
+      // session, so a later plain repo opened at this same path inherited the
+      // deleted repo's GIT_DIR (0022 M7). Runs whether or not this was the
+      // active repo: connect registers every scope a connection carries, not
+      // only the current one.
+      ref.read(gitServiceProvider).unregisterRepoScope(repo);
+      if (current.repoPath == repo) {
+        notifier.setRepoPath(newDefault);
+      }
     }
   }
 
@@ -947,6 +956,14 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
       ref.invalidate(savedConnectionsProvider);
     });
     if (!saved) return;
+    // A repoint leaves the OLD path's live registry entry behind, so a plain
+    // repo later opened there would inherit this repo's GIT_DIR (0022 M7).
+    // Only unregister: the new path is deliberately NOT registered live, so a
+    // repoint applies on the next connect — the same contract the fsmonitor
+    // branch below states for itself.
+    if (pathChanged && ref.read(connectionProvider).connectionId == conn.id) {
+      ref.read(gitServiceProvider).unregisterRepoScope(repo);
+    }
     // Apply an fsmonitor change live only when the path itself did not move —
     // same contract as _toggleFsmonitor (each git command carries its own repo
     // path). Across a repoint the new path may not be a live checkout yet, so

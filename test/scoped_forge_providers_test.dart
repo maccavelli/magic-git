@@ -179,6 +179,31 @@ void main() {
     },
   );
 
+  test('switching to an unscoped repo clears a stale scope entry', () async {
+    // 0022 M7. The live registry only ever grew within a session, so an
+    // ordinary repo opened at a path a scoped repo had vacated inherited its
+    // GIT_DIR — and, because isRepoScoped also gates `-uall`, silently changed
+    // which untracked files that repo reported.
+    const other = '/srv/plain';
+    final c = build(_scopedState());
+    final git = c.read(gitServiceProvider);
+    // Simulate connect having registered every scope the connection carries.
+    git.registerRepoScope(_repo, gitDir: _gitDir, workTree: _repo);
+    git.registerRepoScope(other, gitDir: _gitDir, workTree: other);
+    expect(git.isRepoScoped(other), isTrue);
+
+    // `other` is NOT in the connection's scopedGitDirs, so switching to it must
+    // leave it unscoped.
+    c.read(connectionProvider.notifier).setRepoPath(other);
+
+    expect(git.isRepoScoped(other), isFalse);
+    expect(
+      git.isRepoScoped(_repo),
+      isTrue,
+      reason: 'the genuinely scoped repo must keep its entry',
+    );
+  });
+
   test('sessionAuthStatusProvider scopes its probe commands', () async {
     final c = build(_scopedState());
     await c.read(sessionAuthStatusProvider.future);
