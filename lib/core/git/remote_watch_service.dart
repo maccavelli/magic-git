@@ -25,6 +25,7 @@ List<String> remoteWatcherArgs(
   RemoteWatcherTool tool,
   BoundedWatchSpec? bounded, {
   String? pidFile,
+  String? heartbeat,
 }) {
   // Scoped work-tree repo: watch the explicit, non-recursive bounded surface
   // (git-dir points + tracked-file dirs) instead of the whole work tree.
@@ -36,17 +37,38 @@ List<String> remoteWatcherArgs(
         return [
           'sh',
           '-c',
-          boundedFswatchScript(bounded.watchDirs, pidFile: pidFile),
+          boundedFswatchScript(
+            bounded.watchDirs,
+            pidFile: pidFile,
+            heartbeat: heartbeat,
+          ),
         ];
       case RemoteWatcherTool.inotifywait:
         return [
           'sh',
           '-c',
-          boundedInotifyScript(bounded.watchDirs, pidFile: pidFile),
+          boundedInotifyScript(
+            bounded.watchDirs,
+            pidFile: pidFile,
+            heartbeat: heartbeat,
+          ),
         ];
       case RemoteWatcherTool.none:
         return const [];
     }
+  }
+  if (heartbeat != null && tool != RemoteWatcherTool.none) {
+    // Leased recursive arm — see [recursiveWatchScript].
+    return [
+      'sh',
+      '-c',
+      recursiveWatchScript(
+        inotify: tool == RemoteWatcherTool.inotifywait,
+        excludes: _inotifyExcludeFlags,
+        pidFile: pidFile,
+        heartbeat: heartbeat,
+      ),
+    ];
   }
   switch (tool) {
     case RemoteWatcherTool.fswatch:
@@ -273,6 +295,7 @@ class RemoteWatchService {
               tool,
               spec,
               pidFile: watchPidFile(spec?.gitDir ?? '$repoPath/.git'),
+              heartbeat: watchHeartbeatFile(spec?.gitDir ?? '$repoPath/.git'),
             ),
           );
         } on SSHStreamBudgetExhausted catch (e) {

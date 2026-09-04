@@ -147,18 +147,69 @@ typedef BoundedWatchSpecSource = Future<BoundedWatchSpec> Function();
 /// retrying on the recovery timer (0022 M6).
 const int boundedWatchNoPathsExit = 97;
 
-String boundedInotifyScript(List<String> watchDirs, {String? pidFile}) {
+/// Wraps [inner] — a watcher invocation that exits on its own timeout — in a
+/// loop that re-checks the client's [heartbeat] on every wake.
+///
+/// This is what closes the leak, and it has to live on the host because the
+/// client is exactly what is missing at the moment of failure. `inotifywait`
+/// blocks in `select()`; with no event to write it never gets a `SIGPIPE` and
+/// never learns its reader is gone, so it runs forever — 19 of them, the
+/// oldest 16.9 days (0025 A). A bounded `-t` is what forces `select()` to
+/// return often enough to ask whether anyone is still listening.
+///
+/// The loop shell survives where `exec` did not, so it owns its child's death:
+/// without the trap, a TERM would kill the loop and orphan the watcher —
+/// reproducing the defect this closes.
+///
+/// `find -mmin` rather than `stat`: `stat -c %Y` is GNU-only and the fswatch
+/// arm targets macOS.
+String _leaseLoop({
+  required String inner,
+  required String heartbeat,
+  required Duration staleAfter,
+}) {
+  final hb = ShellEscaper.escape(heartbeat);
+  final mins = staleAfter.inMinutes < 1 ? 1 : staleAfter.inMinutes;
+  return 'c=; '
+      'cleanup() { [ -n "\$c" ] && kill "\$c" 2>/dev/null; exit 0; }; '
+      'trap cleanup TERM INT HUP; '
+      'while :; do '
+      '[ -f $hb ] || exit 0; '
+      '[ -n "\$(find $hb -mmin -$mins 2>/dev/null)" ] || exit 0; '
+      '{ $inner; } & c=\$!; wait "\$c"; '
+      'done';
+}
+
+String boundedInotifyScript(
+  List<String> watchDirs, {
+  String? pidFile,
+  String? heartbeat,
+  Duration wakeInterval = const Duration(minutes: 2),
+  Duration staleAfter = const Duration(minutes: 5),
+}) {
   final joined = watchDirs.map(ShellEscaper.escape).join(' ');
   const fmt = '-m -e modify,create,delete,move --format %w%f';
   // Build the existence-filtered positional list once, then exec inotifywait on
   // it. `set --` re-quotes safely; the loop drops any missing path.
-  return 'set -- $joined; '
+  final prelude =
+      'set -- $joined; '
       'for d; do [ -e "\$d" ] && set -- "\$@" "\$d"; shift; done; '
       '[ "\$#" -gt 0 ] || exit $boundedWatchNoPathsExit; '
-      '${_recordPid(pidFile)}'
+      '${_recordPid(pidFile)}';
+  if (heartbeat == null) {
+    // Unchanged legacy form for callers that supply no lease.
+    return '$prelude'
+        'if command -v stdbuf >/dev/null 2>&1; then '
+        'exec stdbuf -oL inotifywait $fmt "\$@"; '
+        'else exec inotifywait $fmt "\$@"; fi';
+  }
+  final t = wakeInterval.inSeconds;
+  final inner =
       'if command -v stdbuf >/dev/null 2>&1; then '
-      'exec stdbuf -oL inotifywait $fmt "\$@"; '
-      'else exec inotifywait $fmt "\$@"; fi';
+      'stdbuf -oL inotifywait -t $t $fmt "\$@"; '
+      'else inotifywait -t $t $fmt "\$@"; fi';
+  return '$prelude'
+      '${_leaseLoop(inner: inner, heartbeat: heartbeat, staleAfter: staleAfter)}';
 }
 
 /// fswatch equivalent of [boundedInotifyScript]: watch exactly [watchDirs],
@@ -175,13 +226,32 @@ String boundedInotifyScript(List<String> watchDirs, {String? pidFile}) {
 ///
 /// `exec` for the same reason as the inotify script: a channel close must reach
 /// fswatch itself, not a surviving shell wrapper.
-String boundedFswatchScript(List<String> watchDirs, {String? pidFile}) {
+String boundedFswatchScript(
+  List<String> watchDirs, {
+  String? pidFile,
+  String? heartbeat,
+  Duration wakeInterval = const Duration(minutes: 2),
+  Duration staleAfter = const Duration(minutes: 5),
+}) {
   final joined = watchDirs.map(ShellEscaper.escape).join(' ');
-  return 'set -- $joined; '
+  final prelude =
+      'set -- $joined; '
       'for d; do [ -e "\$d" ] && set -- "\$@" "\$d"; shift; done; '
       '[ "\$#" -gt 0 ] || exit $boundedWatchNoPathsExit; '
-      '${_recordPid(pidFile)}'
-      'exec fswatch -0 --latency 0.5 "\$@"';
+      '${_recordPid(pidFile)}';
+  if (heartbeat == null) {
+    return '${prelude}exec fswatch -0 --latency 0.5 "\$@"';
+  }
+  // fswatch has no -t of its own, so the bound comes from `timeout` where it
+  // exists. Where it does not (a bare macOS host without coreutils) the
+  // watcher cannot self-terminate; the connect-time sweep is the backstop.
+  final t = wakeInterval.inSeconds;
+  const fs = 'fswatch -0 --latency 0.5 "\$@"';
+  const inner =
+      'if command -v timeout >/dev/null 2>&1; then '
+      'timeout TSECS $fs; else $fs; fi';
+  return '$prelude'
+      '${_leaseLoop(inner: inner.replaceAll('TSECS', '$t'), heartbeat: heartbeat, staleAfter: staleAfter)}';
 }
 
 /// Records the arming shell's pid so a later sweep can find the watcher.
@@ -211,9 +281,11 @@ String watcherSweepScript(
 }) {
   final hb = ShellEscaper.escape(heartbeat);
   final files = pidFiles.map(ShellEscaper.escape).join(' ');
-  return 'now=\$(date +%s); ts=0; '
-      '[ -f $hb ] && ts=\$(stat -c %Y $hb 2>/dev/null || echo 0); '
-      '[ "\$((now - ts))" -ge ${staleAfter.inSeconds} ] || exit 0; '
+  final mins = staleAfter.inMinutes < 1 ? 1 : staleAfter.inMinutes;
+  // `find -mmin` rather than `stat -c %Y`: the latter is GNU-only and this
+  // runs against macOS hosts too. A heartbeat NEWER than the window means the
+  // client is alive and there is nothing to reclaim.
+  return '[ -n "\$(find $hb -mmin -$mins 2>/dev/null)" ] && exit 0; '
       'for f in $files; do '
       '[ -f "\$f" ] || continue; '
       'p=\$(cat "\$f" 2>/dev/null); '
@@ -222,4 +294,41 @@ String watcherSweepScript(
       'case "\$c" in inotifywait|fswatch) '
       'kill -TERM "\$p" 2>/dev/null; rm -f "\$f" ;; esac; '
       'done; true';
+}
+
+/// Recursive (whole-work-tree) watcher script with the same lease loop the
+/// bounded arms use.
+///
+/// The recursive form is the one that leaked most: of the 19 orphans found on
+/// the host, the majority carried this argv, four of them from a build old
+/// enough to predate the `--exclude` flags (0025 A). Bounding it matters more
+/// than bounding the bounded arm, not less.
+String recursiveWatchScript({
+  required bool inotify,
+  required String excludes,
+  String? pidFile,
+  String? heartbeat,
+  Duration wakeInterval = const Duration(minutes: 2),
+  Duration staleAfter = const Duration(minutes: 5),
+}) {
+  final t = wakeInterval.inSeconds;
+  final prelude = _recordPid(pidFile);
+  if (inotify) {
+    const fmt = '-m -r -e modify,create,delete,move';
+    final inner =
+        'if command -v stdbuf >/dev/null 2>&1; then '
+        'stdbuf -oL inotifywait -t $t $fmt $excludes--format %w%f .; '
+        'else inotifywait -t $t $fmt $excludes--format %w%f .; fi';
+    return '$prelude'
+        '${_leaseLoop(inner: inner, heartbeat: heartbeat!, staleAfter: staleAfter)}';
+  }
+  const fs =
+      "fswatch -0 --latency 0.5 --exclude '\\.git/.*\\.lock\$' "
+      r"--exclude '\.git/objects/' --exclude '\.git/logs/' "
+      r"--exclude '\.git/fsmonitor--daemon/' .";
+  final inner =
+      'if command -v timeout >/dev/null 2>&1; then timeout $t $fs; '
+      'else $fs; fi';
+  return '$prelude'
+      '${_leaseLoop(inner: inner, heartbeat: heartbeat!, staleAfter: staleAfter)}';
 }

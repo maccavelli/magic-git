@@ -193,8 +193,54 @@ void main() {
       // Verified before signalling: 0025 records that a broken `ps` filter is
       // exactly how a kill set ends up containing the wrong processes.
       expect(s, contains('inotifywait'));
-      expect(s, contains('300'), reason: 'staleAfter in seconds');
+      expect(s, contains('-mmin -5'), reason: 'staleAfter as find minutes');
       expect(s, contains('kill -TERM'));
+      expect(s, contains('-mmin -5'), reason: 'portable staleness, not stat');
+    });
+  });
+
+  // 0025 C1. The leak's mechanism is upstream: inotifywait blocks in select()
+  // and, with no event to write, never discovers its reader is gone — there is
+  // no SIGPIPE without a write. So no client-side teardown can reach it, and
+  // `-t` is the documented lever. Verified on the host: `-m -t 3` exits rc=2
+  // after exactly 3s of silence and still reports events meanwhile
+  // (inotifywait 3.22.1.0).
+  group('self-terminating watcher', () {
+    String armed() => boundedInotifyScript(
+      ['/r/.git'],
+      pidFile: '/r/.git/mg-watch.pid',
+      heartbeat: '/r/.git/mg-watch.hb',
+      wakeInterval: const Duration(minutes: 2),
+      staleAfter: const Duration(minutes: 5),
+    );
+
+    test('wakes on a bounded timeout instead of blocking forever', () {
+      expect(armed(), contains('-t 120'));
+    });
+
+    test(
+      're-checks the heartbeat on every wake and exits when it is stale',
+      () {
+        final s = armed();
+        expect(s, contains('mg-watch.hb'));
+        expect(s, contains('-mmin -5'), reason: 'staleAfter as find minutes');
+        expect(s, contains('exit 0'));
+      },
+    );
+
+    test('kills its child before exiting, so a signal orphans nothing', () {
+      // The loop shell survives where `exec` did not, so it owns the child's
+      // death. Without the trap, TERM would kill the loop and orphan the
+      // watcher — reproducing the very defect this closes.
+      final s = armed();
+      expect(s, contains('trap'));
+      expect(s, contains('kill'));
+    });
+
+    test('without a heartbeat the script is the old unbounded form', () {
+      // Every existing caller keeps working untouched.
+      expect(boundedInotifyScript(['/r/.git']), contains('exec'));
+      expect(boundedInotifyScript(['/r/.git']), isNot(contains('-t ')));
     });
   });
 }

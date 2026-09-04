@@ -170,6 +170,7 @@ class _DrivableExecutor extends SSHCommandExecutor {
   final String tool;
   final _DrivableStreamHandle handle;
   final armed = Completer<void>();
+  List<String> lastStreamArgs = const [];
 
   @override
   Future<SSHCommandResult> execute({
@@ -196,6 +197,7 @@ class _DrivableExecutor extends SSHCommandExecutor {
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
+    lastStreamArgs = gitArgs;
     if (!armed.isCompleted) armed.complete();
     return handle;
   }
@@ -590,4 +592,29 @@ void main() {
       },
     );
   });
+
+  test(
+    'the arm actually uses a leased, self-terminating script (0025 C1)',
+    () async {
+      // Pins the WIRING, not the builder. The builder supported a lease for a
+      // while before the arm passed one — a silent no-op that every script-level
+      // test still passed. This is the assertion that would have caught it.
+      final handle = _DrivableStreamHandle();
+      final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
+      final service = RemoteWatchService(executor);
+      RemoteWatchService.resetWatcherCount();
+      addTearDown(RemoteWatchService.resetWatcherCount);
+
+      final sub = service.watch('/repo').listen((_) {});
+      await executor.armed.future;
+      await Future<void>.delayed(Duration.zero);
+
+      final script = executor.lastStreamArgs.last;
+      expect(script, contains('mg-watch.pid'), reason: 'records its pid');
+      expect(script, contains('mg-watch.hb'), reason: 'checks the heartbeat');
+      expect(script, contains('-t '), reason: 'bounded wait, not blocking');
+      expect(script, contains('trap'), reason: 'owns its child on signal');
+      await sub.cancel();
+    },
+  );
 }
