@@ -1879,9 +1879,11 @@ needed. Six tests added to `test/ssh_live_transport_test.dart`:
 
 **Corrected the same day.** Those six tests are right about the *clean*
 teardown path and they stay. But measured on the real host the app runs
-against, **22 `inotifywait` processes are orphaned to init, the oldest 19 days
-old**, seven of them predating an app upgrade, and one created after the
-current session started. Losing the channel — a NAT idle-drop on the
+against, **19 `inotifywait` processes are orphaned to init, the oldest 16.9
+days old**, four of them predating an app upgrade, and one created after the
+current session started. (A first pass said 22/18/7; `ps -u USER -C name` ORs
+its selectors, so those numbers were wrong and are retracted — see the MADR's
+instrument note.) Losing the channel — a NAT idle-drop on the
 by-design-idle stream client — leaves nothing to send TERM on, and there is no
 reconnect-time sweep. M5 is a real defect and is **reopened**; see the MADR's
 correction block. Suite `+3430 ~2`, 0 failing. Original text of this phase

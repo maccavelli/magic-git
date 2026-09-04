@@ -369,17 +369,27 @@ to settle.**
 > connection this app actually runs against):
 >
 > ```
-> orphaned (ppid=1): 22    parented (live app): 18
-> oldest orphan: 19 days   fds held by orphans: 128
-> inotify instances in use: 29 of max_user_instances 1024
-> 7 of the 22 orphans carry the pre-`--exclude` command line
+> orphaned (PPid=1): 19    parented: 0
+> oldest orphan: 16.9 days
+> 4 of the 19 carry the pre-`--exclude` command line
+> inotify instances in use: 29 -> 9 after cleanup (orphans held 20)
 > ```
 >
-> Twenty-two `inotifywait` processes reparented to init, the oldest running
-> since **19 days ago**, seven of them predating a version of this app — they
-> survived an upgrade. Three appeared **today**, one of them *after* the current
-> app session started, so this is not only a crash-time leak: it happens during
-> normal operation.
+> Nineteen `inotifywait` processes reparented to init, the oldest running since
+> **16.9 days ago**, four of them predating a version of this app — they
+> survived an upgrade. Two appeared **today**, one *after* the current app
+> session started, so this is not only a crash-time leak: it happens during
+> normal operation. Every one was individually verified as `comm=inotifywait`,
+> owned by this uid, `PPid=1` before being signalled.
+>
+> > **Instrument note.** A first pass reported *22 orphaned / 18 parented / 7
+> > old-format*. Those figures were wrong and are retracted: `ps -u "$USER" -C
+> > inotifywait` **OR**s its selectors rather than ANDing them, so it returned
+> > every process owned by the user regardless of command. The tell was a dry
+> > run reporting an identical orphan count (21) for `fswatch`, `git`, `gh`,
+> > `glab` *and* `sleep` — impossible, and it stopped the cleanup before
+> > anything was signalled. The numbers above come from reading
+> > `/proc/<pid>/comm` and `/proc/<pid>/status` directly.
 >
 > **Both findings are true, and they are about different paths:**
 >
@@ -402,7 +412,12 @@ to settle.**
 > `fs.inotify.max_user_instances` (1024). Past that, no watcher can arm at all
 > and every repo silently falls back to polling — the class of invisible
 > degradation 0024 H3 exists to make visible. At 29 instances after weeks of
-> use this is not urgent, but it never self-heals.
+> use this was not urgent, but it never self-heals.
+>
+> **Cleared 2026-09-04** at the maintainer's request: all 19 terminated by
+> explicit PID after per-PID re-verification, 0 skipped, 0 remaining, instances
+> back to 9. That is housekeeping, not a fix — the leak will resume until the
+> defect is remediated.
 >
 > **M5 is reopened as a real defect and needs a remediation plan.** Candidate
 > shapes, none yet chosen: a PID file plus a reconnect-time sweep; `--timeout`
