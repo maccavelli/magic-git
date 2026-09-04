@@ -4935,12 +4935,37 @@ Future<T> _retryAfterForgeAuthIfNeeded<T>(
   }
 }
 
-/// Open merge requests for the connected project.
+/// Whether a Forge-tab change-request list (PRs / MRs) has been widened to
+/// include closed items via its "Show closed" row. One-way per session, like
+/// [CiHistoryScope]; nothing collapses it back except auto-dispose.
+///
+/// A dependency the list providers WATCH rather than part of their family key
+/// — flipping it re-fetches the same provider instance in place, so the panel
+/// keeps its rows and selection instead of mounting a second provider (the
+/// same reasoning as [pipelinesScopeProvider], and it keeps the ~14 widget
+/// tests that override these families working unchanged).
+class ChangeRequestScope extends Notifier<bool> {
+  ChangeRequestScope(this.repoPath);
+  final String repoPath;
+
+  @override
+  bool build() => false;
+
+  void includeClosed() => state = true;
+}
+
+/// Whether the MR list includes closed/merged items.
+final mergeRequestScopeProvider = NotifierProvider.autoDispose
+    .family<ChangeRequestScope, bool, String>(ChangeRequestScope.new);
+
+/// Merge requests for the connected project — open only by default, closed and
+/// merged included once [mergeRequestScopeProvider] is set.
 final mergeRequestsProvider = FutureProvider.autoDispose
     .family<List<MergeRequest>, String>((ref, repoPath) async {
       final glab = ref.watch(glabServiceProvider);
+      final includeClosed = ref.watch(mergeRequestScopeProvider(repoPath));
       await _forgeAuthReady(ref);
-      return glab.mergeRequests(repoPath);
+      return glab.mergeRequests(repoPath, includeClosed: includeClosed);
     }, retry: noProviderRetry);
 
 /// Whether a Forge-tab CI list (pipelines / workflow runs) has been expanded
@@ -5251,11 +5276,17 @@ final sessionAuthStatusProvider = FutureProvider.autoDispose<TargetAuth?>((
 }, retry: noProviderRetry);
 
 /// Open pull requests for the connected GitHub repo.
+/// Whether the PR list includes closed/merged items — GitHub twin of
+/// [mergeRequestScopeProvider] (see there for why it is watched, not keyed).
+final pullRequestScopeProvider = NotifierProvider.autoDispose
+    .family<ChangeRequestScope, bool, String>(ChangeRequestScope.new);
+
 final pullRequestsProvider = FutureProvider.autoDispose
     .family<List<PullRequest>, String>((ref, repoPath) async {
       final gh = ref.watch(ghServiceProvider);
+      final includeClosed = ref.watch(pullRequestScopeProvider(repoPath));
       await _forgeAuthReady(ref);
-      return gh.pullRequests(repoPath);
+      return gh.pullRequests(repoPath, includeClosed: includeClosed);
     }, retry: noProviderRetry);
 
 /// Whether the Forge tab's workflow-runs list has been expanded to full

@@ -366,6 +366,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     Map<String, Pipeline> pipeByRef,
   ) {
     final fullHistory = ref.watch(pipelinesScopeProvider(repoPath));
+    final mrsIncludeClosed = ref.watch(mergeRequestScopeProvider(repoPath));
     final collapsed = ref.watch(collapsedSectionsProvider);
     final mrsCollapsed = collapsed.contains(ForgeSections.changeRequests);
     final ciCollapsed = collapsed.contains(ForgeSections.ci);
@@ -420,7 +421,12 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
                 asyncListSection(
                   mrs,
                   _filterQuery.trim().isEmpty
-                      ? 'No open merge requests'
+                      // See the GitHub twin: once closed MRs are included,
+                      // "No open merge requests" answers a different question
+                      // than the one that was asked.
+                      ? (mrsIncludeClosed
+                            ? 'No merge requests'
+                            : 'No open merge requests')
                       : 'No matching merge requests',
                   (mr) => _mrRow(mr, _headPipelineFor(mr, pipeByRef)),
                   where: mrMatches,
@@ -433,6 +439,19 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
                     label: 'Show $hidden more',
                     onTap: () => setState(() => _showAllMrs = true),
                   ),
+                ),
+              // Reaches closed MRs, and with them Reopen (0022 M4).
+              if (!mrsCollapsed && !mrsIncludeClosed)
+                ShowMoreRow(
+                  label: 'Show closed merge requests',
+                  onTap: () => ref
+                      .read(mergeRequestScopeProvider(repoPath).notifier)
+                      .includeClosed(),
+                ),
+              if (!mrsCollapsed && mrsIncludeClosed && mrs.isLoading)
+                const ShowMoreRow(
+                  label: 'Loading closed merge requests…',
+                  busy: true,
                 ),
             ],
             ci: [
@@ -697,12 +716,19 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
           disabledTooltip: draftTip,
           onTap: () => _merge(mr.iid, squash: true, listMr: mr),
         ),
-      ContextMenuItem(
-        icon: CupertinoIcons.xmark_circle,
-        label: 'Close',
-        iconColor: MacosColors.systemRedColor,
-        onTap: () => _closeMr(mr.iid),
-      ),
+      if (forgeChangeRequestIsOpen(mr.state))
+        ContextMenuItem(
+          icon: CupertinoIcons.xmark_circle,
+          label: 'Close',
+          iconColor: MacosColors.systemRedColor,
+          onTap: () => _closeMr(mr.iid),
+        )
+      else if (forgeChangeRequestIsReopenable(mr.state))
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_counterclockwise,
+          label: 'Reopen',
+          onTap: () => _reopenMr(mr.iid),
+        ),
     ];
   }
 
@@ -959,10 +985,16 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
           title: const Text('Edit…'),
           onTap: () => _editMr(mr),
         ),
-        MacosPulldownMenuItem(
-          title: const Text('Close'),
-          onTap: () => _closeMr(mr.iid),
-        ),
+        if (forgeChangeRequestIsOpen(mr.state))
+          MacosPulldownMenuItem(
+            title: const Text('Close'),
+            onTap: () => _closeMr(mr.iid),
+          )
+        else if (forgeChangeRequestIsReopenable(mr.state))
+          MacosPulldownMenuItem(
+            title: const Text('Reopen'),
+            onTap: () => _reopenMr(mr.iid),
+          ),
       ],
     );
   }
@@ -1289,6 +1321,22 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         refreshAfterMutation(ref, repoPath);
       }
     }
+  }
+
+  /// Reopens a closed MR — GitLab twin of GitHubPanel._reopenPr. No confirm;
+  /// reopening is not destructive.
+  Future<void> _reopenMr(int iid) async {
+    if (_busyMrs.contains(iid)) return;
+    final repoPath = this.repoPath;
+    setState(() => _busyMrs.add(iid));
+    final glab = ref.read(glabServiceProvider);
+    final success = await runAction(
+      context,
+      () => glab.reopenMergeRequest(repoPath, iid),
+    );
+    if (!mounted) return;
+    setState(() => _busyMrs.remove(iid));
+    if (success) _invalidateChangeRequest(repoPath, iid);
   }
 
   Future<void> _closeMr(int iid) async {

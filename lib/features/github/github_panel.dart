@@ -331,6 +331,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     Map<String, WorkflowRun> runByBranch,
   ) {
     final fullHistory = ref.watch(workflowRunsScopeProvider(repoPath));
+    final prsIncludeClosed = ref.watch(pullRequestScopeProvider(repoPath));
     final collapsed = ref.watch(collapsedSectionsProvider);
     final prsCollapsed = collapsed.contains(ForgeSections.changeRequests);
     final ciCollapsed = collapsed.contains(ForgeSections.ci);
@@ -384,7 +385,12 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
                 asyncListSection(
                   prs,
                   _filterQuery.trim().isEmpty
-                      ? 'No open pull requests'
+                      // Honest about what was actually asked for: once closed
+                      // PRs are included, "No open pull requests" would be a
+                      // different claim than the query made.
+                      ? (prsIncludeClosed
+                            ? 'No pull requests'
+                            : 'No open pull requests')
                       : 'No matching pull requests',
                   (pr) => _prRow(pr, _headRunFor(pr, runByBranch)),
                   where: prMatches,
@@ -396,6 +402,22 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
                     label: 'Show $hidden more',
                     onTap: () => setState(() => _showAllPrs = true),
                   ),
+                ),
+              // Closed PRs are otherwise unreachable, and with them the Reopen
+              // action (0022 M4). Same one-way widening idiom as the CI
+              // sections' "Show all" row, including the busy row while the
+              // wider fetch lands.
+              if (!prsCollapsed && !prsIncludeClosed)
+                ShowMoreRow(
+                  label: 'Show closed pull requests',
+                  onTap: () => ref
+                      .read(pullRequestScopeProvider(repoPath).notifier)
+                      .includeClosed(),
+                ),
+              if (!prsCollapsed && prsIncludeClosed && prs.isLoading)
+                const ShowMoreRow(
+                  label: 'Loading closed pull requests…',
+                  busy: true,
                 ),
             ],
             ci: [
@@ -654,12 +676,19 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         disabledTooltip: draftTip,
         onTap: () => _merge(pr.number, method: 'rebase', listPr: pr),
       ),
-      ContextMenuItem(
-        icon: CupertinoIcons.xmark_circle,
-        label: 'Close',
-        iconColor: MacosColors.systemRedColor,
-        onTap: () => _closePr(pr.number),
-      ),
+      if (forgeChangeRequestIsOpen(pr.state))
+        ContextMenuItem(
+          icon: CupertinoIcons.xmark_circle,
+          label: 'Close',
+          iconColor: MacosColors.systemRedColor,
+          onTap: () => _closePr(pr.number),
+        )
+      else if (forgeChangeRequestIsReopenable(pr.state))
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_counterclockwise,
+          label: 'Reopen',
+          onTap: () => _reopenPr(pr.number),
+        ),
     ];
   }
 
@@ -921,10 +950,18 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
           title: const Text('Edit…'),
           onTap: () => _editPr(pr),
         ),
-        MacosPulldownMenuItem(
-          title: const Text('Close'),
-          onTap: () => _closePr(pr.number),
-        ),
+        // Mirrors the row menu — this pulldown is documented as carrying the
+        // same set, so the detail pane stays a full action surface.
+        if (forgeChangeRequestIsOpen(pr.state))
+          MacosPulldownMenuItem(
+            title: const Text('Close'),
+            onTap: () => _closePr(pr.number),
+          )
+        else if (forgeChangeRequestIsReopenable(pr.state))
+          MacosPulldownMenuItem(
+            title: const Text('Reopen'),
+            onTap: () => _reopenPr(pr.number),
+          ),
       ],
     );
   }
@@ -1245,6 +1282,25 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         refreshAfterMutation(ref, repoPath);
       }
     }
+  }
+
+  /// Reopens a closed PR. No confirm — reopening is not destructive, matching
+  /// the issue precedent (ForgeIssueActions.reopen) and _setPrDraft's shape.
+  Future<void> _reopenPr(int number) async {
+    if (_busyPrs.contains(number)) return;
+    final repoPath = this.repoPath;
+    setState(() => _busyPrs.add(number));
+    final gh = ref.read(ghServiceProvider);
+    final success = await runAction(
+      context,
+      () => gh.reopenPullRequest(repoPath, number),
+    );
+    if (!mounted) return;
+    setState(() => _busyPrs.remove(number));
+    // The shared invalidator, not an ad-hoc list invalidate: the detail pane
+    // and its comments are stale too, and it exists so a new mutation cannot
+    // forget them (0009 H11).
+    if (success) _invalidateChangeRequest(repoPath, number);
   }
 
   Future<void> _closePr(int number) async {

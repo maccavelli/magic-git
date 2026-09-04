@@ -547,6 +547,7 @@ class GlabService {
   Future<List<MergeRequest>> mergeRequests(
     String repoPath, {
     int perPage = 30,
+    bool includeClosed = false,
   }) async {
     final extra = _hostExtraEnv(await _originHost(repoPath));
     final all = <MergeRequest>[];
@@ -557,6 +558,11 @@ class GlabService {
           'glab',
           'mr',
           'list',
+          // `glab mr list` defaults to opened; `--all` adds closed and merged
+          // (verified against glab 1.116's own help). Needed for the same
+          // reason as the gh twin — a closed MR is otherwise unreachable, so
+          // Reopen can never be offered (0022 M4).
+          if (includeClosed) '--all',
           '--output',
           'json',
           '--per-page',

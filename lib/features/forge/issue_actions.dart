@@ -27,6 +27,18 @@ bool forgeIssueIsOpen(String state) {
   return s == 'open' || s == 'opened';
 }
 
+/// Whether a change request (PR / MR) is open. Same forge-spelling split as
+/// [forgeIssueIsOpen] — GitHub says `open`, GitLab `opened`.
+bool forgeChangeRequestIsOpen(String state) => forgeIssueIsOpen(state);
+
+/// Whether a change request can be reopened.
+///
+/// Deliberately NOT `!isOpen`: a **merged** PR/MR is also not open, and
+/// neither forge will reopen one (`gh pr reopen` refuses it outright). Offering
+/// the action there would be a button that always fails.
+bool forgeChangeRequestIsReopenable(String state) =>
+    state.toLowerCase() == 'closed';
+
 /// Forge-dispatched issue mutations. Each runner owns its confirm/prompt
 /// guardrail, error surfacing ([runAction]), and provider invalidation.
 /// Construct one per action site from the panel's/detail's `ref` + forge.

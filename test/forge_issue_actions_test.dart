@@ -31,10 +31,27 @@ const _issue = ForgeIssue(
   author: 'alice',
 );
 
+/// A closed issue. The Reopen branch of the issue menu shipped with the rest
+/// of the issue actions but had no test at all — every fixture was open, so
+/// only Close was ever exercised (found by the 0022 audit).
+const _closedIssue = ForgeIssue(
+  id: 9,
+  title: 'Stale report',
+  state: 'closed',
+  author: 'alice',
+);
+
 class _IssueGh extends GhService {
   _IssueGh() : super(SSHCommandExecutor(SSHClientManager()));
   final closed = <int>[];
+  final reopened = <int>[];
   final developed = <int>[];
+
+  @override
+  Future<void> reopenIssue(String repoPath, int number) async {
+    reopened.add(number);
+  }
+
   final edited = <(int, String, String)>[]; // number, title, body
 
   @override
@@ -87,7 +104,11 @@ final _remoteRefs = [
 
 GitStatus _clean() => GitStatus(branch: const GitBranchInfo(), files: const []);
 
-Future<void> _pumpGithub(WidgetTester tester, {required GhService gh}) async {
+Future<void> _pumpGithub(
+  WidgetTester tester, {
+  required GhService gh,
+  List<ForgeIssue>? issues,
+}) async {
   final container = ProviderContainer(
     overrides: [
       forgeInboxModeProvider.overrideWith(_BrowseMode.new),
@@ -101,7 +122,9 @@ Future<void> _pumpGithub(WidgetTester tester, {required GhService gh}) async {
       workflowRunsProvider(
         _repo,
       ).overrideWith((ref) async => const <WorkflowRun>[]),
-      projectIssuesProvider(_repo).overrideWith((ref) async => const [_issue]),
+      projectIssuesProvider(
+        _repo,
+      ).overrideWith((ref) async => issues ?? const [_issue]),
       issueDetailProvider((_repo, 8)).overrideWith((ref) async => _issue),
       projectMilestonesProvider(_repo).overrideWith((ref) async => const []),
       githubProjectDashboardProvider(
@@ -261,5 +284,20 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(gh.edited, [(8, 'Fix the crash', 'a fresh body')]);
+  });
+
+  testWidgets('a closed issue offers Reopen instead of Close', (tester) async {
+    final gh = _IssueGh();
+    await _pumpGithub(tester, gh: gh, issues: const [_closedIssue]);
+
+    await tester.tap(find.text('Stale report'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+    expect(find.text('Close'), findsNothing);
+
+    await tester.tap(find.text('Reopen'));
+    await tester.pumpAndSettle();
+
+    expect(gh.reopened, [9]);
+    expect(gh.closed, isEmpty);
   });
 }

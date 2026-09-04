@@ -77,7 +77,14 @@ class _Phase2Gh extends GhService {
   _Phase2Gh() : super(SSHCommandExecutor(SSHClientManager()));
   final merges = <(int, String, bool)>[]; // number, method, deleteBranch
   final closed = <int>[];
+  final reopened = <int>[];
   final draftSet = <(int, bool)>[]; // number, draft
+
+  @override
+  Future<void> reopenPullRequest(String repoPath, int number) async {
+    reopened.add(number);
+  }
+
   final comments = <(int, String)>[];
 
   @override
@@ -179,6 +186,38 @@ const _readyPr = PullRequest(
 
 final _prs = [_readyPr];
 
+/// A closed PR — only reachable in the list once "Show closed" widens it.
+const _closedPr = PullRequest(
+  number: 8,
+  title: 'Abandoned experiment',
+  state: 'closed',
+  merged: false,
+  draft: false,
+  authorLogin: 'alice',
+  headRefName: 'spike',
+  baseRefName: 'main',
+  url: 'https://github.com/o/r/pull/8',
+  headOid: 'ffeeddccbbaa00112233445566778899aabbccdd',
+  mergeable: GhMergeable.unknown,
+  mergeStateStatus: 'UNKNOWN',
+);
+
+/// A MERGED PR must offer neither Close nor Reopen — no forge will reopen one.
+const _mergedPr = PullRequest(
+  number: 9,
+  title: 'Shipped work',
+  state: 'merged',
+  merged: true,
+  draft: false,
+  authorLogin: 'alice',
+  headRefName: 'done',
+  baseRefName: 'main',
+  url: 'https://github.com/o/r/pull/9',
+  headOid: '00112233445566778899aabbccddeeff00112233',
+  mergeable: GhMergeable.unknown,
+  mergeStateStatus: 'UNKNOWN',
+);
+
 const _readyMr = MergeRequest(
   iid: 7,
   title: 'Add the parser',
@@ -194,7 +233,11 @@ const _readyMr = MergeRequest(
 
 final _mrs = [_readyMr];
 
-Future<void> _pumpGithub(WidgetTester tester, {GhService? gh}) async {
+Future<void> _pumpGithub(
+  WidgetTester tester, {
+  GhService? gh,
+  List<PullRequest>? prs,
+}) async {
   final container = ProviderContainer(
     overrides: [
       forgeInboxModeProvider.overrideWith(_BrowseMode.new),
@@ -208,7 +251,7 @@ Future<void> _pumpGithub(WidgetTester tester, {GhService? gh}) async {
           files: const [],
         ),
       ),
-      pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
+      pullRequestsProvider(_repo).overrideWith((ref) async => prs ?? _prs),
       pullRequestDetailProvider((
         _repo,
         7,
@@ -423,5 +466,37 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(glab.comments, [(7, 'Looks good')]);
+  });
+
+  testWidgets('a closed PR offers Reopen instead of Close', (tester) async {
+    // 0022 M4. reopenPullRequest was implemented and tested at the service
+    // layer but had ZERO UI call sites, so closing a PR from Magic Git was a
+    // one-way door — the row also dropped out of the open-only list.
+    final gh = _Phase2Gh();
+    await _pumpGithub(tester, gh: gh, prs: const [_closedPr]);
+
+    await tester.tap(
+      find.text('Abandoned experiment'),
+      buttons: kSecondaryButton,
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Close'), findsNothing);
+
+    await tester.tap(find.text('Reopen'));
+    await tester.pumpAndSettle();
+
+    expect(gh.reopened, [8]);
+  });
+
+  testWidgets('a merged PR offers neither Close nor Reopen', (tester) async {
+    // Reopen is not simply "not open": no forge reopens a merged PR, so
+    // offering it would be a button that always fails.
+    await _pumpGithub(tester, gh: _Phase2Gh(), prs: const [_mergedPr]);
+
+    await tester.tap(find.text('Shipped work'), buttons: kSecondaryButton);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Reopen'), findsNothing);
+    expect(find.text('Close'), findsNothing);
   });
 }

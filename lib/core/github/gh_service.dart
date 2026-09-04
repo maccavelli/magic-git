@@ -369,13 +369,17 @@ class GhService {
   Future<List<PullRequest>> pullRequests(
     String repoPath, {
     int limit = 600,
+    bool includeClosed = false,
   }) async {
     final decoded = await _runJson(repoPath, [
       'gh',
       'pr',
       'list',
       '--state',
-      'open',
+      // Open-only by default. `all` is what makes a closed PR reachable at
+      // all — without it, closing one from Magic Git dropped it out of every
+      // list and there was no path back to Reopen (0022 M4).
+      includeClosed ? 'all' : 'open',
       '--json',
       'number,title,state,isDraft,headRefName,baseRefName,author,url,'
           'labels,assignees,reviewDecision,milestone',

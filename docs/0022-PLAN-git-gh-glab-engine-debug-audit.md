@@ -1582,6 +1582,55 @@ this is exactly what "compare against the baseline, not zero" is for.
 **Verification.** Analyzer: back to the baseline's 2. Suite: `+3323 ~2 -48`,
 failing set identical to baseline.
 
+### Phase 9 — M4: closed PRs/MRs can be reopened (2026-09-03) — **COMPLETE**
+
+**List state first**, because it is a prerequisite, not a nicety: with
+open-only lists a closed PR/MR is invisible, so no Reopen action can ever be
+reached. `pullRequests`/`mergeRequests` gained `includeClosed`
+(`gh pr list --state all`; `glab mr list --all`, the flag verified against the
+installed glab 1.116's own help, not assumed). Exposed through a
+`ChangeRequestScope` notifier that the list providers **watch** — mirroring
+`CiHistoryScope` — rather than a family key, which would have re-keyed the
+providers and broken the widget tests that override them.
+
+**Reopen wired on both surfaces of both panels** — row context menu and the
+detail "More" pulldown, whose doc states it carries the same set. Shaped like
+`_setPrDraft` (no confirm; reopening is not destructive, matching the issue
+precedent) and routed through the shared `_invalidateChangeRequest`, not an
+ad-hoc list invalidate, so the detail pane and its comments cannot go stale.
+
+**A merged PR/MR offers neither Close nor Reopen.** New
+`forgeChangeRequestIsReopenable` is deliberately **not** `!isOpen`: a merged
+request is also not open, and no forge will reopen one (`gh pr reopen` refuses
+outright), so the naive predicate would have produced a button that always
+fails.
+
+**Copy corrected**: with closed items included, "No open pull requests" answers
+a question that was not asked — the empty text now follows the actual scope.
+
+**Tests added:** a closed PR offers Reopen and calls the service; a merged PR
+offers neither; **and the issue Reopen branch — which shipped with zero
+coverage because every fixture was `state: 'open'` — is now exercised too.**
+
+**Negative test — seen to fail.** Row-menu Reopen deleted in a scratch clone:
+the closed-PR test fails, unable to find the item.
+
+**Self-inflicted regression, and a hole in my own gate.** The service signature
+change broke a fake's `@override` in `connection_race_test.dart`, so that file
+failed to **compile** — which reports as a single "loading …" failure while
+silently not running its whole suite. My extraction regex matched only
+`[E]`-suffixed test lines, so the failing-set diff reported "identical to
+baseline" while 10 tests had quietly stopped running. Caught only because the
+summary counts disagreed with the diff.
+Fixed the override, and hardened the check: the gate now compares the
+**passing count against baseline as well as the failing set**, and says so
+loudly when fewer tests ran. A set-diff alone cannot see a suite that never
+executed.
+
+**Verification.** Analyzer: back to the baseline's 2 (it briefly went to 3 —
+the `invalid_override` above). Suite: `+3326 ~2 -48`; failing set identical to
+baseline and passing count up 19, not down.
+
 ### Phase 1 negative-test detail (retained)
 
 Run against a scratch `git clone` in the

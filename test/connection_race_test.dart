@@ -118,6 +118,7 @@ class _GatedGh extends GhService {
   Future<List<PullRequest>> pullRequests(
     String repoPath, {
     int limit = 50,
+    bool includeClosed = false,
   }) async {
     prCalls++;
     return const [];
@@ -383,13 +384,9 @@ void main() {
     );
     manager.gates.first.complete(); // let the SSH connect step finish
     await Future<void>.delayed(Duration.zero); // reach the fsmonitor step
-    expect(
-      git.calls,
-      [
-        ['/repo/a', '/repo/b'],
-      ],
-      reason: 'all opted-in repos are applied in ONE batched round trip',
-    );
+    expect(git.calls, [
+      ['/repo/a', '/repo/b'],
+    ], reason: 'all opted-in repos are applied in ONE batched round trip');
 
     await controller.disconnect(); // supersedes this connect attempt
 
