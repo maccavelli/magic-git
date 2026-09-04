@@ -258,6 +258,80 @@ class EnvironmentResolver {
     return p.substring(0, i);
   }
 
+  /// Directory entries from a login shell's `$PATH` output, discarding
+  /// anything that is not plausibly a directory.
+  ///
+  /// A login shell is a hostile source: `.zshrc` files print banners, MOTDs,
+  /// version-manager chatter and warnings, and all of it lands on the same
+  /// stdout as the value. Feeding that through unvalidated appends junk to a
+  /// PATH whose *ordering is load-bearing* — the resolved `glab` must not be a
+  /// shim. So an entry has to be absolute and single-line to count, and the
+  /// list is capped: a real PATH is tens of entries, not thousands.
+  @visibleForTesting
+  static List<String> parseLoginShellPath(
+    String stdout, {
+    int maxEntries = 64,
+  }) {
+    final out = <String>[];
+    for (final raw in stdout.split(':')) {
+      final d = raw.trim();
+      if (d.length < 2 || !d.startsWith('/')) continue;
+      if (d.contains('\n') || d.contains('\r') || d.contains('=')) continue;
+      out.add(d);
+      if (out.length >= maxEntries) break;
+    }
+    return out;
+  }
+
+  /// [current] with any [additional] directories it lacks appended, preserving
+  /// [current]'s order and dropping blanks and duplicates.
+  ///
+  /// Appended, never prepended. The per-user-before-system ordering is
+  /// load-bearing: a system shim in `/usr/local/bin` that shadows the user's
+  /// real `glab` breaks the injected `!glab auth git-credential` helper and
+  /// HTTPS forge auth dies with "could not read Username". A login shell that
+  /// wants to *reorder* the PATH does not get to.
+  static String mergeLoginShellPath(String current, List<String> additional) {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final d in current.split(':')) {
+      final t = d.trim();
+      if (t.isNotEmpty && seen.add(t)) out.add(t);
+    }
+    for (final d in additional) {
+      final t = d.trim();
+      if (t.isNotEmpty && seen.add(t)) out.add(t);
+    }
+    return out.join(':');
+  }
+
+  /// The login shell's own `$PATH`, split into directories.
+  ///
+  /// Runs AFTER connect, off the critical path — see [_probeScript]. Entirely
+  /// best-effort: any failure, and any shell that hangs past the timeout,
+  /// yields an empty list and the session carries on with the augmented PATH
+  /// it already has.
+  Future<List<String>> probeLoginShellPath({String repoPath = '.'}) async {
+    try {
+      final result = await _executor.execute(
+        repoPath: repoPath,
+        gitArgs: [
+          'sh',
+          '-c',
+          // No temp file and no busy-wait: the command's own timeout is the
+          // bound, and a shell that never returns simply loses.
+          r"""${SHELL:-sh} -lc 'printf %s "$PATH"' 2>/dev/null || true""",
+        ],
+        timeout: const Duration(seconds: 5),
+        lane: ExecLane.read,
+      );
+      if (!result.isSuccess) return const [];
+      return parseLoginShellPath(result.stdout);
+    } on Object {
+      return const [];
+    }
+  }
+
   /// The connect-time probe script — exposed so tests can pin its contract:
   /// pure lookups, nothing spawned.
   @visibleForTesting
@@ -275,23 +349,17 @@ class EnvironmentResolver {
   // capabilities — rather than written out here. A hand-written list is how a
   // tool ends up overridable in Settings but never actually looked for on the
   // host (or looked for, and missing from the doctor panel).
-  // Login-shell PATH capture is useful (Homebrew's `brew shellenv` in zshrc)
-  // but a hung or network-blocking shellrc must not wedge connect for the
-  // full probe timeout. Run it in the background, wait up to ~3s, then kill
-  // and proceed with empty lp — common user dirs still cover Homebrew.
-  // Prefer \$TMPDIR when set, else /tmp (sandbox / odd hosts).
+  // The login shell's PATH is NOT captured here. It used to be, by
+  // backgrounding `$SHELL -lc` and busy-waiting up to 3s for it in 30 forked
+  // `sleep 0.1`s — on the connect critical path, before `connected` is
+  // published, and re-paid on each of up to 20 auto-reconnect attempts. The
+  // payoff is a `brew shellenv` line in someone's zshrc, and the per-OS `c`
+  // list below already covers exactly that in the common case. It now happens
+  // after connect instead (see [probeLoginShellPath]), which also removes the
+  // guessable `$TMPDIR/mg_lp.$$` the capture wrote through a plain `>`
+  // redirect (0024 P1/M4).
   static final String _probeScript =
       'os=\$(uname -s 2>/dev/null || echo unknown); '
-      'lp=""; '
-      '_mg_lp="\${TMPDIR:-/tmp}/mg_lp.\$\$"; '
-      '(\${SHELL:-sh} -lc \'printf %s "\$PATH"\' >"\$_mg_lp" 2>/dev/null) & '
-      'lp_pid=\$!; '
-      'i=0; while [ \$i -lt 30 ] && kill -0 \$lp_pid 2>/dev/null; do '
-      'i=\$((i+1)); sleep 0.1; done; '
-      'if kill -0 \$lp_pid 2>/dev/null; then kill \$lp_pid 2>/dev/null; wait \$lp_pid 2>/dev/null; '
-      'else wait \$lp_pid 2>/dev/null; '
-      'lp=\$(cat "\$_mg_lp" 2>/dev/null); fi; '
-      'rm -f "\$_mg_lp" 2>/dev/null; '
       // Per-user dirs (`u`) come before the OS's shared package-manager dirs
       // (`c`) so the user's own install always wins — a system shim in
       // /usr/local/bin must never shadow ~/.local/bin (it would break the
@@ -302,7 +370,7 @@ class EnvironmentResolver {
       'Linux) c="/usr/local/bin:/usr/local/sbin:/home/linuxbrew/.linuxbrew/bin:/snap/bin" ;; '
       '*) c="/usr/local/bin" ;; '
       'esac; '
-      'aug="\$u:\$c:\$lp:\$PATH:/usr/bin:/bin:/usr/sbin:/sbin"; '
+      'aug="\$u:\$c:\$PATH:/usr/bin:/bin:/usr/sbin:/sbin"; '
       'echo "OS=\$os"; '
       'echo "PATH=\$aug"; '
       // Bare names, unquoted, in a `for` list: safe because every entry is a

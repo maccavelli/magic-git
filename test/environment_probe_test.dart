@@ -153,4 +153,112 @@ void main() {
     expect(env.os, 'unknown');
     expect(env.pathOf('git'), '/x/git');
   });
+
+  group('the connect probe is not blocking (0024 P1)', () {
+    test('spawns no login shell and waits on nothing', () {
+      final script = EnvironmentResolver.probeScriptForTest;
+      // Up to 3s of connect latency in 30 forked sleeps, re-paid on each of up
+      // to 20 auto-reconnect attempts, for directories the per-OS list below
+      // already covers in the common case.
+      expect(script, isNot(contains('sleep')));
+      expect(script, isNot(contains('SHELL')));
+      expect(script, isNot(contains('-lc')));
+      // ...and with it goes the guessable temp file (0024 M4): `$$` is the
+      // probe shell's PID, and a plain `>` redirect follows symlinks, so on a
+      // shared host another user could pre-plant one at that path. The commit
+      // message preview already uses mktemp for exactly this reason.
+      expect(script, isNot(contains(r'$$')));
+      expect(script, isNot(contains('mg_lp')));
+    });
+
+    test('still resolves the per-OS package dirs and every catalog binary', () {
+      final script = EnvironmentResolver.probeScriptForTest;
+      expect(script, contains('/opt/homebrew/bin'));
+      expect(script, contains(r'$HOME/.local/bin'));
+      expect(script, contains('command -v'));
+      expect(script, contains('echo "OS='));
+      expect(script, contains('echo "PATH='));
+    });
+  });
+
+  group('login-shell PATH parsing is defensive', () {
+    test('a shell that prints a banner contributes nothing', () {
+      // .zshrc files print MOTDs, version-manager chatter and warnings onto
+      // the same stdout as the value. Appending that to a PATH whose ordering
+      // is load-bearing is how a /usr/local/bin shim ends up shadowing the
+      // real glab.
+      expect(
+        EnvironmentResolver.parseLoginShellPath(
+          'OS=Linux\nPATH=/usr/bin:/bin\nBIN=git=/usr/bin/git',
+        ),
+        isEmpty,
+      );
+      expect(
+        EnvironmentResolver.parseLoginShellPath('nvm: version 20\n/usr/bin'),
+        isEmpty,
+      );
+    });
+
+    test('a plain PATH parses to its absolute entries', () {
+      expect(
+        EnvironmentResolver.parseLoginShellPath(
+          '/opt/homebrew/bin:/usr/bin:/bin\n',
+        ),
+        ['/opt/homebrew/bin', '/usr/bin', '/bin'],
+      );
+    });
+
+    test('relative and empty entries are refused', () {
+      expect(
+        EnvironmentResolver.parseLoginShellPath('.:..:/usr/bin::rel/bin'),
+        ['/usr/bin'],
+      );
+    });
+
+    test('a pathological shell cannot flood the PATH', () {
+      final huge = List.generate(500, (i) => '/d\$i').join(':');
+      expect(
+        EnvironmentResolver.parseLoginShellPath(huge, maxEntries: 64),
+        hasLength(64),
+      );
+    });
+  });
+
+  group('login-shell PATH reconciliation', () {
+    test('appends only unknown directories, in order, never prepending', () {
+      // Appended, never prepended: per-user-before-system ordering is
+      // load-bearing. A /usr/local/bin shim that shadows the real glab breaks
+      // the injected `!glab auth git-credential` helper.
+      const current = '/home/u/.local/bin:/opt/homebrew/bin:/usr/bin';
+      final merged = EnvironmentResolver.mergeLoginShellPath(current, const [
+        '/opt/homebrew/bin', // already known — must not move or duplicate
+        '/opt/custom/bin', // new — appended at the end
+        '/usr/bin', // already known
+      ]);
+      expect(
+        merged,
+        '/home/u/.local/bin:/opt/homebrew/bin:/usr/bin:/opt/custom/bin',
+      );
+    });
+
+    test('nothing new leaves the PATH byte-identical', () {
+      const current = '/a:/b';
+      expect(
+        EnvironmentResolver.mergeLoginShellPath(current, const ['/b', '/a']),
+        current,
+      );
+    });
+
+    test('blank and duplicate entries are dropped', () {
+      expect(
+        EnvironmentResolver.mergeLoginShellPath('/a', const [
+          '',
+          '  ',
+          '/c',
+          '/c',
+        ]),
+        '/a:/c',
+      );
+    });
+  });
 }

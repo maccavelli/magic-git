@@ -1582,6 +1582,7 @@ class ConnectionController extends Notifier<ConnectionState> {
         if (fsmonitorPaths.isNotEmpty)
           _applyFsmonitorTuning(attempt, fsmonitorPaths),
         _refreshToolVersions(attempt, repoPath),
+        _reconcileLoginShellPath(attempt, repoPath),
         _connectForgeLogins(
           attempt: attempt,
           gate: gate,
@@ -1627,6 +1628,43 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// numbers. Kept off the connect path because spawning `gh`/`glab` for a
   /// banner is exactly the kind of hidden network wait (update checks) that
   /// made connecting slow.
+  /// Folds the login shell's own PATH into the resolved environment, AFTER the
+  /// session is already usable.
+  ///
+  /// The connect-time probe used to capture this inline, busy-waiting up to 3s
+  /// for `$SHELL -lc` before `connected` could be published — and paying it
+  /// again on each of up to 20 auto-reconnect attempts (0024 P1). The per-OS
+  /// package dirs already cover the common case (a `brew shellenv` line), so
+  /// the remaining value is a residue that is perfectly happy to arrive a
+  /// moment late. Best-effort throughout: a shell that hangs or errors leaves
+  /// the augmented PATH exactly as the probe built it.
+  Future<void> _reconcileLoginShellPath(int attempt, String repoPath) async {
+    try {
+      final executor = _activeExecutor;
+      final extra = await EnvironmentResolver(
+        executor,
+      ).probeLoginShellPath(repoPath: repoPath);
+      if (attempt != _attempt || !ref.mounted || extra.isEmpty) return;
+      final env = ref.read(binaryEnvironmentProvider);
+      final merged = EnvironmentResolver.mergeLoginShellPath(env.path, extra);
+      if (merged == env.path) return;
+      executor.configureEnvironment(path: merged, binaries: env.found);
+      ref
+          .read(binaryEnvironmentProvider.notifier)
+          .set(
+            RemoteEnvironment(
+              os: env.os,
+              path: merged,
+              found: env.found,
+              overridden: env.overridden,
+              versions: env.versions,
+            ),
+          );
+    } catch (_) {
+      // Best-effort by design.
+    }
+  }
+
   Future<void> _refreshToolVersions(int attempt, String repoPath) async {
     try {
       final executor = _activeExecutor;
