@@ -613,6 +613,26 @@ a cheap, exact witness of the state it derives from. It converts 15 waves into
 fingerprint collision costs a missed refresh only if the index changes with
 identical size *and* mtime, which the watcher tick would catch anyway.
 
+> **Corrected 2026-09-04 during execution — the safety argument above is wrong,
+> and F1 is narrowed.** A git-dir fingerprint cannot gate `status`: a work-tree
+> edit changes nothing in the git-dir at all. Measured on the host:
+>
+> ```
+> before edit:  46434f4c…|384:1788548717|0:0   status: 0 lines
+> after  edit:  46434f4c…|384:1788548717|0:0   status: 1 lines
+> ```
+>
+> HEAD, index size/mtime and `packed-refs` are identical across an edit that
+> `status` reports. This is not a collision risk — the witness is blind to the
+> work tree. And `GIT_OPTIONAL_LOCKS=0`, which `CommandFormatter.defaultEnv`
+> sets on every command, ensures `git status` will not rewrite the index
+> either, so nothing incidental repairs it.
+>
+> **F1 therefore gates refs-derived reads only** — `for-each-ref`, `remote`,
+> `log` — which depend on nothing but git-dir state. `status` is never gated.
+> The win is smaller than claimed above, and the staleness class it would
+> otherwise have introduced is the one 0022 and 0023 spent phases removing.
+
 ### F2 — Invalidate by path, not by family set
 
 **Grounded in:** `RepoWatchEvent.paths`, `isScoped` and `touchesGitState`

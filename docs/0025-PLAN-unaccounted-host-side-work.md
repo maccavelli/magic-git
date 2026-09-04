@@ -715,6 +715,21 @@ The two that warrant naming:
 **Kill switch.** Only Phase 12 gets one. A flag per phase would be eleven flags
 guarding eleven small changes, which is more risk than the changes carry.
 
+### Deviation (a) — 2026-09-04 — Phase 6's fingerprint cannot gate `status`
+
+Found before writing any Phase 6 code, by testing the witness on the host
+rather than trusting the plan's safety argument: a work-tree edit changes
+nothing in the git-dir, so HEAD, index size/mtime and `packed-refs` are all
+identical across an edit that `status` reports. The plan claimed the only risk
+was an index changing with identical size and mtime; in fact the index does not
+change at all, and `GIT_OPTIONAL_LOCKS=0` ensures `git status` will not rewrite
+it either.
+
+**Decision (maintainer): narrow F1 to refs-derived reads only.**
+`for-each-ref`, `remote` and `log` depend on nothing but git-dir state, so the
+witness is exact for them. `status` is never gated. MADR 0025 F1 carries the
+correction.
+
 ## Execution record
 
 *(Filled in during execution: what each phase did, the verbatim red-test
