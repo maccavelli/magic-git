@@ -197,4 +197,27 @@ void main() {
       );
     });
   });
+
+  test('a copy header is classified, not left looking modified', () {
+    // 0022 L4. `git diff -C` (or a host diff.renames=copies, or an imported
+    // patch) emits copy headers. Without handling them a copied file fell
+    // through to `modified` while carrying oldPath != newPath — a combination
+    // no other parse path produces, so any consumer assuming
+    // "modified => same path" was wrong for copies.
+    const raw = '''diff --git a/src.dart b/dst.dart
+similarity index 95%
+copy from src.dart
+copy to dst.dart
+--- a/src.dart
++++ b/dst.dart
+@@ -1,2 +1,2 @@
+ keep
+-old
++new
+''';
+    final file = parseCommitPatch(raw).files.single;
+    expect(file.change, DiffFileChange.renamed);
+    expect(file.oldPath, 'src.dart');
+    expect(file.newPath, 'dst.dart');
+  });
 }

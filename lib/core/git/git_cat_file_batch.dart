@@ -128,9 +128,24 @@ String catFileBatchScript(List<String> specs) {
   if (specs.isEmpty) {
     throw ArgumentError('cat-file batch requires at least one object');
   }
-  // printf '%s\n' a b c | git cat-file --batch
+  // printf '%s\n' a b c | git cat-file --batch, base64'd for transport.
+  //
+  // The base64 is what makes this binary-safe. The executor decodes stdout as
+  // UTF-8 with `allowMalformed: true`, so raw object bytes came back with every
+  // invalid sequence replaced by U+FFFD — and because the parser frames objects
+  // by git's own byte COUNT, a single bad byte desynced every later object in
+  // the batch and silently returned the wrong content for the wrong key
+  // (0022 M10).
+  //
+  // git writes to a temp file first so the exit status stays git's: a pipeline
+  // reports its LAST command's status, so piping straight into base64 would
+  // turn a failed cat-file into exit 0 with empty output — a silent "no such
+  // object" (the same trap readFileBase64 documents).
   final args = specs.map(ShellEscaper.escape).join(' ');
-  return "printf '%s\\n' $args | git cat-file --batch";
+  return 'tmp=\$(mktemp) || exit 1; '
+      "printf '%s\\n' $args | git cat-file --batch > \"\$tmp\" || "
+      '{ rm -f "\$tmp"; exit 65; }; '
+      "base64 < \"\$tmp\" | tr -d '\\r\\n'; rm -f \"\$tmp\"";
 }
 
 /// Key for a revision path blob (`git show rev:path` / cat-file `rev:path`).
@@ -180,11 +195,10 @@ class GitCatFileBatch {
       if (!result.isSuccess) {
         throw StateError('cat-file batch exit ${result.exitCode}');
       }
-      // stdout was UTF-8 decoded with allowMalformed — re-encode to recover
-      // bytes for the binary-safe parser. For pure-text blobs this is lossless;
-      // for binary blobs the executor path is already lossy (viewer uses
-      // base64 for binary worktree files). Object blobs for text diffs are UTF-8.
-      final raw = Uint8List.fromList(utf8.encode(result.stdout));
+      // Real bytes, recovered from the base64 the script emits — NOT a
+      // re-encode of the lossily-decoded stdout, which is not length-preserving
+      // and desynced the whole batch (0022 M10).
+      final raw = base64.decode(result.stdout.trim());
       final objects = parseCatFileBatch(raw, requests: specs);
       final map = <BlobKey, Uint8List>{};
       for (var i = 0; i < objects.length && i < keys.length; i++) {

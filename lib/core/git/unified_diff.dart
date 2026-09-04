@@ -251,6 +251,21 @@ DiffFile? _parseFileAt(List<String> lines, int from, int to) {
     } else if (line.startsWith('rename to ')) {
       renamed = true;
       newPath = line.substring('rename to '.length);
+    } else if (line.startsWith('copy from ')) {
+      // `git diff -C` emits copy headers. This repo never passes -C itself,
+      // but a host `diff.renames = copies` config or an imported patch does —
+      // and without this a copied file classified as `modified` while carrying
+      // oldPath != newPath, a combination no other path produces (0022 L4).
+      //
+      // Classified as `renamed` rather than a new enum value: every consumer
+      // already treats renamed as "two paths, content mostly carried over",
+      // which is true of a copy, and adding a DiffFileChange variant would
+      // touch every exhaustive switch over it for no behavioural gain.
+      renamed = true;
+      oldPath = line.substring('copy from '.length);
+    } else if (line.startsWith('copy to ')) {
+      renamed = true;
+      newPath = line.substring('copy to '.length);
     } else if (line.startsWith('Binary files ') ||
         line.startsWith('GIT binary patch')) {
       binary = true;

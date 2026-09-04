@@ -26,6 +26,15 @@ Uint8List _batchBytes(List<List<int>> chunks) {
   return b.takeBytes();
 }
 
+/// The stdout the arming script actually produces: base64 of the raw batch.
+///
+/// The old fixtures handed the service `utf8.decode(rawBytes)`, which could
+/// only ever hold clean UTF-8 — so the harness itself could not express a
+/// binary blob, and the desync bug it caused was invisible to every test here
+/// (0022 M10). `utf8.decode` without allowMalformed would in fact THROW on
+/// such a payload.
+String _wireStdout(List<int> rawBatch) => base64.encode(rawBatch);
+
 Uint8List _present(String oid, String type, List<int> content) {
   final header = utf8.encode('$oid $type ${content.length}\n');
   return _batchBytes([
@@ -244,7 +253,7 @@ void main() {
     test('multi-key success parses batch stdout in one execute', () async {
       final oid1 = '1' * 40;
       final oid2 = '2' * 40;
-      final stdout = utf8.decode(
+      final stdout = _wireStdout(
         _batchBytes([
           _present(oid1, 'blob', utf8.encode('alpha')),
           _present(oid2, 'blob', utf8.encode('beta')),
@@ -282,7 +291,7 @@ void main() {
 
     test('missing objects omitted unless requireAll', () async {
       final oid = '9' * 40;
-      final stdout = utf8.decode(
+      final stdout = _wireStdout(
         _batchBytes([
           _present(oid, 'blob', utf8.encode('ok')),
           utf8.encode('HEAD:missing missing\n'),
@@ -319,7 +328,7 @@ void main() {
     test('decodes batch bytes to strings for multi-key fetch', () async {
       final oid1 = '1' * 40;
       final oid2 = '2' * 40;
-      final stdout = utf8.decode(
+      final stdout = _wireStdout(
         _batchBytes([
           _present(oid1, 'blob', utf8.encode('hello')),
           _present(oid2, 'blob', utf8.encode('world')),
@@ -343,5 +352,46 @@ void main() {
       expect(await git.showBlobsBatch('/repo', []), isEmpty);
       expect(exec.calls, isEmpty);
     });
+  });
+
+  test('a binary blob does not corrupt the objects after it', () async {
+    // 0022 M10. The service used to re-encode stdout that had already been
+    // UTF-8 decoded with allowMalformed, which is not length-preserving: a
+    // 0xFF became a 3-byte U+FFFD. Since the parser frames each object by
+    // git's own byte COUNT, that shifted every following object — and the
+    // non-requireAll path then returned the WRONG CONTENT FOR THE WRONG KEY
+    // silently, rather than failing.
+    final binary = [0x50, 0x4e, 0x47, 0xff, 0xfe, 0x00, 0xff];
+    final stdout = _wireStdout(
+      _batchBytes([
+        _present('1' * 40, 'blob', binary),
+        _present('2' * 40, 'blob', utf8.encode('after-the-binary')),
+      ]),
+    );
+    final exec = _RecordingExecutor()
+      ..handler = (_) =>
+          SSHCommandResult(exitCode: 0, stdout: stdout, stderr: '');
+    final batch = GitCatFileBatch(exec);
+    const k1 = (rev: 'HEAD', path: 'bin.dat');
+    const k2 = (rev: 'HEAD', path: 'after.txt');
+
+    final result = await batch.showBlobsBatch('/repo', [k1, k2]);
+
+    expect(result[k1], binary, reason: 'binary bytes must survive verbatim');
+    expect(
+      utf8.decode(result[k2]!),
+      'after-the-binary',
+      reason: 'the object AFTER a binary one is what used to be corrupted',
+    );
+  });
+
+  test('the batch script keeps git\'s exit status, not base64\'s', () {
+    // A pipeline reports its last command's status, so piping cat-file
+    // straight into base64 would turn a failed read into exit 0 with empty
+    // output — a silent "no such object".
+    final script = catFileBatchScript(const ['HEAD:a']);
+    expect(script, contains('mktemp'));
+    expect(script, contains('exit 65'));
+    expect(script, contains('base64'));
   });
 }

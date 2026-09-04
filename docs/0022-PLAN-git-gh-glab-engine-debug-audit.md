@@ -1708,6 +1708,69 @@ oversimplification that would misreport a scope problem as a rate limit.
 **Verification.** Analyzer: 2 pre-existing. Suite: `+3334 ~2 -48`, failing set
 identical to baseline.
 
+### Phase 12 — M10 + L2 + L3 + L4: GitService residuals (2026-09-03) — **COMPLETE**
+
+**M10 — fixed properly, not deleted.** The plan allowed putting deletion of the
+zero-caller path to the maintainer if no byte-returning executor path existed.
+One does: `readFileBase64` establishes the base64-over-the-wire idiom, so
+`catFileBatchScript` now base64s git's output and `showBlobsBatch` decodes real
+bytes instead of re-encoding an already-lossily-decoded string.
+git's output goes to a `mktemp` file first so the **exit status stays git's** —
+a pipeline reports its last command's status, so piping into base64 would have
+turned a failed cat-file into exit 0 with empty output, i.e. a silent "no such
+object" (the same trap `readFileBase64` documents).
+Verified end-to-end against real git, not just in unit tests: a blob containing
+`PNG\xff\xfe\x00…\xff` round-trips byte-identical **and the object after it
+still frames correctly** — the desync is what actually made this dangerous.
+
+**The old test harness could not express the bug.** Fixtures fed the service
+`utf8.decode(rawBytes)`, which can only hold clean UTF-8 — `utf8.decode`
+without `allowMalformed` would in fact *throw* on such a payload. Fixtures now
+model the real wire (base64), which is what makes the regression test possible.
+
+**L2 — two bugs, both fixed.** The pending-op section was the only snapshot
+section with no exit-code policy at all (status and refs throw, remotes
+degrades with a comment); a failed probe reported "nothing pending", which
+gates the session-exit guard — so it told the user it was safe to walk away
+mid-rebase. It now throws. And the script has always emitted `am` while the
+consuming switch had no case for it.
+
+**`PendingOp.am` was added rather than mapped onto `rebase`** — the plan
+offered both. Mapping would have been actively wrong, not merely imprecise:
+`git rebase --abort` does not abort a plain `git am`. **Consequence, recorded
+because it exceeded the phase's original file list:** the new variant made
+three exhaustive switches in `repo_status_view.dart` fail to compile, and
+honouring them needed real `amAbort`/`amContinue` methods on `GitService` —
+otherwise the pending-op banner would offer an Abort button that cannot work.
+Both were added, mirroring their rebase siblings.
+
+**My earlier assessment of that blast radius was wrong**, and the compiler
+caught it: I grepped for `case PendingOp.` and concluded there were no
+exhaustive switches, missing the `=>` switch-expression form entirely.
+
+**L3.** `undoExecute`/`redoExecute` now build an `OperationDescriptor` and pass
+`lane:` explicitly — `undoExecute`'s doc claimed "on the exclusive lane" while
+nothing in its body said so.
+
+**L4.** `copy from`/`copy to` headers are classified as `renamed` rather than
+falling through to `modified` while carrying `oldPath != newPath` — a
+combination no other parse path produces. `renamed` rather than a new
+`DiffFileChange` variant, which would touch every exhaustive switch over it for
+no behavioural gain.
+
+**Negative tests — seen to fail.** Restoring the lossy round-trip fails the
+binary-blob test; removing the copy branch yields
+`Expected: renamed / Actual: modified`.
+
+**The gate earned its keep.** The first run showed `+3180 -61` with **13 files
+failing to load**. The hardened check flagged it instantly by comparing the
+passing count against baseline — the failing-set diff alone would have shown
+only unfamiliar "loading" entries. That is the same class of miss that slipped
+through in Phase 9 before the check was tightened.
+
+**Verification.** Analyzer: 2 pre-existing. Suite: `+3337 ~2 -48`, failing set
+identical to baseline.
+
 ### Phase 1 negative-test detail (retained)
 
 Run against a scratch `git clone` in the

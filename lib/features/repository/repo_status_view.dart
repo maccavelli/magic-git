@@ -1278,6 +1278,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     PendingOp.cherryPick => 'Cherry-pick',
     PendingOp.revert => 'Revert',
     PendingOp.rebase => 'Rebase',
+    PendingOp.am => 'Patch application',
     PendingOp.none => '',
   };
 
@@ -1302,6 +1303,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         PendingOp.cherryPick => git.cherryPickAbort(repoPath),
         PendingOp.revert => git.revertAbort(repoPath),
         PendingOp.rebase => git.rebaseAbort(repoPath),
+        PendingOp.am => git.amAbort(repoPath),
         PendingOp.none => Future<void>.value(),
       },
     )) {
@@ -1323,6 +1325,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         git.cherryPickContinue,
       ),
       PendingOp.revert => ('git revert --continue', git.revertContinue),
+      PendingOp.am => ('git am --continue', git.amContinue),
       // The banner only renders for a real pending op.
       PendingOp.none => ('', git.rebaseContinue),
     };

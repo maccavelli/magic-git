@@ -35,7 +35,13 @@ enum MergeMode { normal, noFf, ffOnly, squash }
 
 /// A git operation left mid-flight — waiting for the user to continue (resolve +
 /// commit) or abort — detected from the state files under the git dir.
-enum PendingOp { none, merge, cherryPick, revert, rebase }
+/// An in-progress git operation the user would lose by walking away.
+///
+/// `am` is a real state the detection script has always reported and the
+/// consuming switch never handled, so `git am` in progress read as "nothing
+/// pending" — the dangerous direction, since this gates the session-exit guard
+/// (0022 L2).
+enum PendingOp { none, merge, cherryPick, revert, rebase, am }
 
 /// One step in an interactive rebase's todo list.
 ///
@@ -2106,6 +2112,7 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
       remotesStdout: remotes.stdout,
       remotesExit: remotes.exitCode,
       pendingStdout: pending.stdout,
+      pendingExit: pending.exitCode,
       stderr: [status.stderr, refs.stderr].join('\n'),
     );
   }
@@ -2120,6 +2127,9 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     required String remotesStdout,
     required int remotesExit,
     required String pendingStdout,
+    // Nullable so the combined fast path, which brackets sections by marker
+    // rather than by process, can say "no separate status to report".
+    int? pendingExit,
     required String stderr,
   }) async {
     if (statusExit != 0) {
@@ -2156,11 +2166,28 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
             for (final line in remotesStdout.split('\n'))
               if (line.trim().isNotEmpty) line.trim(),
           ];
+    // The one snapshot section that had no exit-code policy at all, stated or
+    // otherwise — status and refs throw, remotes degrades with a comment, and
+    // this silently reported "nothing pending" when the script itself failed
+    // (no `sh`, permission error). That is the dangerous direction: it gates
+    // the session-exit guard, so a failed probe told the user it was safe to
+    // walk away mid-rebase. Degrade loudly rather than silently (0022 L2).
+    if (pendingExit != null && pendingExit != 0) {
+      throw GitException(
+        'could not determine whether an operation is in progress',
+        SSHCommandResult(
+          exitCode: pendingExit,
+          stdout: pendingStdout,
+          stderr: stderr,
+        ),
+      );
+    }
     final pendingOp = switch (pendingStdout.trim()) {
       'rebase' => PendingOp.rebase,
       'merge' => PendingOp.merge,
       'cherry-pick' => PendingOp.cherryPick,
       'revert' => PendingOp.revert,
+      'am' => PendingOp.am,
       _ => PendingOp.none,
     };
 
@@ -4856,6 +4883,24 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
   Future<void> rebaseAbort(String repoPath) =>
       _runVoid(repoPath, ['git', 'rebase', '--abort'], 'git rebase --abort');
 
+  /// `--abort` for an in-progress `git am` (a patch series being applied).
+  ///
+  /// Needed because [PendingOp.am] is a real state the detection script has
+  /// always reported (0022 L2). Mapping it onto [PendingOp.rebase] instead
+  /// would have been actively wrong, not merely imprecise: `git rebase
+  /// --abort` during a plain `git am` does not abort it.
+  Future<void> amAbort(String repoPath) =>
+      _runVoid(repoPath, ['git', 'am', '--abort'], 'git am --abort');
+
+  /// `--continue` for a paused `git am`, committing the prepared message
+  /// non-interactively like its rebase/merge siblings.
+  Future<SSHCommandResult> amContinue(String repoPath) => _run(
+    repoPath,
+    ['git', '-c', 'core.editor=true', ..._idArgs, 'am', '--continue'],
+    'git am --continue',
+    timeout: commitTimeout,
+  );
+
   static String _rebaseWord(RebaseAction a) => switch (a) {
     RebaseAction.pick => 'pick',
     RebaseAction.squash => 'squash',
@@ -5986,6 +6031,18 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
         '-c',
         _undoScript(record, force: force),
       ],
+      // Explicit rather than relying on execute()'s default: the doc above
+      // claims this runs on the exclusive lane, and nothing in the body said
+      // so (0022 L3).
+      lane: ExecLane.exclusive,
+      // Undo is a real mutation; without a descriptor it was the one that
+      // never appeared in the Activity Center.
+      operation: OperationDescriptor(
+        repositoryPath: record.repoPath,
+        label: 'Undo ${record.description}',
+        kind: OperationKind.gitMutation,
+        lane: ExecLane.exclusive,
+      ),
     );
     if (result.exitCode == 42) throw UndoStaleException(record);
     if (result.exitCode == 43) throw UndoDirtyException(record);
@@ -6012,6 +6069,13 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       repoPath: record.repoPath,
       extraEnv: _scopeEnvFor(record.repoPath),
       gitArgs: ['sh', '-c', '$command || exit 42'],
+      lane: ExecLane.exclusive,
+      operation: OperationDescriptor(
+        repositoryPath: record.repoPath,
+        label: 'Redo ${record.description}',
+        kind: OperationKind.gitMutation,
+        lane: ExecLane.exclusive,
+      ),
     );
     if (result.exitCode == 42) throw RedoStaleException(record);
     if (!result.isSuccess) {
