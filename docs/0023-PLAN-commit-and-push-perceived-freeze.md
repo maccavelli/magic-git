@@ -641,6 +641,37 @@ below.
 **Verification.** Analyzer: 2, the baseline's. Suite: `+3343 ~2 -48`, failing
 set **identical** to baseline.
 
+### Phase 3 — B8: the refs parse goes off the UI isolate (2026-09-04) — **COMPLETE**
+
+**Done.** `_assembleSnapshot` now gates `parseRefsDetailed` behind the same
+32 KiB `_isolateThreshold` as the porcelain parse on the line above it. The gate
+lives in `_assembleSnapshot`, **not** inside `parseRefsDetailed`, which is
+synchronous and called directly by `refs_parse_test.dart` and the legacy
+`parseRefs` facade.
+
+**Tests added, and an honest note about what each one proves.**
+* A behavioural test: a >32 KiB ref section (1200 refs) still parses to exactly
+  1200 refs, first/last/subject intact, in one round trip. This establishes
+  that the payload survives the isolate hop — `RefsResult`/`GitRef` really are
+  sendable, and nothing is dropped or reordered.
+* **That test cannot be made to fail for the gate**, and this was verified
+  rather than assumed: with the gate removed the sabotage run was **green**,
+  because gating changes only *where* the parse runs, not its result. Reporting
+  it as verification of the gate would have been false.
+* So the gate itself is pinned **structurally** — a source scan asserting
+  `_assembleSnapshot` contains `Isolate.run(() => parseRefsDetailed` and the
+  threshold comparison. That one **does** fail when the gate is removed
+  (`Expected: contains 'Isolate.run(() => parseRefsDetailed'`), confirmed
+  against a scratch clone where `grep -c` reported 0 occurrences.
+
+The scan uses a fixed 3000-char window from the method's start, matching
+`repo_mutation_refresh_test`'s `autoFetchProvider` idiom — a substring between
+two markers inverts here, because `_fetchSnapshotSeparately` is defined *before*
+`_assembleSnapshot`.
+
+**Verification.** Analyzer: 2, the baseline's. Suite: `+3345 ~2 -48`, failing
+set identical to baseline.
+
 ### DEVIATION 2026-09-03 (a) — Phase 1's prerequisite #2 was wrong as written
 
 **What the plan said.** "Thread an `operationId` through `_streamGitOp`.

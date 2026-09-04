@@ -2156,7 +2156,14 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     final status = statusStdout.length > _isolateThreshold
         ? await Isolate.run(() => GitPorcelainParser.parseV2(statusStdout))
         : GitPorcelainParser.parseV2(statusStdout);
-    final refsResult = parseRefsDetailed(refsStdout);
+    // Same 32 KiB gate as the porcelain parse above. This one was never
+    // gated, despite the ref section being routinely the LARGER of the two
+    // (`for-each-ref` over heads + remotes + tags, twelve fields each) and
+    // despite running on every snapshot. It is the only parse on the status
+    // path that can stall frames rather than merely spin a pane (0023 B8).
+    final refsResult = refsStdout.length > _isolateThreshold
+        ? await Isolate.run(() => parseRefsDetailed(refsStdout))
+        : parseRefsDetailed(refsStdout);
     // `git remote` inside a repo effectively cannot fail; a non-zero exit is
     // treated as "no remotes known" rather than failing the whole snapshot —
     // status and refs above are the load-bearing sections.
