@@ -12,8 +12,9 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'helpers/fake_snapshot.dart';
 
-class _DragFakeGit extends GitService {
+class _DragFakeGit extends GitService with FakeRefsSnapshot {
   _DragFakeGit(this.commits, this.refList)
     : super(SSHCommandExecutor(SSHClientManager()));
   final List<GitCommit> commits;

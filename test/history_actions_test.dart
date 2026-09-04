@@ -28,8 +28,9 @@ import 'package:remote_magic_git/features/history/commit_graph_view.dart'
 import 'package:remote_magic_git/features/history/history_minimap.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'helpers/fake_snapshot.dart';
 
-class _FakeGit extends GitService {
+class _FakeGit extends GitService with FakeSnapshot {
   _FakeGit(this.commits) : super(SSHCommandExecutor(SSHClientManager()));
   final List<GitCommit> commits;
 
@@ -85,6 +86,9 @@ class _FakeGit extends GitService {
 
   @override
   Future<List<GitRef>> refs(String repoPath) async => refList;
+
+  @override
+  List<GitRef> get fakeRefs => refList;
 
   @override
   Future<void> checkout(String repoPath, String ref) async {

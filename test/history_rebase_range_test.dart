@@ -17,11 +17,12 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
 import 'package:remote_magic_git/features/history/rebase_sheet.dart';
+import 'helpers/fake_snapshot.dart';
 
 /// Returns [full] for an unfiltered `git log` (no grep, not all-branches) and
 /// [filtered] otherwise — standing in for how a real `--grep` narrows the
 /// result server-side.
-class _FilterAwareFakeGit extends GitService {
+class _FilterAwareFakeGit extends GitService with FakeRefsSnapshot {
   _FilterAwareFakeGit({required this.full, required this.filtered})
     : super(SSHCommandExecutor(SSHClientManager()));
   final List<GitCommit> full;

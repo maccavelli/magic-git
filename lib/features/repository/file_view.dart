@@ -363,7 +363,7 @@ class _FileViewState extends ConsumerState<FileView> {
         // via its structure signature, the tree; repoStructureProvider is
         // invalidated too so a deleted file leaves the tree immediately.
         ref.read(ownMutationTrackerProvider).mark(repoPath);
-        ref.invalidate(statusProvider(repoPath));
+        ref.invalidate(repoSnapshotProvider(repoPath));
         ref.invalidate(repoStructureProvider(repoPath));
         setState(() => _busy = false);
       }

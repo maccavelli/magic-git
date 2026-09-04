@@ -1363,15 +1363,26 @@ class GitService {
   /// Working-tree + branch status via porcelain v2. `--no-optional-locks` (also
   /// enforced via the env prelude) keeps this read from ever taking index.lock.
   /// Bundled with [refs] and [pendingOp] into one round trip — see [_snapshot].
+  /// The whole combined snapshot — status, refs, remotes and pending-op from
+  /// one round trip.
+  ///
+  /// Public so the provider layer can fetch it **once per refresh wave** and
+  /// derive the three views from it. `_snapshot`'s in-flight dedup only covers
+  /// strictly concurrent callers; Riverpod rebuilds `statusProvider`,
+  /// `refsProvider` and `pendingOpProvider` as their listeners settle, not in
+  /// one instant, so each wave used to issue two or three identical commands
+  /// (0025 Finding B — six refresh triggers produced fifteen snapshots).
+  Future<RepoSnapshot> snapshot(String repoPath) => _snapshot(repoPath);
+
   Future<GitStatus> status(String repoPath) async =>
-      (await _snapshot(repoPath)).status;
+      (await snapshot(repoPath)).status;
 
   /// Local branches, remote-tracking refs, and tags. Bundled with [status] and
   /// [pendingOp] into one round trip — see [_snapshot].
   Future<List<GitRef>> refs(String repoPath) async {
-    final snapshot = await _snapshot(repoPath);
-    _latestRefParseWarnings[repoPath] = snapshot.refParseWarnings;
-    return snapshot.refs;
+    final snap = await snapshot(repoPath);
+    _latestRefParseWarnings[repoPath] = snap.refParseWarnings;
+    return snap.refs;
   }
 
   /// Refs and non-fatal parse warnings from the same combined snapshot.
@@ -1391,7 +1402,7 @@ class GitService {
   /// resolve & commit or abort" banner. Bundled with [status] and [refs] into
   /// one round trip — see [_snapshot].
   Future<PendingOp> pendingOp(String repoPath) async =>
-      (await _snapshot(repoPath)).pendingOp;
+      (await snapshot(repoPath)).pendingOp;
 
   /// The repo's *configured* remotes (`git remote`) — the correct test for
   /// "does this repo have a remote" (see [RepoSnapshot.remotes]; remote-

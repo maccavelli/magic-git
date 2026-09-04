@@ -62,18 +62,23 @@ class _Harness {
     late final _Harness h;
     final container = ProviderContainer(
       overrides: [
-        statusProvider(_repo).overrideWith((ref) async {
+        // Counted at the FETCH. statusProvider/refsProvider/pendingOpProvider
+        // are views of this one snapshot since 0025 Finding B, so overriding a
+        // view would detach it and the counter would never move.
+        repoSnapshotProvider(_repo).overrideWith((ref) async {
           h.statusFetches++;
-          return h.current;
+          return RepoSnapshot(
+            status: h.current,
+            refs: const <GitRef>[],
+            pendingOp: PendingOp.none,
+          );
         }),
         logProvider(_repo).overrideWith((ref) async {
           h.logFetches++;
           return const <GitCommit>[];
         }),
-        pendingOpProvider(_repo).overrideWith((ref) async => PendingOp.none),
         repoWatchProvider(_repo).overrideWith((ref) => watch.stream),
         fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
-        refsProvider(_repo).overrideWith((ref) async => const <GitRef>[]),
         remotesProvider(_repo).overrideWith((ref) async => const <String>[]),
         connectionProvider.overrideWith(_StubConnection.new),
       ],
@@ -179,7 +184,7 @@ void main() {
     // A polling tick can only refetch status; the moved oid it lands is the
     // one signal an external commit leaves in that mode.
     h.current = _statusAt('bbb');
-    h.container.invalidate(statusProvider(_repo));
+    h.container.invalidate(repoSnapshotProvider(_repo));
     await _Harness.settle(tester);
 
     expect(h.logFetches, logBefore + 1);
@@ -202,7 +207,7 @@ void main() {
       // mark, then the status refetch lands with the new oid.
       h.container.read(ownMutationTrackerProvider).mark(_repo);
       h.current = _statusAt('bbb');
-      h.container.invalidate(statusProvider(_repo));
+      h.container.invalidate(repoSnapshotProvider(_repo));
       await _Harness.settle(tester);
 
       expect(h.logFetches, logBefore);

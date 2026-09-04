@@ -492,7 +492,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           _missedUnscopedTick = false;
           _invalidateMutationFamilies();
         } else {
-          ref.invalidate(statusProvider(repoPath));
+          ref.invalidate(repoSnapshotProvider(repoPath));
         }
       });
     }
@@ -1557,7 +1557,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       // Otherwise only the working tree moved. Refresh status; the structure
       // tree, status overlay, and sequencer state all follow from it (the tree
       // only re-fetches when its shape changes — see repoStructureProvider).
-      ref.invalidate(statusProvider(repoPath));
+      ref.invalidate(repoSnapshotProvider(repoPath));
     });
     // If the selected conflict was resolved outside this session (another
     // terminal, a `git rebase --continue` run elsewhere) the file list

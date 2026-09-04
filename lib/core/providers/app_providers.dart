@@ -2859,6 +2859,8 @@ final ownMutationTrackerProvider = Provider<OwnMutationTracker>((ref) {
 /// A new repo-scoped fetch family belongs in this list — that single addition
 /// covers both ⌘R and connection resets.
 final List<ProviderOrFamily> repoScopedFetchFamilies = [
+  // The one fetch; the three views below re-derive from it (0025 Finding B).
+  repoSnapshotProvider,
   statusProvider,
   pendingOpProvider,
   logProvider,
@@ -2983,6 +2985,9 @@ void clearHashKeyedRepoCaches() {
 /// (This is the same reasoning that already puts [logSearchProvider] in as a
 /// family — it is keyed by a whole [LogQuery] no mutation site can rebuild.)
 List<ProviderOrFamily> repoMutationFamilies(String repoPath) => [
+  // Invalidating a view alone only re-derives it from the cached snapshot;
+  // this is the fetch (0025 Finding B).
+  repoSnapshotProvider(repoPath),
   // ---- per-worktree: the working tree and index are this checkout's alone ----
   statusProvider(repoPath),
 
@@ -3027,9 +3032,16 @@ List<ProviderOrFamily> familiesFor(Set<GitArea> areas, String repoPath) {
   final out = <ProviderOrFamily>{};
   for (final area in areas) {
     out.addAll(switch (area) {
-      GitArea.gitIndex => [statusProvider(repoPath)],
-      GitArea.worktree => [statusProvider(repoPath)],
+      GitArea.gitIndex => [
+        repoSnapshotProvider(repoPath),
+        statusProvider(repoPath),
+      ],
+      GitArea.worktree => [
+        repoSnapshotProvider(repoPath),
+        statusProvider(repoPath),
+      ],
       GitArea.refs => [
+        repoSnapshotProvider(repoPath),
         statusProvider(repoPath),
         refsProvider,
         logProvider,
@@ -3054,6 +3066,7 @@ List<ProviderOrFamily> familiesFor(Set<GitArea> areas, String repoPath) {
 /// History, stashes, reflog, snapshots, or worktrees — those do not move
 /// when HEAD and the worktree do not.
 List<ProviderOrFamily> repoFetchFamilies(String repoPath) => [
+  repoSnapshotProvider(repoPath),
   statusProvider(repoPath),
   refsProvider,
   remotesProvider,
@@ -3188,15 +3201,30 @@ final ignoreOracleProvider = Provider<GitIgnoreOracle>(
   (ref) => GitIgnoreOracle(ref.watch(gitServiceProvider)),
 );
 
+/// The combined repo snapshot — status, refs, remotes and pending-op from one
+/// round trip, fetched **once per refresh wave**.
+///
+/// [statusProvider], [refsProvider] and [pendingOpProvider] are views of this,
+/// not independent fetches. They used to be: each asked `GitService` for a
+/// snapshot on its own, and `_snapshotInFlight`'s dedup only covers strictly
+/// concurrent callers — but Riverpod rebuilds the three as their listeners
+/// settle, not in one instant. Attribution during a real commit+push found
+/// **six** refresh triggers producing **fifteen** snapshot commands, ~2.5 per
+/// wave (0025 Finding B).
+///
+/// Invalidate THIS to refresh any of the three; invalidating a view alone only
+/// re-derives it from the cached snapshot. A scan test enforces that.
+final repoSnapshotProvider = FutureProvider.autoDispose
+    .family<RepoSnapshot, String>((ref, repoPath) async {
+      final git = ref.watch(gitServiceProvider);
+      return _retryAfterForgeAuthIfNeeded(ref, () => git.snapshot(repoPath));
+    }, retry: noProviderRetry);
+
 final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
   ref,
   repoPath,
 ) async {
-  final git = ref.watch(gitServiceProvider);
-  final status = await _retryAfterForgeAuthIfNeeded(
-    ref,
-    () => git.status(repoPath),
-  );
+  final status = (await ref.watch(repoSnapshotProvider(repoPath).future)).status;
   // `parseWarnings` records any porcelain status record that failed its
   // expected field-count check and was dropped (e.g. output truncated by a
   // transport hiccup) — computed so the drop is inspectable instead of
@@ -3245,9 +3273,8 @@ final pendingOpProvider = FutureProvider.autoDispose.family<PendingOp, String>((
   ref,
   repoPath,
 ) async {
-  // Depend on status so this re-runs whenever the working tree changes.
-  ref.watch(statusProvider(repoPath));
-  return ref.watch(gitServiceProvider).pendingOp(repoPath);
+  // A view of the same snapshot the status came from — not a second fetch.
+  return (await ref.watch(repoSnapshotProvider(repoPath).future)).pendingOp;
 }, retry: noProviderRetry);
 
 /// Background auto-fetch: while connected and a positive interval is configured,
@@ -3595,7 +3622,8 @@ final refsProvider = FutureProvider.autoDispose.family<List<GitRef>, String>((
   ref,
   repoPath,
 ) async {
-  final result = await ref.watch(gitServiceProvider).refsWithWarnings(repoPath);
+  final snapshot = await ref.watch(repoSnapshotProvider(repoPath).future);
+  final result = RefsResult(snapshot.refs, snapshot.refParseWarnings);
   for (final warning in result.parseWarnings) {
     ref.read(outputLogProvider.notifier).logInfo('Ref parse warning: $warning');
   }

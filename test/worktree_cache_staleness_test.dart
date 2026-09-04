@@ -16,8 +16,9 @@ import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'helpers/fake_snapshot.dart';
 
-class _FakeGit extends GitService {
+class _FakeGit extends GitService with FakeSnapshot {
   _FakeGit() : super(LocalCommandExecutor());
 
   int statusCalls = 0;
@@ -97,7 +98,10 @@ void main() {
     // An idle-repo watcher tick: status refetched, identical content lands.
     // The content-identity memo hands back the previous instance — the
     // cached diff must survive untouched.
-    container.invalidate(statusProvider(repo));
+    // The FETCH, not the view: since 0025 Finding B, statusProvider derives
+    // from repoSnapshotProvider, so invalidating it alone only re-derives from
+    // the cached snapshot and no refetch happens.
+    container.invalidate(repoSnapshotProvider(repo));
     await container.read(statusProvider(repo).future);
     await Future<void>.delayed(Duration.zero);
     expect(
@@ -109,7 +113,7 @@ void main() {
 
     // A real external change: the re-landed status differs → invalidate.
     git.oid = 'oid-after-edit';
-    container.invalidate(statusProvider(repo));
+    container.invalidate(repoSnapshotProvider(repo));
     await container.read(statusProvider(repo).future);
     await Future<void>.delayed(Duration.zero); // let invalidation propagate
 
@@ -154,7 +158,7 @@ void main() {
     // Three worktree changes land while that first read is still running.
     for (final oid in ['edit-1', 'edit-2', 'edit-3']) {
       git.oid = oid;
-      container.invalidate(statusProvider(repo));
+      container.invalidate(repoSnapshotProvider(repo));
       await container.read(statusProvider(repo).future);
       await Future<void>.delayed(Duration.zero);
     }
@@ -274,7 +278,7 @@ void main() {
 
       expect(await container.read(commitDiffProvider(key).future), 'patch v1');
       await container.read(statusProvider(repo).future);
-      container.invalidate(statusProvider(repo));
+      container.invalidate(repoSnapshotProvider(repo));
       await container.read(statusProvider(repo).future);
       await Future<void>.delayed(Duration.zero);
 

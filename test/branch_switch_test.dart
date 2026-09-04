@@ -14,6 +14,7 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/branch_switch.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
+import 'helpers/fake_snapshot.dart';
 
 const _repo = '/repo';
 
@@ -29,7 +30,7 @@ GitStatus _untrackedOnly() => GitStatus(
   files: const [GitFileStatus(path: 'new.dart', statusX: '?', statusY: '?')],
 );
 
-class _FakeGit extends GitService {
+class _FakeGit extends GitService with FakeSnapshot {
   _FakeGit(this._status) : super(SSHCommandExecutor(SSHClientManager()));
   final GitStatus Function() _status;
   int statusCalls = 0;

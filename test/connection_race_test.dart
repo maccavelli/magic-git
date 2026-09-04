@@ -12,6 +12,7 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'helpers/fake_snapshot.dart';
 
 /// A manager whose connect() blocks until the test releases a gate, so we can
 /// interleave a disconnect / a second connect while the first is mid-flight.
@@ -70,7 +71,7 @@ class _NoopExecutor extends SSHCommandExecutor {
 /// opted-in repos in one batched round trip) and, on the first one only,
 /// pauses until the test releases [gateFirst] — used to land a disconnect()
 /// while the fsmonitor step is still in flight.
-class _FsmonitorTrackingGit extends GitService {
+class _FsmonitorTrackingGit extends GitService with FakeSnapshot {
   _FsmonitorTrackingGit() : super(_NoopExecutor());
   final List<List<String>> calls = [];
   Completer<void>? gateFirst;
@@ -628,7 +629,7 @@ void main() {
 /// First [status]/[listWorkingTree] call fails with a glab "not logged in"
 /// error; subsequent calls succeed. Models the race between the first git
 /// reads and connect-time forge login.
-class _AuthThenOkGit extends GitService {
+class _AuthThenOkGit extends GitService with FakeSnapshot {
   _AuthThenOkGit() : super(_NoopExecutor());
   int statusCalls = 0;
   int treeCalls = 0;

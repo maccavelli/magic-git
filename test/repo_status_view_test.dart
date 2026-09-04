@@ -302,18 +302,23 @@ Future<_FakeGitService> _pump(
   final container = ProviderContainer(
     overrides: [
       gitServiceProvider.overrideWithValue(resolved),
-      statusProvider(_repo).overrideWith((ref) async {
+      // The shared harness overrides the FETCH, not the views: since 0025
+      // Finding B the three are views of one snapshot, and overriding a view
+      // detaches it from the fetch.
+      repoSnapshotProvider(_repo).overrideWith((ref) async {
         if (statusError != null) throw statusError;
-        return status;
+        return RepoSnapshot(
+          status: status,
+          refs: refs,
+          pendingOp: resolved.pendingOp0,
+        );
       }),
-      pendingOpProvider(_repo).overrideWith((ref) async => resolved.pendingOp0),
       repoWatchProvider(
         _repo,
       ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
       fileViewVisibleProvider.overrideWith(
         showFileView ? _VisibleFileView.new : _HiddenFileView.new,
       ),
-      refsProvider(_repo).overrideWith((ref) async => refs),
       // Sibling of the refs override: the header now reads CONFIGURED
       // remotes (remotesProvider), not remote-tracking refs. Defaults to
       // matching the refs (remote refs imply a configured remote) so
@@ -862,20 +867,25 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           gitServiceProvider.overrideWithValue(git),
-          statusProvider(_repo).overrideWith((ref) async {
+          // Counted at the FETCH: the three views derive from it, so an
+          // invalidation of a view alone would never reach this counter
+          // (0025 Finding B).
+          repoSnapshotProvider(_repo).overrideWith((ref) async {
             statusFetches++;
-            return _statusWith(
-              unstaged: const [
-                GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
-              ],
+            return RepoSnapshot(
+              status: _statusWith(
+                unstaged: const [
+                  GitFileStatus(path: 'lib/a.dart', statusX: '.', statusY: 'M'),
+                ],
+              ),
+              refs: const [],
+              pendingOp: git.pendingOp0,
             );
           }),
-          pendingOpProvider(_repo).overrideWith((ref) async => git.pendingOp0),
           repoWatchProvider(
             _repo,
           ).overrideWith((ref) => watchController.stream),
           fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
-          refsProvider(_repo).overrideWith((ref) async => const []),
           // Sibling of the refs override: the views now read CONFIGURED
           // remotes (remotesProvider), not remote-tracking refs.
           remotesProvider(_repo).overrideWith((ref) async => const <String>[]),

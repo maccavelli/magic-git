@@ -9,13 +9,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/fake_snapshot.dart';
 
 const _sep = '\u0000';
 const _formerSep = '\u001f';
 
 const _peeledHash = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
 
-class _OverriddenRefsGit extends GitService {
+class _OverriddenRefsGit extends GitService with FakeRefsSnapshot {
   _OverriddenRefsGit() : super(SSHCommandExecutor(SSHClientManager()));
 
   var refsCalled = false;

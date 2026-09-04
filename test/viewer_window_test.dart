@@ -18,6 +18,7 @@ import 'package:remote_magic_git/features/viewer/viewer_host.dart';
 import 'package:remote_magic_git/features/viewer/viewer_providers.dart';
 import 'package:remote_magic_git/features/viewer/viewer_window.dart';
 import 'package:riverpod/misc.dart' show Override;
+import 'helpers/fake_snapshot.dart';
 
 const _repo = '/repo';
 
@@ -57,7 +58,7 @@ Override _content(String path, String raw) => fileContentProvider((
 
 // A GitService whose reads always throw a given executor-level error, to
 // exercise the viewer's read-error mapping end to end.
-class _ThrowingGit extends GitService {
+class _ThrowingGit extends GitService with FakeSnapshot {
   _ThrowingGit(this._error) : super(SSHCommandExecutor(SSHClientManager()));
   final Object _error;
   @override

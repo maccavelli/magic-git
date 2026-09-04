@@ -17,7 +17,6 @@ import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
-import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _LocalConnection extends ConnectionController {
@@ -35,10 +34,14 @@ class _SlowGit extends GitService {
   int diffFetches = 0;
   int statusFetches = 0;
 
+  // Counted at the FETCH, and delegating to the REAL one — this fake runs
+  // against a real local repo. Using the FakeSnapshot mixin here would recurse:
+  // its `snapshot()` calls `status()`, and this `status()` called `super`,
+  // which since 0025 Finding B resolves back through `snapshot()`.
   @override
-  Future<GitStatus> status(String repoPath) {
+  Future<RepoSnapshot> snapshot(String repoPath) {
     statusFetches++;
-    return super.status(repoPath);
+    return super.snapshot(repoPath);
   }
 
   @override

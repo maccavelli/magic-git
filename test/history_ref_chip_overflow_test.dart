@@ -19,6 +19,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
 import 'package:remote_magic_git/features/history/ref_chip.dart';
+import 'helpers/fake_snapshot.dart';
 
 const _repo = '/repo';
 
@@ -66,7 +67,7 @@ List<GitRef> _manyRefs() => [
   ),
 ];
 
-class _FakeGit extends GitService {
+class _FakeGit extends GitService with FakeRefsSnapshot {
   _FakeGit(this._refs) : super(SSHCommandExecutor(SSHClientManager()));
 
   final List<GitRef> _refs;

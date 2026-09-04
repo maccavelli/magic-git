@@ -20,6 +20,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/session_exit_guard.dart';
+import 'helpers/fake_snapshot.dart';
 
 const _repo = '/srv/repo';
 
@@ -33,7 +34,7 @@ GitStatus _dirty() => GitStatus(
   files: const [GitFileStatus(path: 'a.dart', statusX: '.', statusY: 'M')],
 );
 
-class _FakeGit extends GitService {
+class _FakeGit extends GitService with FakeSnapshot {
   _FakeGit({this._status, this.throwOnStatus = false})
     : super(SSHCommandExecutor(SSHClientManager()));
 

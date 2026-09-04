@@ -24,6 +24,7 @@ import 'package:remote_magic_git/features/repository/commit_composer_controller.
 import 'package:remote_magic_git/features/repository/commit_dialog.dart';
 import 'package:remote_magic_git/features/repository/repo_status_view.dart';
 import 'package:remote_magic_git/features/stash/stash_view.dart';
+import 'helpers/fake_snapshot.dart';
 
 const _repo = '/srv/repo';
 
@@ -63,7 +64,7 @@ VoidCallback? _bindingFor(
   return null;
 }
 
-class _FakeGit extends GitService {
+class _FakeGit extends GitService with FakeRefsSnapshot {
   _FakeGit({this.commits = const []})
     : super(SSHCommandExecutor(SSHClientManager()));
   final List<String> staged = [];

@@ -843,12 +843,12 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       }
     }
     if (_kind == WindowKind.detachedRepo) {
-      ref.invalidate(statusProvider(repoPath));
+      ref.invalidate(repoSnapshotProvider(repoPath));
     } else if (_kind == WindowKind.history && mode == WatchMode.polling) {
       // Polling mode's only external-commit signal is a HEAD move between two
       // landed statuses — arm the probe and land one (see [_pollHeadProbe]).
       _ensurePollHeadProbe(repoPath);
-      ref.invalidate(statusProvider(repoPath));
+      ref.invalidate(repoSnapshotProvider(repoPath));
     }
   }
 

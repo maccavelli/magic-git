@@ -274,7 +274,7 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
     session.lastKnownHash = newHash;
     session.pendingConflictBytes = null;
     session.declinedConflictBytes = null;
-    ref.invalidate(statusProvider(session.repoPath));
+    ref.invalidate(repoSnapshotProvider(session.repoPath));
   }
 
   /// User chose to overwrite the remote after a conflict notice.

@@ -27,6 +27,7 @@ import 'package:remote_magic_git/features/history/ref_chip.dart';
 import 'package:remote_magic_git/features/viewer/viewer_host.dart';
 import 'package:remote_magic_git/features/window/secondary_window_main.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'helpers/fake_snapshot.dart';
 
 const _windowId = '7';
 final _hub = MethodChannel(windowHubChannel(_windowId));
@@ -65,7 +66,7 @@ class _FakeExecutor extends SSHCommandExecutor {
 /// A GitService that serves one canned commit — enough for the actions-menu
 /// test, which needs a selectable row (the executor-level fake can't produce
 /// git's log wire format).
-class _FakeGit extends GitService {
+class _FakeGit extends GitService with FakeRefsSnapshot {
   _FakeGit({this.withRefs = false})
     : super(SSHCommandExecutor(SSHClientManager()));
 
@@ -119,7 +120,11 @@ class _FakeGit extends GitService {
   }) async => const [headCommit];
 
   @override
-  Future<List<GitRef>> refs(String repoPath) async =>
+  Future<List<GitRef>> refs(String repoPath) async => fakeRefs;
+
+  /// Backs [refs]; not a mixin hook under [FakeRefsSnapshot], which takes
+  /// refs from the `refs()` override above.
+  List<GitRef> get fakeRefs =>
       withRefs ? const [headBranch, releaseTag] : const [];
 
   @override
@@ -138,7 +143,7 @@ class _HeadMoveGit extends _FakeGit {
   int logCalls = 0;
 
   @override
-  Future<GitStatus> status(String repoPath) async => GitStatus(
+  GitStatus get fakeStatus => GitStatus(
     branch: GitBranchInfo(oid: currentOid, head: 'main'),
     files: const [],
   );

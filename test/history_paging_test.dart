@@ -14,6 +14,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'helpers/fake_snapshot.dart';
 
 /// One `git log` the panel asked for: the window it wanted out of the walk.
 typedef _Walk = ({int skip, int count});
@@ -21,7 +22,7 @@ typedef _Walk = ({int skip, int count});
 /// A git whose log honors `skip`/`maxCount` against a synthetic history, and
 /// records the window of every walk — so a test can tell a *page* fetch from a
 /// re-walk of the whole prefix.
-class _PagingGit extends GitService {
+class _PagingGit extends GitService with FakeRefsSnapshot {
   _PagingGit(this.total) : super(SSHCommandExecutor(SSHClientManager()));
 
   /// How many commits this repo has in total.
