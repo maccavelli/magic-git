@@ -33,7 +33,14 @@ bool shouldTriggerWatch(String path) {
         // this file (the commit preview deliberately uses its own mktemp
         // file), and ARCHITECTURE_PLAN §watch already lists it as an ignore
         // that was never implemented.
-        path.endsWith('/COMMIT_EDITMSG')) {
+        path.endsWith('/COMMIT_EDITMSG') ||
+        // The watcher's own registry: the pid it records at arm time and the
+        // heartbeat the client refreshes while it is alive (0025 C3). Both
+        // live in the git-dir, which a bounded watch watches — so without this
+        // the heartbeat would trigger the very refresh it exists to make
+        // unnecessary, once a minute, forever.
+        path.contains('/mg-watch.') ||
+        path.startsWith('.git/mg-watch.')) {
       return false;
     }
   }

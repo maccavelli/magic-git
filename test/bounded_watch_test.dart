@@ -151,4 +151,50 @@ void main() {
       expect(script.contains(r"'/home/u/it'\''s a dir'"), isTrue);
     });
   });
+
+  // 0025 C3. Nothing bounds host processes today: 19 inotifywait orphans were
+  // found on the real host, oldest 16.9 days, four predating an app upgrade.
+  // 0024 M2 showed a budget that lives only in a comment is one that gets
+  // forgotten, so these are constants with tests, not prose.
+  group('watch lease registry', () {
+    test('the inotify arm records its pid where a sweep can find it', () {
+      final s = boundedInotifyScript([
+        '/r/.git',
+      ], pidFile: '/r/.git/mg-watch.pid');
+      expect(s, contains('mg-watch.pid'));
+      // $$ is the arming shell, and `exec` makes the watcher inherit it — so
+      // the pid recorded is the process a sweep must actually signal.
+      expect(s, contains(r'$$'));
+      expect(s, contains('exec'));
+    });
+
+    test('the fswatch arm records its pid too', () {
+      final s = boundedFswatchScript([
+        '/r/.git',
+      ], pidFile: '/r/.git/mg-watch.pid');
+      expect(s, contains('mg-watch.pid'));
+      expect(s, contains(r'$$'));
+    });
+
+    test('no pid file means the script is unchanged', () {
+      // The recursive (non-bounded) path and every existing caller must keep
+      // working untouched.
+      expect(boundedInotifyScript(['/r/.git']), isNot(contains('mg-watch')));
+    });
+
+    test('the sweep signals only a stale lease, and only inotifywait', () {
+      final s = watcherSweepScript(
+        ['/r1/.git/mg-watch.pid'],
+        heartbeat: '/r1/.git/mg-watch.hb',
+        staleAfter: const Duration(minutes: 5),
+      );
+      expect(s, contains('mg-watch.pid'));
+      expect(s, contains('mg-watch.hb'));
+      // Verified before signalling: 0025 records that a broken `ps` filter is
+      // exactly how a kill set ends up containing the wrong processes.
+      expect(s, contains('inotifywait'));
+      expect(s, contains('300'), reason: 'staleAfter in seconds');
+      expect(s, contains('kill -TERM'));
+    });
+  });
 }

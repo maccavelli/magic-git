@@ -1583,6 +1583,7 @@ class ConnectionController extends Notifier<ConnectionState> {
           _applyFsmonitorTuning(attempt, fsmonitorPaths),
         _refreshToolVersions(attempt, repoPath),
         _reconcileLoginShellPath(attempt, repoPath),
+        _sweepStaleWatchers(attempt, repoPath),
         _connectForgeLogins(
           attempt: attempt,
           gate: gate,
@@ -1628,6 +1629,26 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// numbers. Kept off the connect path because spawning `gh`/`glab` for a
   /// banner is exactly the kind of hidden network wait (update checks) that
   /// made connecting slow.
+  /// Reclaims watcher processes left behind by a previous session.
+  ///
+  /// A heartbeat from a session that is gone is stale by definition, so
+  /// anything still running against it is an orphan — the state that left 19
+  /// `inotifywait` processes on the host, the oldest 16.9 days (0025 A/C3).
+  /// Runs in the background stage: it is housekeeping, never a precondition
+  /// for the session being usable.
+  Future<void> _sweepStaleWatchers(int attempt, String repoPath) async {
+    try {
+      final scoped = state.scopedGitDirs;
+      final repos = <String, String>{
+        for (final p in state.repoPaths.isEmpty ? [repoPath] : state.repoPaths)
+          p: scoped[p] ?? '$p/.git',
+      };
+      await ref.read(remoteWatchServiceProvider).sweepStaleWatchers(repos);
+    } catch (_) {
+      // Best-effort by design.
+    }
+  }
+
   /// Folds the login shell's own PATH into the resolved environment, AFTER the
   /// session is already usable.
   ///

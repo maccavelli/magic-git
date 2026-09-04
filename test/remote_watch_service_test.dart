@@ -242,6 +242,45 @@ class _ProbeFailsOnceExecutor extends SSHCommandExecutor {
   }) async => _SilentStreamHandle();
 }
 
+/// Hands out a FRESH handle per arm — the single-handle fake above cannot be
+/// listened to twice, which would fail an arm for the wrong reason.
+class _MultiArmExecutor extends SSHCommandExecutor {
+  _MultiArmExecutor() : super(SSHClientManager());
+
+  final handles = <_DrivableStreamHandle>[];
+
+  @override
+  Future<SSHCommandResult> execute({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    String? stdin,
+    Duration timeout = SSHCommandExecutor.defaultTimeout,
+    int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
+    Duration? activityIdle,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
+  }) async =>
+      const SSHCommandResult(exitCode: 0, stdout: 'inotifywait\n', stderr: '');
+
+  @override
+  Future<SSHStreamHandle> executeStream({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+  }) async {
+    final h = _DrivableStreamHandle();
+    handles.add(h);
+    return h;
+  }
+}
+
 List<String> _chunk(String blob, int bytes) {
   final out = <String>[];
   for (var i = 0; i < blob.length; i += bytes) {
@@ -505,5 +544,50 @@ void main() {
 
       sub.cancel();
     });
+  });
+
+  group('watcher ceiling', () {
+    test('the ceiling is a named constant', () {
+      // One active repo plus one background. Beyond that, poll and say so.
+      expect(RemoteWatchService.maxConcurrentWatchers, 2);
+    });
+
+    test(
+      'arms past the ceiling degrade to polling with a diagnostic',
+      () async {
+        RemoteWatchService.resetWatcherCount();
+        addTearDown(RemoteWatchService.resetWatcherCount);
+        final exec = _MultiArmExecutor();
+        final diagnostics = <String>[];
+        final service = RemoteWatchService(exec, onDiagnostic: diagnostics.add);
+
+        final subs = <StreamSubscription<RepoWatchEvent>>[];
+        final modes = <int, List<WatchMode>>{};
+        for (var i = 0; i <= RemoteWatchService.maxConcurrentWatchers; i++) {
+          modes[i] = [];
+          subs.add(
+            service
+                .watch('/r$i', pollInterval: const Duration(milliseconds: 50))
+                .listen((e) => modes[i]!.add(e.mode)),
+          );
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 400));
+
+        // The arms within the ceiling are live; the one past it polls, and says
+        // why — the failure mode that produced 19 orphans was accumulating in
+        // silence instead.
+        expect(
+          modes[RemoteWatchService.maxConcurrentWatchers],
+          contains(WatchMode.polling),
+          reason: 'the arm past the ceiling must degrade, not accumulate',
+        );
+        expect(diagnostics.join(' '), contains('ceiling reached'));
+        expect(exec.handles.length, RemoteWatchService.maxConcurrentWatchers);
+
+        for (final sub in subs) {
+          await sub.cancel();
+        }
+      },
+    );
   });
 }

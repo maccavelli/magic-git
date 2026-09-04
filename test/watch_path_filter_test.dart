@@ -67,4 +67,15 @@ void main() {
       expect(shouldTriggerWatch(''), isFalse);
     });
   });
+
+  test('the watcher registry files do not trigger the watcher (0025 C3)', () {
+    // The pid file and heartbeat live in the git-dir, which a bounded watch
+    // watches. Without this the heartbeat the app writes every minute would
+    // trigger the refresh it exists to make unnecessary.
+    expect(shouldTriggerWatch('.git/mg-watch.pid'), isFalse);
+    expect(shouldTriggerWatch('.git/mg-watch.hb'), isFalse);
+    expect(shouldTriggerWatch('worktree/.git/mg-watch.hb'), isFalse);
+    // Anything else under .git still does.
+    expect(shouldTriggerWatch('.git/index'), isTrue);
+  });
 }

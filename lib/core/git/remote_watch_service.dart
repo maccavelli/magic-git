@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'dart:developer' as developer;
+
+import 'package:flutter/foundation.dart' show visibleForTesting;
+import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
 import 'bounded_watch.dart';
 import 'watch_event.dart';
@@ -20,8 +23,9 @@ const _inotifyExcludeFlags =
 /// inotifywait excludes without arming an SSH stream.
 List<String> remoteWatcherArgs(
   RemoteWatcherTool tool,
-  BoundedWatchSpec? bounded,
-) {
+  BoundedWatchSpec? bounded, {
+  String? pidFile,
+}) {
   // Scoped work-tree repo: watch the explicit, non-recursive bounded surface
   // (git-dir points + tracked-file dirs) instead of the whole work tree.
   if (bounded != null) {
@@ -29,9 +33,17 @@ List<String> remoteWatcherArgs(
       case RemoteWatcherTool.fswatch:
         // Through `sh -c` like the inotify twin: fswatch needs the same
         // existence filter (see boundedFswatchScript).
-        return ['sh', '-c', boundedFswatchScript(bounded.watchDirs)];
+        return [
+          'sh',
+          '-c',
+          boundedFswatchScript(bounded.watchDirs, pidFile: pidFile),
+        ];
       case RemoteWatcherTool.inotifywait:
-        return ['sh', '-c', boundedInotifyScript(bounded.watchDirs)];
+        return [
+          'sh',
+          '-c',
+          boundedInotifyScript(bounded.watchDirs, pidFile: pidFile),
+        ];
       case RemoteWatcherTool.none:
         return const [];
     }
@@ -100,6 +112,71 @@ class RemoteWatchService {
   /// Diagnostic lines reported per arm.
   static const int maxDiagnosticLines = 20;
 
+  /// Live watcher processes one connection may hold at once.
+  ///
+  /// One active repo plus one background. Past this the app polls and says so,
+  /// rather than accumulating — 19 orphaned `inotifywait` processes, the
+  /// oldest 16.9 days, is what "no ceiling at all" produced (0025 C3).
+  static const int maxConcurrentWatchers = 2;
+
+  /// How often the client refreshes a watcher's heartbeat while it is alive.
+  static const Duration heartbeatInterval = Duration(seconds: 60);
+
+  /// A heartbeat older than this means the client that armed the watcher is
+  /// gone. Generously above [heartbeatInterval] so a slow link or a busy
+  /// exclusive lane cannot orphan a live watcher.
+  static const Duration leaseStaleAfter = Duration(minutes: 5);
+
+  /// Registry paths for [repoPath], in the git-dir so they travel with the
+  /// repository and never sit at a guessable /tmp path (0025 M4's lesson).
+  static String watchPidFile(String gitDir) => '$gitDir/mg-watch.pid';
+  static String watchHeartbeatFile(String gitDir) => '$gitDir/mg-watch.hb';
+
+  /// Reclaims watcher processes whose client is gone.
+  ///
+  /// Run at connect: a heartbeat left by a previous session is by definition
+  /// stale, so anything still running from it is an orphan. This is the
+  /// "reconnect-time sweep" 0022 M5 named and never built — the absence of
+  /// which left 19 `inotifywait` processes on the host, the oldest 16.9 days.
+  ///
+  /// Best-effort: a failure here must never affect the connect.
+  Future<void> sweepStaleWatchers(Map<String, String> repoToGitDir) async {
+    if (repoToGitDir.isEmpty) return;
+    for (final entry in repoToGitDir.entries) {
+      try {
+        await _executor.execute(
+          repoPath: entry.key,
+          gitArgs: [
+            'sh',
+            '-c',
+            watcherSweepScript(
+              [watchPidFile(entry.value)],
+              heartbeat: watchHeartbeatFile(entry.value),
+              staleAfter: leaseStaleAfter,
+            ),
+          ],
+          lane: ExecLane.isolated,
+          timeout: const Duration(seconds: 20),
+        );
+      } catch (e) {
+        onDiagnostic?.call('watcher sweep failed for ${entry.key}: $e');
+      }
+    }
+  }
+
+  /// Live watcher processes this client has armed. Static because the ceiling
+  /// is a property of the *host* budget, not of any one service instance —
+  /// several providers construct their own service against the same host.
+  static int _liveWatchers = 0;
+
+  /// Live watcher count — for tests and diagnostics.
+  static int get liveWatchers => _liveWatchers;
+
+  /// Test seam: the counter is process-global, so a test that arms watchers
+  /// must be able to start from a known state.
+  @visibleForTesting
+  static void resetWatcherCount() => _liveWatchers = 0;
+
   /// Cap on the un-delimited stdout buffer. A watcher tool that streams partial
   /// output without ever emitting the record delimiter (a wedged or misbehaving
   /// fswatch/inotifywait) would otherwise grow `buffer` without bound. Past this
@@ -137,6 +214,10 @@ class RemoteWatchService {
     // Debounces the deliberate re-arm below. Lives outside `arm` so it spans
     // re-arms; cancelled by every teardown.
     Timer? rearmTimer;
+    // Refreshes the watcher's heartbeat while this client is alive. The
+    // watcher reads it and exits on its own when it goes stale, which is the
+    // only thing that survives losing the channel (0025 A/C1).
+    Timer? heartbeatTimer;
 
     return watchLifecycle(
       trailing: trailing,
@@ -159,13 +240,43 @@ class RemoteWatchService {
         final spec = bounded == null ? null : await bounded();
         if (hooks.isCancelled()) return const WatchAborted();
 
+        // Refuse before arming rather than accumulating. Nothing bounded this
+        // before, and the result was 19 orphaned watchers on the real host
+        // (0025 C3). Degrading to polling is a worse experience for this repo
+        // and a far better one than a host slowly filling with processes
+        // nobody is reading.
+        if (_liveWatchers >= maxConcurrentWatchers) {
+          onDiagnostic?.call(
+            'watcher ceiling reached ($_liveWatchers/$maxConcurrentWatchers) — '
+            'polling $repoPath instead',
+          );
+          return const WatchUnavailable();
+        }
+        // RESERVE the slot here, synchronously, rather than counting it once
+        // the arm succeeds. Arms are concurrent — several repos arm at once on
+        // connect — and every one of them awaits the tool probe before this
+        // point, so a check that did not reserve let all of them pass the
+        // ceiling together. Released on every path that does not end armed.
+        _liveWatchers++;
+        var armCounted = true;
+        void releaseSlot() {
+          if (!armCounted) return;
+          armCounted = false;
+          if (_liveWatchers > 0) _liveWatchers--;
+        }
+
         final CommandStreamHandle handle;
         try {
           handle = await _executor.executeStream(
             repoPath: repoPath,
-            gitArgs: remoteWatcherArgs(tool, spec),
+            gitArgs: remoteWatcherArgs(
+              tool,
+              spec,
+              pidFile: watchPidFile(spec?.gitDir ?? '$repoPath/.git'),
+            ),
           );
         } on SSHStreamBudgetExhausted catch (e) {
+          releaseSlot();
           // Deterministic, not a blip: retrying just hits the same wall and
           // spends the restart budget doing it. Poll this repo instead, and
           // say why (0024 M2).
@@ -173,6 +284,7 @@ class RemoteWatchService {
           return const WatchUnavailable();
         }
         if (hooks.isCancelled()) {
+          releaseSlot();
           await handle.cancel();
           return const WatchAborted();
         }
@@ -190,6 +302,7 @@ class RemoteWatchService {
             onTimeout: () => null,
           );
           if (early == boundedWatchNoPathsExit) {
+            releaseSlot();
             await handle.cancel();
             return const WatchUnavailable();
           }
@@ -263,6 +376,25 @@ class RemoteWatchService {
         // (ssh_session.dart:74), so unread stderr is queued in the Dart heap
         // for the life of the channel — and the watcher's channel is the
         // longest-lived one in the app (0024 H3).
+        final gitDir = spec?.gitDir ?? '$repoPath/.git';
+        final heartbeat = watchHeartbeatFile(gitDir);
+        Future<void> beat() async {
+          try {
+            await _executor.execute(
+              repoPath: repoPath,
+              gitArgs: ['sh', '-c', 'touch ${ShellEscaper.escape(heartbeat)}'],
+              lane: ExecLane.isolated,
+              timeout: const Duration(seconds: 15),
+            );
+          } catch (_) {
+            // Best-effort. A missed beat costs nothing until leaseStaleAfter.
+          }
+        }
+
+        unawaited(beat());
+        heartbeatTimer?.cancel();
+        heartbeatTimer = Timer.periodic(heartbeatInterval, (_) => beat());
+
         var diagnosticsSeen = 0;
         var errBuffer = '';
         final errSub = handle.stderr.listen((chunk) {
@@ -284,6 +416,9 @@ class RemoteWatchService {
         }, onError: (Object _) {});
 
         return WatchArmed(() async {
+          releaseSlot();
+          heartbeatTimer?.cancel();
+          heartbeatTimer = null;
           rearmTimer?.cancel();
           rearmTimer = null;
           // Cancel the stdout subscription *before* the handle, mirroring the

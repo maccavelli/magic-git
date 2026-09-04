@@ -147,7 +147,7 @@ typedef BoundedWatchSpecSource = Future<BoundedWatchSpec> Function();
 /// retrying on the recovery timer (0022 M6).
 const int boundedWatchNoPathsExit = 97;
 
-String boundedInotifyScript(List<String> watchDirs) {
+String boundedInotifyScript(List<String> watchDirs, {String? pidFile}) {
   final joined = watchDirs.map(ShellEscaper.escape).join(' ');
   const fmt = '-m -e modify,create,delete,move --format %w%f';
   // Build the existence-filtered positional list once, then exec inotifywait on
@@ -155,6 +155,7 @@ String boundedInotifyScript(List<String> watchDirs) {
   return 'set -- $joined; '
       'for d; do [ -e "\$d" ] && set -- "\$@" "\$d"; shift; done; '
       '[ "\$#" -gt 0 ] || exit $boundedWatchNoPathsExit; '
+      '${_recordPid(pidFile)}'
       'if command -v stdbuf >/dev/null 2>&1; then '
       'exec stdbuf -oL inotifywait $fmt "\$@"; '
       'else exec inotifywait $fmt "\$@"; fi';
@@ -174,10 +175,51 @@ String boundedInotifyScript(List<String> watchDirs) {
 ///
 /// `exec` for the same reason as the inotify script: a channel close must reach
 /// fswatch itself, not a surviving shell wrapper.
-String boundedFswatchScript(List<String> watchDirs) {
+String boundedFswatchScript(List<String> watchDirs, {String? pidFile}) {
   final joined = watchDirs.map(ShellEscaper.escape).join(' ');
   return 'set -- $joined; '
       'for d; do [ -e "\$d" ] && set -- "\$@" "\$d"; shift; done; '
       '[ "\$#" -gt 0 ] || exit $boundedWatchNoPathsExit; '
+      '${_recordPid(pidFile)}'
       'exec fswatch -0 --latency 0.5 "\$@"';
+}
+
+/// Records the arming shell's pid so a later sweep can find the watcher.
+///
+/// `$$` is the shell about to `exec`, so the pid written is the one the watcher
+/// itself will run under — there is no wrapper to confuse a sweep. Empty when
+/// no pid file is wanted, which keeps every existing caller's script identical.
+String _recordPid(String? pidFile) => pidFile == null
+    ? ''
+    : 'printf %s "\$\$" > ${ShellEscaper.escape(pidFile)}; ';
+
+/// Script that reclaims watcher processes whose client is gone.
+///
+/// The client refreshes [heartbeat] while it is alive. A heartbeat older than
+/// [staleAfter] means no one is reading these watchers' output any more — the
+/// state that produced 19 orphans, because a watcher blocked in `select()`
+/// never writes and so never learns its reader has gone (0025 A).
+///
+/// Every pid is re-verified against `/proc/<pid>/comm` before being signalled.
+/// That check is not ceremony: 0025 records a `ps` selector bug that put the
+/// wrong processes in a kill set, caught only because the set was printed
+/// before it was used.
+String watcherSweepScript(
+  List<String> pidFiles, {
+  required String heartbeat,
+  required Duration staleAfter,
+}) {
+  final hb = ShellEscaper.escape(heartbeat);
+  final files = pidFiles.map(ShellEscaper.escape).join(' ');
+  return 'now=\$(date +%s); ts=0; '
+      '[ -f $hb ] && ts=\$(stat -c %Y $hb 2>/dev/null || echo 0); '
+      '[ "\$((now - ts))" -ge ${staleAfter.inSeconds} ] || exit 0; '
+      'for f in $files; do '
+      '[ -f "\$f" ] || continue; '
+      'p=\$(cat "\$f" 2>/dev/null); '
+      'case "\$p" in ""|*[!0-9]*) continue ;; esac; '
+      'c=\$(cat /proc/"\$p"/comm 2>/dev/null || echo); '
+      'case "\$c" in inotifywait|fswatch) '
+      'kill -TERM "\$p" 2>/dev/null; rm -f "\$f" ;; esac; '
+      'done; true';
 }
