@@ -1,6 +1,6 @@
 ---
-status: proposed
-date: 2026-09-03
+status: executed
+date: 2026-09-04
 associated-madr: "0023-MADR-commit-and-push-perceived-freeze.md"
 ---
 # Implement the commit-and-push responsiveness work
@@ -796,6 +796,53 @@ of a session where the user-visible complaint is already answered.
 **What would change the answer:** History paging becoming slow enough to notice
 on a large repo, or the commit path showing up in a profile. Neither is
 evidenced today. Recorded as a candidate, not a debt.
+
+### Phase 7 — Final verification (2026-09-04)
+
+* `flutter analyze` — **2 issues**, exactly the Phase 0 baseline's two
+  pre-existing `unawaited_return_in_try_block` warnings. No phase introduced
+  one that survived; three were introduced and fixed within their own phase
+  (a `directives_ordering`, an `unnecessary_brace_in_string_interps`, and the
+  `invalid_override` waves).
+* `flutter test` — **`+3350 ~2 -48`**. Failing set **identical** to baseline
+  (the 48 known `workspace_golden_test.dart` goldens); passing **3340 → 3350**,
+  ten tests added and none lost.
+* Every negative test was run against a **scratch clone** and observed failing,
+  each with an `assert s != before` post-condition after the Phase 2 incident
+  below.
+* Commits: one per phase, on `master`. **Not pushed** — the maintainer's call.
+
+**Still outstanding, and named rather than buried:**
+
+1. **The app-level measurement (Phase 7 item 4) has NOT been done.** It needs a
+   live `.app` run: time a one-file commit+push, confirm the workspace stays
+   interactive, and count the git processes against the ≈22–40 baseline. Every
+   number in this plan is from a shell or from source. A plan about *perceived*
+   performance that ships without watching the app is not fully verified, and
+   this one has not been.
+2. `_logPushed`/`_logPulled` still sit inside `_push`'s awaited span (carried
+   from Phase 2; much lower value now the modal is gone).
+3. **B9** — the Review-mode forge call on the post-commit path. A behaviour
+   decision, deliberately not taken unilaterally.
+4. `merge` and `cherryPick` still carry the 60 s default that Phase 4c fixed
+   for pull's integrate half (named there as a follow-up).
+5. A2's guarded prepend — assessed and declined on evidence (Phase 6).
+
+### What actually changed for the reported symptom
+
+The complaint was "30+ seconds with the app frozen". Of that:
+
+* **~9.5 s was the `pre-push` hook**, fixed before this plan began — measured
+  `10.208 s → 0.559 s` on the real repo, and it also turned out to be silently
+  missing leaks in large files.
+* **The "frozen" was never compute.** The app rendered at 60 fps throughout,
+  streaming push progress to a log the modal was covering. Phase 1 closes the
+  sheet when the commit lands and shows what is happening.
+* **The refresh storm was real**: four full-set fan-outs, ≈22–40 git processes
+  for a one-file commit. Phases 2 and 5 cut it to one narrow set plus one
+  batched report.
+* **The fixed per-operation overhead is gone**: no `sh -c` upstream probe when
+  the caller can answer from RAM, no credential-helper spawn on SSH remotes.
 
 ### DEVIATION 2026-09-03 (a) — Phase 1's prerequisite #2 was wrong as written
 

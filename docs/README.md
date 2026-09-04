@@ -48,7 +48,7 @@ residuals or maintainer-only steps — 0010's Phase 7 is the standing example.
 | 0020 | [Fetch/pull/push lag](0020-MADR-fetch-pull-push-lag.md) | `accepted` | [plan](0020-PLAN-fetch-pull-push-lag.md) | `executed` |
 | 0021 | [Create-repo identity stays per-repo](0021-MADR-create-repo-identity-and-origin.md) | `accepted` | [plan](0021-PLAN-create-repo-identity-and-origin.md) | `executed` |
 | 0022 | [git/gh/glab engine debug audit](0022-MADR-git-gh-glab-engine-debug-audit.md) | `accepted` | [plan](0022-PLAN-git-gh-glab-engine-debug-audit.md) | `executed` through Phase 14; **Phase 15 open (live host)** |
-| 0023 | [Commit-and-push perceived freeze](0023-MADR-commit-and-push-perceived-freeze.md) | `proposed` (amended) | [plan](0023-PLAN-commit-and-push-perceived-freeze.md) | `proposed` |
+| 0023 | [Commit-and-push perceived freeze](0023-MADR-commit-and-push-perceived-freeze.md) | `accepted` (amended) | [plan](0023-PLAN-commit-and-push-perceived-freeze.md) | `executed`; **live-app measurement open** |
 
 ⚠ **0011 and 0012 each carry two unrelated records.** `AGENTS.md` forbids
 renumbering an existing file, so both keep the number and each carries a note
