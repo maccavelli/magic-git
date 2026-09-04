@@ -836,10 +836,20 @@ finding above:
 4. and, for M2 and M3, names the live-host configuration required, since
    neither can be confirmed offline.
 
-`flutter analyze` and `flutter test` must be clean before any phase is staged.
-Current baseline for comparison: **3,350 passing, 2 skipped, 48 failing**
-(the 48 are the known pre-existing set, unchanged by this pass — no code was
-modified).
+`.flutter-sdk/bin/flutter analyze` and `.flutter-sdk/bin/flutter test` must be
+clean before any phase is staged. Baseline, measured 2026-09-04 at `6f24bfe`:
+**3,398 passing, 2 skipped, 0 failing**, analyzer `No issues found!`.
+
+> **Correction, 2026-09-04.** This section first recorded the baseline as
+> *3,350 passing / 2 skipped / **48 failing***, described as a known
+> pre-existing failing set. That was wrong, and so is the same claim where it
+> appears in `0022-PLAN` and `0023-PLAN`. Those 48 failures were an artifact of
+> running Homebrew's Flutter **3.47.2** instead of the **3.44.8** that
+> `build_macos.sh:41` pins and vendors into `.flutter-sdk`. Under the pinned
+> SDK the suite is entirely green. See the plan's deviation (a). The practical
+> consequence is that this plan's gate is far stronger than specified: any
+> failure at all is new, rather than something to diff against a 48-entry
+> allowlist.
 
 ## More Information
 

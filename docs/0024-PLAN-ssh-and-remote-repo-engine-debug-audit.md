@@ -139,9 +139,12 @@ wc -l "$SCRATCH/phase0-failing-set.txt"
 * `flutter analyze` reports `No issues found!`.
 * The final test line, the passing count, and `phase0-failing-set.txt` are
   transcribed verbatim into the execution record.
-* Expected, from the 0024 audit: **`+3350 ~2 -48`** with the known
-  pre-existing failing set. If the numbers differ, **stop and prompt** — the
-  baseline moved and every later comparison is meaningless.
+* **Measured 2026-09-04 at `6f24bfe`: `+3398 ~2`, "All tests passed!",
+  analyzer `No issues found!`, `phase0-failing-set.txt` EMPTY.** The gate is
+  therefore absolute: any failure in any later phase is new. If a later run
+  shows one, **stop and prompt** — there is no allowlist to diff against.
+* The figure this plan originally predicted (`+3350 ~2 -48`) was measured under
+  the wrong SDK; see deviation (a).
 
 **Commit.** None.
 
