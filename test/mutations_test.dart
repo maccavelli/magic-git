@@ -899,6 +899,52 @@ void main() {
       },
     );
 
+    test('syncFileReport batches four round trips into one', () async {
+      // 0023 A1. _sync used to issue two `rev-parse HEAD` (a literal
+      // duplicate — _logPulled and _logPushed each asked, and a push cannot
+      // move HEAD) plus two `diff --name-status`, all AFTER the push. Over SSH
+      // that is four channel round trips to caption a log entry.
+      const sep = '\u0002RMGSYNC\u0002';
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout:
+            'newhead${sep}A\tpulled.txt\nM\tboth.txt$sep'
+            'A\tpushed.txt\n',
+        stderr: '',
+      );
+      final report = await git.syncFileReport(
+        '/repo',
+        pullBase: 'oldhead',
+        pushBase: 'pushbase',
+      );
+
+      expect(exec.calls, hasLength(1), reason: 'one process, not four');
+      expect(exec.calls.single[0], 'sh');
+      expect(exec.lanes.single, ExecLane.read);
+      final script = exec.calls.single[2];
+      expect(script, contains('rev-parse -q --verify HEAD'));
+      // Bases are shell-escaped, as any interpolated value must be.
+      expect(script, contains("'oldhead'.."));
+      expect(script, contains("'pushbase'.."));
+
+      expect(report.head, 'newhead');
+      expect(report.pulled, ['A\tpulled.txt', 'M\tboth.txt']);
+      expect(report.pushed, ['A\tpushed.txt']);
+    });
+
+    test('syncFileReport skips the diff half it has no base for', () async {
+      const sep = '\u0002RMGSYNC\u0002';
+      exec.next = const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'h$sep$sep',
+        stderr: '',
+      );
+      await git.syncFileReport('/repo', pushBase: 'base');
+      final script = exec.calls.single[2];
+      // Exactly one diff — the pull half was not asked for.
+      expect('--name-status'.allMatches(script).length, 1);
+    });
+
     test('remoteFromUpstream: prefix match, not split', () {
       // 0023 Amendment A2. The naive `split('/').first` gets three of these
       // wrong, and every wrong answer means the WRONG forge credential helper

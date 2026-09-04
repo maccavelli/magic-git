@@ -5433,6 +5433,52 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     return out.isEmpty ? null : out;
   }
 
+  /// Separator for [syncFileReport]'s combined script — same STX-bracketed
+  /// reasoning as [_snapshotSep].
+  static const String _syncReportSep = '\u0002RMGSYNC\u0002';
+
+  /// HEAD plus the files a pull and a push each moved, in ONE invocation.
+  ///
+  /// `_sync` used to take four round trips for this after its push — two
+  /// `rev-parse HEAD` (a literal duplicate: `_logPulled` and `_logPushed` each
+  /// asked, and a push cannot move HEAD) and two `diff --name-status`. Over
+  /// SSH that is four channel round trips to caption a log entry. Same
+  /// captures, one process, exactly the pattern [_runCaptured] already uses.
+  ///
+  /// A null base means "skip that half" and yields an empty list, so a pull
+  /// that changed nothing costs no diff.
+  Future<({String? head, List<String> pulled, List<String> pushed})>
+  syncFileReport(String repoPath, {String? pullBase, String? pushBase}) async {
+    const q = ShellEscaper.escape;
+    const diff = 'git -c core.quotepath=false diff --name-status';
+    final script =
+        'head=\$(git rev-parse -q --verify HEAD); '
+        "printf '%s$_syncReportSep' \"\$head\"; "
+        '${pullBase == null ? '' : '$diff ${q(pullBase)}..\$head; '}'
+        "printf '$_syncReportSep'; "
+        '${pushBase == null ? '' : '$diff ${q(pushBase)}..\$head; '}'
+        'exit 0';
+    final result = await _run(
+      repoPath,
+      ['sh', '-c', script],
+      'git sync report',
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    final parts = result.stdout.split(_syncReportSep);
+    if (parts.length != 3) {
+      return (head: null, pulled: const <String>[], pushed: const <String>[]);
+    }
+    List<String> lines(String raw) =>
+        raw.split('\n').where((l) => l.trim().isNotEmpty).toList();
+    final head = parts[0].trim();
+    return (
+      head: head.isEmpty ? null : head,
+      pulled: lines(parts[1]),
+      pushed: lines(parts[2]),
+    );
+  }
+
   /// The name-status of every file changed across [range] (e.g. `old..new`),
   /// one `git diff --name-status` line per file — used to report what a
   /// push/pull/sync moved.

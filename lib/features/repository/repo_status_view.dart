@@ -1114,14 +1114,24 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     if (ok && mounted) {
       final out = ref.read(outputLogProvider.notifier);
       try {
-        await _logPulled(out, git, before);
+        // One process for what used to be four round trips: two
+        // `rev-parse HEAD` — a literal duplicate, since _logPulled and
+        // _logPushed each asked and a push cannot move HEAD — and two
+        // `diff --name-status` (0023 A1).
+        final report = await git.syncFileReport(
+          repoPath,
+          pullBase: before,
+          pushBase: pushBase,
+        );
+        final head = report.head;
+        if (before != null && head != null && before != head) {
+          out.logFiles('Pulled', report.pulled);
+        }
+        if (pushBase != null && head != null && pushBase != head) {
+          out.logFiles('Pushed', report.pushed);
+        }
       } catch (e) {
-        out.logError('pulled files', e.toString());
-      }
-      try {
-        await _logPushed(out, git, pushBase);
-      } catch (e) {
-        out.logError('pushed files', e.toString());
+        out.logError('sync file report', e.toString());
       }
     }
   }

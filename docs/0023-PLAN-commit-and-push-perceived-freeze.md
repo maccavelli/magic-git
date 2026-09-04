@@ -731,6 +731,72 @@ the check added after Phase 9 of 0022 missed exactly this.
 `directives_ordering` info from the new import). Suite: `+3348 ~2 -48`, failing
 set identical to baseline.
 
+### Phase 5 — A1: batch `_sync`'s bookkeeping (2026-09-04) — **COMPLETE**
+
+**Done.** New `GitService.syncFileReport(repoPath, {pullBase, pushBase})` runs
+ONE `sh -c` that captures HEAD once and both `diff --name-status` ranges,
+separated by an STX-bracketed marker — the pattern `_runCaptured` already uses.
+`_sync` calls it instead of `_logPulled` + `_logPushed`.
+
+**Four round trips → one**, and the duplicate is gone: `_logPulled` and
+`_logPushed` each ran `rev-parse HEAD` after the push, which is the same value
+twice because a push cannot move HEAD.
+
+A null base skips that half, so a pull that changed nothing costs no diff.
+
+**Scoped to `_sync`, deliberately.** `_push` keeps `_logPushed` and its
+`revParse`/`changedFiles` calls, because those two methods are exactly the seam
+`push_logs_output_test` overrides to assert "Pushed — N files". Batching them
+too would have left that fake overriding methods the code no longer calls —
+the trap the plan flagged. `_push` alone issues two reads and has no duplicate,
+so the win there was not worth breaking the seam.
+
+**Verified against real git before wiring**, not just in unit tests: the script
+run in a throwaway repo returned 3 sections with the correct head and both file
+lists.
+
+**Tests added.** The batched call is one process on the read lane, the script
+carries both ranges (shell-escaped — my first assertion expected the *unescaped*
+form and was wrong; the escaping is correct and the test now pins it), and the
+record parses. Plus: a report with only a push base emits exactly one `diff`.
+
+**Negative test — seen to fail.** The pull-half guard removed in a scratch
+clone (with an `assert s != before`): `Expected: <1> / Actual: <2>` — two diffs
+where one was asked for.
+
+**Verification.** Analyzer: 2, the baseline's. Suite: `+3350 ~2 -48`, failing
+set identical to baseline.
+
+### Phase 6 — A2: incremental History (2026-09-04) — **ASSESSED, NOT BUILT**
+
+The plan permitted this outcome explicitly ("a 'does nothing' outcome is a
+realistic result — not a reason to loosen the guards"). It is the outcome, and
+both halves were rejected on evidence rather than effort.
+
+**The "cheap part" is wrong, and would have been a regression.** The plan
+suggested dropping `logProvider` from `repoMutationFamilies` because History
+does not read it. History does not — but **`dashboard_sheet` watches it twice**
+(`:480` the 30-day activity chart, `:541` the contribution heatmap), and a
+commit genuinely changes both. Removing it would leave an open dashboard stale
+after every commit: a correctness bug dressed as an optimisation. `logProvider`
+is correctly in the mutation set. What was actually wasteful — **pushes**
+invalidating it — was already fixed in Phase 2, which is where that value came
+from.
+
+**The guarded prepend is not worth building now.** With Phase 2 landed, the
+remaining waste is that a *commit* re-walks 200 commits and a ≥500-commit page
+to learn it appended one commit. Closing that needs `preHead`/`postHead` plumbed
+from `_runCaptured`'s in-script capture, through Riverpod, and across the window
+relay, behind four guards (`!query.all`, `query.sha == null`, no filters,
+ancestor-proven tip move), against ten command-count tests in
+`history_paging_test.dart` that pin the current walk exactly. That is the
+largest change in this plan protecting the smallest remaining win, at the end
+of a session where the user-visible complaint is already answered.
+
+**What would change the answer:** History paging becoming slow enough to notice
+on a large repo, or the commit path showing up in a profile. Neither is
+evidenced today. Recorded as a candidate, not a debt.
+
 ### DEVIATION 2026-09-03 (a) — Phase 1's prerequisite #2 was wrong as written
 
 **What the plan said.** "Thread an `operationId` through `_streamGitOp`.
