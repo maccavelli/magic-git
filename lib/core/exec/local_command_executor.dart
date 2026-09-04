@@ -177,6 +177,9 @@ class LocalCommandExecutor implements CommandExecutor {
     // Hoisted out of spawnAndDrain so the failure paths below can record what
     // the command consumed before it died — mirrors SSHCommandExecutor._run.
     final budget = OutputByteBudget();
+    // Hoisted for the same reason as the SSH twin: the failure path records a
+    // sample and must name the same command.
+    final label = gitArgs.join(' ');
     void recordFailureSample() {
       CommandTelemetry.instance.record(
         CommandSample(
@@ -187,6 +190,7 @@ class LocalCommandExecutor implements CommandExecutor {
           wireBytes: budget.used,
           compressed: false,
           success: false,
+          label: label,
         ),
       );
     }
@@ -268,7 +272,6 @@ class LocalCommandExecutor implements CommandExecutor {
       // streams) instead of buffering unbounded toward an OOM. The same
       // reasoning applies locally as over SSH: a huge diff/log/`cat` is just as
       // capable of ballooning memory regardless of transport.
-      final label = gitArgs.join(' ');
       final stdoutFuture = collectBounded(
         boundedBytes(
           p.stdout.map((chunk) {
@@ -315,6 +318,7 @@ class LocalCommandExecutor implements CommandExecutor {
           wireBytes: budget.used,
           compressed: false,
           success: exitCode == 0,
+          label: label,
         ),
       );
       return SSHCommandResult(

@@ -19,6 +19,13 @@ class CommandSample {
   final bool compressed;
   final bool success;
 
+  /// The command that produced this sample, as issued — `gitArgs.join(' ')`.
+  ///
+  /// Raw, not normalised: [CommandTelemetry.countsByLabel] buckets it. Keeping
+  /// the raw form here means a sample can still be read back in full for
+  /// diagnosis, while the counter aggregates.
+  final String label;
+
   const CommandSample({
     required this.lane,
     required this.duration,
@@ -26,6 +33,7 @@ class CommandSample {
     required this.wireBytes,
     required this.compressed,
     required this.success,
+    required this.label,
   });
 }
 
@@ -77,9 +85,58 @@ class CommandTelemetry extends ChangeNotifier {
   int _channelOpenErrors = 0;
   int _openStreams = 0;
   int _peakOpenStreams = 0;
+  final Map<String, int> _countsByLabel = {};
 
   /// Recent samples, oldest first (bounded at [_ringCapacity]).
   List<CommandSample> get samples => List.unmodifiable(_ring);
+
+  /// Commands recorded since the last [reset], bucketed by normalised label.
+  ///
+  /// Unbounded by the sample ring on purpose: the ring holds 200 samples for
+  /// latency percentiles, but the question this answers — *which* commands a
+  /// gesture caused, and how many of each — needs the whole session. A repo
+  /// refresh that fires fifteen times is invisible in a 200-sample window once
+  /// anything else happens (0025 Finding B).
+  Map<String, int> get countsByLabel => Map.unmodifiable(_countsByLabel);
+
+  /// Buckets a raw command label so the same command counts once.
+  ///
+  /// `git <subcommand> [<first following token>]`, with `-c key=value` pairs
+  /// and leading global flags dropped, and any `--format`/`--pretty` collapsed.
+  /// Without the `-c` rule the refs read splits into two buckets, because it
+  /// carries `-c i18n.logOutputEncoding=UTF-8` and the plain form does not.
+  /// Shell wrappers collapse to `sh -c`: their script is opaque and unique per
+  /// call, so bucketing on it would defeat the point.
+  @visibleForTesting
+  static String bucketLabel(String raw) {
+    final tokens = raw.trim().split(RegExp(r'\s+'))
+      ..removeWhere((t) => t.isEmpty);
+    if (tokens.isEmpty) return '(empty)';
+    final exe = tokens.first.split('/').last;
+    if (exe == 'sh' || exe == 'bash') return '$exe -c';
+
+    var i = 1;
+    while (i < tokens.length) {
+      final t = tokens[i];
+      if (t == '-c') {
+        i += 2; // the pair
+        continue;
+      }
+      if (t.startsWith('-')) {
+        i += 1; // a global flag before the subcommand
+        continue;
+      }
+      break;
+    }
+    if (i >= tokens.length) return exe;
+    final sub = tokens[i];
+    if (i + 1 >= tokens.length) return '$exe $sub';
+    var next = tokens[i + 1];
+    if (next.startsWith('--format') || next.startsWith('--pretty')) {
+      next = '--format=…';
+    }
+    return '$exe $sub $next';
+  }
 
   /// Commands recorded since the last [reset].
   int get commandCount => _commandCount;
@@ -146,6 +203,8 @@ class CommandTelemetry extends ChangeNotifier {
 
   void record(CommandSample sample) {
     _ring.add(sample);
+    final bucket = bucketLabel(sample.label);
+    _countsByLabel[bucket] = (_countsByLabel[bucket] ?? 0) + 1;
     if (_ring.length > _ringCapacity) _ring.removeAt(0);
     _commandCount++;
     _totalBytes += sample.bytes;
@@ -198,6 +257,7 @@ class CommandTelemetry extends ChangeNotifier {
     _channelOpenErrors = 0;
     _openStreams = 0;
     _peakOpenStreams = 0;
+    _countsByLabel.clear();
     _streamEpoch++; // orphan the previous session's still-closing handles
     notifyListeners();
   }

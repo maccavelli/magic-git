@@ -11,6 +11,7 @@ CommandSample _sample({
   int bytes = 1000,
   int wire = 1000,
   bool compressed = false,
+  String label = 'git status',
 }) => CommandSample(
   lane: ExecLane.read,
   duration: Duration(milliseconds: ms),
@@ -18,6 +19,7 @@ CommandSample _sample({
   wireBytes: wire,
   compressed: compressed,
   success: true,
+  label: label,
 );
 
 void main() {
@@ -166,5 +168,62 @@ void main() {
       );
     }
     expect(t.drops, hasLength(20));
+  });
+
+  // 0025 Phase 1. Attribution: 15 of the 123 processes one commit+push caused
+  // had no call site in lib/, and every later phase's acceptance is "the count
+  // for THIS command fell". A total alone cannot answer that.
+  group('countsByLabel', () {
+    test('a sample records which command produced it', () {
+      final t = CommandTelemetry.instance;
+      t.record(_sample(label: 'git status --porcelain=v2 -z'));
+      expect(t.countsByLabel['git status --porcelain=v2'], 1);
+    });
+
+    test('counts aggregate per normalised label, not per sample', () {
+      final t = CommandTelemetry.instance;
+      t.record(_sample(label: 'git status --porcelain=v2 -uall --branch -z'));
+      t.record(_sample(label: 'git status --porcelain=v2 -uall --branch -z'));
+      t.record(_sample(label: 'git status --porcelain=v2 -uall --branch -z'));
+      t.record(_sample(label: 'git log --topo-order -n 50'));
+      expect(t.countsByLabel['git status --porcelain=v2'], 3);
+      expect(t.countsByLabel['git log --topo-order'], 1);
+    });
+
+    test('`-c key=value` prefixes do not split a bucket', () {
+      // The refs read carries `-c i18n.logOutputEncoding=UTF-8`; without
+      // dropping it, the same command counts under two different keys.
+      final t = CommandTelemetry.instance;
+      t.record(
+        _sample(label: 'git for-each-ref --format=%(refname) refs/heads'),
+      );
+      t.record(
+        _sample(
+          label:
+              'git -c i18n.logOutputEncoding=UTF-8 for-each-ref '
+              '--format=%(refname) refs/heads',
+        ),
+      );
+      expect(t.countsByLabel['git for-each-ref --format=…'], 2);
+    });
+
+    test('counts outlive the sample ring', () {
+      // The ring holds 200; the question "how many refreshes did that gesture
+      // cause" must survive anything else happening afterwards.
+      final t = CommandTelemetry.instance;
+      t.record(_sample(label: 'git rare-command'));
+      for (var i = 0; i < 250; i++) {
+        t.record(_sample(label: 'git status'));
+      }
+      expect(t.samples.length, lessThanOrEqualTo(200));
+      expect(t.countsByLabel['git rare-command'], 1);
+    });
+
+    test('reset clears the counts with everything else', () {
+      final t = CommandTelemetry.instance;
+      t.record(_sample(label: 'git status'));
+      t.reset();
+      expect(t.countsByLabel, isEmpty);
+    });
   });
 }

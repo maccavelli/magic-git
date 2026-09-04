@@ -882,6 +882,9 @@ class SSHCommandExecutor implements CommandExecutor {
     // budget's (post-decompression) total this is what lets the dashboard
     // report real gzip savings per session.
     var stdoutWireBytes = 0;
+    // Hoisted above recordFailureSample: the failure path records a sample too,
+    // and it must name the same command the success path does.
+    final label = gitArgs.join(' ');
     void recordFailureSample() {
       CommandTelemetry.instance.record(
         CommandSample(
@@ -891,6 +894,7 @@ class SSHCommandExecutor implements CommandExecutor {
           wireBytes: stdoutWireBytes,
           compressed: compressed,
           success: false,
+          label: label,
         ),
       );
     }
@@ -935,7 +939,6 @@ class SSHCommandExecutor implements CommandExecutor {
       // compressed read, stdout is gunzipped *before* the budget so the cap
       // bounds what this process actually buffers (the decompressed size) —
       // the wire saving is the point, but a gzip bomb must not be.
-      final label = gitArgs.join(' ');
       final rawStdout = s.stdout.cast<List<int>>().map((chunk) {
         stdoutWireBytes += chunk.length;
         deadline?.pulse();
@@ -1021,6 +1024,7 @@ class SSHCommandExecutor implements CommandExecutor {
             wireBytes: stdoutWireBytes,
             compressed: compressed,
             success: effectiveExit == 0,
+            label: label,
           ),
         );
       }
