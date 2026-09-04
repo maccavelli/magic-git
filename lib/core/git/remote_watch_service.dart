@@ -159,10 +159,19 @@ class RemoteWatchService {
         final spec = bounded == null ? null : await bounded();
         if (hooks.isCancelled()) return const WatchAborted();
 
-        final handle = await _executor.executeStream(
-          repoPath: repoPath,
-          gitArgs: remoteWatcherArgs(tool, spec),
-        );
+        final CommandStreamHandle handle;
+        try {
+          handle = await _executor.executeStream(
+            repoPath: repoPath,
+            gitArgs: remoteWatcherArgs(tool, spec),
+          );
+        } on SSHStreamBudgetExhausted catch (e) {
+          // Deterministic, not a blip: retrying just hits the same wall and
+          // spends the restart budget doing it. Poll this repo instead, and
+          // say why (0024 M2).
+          onDiagnostic?.call('$e — falling back to polling for this repo');
+          return const WatchUnavailable();
+        }
         if (hooks.isCancelled()) {
           await handle.cancel();
           return const WatchAborted();

@@ -675,4 +675,70 @@ void main() {
       );
     });
   });
+
+  group('stream channel budget', () {
+    test(
+      'refuses the channel the host would refuse, and frees it again',
+      () async {
+        final manager = SSHClientManager();
+        final executor = SSHCommandExecutor(manager);
+        final streamClient = FakeSshClient();
+        manager.bindTestClients(command: FakeSshClient(), stream: streamClient);
+        expect(executor.maxConcurrentStreams, 8, reason: 'not degraded');
+
+        // A FakeSshSession completes its exit immediately unless the test hands
+        // it a pending one, and a completed exit closes the handle — which would
+        // free every slot as fast as it was taken. A watcher stays open.
+        Future<SSHStreamHandle> open() {
+          streamClient.nextExit = Completer<int?>();
+          return executor.executeStream(repoPath: '/r', gitArgs: const ['w']);
+        }
+
+        final handles = <SSHStreamHandle>[];
+        for (var i = 0; i < executor.maxConcurrentStreams; i++) {
+          handles.add(await open());
+        }
+        expect(executor.activeStreams, 8);
+
+        await expectLater(open(), throwsA(isA<SSHStreamBudgetExhausted>()));
+
+        // Closing one gives the slot back — the budget is a live count, not a
+        // one-way latch.
+        await handles.removeLast().cancel();
+        expect(executor.activeStreams, 7);
+        handles.add(await open());
+        expect(executor.activeStreams, 8);
+        for (final h in handles) {
+          await h.cancel();
+        }
+      },
+    );
+
+    test('a degraded stream client gets the smaller budget', () {
+      final manager = SSHClientManager();
+      final executor = SSHCommandExecutor(manager);
+      // No stream client: streams land on the command connection, which is
+      // already carrying reads, isolated work and possibly the sync lane.
+      manager.bindTestClients(command: FakeSshClient());
+      expect(manager.streamClientDegraded, isTrue);
+      expect(executor.maxConcurrentStreams, 2);
+    });
+
+    test('budget exhaustion is never retried', () {
+      // Deterministic, unlike a host refusal: retrying just reproduces it.
+      expect(
+        SSHCommandExecutor.isTransientTransportError(
+          const SSHStreamBudgetExhausted('w', 8, 8),
+        ),
+        isFalse,
+      );
+      expect(
+        SSHCommandExecutor.isTransientTransportError(
+          SSHChannelOpenError(1, 'busy'),
+        ),
+        isTrue,
+        reason: 'a host refusal remains a transient blip',
+      );
+    });
+  });
 }

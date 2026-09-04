@@ -165,4 +165,27 @@ void main() {
       expect(message, isNot(contains(blame)), reason: 'reads as a failure');
     }
   });
+
+  group('developer text never reaches the UI', () {
+    test('a full stream budget reads as an action, not a counter', () {
+      final msg = humanizeSshError(
+        const SSHStreamBudgetExhausted('fswatch', 8, 8),
+      );
+      expect(msg, contains('Too many live streams'));
+      expect(msg, isNot(contains('8/8')));
+    });
+
+    test('a reclaimed lane slot does not leak its developer note', () {
+      // CommandLaneOverrun.toString() is a two-sentence note aimed at whoever
+      // is debugging the executor ("This is a bug in the command executor…").
+      // Rare by construction, but rare is what left the watchdog unenforced
+      // until it was added, and this string is worse than the ones MADR 0018
+      // was written to rewrite (0024 L2).
+      final msg = humanizeSshError(
+        const CommandLaneOverrun(ExecLane.read, Duration(seconds: 90)),
+      );
+      expect(msg, 'A command did not finish and was abandoned. Try again.');
+      expect(msg, isNot(contains('bug in the command executor')));
+    });
+  });
 }

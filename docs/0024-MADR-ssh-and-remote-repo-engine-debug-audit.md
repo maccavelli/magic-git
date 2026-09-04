@@ -555,6 +555,16 @@ It should be rare by construction — but "rare" is the argument that left the
 watchdog unenforced until it was added, and the string is worse than the ones
 0018 rewrote.
 
+> **Corrected during execution, 2026-09-04.** This is worse than described
+> above. `CommandLaneOverrun.toString()` contains the words *"timed out"*, so
+> the string fallback at `ssh_error_messages.dart:146`
+> (`lower.contains('timed out')`) matches it and returns **"Timed out reaching
+> the host."** The developer text does not leak — instead a scheduler bug is
+> silently mis-attributed to the network, and the user is told to check a host
+> that is fine. Measured by running the negative test against the unfixed
+> humanizer: `Expected: 'A command did not finish and was abandoned. Try
+> again.' / Actual: 'Timed out reaching the host.'`
+
 **Resolution.** One arm: *"A command did not finish and was abandoned. Try
 again."*
 

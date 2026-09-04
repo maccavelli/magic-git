@@ -121,9 +121,15 @@ class CommandLaneScheduler {
     // Triple-client MaxSessions budget (per TCP connection, default 10 each):
     //   command: ≤4 reads (+ exclusive is a barrier) + ≤2 isolated
     //   sync:    1 fetch/push (scheduler: one at a time)
-    //   stream:  1 watcher + 1 CI trace
+    //   stream:  bounded by SSHCommandExecutor.maxConcurrentStreams
     // Degraded dual (no sync client): command carries 4 reads + 1 sync + ≤2
     // isolated. Do not raise maxConcurrentReads above 4 in this change.
+    //
+    // Streams are NOT scheduled here — a never-exiting command would wedge a
+    // lane — so this scheduler cannot enforce their share. It is enforced as a
+    // live counter in SSHCommandExecutor instead. It was previously only
+    // asserted in this comment, which omitted streams entirely and so could
+    // not have caught the omission (0024 M2).
     int maxConcurrentReads = 4,
     this.maxConcurrentIsolated = 2,
   }) : _maxConcurrentReads = maxConcurrentReads.clamp(1, 8);

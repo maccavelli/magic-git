@@ -25,7 +25,7 @@ export '../exec/command_drain.dart'
         maxCommandOutputChars,
         maxCommandOutputBytes,
         maxCommandWireBytes;
-export '../exec/command_lanes.dart' show ExecLane;
+export '../exec/command_lanes.dart' show ExecLane, CommandLaneOverrun;
 export '../exec/operation_activity.dart'
     show OperationDescriptor, OperationEventCallback, OperationId;
 
@@ -99,6 +99,25 @@ class SSHTransportNotReady implements Exception {
 
   @override
   String toString() => 'SSH transport is not ready yet: $command';
+}
+
+/// Thrown when this client refuses to open another long-lived stream channel
+/// because its own budget is full — distinct from [SSHChannelOpenError], which
+/// is the *host* refusing.
+///
+/// The distinction is what makes it actionable: a host refusal is a transient
+/// capacity blip worth retrying, while this one is deterministic and will keep
+/// being true until a stream is closed, so the caller must degrade instead
+/// (see `RemoteWatchService`, which falls back to polling for that repo).
+class SSHStreamBudgetExhausted implements Exception {
+  const SSHStreamBudgetExhausted(this.command, this.active, this.limit);
+
+  final String command;
+  final int active;
+  final int limit;
+
+  @override
+  String toString() => 'SSH stream budget exhausted ($active/$limit): $command';
 }
 
 /// A live handle to a long-running command (e.g. `fswatch`, a CI job trace,
@@ -340,6 +359,19 @@ class SSHCommandExecutor implements CommandExecutor {
   bool get commandBusy => _activeNonSync > 0;
 
   bool get syncBusy => _activeSync > 0;
+
+  /// How many long-lived stream channels this client may hold at once.
+  ///
+  /// The budget used to exist only as prose in `command_lanes.dart`, and that
+  /// prose omitted streams entirely (0024 M2). In triple-client mode streams
+  /// have their own TCP connection, so the ceiling is the host's `MaxSessions`
+  /// (10 by default) less headroom. When the stream client has degraded onto
+  /// the command client they share it with up to 4 reads, 2 isolated and — if
+  /// sync degraded too — 1 sync, so 2 is what is actually left.
+  int get maxConcurrentStreams => _clientManager.streamClientDegraded ? 2 : 8;
+
+  /// Live stream channels — for tests / diagnostics.
+  int get activeStreams => _activeStreams;
 
   /// Stream client is busy only while bytes have flowed recently.
   bool get streamBusy =>
@@ -619,6 +651,7 @@ class SSHCommandExecutor implements CommandExecutor {
     if (e is SSHCommandTimeout ||
         e is SSHCommandSuperseded ||
         e is SSHOutputExceeded ||
+        e is SSHStreamBudgetExhausted ||
         e is ArgumentError ||
         e is FormatException ||
         e is StateError ||
@@ -1145,6 +1178,18 @@ class SSHCommandExecutor implements CommandExecutor {
       // CI trace) to a session that's about to be retired — the caller's
       // restart/backoff logic re-opens it against the new session instead.
       throw SSHCommandSuperseded(gitArgs.join(' '));
+    }
+
+    // Refuse before asking the host, so the failure is a legible, typed,
+    // deterministic one instead of an SSHChannelOpenError that reads as a
+    // transient blip and gets retried into the same wall (0024 M2).
+    if (_activeStreams >= maxConcurrentStreams) {
+      lifecycle?.failed('Stream budget exhausted');
+      throw SSHStreamBudgetExhausted(
+        gitArgs.join(' '),
+        _activeStreams,
+        maxConcurrentStreams,
+      );
     }
 
     final command = CommandFormatter.format(

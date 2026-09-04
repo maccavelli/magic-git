@@ -101,6 +101,17 @@ String humanizeSshError(Object error) {
   if (error is SSHKeyDecodeError || error is SSHKeyDecryptError) {
     return 'The private key could not be read — check the key format and passphrase.';
   }
+  if (error is CommandLaneOverrun) {
+    // Its toString() is a developer note that happens to contain the words
+    // "timed out", so without this arm the string fallback below classified a
+    // scheduler bug as a network timeout and told the user to check the host
+    // (0024 L2).
+    return 'A command did not finish and was abandoned. Try again.';
+  }
+  if (error is SSHStreamBudgetExhausted) {
+    return 'Too many live streams on this connection. Close a repository '
+        'window or a CI trace and try again.';
+  }
   if (error is SSHChannelOpenError) {
     return 'The host refused another SSH session (session limit). '
         'Close other SSH tools on that host, or wait and try again.';
