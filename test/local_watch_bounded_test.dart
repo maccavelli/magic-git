@@ -50,9 +50,24 @@ void main() {
   /// Starts a bounded watcher and lets setUp's own FS churn settle, so a test
   /// asserting on its own change isn't handed the tail of setup. Same approach
   /// as local_watch_worktree_test.
+  /// Recomputes the bounded surface from the repo's CURRENT tracked files, the
+  /// way the provider's supplier does — so a re-arm sees files added since.
+  Future<BoundedWatchSpec> currentSpec() async {
+    final tracked = await Process.run('git', [
+      '--git-dir=$gitDir',
+      '--work-tree=$workTree',
+      'ls-files',
+    ], workingDirectory: workTree);
+    return computeBoundedWatchSpec(
+      gitDir: gitDir,
+      workTree: workTree,
+      trackedFiles: (tracked.stdout as String).split('\n'),
+    );
+  }
+
   Future<Stream<RepoWatchEvent>> quietWatcher() async {
     final events = LocalWatchService()
-        .watch(workTree, bounded: spec)
+        .watch(workTree, bounded: currentSpec)
         .asBroadcastStream();
     final sub = events.listen(null);
     addTearDown(sub.cancel);
@@ -158,4 +173,32 @@ void main() {
       reason: 'untracked-dir churn must never enter the bounded surface',
     );
   });
+
+  test(
+    'a file staged into a NEW directory becomes watched after re-arm',
+    () async {
+      // 0022 H5. The bounded surface is the parent directory of every tracked
+      // file. Before the fix it was computed once and frozen for the life of the
+      // stream, so a file added to a directory that held nothing tracked at arm
+      // time was invisible forever — silently, with the watch indicator still
+      // green — until the tab was closed or the connection dropped.
+      final events = await quietWatcher();
+
+      Directory('$workTree/.config/nvim').createSync(recursive: true);
+      File('$workTree/.config/nvim/init.lua').writeAsStringSync('-- v1\n');
+      // Staging writes the git-dir, which the surface always covers: that event
+      // is what triggers the debounced recompute + re-arm.
+      await gd(['add', '.config/nvim/init.lua']);
+
+      // Wait out the re-arm debounce, then edit the newly tracked file.
+      await Future<void>.delayed(const Duration(seconds: 3));
+      File('$workTree/.config/nvim/init.lua').writeAsStringSync('-- v2\n');
+
+      final event = await waitFor(
+        events,
+        (e) => e.paths.any((p) => p.contains('nvim')),
+      );
+      expect(event.paths.any((p) => p.contains('init.lua')), isTrue);
+    },
+  );
 }

@@ -27,7 +27,9 @@ List<String> remoteWatcherArgs(
   if (bounded != null) {
     switch (tool) {
       case RemoteWatcherTool.fswatch:
-        return boundedFswatchArgs(bounded.watchDirs);
+        // Through `sh -c` like the inotify twin: fswatch needs the same
+        // existence filter (see boundedFswatchScript).
+        return ['sh', '-c', boundedFswatchScript(bounded.watchDirs)];
       case RemoteWatcherTool.inotifywait:
         return ['sh', '-c', boundedInotifyScript(bounded.watchDirs)];
       case RemoteWatcherTool.none:
@@ -98,6 +100,12 @@ class RemoteWatchService {
   /// we drop what's accumulated and resync on the next delimiter.
   static const int _maxBufferChars = 1 << 20; // 1 MiB
 
+  /// How long a bounded watch waits after a git-state event before recomputing
+  /// its surface and re-arming. Long enough that one `git add`/commit — which
+  /// writes the index, refs and lock files in quick succession — costs a single
+  /// re-arm rather than one per write.
+  static const Duration _rearmDebounce = Duration(seconds: 2);
+
   /// Watches [repoPath] for changes.
   ///
   /// [bounded], when supplied, switches to the **scoped work-tree** surface for
@@ -108,7 +116,7 @@ class RemoteWatchService {
   /// unchanged recursive behaviour.
   Stream<RepoWatchEvent> watch(
     String repoPath, {
-    BoundedWatchSpec? bounded,
+    BoundedWatchSpecSource? bounded,
     Duration trailing = const Duration(milliseconds: 150),
     Duration maxWait = const Duration(seconds: 1),
     Duration minInterval = const Duration(seconds: 1),
@@ -120,6 +128,9 @@ class RemoteWatchService {
     // remote for it every time. Cleared while recovering from polling, since
     // enough time has passed there that it's worth re-checking.
     RemoteWatcherTool? cachedTool;
+    // Debounces the deliberate re-arm below. Lives outside `arm` so it spans
+    // re-arms; cancelled by every teardown.
+    Timer? rearmTimer;
 
     return watchLifecycle(
       trailing: trailing,
@@ -134,13 +145,39 @@ class RemoteWatchService {
 
         if (tool == RemoteWatcherTool.none) return const WatchUnavailable();
 
+        // Resolve the bounded surface HERE, on every arm, rather than closing
+        // over one computed once for the stream's life. The tracked-file set
+        // changes constantly on a dotfiles repo, and a frozen surface meant a
+        // file staged into a directory nothing was watching yet never produced
+        // an event again until the whole provider was torn down (0022 H5).
+        final spec = bounded == null ? null : await bounded();
+        if (hooks.isCancelled()) return const WatchAborted();
+
         final handle = await _executor.executeStream(
           repoPath: repoPath,
-          gitArgs: remoteWatcherArgs(tool, bounded),
+          gitArgs: remoteWatcherArgs(tool, spec),
         );
         if (hooks.isCancelled()) {
           await handle.cancel();
           return const WatchAborted();
+        }
+
+        if (spec != null) {
+          // The bounded scripts exit immediately with a distinct status when
+          // none of their paths exist yet. Catch that here so it degrades to
+          // polling-with-recovery instead of looking like a watcher that armed
+          // and died — which would spend the restart budget on three doomed
+          // retries first (0022 M6). Bounded arms only, and the wait is capped:
+          // a live watcher never completes exitCode, so this costs one short
+          // timeout on a path that already paid for an SSH round trip.
+          final early = await handle.exitCode.timeout(
+            const Duration(milliseconds: 250),
+            onTimeout: () => null,
+          );
+          if (early == boundedWatchNoPathsExit) {
+            await handle.cancel();
+            return const WatchUnavailable();
+          }
         }
 
         var buffer = '';
@@ -156,11 +193,22 @@ class RemoteWatchService {
               // Bounded mode watches absolute paths; remap them to the
               // repo-relative (`.git/…` for git-dir) shape the filter expects.
               // Recursive mode already emits repo-relative paths (cwd = repo).
-              final path = bounded == null
+              final path = spec == null
                   ? event
-                  : relativizeBoundedEvent(event, bounded);
+                  : relativizeBoundedEvent(event, spec);
               if (path != null && shouldTriggerWatch(path)) {
                 hooks.signalPath(path);
+                // A bounded surface is derived from the index, so a git-state
+                // change can mean "there are now tracked files in directories
+                // this arming does not cover". Recompute and re-arm, debounced
+                // — one `git add` writes the index several times (0022 H5).
+                if (spec != null && path.startsWith('.git/')) {
+                  rearmTimer?.cancel();
+                  rearmTimer = Timer(_rearmDebounce, () {
+                    if (hooks.isCancelled()) return;
+                    hooks.rearm();
+                  });
+                }
               }
               idx = buffer.indexOf(delimiter);
             }
@@ -182,6 +230,8 @@ class RemoteWatchService {
         );
 
         return WatchArmed(() async {
+          rearmTimer?.cancel();
+          rearmTimer = null;
           // Cancel the stdout subscription *before* the handle, mirroring the
           // engine's source-before-coalescer ordering.
           await sub.cancel();

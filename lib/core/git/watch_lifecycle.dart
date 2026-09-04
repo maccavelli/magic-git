@@ -42,6 +42,7 @@ class WatchHooks {
     required this.signalPath,
     required this.noteActivity,
     required this.scheduleRestart,
+    required this.rearm,
     required this.isCancelled,
   });
 
@@ -59,6 +60,19 @@ class WatchHooks {
   /// The source died (stream onDone/onError) — ask the engine to re-arm with
   /// backoff, degrading to polling once the restart budget is spent.
   final void Function() scheduleRestart;
+
+  /// Re-arm the source deliberately, because what it should be watching has
+  /// changed — NOT because it died.
+  ///
+  /// Distinct from [scheduleRestart] on purpose, and the difference is
+  /// user-visible: a restart marks the mode `stopped` and emits a grey tick,
+  /// applies `restarts * 2`s of backoff, and spends one of the restart budget
+  /// that degrades to polling when exhausted. Re-arming for a legitimate
+  /// reason — a bounded watch whose tracked-file set grew — must do none of
+  /// those, or staging a file would flicker the watch indicator to "stopped",
+  /// and three edits in new directories would drop the repo to polling for the
+  /// rest of the session (0022 H5).
+  final void Function() rearm;
 
   /// Whether the stream was cancelled — for checks between an arm callback's
   /// own awaits (the engine can only check before and after the whole call).
@@ -192,6 +206,12 @@ Stream<RepoWatchEvent> watchLifecycle({
       mode = WatchMode.eventDriven;
     },
     scheduleRestart: () => scheduleRestart(),
+    rearm: () {
+      if (cancelled || controller.isClosed) return;
+      // Straight back through start(), which tears the old source down first.
+      // No mode change, no backoff, no budget spend — see [WatchHooks.rearm].
+      start().catchError((_) => scheduleRestart());
+    },
     isCancelled: () => cancelled,
   );
 

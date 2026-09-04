@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -3362,8 +3363,7 @@ final repoWatchProvider = StreamProvider.autoDispose
       final backend = ref.watch(connectionProvider.select((c) => c.backend));
       // A scoped work-tree (dotfiles) repo can't be watched recursively — its
       // work tree may be all of $HOME. Watch the bounded surface (git-dir points
-      // + tracked-file dirs) instead. The tracked-file list is fetched once at
-      // arm; a productionization TODO is to re-arm on index change.
+      // + tracked-file dirs) instead.
       final scopedGitDir = ref.watch(
         connectionProvider.select((c) => c.scopedGitDirFor(repoPath)),
       );
@@ -3371,7 +3371,7 @@ final repoWatchProvider = StreamProvider.autoDispose
       final remote = ref.watch(remoteWatchServiceProvider);
 
       Stream<RepoWatchEvent> armed(
-        BoundedWatchSpec? bounded,
+        BoundedWatchSpecSource? bounded,
       ) => switch (backend) {
         // Keep the connection-scoped services alive while the watcher runs.
         // Exhaustive switch (no default) so a new backend can't silently fall
@@ -3383,19 +3383,32 @@ final repoWatchProvider = StreamProvider.autoDispose
       final Stream<RepoWatchEvent> raw;
       if (scopedGitDir != null && scopedGitDir.isNotEmpty) {
         final git = ref.watch(gitServiceProvider);
-        // Build the bounded spec from the repo's tracked files, then arm — as a
-        // single stream so the async fetch doesn't block provider construction.
-        raw = Stream.fromFuture(
-          git
-              .listTrackedFiles(repoPath)
-              .then(
-                (tracked) => computeBoundedWatchSpec(
-                  gitDir: scopedGitDir,
-                  workTree: repoPath,
-                  trackedFiles: tracked,
-                ),
-              ),
-        ).asyncExpand((spec) => armed(spec));
+        // A SUPPLIER, not a value: the service calls this on every arm, so a
+        // re-arm picks up files tracked since the watch started (0022 H5).
+        raw = armed(() async {
+          List<String> tracked;
+          try {
+            tracked = await git.listTrackedFiles(repoPath);
+          } catch (e) {
+            // Never let this kill the watcher. It used to run through
+            // Stream.fromFuture OUTSIDE the lifecycle engine, so a transport
+            // blip or a GitException errored the whole provider and the repo
+            // went unwatched with no polling fallback at all (0022 N1).
+            // Degrade instead: an empty tracked list still yields the git-dir
+            // watch points, so git-state changes are still seen, and the next
+            // re-arm can recover the full surface.
+            developer.log(
+              'listTrackedFiles failed for $repoPath; watching git-dir only: $e',
+              name: 'repoWatchProvider',
+            );
+            tracked = const [];
+          }
+          return computeBoundedWatchSpec(
+            gitDir: scopedGitDir,
+            workTree: repoPath,
+            trackedFiles: tracked,
+          );
+        });
       } else {
         raw = armed(null);
       }

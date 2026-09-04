@@ -133,21 +133,33 @@ class LocalWatchService {
   /// such; an ordinary repo leaves it null and behaves exactly as before. Mirror
   /// of [RemoteWatchService.watch]'s `bounded` so the DI hub can pick the backend
   /// without either caring which it got.
+  /// How long a bounded watch waits after a git-state event before recomputing
+  /// its surface and re-arming. Matches the remote twin: one `git add` writes
+  /// the index, refs and lock files in quick succession, and should cost a
+  /// single re-arm rather than one per write.
+  static const Duration _rearmDebounce = Duration(seconds: 2);
+
   Stream<RepoWatchEvent> watch(
     String repoPath, {
-    BoundedWatchSpec? bounded,
+    BoundedWatchSpecSource? bounded,
     Duration trailing = const Duration(milliseconds: 150),
     Duration maxWait = const Duration(seconds: 1),
     Duration minInterval = const Duration(seconds: 1),
     Duration pollInterval = const Duration(seconds: 5),
     Duration recoveryInterval = const Duration(minutes: 3),
   }) {
-    // Resolved once per watch, not per restart: the layout of a checkout can't
-    // change while it's open (only `worktree move`/`repair` does that, and both
-    // go through a full reconnect).
-    final roots = bounded != null
-        ? _boundedRoots(bounded)
-        : _rootsFor(repoPath);
+    // An ORDINARY repo's roots are resolved once: the layout of a checkout
+    // can't change while it's open (only `worktree move`/`repair` does that,
+    // and both go through a full reconnect).
+    //
+    // A BOUNDED repo's roots are not stable in that way and are resolved per
+    // arm below — its surface is derived from the tracked-file set, which every
+    // `git add` can widen. Freezing it here is what made a file staged into a
+    // previously-untracked directory invisible until the whole provider was
+    // rebuilt (0022 H5).
+    final fixedRoots = bounded == null ? _rootsFor(repoPath) : null;
+    // Debounces the deliberate re-arm; spans re-arms, cancelled by teardown.
+    Timer? rearmTimer;
 
     return watchLifecycle(
       trailing: trailing,
@@ -156,8 +168,14 @@ class LocalWatchService {
       pollInterval: pollInterval,
       recoveryInterval: recoveryInterval,
       arm: (hooks) async {
+        final spec = bounded == null ? null : await bounded();
+        if (hooks.isCancelled()) return const WatchAborted();
+        final roots = spec != null ? _boundedRoots(spec) : fixedRoots!;
+
         final subs = <StreamSubscription<FileSystemEvent>>[];
         Future<void> teardown() async {
+          rearmTimer?.cancel();
+          rearmTimer = null;
           for (final sub in subs) {
             await sub.cancel();
           }
@@ -175,6 +193,16 @@ class LocalWatchService {
                       final path = root.relativize(event.path);
                       if (shouldTriggerWatch(path)) {
                         hooks.signalPath(path);
+                        // See the remote twin: a bounded surface derives from
+                        // the index, so a git-state write can mean the surface
+                        // is now too small. Recompute and re-arm, debounced.
+                        if (spec != null && path.startsWith('.git/')) {
+                          rearmTimer?.cancel();
+                          rearmTimer = Timer(_rearmDebounce, () {
+                            if (hooks.isCancelled()) return;
+                            hooks.rearm();
+                          });
+                        }
                       }
                       // A move has both a source and a destination. The source may be
                       // a transient lock (e.g. `.git/index.lock`) that

@@ -1417,6 +1417,58 @@ the stale scope surviving the switch, which is the leak.
 **Verification.** Analyzer: 2 pre-existing. Suite: `+3316 ~2 -48`, failing set
 identical to baseline.
 
+### Phases 5 + 6 — M6, N1, H5: bounded watch arming and re-arming (2026-09-03) — **COMPLETE**
+
+Landed as one commit, as the plan's rollout section requires (Phase 6 subsumes
+Phase 5's fallback).
+
+**M6 — arming no longer fails silently.** `boundedFswatchArgs` is replaced by
+`boundedFswatchScript`, running through `sh -c` so remote fswatch gets the same
+existence filter inotifywait already had. The reason differs by tool and is now
+written down: inotifywait *aborts* on a missing path, while fswatch merely
+*skips* it — and a skipped path is never retried, so a watch armed before the
+first `git tag` would never see `refs/tags` appear. The all-missing case now
+exits `boundedWatchNoPathsExit` (97) instead of 0; the remote service maps that
+to `WatchUnavailable`, which degrades to polling **with** recovery retries,
+rather than looking like a watcher that armed and died and burning three
+restarts first.
+
+**N1 — a failed `listTrackedFiles` no longer kills the watcher.** The fetch
+moved inside the supplier, where a `GitException` or timeout is caught and
+degrades to a git-dir-only surface (still enough to see git-state changes)
+instead of erroring the provider stream and leaving the repo with no watcher
+and no poll.
+
+**H5 — the surface is recomputed on every arm.** Both services now take a
+`BoundedWatchSpecSource` supplier instead of a frozen `BoundedWatchSpec`, and
+`watchLifecycle` gained a `rearm` hook. `rearm` is deliberately **not**
+`scheduleRestart`: a restart marks the mode `stopped`, emits a grey tick,
+applies backoff and spends the restart budget — so reusing it would flicker the
+watch indicator on every `git add` and drop a repo to polling after three edits
+in new directories. The trigger is a `.git/`-prefixed path, debounced 2s
+because one `git add` writes index, refs and locks in quick succession.
+The local service's `roots` were also frozen outside the lifecycle; ordinary
+repos keep that (their layout genuinely cannot change while open) while bounded
+repos resolve per arm. The comment that justified freezing was amended rather
+than deleted — it was true for linked worktrees and false for bounded mode.
+
+**Tests.** `local_watch_bounded_test.dart` gained a real-git regression: stage
+a file into a directory that held nothing tracked at arm time, wait out the
+debounce, edit it, and require an event. Its `quietWatcher` helper now
+recomputes from the live index, mirroring the provider's supplier.
+
+**Negative test — seen to fail.** In a scratch clone the supplier was resolved
+once and cached (`frozenSpec ??= …`), reproducing the pre-fix freeze exactly,
+with an assert that the target line existed. Result:
+`no matching watch event within 0:00:15.000000` — the new file silently
+unwatched, which is the bug verbatim.
+
+**Verification.** Analyzer: 2 pre-existing. Suite: `+3317 ~2 -48`, failing set
+identical to baseline.
+
+**Not addressed here (M5):** whether the remote watcher *process* survives
+channel teardown is a live-host question, deferred to Phase 15 as planned.
+
 ### Phase 1 negative-test detail (retained)
 
 Run against a scratch `git clone` in the

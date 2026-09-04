@@ -118,6 +118,15 @@ String? relativizeBoundedEvent(String absolutePath, BoundedWatchSpec spec) {
   return null;
 }
 
+/// Supplies a freshly-computed [BoundedWatchSpec].
+///
+/// The watch services take this rather than a spec value because the surface a
+/// bounded watch should cover is not stable: every `git add` of a file in a
+/// new directory widens it. Passing a value froze the surface for the life of
+/// the stream (0022 H5); passing a supplier lets each arm — including a
+/// deliberate re-arm — recompute it.
+typedef BoundedWatchSpecSource = Future<BoundedWatchSpec> Function();
+
 /// Shell script (for `sh -c`) that arms `inotifywait` over exactly [watchDirs],
 /// **non-recursively** (no `-r`), line-buffered via `stdbuf` when available so
 /// each event flushes immediately over the pipe (same reasoning as the
@@ -128,6 +137,16 @@ String? relativizeBoundedEvent(String absolutePath, BoundedWatchSpec spec) {
 /// Emits absolute paths (`%w%f` over absolute watch dirs) for
 /// [relativizeBoundedEvent] to remap. Uses `exec` so a channel-close signal
 /// reaches inotifywait itself, not a surviving shell wrapper.
+/// Exit status a bounded arming script uses for "none of the paths exist".
+///
+/// Distinct from 0 on purpose. It used to `exit 0`, which reads as a clean
+/// watcher death: the lifecycle engine scheduled a restart, burned its budget
+/// on three doomed retries, and only then degraded to polling — with nothing
+/// said about why. A distinct status lets the caller map it straight to
+/// [WatchUnavailable], which degrades to polling immediately *and* keeps
+/// retrying on the recovery timer (0022 M6).
+const int boundedWatchNoPathsExit = 97;
+
 String boundedInotifyScript(List<String> watchDirs) {
   final joined = watchDirs.map(ShellEscaper.escape).join(' ');
   const fmt = '-m -e modify,create,delete,move --format %w%f';
@@ -135,20 +154,30 @@ String boundedInotifyScript(List<String> watchDirs) {
   // it. `set --` re-quotes safely; the loop drops any missing path.
   return 'set -- $joined; '
       'for d; do [ -e "\$d" ] && set -- "\$@" "\$d"; shift; done; '
-      '[ "\$#" -gt 0 ] || exit 0; '
+      '[ "\$#" -gt 0 ] || exit $boundedWatchNoPathsExit; '
       'if command -v stdbuf >/dev/null 2>&1; then '
       'exec stdbuf -oL inotifywait $fmt "\$@"; '
       'else exec inotifywait $fmt "\$@"; fi';
 }
 
-/// fswatch equivalent of [boundedInotifyScript]: watch exactly [watchDirs].
-/// fswatch is non-recursive unless `-r` is passed, so omitting it bounds the
-/// surface to the listed directories. NUL-delimited (`-0`) like the recursive
-/// path.
-List<String> boundedFswatchArgs(List<String> watchDirs) => [
-  'fswatch',
-  '-0',
-  '--latency',
-  '0.5',
-  ...watchDirs,
-];
+/// fswatch equivalent of [boundedInotifyScript]: watch exactly [watchDirs],
+/// non-recursively (fswatch recurses only with `-r`), NUL-delimited (`-0`)
+/// like the recursive path.
+///
+/// Runs through `sh -c` rather than as bare argv **because fswatch needs the
+/// same existence guard inotifywait does**, for a different reason. inotifywait
+/// aborts outright when handed a missing path; fswatch merely skips it — but a
+/// skipped path is never retried, so a bounded watch armed before the first
+/// `git tag` exists would never see `refs/tags` appear (0022 M6). Filtering
+/// here keeps both backends honest about what they are actually watching, and
+/// lets an all-missing set report [boundedWatchNoPathsExit] identically.
+///
+/// `exec` for the same reason as the inotify script: a channel close must reach
+/// fswatch itself, not a surviving shell wrapper.
+String boundedFswatchScript(List<String> watchDirs) {
+  final joined = watchDirs.map(ShellEscaper.escape).join(' ');
+  return 'set -- $joined; '
+      'for d; do [ -e "\$d" ] && set -- "\$@" "\$d"; shift; done; '
+      '[ "\$#" -gt 0 ] || exit $boundedWatchNoPathsExit; '
+      'exec fswatch -0 --latency 0.5 "\$@"';
+}
