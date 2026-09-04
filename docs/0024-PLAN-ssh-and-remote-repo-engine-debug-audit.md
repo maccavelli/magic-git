@@ -68,6 +68,11 @@ These are binding for every phase.
    exits zero.
 6. **Read whole test output**, never through `head`/`tail`/a narrow `grep`, when
    judging whether a check failed for the reason expected.
+0. **Every `flutter` invocation in this plan means `.flutter-sdk/bin/flutter`.**
+   See deviation (a): Homebrew's `flutter` on PATH is 3.47.2 while
+   `build_macos.sh:41` pins `FLUTTER_VERSION="3.44.8"`, and the two SDKs pin
+   different transitive versions. Running the wrong one rewrites
+   `pubspec.lock` and reports two lints that do not exist on the pinned SDK.
 7. **Per-phase commit** once `flutter analyze` and `flutter test` are clean for
    that phase, using exactly `git commit --no-edit` — the global
    `prepare-commit-msg` hook writes the message (`AGENTS.md`). No `-m`, no
@@ -1322,6 +1327,46 @@ nine defect fixes, which is more risk than the fixes carry.
 red-test output, the verification output rather than a summary of it, and a
 dated entry for every deviation, per `AGENTS.md`. Empty until the plan is
 approved.)*
+
+### Deviation (a) — 2026-09-04 — the plan did not say *which* `flutter`
+
+**Found.** Phase 0's gates ("`git status --short` prints nothing",
+"`flutter analyze` reports `No issues found!`") both failed on an unmodified
+tree: analyze reported two `unawaited_return_in_try_block` warnings
+(`pinned_branches.dart:29`, `image_diff_view.dart:105`) and rewrote
+`pubspec.lock`, bumping six transitive packages.
+
+**Evidence it was pre-existing, and then that it was not a defect at all.**
+Both reproduced on a pristine `git clone` of `21721ef` with no edits. But the
+cause is tooling, not code: `build_macos.sh:41` pins `FLUTTER_VERSION="3.44.8"`
+and vendors it into `.flutter-sdk`, while Homebrew's `flutter` on PATH is
+3.47.2. The Flutter SDK pins these packages *exactly* in its own
+`pubspec.yaml` — 3.44.8 wants `test_api 0.7.11` / `matcher 0.12.19` /
+`meta 1.18.0` / `vector_math 2.2.0`; 3.47.2 wants 0.7.12 / 0.12.20 / 1.19.0 /
+2.4.2 — which is why `flutter pub get --enforce-lockfile` reports "Unable to
+satisfy `pubspec.yaml` using `pubspec.lock`" against either SDK's lock when run
+under the other. It also explains the `bd93c18` (bump) / `21721ef` (downgrade)
+pair in the history: the same tug-of-war, twice.
+
+Under the pinned SDK both gates pass as the plan specifies:
+
+```
+$ .flutter-sdk/bin/flutter analyze
+No issues found! (ran in 11.5s)
+$ git status --short          # pubspec.lock restored to HEAD by the SDK's own pub get
+(clean)
+```
+
+**Decision.** No code change. Execution rule 0 added: every `flutter` in this
+plan is `.flutter-sdk/bin/flutter`. `21721ef`'s lock is correct and is left
+alone. The two lints are a 3.47.2-only rule and are **not** in scope.
+
+**Left open for the maintainer** (not actioned, not blocking): `AGENTS.md`'s
+Commands section says bare `flutter analyze` / `flutter test`, which is what
+led here; and `FLUTTER_VERSION` is three minors behind the machine's Flutter.
+Either making `AGENTS.md` name the vendored binary, or bumping the pin to
+3.47.2 and re-locking once, would end the churn. Both are dependency/tooling
+policy and belong to the maintainer.
 
 | Phase | Status | Commit | Red-test observed | Notes |
 |---|---|---|---|---|
