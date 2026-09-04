@@ -164,10 +164,19 @@ Map<String, Object?> encodeExecuteResult(SSHCommandResult result) => {
   'operationId': result.operationId?.value,
 };
 
-/// Encodes a thrown error into the failure envelope. The three typed executor
+/// Encodes a thrown error into the failure envelope. The four typed executor
 /// exceptions keep their identity (each carries only a command string, so
 /// they reconstruct losslessly on the other side); anything else degrades to
 /// `other` with its message.
+///
+/// [SSHTransportNotReady] is load-bearing here, not merely one more type: the
+/// panes render it as a spinner rather than an error (MADR 0018), and that
+/// decision is a `is SSHTransportNotReady` test. Losing the type across the
+/// relay put the raw developer string into every pop-out window's Repository
+/// pane on a cold connect — the exact regression 0018 fixed for the main
+/// window. It also carries `message`, unlike its siblings, so a version-skewed
+/// OLD decoder (which falls to its `default:` arm) degrades to today's
+/// behavior instead of "unknown proxy error".
 Map<String, Object?> encodeExecuteError(Object error) => switch (error) {
   SSHCommandTimeout(:final command) => {
     'ok': false,
@@ -184,14 +193,20 @@ Map<String, Object?> encodeExecuteError(Object error) => switch (error) {
     'error': 'outputExceeded',
     'command': command,
   },
+  SSHTransportNotReady(:final command) => {
+    'ok': false,
+    'error': 'transportNotReady',
+    'command': command,
+    'message': error.toString(),
+  },
   _ => {'ok': false, 'error': 'other', 'message': error.toString()},
 };
 
 /// Decodes the response envelope: a success becomes an [SSHCommandResult];
 /// a failure re-throws the original exception *type* — callers above the
 /// executor pattern-match on [SSHCommandTimeout]/[SSHCommandSuperseded]/
-/// [SSHOutputExceeded], so preserving the type is the contract. `other`
-/// failures become [ProxyExecuteException].
+/// [SSHOutputExceeded]/[SSHTransportNotReady], so preserving the type is the
+/// contract. `other` failures become [ProxyExecuteException].
 SSHCommandResult decodeExecuteResponse(Map<Object?, Object?> map) {
   if (map['ok'] == true) {
     return SSHCommandResult(
@@ -212,6 +227,8 @@ SSHCommandResult decodeExecuteResponse(Map<Object?, Object?> map) {
       throw SSHCommandSuperseded(command);
     case 'outputExceeded':
       throw SSHOutputExceeded(command);
+    case 'transportNotReady':
+      throw SSHTransportNotReady(command);
     default:
       throw ProxyExecuteException(
         map['message'] as String? ?? 'unknown proxy error',

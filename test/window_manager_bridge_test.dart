@@ -224,6 +224,15 @@ void main() {
         throwsA(isA<SSHCommandTimeout>()),
       );
 
+      // Not-ready must keep its type end-to-end through the real hub handler:
+      // the pop-out's panes spin on it and error on anything else (MADR 0018).
+      executor.throwNext = const SSHTransportNotReady('git log');
+      final notReady = await deliverHubCall('execute', request);
+      expect(
+        () => decodeExecuteResponse((notReady as Map).cast<Object?, Object?>()),
+        throwsA(isA<SSHTransportNotReady>()),
+      );
+
       executor.throwNext = StateError('boom');
       final other = await deliverHubCall('execute', request);
       expect(

@@ -234,7 +234,36 @@ void main() {
           ),
         ),
       );
+      // The type is the whole point for this one: `isTransportNotReady` is an
+      // exact `is` test, and the panes spin rather than error on it (MADR
+      // 0018). Degrading it to ProxyExecuteException across the relay put the
+      // raw developer string into every pop-out's Repository pane.
+      expect(
+        () => decodeExecuteResponse(
+          encodeExecuteError(const SSHTransportNotReady('git status')),
+        ),
+        throwsA(
+          isA<SSHTransportNotReady>().having(
+            (e) => e.command,
+            'command',
+            'git status',
+          ),
+        ),
+      );
     });
+
+    test(
+      'a not-ready envelope also carries text for a version-skewed peer',
+      () {
+        // An OLD decoder has no 'transportNotReady' case and falls to its
+        // `default:` arm, which reads 'message'. Without it that peer would
+        // surface "unknown proxy error" — strictly worse than the pre-fix text.
+        final envelope = encodeExecuteError(
+          const SSHTransportNotReady('git status'),
+        );
+        expect(envelope['message'], contains('git status'));
+      },
+    );
 
     test('uploadBytes request round-trips path, bytes, and routingRepo', () {
       final bytes = Uint8List.fromList([0, 1, 2, 255, 0]);
