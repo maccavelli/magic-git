@@ -393,7 +393,7 @@ that finds itself wanting a live host has left its scope.
 | 4 | executed | — | `'recorded'`→`'MISSING'`; `Set:['pipelinesProvider']` | 2 invariants; the third was absorbed by Phase 3 |
 | 5 | executed | — | bytes arrived as `'hi\x00ÿþÃ(\n'`; guard removal | 7 tests; `uploadBytes` covered end to end |
 | 6 | executed | — | `Found 0 widgets with text "Files Changed Since"` | 6 tests; the data-loss path covered, 2 guards proven unreachable |
-| 7 | not started | — | — | — |
+| 7 | **executed, partial** | — | best-effort sweep sabotage | 3 contract tests; the 68 lines remain uncovered, and why is recorded |
 | 8 | not started | — | — | — |
 | 9 | not started | — | — | — |
 
@@ -672,3 +672,40 @@ repository-mutating code. What caught all three was the same move: delete the
 guard, re-run, and see whether the test notices. It is recorded here because the
 rate — three in one phase — says more about how easily this happens than any
 argument would.
+
+### Phase 7 as executed — 2026-09-05 — partial, deliberately and on the record
+
+**The 68 uncovered lines in `connect()` / `connectLocal()` are still
+uncovered.** Driving either offline is not possible without stubbing
+`ScopedAccess.instance` (the macOS sandbox singleton), the SSH client manager,
+the binary-environment notifier, the ping-sample store and the output log — at
+which point the test asserts the arrangement of its own stubs rather than the
+controller. Phase 6 had just demonstrated what that produces: a test that passes
+whether or not the code it names exists.
+
+**What was covered instead** — connect-path *contracts*, each on the unit that
+owns it:
+
+* the connect-time sweep runs for every repo it is handed;
+* **a sweep failure never fails the connect** — `sweepStaleWatchers` is
+  documented best-effort, and if it threw, a stale watcher on an unreachable
+  host would turn housekeeping into a connect failure;
+* the failure is swallowed but **not silently**: it reaches `onDiagnostic`;
+* an empty repo set is a no-op.
+
+Seen to fail: replacing the `catch` with a `rethrow` fails the best-effort test.
+
+**Named as not covered, in the test file itself:**
+
+* the generation guard (`final attempt = ++_attempt; … if (attempt != _attempt)
+  return;`) that stops a superseded connect from marking, invalidating or
+  logging against the connection that replaced it;
+* `connectLocal` establishing a local backend without touching SSH state;
+* a forge-auth failure leaving `forgeAuthPending` true rather than surfacing as
+  a broken working tree.
+
+Covering those needs a harness that can construct a `ConnectionController` with
+every collaborator faked. **That is its own piece of work and should be decided
+as such**, not smuggled into a testing sweep — the same judgement the plan's own
+rollout section asked for when it said a design question found mid-sweep is a
+deviation.
