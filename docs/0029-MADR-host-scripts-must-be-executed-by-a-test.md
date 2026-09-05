@@ -25,7 +25,21 @@ Six such builders exist:
 
 Five of six are covered only by assertions on the script's *text*, and one — the
 recursive watcher, which carried the majority of the 19 orphaned `inotifywait`
-processes found on the host — is referenced by no test at all. The single
+processes found on the host — is referenced by no test at all.
+
+> **Post-plan state, 2026-09-04.** Five of six are now executed by a test;
+> `rootlessInstallScript` remains exempt permanently, because running it would
+> install binaries onto the machine running the suite. The table above is left
+> as the evidence this decision was made from.
+>
+> | builder | executed | how |
+> |---|---|---|
+> | `watcherSweepScript` | yes | real process tree, reclaim + spare |
+> | `catFileBatchScript` | yes | real git repo, byte-exact binary blob |
+> | `recursiveWatchScript` | yes | real script text, `inotifywait` shimmed on `PATH` |
+> | `boundedInotifyScript` | yes | same shim; missing-path guard exercised |
+> | `boundedFswatchScript` | yes | `fswatch` shimmed the same way |
+> | `rootlessInstallScript` | **exempt** | installs binaries; reason recorded in the registry | The single
 executed case exists only because
 [0027](0027-MADR-watcher-reclamation-cannot-reclaim.md) forced it.
 

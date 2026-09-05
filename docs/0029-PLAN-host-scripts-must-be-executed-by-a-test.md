@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-04
 associated-madr: "0029-MADR-host-scripts-must-be-executed-by-a-test.md"
 ---
@@ -146,6 +146,60 @@ record, which is how the sweep shipped dead in the first place.
 
 | Phase | Status | Commit | Red-test observed | Result |
 |---|---|---|---|---|
-| 1 | not started | — | — | — |
-| 2 | not started | — | — | — |
-| 3 | not started | — | — | — |
+| 1 | executed | `8e72f6d` | `Expected: empty / Actual: Set:['watcherSweepScript']` | the scan reads `lib/` and fails on an unclassified builder |
+| 2 | executed | `566e6bf` | three separate reds, below | 1 executed builder → **5**; only the installer stays exempt |
+| 3 | executed | *(this entry)* | — | residue recorded; MADR table updated to the post-plan state |
+
+### Phase 1 as executed
+
+The scan reads `lib/` with a regex rather than a hand-maintained list — a
+hand-list would be the same class of check this record exists to constrain. Four
+tests: every builder is classified, every `_executed` claim is *verified* by
+finding a test that both names it and starts a process, every exemption carries
+a reason, and the scan can see a new builder in a fixture directory.
+
+**Seen to fail** by dropping a real builder from the sets:
+
+```
+Expected: empty
+  Actual: Set:['watcherSweepScript']
+a new host script must be executed by a test or added to _exempt with a reason.
+```
+
+### Phase 2 as executed — and every claim was broken on purpose first
+
+`catFileBatchScript` and the watcher lease loops now run for real. **No
+behavioural defect was found**, so no deviation was needed — the scripts work;
+they were simply never checked.
+
+The watcher binaries do not exist on the development machine, so the real script
+text runs with `inotifywait`/`fswatch` **shimmed onto `PATH`**. What is under
+test is the lease loop wrapped around them, which is pure shell and is where the
+orphan behaviour lives.
+
+Three reds, each produced by breaking the guarantee rather than reading a green
+run:
+
+| what was broken | observed |
+|---|---|
+| piped `cat-file` straight into `base64` (the pre-M10 form) | `Expected: not <0> / Actual: <0>` — a failed `cat-file` reported success |
+| dropped the `base64` hop | `FormatException: Invalid UTF-8 byte (at offset 52)` |
+| removed both lease checks from the loop | `TimeoutException after 0:00:10` ×2 — the watcher never exits, which **is** the orphan |
+
+Each sabotage was applied to a backed-up copy and the source restored
+byte-identical afterwards, verified with `cmp`.
+
+### Phase 3 — the residue
+
+One builder remains exempt: `rootlessInstallScript`, because executing it would
+install binaries onto the machine running the suite, and no test may mutate the
+developer's machine. Its composition is checked by a string assertion in
+`install_planner_test.dart`, which is exactly what this record permits a string
+assertion to claim — and no more.
+
+**The gap this record was written about is closed**: the builder with no test of
+any kind (`recursiveWatchScript`, which carried most of the 19 orphans) is now
+executed, and a new builder cannot be added without either an executing test or
+a written exemption.
+
+Suite: **3502 passing, 2 skipped, 0 failing** (+12), analyzer clean.
