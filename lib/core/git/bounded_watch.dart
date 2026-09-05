@@ -291,9 +291,18 @@ String watcherSweepScript(
   List<String> gitDirs, {
   required Duration staleAfter,
 }) {
+  // Both shapes: the tokenised per-instance form, and the pre-0027 single pair
+  // that hosts running an earlier build still carry. `${f%.pid}.hb` derives the
+  // right heartbeat for either — `mg-watch.<tok>.pid` -> `mg-watch.<tok>.hb`,
+  // and `mg-watch.pid` -> `mg-watch.hb`. Without the legacy glob the orphans
+  // that motivated this work would never be reclaimed (0027 Phase 4).
   final globs = gitDirs
-      .map((d) => ShellEscaper.escape('$d/mg-watch.'))
-      .map((e) => '$e*.pid')
+      .expand(
+        (d) => [
+          '${ShellEscaper.escape('$d/mg-watch.')}*.pid',
+          ShellEscaper.escape('$d/mg-watch.pid'),
+        ],
+      )
       .join(' ');
   final mins = staleAfter.inMinutes < 1 ? 1 : staleAfter.inMinutes;
   // `find -mmin` rather than `stat -c %Y`: the latter is GNU-only and this

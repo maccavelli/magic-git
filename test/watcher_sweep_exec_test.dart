@@ -122,6 +122,26 @@ void main() {
     );
   });
 
+  test('a legacy untokenised pair is reclaimed and removed', () async {
+    // Hosts that ran a pre-0027 build carry `mg-watch.pid` / `mg-watch.hb`
+    // with no token — including the two orphans that motivated this record.
+    // If the sweep only matched the tokenised shape, the very processes this
+    // work exists to reclaim would run forever.
+    final pidFile = '${tmp.path}/mg-watch.pid';
+    final proc = await spawnWatcher(pidFile);
+
+    await runScript(
+      watcherSweepScript([tmp.path], staleAfter: const Duration(minutes: 5)),
+    );
+
+    expect(
+      await diedWithin(proc.pid),
+      isTrue,
+      reason: 'a legacy orphan must be reclaimed, not stranded',
+    );
+    expect(File(pidFile).existsSync(), isFalse);
+  });
+
   test('the sweep spares a process that is not ours', () async {
     // A pid file naming a process whose command line carries no marker of
     // ours — a recycled pid, or another tool. Killing it would be the
