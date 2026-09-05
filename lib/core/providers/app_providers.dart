@@ -373,7 +373,13 @@ final remoteWatchServiceProvider = Provider<RemoteWatchService>((ref) {
 /// local repo — no SSH-spawned `fswatch`/`inotifywait`, just `dart:io`'s
 /// `Directory.watch()`.
 final localWatchServiceProvider = Provider<LocalWatchService>((ref) {
-  return LocalWatchService();
+  return LocalWatchService(
+    // The local twin of the remote watcher's channel. Both services drive the
+    // same lifecycle engine, so both can degrade to polling; only one used to
+    // say so (0026 deviation (c)).
+    onDiagnostic: (line) =>
+        ref.read(outputLogProvider.notifier).logInfo('watcher: $line'),
+  );
 });
 
 /// Persists connection profiles (metadata + Keychain secret).
@@ -3224,7 +3230,9 @@ final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
   ref,
   repoPath,
 ) async {
-  final status = (await ref.watch(repoSnapshotProvider(repoPath).future)).status;
+  final status = (await ref.watch(
+    repoSnapshotProvider(repoPath).future,
+  )).status;
   // `parseWarnings` records any porcelain status record that failed its
   // expected field-count check and was dropped (e.g. output truncated by a
   // transport hiccup) — computed so the drop is inspectable instead of

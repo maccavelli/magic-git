@@ -1,5 +1,5 @@
 ---
-status: "complete"
+status: "complete (amended)"
 date: 2026-09-04
 associated-madr: "0026-MADR-degraded-watch-poll-diagnosis.md"
 ---
@@ -446,3 +446,69 @@ source rather than rewritten.
   not address. Phase 5 records them as open rather than closed, because a
   hypothesis that was never tested must not be written up as though it were
   eliminated.
+
+### Deviation (c) — 2026-09-05 — the instrument was wired into one of the two watch services
+
+**Reported from use**: watcher lines appear in the output log for repos on the
+remote host, and never for repos on this Mac.
+
+Not a difference in watch mechanics, as it first appears. The backend selects
+the service (`app_providers.dart:3520-3521`):
+
+```dart
+ConnectionBackend.local => local.watch(...)   // LocalWatchService — Directory.watch
+ConnectionBackend.ssh   => remote.watch(...)  // RemoteWatchService — inotifywait/fswatch
+```
+
+`RemoteWatchService` is constructed **with** a diagnostic channel
+(`app_providers.dart:359-368`) and Phase 2 of this plan passed it `onTransition`.
+`LocalWatchService` is constructed as `LocalWatchService()` — it has no
+`onDiagnostic` parameter at all, and never received `onTransition`. **A local
+repo therefore produces no watcher log lines and no transition records, by
+construction.** A repo on a *remote macOS host* logs normally; it is
+specifically repos on this Mac that are silent.
+
+**Why this is a defect and not a missing nicety.** Both services drive the same
+`watchLifecycle`: same restart budget, same degrade-to-polling, same 3-minute
+recovery. `LocalWatchService` has its own failure path — some network mounts
+reject `Directory.watch()` outright, which it logs and rethrows so the engine
+restarts and then degrades (`local_watch_service.dart:227-240`). A local repo
+can therefore reach exactly the polling state that
+[0027 deviation (b)](0027-PLAN-watcher-reclamation-cannot-reclaim.md) put the
+remote host in — **and the diagnostic that exposed that bug would not have
+appeared.** Its `developer.log` goes to the IDE console, not the app's output
+log, so nothing reaches the user either.
+
+This record's stated purpose is that *"why is this repo polling"* be answerable
+from inside the app. For half the backends it was not. Phase 2 wired one service
+and the phase was called done.
+
+**Fix:** `LocalWatchService` gains the same `onDiagnostic` parameter, routed to
+`outputLogProvider` by the provider, and passes `onTransition` to
+`watchLifecycle`; its `Directory.watch` start failure goes to that channel
+instead of only to `developer.log`.
+
+**Guarded against recurrence** by a test that arms **both** services and asserts
+each feeds `watchDiagnostics` — so the next instrument cannot be wired to one
+and declared finished.
+
+**Executed 2026-09-05.** `LocalWatchService` gained `onDiagnostic`, passes
+`onTransition`, and reports both its `Directory.watch` start failure and its
+stream errors on that channel; `localWatchServiceProvider` routes it to the
+output log exactly as the remote one does. Guarded by
+`test/watch_diagnostics_both_backends_test.dart`, which arms **both** services
+and asserts each feeds `watchDiagnostics` — seen to fail (`Expected: non-empty /
+Actual: []`) with the local wiring removed.
+
+**One gap is named rather than papered over.** The local failure paths are wired
+but **untested on macOS**: `Directory.watch()` over a path that does not exist
+neither throws, nor errors the stream, nor completes it — measured
+(`threwSync=false streamError=false done=false`). There is no portable way to
+make a local watch fail on demand here, so the `onDiagnostic` calls on those
+paths have no covering test.
+
+That measurement also surfaced a hazard worth its own line: **a local watch on a
+missing path arms successfully and then reports nothing, forever.** The engine
+records `armed`, the indicator shows healthy, and no event can ever arrive —
+indistinguishable from a quiet repository. A characterisation test pins it, and
+says in its own comment that it pins the behaviour rather than blessing it.

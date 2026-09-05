@@ -3,6 +3,7 @@ import 'dart:developer' as developer;
 import 'dart:io';
 import '../local/linked_worktree_probe.dart';
 import 'bounded_watch.dart';
+import 'watch_diagnostics.dart';
 import 'watch_event.dart';
 import 'watch_lifecycle.dart';
 import 'watch_path_filter.dart';
@@ -54,6 +55,47 @@ class _WatchRoot {
 /// consumer's refresh gating then work on a linked worktree **unmodified**,
 /// instead of growing a parallel code path.
 class LocalWatchService {
+  LocalWatchService({this.onDiagnostic});
+
+  /// Where this service's own failures go — the local twin of
+  /// [RemoteWatchService.onDiagnostic].
+  ///
+  /// Without it a local repo was silent: it drives the same `watchLifecycle`,
+  /// with the same restart budget and the same degrade-to-polling, but nothing
+  /// reached the output log, so "why is this repo polling" was unanswerable for
+  /// exactly half the backends (0026 deviation (c)).
+  final void Function(String line)? onDiagnostic;
+
+  /// Files one transition against [repoPath].
+  ///
+  /// [WatchTransitionRecord.liveWatchers] is always 0 here and that is not a
+  /// placeholder: a local watch holds no host processes, so there is no budget
+  /// to report. The field distinguishes a leaked slot from a leaked process on
+  /// the remote side; locally neither exists.
+  void _record(
+    String repoPath,
+    WatchTransition kind,
+    String cause,
+    int restarts,
+  ) {
+    watchDiagnostics
+        .forRepo(repoPath)
+        .add(
+          WatchTransitionRecord(
+            at: DateTime.now(),
+            kind: kind,
+            repoPath: repoPath,
+            cause: cause,
+            liveWatchers: 0,
+            restarts: restarts,
+          ),
+        );
+    if (kind == WatchTransition.degradedToPolling) {
+      final summary = watchDiagnostics.forRepo(repoPath).degradationSummary;
+      if (summary != null) onDiagnostic?.call(summary);
+    }
+  }
+
   /// Strips [root] from an absolute event path, yielding a root-relative one.
   ///
   /// [prefix] is prepended to the result, which is what maps an event in the
@@ -167,6 +209,8 @@ class LocalWatchService {
       minInterval: minInterval,
       pollInterval: pollInterval,
       recoveryInterval: recoveryInterval,
+      onTransition: (kind, cause, restarts) =>
+          _record(repoPath, kind, cause, restarts),
       arm: (hooks) async {
         final spec = bounded == null ? null : await bounded();
         if (hooks.isCancelled()) return const WatchAborted();
@@ -220,7 +264,16 @@ class LocalWatchService {
                       }
                     },
                     onDone: hooks.scheduleRestart,
-                    onError: (Object _) => hooks.scheduleRestart(),
+                    onError: (Object e) {
+                      // Say what died before restarting. The remote service
+                      // forwards its watcher's stderr for exactly this reason;
+                      // locally the equivalent arrived only as a silent
+                      // restart, so a watch that could never start burned its
+                      // budget and degraded with nothing to chase
+                      // (0026 deviation (c)).
+                      onDiagnostic?.call('watch error: $e');
+                      hooks.scheduleRestart();
+                    },
                   ),
             );
           }
@@ -235,6 +288,10 @@ class LocalWatchService {
             'Directory.watch failed to start: $e',
             name: 'LocalWatchService',
           );
+          // And to the user-visible log. `developer.log` reaches the IDE
+          // console only, which is nobody's idea of a diagnostic when the app
+          // is running from /Applications (0026 deviation (c)).
+          onDiagnostic?.call('Directory.watch failed to start: $e');
           await teardown();
           rethrow; // the engine schedules the restart
         }
