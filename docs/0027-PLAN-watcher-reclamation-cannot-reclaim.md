@@ -432,3 +432,14 @@ a dead predecessor's lease open, which is what let orphans reach 19 minutes).
 
 **The fix is covered by a test that arms through the real service and asserts
 the ordering**, not by another test of either half.
+
+**Verified.** The seam test went red with the ordering named in its own failure
+message — `events were: [arm, beat]` — and green once the lease was stamped
+first. Host control, run before the fix: the script with no heartbeat exits in
+**5 ms**; the same script with the heartbeat present is still running at 3 s.
+Full suite 3503 passing, 2 skipped, 0 failing.
+
+**Residue on the host.** The 14 dead lease pairs left by the failed arms are
+stale (>5 min) and are removed by the connect sweep on the next connection —
+no manual cleanup needed. **A rebuild is required** for the fix to take effect;
+until then the repo keeps polling.
