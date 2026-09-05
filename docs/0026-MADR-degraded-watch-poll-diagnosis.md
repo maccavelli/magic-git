@@ -185,7 +185,12 @@ one and this record needs a successor rather than a fix.
 > both halves of it were then seen to fail on demand (`<1>`/`<2>` without
 > serialisation, `<2>`/`<4>` without collapsing). **H2 and H3 remain open** —
 > H1 explained every symptom, so neither was pursued, and neither may be
-> written up as eliminated. The post-fix live capture is still outstanding.
+> written up as eliminated. *(The post-fix capture was taken the same day: the
+> poll regime did not recur — see the plan's Phase 4. H2 and H3 are carried
+> forward by [`0028-MADR-ceiling-refusal-and-teardown-residue.md`](0028-MADR-ceiling-refusal-and-teardown-residue.md),
+> which also records that H3 may already be resolved as a consequence of this
+> fix and 0027's per-instance lease — a claim it settles by observation, not
+> by inference.)*
 
 The instrument itself is not trusted until it has been **seen to fail**: a test
 must drive a synthetic degradation and observe the log record it, and a test
