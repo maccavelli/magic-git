@@ -667,6 +667,12 @@ predecessor — which is how an `inotifywait` reached 16.9 days. M5 identified
 abnormal channel loss as what *creates* an orphan; C5 is what makes an orphan
 *permanent*.
 
+> **Successor:** [`0027-MADR-watcher-reclamation-cannot-reclaim.md`](0027-MADR-watcher-reclamation-cannot-reclaim.md)
+> decides the remedy — and finds the defect is worse than described here: the
+> sweep records a **shell** pid while refusing to signal anything whose `comm`
+> is not `inotifywait`/`fswatch`, so it has never been able to reclaim
+> anything, in any configuration.
+
 **Not remedied here**, and the choice is a real one: per-watcher lease and pid
 files (simple, but leaves stale files to garbage-collect), an append-only pid
 registry (keeps the single file, needs pruning), or a generation stamp the
