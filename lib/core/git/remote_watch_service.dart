@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
 import 'bounded_watch.dart';
+import 'watch_diagnostics.dart';
 import 'watch_event.dart';
 import 'watch_lifecycle.dart';
 import 'watch_path_filter.dart';
@@ -199,6 +200,27 @@ class RemoteWatchService {
   @visibleForTesting
   static void resetWatcherCount() => _liveWatchers = 0;
 
+  /// Files one transition against [repoPath], stamping it with the live watcher
+  /// count — the field that separates a leaked **slot** (H1: refusals persist
+  /// with no watcher process alive) from a leaked **process** (H3). MADR 0026.
+  static void _record(
+    String repoPath,
+    WatchTransition kind,
+    String cause,
+    int restarts,
+  ) => watchDiagnostics
+      .forRepo(repoPath)
+      .add(
+        WatchTransitionRecord(
+          at: DateTime.now(),
+          kind: kind,
+          repoPath: repoPath,
+          cause: cause,
+          liveWatchers: _liveWatchers,
+          restarts: restarts,
+        ),
+      );
+
   /// Cap on the un-delimited stdout buffer. A watcher tool that streams partial
   /// output without ever emitting the record delimiter (a wedged or misbehaving
   /// fswatch/inotifywait) would otherwise grow `buffer` without bound. Past this
@@ -248,11 +270,16 @@ class RemoteWatchService {
       pollInterval: pollInterval,
       recoveryInterval: recoveryInterval,
       onPollingRecoveryAttempt: () => cachedTool = null,
+      onTransition: (kind, cause, restarts) =>
+          _record(repoPath, kind, cause, restarts),
       arm: (hooks) async {
         final tool = cachedTool ??= await _detectWatcher(repoPath);
         if (hooks.isCancelled()) return const WatchAborted();
 
-        if (tool == RemoteWatcherTool.none) return const WatchUnavailable();
+        if (tool == RemoteWatcherTool.none) {
+          _record(repoPath, WatchTransition.armFailed, 'no watcher tool', 0);
+          return const WatchUnavailable();
+        }
 
         // Resolve the bounded surface HERE, on every arm, rather than closing
         // over one computed once for the stream's life. The tracked-file set
@@ -271,6 +298,12 @@ class RemoteWatchService {
           onDiagnostic?.call(
             'watcher ceiling reached ($_liveWatchers/$maxConcurrentWatchers) — '
             'polling $repoPath instead',
+          );
+          _record(
+            repoPath,
+            WatchTransition.armFailed,
+            'ceiling $_liveWatchers/$maxConcurrentWatchers',
+            0,
           );
           return const WatchUnavailable();
         }
@@ -304,6 +337,7 @@ class RemoteWatchService {
           // spends the restart budget doing it. Poll this repo instead, and
           // say why (0024 M2).
           onDiagnostic?.call('$e — falling back to polling for this repo');
+          _record(repoPath, WatchTransition.armFailed, 'stream budget', 0);
           return const WatchUnavailable();
         }
         if (hooks.isCancelled()) {
@@ -327,6 +361,7 @@ class RemoteWatchService {
           if (early == boundedWatchNoPathsExit) {
             releaseSlot();
             await handle.cancel();
+            _record(repoPath, WatchTransition.armFailed, 'no watched paths', 0);
             return const WatchUnavailable();
           }
         }

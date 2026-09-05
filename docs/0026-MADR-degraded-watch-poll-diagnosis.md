@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-09-04
 decision-makers: [Maintainer]
 consulted: []
@@ -185,6 +185,33 @@ must drive the H1 race directly (two `start()` calls overlapping one `arm`) and
 observe the double reservation. A transition log that has only ever been
 watched recording healthy transitions proves nothing about the unhealthy ones
 it exists for.
+
+#### Amendment 0026.1 — 2026-09-04: H1 confirmed, and the fix taken into this record
+
+The instrument was built and, before any live capture was needed, **H1 was
+proven deterministically**. `test/watch_transition_wiring_test.dart` drives two
+overlapping `start()` calls and asserts every armed source is torn down:
+
+```
+Expected: <2>
+  Actual: <1>
+```
+
+Two sources armed, one teardown ran. The mechanism is as reasoned above, and
+the consequence is precisely the census that opened this record: a live watcher
+process with nothing holding it, and a watcher slot leaked so every later arm is
+refused and the repo drops to the 5-second poll.
+
+**H2 and H3 are neither confirmed nor refuted.** H1 accounts for every
+observation, but the other two were never tested and must not be written up as
+eliminated. They remain open contributors that this fix does not address.
+
+**The decision below is amended in one respect** (maintainer, same day): the fix
+is implemented under this record rather than a successor. The "does not fix
+anything" boundary existed to stop a remedy being chosen before a cause was
+known. The cause is now known and pinned by a failing-then-passing test, so the
+boundary's reason has expired. The rest of the section stands — in particular,
+the ceiling was **not** raised and the intervals were **not** touched.
 
 ## What this record deliberately does not do
 

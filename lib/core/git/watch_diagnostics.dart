@@ -80,6 +80,14 @@ class WatchTransitionRecord {
       'cause=$cause live=$liveWatchers restarts=$restarts';
 }
 
+/// How the engine reports a transition to whoever is recording it.
+///
+/// The engine is transport-agnostic: it knows the transition, why it happened,
+/// and its own restart budget, but not the repository path or how many watcher
+/// processes the transport is holding. The service supplies those.
+typedef WatchTransitionSink =
+    void Function(WatchTransition kind, String cause, int restarts);
+
 /// The transition history for one repository.
 class WatchTransitionLog {
   /// Ceiling on retained records. The log must not become the leak it is

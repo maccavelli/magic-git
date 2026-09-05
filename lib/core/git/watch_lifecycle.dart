@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'coalescer.dart';
+import 'watch_diagnostics.dart';
 import 'watch_event.dart';
 
 /// What one [WatchArmCallback] invocation produced.
@@ -110,6 +111,11 @@ Stream<RepoWatchEvent> watchLifecycle({
   Duration recoveryInterval = const Duration(minutes: 3),
   void Function()? onPollingRecoveryAttempt,
   int maxRestarts = 3,
+
+  /// Records mode transitions for diagnosis (MADR 0026). Purely
+  /// observational: every transition reported here already happened, and
+  /// reporting one must never change which happen or when.
+  WatchTransitionSink? onTransition,
 }) {
   late final StreamController<RepoWatchEvent> controller;
   Future<void> Function()? armedTeardown;
@@ -121,7 +127,12 @@ Stream<RepoWatchEvent> watchLifecycle({
   var cancelled = false;
   var restarts = 0;
   late Future<void> Function() start;
+  late Future<void> Function() startOnce;
   late void Function() scheduleRestart;
+  // Serialises arming — see [start] below. `startChain` is the tail of the
+  // queue; `queued` is how many calls are waiting behind the running one.
+  var startChain = Future<void>.value();
+  var queued = 0;
 
   // The paths seen since the last fire, drained into the tick the coalescer
   // eventually emits — see [RepoWatchEvent.paths] for why a tick that names
@@ -142,7 +153,8 @@ Stream<RepoWatchEvent> watchLifecycle({
     );
   }
 
-  void startPolling() {
+  void startPolling(String cause) {
+    onTransition?.call(WatchTransition.degradedToPolling, cause, restarts);
     mode = WatchMode.polling;
     pollTimer?.cancel();
     emit();
@@ -155,6 +167,7 @@ Stream<RepoWatchEvent> watchLifecycle({
     recoveryTimer = Timer.periodic(recoveryInterval, (_) {
       if (cancelled) return;
       restarts = 0;
+      onTransition?.call(WatchTransition.recoveryAttempted, 'poll recovery', 0);
       onPollingRecoveryAttempt?.call();
       start().catchError((_) => scheduleRestart());
     });
@@ -174,9 +187,14 @@ Stream<RepoWatchEvent> watchLifecycle({
   scheduleRestart = () {
     if (cancelled || controller.isClosed) return;
     if (restarts >= maxRestarts) {
-      startPolling();
+      startPolling('restart budget spent ($restarts/$maxRestarts)');
       return;
     }
+    onTransition?.call(
+      WatchTransition.restartScheduled,
+      'source died',
+      restarts,
+    );
     mode = WatchMode.stopped;
     // Emit immediately — without this, subscribers keep seeing whatever mode
     // was last emitted (usually `eventDriven`) for the entire restart backoff
@@ -202,12 +220,24 @@ Stream<RepoWatchEvent> watchLifecycle({
       coalescer?.signal();
     },
     noteActivity: () {
+      if (mode == WatchMode.polling) {
+        onTransition?.call(
+          WatchTransition.recovered,
+          'event received',
+          restarts,
+        );
+      }
       restarts = 0;
       mode = WatchMode.eventDriven;
     },
     scheduleRestart: () => scheduleRestart(),
     rearm: () {
       if (cancelled || controller.isClosed) return;
+      onTransition?.call(
+        WatchTransition.rearmed,
+        'watched paths changed',
+        restarts,
+      );
       // Straight back through start(), which tears the old source down first.
       // No mode change, no backoff, no budget spend — see [WatchHooks.rearm].
       start().catchError((_) => scheduleRestart());
@@ -215,7 +245,33 @@ Stream<RepoWatchEvent> watchLifecycle({
     isCancelled: () => cancelled,
   );
 
-  start = () async {
+  // ONE arm at a time. `startOnce` nulls `armedTeardown` before `await
+  // arm(...)` and only re-assigns it afterwards, so two overlapping entries
+  // each armed a source and the later assignment overwrote the earlier
+  // teardown — leaving a live watcher with nothing holding it and, in
+  // RemoteWatchService, leaking the slot it had reserved. That is MADR 0026 H1,
+  // and it is what put a repo into the 5-second poll while its `inotifywait`
+  // processes were still running on the host.
+  //
+  // Serialised rather than dropped: a re-arm requested during an arm is a
+  // legitimate request (the watched path set changed) and must still happen —
+  // just after the one in flight, so the teardown it depends on has run. At
+  // most one is queued, because three timers firing during one slow arm should
+  // produce one re-arm, not three.
+  start = () {
+    if (queued >= 1) return startChain;
+    queued++;
+    final next = startChain.then((_) {
+      queued--;
+      return startOnce();
+    });
+    // Keep the chain alive past a failed arm; the caller still sees the error
+    // through `next`, and `scheduleRestart` is what reacts to it.
+    startChain = next.then((_) {}, onError: (Object _) {});
+    return next;
+  };
+
+  startOnce = () async {
     // An active attempt is underway — pause the polling-recovery retries
     // until it's clear whether this one succeeds. And stop any polling loop:
     // without this, a successful recovery from polling mode left the periodic
@@ -245,6 +301,7 @@ Stream<RepoWatchEvent> watchLifecycle({
           return;
         }
         armedTeardown = teardown;
+        onTransition?.call(WatchTransition.armed, 'arm succeeded', restarts);
         // The watcher is now armed. Announce it with one eventDriven tick so
         // the status dot turns green immediately (and pulls a fresh status)
         // instead of sitting grey — indistinguishable from "stopped" — until
@@ -253,13 +310,15 @@ Stream<RepoWatchEvent> watchLifecycle({
         // watcher that arms then dies repeatedly still degrades to polling.
         emit();
       case WatchUnavailable():
-        startPolling();
+        startPolling('arm unavailable');
       case WatchAborted():
+        onTransition?.call(WatchTransition.stopped, 'arm aborted', restarts);
         return;
     }
   };
 
   Future<void> stop() async {
+    onTransition?.call(WatchTransition.stopped, 'stream cancelled', restarts);
     cancelled = true;
     restartTimer?.cancel();
     pollTimer?.cancel();

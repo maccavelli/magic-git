@@ -35,7 +35,10 @@ hypothesis, and adopting one before the capture is the guess this plan exists
 to avoid:
 
 * changing `maxConcurrentWatchers` (`remote_watch_service.dart:142`);
-* adding a re-entrancy guard to `start()`;
+* ~~adding a re-entrancy guard to `start()`~~ — **brought into scope 2026-09-04
+  by deviation (b)**, after Phase 2b proved H1 deterministically. The exclusion
+  existed to prevent choosing a fix before a cause was known; the cause is now
+  known;
 * changing `recoveryInterval` or `pollInterval`;
 * making the ceiling's `WatchUnavailable` distinguishable from the host's;
 * anything touching teardown or `releaseSlot()`.
@@ -269,3 +272,49 @@ spike now affects both arms equally instead of only the second. Deliberately
 assertion, all of which would leave the real timing claim unguarded.
 
 **Files added to Phase 1's scope:** `test/ssh_live_transport_test.dart`.
+
+### Deviation (b) — 2026-09-04 — H1 confirmed in Phase 2; the fix is taken into this plan
+
+**Found** by Phase 2b, which the plan called "the single most important
+artifact" and which went red exactly as it predicted:
+
+```
+overlapping start() calls: every armed source is torn down [E]
+  Expected: <2>
+    Actual: <1>
+  both armed sources must be torn down; H1 is real if only one is
+```
+
+Two sources armed; **one teardown ran**. `start()`
+(`watch_lifecycle.dart:218`) nulls `armedTeardown` (`:167-168`), awaits
+`arm(hooks)`, and assigns the new teardown at `:247`. A second `start()`
+entering that window tears down nothing, arms a second source, and its
+assignment overwrites the first teardown — orphaning a live watcher and leaking
+the slot it reserved. Reachable in production because `rearmTimer`, the restart
+timer and the recovery timer can each fire during an in-flight arm, and an arm
+costs a full SSH round trip.
+
+**H1 is therefore CONFIRMED, deterministically and without the live capture.**
+The plan anticipated this exit: *"A red here confirms H1 without needing the
+live capture at all, and the plan may stop early and propose the fix."*
+
+**Decision (maintainer): implement the fix under this plan number** rather than
+opening a successor. This overrides the plan's own out-of-scope list, which
+named "adding a re-entrancy guard to `start()`" as forbidden. That boundary
+existed to stop a fix being chosen before a cause was known; the cause is now
+known and proven by a test, so the reason for the boundary has expired. Recorded
+here rather than applied silently, and the out-of-scope list is annotated at its
+source rather than rewritten.
+
+**Consequences for the remaining phases.**
+
+* **Phase 3 (surface the log)** — still wanted. "Why is this repo polling" stays
+  unanswerable from inside the app, and the log now has real content to show.
+* **Phase 4 (live capture)** — **no longer needed to confirm H1.** Retained in
+  reduced form: a post-fix capture to confirm the degraded-poll regime does not
+  recur, which is a different question from what caused it.
+* **H2 and H3 are neither confirmed nor refuted.** H1 explains every observation
+  and is proven; the other two remain plausible contributors that the fix does
+  not address. Phase 5 records them as open rather than closed, because a
+  hypothesis that was never tested must not be written up as though it were
+  eliminated.
