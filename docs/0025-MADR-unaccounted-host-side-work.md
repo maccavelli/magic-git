@@ -467,7 +467,7 @@ general worker has to make — serial processing, superseded results dropped by
 the caller's token. The pattern is proven in-tree; it simply was not applied to
 the other twelve.
 
-## C — Process and watchdog management (4)
+## C — Process and watchdog management (5)
 
 ### C1 — Make the watcher self-terminating, and stop relying on the client
 
@@ -632,6 +632,46 @@ carries no single point of failure, and a persistent session would merely make
 the same 4-per-5-second poll cheaper. On the measured evidence the ordering in
 decision driver 5 — reduce demand before adding machinery — applies to C4
 ahead of D1.
+
+### C5 — An orphaned watcher is kept alive by its successor and hidden from the sweep
+
+**Grounded in:** the post-fix capture of 2026-09-04
+([`0026-PLAN`](0026-PLAN-degraded-watch-poll-diagnosis.md) Phase 4), taken on
+the live host with the app running.
+
+C1 gave watchers a heartbeat lease so they self-terminate when the app stops
+refreshing it, and C3 gave the connection a PID registry swept at connect.
+Neither reclaimed two lease shells found alive at `ppid 1`, aged ~19 minutes,
+with **zero child processes** — resident, watching nothing, from a previous app
+instance. The capture shows why, and the two mechanisms fail for the same
+reason: **both are keyed per repository, and neither can tell one watcher
+instance from another.**
+
+```
+mg-watch.pid = '331312'      the NEWEST watcher only; the orphans are named nowhere
+mg-watch.hb   mtime age 0s   FRESH — written by the CURRENT app every 60s
+find mg-watch.hb -mmin -5 -> FRESH: an orphan re-checking its lease would NOT exit
+```
+
+* **The lease keeps the wrong thing alive.** An orphan tests `<git-dir>/mg-watch.hb`;
+  its *successor* refreshes that same file every 60 s. A healthy watcher
+  therefore holds its predecessor's lease open indefinitely. The self-termination
+  is disabled exactly when orphans accumulate — while the repo is being watched.
+* **The pid file is overwritten, not appended.** `mg-watch.pid` names only the
+  newest watcher, so the connect sweep has no record of the orphan. It is not
+  that the sweep ran and failed; it had nothing to find.
+
+**This is the mechanism behind 0022 M5's ages.** Once a successor overwrites the
+pid file and takes over the heartbeat, nothing in the system can reclaim its
+predecessor — which is how an `inotifywait` reached 16.9 days. M5 identified
+abnormal channel loss as what *creates* an orphan; C5 is what makes an orphan
+*permanent*.
+
+**Not remedied here**, and the choice is a real one: per-watcher lease and pid
+files (simple, but leaves stale files to garbage-collect), an append-only pid
+registry (keeps the single file, needs pruning), or a generation stamp the
+sweep compares against the live arm (smallest surface, most subtle). That is a
+decision, not a detail, and it needs its own record.
 
 ## D — The process stack (3)
 

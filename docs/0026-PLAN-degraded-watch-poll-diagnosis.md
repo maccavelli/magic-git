@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-04
 associated-madr: "0026-MADR-degraded-watch-poll-diagnosis.md"
 ---
@@ -235,7 +235,7 @@ verbatim red-test output, the capture, and a dated entry for every deviation.)*
 | 1 | executed | `c4b361f` | `Expected: an object with length of <200>` against 250 retained | bounded transition log; 0024's P1 flake fixed (deviation (a)) |
 | 2 | executed | `4d83f5d` | `Expected: <2> / Actual: <1>` — two sources armed, one torn down | **H1 CONFIRMED**; fix landed under deviation (b) |
 | 3 | executed | `da53623` | `Expected: non-empty / Actual: []` with the summary suppressed | degradations explained on the existing diagnostic channel |
-| 4 | **partial — deferred** | — | n/a (measurement) | pre-fix host reading taken; post-fix capture needs a rebuilt app |
+| 4 | executed | — | n/a (measurement) | **degraded-poll regime did not recur**; new finding: orphans survive the lease (0025 C5) |
 | 5 | executed | *(this entry)* | — | verdict recorded; H2/H3 left open, not closed |
 
 ### Verdict — H1 confirmed, H2 and H3 untested
@@ -286,7 +286,64 @@ eliminated:
 * **H3** — teardown-does-not-kill (0022 M5) is untested here and unaffected by
   this fix.
 
-### Phase 4 as executed — partial, and honestly so
+### Phase 4 as executed — post-fix capture, 2026-09-04
+
+Taken against a build containing `4d83f5d` (app binary built 20:34; fix
+committed 20:24:52 — verified before capturing, not assumed). Control passed
+(6 start events for 5 known invocations). `~/.gitconfig` restored
+byte-identical (sha256 `3134c8a2…`), trace and backups removed.
+
+**The degraded-poll regime did not recur.** Over a 300 s window the trace holds
+92 start events spanning only 166 s, and their shape is user activity — `diff`,
+`ls-files`, `check-ignore`, a fetch — not poll ticks:
+
+| | pre-fix (2026-09-04, regime A) | post-fix |
+|---|---|---|
+| cadence | **4 events every 5 s, 19 consecutive ticks** | none |
+| longest silence | 0 s during the regime | **142 s** mid-window, and ~134 s more after the last event |
+| watcher trees | 2 trees + duplicates on **one** repo | **2, exactly the ceiling** |
+| inter-event gaps | uniform 5 s | 1, 2, 4, 10, then 142 |
+
+There is no metronome. Idle costs nothing, which is what regime B established as
+the healthy state and what the fix was meant to restore.
+
+**But the capture found something else**, which is why Phase 4 was worth running
+even after H1 was settled by test.
+
+### New finding — orphaned watchers survive the lease and are invisible to the sweep
+
+Two lease shells were alive with `ppid 1`, aged **1145 s and 1127 s** (~19
+minutes), with **zero child processes** — not watching anything, just resident.
+They predate the rebuild, so they are the previous app instance's orphans. Both
+of 0025's reclamation mechanisms failed on them, and the capture shows exactly
+why:
+
+```
+mg-watch.pid = '331312'      <- the NEWEST watcher only; the orphans are named nowhere
+mg-watch.hb   mtime age 0s   <- FRESH, written by the CURRENT app every 60s
+find mg-watch.hb -mmin -5    -> FRESH: an orphan re-checking its lease would NOT exit
+```
+
+* **The lease is keyed per repository, not per watcher.** An orphan's loop tests
+  `mg-watch.hb`, and its *successor* refreshes that same file every 60 s. The
+  successor therefore holds its predecessor's lease open indefinitely. The
+  self-termination built in 0025 Phase 4 cannot fire while any watcher for that
+  repo is healthy — precisely when orphans accumulate.
+* **The PID file is overwritten by each arm.** `mg-watch.pid` names only the
+  newest watcher, so `sweepStaleWatchers` (0025 Phase 3) has no record of the
+  orphan to reclaim at connect. It is not that the sweep ran and failed; it had
+  nothing to find.
+
+This is **not** H1 recurring — the fix holds, and these orphans predate it. It is
+a distinct defect in the reclamation machinery, recorded as **MADR 0025 C5**.
+It is also the mechanism that lets orphans reach the ages 0022 M5 measured
+(oldest 16.9 days): nothing can reclaim a watcher once its successor has
+overwritten the pid file and taken over the heartbeat.
+
+**Not fixed here.** 0026 is a diagnosis of the poll path; this is a different
+defect in a different mechanism, and choosing its remedy — per-watcher lease
+files, an append-only pid registry, or a generation stamp — is a decision, not a
+detail. Two orphaned shells remain on the host, reported rather than killed.
 
 The post-fix capture the plan asks for **has not been taken**: it requires the
 app rebuilt with the serialisation fix, and the running build predates it. What
@@ -304,9 +361,10 @@ ordinary re-arm churn (the shells self-terminate on a stale heartbeat), and it
 is **not** offered as confirmation. The deterministic test is the evidence; this
 is context.
 
-**Outstanding, and the plan is not complete until it is done:** one capture
-against a build containing `4d83f5d`, confirming the 4-processes-per-5-seconds
-regime does not recur. Until then this plan stays `in-progress`.
+**The plan is complete.** Its question — why does the watcher degrade while its
+host processes live — is answered (H1), fixed, and the fix confirmed in
+production. H2 and H3 remain open and are recorded as such, and the capture
+raised one new finding (0025 C5) rather than closing quietly.
 
 ## Deviations
 
