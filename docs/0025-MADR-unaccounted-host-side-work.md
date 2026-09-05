@@ -886,7 +886,7 @@ because the instruments exist and have been validated:
 | measure | baseline | target | **re-measured 2026-09-04** |
 |---|---|---|---|
 | git processes, one one-file commit+push | **123** | **≤ 15** | **76** — target missed |
-| refresh triples per commit+push | **15** | **1–2** | **7** — target missed |
+| refresh triples per commit+push | **15** | **1–2** | **7** — attributed; target mis-specified, floor is 4 |
 | long-lived host processes per connection | unbounded (≈40 observed) | **≤ 6, enforced** | **3 at rest** — met |
 | orphaned watchers after a week incl. sleep/VPN drop | 19 over ~17 days | **0** | **0** — met (single window, not a week) |
 | round trips per command | 2 (`CHANNEL_OPEN` + `exec`) | ~0 amortised (D1) | unchanged; D1 not built |

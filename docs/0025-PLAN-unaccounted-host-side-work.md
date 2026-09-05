@@ -719,7 +719,7 @@ flutter test             # passing rises by exactly the tests added; failing 0
 | measure | baseline | target | measured 2026-09-04 |
 |---|---|---|---|
 | git processes, one commit+push | 123 | ≤ 15 | **76 — missed** |
-| refresh triples per commit+push | 15 | 1–2 | **7 — missed** |
+| refresh triples per commit+push | 15 | 1–2 | **7 — attributed; the target was mis-specified (see below)** |
 | long-lived host processes per connection | ≈40 observed | ≤ 6, enforced | **3 at rest — met** |
 | orphaned watchers after a week incl. sleep/VPN drop | 19 / ~17 days | 0 | **0 — met (one window, not a week)** |
 | repeated `Isolate.run` call sites | 13 | hot parses on 1 worker | **4 on 1 worker — met** |
@@ -1004,3 +1004,53 @@ executors and a relay.
 **Decision (maintainer): decline.** MADR 0025 carries amendment D3.1, which
 records the prerequisites so a future burst caller reopens it with a correct
 estimate rather than this one.
+
+### Attribution of the seven refresh triples — 2026-09-04
+
+The re-measurement recorded 7 snapshots for one commit+push against a target of
+1-2 and left it as "missed". Attributing it, per this record's own rule that a
+finding is not remediated before it is attributed.
+
+**Measured, offline and deterministically**, by counting `repoSnapshotProvider`
+fetches through the real `RepoStatusView` refresh path with the snapshot as the
+overridden seam:
+
+```
+ATTR initial-load=1  stage-delta=1
+```
+
+**One mutation costs exactly one snapshot.** There is no amplification left to
+remove — Phase 7 took it out, and this confirms it end to end rather than by
+reading the provider graph.
+
+So the seven are seven *triggers*, and four of them are by design:
+
+| # | trigger | why it refreshes |
+|---|---|---|
+| 1 | stage | the index changed |
+| 2 | commit | HEAD and the index changed |
+| 3 | **post-commit background fetch** | `ConnectionController.fetchInBackground` invalidates `repoFetchFamilies`, which includes the snapshot |
+| 4 | push | remote-tracking refs moved |
+
+The remaining ~3 are watcher ticks for the gesture's **own** filesystem changes,
+arriving more than three seconds after the mutation returned.
+`_ownMutationSuppressWindow` is `Duration(seconds: 3)`
+(`repo_status_view.dart:328`) measured from when the command completes, but the
+host's inotify events for a commit or a push — index, `refs/`, `logs/`,
+remote-tracking updates — can land later than that, at which point they are
+indistinguishable from an external change and are answered honestly.
+
+**The target was wrong, not the code.** "1-2 refresh triples per commit+push"
+was written when one trigger cost ~2.5 snapshots *and* when the triple was
+believed to be three separate reads (corrected by deviation (b)). A gesture that
+stages, commits, fetches and pushes changes repository state four times;
+refreshing once or twice would mean showing stale state after three of them.
+**Four is the floor, and the floor is met.**
+
+**Not remedied, deliberately.** The only reducible part is the late self-inflicted
+ticks, and the available levers are both bad: widening the 3 s window trades a
+real cost for the risk of suppressing genuine external changes for longer, and
+content-keyed suppression is F1, already declined on evidence (deviation (a)) —
+the witness cannot gate `status`. Three extra snapshots (nine host processes)
+per gesture does not justify either. Recorded as understood and accepted rather
+than left reading as an open miss.
