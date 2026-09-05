@@ -90,19 +90,20 @@ void main() {
 
     /// Providers that call a gh/glab service without awaiting the gate.
     ///
-    /// Every entry is a REVIEWED decision, not a backlog. These are drill-in
-    /// providers: nothing watches them until the user selects an issue, a
-    /// milestone or a release, which cannot happen before connect completes.
-    /// If one of them is ever watched from a restored selection at connect, it
-    /// must move above this line and await the gate.
-    const reviewedWithoutGate = <String>{
-      'changeRequestCommentsProvider',
-      'issueCommentsProvider',
-      'issueDetailProvider',
-      'projectLabelsProvider',
-      'projectMilestonesProvider',
-      'projectReleasesProvider',
-    };
+    /// **Empty, and it should stay that way.** It held six drill-in providers
+    /// (issue detail, comments, labels, milestones, releases) on the reasoning
+    /// that nothing watches them until the user selects something, which
+    /// cannot happen before connect completes. That reasoning was sound but it
+    /// rested on a UI assumption rather than a structural guarantee: if the
+    /// Forge tab ever restored a selection at connect, one would fire
+    /// immediately and show a transient auth error as its error state.
+    ///
+    /// All six now await the gate. For a session without managed tokens the
+    /// gate is an already-completed future, so the cost is nothing.
+    ///
+    /// An entry here needs a reason that does not depend on which panel
+    /// happens to be visible.
+    const reviewedWithoutGate = <String>{};
 
     test('every forge-reading provider awaits the gate or is reviewed', () {
       final src = File(

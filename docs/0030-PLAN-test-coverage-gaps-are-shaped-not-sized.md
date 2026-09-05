@@ -558,13 +558,36 @@ milestone or release, which cannot happen before connect completes. That
 reasoning is sound today and is written down so it can be checked rather than
 assumed.
 
-**It is worth a maintainer's eye**, because the exemption rests on a UI
-assumption rather than a structural guarantee: if the Forge tab ever restores a
-selection at connect, one of these fires immediately and shows a transient auth
-error as its error state. Adding the gate to all six would cost nothing for
-sessions without managed tokens (the future is already complete) — but it is a
-behaviour change, and this is a testing plan, so it is reported rather than
-taken.
+**It was worth a maintainer's eye**, because the exemption rested on a UI
+assumption rather than a structural guarantee: if the Forge tab ever restored a
+selection at connect, one of these would fire immediately and show a transient
+auth error as its error state.
+
+#### Resolved — 2026-09-05
+
+**Maintainer decision: gate all six.** `await _forgeAuthReady(ref)` now runs
+before the first gh/glab call in `changeRequestCommentsProvider`,
+`issueCommentsProvider`, `issueDetailProvider`, `projectLabelsProvider`,
+`projectMilestonesProvider` and `projectReleasesProvider` — placed after each
+provider's early return, so a scoped-off provider does not wait for a login it
+will not use.
+
+`reviewedWithoutGate` is now **empty**, and its doc comment says it should stay
+that way: an entry needs a reason that does not depend on which panel happens to
+be visible.
+
+**Checked before making the change, because awaiting a gate that never opens
+would hang these providers forever:** the gate always completes.
+`_finishConnectInBackground` releases it in a `finally`, `connect()` releases it
+when the background task was never launched (*"a provider created just before
+the failure would hang on it instead of being torn down"*, as that code's own
+comment puts it), and both disconnect paths reset it to an
+already-completed completer. For a session without managed tokens it is
+completed from the start, so the cost is nothing.
+
+Seen to fail: removing the gate from `issueDetailProvider` gives
+`Actual: Set:['issueDetailProvider']`. Suite 3,547 passing, 0 failing,
+analyzer clean.
 
 ### Phase 5 as executed — 2026-09-05
 

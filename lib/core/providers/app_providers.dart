@@ -5532,6 +5532,7 @@ final projectMilestonesProvider = FutureProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       final glab = ref.watch(glabServiceProvider);
       final allHistory = ref.watch(projectMilestonesScopeProvider(repoPath));
+      await _forgeAuthReady(ref);
       switch (await ref.watch(forgeProvider(repoPath).future)) {
         case Forge.github:
           return gh.listMilestones(repoPath, allHistory: allHistory);
@@ -5561,6 +5562,7 @@ final projectLabelsProvider = FutureProvider.autoDispose
       }
       final gh = ref.watch(ghServiceProvider);
       final glab = ref.watch(glabServiceProvider);
+      await _forgeAuthReady(ref);
       switch (await ref.watch(forgeProvider(repoPath).future)) {
         case Forge.github:
           return gh.listLabels(repoPath);
@@ -5585,6 +5587,7 @@ final projectReleasesProvider = FutureProvider.autoDispose
       }
       final gh = ref.watch(ghServiceProvider);
       final glab = ref.watch(glabServiceProvider);
+      await _forgeAuthReady(ref);
       switch (await ref.watch(forgeProvider(repoPath).future)) {
         case Forge.github:
           return gh.listReleases(repoPath);
@@ -5603,6 +5606,7 @@ final issueDetailProvider = FutureProvider.autoDispose
       final (repoPath, id) = key;
       final gh = ref.watch(ghServiceProvider);
       final glab = ref.watch(glabServiceProvider);
+      await _forgeAuthReady(ref);
       switch (await ref.watch(forgeProvider(repoPath).future)) {
         case Forge.github:
           return gh.issueDetail(repoPath, id);
@@ -5620,6 +5624,7 @@ final issueCommentsProvider = FutureProvider.autoDispose
       final (repoPath, id) = key;
       final gh = ref.watch(ghServiceProvider);
       final glab = ref.watch(glabServiceProvider);
+      await _forgeAuthReady(ref);
       switch (await ref.watch(forgeProvider(repoPath).future)) {
         case Forge.github:
           return gh.listIssueComments(repoPath, id);
@@ -5638,6 +5643,7 @@ final changeRequestCommentsProvider = FutureProvider.autoDispose
       final (repoPath, id) = key;
       final gh = ref.watch(ghServiceProvider);
       final glab = ref.watch(glabServiceProvider);
+      await _forgeAuthReady(ref);
       switch (await ref.watch(forgeProvider(repoPath).future)) {
         case Forge.github:
           return gh.listPullRequestComments(repoPath, id);
