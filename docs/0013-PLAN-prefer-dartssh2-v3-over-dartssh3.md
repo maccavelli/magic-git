@@ -913,7 +913,7 @@ move to `^3.3.0`.
 
 Filled 2026-08-19 during execution.
 
-* 3.3.0 cache path: `/Users/saxsmith/.pub-cache/hosted/pub.dev/dartssh2-3.3.0`
+* 3.3.0 cache path: `/Users/<user>/.pub-cache/hosted/pub.dev/dartssh2-3.3.0`
 * `SSHClient.close` signature: `Future<void> close() async`
 * `SSHDisconnectError` constructor: `SSHDisconnectError(this.reasonCode, this.message)` (`int`, `String`)
 * Pre-auth wrap still `SSHAuthAbortError(..., reason)`? yes (`_handleTransportClosed`)

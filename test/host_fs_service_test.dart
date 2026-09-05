@@ -54,8 +54,8 @@ void main() {
 
   group('homeDir', () {
     test('runs pwd from "." and trims the result', () async {
-      exec.next = _ok('/home/mac\n');
-      expect(await fs.homeDir(), '/home/mac');
+      exec.next = _ok('/home/testuser\n');
+      expect(await fs.homeDir(), '/home/testuser');
       expect(exec.calls.single, ['pwd']);
       expect(exec.repoPaths.single, '.');
     });
@@ -71,12 +71,12 @@ void main() {
       'keeps only directory entries, stripping the trailing slash',
       () async {
         exec.next = _ok('code/\nnotes.txt\n.config/\nlink-to-dir/\nfile\n');
-        expect(await fs.listDirectories('/home/mac'), [
+        expect(await fs.listDirectories('/home/testuser'), [
           'code',
           '.config',
           'link-to-dir',
         ]);
-        expect(exec.repoPaths.single, '/home/mac');
+        expect(exec.repoPaths.single, '/home/testuser');
         expect(exec.calls.single, ['sh', '-c', 'LC_ALL=C ls -1ALp .']);
       },
     );

@@ -22,16 +22,16 @@ class _FakeFs extends HostFsService {
   _FakeFs() : super(SSHCommandExecutor(SSHClientManager()));
 
   final Map<String, List<String>> tree = {
-    '/home/mac': ['code', 'notes', '.config'],
-    '/home/mac/code': ['magic-git', 'secret'],
-    '/home/mac/code/magic-git': ['lib', 'test'],
+    '/home/testuser': ['code', 'notes', '.config'],
+    '/home/testuser/code': ['magic-git', 'secret'],
+    '/home/testuser/code/magic-git': ['lib', 'test'],
   };
-  final Set<String> denied = {'/home/mac/code/secret'};
+  final Set<String> denied = {'/home/testuser/code/secret'};
   final List<String> listed = [];
   final Map<String, Completer<List<String>>> gates = {};
 
   @override
-  Future<String> homeDir() async => '/home/mac';
+  Future<String> homeDir() async => '/home/testuser';
 
   @override
   Future<List<String>> listDirectories(String path) async {
@@ -151,7 +151,7 @@ void main() {
   testWidgets('an explicit initialPath is honored over the home dir', (
     tester,
   ) async {
-    await _open(tester, initialPath: '/home/mac/code');
+    await _open(tester, initialPath: '/home/testuser/code');
     expect(find.text('magic-git'), findsOneWidget);
     expect(find.text('notes'), findsNothing);
   });
@@ -160,7 +160,7 @@ void main() {
     tester,
   ) async {
     final fs = _FakeFs();
-    fs.gates['/home/mac/code'] = Completer<List<String>>();
+    fs.gates['/home/testuser/code'] = Completer<List<String>>();
     await _open(tester, fs: fs);
 
     // Start a slow descend into `code` — its listing is gated open.
@@ -169,12 +169,12 @@ void main() {
 
     // While it's in flight, navigate by path; this resolves immediately and
     // becomes the current listing.
-    await tester.enterText(find.byType(MacosTextField), '/home/mac/notes');
+    await tester.enterText(find.byType(MacosTextField), '/home/testuser/notes');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pumpAndSettle();
 
     // The old `code` request resolves late; it must be dropped, not applied.
-    fs.gates['/home/mac/code']!.complete(['magic-git', 'secret']);
+    fs.gates['/home/testuser/code']!.complete(['magic-git', 'secret']);
     await tester.pumpAndSettle();
 
     expect(
@@ -187,7 +187,7 @@ void main() {
           .widget<MacosTextField>(find.byType(MacosTextField))
           .controller!
           .text,
-      '/home/mac/notes',
+      '/home/testuser/notes',
       reason: 'the path field must stay on the navigation the user made last',
     );
   });

@@ -11,7 +11,7 @@ informed: [Magic Git contributors]
 
 ## Context and Problem Statement
 
-On the `admdevops` SSH bastion, Magic Git's GitLab MR / Forge path fails with an
+On the `<host>` SSH bastion, Magic Git's GitLab MR / Forge path fails with an
 auth-shaped error (the maintainer's phrasing: *glab not authenticated for that
 forge*) even though an interactive `glab auth status` on the same host reports
 a working login. The architecture's load-bearing assumption is that `cd` into
@@ -30,35 +30,35 @@ gap. No code is changed until a paired plan is approved.
 
 * Read-only pass over `GlabService`, `CommandFormatter`, forge detection,
   auth parsing, and the provider wiring in `app_providers.dart`.
-* SSH exec onto `admdevops` (`HostName dpsaur4vadm002.lkq.lkqx.net`, user
-  `adm_saxsmith`) as the same account Magic Git would use, including a
+* SSH exec onto `<host>` (`HostName <host-fqdn>`, user
+  `<user>`) as the same account Magic Git would use, including a
   dartssh2-like stripped environment (`env -i HOME USER PATH LANG` plus
   Magic Git's default env prelude).
 * Magic Git itself was **not** attached to a live session during this
   investigation. Commands below are the argv + environment the app would
   send, not a captured `.app` trace.
 
-Facts below are tagged **(host)** when observed on `admdevops`, **(code)**
+Facts below are tagged **(host)** when observed on `<host>`, **(code)**
 when read from this tree. Assumptions are called out as such. Self-hosted
 GitLab hostnames from that investigation are written as
 `gitlab.example.com` / `ssh-gitlab.example.com` in this public record.
 
-### Host facts (`admdevops`)
+### Host facts (`<host>`)
 
-* **(host)** `glab` is 1.109.0 at `/home/adm_saxsmith/.local/bin/glab`. That
+* **(host)** `glab` is 1.109.0 at `/home/<user>/.local/bin/glab`. That
   is also where Magic Git's environment probe would resolve it (`$HOME/.local/bin`
   is first on the augmented PATH).
 * **(host)** An interactive login has `GITLAB_HOST=gitlab.example.com` and
   `GITLAB_TOKEN` (plus `GITLAB_PERSONAL_ACCESS_TOKEN` and
   `GITLAB_USER_TOKEN`) in the environment. `glab auth status` then reports
-  `Logged in to gitlab.example.com as saxsmith (GITLAB_TOKEN)` and a banner
+  `Logged in to gitlab.example.com as <user> (GITLAB_TOKEN)` and a banner
   that the env var **takes precedence over tokens stored in config or
   keyring**.
 * **(host)** `~/.config/glab-cli/config.yml` (symlink into
   `~/dotfiles/glab/…`) has:
   * global `host: gitlab.com` (glab's documented default when unset);
   * `hosts.gitlab.com.token` empty;
-  * `hosts.gitlab.example.com.user: saxsmith` and a stored token.
+  * `hosts.gitlab.example.com.user: <user>` and a stored token.
 * **(host)** Many work remotes are stored as `git@ssh-gitlab.example.com:…`
   or `git@gitlab.example.com:…`. Global `url.*.insteadof` rewrites both to
   `https://gitlab.example.com/`, so `git remote get-url origin` (what
@@ -68,7 +68,7 @@ GitLab hostnames from that investigation are written as
   * `glab api user` talks to **gitlab.com**, returns HTTP 401, **exit 0**.
     glab #911 (advisory exit codes) is still live on 1.109 for this path.
   * `glab api user` with `GITLAB_HOST=gitlab.example.com` returns HTTP 200
-    for user `saxsmith` against the self-hosted instance.
+    for user `<user>` against the self-hosted instance.
   * `glab auth status` prints a `gitlab.com` 401 block **and** a working
     `gitlab.example.com` block, then `X could not authenticate to one or
     more of the configured GitLab instances`. From `$HOME` the combined
@@ -294,7 +294,7 @@ Accepted 2026-08-26; execution follows that plan.
   a mixed dump (gitlab.com 401 + self-hosted OK + "could not
   authenticate to one or more") as authenticated **to the origin
   host**, not to gitlab.com, and not as signed out.
-* Live, maintainer-driven, on `admdevops` over Magic Git's SSH
+* Live, maintainer-driven, on `<host>` over Magic Git's SSH
   executor (not an interactive shell): open a `gitlab.example.com` repo
   whose stored remote is `git@ssh-gitlab.example.com:…`, and a repo
   whose origin is already HTTPS. Forge tab lists MRs, GraphQL
@@ -452,14 +452,14 @@ Out of scope here unless a GitHub Enterprise host reproduces it.
    forge CLIs, but glab's remote resolver is go-git on cwd.** A
    scoped/dotfiles repo whose work tree has no `.git` directory can
    look to glab like "not a git dir" → default host gitlab.com.
-   Not reproduced on `admdevops` (sampled repos are ordinary
+   Not reproduced on `<host>` (sampled repos are ordinary
    `.git` directories). Related to the pin, not a substitute for it.
    **(code; assumption that go-git ignores `GIT_DIR` — not verified
    against 1.109 source in this pass)**
 
 ### What this record does not claim
 
-* It does not claim every MR list on `admdevops` currently fails.
+* It does not claim every MR list on `<host>` currently fails.
   Four sampled repos listed MRs (or empty `[]`) successfully from a
   stripped env inside the repo cwd. The failure mode is
   **unpinned commands that miss remote resolution**, not "glab is
@@ -473,7 +473,7 @@ Out of scope here unless a GitHub Enterprise host reproduces it.
 
 ### Host binary freeze (2026-08-26)
 
-The maintainer leaves `admdevops` on **glab 1.109.0**. Official 1.110–1.115
+The maintainer leaves `<host>` on **glab 1.109.0**. Official 1.110–1.115
 notes do not change the documented host model (`GITLAB_HOST` / `--hostname` /
 cwd remotes / default `gitlab.com`). 1.111 stores credentials in the OS
 keyring by default, which would change `glab auth login --stdin` on a

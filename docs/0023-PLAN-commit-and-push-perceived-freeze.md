@@ -850,7 +850,7 @@ evidenced today. Recorded as a candidate, not a debt.
 1. ~~**The app-level measurement (Phase 7 item 4) has NOT been done.**~~
    **Done 2026-09-04 — and the fan-out is far larger than this plan assumed.**
 
-   Measured on the real host (`admdevops`) with git's own `trace2.eventTarget`,
+   Measured on the real host (`<host>`) with git's own `trace2.eventTarget`,
    which logs every git process exactly — no sampling. One one-file
    commit+push in the running `.app`, on `systems-workspace`:
 

@@ -24,7 +24,7 @@ class _StubConnection extends ConnectionController {
 /// never return: pump discretely and unmount before the test ends.
 Future<_StubConnection> _pumpDropped(
   WidgetTester tester, {
-  String? host = 'admdevops',
+  String? host = 'devhost',
   int attempt = 2,
   String? reason = 'Connection lost',
 }) async {
@@ -107,7 +107,7 @@ void main() {
     await _pumpDropped(tester);
 
     expect(find.text('Connection interrupted'), findsOneWidget);
-    expect(find.textContaining('admdevops'), findsWidgets);
+    expect(find.textContaining('devhost'), findsWidgets);
     expect(find.textContaining('attempt 2'), findsOneWidget);
     expect(find.text('Stop Retrying'), findsOneWidget);
     expect(find.text('Cancel'), findsOneWidget);

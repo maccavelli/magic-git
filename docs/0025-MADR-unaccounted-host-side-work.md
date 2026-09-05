@@ -382,8 +382,8 @@ third-party tools.
 (`git_service.dart:2319`) at connect, and the host confirms it:
 
 ```
-systems-workspace:  core.fsmonitor=true
-lkq-apache-spark:   core.fsmonitor=true
+<repo-a>:            core.fsmonitor=true
+<repo-b>:            core.fsmonitor=true
 ```
 
 So for every repo the app opens, there are **two independent inotify watch

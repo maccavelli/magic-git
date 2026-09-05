@@ -331,10 +331,10 @@ file.
 
 1. `'a dropped session shows the reconnect overlay, not the landing card'`
    - Override `connectionProvider` with a state where `reconnecting` is
-     true, `host: 'admdevops'`, `reconnectAttempt: 2`,
+     true, `host: '<host>'`, `reconnectAttempt: 2`,
      `error: 'Connection lost'`.
    - `expect(find.text('Connection interrupted'), findsOneWidget)`
-   - `expect(find.textContaining('admdevops'), findsWidgets)`
+   - `expect(find.textContaining('<host>'), findsWidgets)`
    - `expect(find.textContaining('attempt 2'), findsOneWidget)`
    - `expect(find.text('Stop Retrying'), findsOneWidget)`
    - `expect(find.text('Cancel'), findsOneWidget)`

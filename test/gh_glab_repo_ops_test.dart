@@ -108,7 +108,7 @@ void main() {
 
     test('glab: token via stdin only, never argv or env', () async {
       exec.results.add(_ok('')); // auth login
-      exec.results.add(_ok('{"username":"saxsmith"}')); // glab api user
+      exec.results.add(_ok('{"username":"testuser"}')); // glab api user
       exec.results.add(_ok('')); // glab config set user
       await glab.loginWithTokenHost(host: 'gitlab.corp', token: 'glpat-x');
       final argv = exec.calls.first;
@@ -129,7 +129,7 @@ void main() {
         'otherwise breaks HTTPS git)', () async {
       exec.results.add(_ok('')); // auth login
       exec.results.add(
-        _ok('{"username":"saxsmith","id":255}'),
+        _ok('{"username":"testuser","id":255}'),
       ); // glab api user
       exec.results.add(_ok('')); // glab config set user
       await glab.loginWithTokenHost(host: 'gitlab.corp', token: 'glpat-x');
@@ -151,7 +151,7 @@ void main() {
         'config',
         'set',
         'user',
-        'saxsmith',
+        'testuser',
         '--host',
         'gitlab.corp',
       ]);

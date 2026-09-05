@@ -20,8 +20,8 @@ void main() {
 
     test('self-hosted GitLab instance', () {
       expect(
-        forgeProjectWebUrl('git@gitlab.example.com:saxsmith/proj.git'),
-        'https://gitlab.example.com/saxsmith/proj',
+        forgeProjectWebUrl('git@gitlab.example.com:testuser/proj.git'),
+        'https://gitlab.example.com/testuser/proj',
       );
     });
 

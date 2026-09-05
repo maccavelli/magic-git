@@ -365,7 +365,7 @@ to settle.**
 > ### Correction, 2026-09-04 (same day): M5 is **CONFIRMED**, not refuted
 >
 > The refutation above is **wrong**, and was wrong because it tested only the
-> happy path on a loopback sshd. Measured on the real host (`admdevops`, the
+> happy path on a loopback sshd. Measured on the real host (`<host>`, the
 > connection this app actually runs against):
 >
 > ```

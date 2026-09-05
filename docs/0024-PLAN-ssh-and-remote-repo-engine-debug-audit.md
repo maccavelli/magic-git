@@ -115,7 +115,7 @@ every later phase is compared to.
 **Method.**
 
 ```sh
-cd /Users/saxsmith/gitrepos/magic-git
+cd /Users/<user>/gitrepos/magic-git
 git status --short          # must print nothing
 git rev-parse HEAD          # record this SHA in the execution record
 flutter analyze 2>&1 | tee "$SCRATCH/phase0-analyze.txt"

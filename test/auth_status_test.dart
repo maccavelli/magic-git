@@ -108,14 +108,14 @@ ghe.internal:8443:
     test('signed in to a self-hosted instance', () {
       const out = '''
 gitlab.example.com
-  ✓ Logged in to gitlab.example.com as saxsmith (/Users/x/config.yml)
+  ✓ Logged in to gitlab.example.com as testuser (/Users/x/config.yml)
   ✓ Git operations for gitlab.example.com configured to use https protocol.
   ✓ Token found: **************************
 ''';
       final a = parseGlabAuthStatus(out, present: true);
       expect(a.authenticated, isTrue);
       expect(a.host, 'gitlab.example.com');
-      expect(a.account, 'saxsmith');
+      expect(a.account, 'testuser');
       expect(a.level, ToolAuthLevel.ok);
     });
 
@@ -139,13 +139,13 @@ gitlab.com
   x gitlab.com: API call failed: GET https://gitlab.com/api/v4/user: 401 {message: 401 Unauthorized}
 
 gitlab.example.com
-  ✓ Logged in to gitlab.example.com as saxsmith (/Users/x/config.yml)
+  ✓ Logged in to gitlab.example.com as testuser (/Users/x/config.yml)
   ✓ Token found: **************************
 ''';
       final a = parseGlabAuthStatus(out, present: true);
       expect(a.authenticated, isTrue);
       expect(a.host, 'gitlab.example.com');
-      expect(a.account, 'saxsmith');
+      expect(a.account, 'testuser');
       expect(a.level, ToolAuthLevel.ok);
     });
 
@@ -177,14 +177,14 @@ gitbox
 
     test('Logged in to line before bare hostname (alternate glab output)', () {
       const out = '''
-✓ Logged in to gitlab.example.com as saxsmith
+✓ Logged in to gitlab.example.com as testuser
   ✓ Git operations for gitlab.example.com configured to use https protocol.
   ✓ Token found: **************************
 ''';
       final a = parseGlabAuthStatus(out, present: true);
       expect(a.authenticated, isTrue);
       expect(a.host, 'gitlab.example.com');
-      expect(a.account, 'saxsmith');
+      expect(a.account, 'testuser');
       expect(a.level, ToolAuthLevel.ok);
     });
 
@@ -208,7 +208,7 @@ gitlab.com
   x gitlab.com: API call failed: GET https://gitlab.com/api/v4/user: 401 {message: 401 Unauthorized}
 
 gitlab.example.com
-  ✓ Logged in to gitlab.example.com as saxsmith (/Users/x/config.yml)
+  ✓ Logged in to gitlab.example.com as testuser (/Users/x/config.yml)
   ✓ Token found: **************************
 ''';
 
@@ -220,7 +220,7 @@ gitlab.example.com
       );
       expect(a.authenticated, isTrue);
       expect(a.host, 'gitlab.example.com');
-      expect(a.account, 'saxsmith');
+      expect(a.account, 'testuser');
     });
 
     test('mixed dump + gitlab.com is not authenticated (expired detail)', () {
@@ -258,7 +258,7 @@ gitlab.example.com
     test('1.109 single-block dump matching host is authenticated', () {
       const out = '''
 gitlab.example.com
-  ✓ Logged in to gitlab.example.com as saxsmith (/home/x/.config/glab-cli/config.yml)
+  ✓ Logged in to gitlab.example.com as testuser (/home/x/.config/glab-cli/config.yml)
   ✓ Git operations for gitlab.example.com configured to use https protocol.
   ✓ API calls for gitlab.example.com are made over https protocol
   ✓ Token found: **************************
@@ -270,7 +270,7 @@ gitlab.example.com
       );
       expect(a.authenticated, isTrue);
       expect(a.host, 'gitlab.example.com');
-      expect(a.account, 'saxsmith');
+      expect(a.account, 'testuser');
     });
   });
 

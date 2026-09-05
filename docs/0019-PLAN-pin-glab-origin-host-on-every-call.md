@@ -11,7 +11,7 @@ target-milestone: This work cycle
 
 > **Status note (2026-08-26).** Engineering phases 0–7 shipped (`flutter
 > analyze` clean, full `flutter test` green). **Phase 8 — maintainer live
-> check on admdevops / glab 1.109 — is open by nature.** `status: executed`
+> check on <host> / glab 1.109 — is open by nature.** `status: executed`
 > above refers to the engineering phases. A Phase 7 deviation (pre-existing
 > `activityIdle` tests) is recorded under Phase 7.
 
@@ -32,13 +32,13 @@ must produce the same diff.
 Approved for execution 2026-08-26.
 
 **Host binary is frozen at glab 1.109.0.** Do not upgrade it as part of this
-work. Flag placement below was verified live on `admdevops` against that
+work. Flag placement below was verified live on `<host>` against that
 binary on 2026-08-26 (see Reassessment).
 
 ## Reassessment (2026-08-26)
 
-Maintainer decision: leave `admdevops` on **glab 1.109.0**
-(`/home/adm_saxsmith/.local/bin/glab`, `757294c0`). Official 1.110–1.115
+Maintainer decision: leave `<host>` on **glab 1.109.0**
+(`/home/<user>/.local/bin/glab`, `757294c0`). Official 1.110–1.115
 notes add artifact-registry, dependency-firewall, Orbit, and (in 1.111)
 **keyring-by-default** for `glab auth login`. None of that replaces the
 origin pin; 1.111 would change stdin-login storage on a headless SSH
@@ -98,7 +98,7 @@ Plan defects this pass removes:
    get-url). New tests cover the pin without that override.
 7. `flutter analyze` exit 0, `dart format` clean on staged files, full
    `flutter test` green. **No `live-forge`.** No glab upgrade.
-8. Phase 8 is maintainer verification on `admdevops` / glab 1.109.
+8. Phase 8 is maintainer verification on `<host>` / glab 1.109.
 
 ## Scope
 
@@ -118,7 +118,7 @@ Plan defects this pass removes:
 
 **Out of scope** (do not implement)
 
-* Upgrading glab on `admdevops` or anywhere else.
+* Upgrading glab on `<host>` or anywhere else.
 * `GhService` / `GH_HOST`.
 * Changing `classifyForgeHost` so `ssh-gitlab.example.com` is GitLab.
 * Expanding `CommandFormatter.gitlabTokenVars` beyond `GITLAB_TOKEN` /
@@ -783,7 +783,7 @@ if pulses reset idle, fails if they do not. File added to this phase:
 
 ### Phase 8 — Maintainer live check (not coded)
 
-glab **1.109.0** on `admdevops`, through Magic Git's SSH session:
+glab **1.109.0** on `<host>`, through Magic Git's SSH session:
 
 1. No stored GitLab token. Open `~/gitrepos/ansible` and
    `~/gitrepos/tf-okd-sbx`. Forge MR list loads (empty `[]` is success);
@@ -824,7 +824,7 @@ binary is modified.
 
 * `GhService` host pin.
 * `classifyForgeHost('ssh-gitlab.example.com')` remains `unknown`;
-  insteadOf on get-url is what classifies `admdevops` remotes as GitLab.
+  insteadOf on get-url is what classifies `<host>` remotes as GitLab.
 * `glab auth login --ssh-hostname` when raw origin host ≠ get-url host.
 * glab 2.0 `GLAB_*` env rename.
 * Empty `hosts.gitlab.com.token` on the bastion (operator cleanup).

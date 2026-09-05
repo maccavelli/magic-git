@@ -59,7 +59,7 @@ supersedes the original finding text wherever the two disagree.
 
 **Out of scope, deliberately:**
 
-* 0019 Phase 8 (maintainer-only live check on `admdevops`) — unchanged.
+* 0019 Phase 8 (maintainer-only live check on `<host>`) — unchanged.
 * 0010 Phase 7, and the 0007 Phase-12 items (submodules, LFS, Code Owners,
   stacked branches, commit signing) — each needs its own MADR.
 * UI/UX presentation work not named by a 0022 finding.

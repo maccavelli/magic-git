@@ -49,7 +49,7 @@ Future<void> _pump(
     repoPath: '/srv/repo',
     repoPaths: const ['/srv/repo'],
     connectionLabel: 'Prod',
-    host: 'admdevops',
+    host: 'devhost',
     connectedAt: DateTime.now().subtract(const Duration(minutes: 5)),
   );
   await tester.pumpWidget(
@@ -138,7 +138,7 @@ void main() {
 
     expect(find.text('Dashboard'), findsOneWidget);
     // Connection card.
-    expect(find.text('admdevops'), findsOneWidget);
+    expect(find.text('devhost'), findsOneWidget);
     expect(find.text('Session uptime'), findsOneWidget);
     // Authentication section: local + the active remote target both render.
     expect(find.text('Authentication'), findsOneWidget);

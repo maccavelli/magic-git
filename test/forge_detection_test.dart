@@ -82,7 +82,7 @@ void main() {
   group('authStatusListsHost', () {
     const glabStatus =
         'gitlab.example.com\n'
-        '  ✓ Logged in to gitlab.example.com as saxsmith (config.yml)\n'
+        '  ✓ Logged in to gitlab.example.com as testuser (config.yml)\n'
         '  ✓ API calls for gitlab.example.com are made over https protocol.';
     const ghStatus =
         'github.com\n'

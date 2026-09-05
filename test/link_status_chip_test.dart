@@ -126,7 +126,7 @@ void main() {
         tester,
         connection: const ConnectionState(
           phase: ConnectionPhase.connected,
-          host: 'admdevops',
+          host: 'devhost',
           repoPath: '/srv/repo',
         ),
       );
@@ -141,7 +141,7 @@ void main() {
         tester,
         connection: const ConnectionState(
           phase: ConnectionPhase.connected,
-          host: 'admdevops',
+          host: 'devhost',
           repoPath: '/srv/repo',
         ),
         samples: const [
@@ -161,7 +161,7 @@ void main() {
         connection: const ConnectionState(
           phase: ConnectionPhase.lost,
           reconnecting: true,
-          host: 'admdevops',
+          host: 'devhost',
           reconnectAttempt: 1,
         ),
       );
@@ -174,7 +174,7 @@ void main() {
         tester,
         connection: const ConnectionState(
           phase: ConnectionPhase.disconnected,
-          host: 'admdevops',
+          host: 'devhost',
         ),
       );
       expect(find.text('Disconnected'), findsOneWidget);

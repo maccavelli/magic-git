@@ -2,7 +2,7 @@
 status: accepted
 date: 2026-08-16
 decision-makers: maccavelli (maintainer)
-consulted: 21593a0 and 9a385da (the two commits that produced the defect), live NSUserDefaults records from com.example.remoteMagicGit, git state of magic-git and magic-cli-remote on wonder.lallygag.net, 0008-MADR unified repository chrome
+consulted: 21593a0 and 9a385da (the two commits that produced the defect), live NSUserDefaults records from com.example.remoteMagicGit, git state of magic-git and magic-cli-remote on <build-host>, 0008-MADR unified repository chrome
 informed: implementers of RepositoryWorkspacePrefs and the repository context bar
 verified: 2026-08-20
 ---
@@ -49,10 +49,10 @@ Decoding the live records from
 | `ssh:1786755957310113` · `/data/gitrepos/magic-git/.git` | all 9 slots |
 | `ssh:1786755957310113` · `/data/gitrepos/magic-cli-remote/.git` | `back`, `forward` |
 | `ssh:1786755957310113` · `/data/gitrepos/mcp-server-magictools/.git` | all 9 slots |
-| `ssh:1784478990700927` · `/home/mac/gitrepos/magic-git/.git` | all 9 slots |
-| `ssh:1784478990700927` · `/home/mac/gitrepos/magic-cli-remote/.git` | `back`, `forward` |
-| `local:1786830353850083` · `/Users/saxsmith/gitrepos/magic-git/.git` | all 9 slots |
-| `local:1784307006484082` · `/Users/saxsmith/gitrepos/magic-git/.git` | `back`, `forward` |
+| `ssh:1784478990700927` · `/home/testuser/gitrepos/magic-git/.git` | all 9 slots |
+| `ssh:1784478990700927` · `/home/testuser/gitrepos/magic-cli-remote/.git` | `back`, `forward` |
+| `local:1786830353850083` · `/Users/<user>/gitrepos/magic-git/.git` | all 9 slots |
+| `local:1784307006484082` · `/Users/<user>/gitrepos/magic-git/.git` | `back`, `forward` |
 | `local:1784554734225500` · `.../go/magic-cli-remote/.git` | `back`, `forward` |
 
 Two-slot records exist for **local** identities as well. Remote-versus-
