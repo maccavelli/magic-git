@@ -394,7 +394,7 @@ that finds itself wanting a live host has left its scope.
 | 5 | executed | — | bytes arrived as `'hi\x00ÿþÃ(\n'`; guard removal | 7 tests; `uploadBytes` covered end to end |
 | 6 | executed | — | `Found 0 widgets with text "Files Changed Since"` | 6 tests; the data-loss path covered, 2 guards proven unreachable |
 | 7 | **executed, partial** | — | best-effort sweep sabotage | 3 contract tests; the 68 lines remain uncovered, and why is recorded |
-| 8 | not started | — | — | — |
+| 8 | executed | — | `Set:['forge/forge_widgets.dart']`; fixture flagged | 2 heuristics; my own scan had 2 bugs, both found by sabotage |
 | 9 | not started | — | — | — |
 
 ## Execution notes
@@ -709,3 +709,39 @@ every collaborator faked. **That is its own piece of work and should be decided
 as such**, not smuggled into a testing sweep — the same judgement the plan's own
 rollout section asked for when it said a design question found mid-sweep is a
 deviation.
+
+### Phase 8 as executed — 2026-09-05
+
+Two allowlist heuristics, both stated as heuristics: they enumerate sites that
+need a human decision and fail when the enumeration drifts. Neither is a proof.
+
+**1. Boundary-crossing `.when()`** — the blind spot Phase 1 deferred here. An
+`AsyncValue` handed across a widget boundary escapes `refresh_no_flash_test`'s
+same-file scan. This one finds them and requires each un-flagged site to be
+reviewed.
+
+**2. Text-only assertions about generated scripts** — the general form of 0029.
+It flagged `git_cat_file_batch_test.dart`, which asserts `contains(...)` on the
+batch script without executing it. Correct as a finding: it is listed as
+composition-only, naming `host_script_exec_test.dart` as where the behaviour
+actually is.
+
+**My own scan shipped with two bugs, and sabotage found both.**
+
+| bug | how it showed |
+|---|---|
+| matched the bare word `skipLoadingOnReload` | `dashboard_sheet.dart` counted as compliant **because the comment there explains why it deliberately omits the flag**. A scan a comment can satisfy is not a scan. Fixed by matching `skipLoadingOnReload:` with the colon — the argument, not the word. |
+| `AsyncValue<[^>]*>` broke on nested generics | `AsyncValue<List<ForgeComment>>` never matched, so the scan missed **the exact site that motivated it** — `forge_widgets.dart`, the one reading had found and scanning had not. Removing its flag left the scan green, twice, before the regex was fixed. |
+
+Only after the second fix did the sabotage bite:
+`Expected: empty / Actual: Set:['forge/forge_widgets.dart']`.
+
+**Fixing the regex surfaced a site nobody had looked at**:
+`worktrees/worktrees_view.dart`. Reviewed and left alone —
+`gitWorktreesProvider` calls the git service directly rather than awaiting
+another provider's future, so invalidating it is a *refresh*, and
+`skipLoadingOnRefresh` (default true) already keeps its rows. Adding the flag
+there would be cargo cult. The allowlist was renamed from `_deliberateSpinners`
+to `_reviewedBoundarySites` to hold both kinds of reason honestly: "the spinner
+is correct" and "the flag is unnecessary" are different answers and the list now
+says which is which.
