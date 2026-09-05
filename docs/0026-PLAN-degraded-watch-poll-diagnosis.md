@@ -232,11 +232,81 @@ verbatim red-test output, the capture, and a dated entry for every deviation.)*
 
 | Phase | Status | Commit | Red-test observed | Result |
 |---|---|---|---|---|
-| 1 | not started | — | — | — |
-| 2 | not started | — | — | — |
-| 3 | not started | — | — | — |
-| 4 | not started | — | — | — |
-| 5 | not started | — | — | — |
+| 1 | executed | `c4b361f` | `Expected: an object with length of <200>` against 250 retained | bounded transition log; 0024's P1 flake fixed (deviation (a)) |
+| 2 | executed | `4d83f5d` | `Expected: <2> / Actual: <1>` — two sources armed, one torn down | **H1 CONFIRMED**; fix landed under deviation (b) |
+| 3 | executed | `da53623` | `Expected: non-empty / Actual: []` with the summary suppressed | degradations explained on the existing diagnostic channel |
+| 4 | **partial — deferred** | — | n/a (measurement) | pre-fix host reading taken; post-fix capture needs a rebuilt app |
+| 5 | executed | *(this entry)* | — | verdict recorded; H2/H3 left open, not closed |
+
+### Verdict — H1 confirmed, H2 and H3 untested
+
+**H1 is confirmed**, deterministically and without the live capture the plan
+budgeted for. `test/watch_transition_wiring_test.dart` drives two overlapping
+`start()` calls and asserts every armed source is torn down:
+
+```
+overlapping start() calls: every armed source is torn down [E]
+  Expected: <2>
+    Actual: <1>
+  both armed sources must be torn down; H1 is real if only one is
+```
+
+Two sources armed; one teardown ran. The other stayed live with nothing holding
+it — the orphaned watcher, and the leaked slot that then refuses every later arm
+and drops the repo to the 5-second poll.
+
+**The fix** serialises arming: `start()` chains onto the previous attempt
+instead of racing it, so a re-arm requested during an in-flight arm runs *after*
+the teardown it depends on. At most one follow-up is queued, because three
+timers firing during one slow arm should produce one re-arm, not three. The
+ceiling was **not** raised and no interval was touched — the two changes that
+would have hidden the symptom rather than removed it.
+
+**Both halves of the fix were seen to fail.** Serialisation removed:
+`Expected: <1> / Actual: <2>`. Collapsing removed: `Expected: <2> / Actual: <4>`
+— three re-arms producing four arms. Each sabotage was applied to a backed-up
+copy and the source restored byte-identical afterwards, verified with `cmp`.
+
+> **A correction worth recording:** the first sabotage attempt *passed*, and it
+> was wrong rather than the check being weak — it disabled the collapsing guard,
+> not the serialisation, which lives in the `startChain.then(...)` chain. The
+> passing run was the signal to re-read the mechanism. It also exposed that the
+> collapsing guard had no test of its own, which is why one was added.
+
+**H2 and H3 are neither confirmed nor refuted.** H1 accounts for every observed
+symptom and is now proven, so neither was pursued. They are **open**, not
+eliminated:
+
+* **H2** — a ceiling refusal is still indistinguishable to the engine from
+  "this host has no watcher tool", so both get the same 3-minute recovery. The
+  instrument now records *which* it was (`cause: 'ceiling 2/2'` vs
+  `'no watcher tool'`), so a future capture can settle it. And
+  `_liveWatchers` is still `static` — process-global — while documented as
+  per-connection.
+* **H3** — teardown-does-not-kill (0022 M5) is untested here and unaffected by
+  this fix.
+
+### Phase 4 as executed — partial, and honestly so
+
+The post-fix capture the plan asks for **has not been taken**: it requires the
+app rebuilt with the serialisation fix, and the running build predates it. What
+was taken is a **pre-fix reading**, so a comparison exists later:
+
+```
+real inotifywait binaries : 1     (0 orphaned by ppid)
+lease shells              : 4     for ONE repo, against a ceiling of 2
+distinct repos watched    : 1
+```
+
+Four lease shells for a single repo, where two watchers are the maximum, is
+consistent with H1's duplication — but a census cannot separate that from
+ordinary re-arm churn (the shells self-terminate on a stale heartbeat), and it
+is **not** offered as confirmation. The deterministic test is the evidence; this
+is context.
+
+**Outstanding, and the plan is not complete until it is done:** one capture
+against a build containing `4d83f5d`, confirming the 4-processes-per-5-seconds
+regime does not recur. Until then this plan stays `in-progress`.
 
 ## Deviations
 

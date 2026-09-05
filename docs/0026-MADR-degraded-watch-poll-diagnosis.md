@@ -179,6 +179,14 @@ one of H1/H2/H3 as the cause, or shows a transition sequence none of them
 predicts — which is itself a result, and would mean the mechanism is a fourth
 one and this record needs a successor rather than a fix.
 
+> **Confirmed 2026-09-04 — H1, by test rather than by capture.**
+> `test/watch_transition_wiring_test.dart` went red at `Expected: <2> /
+> Actual: <1>`: two sources armed, one torn down. The fix serialises arming;
+> both halves of it were then seen to fail on demand (`<1>`/`<2>` without
+> serialisation, `<2>`/`<4>` without collapsing). **H2 and H3 remain open** —
+> H1 explained every symptom, so neither was pursued, and neither may be
+> written up as eliminated. The post-fix live capture is still outstanding.
+
 The instrument itself is not trusted until it has been **seen to fail**: a test
 must drive a synthetic degradation and observe the log record it, and a test
 must drive the H1 race directly (two `start()` calls overlapping one `arm`) and
