@@ -270,8 +270,17 @@ class RemoteWatchService {
       pollInterval: pollInterval,
       recoveryInterval: recoveryInterval,
       onPollingRecoveryAttempt: () => cachedTool = null,
-      onTransition: (kind, cause, restarts) =>
-          _record(repoPath, kind, cause, restarts),
+      onTransition: (kind, cause, restarts) {
+        _record(repoPath, kind, cause, restarts);
+        // Degradation is the expensive state and the one a maintainer needs
+        // explained: report it on the channel watcher stderr already uses, so
+        // "why is this repo polling" is answerable while it is polling
+        // (MADR 0026 Phase 3) rather than only from a host-side census.
+        if (kind == WatchTransition.degradedToPolling) {
+          final summary = watchDiagnostics.forRepo(repoPath).degradationSummary;
+          if (summary != null) onDiagnostic?.call(summary);
+        }
+      },
       arm: (hooks) async {
         final tool = cachedTool ??= await _detectWatcher(repoPath);
         if (hooks.isCancelled()) return const WatchAborted();

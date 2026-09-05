@@ -112,6 +112,30 @@ class WatchTransitionLog {
   }
 
   void clear() => _records.clear();
+
+  /// One line answering *"why is this repo polling?"* from the recorded
+  /// history, for the output log a maintainer is already reading.
+  ///
+  /// The degradation itself is not the useful part — that it happened is
+  /// already visible as a grey watch indicator. What is useful is the run-up:
+  /// the cause the engine collapsed to `WatchUnavailable`, how much restart
+  /// budget was spent getting there, and how many watcher processes the
+  /// connection was holding at that moment.
+  String? get degradationSummary {
+    final at = _records.lastIndexWhere(
+      (r) => r.kind == WatchTransition.degradedToPolling,
+    );
+    if (at < 0) return null;
+    final d = _records[at];
+    // The transitions that led into it, most recent last.
+    final runUp = _records
+        .sublist(at >= 4 ? at - 4 : 0, at)
+        .map((r) => '${r.kind.name}(${r.cause})')
+        .join(' -> ');
+    final tail = runUp.isEmpty ? '' : '  after: $runUp';
+    return 'polling ${d.repoPath} — ${d.cause}; '
+        'watchers held ${d.liveWatchers}, restarts spent ${d.restarts}$tail';
+  }
 }
 
 /// Process-wide transition logs, keyed by repository path.

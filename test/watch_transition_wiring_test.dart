@@ -147,6 +147,49 @@ void main() {
     await sub.cancel();
   });
 
+  // ---- Phase 3: the log is readable while it matters ---------------------
+
+  test('a degradation is explained on the diagnostic channel', () async {
+    final lines = <String>[];
+    final service = RemoteWatchService(
+      _ArmsAlwaysExecutor(),
+      onDiagnostic: lines.add,
+    );
+    final subs = <StreamSubscription<RepoWatchEvent>>[];
+    for (final repo in ['/a', '/b']) {
+      subs.add(service.watch(repo).listen((_) {}));
+    }
+    await pumpEventQueue();
+    subs.add(service.watch('/c').listen((_) {}));
+    await pumpEventQueue();
+
+    // The maintainer-facing answer to "why is this repo polling", on the
+    // channel watcher stderr already uses.
+    final explained = lines.where((l) => l.startsWith('polling /c')).toList();
+    expect(explained, isNotEmpty, reason: 'the degradation must be explained');
+    expect(explained.single, contains('ceiling'));
+    expect(explained.single, contains('watchers held 2'));
+
+    for (final s in subs) {
+      await s.cancel();
+    }
+  });
+
+  test('a repo that never degrades has no summary', () {
+    final log = WatchTransitionLog()
+      ..add(
+        WatchTransitionRecord(
+          at: DateTime.now(),
+          kind: WatchTransition.armed,
+          repoPath: '/ok',
+          cause: 'arm succeeded',
+          liveWatchers: 1,
+          restarts: 0,
+        ),
+      );
+    expect(log.degradationSummary, isNull);
+  });
+
   // ---- 2b: H1 driven directly -------------------------------------------
 
   test('overlapping start() calls: every armed source is torn down', () async {
