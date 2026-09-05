@@ -425,6 +425,10 @@ the per-command table.
 
 ## Phase 6 — F1: fingerprint short-circuit
 
+> **DECLINED ON EVIDENCE — 2026-09-04.** Not executed; see **deviation (a)**
+> (the witness cannot gate `status`) and **deviation (b)** (almost no target
+> remains). Steps below stand as written.
+
 **Finding.** MADR 0025 F1. Most of the 15 refresh triples observed a repository
 identical to the one the previous wave saw.
 
@@ -470,6 +474,10 @@ code, not only here.
 
 ## Phase 7 — F3b: supersede in-flight refresh waves
 
+> **EXECUTED — 2026-09-04**, commit `84882e2`, but **not by the mechanism
+> below**: the fetch seam was shared rather than waves superseded. See the
+> execution record and **deviation (c)**.
+
 **Finding.** MADR 0025 F3. Wave *n+1* arriving while *n* is in flight, with no
 change between them, should supersede rather than both completing.
 
@@ -500,6 +508,11 @@ precedent for supersession.
 ---
 
 ## Phase 8 — C2: stop watching what git is already watching
+
+> **DECLINED ON EVIDENCE — 2026-09-04.** Not executed. The steps below stand as
+> written so the record shows what was planned; see **deviation (e)** for why
+> the premise does not hold and MADR amendment C2.1 for the correction. Do not
+> implement this phase from the text below.
 
 **Finding.** MADR 0025 C2. `core.fsmonitor=true` is set by this app
 (`app_providers.dart:1606` → `git_service.dart:2319`), confirmed live on both
@@ -539,6 +552,9 @@ work-tree edits still surface within the poll interval.
 ---
 
 ## Phase 9 — E: one long-lived parse worker
+
+> **EXECUTED — 2026-09-04**, commit `0a9e0d4`. See the execution record for the
+> observed red, and for the one test in 9a that could not be written.
 
 **Finding.** MADR 0025 E. **13** `Isolate.run` call sites, each spawning and
 tearing down an isolate per invocation, against Flutter's own guidance — and
@@ -584,6 +600,9 @@ unchanged; full suite +2.
 
 ## Phase 10 — D2: one process for the refresh triple
 
+> **ALREADY IMPLEMENTED — 2026-09-04.** Not executed; `_snapshot` bundled the
+> refresh triple before this plan was written. See **deviation (b)**.
+
 **Finding.** MADR 0025 D2. `status`, `for-each-ref` and `remote` always appear
 together and appeared 15 times each.
 
@@ -615,6 +634,11 @@ Fail open to the three individual calls, as `GitCatFileBatch` does.
 ---
 
 ## Phase 11 — D3: `cat-file --batch` as a session
+
+> **DECLINED ON EVIDENCE — 2026-09-04.** Not executed. The steps below stand as
+> written so the record shows what was planned; see **deviation (f)** for the
+> two grounds and MADR amendment D3.1 for the prerequisites a future attempt
+> needs. The file list below is known to be incomplete.
 
 **Files.** `lib/core/git/git_cat_file_batch.dart`; `test/git_cat_file_batch_test.dart`.
 
@@ -771,10 +795,10 @@ its A2); D2 as **already implemented**.
 | 5 | executed | `0dc4cba` | area-scoped invalidation absent → a work-tree tick invalidated ref families | refresh fan-out scoped by `GitArea` |
 | 6 | **declined on evidence** | — | — | see deviation (a): the witness cannot gate `status` |
 | 7 | executed | `84882e2` | `Expected: <1> / Actual: <3>` — three providers, three fetches | one snapshot command per refresh wave instead of ~2.5 |
-| 8 | not started | — | — | — |
-| 9 | not started | — | — | — |
+| 8 | **declined on evidence** | — | — | see deviation (e): fsmonitor is a query accelerator, not a notification source |
+| 9 | executed | `0a9e0d4` | `Expected: <1> / Actual: <5>` — five calls, five isolates | four hot parses share one persistent isolate |
 | 10 | **already implemented** | — | — | see deviation (b): `_snapshot` bundled the triple before this plan |
-| 11 | not started | — | — | — |
+| 11 | **declined on evidence** | — | — | see deviation (f): no production caller, and the transport cannot carry a session |
 | 12 | **not authorized** | — | — | needs separate approval |
 
 ### Phase 7 as executed — F3 by sharing the fetch, not by superseding waves
@@ -839,3 +863,101 @@ A temporary `mgTraceRefresh` instrumentation commit (`12903f1`) was committed
 and pushed by the maintainer along with the phase work. It was removed with
 `git revert` (`d34e662`) rather than a history rewrite, because the commit was
 already published.
+
+### Phase 9 as executed — the worker, and what could not be tested
+
+`lib/core/parse/parse_worker.dart` holds one persistent isolate, modelled on
+`features/viewer/highlight_worker.dart`: request/reply over
+`SendPort`/`ReceivePort`, serial processing, a `spawnCount` observable, and
+`onExit`-driven recovery that fails in-flight work rather than leaving callers
+awaiting a reply that can no longer come. The four **hot repeated** parses moved
+onto it — status (`git_service.dart:2168`), refs (`:2176`), log (`:2521`),
+blame (`:2890`). One-shot parses (key decode, gunzip) stayed on `Isolate.run`,
+and `GitService`'s 32 KiB inline threshold is unchanged, both as the plan
+specified.
+
+**Red observed**, via the two-step landing the plan asked for — step 1 spawned a
+fresh isolate per call, which is today's `Isolate.run` behaviour expressed
+through `Isolate.spawn` so a test can reach it at all:
+
+```
+00:01 +0 -1: repeated parses reuse one isolate [E]
+  Expected: <1>
+    Actual: <5>
+```
+
+Then green at 1 once the isolate persisted. Full suite **3468 passed, 2
+skipped, 0 failures** (from 3464; +4 tests), analyzer clean, on Flutter 3.47.2
+— checked against `FLUTTER_VERSION` before starting, per AGENTS.md.
+
+**The plan's second test could not be written.** 9a specified *"a parse failure
+does not kill the worker"*. None of the four parsers has a throw site: they are
+total on malformed input by design, degrading to partial results. There is no
+input that makes one fail, so the assertion has no way to be true-then-false and
+would have been a check that had never been seen to fail. The worker's `catch`
+is kept and documented as belt-and-braces for a future parser that *can* throw,
+and the reachable resilience property is tested instead: an isolate death fails
+in-flight work and the next call respawns and answers.
+
+**Deviation in scope:** `test/snapshot_fallback_test.dart` pinned the old
+mechanism by literal string (`contains('Isolate.run(() => parseRefsDetailed')`)
+and failed. It was updated to `contains('parseWorker.parseRefs(')` — the
+invariant it guards (the ref parse never runs on the UI isolate) is unchanged;
+only the spelling of the hop moved. That failure doubles as proof the scan
+works: it was observed failing on the real source, not assumed to.
+
+### Deviation (e) — 2026-09-04 — Phase 8 declined: fsmonitor does not notify anyone
+
+**Found** before writing any Phase 8 code, by checking the daemon's interface
+rather than trusting the finding. `git fsmonitor--daemon` (git 2.55.0) has four
+verbs — `start`, `run`, `stop`, `status` — and git's manual states it
+"communicates directly with commands like `git status` using the simple IPC
+interface". It is a query accelerator for **git**, with no subscribe and no
+third-party client path.
+
+The plan's stated mitigation is also false. 8b says a work-tree edit would still
+reach the app "via the next git-state event or a poll"; but
+`watch_lifecycle.dart:149` starts the 5 s poll **only** in degraded mode, and
+`start()` cancels `pollTimer` on a successful arm (`:227`) — deliberately, to
+fix a bug where recovery left the poll running forever. A healthy watcher polls
+not at all, so shrinking the surface to git-dir points would leave a tracked
+work-tree edit with no route to the UI at any latency.
+
+Separately, the surface Phase 8 proposed reusing is unavailable to the repos it
+targets: fsmonitor is refused for scoped repos
+(`local_repo_form.dart:414-416`), and `computeBoundedWatchSpec` exists only for
+scoped repos.
+
+**Decision (maintainer): decline.** MADR 0025 carries amendment C2.1. The one
+true observation inside C2 — the daemon is a long-lived host process the app
+causes, never counts and never reclaims — is reassigned to **C3**'s registry
+and ceilings, where it costs no user-visible behaviour.
+
+### Deviation (f) — 2026-09-04 — Phase 11 declined: nothing calls it, and the transport cannot carry it
+
+**Found** before writing any Phase 11 code, on two independent grounds.
+
+**No caller.** `GitService.showBlobsBatch` (`git_service.dart:2989`) is
+referenced nowhere in `lib/features/`; the only invocations in the tree are its
+own tests. Its doc comment already records this as deliberate — *"Deliberately
+unconsumed by the UI today (evaluated, not an oversight)"*. The per-batch spawn
+the phase would eliminate happens zero times per session.
+
+**No transport.** A session needs raw bytes out and incremental stdin in, and
+the executor seam has neither. `CommandStreamHandle.stdout` is `Stream<String>`
+UTF-8-decoded with `allowMalformed: true`
+(`ssh_command_executor.dart:133-137`, decode at `:185`) — the exact lossy path
+0022 M10 fixed, where one replaced byte desyncs a parser that frames objects by
+git's byte count and returns the wrong content for the wrong key. And
+`executeStream` takes no stdin; the one-shot path closes stdin immediately and
+says why (`:920-929`): a process that reads stdin forever never exits and holds
+its channel open — which is what `cat-file --batch` is. Supplying both means a
+new byte-level bidirectional stream across all three `CommandExecutor`
+implementations plus the pop-out relay, where
+`ProxyCommandExecutor.executeStream` throws `UnsupportedError`. The plan's file
+list (`git_cat_file_batch.dart` and its test) understates the work by three
+executors and a relay.
+
+**Decision (maintainer): decline.** MADR 0025 carries amendment D3.1, which
+records the prerequisites so a future burst caller reopens it with a correct
+estimate rather than this one.

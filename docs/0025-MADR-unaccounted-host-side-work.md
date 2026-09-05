@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-09-04
 decision-makers: [Maintainer]
 consulted: []
@@ -163,9 +163,16 @@ Adopted with it:
 5. **Reduce demand before adding machinery.** F1/F2/F3 remove work; D1/D3 make
    the remaining work cheaper. The former are smaller, are testable without a
    host, and make the latter's payoff easier to measure — so they go first.
+   *(Borne out further than intended: putting demand-reduction first is what
+   established that D3 had no demand to reduce — see amendment D3.1 — and that
+   F1 and C2 rested on witnesses that do not exist. Three of the nine findings
+   were withdrawn on evidence gathered by doing the cheap ones first.)*
 
-No code changes accompany this record. Implementation waits on
-`0025-PLAN-unaccounted-host-side-work.md` and explicit approval.
+No code changes accompanied this record as written. Implementation is tracked
+in `0025-PLAN-unaccounted-host-side-work.md`, which carries the execution
+record, the per-phase evidence, and every deviation. As of 2026-09-04 phases
+1-5, 7 and 9 have shipped; C2, D2, D3 and F1 are settled without code (see
+their amendments).
 
 ### Consequences
 
@@ -492,6 +499,46 @@ Option 1 is a scope reduction of existing code, not new machinery, and it
 removes the leaking surface for the repos most exposed to it — large work
 trees, which is exactly where `$HOME`-scoped dotfiles repos live.
 
+#### Amendment C2.1 — 2026-09-04: declined on evidence — the daemon is a query accelerator, not a notification source
+
+**C2 is withdrawn.** Both of its options rest on a premise git's own
+documentation contradicts, found before writing any Phase 8 code.
+
+`git fsmonitor--daemon` exposes exactly four verbs — `start`, `run`, `stop`,
+`status` (git 2.55.0, verified against the installed binary and
+`git help fsmonitor--daemon`). There is no subscribe, no event stream, and no
+third-party client interface. The manual is explicit that the daemon
+"communicates directly with commands like `git status` using the simple IPC
+interface": it makes *git's own* scan cheap by answering "what changed since
+token X" to a **polling** caller. It does not tell anyone when something
+changed.
+
+So the sentence above — "Work-tree events stop being the app's problem" — is
+false. The app's watcher and the daemon are not two systems watching the same
+tree redundantly; they do different jobs. The daemon accelerates the `git
+status` the app runs, and the app's watcher is what tells the app to run it.
+There is no double-watching to stop, and option 2's "shim could subscribe and
+forward" has no interface to subscribe through.
+
+Two further facts settle it:
+
+* **There is no poll to fall back on.** `watch_lifecycle.dart:149` starts the
+  5 s poll **only** in degraded mode, and `start()` cancels `pollTimer` on a
+  successful arm (`:227`) — deliberately, to fix a bug where a recovered
+  watcher left the poll running forever. A healthy event-driven watcher polls
+  not at all. Dropping the work-tree watch would therefore leave a tracked-file
+  edit with no path to the UI whatsoever, indefinitely — the status pane, this
+  app's primary view, silently stale.
+* **The two code paths are mutually exclusive by design.** fsmonitor is
+  refused for scoped repos (`local_repo_form.dart:414-416`, "The fsmonitor
+  daemon is never valid on a scoped repo"), and `computeBoundedWatchSpec` — the
+  surface C2 proposed reusing — exists only for scoped repos.
+
+**What survives.** The daemon is still a long-lived host process this app
+causes, never counts, and never reclaims, which is squarely this record's
+thesis. That belongs to **C3**'s registry and ceilings, not to a watch-surface
+reduction; it is recorded there rather than pursued here.
+
 ### C3 — A registry with determinate ceilings, enforced not assumed
 
 **Grounded in:** 0024 M2, which turned the `MaxSessions` budget from a comment
@@ -574,6 +621,47 @@ fails open to per-key `showOne`.
 it per batch and discards it. Holding one per repo over the persistent session
 (D1) makes blob reads a write/read on an existing process — the same move git
 itself made for `fsmonitor`.
+
+#### Amendment D3.1 — 2026-09-04: declined on evidence — no caller to optimise, and the transport cannot carry it
+
+**D3 is withdrawn**, on two independent grounds established before writing any
+Phase 11 code.
+
+**1. The app never spawns it.** `GitService.showBlobsBatch`
+(`git_service.dart:2989`) has no caller anywhere in `lib/features/`; the only
+invocations in the tree are its own tests. The method's own doc comment already
+records this as deliberate — *"Deliberately unconsumed by the UI today
+(evaluated, not an oversight): every current blob reader requests exactly one
+blob at a time"*. The sentence above, "the app spawns it per batch and discards
+it", describes a cost of **zero invocations per session**. There is nothing to
+promote from one-shot to session.
+
+**2. The transport cannot carry a session, and making it could reintroduce a
+fixed corruption bug.** A persistent `cat-file --batch` needs two things the
+executor seam does not have:
+
+* **Raw bytes out.** `CommandStreamHandle.stdout` is `Stream<String>`,
+  UTF-8-decoded with `allowMalformed: true`
+  (`ssh_command_executor.dart:133-137`; the decode is at `:185`). That is
+  exactly the lossy path 0022 M10 fixed: the batch parser frames objects by
+  git's own byte **count**, so one replaced byte desyncs every later object and
+  returns the wrong content for the wrong key. It is why the surviving one-shot
+  path base64s its output through a temp file.
+* **Incremental stdin.** `executeStream` takes no stdin at all, and the
+  one-shot path closes stdin immediately and on purpose (`:920-929`): "a
+  command that unexpectedly reads stdin blocks on it forever: it never exits,
+  its channel stays open". A `cat-file --batch` session is precisely a process
+  that reads stdin forever.
+
+Supplying both means a new byte-level bidirectional stream across all three
+`CommandExecutor` implementations plus the pop-out relay — where
+`ProxyCommandExecutor.executeStream` today throws `UnsupportedError`
+outright. That is transport work, not the local change D3 describes.
+
+**If a burst caller ever lands** — an "expand all", a multi-file prefetch, a
+bulk export — reopen this with those prerequisites stated, and note that the
+existing one-shot batch already collapses a burst into **one** process. The
+session form saves the second and subsequent bursts only.
 
 ## E — Threads, channels, routines
 
