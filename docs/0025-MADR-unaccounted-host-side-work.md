@@ -622,6 +622,10 @@ arms raced, or whether the app misclassified a healthy watch, cannot be settled
 from host-side data — it needs app-side instrumentation of `watchLifecycle`'s
 mode transitions.
 
+> **Successor:** [`0026-MADR-degraded-watch-poll-diagnosis.md`](0026-MADR-degraded-watch-poll-diagnosis.md)
+> takes this finding forward. It is a **diagnosis**, not a fix: three code-grounded
+> mechanisms could each produce this symptom and they need opposite remedies.
+
 **Why this outranks D1.** D1 makes each command cheaper; C4 is about commands
 that should not be issued at all. It is bug-shaped rather than architectural,
 carries no single point of failure, and a persistent session would merely make
