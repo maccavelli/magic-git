@@ -443,3 +443,43 @@ Full suite 3503 passing, 2 skipped, 0 failing.
 stale (>5 min) and are removed by the connect sweep on the next connection —
 no manual cleanup needed. **A rebuild is required** for the fix to take effect;
 until then the repo keeps polling.
+
+### Deviation (c) — 2026-09-05 — the sweep cannot see a heartbeat whose pid file is gone
+
+**Found** on the live host while verifying an unrelated push. The watched repo
+held nine `mg-watch.*` files: one healthy pair (heartbeat refreshed 14 s
+earlier, pid alive), two reclaimable pairs, and **three heartbeats with no pid
+file beside them, aged 14.5 hours**.
+
+They will never be removed. Phase 3's sweep iterates **PID files**
+(`mg-watch.*.pid`) and derives each heartbeat from the pid file's name, so a
+heartbeat whose pid file is absent is never visited.
+
+**Deviation (b)'s fix widens the path that creates them.** Stamping the lease
+*before* arming means every arm that fails after the stamp — a stream-budget
+refusal, a transport blip, a lost ceiling race — leaves an orphaned heartbeat by
+construction. The three on the host are pre-fix residue; the fix makes the case
+more common, not less.
+
+Impact is small — a few bytes each, already excluded from watch events by
+`watch_path_filter` — but it is unbounded growth in `.git`, one file per failed
+arm, forever.
+
+**Fix:** a second loop over `mg-watch.*.hb` (plus the legacy `mg-watch.hb`) that
+removes a heartbeat with no pid sibling **only when it is stale**.
+
+**The staleness test is the load-bearing part, not a copy of the loop above
+it.** Since the lease is now stamped before the arm, "heartbeat present, pid
+file absent" is *also exactly what an arm in flight looks like*. Pruning
+unconditionally would pull the lease out from under a script that is about to
+check for it — reintroducing deviation (b)'s failure by another route.
+
+**Both directions seen to fail:**
+
+| broken | observed |
+|---|---|
+| pruning loop removed | `Expected: false / Actual: <true>` — the orphan survives |
+| staleness check removed | `Expected: true / Actual: <false>` — an in-flight lease is deleted |
+
+The three heartbeats on the host are reclaimed by the next connect sweep once a
+build carrying this ships; no manual cleanup is needed.

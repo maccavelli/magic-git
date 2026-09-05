@@ -304,6 +304,16 @@ String watcherSweepScript(
         ],
       )
       .join(' ');
+  // Heartbeats are globbed separately because a lease can outlive its pid file
+  // — see the second loop below.
+  final hbGlobs = gitDirs
+      .expand(
+        (d) => [
+          '${ShellEscaper.escape('$d/mg-watch.')}*.hb',
+          ShellEscaper.escape('$d/mg-watch.hb'),
+        ],
+      )
+      .join(' ');
   final mins = staleAfter.inMinutes < 1 ? 1 : staleAfter.inMinutes;
   // `find -mmin` rather than `stat -c %Y`: the latter is GNU-only and this
   // runs against macOS hosts too. A heartbeat NEWER than the window means the
@@ -324,6 +334,22 @@ String watcherSweepScript(
       'cmd=\$(ps -o command= -p "\$p" 2>/dev/null || echo); '
       'case "\$cmd" in *"\$f"*) kill -TERM "\$p" 2>/dev/null ;; esac; '
       'rm -f "\$f" "\$hb"; '
+      'done; '
+      // A heartbeat with no pid file beside it. The loop above never visits
+      // one, because it iterates PID files and derives the heartbeat from
+      // them — so these accumulated, one per failed arm, forever (three were
+      // found on the host aged 14.5 hours).
+      //
+      // Since the lease is now stamped BEFORE the watcher is armed (0027
+      // deviation (b)), every arm that fails after stamping leaves one. That
+      // also means a heartbeat with no pid is exactly what an arm IN FLIGHT
+      // looks like — so the staleness test is not optional here, it is what
+      // separates litter from a watcher that is still starting up.
+      'for h in $hbGlobs; do '
+      '[ -f "\$h" ] || continue; '
+      '[ -f "\${h%.hb}.pid" ] && continue; '
+      '[ -n "\$(find "\$h" -mmin -$mins 2>/dev/null)" ] && continue; '
+      'rm -f "\$h"; '
       'done; true';
 }
 

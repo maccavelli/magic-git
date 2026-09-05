@@ -162,6 +162,45 @@ void main() {
       reason: 'a process that is not ours must never be signalled',
     );
   });
+
+  test('a stale heartbeat with no pid file is pruned', () async {
+    // The sweep iterates PID files and derives the heartbeat from them, so a
+    // heartbeat whose pid file is absent was never visited — it accumulated,
+    // one per failed arm, forever. Three were found on the host aged 14.5
+    // hours (0027 deviation (c)).
+    final orphanHb = File('${tmp.path}/mg-watch.gone.hb')
+      ..writeAsStringSync('');
+    // Older than staleAfter by any measure.
+    await Process.run('touch', ['-t', '202001010000', orphanHb.path]);
+    await runScript(
+      watcherSweepScript([tmp.path], staleAfter: const Duration(minutes: 5)),
+    );
+    expect(
+      orphanHb.existsSync(),
+      isFalse,
+      reason: 'an owner-less, stale lease file is litter and must be removed',
+    );
+  });
+  test(
+    'a FRESH heartbeat with no pid file is spared — that is an arm in flight',
+    () async {
+      // Since the lease is stamped before the watcher is armed, "heartbeat, no
+      // pid file" is also exactly what a watcher that is still starting looks
+      // like. Deleting one would pull the lease out from under a script about to
+      // check for it — reintroducing the arm-race failure by a different route.
+      final fresh = File('${tmp.path}/mg-watch.starting.hb')
+        ..writeAsStringSync('');
+      await runScript(
+        watcherSweepScript([tmp.path], staleAfter: const Duration(minutes: 5)),
+      );
+      expect(
+        fresh.existsSync(),
+        isTrue,
+        reason:
+            'a lease stamped seconds ago belongs to an arm still starting up',
+      );
+    },
+  );
 }
 
 String _esc(String s) => "'${s.replaceAll("'", r"'\''")}'";
