@@ -33,6 +33,24 @@ class WorkspacePaneFocusRegistry {
   static final instance = WorkspacePaneFocusRegistry._();
   final Map<WorkspacePaneRole, Set<FocusNode>> _nodes = {};
 
+  /// Set for the duration of a [request] so the region that gains focus can
+  /// tell WHY it did.
+  ///
+  /// The ring exists to show where the pane-focus shortcuts moved focus to —
+  /// that is its only job. But `Focus.onFocusChange` fires when the node **or
+  /// any descendant** takes focus, so clicking a file in the canvas list
+  /// (`repo_status_view.dart` requests its list node) looked identical to the
+  /// shortcut and ringed the entire pane. A focus ring on a mouse click is
+  /// against the platform convention and was, in practice, just noise.
+  bool _viaShortcut = false;
+
+  /// True exactly once per [request], for the region that gains focus from it.
+  bool consumeShortcutFocus() {
+    final was = _viaShortcut;
+    _viaShortcut = false;
+    return was;
+  }
+
   void register(WorkspacePaneRole role, FocusNode node) {
     (_nodes[role] ??= <FocusNode>{}).add(node);
   }
@@ -51,9 +69,15 @@ class WorkspacePaneFocusRegistry {
           !TickerMode.valuesOf(context).enabled) {
         continue;
       }
+      _viaShortcut = true;
       node.requestFocus();
+      // Not cleared here: `onFocusChange` runs after this returns, and the
+      // region consumes the flag then. It is cleared on the no-candidate path
+      // below so a refused request cannot leak a ring onto the next, unrelated
+      // focus change.
       return true;
     }
+    _viaShortcut = false;
     return false;
   }
 }
@@ -116,16 +140,34 @@ class _WorkspaceFocusRegionState extends State<WorkspaceFocusRegion> {
         child: Focus(
           focusNode: _node,
           onFocusChange: (focused) {
-            if (_focused != focused) setState(() => _focused = focused);
+            // Ring only when the pane-focus SHORTCUT put focus here. Focus
+            // arriving because the user clicked something inside the pane is
+            // not what this indicator is for.
+            final show =
+                focused &&
+                WorkspacePaneFocusRegistry.instance.consumeShortcutFocus();
+            if (_focused != show) setState(() => _focused = show);
           },
-          child: AnimatedContainer(
-            duration: reduceMotion
-                ? Duration.zero
-                : const Duration(milliseconds: 90),
-            foregroundDecoration: BoxDecoration(
-              border: _focused ? Border.all(color: focusColor, width: 2) : null,
+          // A pointer press anywhere dismisses the ring, including inside the
+          // pane that already has it — where focus does not change and
+          // `onFocusChange` would never fire. Translucent so it observes
+          // without consuming.
+          child: Listener(
+            behavior: HitTestBehavior.translucent,
+            onPointerDown: (_) {
+              if (_focused) setState(() => _focused = false);
+            },
+            child: AnimatedContainer(
+              duration: reduceMotion
+                  ? Duration.zero
+                  : const Duration(milliseconds: 90),
+              foregroundDecoration: BoxDecoration(
+                border: _focused
+                    ? Border.all(color: focusColor, width: 2)
+                    : null,
+              ),
+              child: widget.child,
             ),
-            child: widget.child,
           ),
         ),
       ),
