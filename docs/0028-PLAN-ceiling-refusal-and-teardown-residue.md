@@ -214,3 +214,36 @@ serialised path and never arms directly — and criterion 4 exists to enforce it
 | 3 | not started | — | — | — |
 | 4 | not started | — | — | — |
 | 5 | not started | — | — | — |
+
+## Deviations
+
+### Deviation (a) — 2026-09-04 — Phase 3's premise was wrong: there is no behavioural defect
+
+**Found** at the start of Phase 3, before changing anything. The MADR asserts
+that `_liveWatchers` being `static` (`remote_watch_service.dart:217`)
+contradicts the constant's *"one connection may hold"* (`:138`), and that one of
+them must be a defect. The code says otherwise:
+
+* `connectionProvider` (`app_providers.dart:2727`) is a plain
+  `NotifierProvider`, not a family, and `remoteWatchServiceProvider` (`:360`) is
+  a plain `Provider`. **The app holds one connection at a time.** "Process
+  global" and "per connection" therefore describe the same set of watchers, and
+  both comments are individually accurate.
+* The remedy the MADR floated — moving the counter onto the service instance —
+  would be a **regression**, not a fix. The counter's own comment records why it
+  is static: *"several providers construct their own service against the same
+  host"*. Per-instance counting would give each service its own budget of two
+  and multiply the ceiling instead of enforcing it.
+
+So the contradiction is documentary: neither comment states the assumption it
+depends on, which makes the pairing read as a defect and *would* become one if
+simultaneous connections ever landed.
+
+**Decision (maintainer): state the dependency and pin it with a test.** Keying
+the counter by host was considered and declined as speculative work on a
+condition the app cannot currently reach, in a component whose last three
+defects were all concurrency-shaped. Dropping Phase 3 entirely was declined
+because it leaves the misleading pairing in place with nothing to catch a future
+multi-connection change.
+
+**MADR 0028 carries the correction as amendment 0028.1.**

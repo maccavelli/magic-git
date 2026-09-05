@@ -135,11 +135,19 @@ class RemoteWatchService {
   /// Diagnostic lines reported per arm.
   static const int maxDiagnosticLines = 20;
 
-  /// Live watcher processes one connection may hold at once.
+  /// Live watcher processes one **host** may hold at once.
   ///
   /// One active repo plus one background. Past this the app polls and says so,
   /// rather than accumulating — 19 orphaned `inotifywait` processes, the
   /// oldest 16.9 days, is what "no ceiling at all" produced (0025 C3).
+  ///
+  /// This reads as "per connection" too, but only because the app holds **one
+  /// connection at a time** (`connectionProvider` is a plain notifier, not a
+  /// family). The budget belongs to the host, and [_liveWatchers] is counted
+  /// globally to match — see there. If simultaneous connections to different
+  /// hosts ever land, the counter must be keyed by host or one host's watchers
+  /// will starve another's; `watch_ceiling_recovery_test.dart` pins the
+  /// assumption so that change cannot pass unnoticed (0028 amendment 0028.1).
   static const int maxConcurrentWatchers = 2;
 
   /// How often the client refreshes a watcher's heartbeat while it is alive.
@@ -214,6 +222,10 @@ class RemoteWatchService {
   /// Live watcher processes this client has armed. Static because the ceiling
   /// is a property of the *host* budget, not of any one service instance —
   /// several providers construct their own service against the same host.
+  ///
+  /// Counting this per instance would therefore be a regression, not a fix:
+  /// each service would get its own budget and the ceiling would multiply
+  /// (0028 amendment 0028.1).
   static int _liveWatchers = 0;
 
   /// Broadcasts the moment a watcher slot is released, so a repo that was

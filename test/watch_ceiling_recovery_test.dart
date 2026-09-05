@@ -104,6 +104,47 @@ void main() {
   });
 
   test(
+    'two service instances share one ceiling, they do not each get one',
+    () async {
+      // 0028 deviation (a). `_liveWatchers` is static because several providers
+      // construct their own RemoteWatchService against the same host, and the
+      // budget belongs to the host, not to a service object. Counting per
+      // instance would hand each one its own two slots and multiply the ceiling
+      // — the opposite of enforcing it.
+      //
+      // This also pins the assumption the "one connection may hold" wording
+      // rests on: the app holds ONE connection at a time, so process-global and
+      // per-connection are the same set. If simultaneous connections to
+      // different hosts ever land, this test is where that stops being true and
+      // the counter needs keying by host.
+      final first = RemoteWatchService(_ArmsAlways());
+      final second = RemoteWatchService(_ArmsAlways());
+
+      final a = first.watch('/a').listen((_) {});
+      final b = second.watch('/b').listen((_) {});
+      await pumpEventQueue();
+      expect(
+        RemoteWatchService.liveWatchers,
+        2,
+        reason: 'one budget across both services, not two budgets of two',
+      );
+
+      final events = <RepoWatchEvent>[];
+      final c = second.watch('/c').listen(events.add);
+      await pumpEventQueue();
+      expect(
+        events.last.mode,
+        WatchMode.polling,
+        reason: 'the ceiling binds across service instances',
+      );
+
+      await a.cancel();
+      await b.cancel();
+      await c.cancel();
+    },
+  );
+
+  test(
     'a refusal that is NOT the ceiling is not woken by a slot release',
     () async {
       // `noTool` means the host has no inotifywait/fswatch. A freed watcher slot

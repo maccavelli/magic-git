@@ -137,6 +137,21 @@ the counter becomes per-connection to match its documentation, or the
 documentation is corrected and the global budget justified. It cannot stay as
 two statements that contradict each other.
 
+#### Amendment 0028.1 — 2026-09-04: the scope contradiction is documentary, and the floated remedy was a regression
+
+Found while executing the plan. `connectionProvider` and
+`remoteWatchServiceProvider` are both plain providers, not families — **the app
+holds one connection at a time** — so "process-global" and "per connection"
+denote the same watchers and both comments are accurate as written. There is no
+behavioural defect today.
+
+And the remedy suggested above is backwards: moving the counter onto the service
+instance would give **each** service its own budget, because several providers
+construct their own service against one host, multiplying the ceiling rather
+than enforcing it. The paragraph above should be read as superseded — what the
+pairing actually lacks is a statement of the assumption it rests on, and a test
+that fails if that assumption stops holding.
+
 **H3: "H3-a — measure first."** No remedy is chosen, because whether one is
 needed is unknown. If an orphan can still be produced under the current build,
 this record gains an amendment and a successor decides the fix; if it cannot,
