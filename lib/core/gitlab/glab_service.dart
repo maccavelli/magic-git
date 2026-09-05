@@ -528,6 +528,56 @@ class GlabService {
     );
   }
 
+  /// Namespaces this account may create a project in on [host], most-usable
+  /// first: the user's own namespace, then groups by full path.
+  ///
+  /// Host-explicit because there is **no origin to infer the host from** at
+  /// create time — the project does not exist yet.
+  Future<List<String>> listCreatableNamespaces(
+    String repoPath, {
+    required String host,
+  }) async {
+    final namespaces = <String>[];
+    try {
+      final who = await _runJson(
+        repoPath,
+        ['glab', 'api', ...hostnameFlag(host), 'user', '-i'],
+        'glab api user',
+        expectHeaders: true,
+        extraEnv: hostEnv(host),
+      );
+      final username = (who is Map ? who['username'] : null) as String?;
+      if (username != null && username.isNotEmpty) namespaces.add(username);
+    } catch (_) {
+      // No account, no list. The field is free text; typing is the contract.
+      return const <String>[];
+    }
+    try {
+      // `min_access_level=30` is Developer — the floor for creating a project
+      // in a group. `namespaces` is the wrong endpoint and must not be used
+      // here: it returns what the account can *see*, including other people's
+      // personal namespaces, which a create would then fail on (MADR 0031).
+      final decoded = await api(
+        repoPath,
+        'groups',
+        fields: ['min_access_level=30', 'per_page=100'],
+        host: host,
+      );
+      if (decoded is List) {
+        for (final entry in decoded) {
+          if (entry is! Map) continue;
+          final path = entry['full_path'] as String?;
+          if (path == null || path.isEmpty) continue;
+          if (namespaces.contains(path)) continue;
+          namespaces.add(path);
+        }
+      }
+    } catch (_) {
+      // A missing group list still leaves the own namespace usable.
+    }
+    return namespaces;
+  }
+
   /// Safety bound on the manual page walks ([mergeRequests], [jobs], and
   /// [pipelines]'s full-history mode) — far beyond any realistic project's
   /// open-MR or pipeline-job count, but a hard stop so a bug (or a

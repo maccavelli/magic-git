@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-05
 associated-madr: "0031-MADR-forge-namespace-on-create.md"
 ---
@@ -45,7 +45,23 @@ flutter analyze                      # No issues found!
 flutter test                         # 3549 passing, 2 skipped, 0 failing
 ```
 
-Any deviation from **3549 / 2 / 0**: stop and prompt.
+~~Any deviation from **3549 / 2 / 0**: stop and prompt.~~
+
+> **Amended 2026-09-05 (before Phase 1).** The baseline is **3554 / 2 / 0**.
+> The plan was written at 3549; the difference is five tests added afterwards
+> and fully accounted for, so this is stale bookkeeping rather than a
+> discovered problem:
+>
+> * `+3` — `test/workspace_focus_ring_test.dart`, commit `4147b2e`, landed
+>   after the plan commit `e200dd7`;
+> * `+2` — `test/no_real_identifiers_scan_test.dart`, the guard added when the
+>   internal identifiers were purged from the tree.
+>
+> Any deviation from **3554 / 2 / 0** from here: stop and prompt.
+>
+> The tree is also not empty at Phase 1 start: the identifier redaction (19
+> files) and its guard are uncommitted, because the maintainer commits each
+> cycle himself. Those paths do not intersect this plan's file list.
 
 ## Implementation Steps
 
@@ -223,11 +239,62 @@ unreachable — worse than the missing feature.
 
 ## Execution record
 
-*(Empty until approved.)*
-
 | Phase | Status | Commit | Red observed | Result |
 |---|---|---|---|---|
-| 1 | not started | — | — | — |
+| 1 | **complete** | *(this commit)* | yes, verbatim below | 3554 → 3562, analyzer clean |
 | 2 | not started | — | — | — |
 | 3 | not started | — | — | — |
 | 4 | **not authorized** | — | — | mutating; needs separate approval |
+
+### Phase 1 — 2026-09-05
+
+`listCreatableNamespaces(repoPath, {required String host})` added to
+`GlabService` (`glab_service.dart:535`) and `GhService` (`gh_service.dart:369`);
+eight tests in `test/forge_namespaces_test.dart`. Both diffs are **pure
+insertion** — 95 added lines, none removed — so nothing below the sheet moved.
+
+* **GitLab** — `glab api user -i` for the own namespace, then
+  `groups?min_access_level=30&per_page=100` through the existing `api()` helper,
+  reading `full_path`. `api()` already takes an explicit `host`, which is what
+  this needs: at create time there is no origin to infer one from.
+* **GitHub** — `gh api user` for the login, then `gh api user/orgs`. `gh api`
+  has no `--hostname`, so the host rides `GH_HOST` via the existing `hostEnv()`.
+* **Failure is not an exception.** A dead account call yields `[]`; a dead
+  group/org call still yields the own namespace. The sheet's field is free
+  text, so a namespace list that cannot load must not reach it as an error.
+
+**Required red, observed verbatim** against stubs returning `const <String>[]`,
+before either implementation existed:
+
+```
+Expected: ['testuser', 'team/subgroup', 'platform']
+  Actual: []
+Expected: ['testuser']
+  Actual: []
+```
+
+**Two checks were vacuous when first written, and are recorded rather than
+quietly fixed:**
+
+1. `expect(exec.envs.every((e) => e?['GH_HOST'] == …), isTrue)` passed against
+   the empty stub, because `every` on an empty list is true. Now preceded by
+   `expect(exec.envs, hasLength(2))`.
+2. The two "non-JSON yields an empty list" tests passed trivially while the
+   stub returned `[]`. Proven afterwards by sabotage: all four `catch` blocks
+   were rewritten to `rethrow` and the four failure-path tests went red —
+
+   ```
+   GlabService … a failing groups call still yields the own namespace [E]
+   GlabService … non-JSON answers yield an empty list rather than throwing [E]
+   GhService  … a failing orgs call still yields the login [E]
+   GhService  … non-JSON answers yield an empty list rather than throwing [E]
+   ```
+
+   The sabotage ran against scratchpad copies of both service files and was
+   restored by copying them back, verified byte-identical with `cmp`. No git
+   command that discards work was used at any point.
+
+**Not yet true.** Nothing calls this method — the sheet is Phase 2/3, and no
+project has been created under a non-default namespace on a real forge. The
+nested-subgroup question the MADR raises stays open until Phase 4, which is
+mutating and unauthorised.

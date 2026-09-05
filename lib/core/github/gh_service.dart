@@ -361,6 +361,51 @@ class GhService {
     );
   }
 
+  /// Namespaces this account may create a repository in on [host],
+  /// most-usable first: the authenticated login, then organisation logins.
+  ///
+  /// Host-explicit because there is **no origin to infer the host from** at
+  /// create time — the repository does not exist yet.
+  Future<List<String>> listCreatableNamespaces(
+    String repoPath, {
+    required String host,
+  }) async {
+    final namespaces = <String>[];
+    try {
+      final who = await _runJson(
+        repoPath,
+        ['gh', 'api', 'user'],
+        'gh api user',
+        extraEnv: hostEnv(host),
+      );
+      final login = (who is Map ? who['login'] : null) as String?;
+      if (login != null && login.isNotEmpty) namespaces.add(login);
+    } catch (_) {
+      // No account, no list. The field is free text; typing is the contract.
+      return const <String>[];
+    }
+    try {
+      final decoded = await _runJson(
+        repoPath,
+        ['gh', 'api', 'user/orgs', '--method', 'GET', '-f', 'per_page=100'],
+        'gh api user/orgs',
+        extraEnv: hostEnv(host),
+      );
+      if (decoded is List) {
+        for (final entry in decoded) {
+          if (entry is! Map) continue;
+          final login = entry['login'] as String?;
+          if (login == null || login.isEmpty) continue;
+          if (namespaces.contains(login)) continue;
+          namespaces.add(login);
+        }
+      }
+    } catch (_) {
+      // A missing org list still leaves the login usable.
+    }
+    return namespaces;
+  }
+
   /// Open pull requests for the current repo, via `gh pr list --json`.
   ///
   /// [limit] matches the GitLab side's paginated ceiling (20 pages × 30 —
