@@ -17,7 +17,7 @@ precise and portable.
 
 **Success is not "the code changed".** It is: a sweep script, executed against a
 real process tree, kills an orphan and spares a live watcher; and the two
-orphans currently resident on `admdevops` are reclaimed by the new sweep and are
+orphans currently resident on the measured host are reclaimed by the new sweep and are
 not by the old one.
 
 ## Scope
@@ -55,7 +55,7 @@ flutter test                         # 3479 passing, 2 skipped, 0 failing
 
 Any deviation from **3479 / 2 / 0**: stop and prompt — the baseline moved.
 
-**Do not clean the host.** The two orphans on `admdevops` (`3503545`,
+**Do not clean the host.** The two orphans on the measured host (`3503545`,
 `3504806`, both `ppid 1`, no children) are this plan's live fixture. Phase 5
 uses them, and they cannot be recreated on demand.
 
@@ -175,7 +175,7 @@ test('a fresh sibling heartbeat does not protect an orphan', () async {
 
 **Required red:** `Expected: false / Actual: true` — today a fresh sibling
 heartbeat aborts the sweep before it looks at anything, which is precisely how
-the `admdevops` orphans survived a rebuild.
+the host's orphans survived a rebuild.
 
 **3b.** A stale pair whose pid is gone is pruned, so files do not accumulate.
 
@@ -186,7 +186,7 @@ the `admdevops` orphans survived a rebuild.
 **Files.** `lib/core/git/bounded_watch.dart`; `test/watcher_sweep_exec_test.dart`.
 
 Existing hosts carry legacy `mg-watch.pid` / `mg-watch.hb` — including the two
-orphans on `admdevops`, which name a shell and have no token. The sweep must
+orphans on the measured host, which name a shell and have no token. The sweep must
 reclaim those too, or this plan leaves the exact processes that motivated it
 running forever.
 
@@ -201,7 +201,7 @@ pair as a special case, then delete it.
 
 ### Phase 5 — Live confirmation against the fixture
 
-**No code.** The two orphans on `admdevops` are the fixture, and the check runs
+**No code.** The two orphans on the measured host are the fixture, and the check runs
 in one direction that cannot be faked:
 
 1. Record the fixture: `ps -o pid=,ppid=,etimes=,command= -p 3503545 3504806`.
@@ -325,14 +325,14 @@ one appears rather than assuming it.
 ### Deviation (a) — 2026-09-04 — pre-fix orphans are unreclaimable; Phase 5 cannot pass as written
 
 **Found** at the start of Phase 5, before running anything against the host.
-Phase 5 assumed the new sweep would reclaim the two `admdevops` orphans. It
+Phase 5 assumed the new sweep would reclaim the two host orphans. It
 cannot, and neither can any other file-driven sweep.
 
 The orphans carry the legacy path in their command line:
 
 ```
-pid 3503545  cmd: sh -c printf %s "$$" > '…/percona-postgres/.git/mg-watch.pid';
-pid 3504806  cmd: sh -c printf %s "$$" > '…/percona-postgres/.git/mg-watch.pid';
+pid 3503545  cmd: sh -c printf %s "$$" > '…/<repo>/.git/mg-watch.pid';
+pid 3504806  cmd: sh -c printf %s "$$" > '…/<repo>/.git/mg-watch.pid';
 ```
 
 but the registry names a newer watcher:
@@ -375,7 +375,7 @@ confirm no live watcher was harmed.
 (0026 Phase 3):
 
 ```
-watcher: polling …/percona-postgres — restart budget spent (3/3);
+watcher: polling …/<repo> — restart budget spent (3/3);
 watchers held 1, restarts spent 3
 after: restartScheduled(source died) -> armed(arm succeeded)
     -> restartScheduled(source died) -> armed(arm succeeded)

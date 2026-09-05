@@ -732,7 +732,7 @@ flutter test             # passing rises by exactly the tests added; failing 0
 
 ### Re-measurement — 2026-09-04 (after phases 1-5, 7, 9)
 
-Method as Phase 0, against `percona-postgres` on the live host, with the app
+Method as Phase 0, against one repository on the live host, with the app
 connected. Control passed (**7 start events for 5 known invocations**) before
 the capture, per the rule that an instrument is not trusted until it has been
 seen to work — this one had failed twice before. `~/.gitconfig` restored
@@ -1129,7 +1129,7 @@ to reconstruct them from the phase table.
 
 ### Deviation (e) — 2026-09-04 — Phase 7 made every refresh blank the panel
 
-**Reported from a running build**: *"when I had the percona-postgres remote repo
+**Reported from a running build**: *"when I had the remote repo
 open the repository main panel was blinking constantly."*
 
 Phase 7 moved `statusProvider` (and `refsProvider`, `pendingOpProvider`,

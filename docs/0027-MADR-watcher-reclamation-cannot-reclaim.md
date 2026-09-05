@@ -225,7 +225,7 @@ the same sweep. Both must be seen to fail before they are trusted: the first
 against today's script (which reclaims nothing), the second against a sweep with
 the identity check removed.
 
-The live confirmation is the two orphans currently on `admdevops`
+The live confirmation is the two orphans currently on the measured host
 (pids `3503545`, `3504806`): a sweep built to this decision must reclaim them,
 and today's must not. They are deliberately left in place as the fixture.
 

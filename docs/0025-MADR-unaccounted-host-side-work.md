@@ -17,7 +17,7 @@ only thing that knows any of it happened. That is the point of the product —
 and it means the app is solely responsible for accounting for what it starts.
 
 Two measurements taken on 2026-09-04, against the real host this app runs
-against (`admdevops`) rather than a fixture, show that it does not:
+against (the real remote host) rather than a fixture, show that it does not:
 
 * **It leaves processes behind.** Nineteen `inotifywait` processes were found
   orphaned to init, the oldest running for **16.9 days**, four of them
@@ -586,7 +586,7 @@ all**, which is how 19 orphans and 123 processes both went unnoticed.
 host, method as in Phase 0, control passed 7 ≥ 5). Found by measuring rather
 than predicted — this finding did not exist when the record was written.
 
-Across a 21-minute window with the app connected to `percona-postgres`, 156 git
+Across a 21-minute window with the app connected to one repository, 156 git
 processes were logged. They separate into three regimes with no overlap:
 
 | regime | duration | git processes | character |
@@ -1005,7 +1005,7 @@ Flutter 3.47.2.
 * [0024](0024-MADR-ssh-and-remote-repo-engine-debug-audit.md) established that
   the transport itself is sound, which is what makes both of these
   application-level rather than transport-level problems.
-* Host measured: `admdevops`, Linux, OpenSSH 10.3p1,
+* Host measured: the remote host — Linux, OpenSSH 10.3p1,
   `fs.inotify.max_user_instances = 1024`.
 * The 19 orphans found during this work were terminated at the maintainer's
   request on 2026-09-04 — housekeeping, not a fix. The leak resumes until
