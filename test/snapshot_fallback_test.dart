@@ -186,11 +186,14 @@ void main() {
       final assemble = src.substring(start, start + 3000);
       expect(
         assemble,
-        contains('Isolate.run(() => parseRefsDetailed'),
+        contains('parseWorker.parseRefs('),
         reason:
             'the ref section is routinely LARGER than the status section; '
             'parsing it inline is the one thing on this path that can stall '
-            'frames rather than merely spin a pane',
+            'frames rather than merely spin a pane. Since MADR 0025 E the hop '
+            'goes to the shared long-lived parse worker rather than a '
+            'per-call Isolate.run — same off-isolate guarantee, one isolate '
+            'instead of one per snapshot',
       );
       expect(assemble, contains('refsStdout.length > _isolateThreshold'));
     },

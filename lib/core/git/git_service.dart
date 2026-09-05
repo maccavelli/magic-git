@@ -5,6 +5,7 @@ import 'dart:isolate';
 
 import '../exec/operation_activity.dart';
 import '../forge/forge.dart';
+import '../parse/parse_worker.dart';
 import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../undo/undo_types.dart';
@@ -2165,7 +2166,7 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     }
 
     final status = statusStdout.length > _isolateThreshold
-        ? await Isolate.run(() => GitPorcelainParser.parseV2(statusStdout))
+        ? await parseWorker.parseStatus(statusStdout)
         : GitPorcelainParser.parseV2(statusStdout);
     // Same 32 KiB gate as the porcelain parse above. This one was never
     // gated, despite the ref section being routinely the LARGER of the two
@@ -2173,7 +2174,7 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     // despite running on every snapshot. It is the only parse on the status
     // path that can stall frames rather than merely spin a pane (0023 B8).
     final refsResult = refsStdout.length > _isolateThreshold
-        ? await Isolate.run(() => parseRefsDetailed(refsStdout))
+        ? await parseWorker.parseRefs(refsStdout)
         : parseRefsDetailed(refsStdout);
     // `git remote` inside a repo effectively cannot fail; a non-zero exit is
     // treated as "no remotes known" rather than failing the whole snapshot —
@@ -2518,7 +2519,7 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     }
     final stdout = result.stdout;
     if (stdout.length > _isolateThreshold) {
-      return Isolate.run(() => parseGitLog(stdout));
+      return parseWorker.parseLog(stdout);
     }
     return parseGitLog(stdout);
   }
@@ -2885,7 +2886,7 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
     }
     final stdout = result.stdout;
     if (stdout.length > _isolateThreshold) {
-      return Isolate.run(() => parseBlame(stdout));
+      return parseWorker.parseBlameOutput(stdout);
     }
     return parseBlame(stdout);
   }
