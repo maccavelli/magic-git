@@ -10,6 +10,7 @@
 // once a degraded watcher started refreshing every few seconds.
 
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -135,4 +136,80 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('lib/a.dart'), findsWidgets, reason: 'and after it lands');
   });
+
+  // ---- the guard --------------------------------------------------------
+  //
+  // The behavioural test above proves the property for one panel. This stops a
+  // NEW render site from shipping without it, which is how both of the
+  // affected sites got there: they predated Phase 7, which changed refresh
+  // into reload underneath them.
+
+  test(
+    'every .when() on a snapshot-derived provider skips loading on reload',
+    () {
+      // The derived set is read from source, not hardcoded — a hardcoded list
+      // would silently stop covering a provider that starts deriving later.
+      final providersSrc = File(
+        'lib/core/providers/app_providers.dart',
+      ).readAsStringSync();
+      final derived = <String>{};
+      final decls = RegExp(
+        r'^final (\w+Provider)\s*=',
+        multiLine: true,
+      ).allMatches(providersSrc).toList();
+      for (var i = 0; i < decls.length; i++) {
+        final start = decls[i].start;
+        final end = i + 1 < decls.length
+            ? decls[i + 1].start
+            : providersSrc.length;
+        if (providersSrc
+            .substring(start, end)
+            .contains('repoSnapshotProvider(')) {
+          derived.add(decls[i][1]!);
+        }
+      }
+      expect(
+        derived,
+        isNotEmpty,
+        reason: 'the scan must find the derived providers at all',
+      );
+
+      final offenders = <String>[];
+      for (final f
+          in Directory('lib/features')
+              .listSync(recursive: true)
+              .whereType<File>()
+              .where((f) => f.path.endsWith('.dart'))) {
+        final src = f.readAsStringSync();
+        for (final m in RegExp(
+          r'final\s+(\w+)\s*=\s*ref\.watch\((\w+Provider)\(',
+        ).allMatches(src)) {
+          if (!derived.contains(m[2])) continue;
+          final varName = m[1]!;
+          for (final w in RegExp('\\b$varName\\.when\\(').allMatches(src)) {
+            // Look at the next 40 LINES, not a byte count. A char window is
+            // the wrong unit and said so loudly: at 500 chars this reported
+            // repo_status_view as an offender when the flag WAS present but
+            // sat behind an eight-line comment explaining why it is there.
+            final window = src.substring(w.end).split('\n').take(40).join('\n');
+            if (!window.contains('skipLoadingOnReload')) {
+              final line =
+                  '\n'.allMatches(src.substring(0, w.start)).length + 1;
+              offenders.add('${f.path}:$line  $varName.when() on ${m[2]}');
+            }
+          }
+        }
+      }
+
+      expect(
+        offenders,
+        isEmpty,
+        reason:
+            'these render a value derived from repoSnapshotProvider through '
+            '.when() without skipLoadingOnReload, so every refresh replaces them '
+            'with a spinner while the previous data is still held:\n'
+            '${offenders.join('\n')}',
+      );
+    },
+  );
 }
