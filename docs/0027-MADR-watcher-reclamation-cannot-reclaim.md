@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-09-04
 decision-makers: [Maintainer]
 consulted: []
@@ -62,6 +62,18 @@ Recording the shell is the *correct* intent — the shell carries
 `trap cleanup TERM ... kill "$c"`, so signalling it kills the watcher **and**
 stops the re-arm loop, where signalling `inotifywait` alone would let the loop
 immediately re-arm. The guard, not the record, is what disagrees with the design.
+
+**And the guard is Linux-only.** `/proc/<pid>/comm` does not exist on macOS,
+which `bounded_watch.dart` itself treats as a supported host — the same file
+chooses `find -mmin` over `stat -c %Y` with the comment *"the latter is GNU-only
+and this runs against macOS hosts too"*. On a macOS host `cat /proc/…` yields
+nothing, the `case` again cannot match, and the sweep is a no-op for a second,
+independent reason. It also means the executable confirmation this record
+demands could not run on the macOS development machine at all.
+
+`ps -o command= -p <pid>` is POSIX and works on both (verified on this Mac and
+on the Linux host), so the replacement identity check must be built on `ps`,
+not on `/proc`.
 
 ### 2. A fresh heartbeat aborts the sweep before it examines anything
 
@@ -163,11 +175,16 @@ Each watcher instance gets a unique token at arm time and owns its own files:
   asking whether the repo is watched at all, so it works during normal use.
 * **Defect 4 disappears**: files accumulate per instance and are removed on
   reclamation, so every watcher is discoverable.
-* **Defect 1 is fixed without weakening the guard**: identity is verified
-  against `/proc/<pid>/cmdline` containing that instance's **own** token, which
+* **Defect 1 is fixed without weakening the guard**: identity is verified with
+  `ps -o command= -p <pid>` and a match on that instance's **own** token, which
   a recycled pid cannot satisfy. This is strictly stronger than the `comm`
   check it replaces — `comm` would accept *any* `inotifywait` on the host,
-  including one belonging to a different tool or user.
+  including one belonging to a different tool or user — and, being POSIX rather
+  than `/proc`, it works on macOS hosts and is runnable in a local test.
+
+  The token needs no separate plumbing: the pid-file path already appears in the
+  watcher's own command line, because the script embeds it. Matching the path is
+  matching the instance.
 
 ### Consequences
 
