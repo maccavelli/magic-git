@@ -702,6 +702,53 @@ per-command executor. It also needs an answer for a wedged session that the
 batching proposal did not: a session is a single point of failure in a way that
 N independent channels are not.
 
+#### Amendment D1.1 — 2026-09-04: declined on measurement
+
+**D1 is declined**, and Phase 12 is closed unexecuted. The plan gated approval
+on a number — *"If phases 2-11 reach the ≤15 target, D1's remaining value is
+~30 round trips per gesture and may not justify the risk. That is a decision to
+take on the number, not now."* The number was taken.
+
+**What the measurement says.**
+
+* **Idle is free.** Nineteen minutes connected cost **zero** git processes, so
+  D1 buys nothing in steady state. Its entire value is concentrated in gestures.
+* **A commit+push is ≈42 app-level `execute()` calls** (76 host processes; the
+  snapshot's three gits are siblings under one `sh -c`). D1 is **reads only**,
+  so it covers ≈36 of them.
+* **RTT to the host is 51 ms** (median of 12 TCP connects to :22; ICMP blocked).
+  At two round trips per command that is ≈3.7 s of protocol overhead per
+  gesture, or **≈1-2 s of wall clock** once the read lane's 4-way concurrency is
+  applied.
+
+**Why that does not justify it.** D1 is the only proposal in this record that
+creates a single point of failure: one wedged session degrades every command on
+the connection, where N independent channels degrade one. Its constraints —
+reads only, one deadline per request, per-request byte budgets, fail-open,
+flag-gated default off — are all sound, but they are mitigations for a risk that
+buys 1-2 s on a gesture a user performs deliberately and expects to take a
+moment. The finding that motivated this record was **123 processes and 19
+orphaned watchers**, both now addressed by work that added no new failure mode.
+
+**Stated against the decision, because the number may be conservative in D1's
+favour.** The 51 ms figure is network RTT measured by TCP connect. A real SSH
+`CHANNEL_OPEN` + `exec` also costs server-side processing, so the true
+per-command overhead is *at least* two RTTs and plausibly more — a separate
+measurement of ten muxed `ssh` invocations came out at 242 ms each, though that
+included local client process spawn the app does not pay. **D1's saving is
+therefore a floor, not a ceiling**, and this decline is made knowing that.
+
+**What would reopen it**, so a future reader has a threshold rather than a
+verdict:
+
+* a materially higher-latency host becoming normal — at 200 ms RTT the same
+  gesture carries ≈14 s of protocol overhead, ≈4 s of wall clock, which is a
+  different decision;
+* a workload that issues many more reads per gesture than a commit+push;
+* a measurement of the *actual* channel-open cost (not TCP RTT) showing the
+  per-command overhead is several times what is modelled here.
+
+Until one of those, the per-command executor stays.
 ### D2 — Bundle the refresh triple into one invocation
 
 > **Already implemented — corrected 2026-09-04 during execution.**

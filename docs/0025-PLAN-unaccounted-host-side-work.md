@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-04
 associated-madr: "0025-MADR-unaccounted-host-side-work.md"
 ---
@@ -661,6 +661,12 @@ full suite +1.
 
 ## Phase 12 — D1: persistent command session *(requires separate approval)*
 
+> **DECLINED ON MEASUREMENT — 2026-09-04.** Not executed. The gate below asked
+> for a number before approval; the number was taken and argues against it. See
+> the execution record and MADR amendment **D1.1**. The steps stand as written
+> so the record shows what was planned; do not implement from them without
+> re-deciding on fresh measurements.
+
 **Not authorized by approval of this plan.**
 
 One long-lived `sh` per connection reading length-prefixed requests and writing
@@ -842,7 +848,7 @@ its A2); D2 as **already implemented**.
 | 9 | executed | `0a9e0d4` | `Expected: <1> / Actual: <5>` — five calls, five isolates | four hot parses share one persistent isolate |
 | 10 | **already implemented** | — | — | see deviation (b): `_snapshot` bundled the triple before this plan |
 | 11 | **declined on evidence** | — | — | see deviation (f): no production caller, and the transport cannot carry a session |
-| 12 | **not authorized** | — | — | needs separate approval |
+| 12 | **declined on measurement** | — | — | idle is free; ≈1-2 s/gesture against a single point of failure (MADR D1.1) |
 
 ### Phase 7 as executed — F3 by sharing the fetch, not by superseding waves
 
@@ -1054,3 +1060,69 @@ content-keyed suppression is F1, already declined on evidence (deviation (a)) �
 the witness cannot gate `status`. Three extra snapshots (nine host processes)
 per gesture does not justify either. Recorded as understood and accepted rather
 than left reading as an open miss.
+
+### Phase 12 closed — 2026-09-04, declined on measurement
+
+The phase's own gate read: *"Required before approval. The live command count
+after Phase 11. If phases 2-11 reach the ≤15 target, D1's remaining value is ~30
+round trips per gesture and may not justify the risk. That is a decision to take
+on the number, not now."*
+
+The number was taken (see the re-measurement above) and the decision is
+**decline**:
+
+| input | measured |
+|---|---|
+| idle cost | **0 processes over 19 minutes** — D1 buys nothing in steady state |
+| commit+push | ≈42 app-level `execute()` calls, of which D1 covers the ≈36 reads |
+| RTT | **51 ms** median |
+| D1's saving | ≈3.7 s protocol overhead, **≈1-2 s wall clock** at 4-way read concurrency |
+
+Against that: D1 is the only proposal here that introduces a single point of
+failure. One wedged session degrades every command on the connection where N
+channels degrade one, and no amount of deadline/budget/fail-open machinery
+removes that shape — it only bounds it.
+
+**Recorded against the decision:** the 51 ms figure is *network* RTT (TCP
+connect); a real `CHANNEL_OPEN` + `exec` also costs server-side processing, so
+D1's saving is a **floor, not a ceiling**. The decline is made knowing the true
+number is larger, because the objection is the failure mode rather than the
+size of the win. MADR amendment **D1.1** carries the thresholds that would
+reopen it — chiefly a materially higher-latency host, where the same gesture
+carries ≈14 s of protocol overhead at 200 ms RTT and the decision changes.
+
+**With this, every phase of this plan is resolved.** Phases 1-5, 7 and 9
+executed; 6, 8, 11 and 12 declined on evidence; 10 was already implemented. The
+findings that outgrew the plan (C4, C5) were carried by 0026-0029, all complete.
+
+## Residuals — what this plan did not do
+
+`AGENTS.md`: *"`executed` means the engineering phases shipped, not that nothing
+is left — where the body names a residual or a maintainer-only step, the body
+wins."* Two remain, both deliberate.
+
+**1. Two of C3's five proposed ceilings were never built.** Whole-plan
+acceptance criterion 4 asks that *"every ceiling is a named constant with a test
+that fails when exceeded"*. `maxConcurrentWatchers` and `maxConcurrentStreams`
+are; **"total host processes ≤ 6"** and **"inotify instances ≤ 8"** have no
+constant in the codebase.
+
+Not an oversight — they would enforce bounds nothing can currently exceed. With
+watchers capped at 2 and D1/D3 declined, no other component holds a long-lived
+host process; the measured count at rest is **3**, and the host carried 11
+inotify instances across *all* processes against a limit of 1024. Building them
+would add counters to a component whose last four defects were concurrency-
+shaped, to guard a condition that cannot arise. **Criterion 4 is recorded as
+not met, with the reason, rather than satisfied literally.** If a future
+component starts holding host processes, that is when these become real.
+
+**2. The orphan target was met in one window, not over a week.** The success
+table's row reads *"orphaned watchers after a week incl. sleep/VPN drop"*. What
+was measured is **0 orphans in a single session**, plus a live confirmation that
+an abandoned watcher self-terminates at 371 s (0028 Phase 4). That is strong but
+it is not a week, and sleep/VPN drop were never exercised. **This needs elapsed
+time, not work**: re-census the host after ~7 days of normal use. If it is 0,
+the row closes with evidence.
+
+Neither residual blocks anything. Both are stated here so a reader does not have
+to reconstruct them from the phase table.
