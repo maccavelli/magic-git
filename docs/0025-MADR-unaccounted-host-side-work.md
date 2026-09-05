@@ -259,6 +259,13 @@ A unit test cannot establish this — the failure requires a real dropped TCP.
 
 ### B — One commit+push causes 123 git processes, against a believed ≈22–40
 
+> **Superseded as a current figure — re-measured 2026-09-04.** The 123 below is
+> the pre-remediation baseline and stands as the record of what was found. After
+> phases 1-5, 7 and 9 the same gesture costs **76** processes, and a connected
+> idle app costs **0** (see the success table and **C4**). The paragraphs below
+> are not updated in place, so that the baseline this record argued from stays
+> legible.
+
 **Evidence: measured with `trace2`, exact.** One one-file commit+push in the
 running `.app`, on a real repo:
 
@@ -411,6 +418,12 @@ command starts**, every time.
 
 At 123 processes, that is 246 round trips of pure protocol for one commit.
 
+*(Re-measured 2026-09-04: the gesture is now 76 processes from ≈42 app-level
+`execute()` calls — the snapshot's three gits are siblings under one `sh -c`, so
+processes overcount commands. ≈84 round trips, ≈3.7 s at the measured 51 ms RTT,
+and ≈1-2 s of wall clock once the read lane's 4-way concurrency is applied. That
+smaller figure, not the 246 above, is what D1's approval turns on.)*
+
 ### The watcher leak is a documented upstream limitation
 
 `inotifywait` blocks in `select()` on its inotify fd. On a quiet repository it
@@ -454,7 +467,7 @@ general worker has to make — serial processing, superseded results dropped by
 the caller's token. The pattern is proven in-tree; it simply was not applied to
 the other twelve.
 
-## C — Process and watchdog management (3)
+## C — Process and watchdog management (4)
 
 ### C1 — Make the watcher self-terminating, and stop relying on the client
 
@@ -566,6 +579,55 @@ Proposed ceilings, to be pinned as constants and asserted by a test the way
 
 The point is not the specific numbers. It is that today **there is no number at
 all**, which is how 19 orphans and 123 processes both went unnoticed.
+
+### C4 — The degraded-poll path costs more than everything else combined
+
+**Grounded in:** the 2026-09-04 post-phase re-measurement (`trace2` on the live
+host, method as in Phase 0, control passed 7 ≥ 5). Found by measuring rather
+than predicted — this finding did not exist when the record was written.
+
+Across a 21-minute window with the app connected to `percona-postgres`, 156 git
+processes were logged. They separate into three regimes with no overlap:
+
+| regime | duration | git processes | character |
+|---|---|---|---|
+| A | 0–92 s | **83** | exactly 4 processes every 5 s |
+| B | 92 s–1240 s | **0** | connected, idle, event-driven |
+| C | last 42 s | **76** | one one-file commit+push |
+
+**Regime B is the good news and it is unambiguous:** nineteen minutes connected
+and idle cost *zero* git processes. An armed event-driven watcher is free, so
+none of this record's remaining proposals can be justified by steady-state cost.
+
+**Regime A is the finding.** 83 of 156 processes — **53 % of everything
+observed** — arrived with no user action, on a 5-second metronome, each tick
+being one snapshot (3 gits) plus one `rev-parse`. Five seconds is
+`pollInterval` in `watch_lifecycle.dart:149`, which by construction runs **only
+in degraded mode**: `start()` cancels `pollTimer` on a successful arm (`:227`).
+The metronome stopped abruptly at 92 s, consistent with a recovery attempt
+finally arming.
+
+The rate is the problem: **48 git processes per minute** while degraded, and
+`recoveryInterval` is 3 minutes, so a single degradation can cost ~140
+processes before it is even retried — more than the 123 that motivated this
+entire record, from one unlucky arm.
+
+**What is observed but not yet explained.** The census taken during regime A
+showed **two live `inotifywait` processes** (ages 86 s and 69 s) on the host at
+the same time the app was polling as though it had no watcher. Host watchers
+running while the app polls means the cost is paid twice: the watch processes
+exist and are billed to the connection, and the poll runs anyway. Whether the
+stream broke while the process survived (the 0022 M5 signature), whether two
+arms raced, or whether the app misclassified a healthy watch, cannot be settled
+from host-side data — it needs app-side instrumentation of `watchLifecycle`'s
+mode transitions.
+
+**Why this outranks D1.** D1 makes each command cheaper; C4 is about commands
+that should not be issued at all. It is bug-shaped rather than architectural,
+carries no single point of failure, and a persistent session would merely make
+the same 4-per-5-second poll cheaper. On the measured evidence the ordering in
+decision driver 5 — reduce demand before adding machinery — applies to C4
+ahead of D1.
 
 ## D — The process stack (3)
 
@@ -769,18 +831,29 @@ Two parts:
 Deliberately expressed as measurements, all of which are now cheap to take
 because the instruments exist and have been validated:
 
-| measure | today | target |
-|---|---|---|
-| git processes, one one-file commit+push | **123** | **≤ 15** |
-| refresh triples per commit+push | **15** | **1–2** |
-| long-lived host processes per connection | unbounded (≈40 observed) | **≤ 6, enforced** |
-| orphaned watchers after a week incl. sleep/VPN drop | 19 over ~17 days | **0** |
-| round trips per command | 2 (`CHANNEL_OPEN` + `exec`) | ~0 amortised (D1) |
-| repeated `Isolate.run` call sites | **13** | hot parses on 1–2 warm workers |
+| measure | baseline | target | **re-measured 2026-09-04** |
+|---|---|---|---|
+| git processes, one one-file commit+push | **123** | **≤ 15** | **76** — target missed |
+| refresh triples per commit+push | **15** | **1–2** | **7** — target missed |
+| long-lived host processes per connection | unbounded (≈40 observed) | **≤ 6, enforced** | **3 at rest** — met |
+| orphaned watchers after a week incl. sleep/VPN drop | 19 over ~17 days | **0** | **0** — met (single window, not a week) |
+| round trips per command | 2 (`CHANNEL_OPEN` + `exec`) | ~0 amortised (D1) | unchanged; D1 not built |
+| repeated `Isolate.run` call sites | **13** | hot parses on 1–2 warm workers | **4 hot parses on 1 worker** — met |
+| *(new)* git processes while connected and idle | not measured | — | **0 over 19 minutes** |
+| *(new)* git processes while the watcher is degraded | not measured | — | **48 per minute** (C4) |
 
 Each is measurable with a method already used in this record: `trace2` for
 command counts, `/proc` enumeration for host processes, dartssh2 source for
 round trips.
+
+**Two targets were missed and are recorded as missed.** The commit+push count
+fell 123 → 76 (38 %) and the refresh triples 15 → 7, both short of target. The
+re-measurement also reframes what is left: with idle cost at zero (regime B),
+the remaining count is concentrated in gestures and in the degraded-poll path
+**C4**, not in steady state. Measured RTT to the host is **51 ms** (median TCP
+connect to :22), so the ~36 read commands in a gesture carry ≈3.7 s of protocol
+overhead, or roughly 1–2 s of wall clock at the read lane's 4-way concurrency —
+D1's actual remaining value, and the number its approval should be decided on.
 
 ## Sources
 

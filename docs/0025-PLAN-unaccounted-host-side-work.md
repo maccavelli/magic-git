@@ -687,6 +687,16 @@ about to disappear.
 2–11 reach the ≤15 target, D1's remaining value is ~30 round trips per gesture
 and may not justify the risk. That is a decision to take on the number, not now.
 
+> **The number was taken on 2026-09-04** — see the re-measurement below. The
+> ≤15 target was **not** reached (76 processes, ≈42 app commands per gesture),
+> so on the letter of this gate D1 is live, and its measured value is ≈3.7 s of
+> protocol overhead per commit+push (≈1–2 s of wall clock at the read lane's
+> 4-way concurrency, 51 ms RTT). **Still not approved**, on the re-measurement's
+> own evidence: 53 % of all observed host processes came from the degraded-poll
+> path (**MADR 0025 C4**), which D1 does not address and would merely make
+> cheaper. C4 is bug-shaped, carries no single point of failure, and by decision
+> driver 5 comes first. Re-decide D1 against a window with C4 removed.
+
 ---
 
 ## Verification
@@ -706,13 +716,46 @@ flutter test             # passing rises by exactly the tests added; failing 0
 3. The MADR's success table re-measured with the validated instruments and
    recorded — **including any target not reached**:
 
-| measure | baseline | target |
-|---|---|---|
-| git processes, one commit+push | 123 | ≤ 15 |
-| refresh triples per commit+push | 15 | 1–2 |
-| long-lived host processes per connection | ≈40 observed | ≤ 6, enforced |
-| orphaned watchers after a week incl. sleep/VPN drop | 19 / ~17 days | 0 |
-| repeated `Isolate.run` call sites | 13 | hot parses on 1 worker |
+| measure | baseline | target | measured 2026-09-04 |
+|---|---|---|---|
+| git processes, one commit+push | 123 | ≤ 15 | **76 — missed** |
+| refresh triples per commit+push | 15 | 1–2 | **7 — missed** |
+| long-lived host processes per connection | ≈40 observed | ≤ 6, enforced | **3 at rest — met** |
+| orphaned watchers after a week incl. sleep/VPN drop | 19 / ~17 days | 0 | **0 — met (one window, not a week)** |
+| repeated `Isolate.run` call sites | 13 | hot parses on 1 worker | **4 on 1 worker — met** |
+
+### Re-measurement — 2026-09-04 (after phases 1-5, 7, 9)
+
+Method as Phase 0, against `percona-postgres` on the live host, with the app
+connected. Control passed (**7 start events for 5 known invocations**) before
+the capture, per the rule that an instrument is not trusted until it has been
+seen to work — this one had failed twice before. `~/.gitconfig` restored
+byte-identical afterwards (sha256 `3134c8a2…` before and after), trace file and
+backups removed, nothing left on the host.
+
+**156 git processes over a 21-minute window, separating into three regimes with
+no overlap:**
+
+| regime | duration | processes | character |
+|---|---|---|---|
+| A | 0-92 s | **83** | 4 processes every 5 s, no user action |
+| B | 92-1240 s | **0** | connected, idle, event-driven |
+| C | last 42 s | **76** | one one-file commit+push |
+
+* **Idle is free.** Nineteen minutes connected cost zero git processes, so no
+  remaining proposal can be justified by steady-state cost.
+* **The gesture cost 76 processes**, from ≈42 app-level `execute()` calls — the
+  snapshot's three gits are siblings under one `sh -c`, so the seven
+  status/for-each-ref/remote triples are **7 commands, not 21**.
+* **Regime A is a new finding**, recorded as **MADR 0025 C4**: 53 % of all
+  observed processes came from a 5-second metronome that only runs in
+  `watchLifecycle`'s degraded mode — 48 processes per minute, with a 3-minute
+  recovery interval, so one bad arm can cost ~140 processes. Two live
+  `inotifywait` processes were present *during* that polling, which host-side
+  data cannot explain and which needs app-side instrumentation of the mode
+  transitions.
+* **RTT to the host: 51 ms** (median TCP connect to :22; ICMP blocked). This is
+  the number D1's approval turns on — see Phase 12.
 
 4. Every ceiling is a named constant with a test that fails when exceeded.
 5. `~/.gitconfig` on any measured host restored byte-identical; no samplers,
