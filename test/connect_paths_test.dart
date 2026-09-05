@@ -10,8 +10,6 @@
 // each on the unit that owns it. What is not covered is named at the bottom
 // rather than left to look covered.
 
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
