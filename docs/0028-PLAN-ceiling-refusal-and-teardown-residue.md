@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-04
 associated-madr: "0028-MADR-ceiling-refusal-and-teardown-residue.md"
 ---
@@ -209,11 +209,88 @@ serialised path and never arms directly — and criterion 4 exists to enforce it
 
 | Phase | Status | Commit | Red-test observed | Result |
 |---|---|---|---|---|
-| 1 | not started | — | — | — |
-| 2 | not started | — | — | — |
-| 3 | not started | — | — | — |
-| 4 | not started | — | — | — |
-| 5 | not started | — | — | — |
+| 1 | executed | `af8ea52` | `Expected: contains 'ceiling' / Actual: 'arm unavailable'` | the four refusals are typed |
+| 2 | executed | `dd62a36` | `Expected: eventDriven / Actual: polling` | a ceiling-refused repo arms on slot release |
+| 3 | executed (corrected) | `854d7a0` | `Expected: polling / Actual: eventDriven` (ceiling raised) | assumption stated and pinned; see deviation (a) |
+| 4 | executed | — | n/a (live experiment) | **H3 resolved by consequence** — abandoned watcher self-terminated at 371 s |
+| 5 | executed | *(this entry)* | — | both verdicts recorded |
+
+### Phase 2 as executed — the wake-up, and its guard
+
+`releaseSlot()` now broadcasts, and a watcher that degraded **for the ceiling
+reason only** re-arms on it. Red observed with no time advanced at all, so a
+green cannot be the 3-minute recovery timer firing:
+
+```
+Expected: WatchMode:<WatchMode.eventDriven>
+  Actual: WatchMode:<WatchMode.polling>
+```
+
+The reason guard is load-bearing and was seen to fail: removing it makes a
+`noTool` refusal re-probe on every slot release (`Expected: <1> / Actual: <2>`).
+Acceptance criterion 4 holds — `grep` finds exactly one call to `arm(hooks)`
+(`watch_lifecycle.dart:337`, inside `startOnce`), so the wake-up requests an arm
+through the serialised path and never opens a second one.
+
+### Phase 4 as executed — H3, and a first attempt that had to be thrown away
+
+**Verdict: H3 is resolved by consequence of 0026 and 0027.** Read from the
+plan's pre-committed table (*"process gone within ~7 min"*), not fitted
+afterwards.
+
+An abandoned watcher — armed with a fresh lease, then its client removed with no
+clean teardown, nothing ever refreshing the lease again — self-terminated at
+**lease age 371 s**, inside the predicted 360-480 s window. The mechanism is
+visible in the samples rather than inferred: the `inotifywait` child pid rotates
+at t≈135 s and t≈270 s, which is `-t 120` waking and the loop re-arming, with
+the lease re-checked at each wake (146 s, 281 s — both fresh) and the third wake
+finding it stale.
+
+```
+t≈0s   ALIVE  child=182260 (age 10s)   lease age=11s
+t≈135s ALIVE  child=182413 (age 25s)   lease age=146s     <- first -t wake, re-armed
+t≈270s ALIVE  child=182571 (age 40s)   lease age=281s     <- second wake, re-armed
+t≈360s GONE — self-terminated at lease age 371s
+```
+
+**The first attempt was invalid and is recorded rather than quietly replaced.**
+It wrote the watcher's output to a log **inside the directory being watched**,
+so every event wrote a line that generated another event: 178,933,852 lines and
+**1.78 GB** on the host, `inotifywait -t 120` never saw 120 s of silence, the
+lease was therefore never re-checked, and the watcher was still alive at 419 s.
+Read naively that was a confirmation of H3 — the opposite of the truth. It was
+caught by checking the instrument rather than the result. The file was deleted
+(`/tmp` 51% → 8%) and one `inotifywait` my own cleanup orphaned was killed.
+
+A second invalid check was also caught: an instrument probe whose redirect
+failed because its log directory did not exist yet reported "exited within 25s"
+having never started at all. The corrected probe verified the process was
+running before timing it, and observed `-t 20` firing after ~18 s on a quiet
+directory.
+
+**Incidental confirmation.** The app disconnected during the phase, and its own
+lease shells were gone with zero orphans left behind — the lease doing exactly
+its job once the client is truly absent.
+
+### Verdicts
+
+* **H2 — confirmed and fixed.** A ceiling refusal was indistinguishable from a
+  permanent host limitation and answered with the same 3-minute recovery; a
+  third watched repo therefore polled at 48 host processes per minute until a
+  timer happened to fire, or forever while the slots stayed occupied. The
+  refusals are now typed, and a ceiling-refused repo takes a freed slot at once.
+* **H3 — resolved by consequence, with evidence.** 0026's serialised arming
+  removed the route that manufactured orphans, and 0027's per-instance lease
+  means an orphan's own lease goes stale on schedule. Measured: 371 s. **No
+  remedy was needed and none was built** — which is what "measure first" was
+  for.
+* **The `static` ceiling scope — no defect.** See deviation (a): the app holds
+  one connection at a time, so the two comments describe the same set, and the
+  remedy the MADR floated would have multiplied the ceiling. Now stated and
+  pinned.
+
+0026's H2/H3 are closed. Its "open, not eliminated" note can be read as
+discharged.
 
 ## Deviations
 
