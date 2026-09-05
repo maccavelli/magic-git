@@ -200,11 +200,7 @@ class RemoteWatchService {
           gitArgs: [
             'sh',
             '-c',
-            watcherSweepScript(
-              [legacyWatchPidFile(entry.value)],
-              heartbeat: legacyWatchHeartbeatFile(entry.value),
-              staleAfter: leaseStaleAfter,
-            ),
+            watcherSweepScript([entry.value], staleAfter: leaseStaleAfter),
           ],
           lane: ExecLane.isolated,
           timeout: const Duration(seconds: 20),

@@ -71,17 +71,13 @@ void main() {
   }
 
   test('the sweep reclaims an orphaned watcher', () async {
-    final pidFile = '${tmp.path}/mg-watch.pid';
+    final pidFile = '${tmp.path}/mg-watch.tok1.pid';
     final proc = await spawnWatcher(pidFile);
     expect(await isAlive(proc.pid), isTrue, reason: 'fixture must be running');
 
     // No heartbeat file at all: the owner is gone, which is what an orphan is.
     await runScript(
-      watcherSweepScript(
-        [pidFile],
-        heartbeat: '${tmp.path}/mg-watch.hb',
-        staleAfter: const Duration(minutes: 5),
-      ),
+      watcherSweepScript([tmp.path], staleAfter: const Duration(minutes: 5)),
     );
 
     expect(
@@ -96,21 +92,47 @@ void main() {
     );
   });
 
+  test('a fresh sibling heartbeat does not protect an orphan', () async {
+    // THE PRODUCTION SCENARIO. One repo, two watcher instances: one live with
+    // its client refreshing its lease, one orphaned. This is exactly the state
+    // on the host after a rebuild-and-relaunch, and it is how two orphans
+    // survived a sweep and reached 19 minutes (0027 defect 2/3).
+    final orphanPid = '${tmp.path}/mg-watch.dead.pid';
+    final livePid = '${tmp.path}/mg-watch.live.pid';
+    final orphan = await spawnWatcher(orphanPid);
+    final live = await spawnWatcher(livePid);
+
+    // The LIVE instance's owner is alive and refreshing its own lease.
+    // The orphan's lease file does not exist: nobody is refreshing it.
+    File('${tmp.path}/mg-watch.live.hb').writeAsStringSync('');
+
+    await runScript(
+      watcherSweepScript([tmp.path], staleAfter: const Duration(minutes: 5)),
+    );
+
+    expect(
+      await diedWithin(orphan.pid),
+      isTrue,
+      reason: "a sibling's fresh heartbeat must not keep an orphan alive",
+    );
+    expect(
+      await isAlive(live.pid),
+      isTrue,
+      reason: 'the live watcher must survive its own sweep',
+    );
+  });
+
   test('the sweep spares a process that is not ours', () async {
     // A pid file naming a process whose command line carries no marker of
     // ours — a recycled pid, or another tool. Killing it would be the
     // "wrong processes in the kill set" failure 0025 records.
-    final pidFile = '${tmp.path}/mg-watch.pid';
+    final pidFile = '${tmp.path}/mg-watch.tok2.pid';
     final other = await Process.start('sh', ['-c', 'sleep 300']);
     spawned.add(other);
     File(pidFile).writeAsStringSync('${other.pid}');
 
     await runScript(
-      watcherSweepScript(
-        [pidFile],
-        heartbeat: '${tmp.path}/mg-watch.hb',
-        staleAfter: const Duration(minutes: 5),
-      ),
+      watcherSweepScript([tmp.path], staleAfter: const Duration(minutes: 5)),
     );
 
     await Future<void>.delayed(const Duration(milliseconds: 300));

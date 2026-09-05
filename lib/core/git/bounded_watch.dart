@@ -288,24 +288,33 @@ String _recordPid(String? pidFile) => pidFile == null
 /// `ps -o command=` is POSIX and works on both — and, unlike `/proc`, lets the
 /// sweep be tested by executing it against a real process.
 String watcherSweepScript(
-  List<String> pidFiles, {
-  required String heartbeat,
+  List<String> gitDirs, {
   required Duration staleAfter,
 }) {
-  final hb = ShellEscaper.escape(heartbeat);
-  final files = pidFiles.map(ShellEscaper.escape).join(' ');
+  final globs = gitDirs
+      .map((d) => ShellEscaper.escape('$d/mg-watch.'))
+      .map((e) => '$e*.pid')
+      .join(' ');
   final mins = staleAfter.inMinutes < 1 ? 1 : staleAfter.inMinutes;
   // `find -mmin` rather than `stat -c %Y`: the latter is GNU-only and this
   // runs against macOS hosts too. A heartbeat NEWER than the window means the
   // client is alive and there is nothing to reclaim.
-  return '[ -n "\$(find $hb -mmin -$mins 2>/dev/null)" ] && exit 0; '
-      'for f in $files; do '
+  // Staleness is evaluated PER INSTANCE, inside the loop, against that
+  // instance's own heartbeat. The previous form opened with a single
+  // `[ -n "$(find <shared hb> -mmin -N)" ] && exit 0` — one repo-wide test that
+  // asked "is anyone watching this repo?" rather than "is this watcher's owner
+  // gone?". Any healthy watcher therefore aborted the whole sweep before it
+  // examined a single pid, which is how two orphans survived a
+  // rebuild-and-relaunch on the host and reached 19 minutes (0027 defect 2).
+  return 'for f in $globs; do '
       '[ -f "\$f" ] || continue; '
+      'hb="\${f%.pid}.hb"; '
+      '[ -n "\$(find "\$hb" -mmin -$mins 2>/dev/null)" ] && continue; '
       'p=\$(cat "\$f" 2>/dev/null); '
-      'case "\$p" in ""|*[!0-9]*) continue ;; esac; '
+      'case "\$p" in ""|*[!0-9]*) rm -f "\$f" "\$hb"; continue ;; esac; '
       'cmd=\$(ps -o command= -p "\$p" 2>/dev/null || echo); '
-      'case "\$cmd" in *"\$f"*) '
-      'kill -TERM "\$p" 2>/dev/null; rm -f "\$f" ;; esac; '
+      'case "\$cmd" in *"\$f"*) kill -TERM "\$p" 2>/dev/null ;; esac; '
+      'rm -f "\$f" "\$hb"; '
       'done; true';
 }
 

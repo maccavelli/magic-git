@@ -183,13 +183,10 @@ void main() {
     });
 
     test('the sweep script is built from the paths it was given', () {
-      final s = watcherSweepScript(
-        ['/r1/.git/mg-watch.pid'],
-        heartbeat: '/r1/.git/mg-watch.hb',
-        staleAfter: const Duration(minutes: 5),
-      );
-      expect(s, contains('mg-watch.pid'));
-      expect(s, contains('mg-watch.hb'));
+      final s = watcherSweepScript([
+        '/r1/.git',
+      ], staleAfter: const Duration(minutes: 5));
+      expect(s, contains('mg-watch.'));
       expect(s, contains('-mmin -5'), reason: 'portable staleness, not stat');
       // WHETHER IT RECLAIMS ANYTHING IS NOT ASSERTED HERE, ON PURPOSE.
       //
