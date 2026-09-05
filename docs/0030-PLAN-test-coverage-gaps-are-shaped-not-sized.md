@@ -390,7 +390,7 @@ that finds itself wanting a live host has left its scope.
 | 1 | executed | — | scan named `project_sections.dart:458` | 2 sites fixed, 1 recorded correct-as-is, blind spot found |
 | 2 | executed | — | fixture rule flagged `Seam.Beta` | live scan green; 2 seams, 3 private impls exempt |
 | 3 | executed | — | 3 sabotages, incl. a real injection | parity sound; 16 rows, wrappers + real processes |
-| 4 | not started | — | — | — |
+| 4 | executed | — | `'recorded'`→`'MISSING'`; `Set:['pipelinesProvider']` | 2 invariants; the third was absorbed by Phase 3 |
 | 5 | not started | — | — | — |
 | 6 | not started | — | — | — |
 | 7 | not started | — | — | — |
@@ -517,3 +517,51 @@ transport that needs a live socket, and it is the most-tested implementation
 (126 test files) with its own live-sshd suite. The exclusion is written into the
 test file, so "parity" here means *every implementation reachable in-process*,
 not literally all five.
+
+### Phase 4 as executed — 2026-09-05
+
+**Invariant A was absorbed by Phase 3 and is not duplicated.** The plan listed
+"scope env before the command that needs it" as its own test; contract rows R2
+and R5 already assert the merged env reaches both `execute` and `executeStream`,
+and R5 was sabotage-proven. Writing it twice would be coverage theatre. Recorded
+here rather than silently dropped.
+
+**Invariant B — a watcher records its pid before it can be signalled.** The
+real script runs with `inotifywait` shimmed onto `PATH`, and the shim reports
+whether the pid file was populated *at the moment it started*. A watcher that
+runs before it is recorded is one the sweep can never name, which is what made
+the host's orphans permanent (0027 amendment 0027.1).
+
+Seen to fail with the pid prelude removed: `Expected: 'recorded' / Actual:
+'MISSING'`.
+
+**Invariant C — forge reads wait for the connect-time login.** `_forgeAuthReady`
+holds a forge data provider until the session's background CLI logins settle, so
+a panel visible at connect loads against an authenticated CLI rather than
+flashing a transient auth error. The scan asserts every provider that calls a
+gh/glab service either awaits the gate or is on a reviewed list.
+
+Seen to fail with the gate removed from one provider:
+`Actual: Set:['pipelinesProvider']`.
+
+**A finding, recorded and not silently allowlisted.** Fourteen forge providers
+await the gate; **six do not**:
+
+```
+changeRequestCommentsProvider, issueCommentsProvider, issueDetailProvider,
+projectLabelsProvider, projectMilestonesProvider, projectReleasesProvider
+```
+
+They are listed as `reviewedWithoutGate` with the reason stated in the test:
+all six are **drill-in** providers, watched only once the user selects an issue,
+milestone or release, which cannot happen before connect completes. That
+reasoning is sound today and is written down so it can be checked rather than
+assumed.
+
+**It is worth a maintainer's eye**, because the exemption rests on a UI
+assumption rather than a structural guarantee: if the Forge tab ever restores a
+selection at connect, one of these fires immediately and shows a transient auth
+error as its error state. Adding the gate to all six would cost nothing for
+sessions without managed tokens (the future is already complete) — but it is a
+behaviour change, and this is a testing plan, so it is reported rather than
+taken.
