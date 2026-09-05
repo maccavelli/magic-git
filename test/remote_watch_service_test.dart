@@ -610,8 +610,20 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       final script = executor.lastStreamArgs.last;
-      expect(script, contains('mg-watch.pid'), reason: 'records its pid');
-      expect(script, contains('mg-watch.hb'), reason: 'checks the heartbeat');
+      // Tokenised per watcher instance since 0027 — the invariant is that the
+      // arm records a pid and checks a heartbeat, not that they sit at a fixed
+      // per-repo path. A shared path is what let a live successor hold a dead
+      // predecessor's lease open.
+      expect(
+        script,
+        matches(RegExp(r'mg-watch\.[\w]+\.pid')),
+        reason: 'records its pid, under this instance token',
+      );
+      expect(
+        script,
+        matches(RegExp(r'mg-watch\.[\w]+\.hb')),
+        reason: 'checks its own heartbeat, not the repo-wide one',
+      );
       expect(script, contains('-t '), reason: 'bounded wait, not blocking');
       expect(script, contains('trap'), reason: 'owns its child on signal');
       await sub.cancel();

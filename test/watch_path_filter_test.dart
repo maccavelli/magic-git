@@ -75,6 +75,14 @@ void main() {
     expect(shouldTriggerWatch('.git/mg-watch.pid'), isFalse);
     expect(shouldTriggerWatch('.git/mg-watch.hb'), isFalse);
     expect(shouldTriggerWatch('worktree/.git/mg-watch.hb'), isFalse);
+    // Since 0027 the lease files are tokenised per watcher instance. The
+    // filter matches the `mg-watch.` prefix, so this still holds — but it is
+    // now load-bearing for a name shape nothing else covers, and a heartbeat
+    // that triggers a watch event would provoke the very refresh it exists to
+    // make unnecessary, once a minute, forever.
+    expect(shouldTriggerWatch('.git/mg-watch.m3k9x2a1.pid'), isFalse);
+    expect(shouldTriggerWatch('.git/mg-watch.m3k9x2a1.hb'), isFalse);
+    expect(shouldTriggerWatch('worktree/.git/mg-watch.m3k9x2a1.hb'), isFalse);
     // Anything else under .git still does.
     expect(shouldTriggerWatch('.git/index'), isTrue);
   });

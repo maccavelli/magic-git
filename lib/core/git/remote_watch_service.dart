@@ -152,8 +152,36 @@ class RemoteWatchService {
 
   /// Registry paths for [repoPath], in the git-dir so they travel with the
   /// repository and never sit at a guessable /tmp path (0025 M4's lesson).
-  static String watchPidFile(String gitDir) => '$gitDir/mg-watch.pid';
-  static String watchHeartbeatFile(String gitDir) => '$gitDir/mg-watch.hb';
+  /// Registry file for ONE watcher instance.
+  ///
+  /// Tokenised per instance, not per repo. A single `mg-watch.pid` per repo was
+  /// truncated by every re-arm, so the registry named only the newest watcher
+  /// and the connect sweep had no record of any orphan to reclaim (0027).
+  static String watchPidFile(String gitDir, String token) =>
+      '$gitDir/mg-watch.$token.pid';
+
+  /// Lease file for ONE watcher instance.
+  ///
+  /// Tokenised for a sharper reason than the pid file: a single `mg-watch.hb`
+  /// per repo is refreshed by whichever watcher is currently healthy, so an
+  /// orphan testing it sees a fresh lease and never exits — self-termination
+  /// was disabled exactly while orphans accumulate (0027).
+  static String watchHeartbeatFile(String gitDir, String token) =>
+      '$gitDir/mg-watch.$token.hb';
+
+  /// The pre-0027 single-file scheme, still present on hosts that ran an
+  /// earlier build. Phase 4 reclaims what it left; nothing writes these.
+  static String legacyWatchPidFile(String gitDir) => '$gitDir/mg-watch.pid';
+  static String legacyWatchHeartbeatFile(String gitDir) =>
+      '$gitDir/mg-watch.hb';
+
+  static int _tokenSeq = 0;
+
+  /// A token unique among *live* watchers. Time plus a sequence: it must not
+  /// collide with another instance, and needs no other property.
+  static String newWatchToken() =>
+      '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}'
+      '${(_tokenSeq++).toRadixString(36)}';
 
   /// Reclaims watcher processes whose client is gone.
   ///
@@ -173,8 +201,8 @@ class RemoteWatchService {
             'sh',
             '-c',
             watcherSweepScript(
-              [watchPidFile(entry.value)],
-              heartbeat: watchHeartbeatFile(entry.value),
+              [legacyWatchPidFile(entry.value)],
+              heartbeat: legacyWatchHeartbeatFile(entry.value),
               staleAfter: leaseStaleAfter,
             ),
           ],
@@ -282,6 +310,10 @@ class RemoteWatchService {
         }
       },
       arm: (hooks) async {
+        // ONE identity per arm. Every re-arm is a new watcher instance and gets
+        // its own lease and registry files, so a live instance can neither
+        // overwrite its predecessor's pid record nor refresh its lease (0027).
+        final token = newWatchToken();
         final tool = cachedTool ??= await _detectWatcher(repoPath);
         if (hooks.isCancelled()) return const WatchAborted();
 
@@ -336,8 +368,11 @@ class RemoteWatchService {
             gitArgs: remoteWatcherArgs(
               tool,
               spec,
-              pidFile: watchPidFile(spec?.gitDir ?? '$repoPath/.git'),
-              heartbeat: watchHeartbeatFile(spec?.gitDir ?? '$repoPath/.git'),
+              pidFile: watchPidFile(spec?.gitDir ?? '$repoPath/.git', token),
+              heartbeat: watchHeartbeatFile(
+                spec?.gitDir ?? '$repoPath/.git',
+                token,
+              ),
             ),
           );
         } on SSHStreamBudgetExhausted catch (e) {
@@ -444,7 +479,7 @@ class RemoteWatchService {
         // for the life of the channel — and the watcher's channel is the
         // longest-lived one in the app (0024 H3).
         final gitDir = spec?.gitDir ?? '$repoPath/.git';
-        final heartbeat = watchHeartbeatFile(gitDir);
+        final heartbeat = watchHeartbeatFile(gitDir, token);
         Future<void> beat() async {
           try {
             await _executor.execute(
