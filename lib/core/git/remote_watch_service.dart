@@ -216,6 +216,16 @@ class RemoteWatchService {
   /// several providers construct their own service against the same host.
   static int _liveWatchers = 0;
 
+  /// Broadcasts the moment a watcher slot is released, so a repo that was
+  /// refused by the ceiling can take it immediately instead of polling until
+  /// its recovery timer fires (0028 H2). Broadcast and never closed: it is a
+  /// process-wide signal with the same lifetime as the counter it reports on.
+  static final StreamController<void> _slotReleases =
+      StreamController<void>.broadcast();
+
+  /// Fires once per released watcher slot.
+  static Stream<void> get slotReleases => _slotReleases.stream;
+
   /// Live watcher count — for tests and diagnostics.
   static int get liveWatchers => _liveWatchers;
 
@@ -294,6 +304,7 @@ class RemoteWatchService {
       pollInterval: pollInterval,
       recoveryInterval: recoveryInterval,
       onPollingRecoveryAttempt: () => cachedTool = null,
+      slotReleased: slotReleases,
       onTransition: (kind, cause, restarts) {
         _record(repoPath, kind, cause, restarts);
         // Degradation is the expensive state and the one a maintainer needs
@@ -355,6 +366,10 @@ class RemoteWatchService {
           if (!armCounted) return;
           armCounted = false;
           if (_liveWatchers > 0) _liveWatchers--;
+          // Announce room. Several waiting repos may wake together; the
+          // reserve-then-arm ceiling settles who gets it, and the losers are
+          // refused exactly as they were before.
+          if (!_slotReleases.isClosed) _slotReleases.add(null);
         }
 
         final CommandStreamHandle handle;

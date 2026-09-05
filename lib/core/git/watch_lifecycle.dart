@@ -141,6 +141,16 @@ Stream<RepoWatchEvent> watchLifecycle({
   /// observational: every transition reported here already happened, and
   /// reporting one must never change which happen or when.
   WatchTransitionSink? onTransition,
+
+  /// Fires when the transport releases a watcher slot.
+  ///
+  /// A watcher that degraded because the ceiling was full is waiting on a
+  /// *local* condition that this signal resolves, so it re-arms at once rather
+  /// than waiting out [recoveryInterval] — up to three minutes of polling at
+  /// 48 host processes per minute, and forever if the slots stay occupied
+  /// (0028 H2). Refusals for any other reason ignore it: a freed slot says
+  /// nothing about a host that has no watcher tool.
+  Stream<void>? slotReleased,
 }) {
   late final StreamController<RepoWatchEvent> controller;
   Future<void> Function()? armedTeardown;
@@ -149,6 +159,11 @@ Stream<RepoWatchEvent> watchLifecycle({
   Timer? recoveryTimer;
   Coalescer? coalescer;
   var mode = WatchMode.stopped;
+
+  /// Why the last degradation happened, so the slot signal can be ignored
+  /// unless it is the condition that actually blocked this watcher.
+  WatchUnavailableReason? degradedReason;
+  StreamSubscription<void>? slotSub;
   var cancelled = false;
   var restarts = 0;
   late Future<void> Function() start;
@@ -326,6 +341,7 @@ Stream<RepoWatchEvent> watchLifecycle({
           return;
         }
         armedTeardown = teardown;
+        degradedReason = null;
         onTransition?.call(WatchTransition.armed, 'arm succeeded', restarts);
         // The watcher is now armed. Announce it with one eventDriven tick so
         // the status dot turns green immediately (and pulls a fresh status)
@@ -335,6 +351,7 @@ Stream<RepoWatchEvent> watchLifecycle({
         // watcher that arms then dies repeatedly still degrades to polling.
         emit();
       case WatchUnavailable(reason: final reason):
+        degradedReason = reason;
         startPolling('arm unavailable: ${reason.name}');
       case WatchAborted():
         onTransition?.call(WatchTransition.stopped, 'arm aborted', restarts);
@@ -345,6 +362,8 @@ Stream<RepoWatchEvent> watchLifecycle({
   Future<void> stop() async {
     onTransition?.call(WatchTransition.stopped, 'stream cancelled', restarts);
     cancelled = true;
+    await slotSub?.cancel();
+    slotSub = null;
     restartTimer?.cancel();
     pollTimer?.cancel();
     recoveryTimer?.cancel();
@@ -354,6 +373,22 @@ Stream<RepoWatchEvent> watchLifecycle({
 
   controller = StreamController<RepoWatchEvent>(
     onListen: () {
+      // Requests an arm through the SAME serialised `start()` every other
+      // trigger uses. A second arming path is exactly the shape that produced
+      // 0026 H1, where two overlapping arms each armed a source and only one
+      // teardown survived.
+      slotSub = slotReleased?.listen((_) {
+        if (cancelled || controller.isClosed) return;
+        if (mode != WatchMode.polling) return;
+        if (degradedReason != WatchUnavailableReason.ceiling) return;
+        restarts = 0;
+        onTransition?.call(
+          WatchTransition.recoveryAttempted,
+          'watcher slot released',
+          0,
+        );
+        start().catchError((Object _) => scheduleRestart());
+      });
       start().catchError((Object _) => scheduleRestart());
     },
     onCancel: stop,
