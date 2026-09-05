@@ -11,12 +11,14 @@
 // asserts **the documented refusal**. That is parity too: a difference that is
 // intentional and pinned, rather than a difference nobody noticed.
 
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/activity_command_executor.dart';
 import 'package:remote_magic_git/core/exec/exec_proxy_codec.dart';
+import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/exec/proxy_command_executor.dart';
 import 'package:remote_magic_git/core/exec/scoped_command_executor.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -260,6 +262,103 @@ void main() {
         ).uploadBytes('/p', Uint8List(0), routingRepo: null),
         throwsA(isA<ProxyExecuteException>()),
       );
+    });
+  });
+
+  // ---- LocalCommandExecutor, driven with REAL child processes -------------
+  //
+  // The wrapper rows above are satisfied by delegation, which is cheap to get
+  // right. These rows are the ones a transport-owning implementation can get
+  // wrong, and they are the contract claims that matter most: no shell, an
+  // honest exit code, and a cancelled stream that actually dies.
+
+  group('LocalCommandExecutor — real processes', () {
+    late Directory dir;
+    setUp(() async {
+      dir = await Directory.systemTemp.createTemp('mg-exec-contract-');
+    });
+    tearDown(() async {
+      if (dir.existsSync()) await dir.delete(recursive: true);
+    });
+
+    test(
+      'R7 — argv is never a shell string, so metacharacters are inert',
+      () async {
+        // `AGENTS.md`: ShellEscaper is the injection defense on the SSH path.
+        // On this path the defense is that NO SHELL EXISTS — `Process.start`
+        // takes argv natively. If anything ever joins argv into a string, this
+        // argument stops being data and starts being code.
+        final canary = '${dir.path}/pwned';
+        final result = await LocalCommandExecutor().execute(
+          repoPath: dir.path,
+          gitArgs: ['echo', 'hello; touch $canary'],
+        );
+
+        expect(result.exitCode, 0);
+        expect(
+          result.stdout.trim(),
+          'hello; touch $canary',
+          reason: 'the metacharacters came back as literal text',
+        );
+        expect(
+          File(canary).existsSync(),
+          isFalse,
+          reason: 'and nothing executed them — no shell was involved',
+        );
+      },
+    );
+
+    test('R8 — a non-zero exit is reported, not swallowed', () async {
+      final result = await LocalCommandExecutor().execute(
+        repoPath: dir.path,
+        gitArgs: ['sh', '-c', 'exit 3'],
+      );
+      expect(result.exitCode, 3);
+      expect(result.isSuccess, isFalse);
+    });
+
+    test('R9 — cancelling a stream actually kills the child process', () async {
+      // THE ORPHAN CLASS. A handle that reports cancelled while its process
+      // keeps running is how a host accumulates watchers nobody reads — 19 of
+      // them, the oldest 16.9 days (0025 A). Asserted against the OS, not
+      // against the handle's own opinion of itself.
+      final marker = 'mg-contract-${DateTime.now().microsecondsSinceEpoch}';
+      final handle = await LocalCommandExecutor().executeStream(
+        repoPath: dir.path,
+        gitArgs: ['sh', '-c', 'echo $marker; sleep 300'],
+      );
+      await handle.stdout.first.timeout(const Duration(seconds: 10));
+
+      final before = await Process.run('pgrep', ['-f', marker]);
+      expect(
+        before.exitCode,
+        0,
+        reason: 'the fixture process must actually be running',
+      );
+
+      await handle.cancel();
+
+      var gone = false;
+      for (var i = 0; i < 40; i++) {
+        final r = await Process.run('pgrep', ['-f', marker]);
+        if (r.exitCode != 0) {
+          gone = true;
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      expect(
+        gone,
+        isTrue,
+        reason: 'cancel must reach the OS process, not just close the stream',
+      );
+    });
+
+    test('R10 — uploadBytes writes the exact bytes, including NUL', () async {
+      final hostile = Uint8List.fromList([0x68, 0x00, 0xff, 0xfe, 0x0a, 0x7a]);
+      final path = '${dir.path}/blob.bin';
+      await LocalCommandExecutor().uploadBytes(path, hostile);
+      expect(File(path).readAsBytesSync(), orderedEquals(hostile));
     });
   });
 }

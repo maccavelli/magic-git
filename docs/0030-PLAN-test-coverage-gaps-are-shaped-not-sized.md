@@ -389,7 +389,7 @@ that finds itself wanting a live host has left its scope.
 |---|---|---|---|---|
 | 1 | executed | — | scan named `project_sections.dart:458` | 2 sites fixed, 1 recorded correct-as-is, blind spot found |
 | 2 | executed | — | fixture rule flagged `Seam.Beta` | live scan green; 2 seams, 3 private impls exempt |
-| 3 | not started | — | — | — |
+| 3 | executed | — | 3 sabotages, incl. a real injection | parity sound; 16 rows, wrappers + real processes |
 | 4 | not started | — | — | — |
 | 5 | not started | — | — | — |
 | 6 | not started | — | — | — |
@@ -466,3 +466,54 @@ written, so a class implementing a *typedef alias* forms its own group.
 `_ProcessStreamHandle implements SSHStreamHandle` does not join the
 `CommandStreamHandle` seam. It is private and exempt either way, so nothing is
 missed today; a public class written against an alias would slip the rule.
+
+### Phase 3 as executed — 2026-09-05
+
+**Outcome: parity is sound.** The harness found no live defect, and per 3a that
+could not close the phase, so the rows were pushed harder rather than the result
+accepted — first into a real assertion where one was hollow, then into
+`LocalCommandExecutor` driven with **real child processes**.
+
+**Sixteen rows.** R1–R6 over the wrapper implementations against a recording
+inner; R7–R10 over `LocalCommandExecutor` against the OS:
+
+| row | claim | result |
+|---|---|---|
+| R1–R3 | argv, extraEnv and `uploadBytes` reach the inner unmodified | pass, all wrappers |
+| R4 | the environment contract | `Scoped`/`Activity` delegate; **`Proxy` deliberately does not**, and the harness pins that *intent* |
+| R5 | `Scoped` scopes streams as well as commands | pass |
+| R6 | `Proxy.uploadBytes` refuses without `routingRepo` | pass |
+| R7 | **argv is never a shell string** | pass |
+| R8 | a non-zero exit is reported | pass |
+| R9 | **cancelling a stream kills the child process** | pass |
+| R10 | `uploadBytes` writes exact bytes, NUL included | pass |
+
+**A hollow assertion of my own was found and replaced.** R5 was originally
+`expect(streamed || true, isTrue)` — an assertion that cannot fail, written into
+the very harness whose purpose is to catch assertions that cannot fail. It now
+asserts the scope reaches `executeStream`, and is one of the sabotaged rows
+below.
+
+**Three sabotages, all observed:**
+
+| what was broken | observed |
+|---|---|
+| `Scoped.executeStream` drops the scope merge | `Expected: {'GIT_DIR': '/g'} / Actual: <null>` |
+| `cancel()` closes the stream without signalling the process | `Expected: true / Actual: <false>` — the process survived |
+| argv joined into `sh -c` | `Expected: 'hello; touch …/pwned' / Actual: 'hello'` — **the injection executed** |
+
+The third is the one worth keeping in mind: R7 is not a style rule. With argv
+joined into a shell string the canary command ran, and the row caught it.
+
+**Design questions checked rather than assumed.** The plan predicted Phase 3
+would surface a difference needing a decision. Two were examined and both are
+already settled: `ScopedCommandExecutor` applies its scope to *both* `execute`
+and `executeStream`, and `ProxyCommandExecutor`'s environment no-ops are
+deliberate and documented (a pop-out relays to the main isolate, which owns
+binary resolution and the `argv[0]` rewrite). No production change was needed.
+
+**Stated limit.** `SSHCommandExecutor` is not driven by this harness: it owns a
+transport that needs a live socket, and it is the most-tested implementation
+(126 test files) with its own live-sshd suite. The exclusion is written into the
+test file, so "parity" here means *every implementation reachable in-process*,
+not literally all five.
