@@ -1126,3 +1126,44 @@ the row closes with evidence.
 
 Neither residual blocks anything. Both are stated here so a reader does not have
 to reconstruct them from the phase table.
+
+### Deviation (e) — 2026-09-04 — Phase 7 made every refresh blank the panel
+
+**Reported from a running build**: *"when I had the percona-postgres remote repo
+open the repository main panel was blinking constantly."*
+
+Phase 7 moved `statusProvider` (and `refsProvider`, `pendingOpProvider`,
+`remotesProvider`) to derive from `repoSnapshotProvider`. A refresh therefore
+invalidates the **dependency**, and Riverpod reports a dependency-driven
+recomputation as a **reload**, not a refresh. `AsyncValue.when` skips its
+loading branch on a refresh (`skipLoadingOnRefresh` defaults to true) but **not**
+on a reload (`skipLoadingOnReload` defaults to false).
+
+Measured directly rather than reasoned:
+
+```
+PROBE isLoading=true isRefreshing=false isReloading=true hasValue=true
+PROBE when() would show: SPINNER
+```
+
+The previous status is still held — `hasValue` is true — and the panel is
+replaced by a spinner anyway. Before Phase 7 `statusProvider` was invalidated
+*directly*, which is a refresh, so the data stayed on screen.
+
+**Two render sites were affected**, both rendering a snapshot-derived value
+through `.when()` without the flag: `repo_status_view.dart:1865` (the main
+panel) and `branches_view.dart:206` (the branch list). The codebase already had
+sixteen `skipLoadingOnReload: true` sites with this exact reasoning written down
+— *"so the pane never flashes to a spinner mid-edit"* — so the pattern was
+established and these two simply predated the change that made them need it.
+
+**Why it looked constant.** It flashes on every mutation, which is occasional
+and might read as normal. It became continuous only because a separate
+regression (0027 deviation (b)) left the repo polling every five seconds, so the
+panel blanked every five seconds. **Fixing the polling would have hidden this,
+not fixed it.**
+
+**Fix:** `skipLoadingOnReload: true` at both sites. Covered by
+`test/refresh_no_flash_test.dart`, which asserts the panel still shows its rows
+while a refetch is in flight; seen to fail (`Found 0 widgets`) with the flag
+removed.

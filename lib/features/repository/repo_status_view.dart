@@ -1863,6 +1863,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         builder: (context, constraints) {
           final statusArea = Expanded(
             child: statusAsync.when(
+              // Since 0025 Phase 7 this value derives from
+              // `repoSnapshotProvider`, so every refresh invalidates its
+              // DEPENDENCY — which Riverpod reports as a reload, not a
+              // refresh. `when` skips the loading branch on a refresh but not
+              // on a reload, so without this the whole panel was replaced by a
+              // spinner on every mutation and every watcher tick, while the
+              // previous status was still held. It read as the panel blinking.
+              skipLoadingOnReload: true,
               loading: () => const Center(child: ProgressCircle()),
               error: (err, _) {
                 // Connect-time `gh`/`glab auth login` races the first git

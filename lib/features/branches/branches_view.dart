@@ -204,6 +204,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
   Widget build(BuildContext context) {
     final refsAsync = ref.watch(refsProvider(repoPath));
     return refsAsync.when(
+      // Same reload-vs-refresh trap as the status panel: `refsProvider`
+      // derives from `repoSnapshotProvider`, so a refresh reloads it and
+      // `when` would blank the branch list on every tick (0025 Phase 7).
+      skipLoadingOnReload: true,
       loading: () => const Center(child: ProgressCircle()),
       error: (err, _) => _error(context, err),
       data: (refs) => _content(context, refs),
