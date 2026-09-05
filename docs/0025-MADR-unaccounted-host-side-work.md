@@ -671,7 +671,9 @@ abnormal channel loss as what *creates* an orphan; C5 is what makes an orphan
 > decides the remedy — and finds the defect is worse than described here: the
 > sweep records a **shell** pid while refusing to signal anything whose `comm`
 > is not `inotifywait`/`fswatch`, so it has never been able to reclaim
-> anything, in any configuration.
+> anything, in any configuration. **Fixed and closed 2026-09-04**; note its
+> amendment 0027.1 — orphans created before that fix are irrecoverable, because
+> the overwrite destroyed the only copy of their pid.
 
 **Not remedied here**, and the choice is a real one: per-watcher lease and pid
 files (simple, but leaves stale files to garbage-collect), an append-only pid

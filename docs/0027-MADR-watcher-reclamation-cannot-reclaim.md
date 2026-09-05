@@ -111,12 +111,27 @@ find mg-watch.hb -mmin -5 -> FRESH: an orphan re-checking its lease would NOT ex
 Self-termination is disabled **precisely when orphans accumulate** — while the
 repo is actively watched.
 
-### 4. The registry holds one pid and overwrites it
+### 4. The registry holds one pid and overwrites it — destroying the only record
 
 `printf %s "$$" > <pidfile>` is a truncating write, and the path is one per
 repo. Each arm overwrites its predecessor, so the registry names only the newest
 watcher. Live: `mg-watch.pid` named `331312` while orphans `3503545` and
 `3504806` were still running, recorded nowhere.
+
+#### Amendment 0027.1 — 2026-09-04: this loss is irreversible
+
+Found while executing the plan. The consequence is worse than "the sweep cannot
+find them": the overwrite is the **only** copy of the pid, so an orphan created
+before this fix ships can never be reclaimed by reading files — not by the old
+sweep, and not by the new one. Verified on the host, where both orphans carry
+`…/mg-watch.pid` in their command line while that file names an unrelated,
+newer watcher.
+
+So the remedy below **prevents future loss and cannot recover past loss.**
+Existing orphans on any host that ran a pre-0027 build require a one-time manual
+kill; this is recorded in the plan's deviation (a), where a `ps`-driven recovery
+sweep was considered and declined for widening the identity test that makes
+signalling safe.
 
 ### Why the tests passed
 

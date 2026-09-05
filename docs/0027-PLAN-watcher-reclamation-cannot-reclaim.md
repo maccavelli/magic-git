@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "complete"
 date: 2026-09-04
 associated-madr: "0027-MADR-watcher-reclamation-cannot-reclaim.md"
 ---
@@ -260,8 +260,111 @@ deviation.)*
 
 | Phase | Status | Commit | Red-test observed | Result |
 |---|---|---|---|---|
-| 1 | not started | — | — | — |
-| 2 | not started | — | — | — |
-| 3 | not started | — | — | — |
-| 4 | not started | — | — | — |
-| 5 | not started | — | — | — |
+| 1 | executed | `f019909` | `Expected: true / Actual: <false>` — orphan survives today's sweep | `ps`-based identity replaces the `/proc` `comm` test |
+| 2 | executed | `1cc5e70` | `Expected: a value greater than <2> / Actual: <2>` | per-instance lease and registry files |
+| 3 | executed | `24f9cb1` | `Expected: true / Actual: <false>` — sibling heartbeat protects an orphan | staleness evaluated per instance |
+| 4 | executed | `f929371` | `Expected: true / Actual: <false>` — legacy pair unmatched | legacy untokenised pairs reclaimed too |
+| 5 | executed (re-scoped) | *(this entry)* | n/a (live) | defect confirmed on the host; fixture reclaimed by hand |
+
+### Phase 5 as executed — 2026-09-04, re-scoped per deviation (a)
+
+**1. The defect, confirmed on the real host.** Today's sweep script, run
+verbatim against the two orphans:
+
+```
+exit=0
+pid 3503545 SURVIVED (defect confirmed on the real host)
+pid 3504806 SURVIVED (defect confirmed on the real host)
+```
+
+It exits zero having reclaimed nothing — not a failure under unusual conditions,
+the documented behaviour of a `case` that cannot match. This is the direction
+the plan called "as much a required result" as the reclaim direction, and it is
+the only one obtainable from this fixture (deviation (a)).
+
+**2. One-time manual cleanup.** Both orphans were signalled individually, with
+all three identifying properties re-verified at the moment of signalling rather
+than from the earlier census — `ppid == 1`, zero children, and a command line
+carrying `mg-watch.pid`:
+
+```
+TERM -> 3503545 (ppid=1, 0 children, carries mg-watch.pid)
+TERM -> 3504806 (ppid=1, 0 children, carries mg-watch.pid)
+pid 3503545 reclaimed
+pid 3504806 reclaimed
+```
+
+**3. No live watcher was harmed.** The live `inotifywait` pid set was captured
+before and after and compared as a set, not counted:
+
+```
+live inotifywait before: 3239
+live inotifywait after:  3239
+live watchers UNHARMED (identical pid set)
+```
+
+**4. Host left clean.** `orphaned shells with mg-watch: 0`, `trace2 keys: 0`.
+This phase wrote no git config and created no files.
+
+### Verdict
+
+The four defects are fixed and each fix was observed failing first. Reclamation
+now works, proven by executing the scripts against real processes rather than by
+asserting their text — the failure mode that let the original defect ship.
+
+**What is not proven:** that the new sweep reclaims a *real host* orphan. It
+cannot be, from this fixture — the only orphans available were created before
+the fix and are recorded nowhere (deviation (a)). The executable tests cover the
+mechanism against real processes; the host confirmed the defect and the
+cleanup. A future host orphan, created under this build, is the first case where
+the automatic path can be observed end-to-end, and that is worth checking when
+one appears rather than assuming it.
+
+## Deviations
+
+### Deviation (a) — 2026-09-04 — pre-fix orphans are unreclaimable; Phase 5 cannot pass as written
+
+**Found** at the start of Phase 5, before running anything against the host.
+Phase 5 assumed the new sweep would reclaim the two `admdevops` orphans. It
+cannot, and neither can any other file-driven sweep.
+
+The orphans carry the legacy path in their command line:
+
+```
+pid 3503545  cmd: sh -c printf %s "$$" > '…/percona-postgres/.git/mg-watch.pid';
+pid 3504806  cmd: sh -c printf %s "$$" > '…/percona-postgres/.git/mg-watch.pid';
+```
+
+but the registry names a newer watcher:
+
+```
+mg-watch.pid = '1792401'
+is either orphan named in ANY pid file?  NO — recorded nowhere
+```
+
+**This sharpens MADR 0027 defect 4.** The record describes the overwriting pid
+file as hiding orphans from the sweep. It does more: it **destroys the record
+permanently**. Phase 4's legacy glob reads `mg-watch.pid` and finds `1792401`,
+not them. An orphan whose pid was overwritten before this fix shipped can never
+be reclaimed by reading files, because the only copy of its pid is gone.
+
+The fix therefore **prevents future loss but cannot recover past loss** — a
+distinction the MADR did not draw and now does (amendment 0027.1).
+
+**Decision (maintainer): document it as one-time manual cleanup.** A
+`ps`-command-line-driven recovery sweep was considered and declined: it would
+have reclaimed pre-fix orphans on any host automatically, but it widens the
+sweep from "processes this app recorded" to "processes whose command line looks
+like ours", and the narrowness of the identity check is the property that makes
+signalling safe at all.
+
+**Consequences, stated so deferring is informed.** Every host that ran a
+pre-0027 build keeps its existing orphans until a human kills them. They are
+inert (zero children, watching nothing) but resident, and they are exactly how
+0022 M5 reached an age of 16.9 days. New orphans cannot enter this state once
+this plan ships, because every instance now records its own pid under its own
+name.
+
+**Phase 5 is re-scoped accordingly**: verify that today's sweep spares the
+fixture (the defect, on the real host), kill the two orphans by hand, and
+confirm no live watcher was harmed.
