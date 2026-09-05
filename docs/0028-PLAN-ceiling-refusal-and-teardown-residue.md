@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-04
 associated-madr: "0028-MADR-ceiling-refusal-and-teardown-residue.md"
 ---

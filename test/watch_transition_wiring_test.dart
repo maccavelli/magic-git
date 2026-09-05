@@ -136,6 +136,40 @@ void main() {
     },
   );
 
+  test('the degradation names WHICH refusal caused it', () async {
+    // 0028 H2. The engine collapses four different refusals into one
+    // `WatchUnavailable` and answers all of them with the same 3-minute
+    // recovery. A ceiling refusal is transient and locally controlled — it
+    // resolves the instant another watcher stops — where "this host has no
+    // inotifywait" is not. The engine cannot tell them apart, so it cannot
+    // treat them differently; carrying the reason is the prerequisite.
+    final executor = _ArmsAlwaysExecutor();
+    final service = RemoteWatchService(executor);
+    final subs = <StreamSubscription<RepoWatchEvent>>[];
+    for (final repo in ['/a', '/b']) {
+      subs.add(service.watch(repo).listen((_) {}));
+    }
+    await pumpEventQueue();
+    subs.add(service.watch('/c').listen((_) {}));
+    await pumpEventQueue();
+
+    final degraded = watchDiagnostics
+        .forRepo('/c')
+        .records
+        .where((r) => r.kind == WatchTransition.degradedToPolling)
+        .toList();
+    expect(degraded, isNotEmpty);
+    expect(
+      degraded.last.cause,
+      contains('ceiling'),
+      reason: 'the engine must know WHY it degraded, not just that it did',
+    );
+
+    for (final s in subs) {
+      await s.cancel();
+    }
+  });
+
   test('a healthy arm is recorded as armed, not as a failure', () async {
     final service = RemoteWatchService(_ArmsAlwaysExecutor());
     final sub = service.watch('/ok').listen((_) {});

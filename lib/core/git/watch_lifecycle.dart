@@ -25,10 +25,35 @@ class WatchArmed extends WatchArm {
   final Future<void> Function() teardown;
 }
 
-/// No watch source is available (no fswatch/inotifywait on the host) —
-/// degrade to polling, with periodic recovery retries.
+/// Why an arm could not produce a live source.
+///
+/// The engine used to see one undifferentiated `WatchUnavailable` and answer
+/// every cause with the same 3-minute recovery. They are not the same kind of
+/// condition: [ceiling] is transient and resolves the instant another watcher
+/// stops — it is a property of this process, not of the host — where [noTool]
+/// persists until the host itself changes. 0028 H2.
+enum WatchUnavailableReason {
+  /// No `inotifywait`/`fswatch` on the host. Persists until the host changes.
+  noTool,
+
+  /// This process already holds its maximum concurrent watchers. Transient,
+  /// and resolves the moment any watcher is released.
+  ceiling,
+
+  /// The SSH stream budget is exhausted (0024 M2). Semi-persistent.
+  streamBudget,
+
+  /// A bounded spec matched no existing paths yet. Transient — resolves as
+  /// tracked files appear.
+  noWatchedPaths,
+}
+
+/// No watch source is available — degrade to polling, with periodic recovery
+/// retries. [reason] says which condition applied; see
+/// [WatchUnavailableReason] for why the difference matters.
 class WatchUnavailable extends WatchArm {
-  const WatchUnavailable();
+  const WatchUnavailable(this.reason);
+  final WatchUnavailableReason reason;
 }
 
 /// The stream was cancelled mid-arm; the callback already tore down whatever
@@ -309,8 +334,8 @@ Stream<RepoWatchEvent> watchLifecycle({
         // restart budget: only a real event counts as proof of health, so a
         // watcher that arms then dies repeatedly still degrades to polling.
         emit();
-      case WatchUnavailable():
-        startPolling('arm unavailable');
+      case WatchUnavailable(reason: final reason):
+        startPolling('arm unavailable: ${reason.name}');
       case WatchAborted():
         onTransition?.call(WatchTransition.stopped, 'arm aborted', restarts);
         return;

@@ -63,7 +63,8 @@ void main() {
       fakeAsync((async) {
         final events = <RepoWatchEvent>[];
         fastLifecycle(
-          arm: (_) async => const WatchUnavailable(),
+          arm: (_) async =>
+              const WatchUnavailable(WatchUnavailableReason.noTool),
         ).listen(events.add);
         async.elapse(Duration.zero);
 

@@ -315,7 +315,7 @@ class RemoteWatchService {
 
         if (tool == RemoteWatcherTool.none) {
           _record(repoPath, WatchTransition.armFailed, 'no watcher tool', 0);
-          return const WatchUnavailable();
+          return const WatchUnavailable(WatchUnavailableReason.noTool);
         }
 
         // Resolve the bounded surface HERE, on every arm, rather than closing
@@ -342,7 +342,7 @@ class RemoteWatchService {
             'ceiling $_liveWatchers/$maxConcurrentWatchers',
             0,
           );
-          return const WatchUnavailable();
+          return const WatchUnavailable(WatchUnavailableReason.ceiling);
         }
         // RESERVE the slot here, synchronously, rather than counting it once
         // the arm succeeds. Arms are concurrent — several repos arm at once on
@@ -378,7 +378,7 @@ class RemoteWatchService {
           // say why (0024 M2).
           onDiagnostic?.call('$e — falling back to polling for this repo');
           _record(repoPath, WatchTransition.armFailed, 'stream budget', 0);
-          return const WatchUnavailable();
+          return const WatchUnavailable(WatchUnavailableReason.streamBudget);
         }
         if (hooks.isCancelled()) {
           releaseSlot();
@@ -402,7 +402,9 @@ class RemoteWatchService {
             releaseSlot();
             await handle.cancel();
             _record(repoPath, WatchTransition.armFailed, 'no watched paths', 0);
-            return const WatchUnavailable();
+            return const WatchUnavailable(
+              WatchUnavailableReason.noWatchedPaths,
+            );
           }
         }
 
