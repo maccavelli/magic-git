@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-04
 associated-madr: "0026-MADR-degraded-watch-poll-diagnosis.md"
 ---
@@ -234,3 +234,38 @@ verbatim red-test output, the capture, and a dated entry for every deviation.)*
 | 3 | not started | — | — | — |
 | 4 | not started | — | — | — |
 | 5 | not started | — | — | — |
+
+## Deviations
+
+### Deviation (a) — 2026-09-04 — Phase 1 uncovered a load-sensitive check in 0024's P1 test
+
+**Found** running Phase 1's full-suite gate. `test/ssh_live_transport_test.dart`
+— *"the connect probe no longer waits on a login shell (0024 P1)"* — failed with
+`Expected: a value less than 0:00:00.186114 / Actual: 0:00:00.347185`.
+
+**Confirmed pre-existing, not caused by this work.** `git status` shows the test
+file and the whole of `lib/core/ssh/` untouched; Phase 1's entire change set is
+two new files (`watch_diagnostics.dart` and its test) that nothing imports yet,
+so no code path under test executes any of it. Re-run in isolation the same test
+passes (prelude 215 ms vs probe 96 ms), and it passed twice earlier the same day
+at 105 ms and 95 ms. It is marginal under load, not newly broken.
+
+**The defect is in the instrument.** At `:738-760` it takes **one** sample of
+the removed-prelude path, then **one** of the current probe, sequentially, and
+compares them directly. Any load arriving between the two measurements is
+attributed to the probe. The check therefore measures load drift as much as the
+thing it claims to measure — and a check that fails for reasons unrelated to its
+claim is one that will eventually be ignored.
+
+**Decision (maintainer): fix the instrument, and file the deviation against
+0024 as well** — 0024 owns finding P1 and wrote this test, so the record belongs
+where the instrument lives, not only where it happened to surface.
+
+**Fix.** Interleave N paired samples and compare medians. The claim is
+unchanged — the current probe must still beat the prelude that was deleted, and
+the test still fails if removing the prelude did not help — but a transient load
+spike now affects both arms equally instead of only the second. Deliberately
+**not** done: widening the tolerance, marking it skipped, or dropping the
+assertion, all of which would leave the real timing claim unguarded.
+
+**Files added to Phase 1's scope:** `test/ssh_live_transport_test.dart`.

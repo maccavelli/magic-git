@@ -1537,3 +1537,40 @@ was **not** performed.
   produced deviation (a). Naming `.flutter-sdk/bin/flutter`, or bumping
   `FLUTTER_VERSION` from 3.44.8 to the machine's 3.47.2 and re-locking once,
   would end the `pubspec.lock` churn behind `bd93c18`/`21721ef`.
+
+### Deviation (e) — 2026-09-04 — P1's own timing test compares two unpaired samples
+
+**Found later**, while running the full-suite gate for
+[`0026-PLAN-degraded-watch-poll-diagnosis.md`](0026-PLAN-degraded-watch-poll-diagnosis.md)
+Phase 1, and filed here because **this plan owns finding P1 and wrote the
+test**. Recorded there as deviation (a); this is the entry where the instrument
+lives.
+
+`test/ssh_live_transport_test.dart`, *"the connect probe no longer waits on a
+login shell (0024 P1)"*, failed under full-suite load:
+
+```
+Expected: a value less than Duration:<0:00:00.186114>
+  Actual: Duration:<0:00:00.347185>
+```
+
+It passes in isolation (prelude 215 ms vs probe 96 ms) and passed twice the same
+day at 105 ms and 95 ms. Nothing in `lib/core/ssh/` had changed.
+
+**The instrument's shape is the defect.** At `:738-760` it takes one sample of
+the removed prelude, then one sample of the current probe, sequentially, and
+compares them (`expect(newSw.elapsed, lessThan(oldSw.elapsed))`). Load arriving
+between the two measurements is charged entirely to the probe, so the check
+measures drift as much as the improvement it asserts. P1's *conclusion* is
+unaffected — the probe genuinely is faster, and this plan's live run measured it
+so — but the check that guards it is not trustworthy under load, and a check
+that fails for reasons unrelated to its claim is one that gets ignored.
+
+**Resolution: interleave paired samples and compare medians.** The claim is
+identical and the check still fails if removing the prelude did not help; a load
+spike now perturbs both arms equally. Explicitly rejected: widening the
+tolerance, skipping the test, or dropping the assertion — each would leave P1's
+timing claim unguarded, which is worse than the flake.
+
+Fixed under 0026 Phase 1 (the phase whose gate it blocked), with the file added
+to that phase's scope.

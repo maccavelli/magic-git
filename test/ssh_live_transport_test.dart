@@ -735,30 +735,59 @@ void main() {
         'lp=\$(cat "\$_mg_lp" 2>/dev/null); fi; rm -f "\$_mg_lp" 2>/dev/null; '
         'echo done';
 
-    final oldSw = Stopwatch()..start();
-    await executor.execute(
-      repoPath: repo,
-      gitArgs: const ['sh', '-c', removedPrelude],
-      timeout: const Duration(seconds: 20),
-      lane: ExecLane.read,
-    );
-    oldSw.stop();
+    // PAIRED and INTERLEAVED, compared by median (0024 deviation (e)).
+    //
+    // This originally took one sample of each, back to back, and compared them
+    // directly — so any load arriving between the two measurements was charged
+    // entirely to the second, and the check failed under full-suite load
+    // (probe 347 ms vs prelude 186 ms) while passing in isolation moments later
+    // (96 ms vs 215 ms). It was measuring drift as much as the improvement it
+    // asserts. Interleaving makes a load spike perturb both arms equally, and
+    // the median discards the spike outright.
+    //
+    // The claim is unchanged: the current probe does strictly more work (OS,
+    // PATH, and `command -v` for every catalog binary) and must still beat the
+    // prelude that was deleted, which did none of it. This still goes red if
+    // removing the prelude did not help.
+    const samples = 5;
+    final oldMs = <int>[];
+    final newMs = <int>[];
+    RemoteEnvironment? env;
 
-    final newSw = Stopwatch()..start();
-    final env = await EnvironmentResolver(executor).resolve(repo);
-    newSw.stop();
+    for (var i = 0; i < samples; i++) {
+      final oldSw = Stopwatch()..start();
+      await executor.execute(
+        repoPath: repo,
+        gitArgs: const ['sh', '-c', removedPrelude],
+        timeout: const Duration(seconds: 20),
+        lane: ExecLane.read,
+      );
+      oldSw.stop();
+      oldMs.add(oldSw.elapsedMicroseconds);
+
+      final newSw = Stopwatch()..start();
+      env = await EnvironmentResolver(executor).resolve(repo);
+      newSw.stop();
+      newMs.add(newSw.elapsedMicroseconds);
+    }
+
+    int median(List<int> xs) {
+      final sorted = [...xs]..sort();
+      return sorted[sorted.length ~/ 2];
+    }
+
+    final oldMedian = median(oldMs);
+    final newMedian = median(newMs);
 
     // ignore: avoid_print
     print(
-      '0024 P1: removed prelude ${oldSw.elapsedMilliseconds} ms  vs  '
-      'whole current probe ${newSw.elapsedMilliseconds} ms',
+      '0024 P1: removed prelude ${oldMedian ~/ 1000} ms  vs  '
+      'whole current probe ${newMedian ~/ 1000} ms  '
+      '(median of $samples interleaved pairs)',
     );
 
-    // The current probe does strictly more work (OS, PATH, and `command -v`
-    // for every catalog binary) and must still beat the prelude that was
-    // deleted — which did none of it.
-    expect(newSw.elapsed, lessThan(oldSw.elapsed));
-    expect(env.os, isNot('unknown'), reason: 'sanity: the probe worked');
+    expect(newMedian, lessThan(oldMedian));
+    expect(env!.os, isNot('unknown'), reason: 'sanity: the probe worked');
     expect(env.has('git'), isTrue);
   });
 }
