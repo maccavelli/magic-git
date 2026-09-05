@@ -388,7 +388,7 @@ that finds itself wanting a live host has left its scope.
 | Phase | Status | Commit | Red observed | Result |
 |---|---|---|---|---|
 | 1 | executed | — | scan named `project_sections.dart:458` | 2 sites fixed, 1 recorded correct-as-is, blind spot found |
-| 2 | not started | — | — | — |
+| 2 | executed | — | fixture rule flagged `Seam.Beta` | live scan green; 2 seams, 3 private impls exempt |
 | 3 | not started | — | — | — |
 | 4 | not started | — | — | — |
 | 5 | not started | — | — | — |
@@ -436,3 +436,33 @@ stands — so closing this needs an **allowlist of reviewed sites with reasons**
 which is exactly 0030 Phase 8's shape (0029's registry idiom) and not this
 phase's. Carried to Phase 8; the blind spot is written into the test itself so a
 reader does not mistake a green scan for full coverage.
+
+### Phase 2 as executed — 2026-09-05
+
+The scan finds both multi-implementation seams and, as the plan predicted, is
+**green on the live tree** — every public implementation is named by some test:
+
+```
+SEAMS: {CommandStreamHandle: 3, CommandExecutor: 5}
+PRIVATE (exempt by construction): [_SshSessionStreamHandle, _ActivityStreamHandle,
+                                   _LocalActivityStreamHandle]
+```
+
+**The value is therefore the fixture test, exactly as the plan said.** The rule
+is extracted with its naming function injected, so the negative case drives it
+over a fixture: it flags `Seam.Beta` (a sibling no test names), lists
+`Seam._Gamma` as private-exempt rather than dropping it, and flags nothing when
+every sibling is named.
+
+**A first attempt was wrong and is recorded rather than quietly replaced.** The
+negative case originally asserted `testFilesNaming('class Beta implements') == 0`
+against the real `test/` directory — and got **1**, because that string appears
+in the fixture literal inside this very test file. A scan that reads `test/`
+cannot be negative-tested by writing the offending pattern into `test/`.
+Injecting the naming function is what makes the negative case honest.
+
+**Blind spot recorded in the test:** implementations are grouped by the name as
+written, so a class implementing a *typedef alias* forms its own group.
+`_ProcessStreamHandle implements SSHStreamHandle` does not join the
+`CommandStreamHandle` seam. It is private and exempt either way, so nothing is
+missed today; a public class written against an alias would slip the rule.
