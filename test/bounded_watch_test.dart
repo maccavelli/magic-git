@@ -182,7 +182,7 @@ void main() {
       expect(boundedInotifyScript(['/r/.git']), isNot(contains('mg-watch')));
     });
 
-    test('the sweep signals only a stale lease, and only inotifywait', () {
+    test('the sweep script is built from the paths it was given', () {
       final s = watcherSweepScript(
         ['/r1/.git/mg-watch.pid'],
         heartbeat: '/r1/.git/mg-watch.hb',
@@ -190,12 +190,19 @@ void main() {
       );
       expect(s, contains('mg-watch.pid'));
       expect(s, contains('mg-watch.hb'));
-      // Verified before signalling: 0025 records that a broken `ps` filter is
-      // exactly how a kill set ends up containing the wrong processes.
-      expect(s, contains('inotifywait'));
-      expect(s, contains('-mmin -5'), reason: 'staleAfter as find minutes');
-      expect(s, contains('kill -TERM'));
       expect(s, contains('-mmin -5'), reason: 'portable staleness, not stat');
+      // WHETHER IT RECLAIMS ANYTHING IS NOT ASSERTED HERE, ON PURPOSE.
+      //
+      // This test used to also assert `contains('inotifywait')` and
+      // `contains('kill -TERM')`, and passed for months while the script could
+      // not reclaim a single process: it recorded a shell's pid and then
+      // signalled only pids whose `comm` was `inotifywait`/`fswatch`, so the
+      // `case` never fired (0027). Both strings were present; the contradiction
+      // between them is invisible to substring matching.
+      //
+      // The behaviour now lives in `watcher_sweep_exec_test.dart`, which
+      // spawns a real process and checks whether it is still there afterwards.
+      // Do not re-add behavioural assertions here.
     });
   });
 

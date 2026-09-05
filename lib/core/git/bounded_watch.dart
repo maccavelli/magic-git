@@ -270,10 +270,23 @@ String _recordPid(String? pidFile) => pidFile == null
 /// state that produced 19 orphans, because a watcher blocked in `select()`
 /// never writes and so never learns its reader has gone (0025 A).
 ///
-/// Every pid is re-verified against `/proc/<pid>/comm` before being signalled.
+/// Every pid is re-verified before being signalled — by **identity**, not by
+/// classification. The process's command line must contain the pid-file path
+/// this app constructed, which a recycled pid cannot satisfy.
+///
 /// That check is not ceremony: 0025 records a `ps` selector bug that put the
 /// wrong processes in a kill set, caught only because the set was printed
 /// before it was used.
+///
+/// It replaces a `/proc/<pid>/comm` test that could never match (0027). The pid
+/// recorded is the lease **shell's** — deliberately, since signalling the shell
+/// runs its `trap` and stops the re-arm loop, where signalling `inotifywait`
+/// alone would let the loop immediately re-arm — but the guard only accepted
+/// `inotifywait`/`fswatch`, so the `case` never fired and the sweep reclaimed
+/// nothing, ever. `/proc` is also Linux-only, while this file supports macOS
+/// hosts (see the `find -mmin` choice below), so the check was dead twice over.
+/// `ps -o command=` is POSIX and works on both — and, unlike `/proc`, lets the
+/// sweep be tested by executing it against a real process.
 String watcherSweepScript(
   List<String> pidFiles, {
   required String heartbeat,
@@ -290,8 +303,8 @@ String watcherSweepScript(
       '[ -f "\$f" ] || continue; '
       'p=\$(cat "\$f" 2>/dev/null); '
       'case "\$p" in ""|*[!0-9]*) continue ;; esac; '
-      'c=\$(cat /proc/"\$p"/comm 2>/dev/null || echo); '
-      'case "\$c" in inotifywait|fswatch) '
+      'cmd=\$(ps -o command= -p "\$p" 2>/dev/null || echo); '
+      'case "\$cmd" in *"\$f"*) '
       'kill -TERM "\$p" 2>/dev/null; rm -f "\$f" ;; esac; '
       'done; true';
 }
