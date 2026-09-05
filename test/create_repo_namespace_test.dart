@@ -1,15 +1,27 @@
-// MADR 0031 Phase 2 — a namespace on the create-repository sheet.
+// MADR 0031 Phases 2 and 3 — a namespace on the create-repository sheet,
+// and the suggestions offered beneath it.
 //
 // The risk this file exists for is a **silent mis-create**: a project created
 // in one place while the app wires origin to another. That is exactly what
 // `--group` would cause, so the composed path is asserted to reach
 // `resolveOriginUrl` as the *same string* that was created, rather than being
 // trusted because the composition looked right.
+//
+// Phase 3's contract is the opposite of an assertion about the list: the
+// field is free text, so a suggestion fetch that hangs forever or throws
+// must be *invisible*. Those tests assert the field is still there and the
+// create still composes, not that anything was suggested.
 
+import 'dart:async';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/core/forge/forge.dart';
+import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
+import 'package:remote_magic_git/features/common/inline_action_button.dart';
 import 'package:remote_magic_git/features/workspace/create_repo_sheet.dart';
 
 import 'helpers/create_repo_harness.dart';
@@ -193,4 +205,106 @@ void main() {
     await nextStep(tester); // Remote (none) → Details
     expect(_namespaceField(), findsNothing);
   });
+
+  // -------------------------------------------------------------------------
+  // Phase 3 — suggestions beneath the field
+  // -------------------------------------------------------------------------
+
+  testWidgets('offered namespaces fill the field when tapped', (tester) async {
+    final (_, _, _) = await pumpConnected(
+      tester,
+      extraOverrides: [
+        forgeNamespacesProvider.overrideWith(
+          (ref, key) async => ['me', 'team/subgroup'],
+        ),
+      ],
+    );
+    await nextStep(tester);
+    await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
+    await tester.pumpAndSettle();
+    await nextStep(tester);
+    await tester.enterText(nameField(), 'repo');
+    await tester.pumpAndSettle();
+
+    final chip = find.widgetWithText(InlineActionButton, 'team/subgroup');
+    expect(chip, findsOneWidget);
+    await tester.tap(chip);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text('Creates team/subgroup/repo on the forge.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'a forge that never answers leaves the field usable and composing',
+    (tester) async {
+      // Never completes: the sheet must not wait on it, at any point.
+      final exec = await _toReviewWithNamespaces(
+        tester,
+        (ref, key) => Completer<List<String>>().future,
+      );
+      final joined = exec.calls.map((c) => c.join(' ')).toList();
+      expect(
+        joined.any((c) => c.startsWith('gh repo create team/subgroup/repo')),
+        isTrue,
+        reason: 'a pending suggestion fetch must not block the create',
+      );
+    },
+  );
+
+  testWidgets('a throwing namespace service shows no error and no spinner', (
+    tester,
+  ) async {
+    final exec = await _toReviewWithNamespaces(
+      tester,
+      (ref, key) async => throw StateError('forge unreachable'),
+    );
+    final joined = exec.calls.map((c) => c.join(' ')).toList();
+    expect(
+      joined.any((c) => c.startsWith('gh repo create team/subgroup/repo')),
+      isTrue,
+      reason: 'a failed suggestion fetch must not block the create',
+    );
+  });
+}
+
+/// Drives a GitHub create of `team/subgroup/repo` with [namespaces] overriding
+/// the suggestion provider, asserting along the way that the namespace field
+/// itself never disappears and no spinner replaces the form.
+Future<FakeCreateExecutor> _toReviewWithNamespaces(
+  WidgetTester tester,
+  Future<List<String>> Function(Ref ref, (Forge, String, bool) key) namespaces,
+) async {
+  final (_, exec, _) = await pumpConnected(
+    tester,
+    extraOverrides: [forgeNamespacesProvider.overrideWith(namespaces)],
+  );
+  await nextStep(tester);
+  await tester.tap(find.widgetWithText(AppPushButton, 'GitHub'));
+  await tester.pumpAndSettle();
+  await nextStep(tester);
+
+  // The field is the contract; the list is a convenience.
+  expect(_namespaceField(), findsOneWidget);
+  expect(find.byType(ProgressCircle), findsNothing);
+
+  await tester.enterText(nameField(), 'repo');
+  await tester.pumpAndSettle();
+  await tester.enterText(_namespaceField(), 'team/subgroup');
+  await tester.pumpAndSettle();
+  expect(_namespaceField(), findsOneWidget);
+  expect(find.byType(ProgressCircle), findsNothing);
+
+  await nextStep(tester);
+  exec.results.add(okResult('absent'));
+  exec.results.add(okResult(''));
+  exec.results.add(okResult('https://github.com/team/subgroup/repo\n'));
+  exec.results.add(_noOrigin);
+  exec.results.add(okResult('https'));
+  exec.results.add(okResult(''));
+  exec.results.add(okResult('https://github.com/team/subgroup/repo.git\n'));
+  await pumpCreate(tester);
+  return exec;
 }

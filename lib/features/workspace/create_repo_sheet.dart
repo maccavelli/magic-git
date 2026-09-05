@@ -18,6 +18,7 @@ import '../../core/utils/display_error.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
+import '../common/inline_action_button.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'remote_directory_browser.dart';
@@ -1444,6 +1445,57 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     );
   }
 
+  /// Namespace suggestions under the field — never a spinner, never an error.
+  ///
+  /// Read through `asData?.value` on purpose. The wizard's namespace field is
+  /// free text and works with no list at all, so a slow or unreachable forge
+  /// must cost the user nothing: while the fetch is in flight, and forever
+  /// after it fails, this renders as empty space. Rendering this `AsyncValue`
+  /// through `.when()` would put a spinner where the form is (0030 Phase 1).
+  Widget _namespaceSuggestions() {
+    final host = _host.text.trim().isEmpty ? _defaultHost : _host.text.trim();
+    final namespaces =
+        ref
+            .watch(forgeNamespacesProvider((_forge, host, _isLocalTarget)))
+            .asData
+            ?.value ??
+        const <String>[];
+    final offered = namespaces
+        .where((String ns) => ns != _namespaceText)
+        .take(8)
+        .toList();
+    if (offered.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        children: [
+          for (final ns in offered)
+            InlineActionButton(
+              label: ns,
+              icon: CupertinoIcons.folder,
+              tooltip: 'Create under $ns',
+              onPressed: () {
+                _namespace.text = ns;
+                setState(() {});
+              },
+            ),
+          if (_namespaceText.isNotEmpty)
+            InlineActionButton(
+              label: 'Clear',
+              icon: CupertinoIcons.clear,
+              tooltip: 'Create under your own account',
+              onPressed: () {
+                _namespace.clear();
+                setState(() {});
+              },
+            ),
+        ],
+      ),
+    );
+  }
+
   Widget _detailsStep(MacosTypography typography) {
     final existing = _source == _SourceMode.existingFolder;
     return Column(
@@ -1496,6 +1548,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
                 : 'Creates ${_forgePath.isEmpty ? '—' : _forgePath} on the '
                       'forge.',
           ),
+          _namespaceSuggestions(),
           const SizedBox(height: 10),
         ],
         Text('Initial branch', style: typography.caption1),

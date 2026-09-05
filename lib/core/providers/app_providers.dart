@@ -5364,6 +5364,40 @@ final forgeAuthHostProvider = FutureProvider.autoDispose
       return auth.authenticated ? auth.host : null;
     }, retry: noProviderRetry);
 
+/// Namespaces the signed-in account may create a project in on (forge, host)
+/// — the create wizard's namespace suggestions.
+///
+/// Keyed by the host as well as the forge because the wizard's host field is
+/// editable: switching from `gitlab.com` to a self-hosted instance must not
+/// keep offering the first host's groups. `local` picks the executor the same
+/// way [forgeAuthProvider] does.
+///
+/// **Suggestions only.** The wizard's field is free text, so a failure here is
+/// not an error state — the service already answers with an empty list rather
+/// than throwing, and the wizard must render the field either way.
+final forgeNamespacesProvider = FutureProvider.autoDispose
+    .family<List<String>, (Forge, String, bool)>((ref, key) async {
+      final (forge, host, local) = key;
+      ref.watch(connectionProvider.select((c) => (c.phase, c.backend, c.host)));
+      final executor = local
+          ? ref.read(localExecutorProvider)
+          : ref.read(activeExecutorProvider);
+      if (local) {
+        await ref.read(localEnvironmentProvider).ensure();
+      }
+      return switch (forge) {
+        Forge.gitlab => GlabService(
+          executor,
+        ).listCreatableNamespaces('.', host: host),
+        Forge.github => GhService(
+          executor,
+        ).listCreatableNamespaces('.', host: host),
+        _ => throw ArgumentError(
+          'forgeNamespacesProvider: not a forge: $forge',
+        ),
+      };
+    }, retry: noProviderRetry);
+
 /// Authentication status of git/gh/glab on **this Mac** — probed on demand for
 /// the Dashboard's Authentication section (and reusable by any This-Mac flow
 /// that wants to warn before a create/clone that would fail on a signed-out

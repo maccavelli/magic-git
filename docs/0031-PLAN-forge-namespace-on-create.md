@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "executed"
 date: 2026-09-05
 associated-madr: "0031-MADR-forge-namespace-on-create.md"
 ---
@@ -271,8 +271,8 @@ unreachable — worse than the missing feature.
 |---|---|---|---|---|
 | 1 | **complete** | *(this commit)* | yes, verbatim below | 3554 → 3562, analyzer clean |
 | 2 | **complete** | *(this commit)* | yes, 4 sabotages | 3562 → 3568, analyzer clean |
-| 3 | not started | — | — | — |
-| 4 | **not authorized** | — | — | mutating; needs separate approval |
+| 3 | **complete** | *(this commit)* | yes, 3 sabotages | 3568 → 3571, analyzer clean |
+| 4 | **not authorized** | — | — | mutating; needs separate approval. See *Residual* below. |
 
 ### Phase 1 — 2026-09-05
 
@@ -374,3 +374,59 @@ as the same string rather than being trusted from the composition.
 `listCreatableNamespaces` from Phase 1 still has no caller. Nothing has created
 a project under a non-default namespace on a real forge; the nested-subgroup
 question stays open until Phase 4.
+
+### Phase 3 — 2026-09-05
+
+`forgeNamespacesProvider` (`app_providers.dart:5368`), an `autoDispose` family
+keyed `(Forge, String host, bool local)` with `retry: noProviderRetry`, calling
+Phase 1's `listCreatableNamespaces`. Keyed on the host because the wizard's
+host field is editable: switching from `gitlab.com` to a self-hosted instance
+must not keep offering the first host's groups. Three tests added, nine in the
+file.
+
+Suggestions render as `InlineActionButton` chips beneath the field
+(`_namespaceSuggestions`, `create_repo_sheet.dart:1449`) — the repo's enforced
+small-button standard. Tapping one fills the field; a `Clear` chip appears once
+a namespace is set. **The field stays free text**, so a group the API did not
+return is still typeable.
+
+**Read through `asData?.value`, never `.when()`.** The plan named this as the
+constraint and it is the whole design: while the fetch is in flight, and
+permanently after it fails, the strip renders as empty space. `valueOrNull`
+does not exist on this Riverpod version's `AsyncValue`; `asData?.value` is the
+idiom already used across `lib/features/`.
+
+**Red observed.** Three sabotages, each against a scratchpad copy of the sheet
+restored by `cmp`-verified copy:
+
+| Sabotage | Test that went red |
+|---|---|
+| the strip returns a `ProgressCircle` while `!hasValue` | *forge that never answers*; *throwing service* — both `[E]` |
+| the field's own `if (_onForge)` guard also requires `hasValue`, so the field disappears while pending | *forge that never answers*; *throwing service* — both `[E]` |
+| a suggestion chip's `onPressed` no longer writes the field | *offered namespaces fill the field when tapped* — `[E]` |
+
+The first two are exactly the failure the plan predicted — "a create-repository
+sheet that hangs on open for a user whose forge is slow or unreachable" — and
+they are the reason the two failure tests assert *the field is still there and
+the create still composes*, rather than asserting anything about the list.
+
+`assertion_strength_scan_test` and `refresh_no_flash_test` are both green; no
+new boundary `.when()` site was introduced, because there is no `.when()`.
+
+## Residual — the plan is complete only in its offline scope
+
+Phases 1–3 shipped. **Phase 4 has not run and was not authorised**, so the
+claim *"creates under the chosen namespace"* is **verified against fakes only**.
+Specifically still unestablished:
+
+* that `glab repo create team/sub/name` works for a **nested** subgroup (two
+  levels). GitLab identifies groups by `full_path` so it should, and glab's own
+  help example is single-level — the MADR names this as the open question;
+* that origin resolves to the created project rather than to
+  `<login>/<name>` **on a real forge**, end to end;
+* that `gh repo create org/name` behaves the same way for a GitHub org.
+
+Running Phase 4 creates and deletes real projects on a real forge. It needs
+explicit approval per `AGENTS.md`, and is invoked as
+`flutter test --run-skipped -t live-forge test/create_repo_wire_live_test.dart`.
+Until then this feature is shipped but unproven against the thing it targets.
