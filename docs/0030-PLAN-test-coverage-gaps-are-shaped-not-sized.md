@@ -392,7 +392,7 @@ that finds itself wanting a live host has left its scope.
 | 3 | executed | — | 3 sabotages, incl. a real injection | parity sound; 16 rows, wrappers + real processes |
 | 4 | executed | — | `'recorded'`→`'MISSING'`; `Set:['pipelinesProvider']` | 2 invariants; the third was absorbed by Phase 3 |
 | 5 | executed | — | bytes arrived as `'hi\x00ÿþÃ(\n'`; guard removal | 7 tests; `uploadBytes` covered end to end |
-| 6 | not started | — | — | — |
+| 6 | **executed, partial** | — | control crashed at `app_shell.dart:560` | 3 tests; 2 of them proven NOT to reach their guards |
 | 7 | not started | — | — | — |
 | 8 | not started | — | — | — |
 | 9 | not started | — | — | — |
@@ -595,3 +595,44 @@ null-reply and not-ok rows were added for it.
 
 The first is the trap `AGENTS.md` records — the native codec truncates strings
 at NUL — reproduced deliberately and caught.
+
+### Phase 6 as executed — 2026-09-05 — partial, and the shortfall is the finding
+
+Three tests landed. **Only one of them exercises the code it is named after**,
+and that is the result worth recording.
+
+| test | what it pins | reaches the guard? |
+|---|---|---|
+| CONTROL: ⌘Z with no field focused reaches the shell | the shortcut is genuinely wired | n/a — it *is* the wiring proof |
+| ⌘Z inside a text field stays text undo | the user-facing property | **no** |
+| ⌘Z with no active repo does nothing | the user-facing property | **no** |
+
+**Both were proven vacuous by sabotage, not by inspection.**
+
+* Removing the in-field guard (`app_shell.dart:522-531`) left the test
+  **passing**. A focused `EditableText` consumes ⌘Z before it reaches the
+  shell's shortcuts — which is precisely what the guard's own comment says it
+  is a backstop for. Producing a focus setup that does *not* consume the key is
+  what would exercise the backstop, and this harness cannot make one.
+* Removing the `repoPath == null` guard left its test **passing** too: with no
+  repo the shell renders a different tree, so the keystroke never reaches the
+  handler and the guard is never consulted.
+
+Each test now says this in its own comment. A test named after a guard it
+cannot reach is worse than no test, because it tells the next reader the guard
+is covered.
+
+**The control is what caught it**, and it was added only after the in-field test
+survived its sabotage. Without it, two green tests would have been reported as
+covering 69 uncovered lines of repository-mutating code. The control also found
+a second thing on its way: it crashed at `app_shell.dart:560` on
+`attempt.record!`, because the fake returned a `done` attempt with no record —
+a shape production never produces. The fake was corrected rather than the
+null-check blamed.
+
+**Not done, and not disguised as done:** the `UndoStatus.dirty`
+confirm-before-overwrite path, and the redo mirrors. Those need a driveable
+dialog and a focus setup this harness does not have. **69 uncovered lines over
+a repository-mutating feature remain substantially uncovered**, and the honest
+summary of this phase is that it established *why* they are hard to reach, not
+that it covered them.
