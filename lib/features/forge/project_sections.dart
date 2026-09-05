@@ -456,6 +456,13 @@ Widget? projectDetailFor({
       final labels = dashboard.value?.labels ?? const <ForgeLabel>[];
       final palette = {for (final l in labels) l.name: l};
       return detail.when(
+        // `issueDetailProvider` awaits `forgeProvider(repoPath).future`, so a
+        // repo-scoped refresh RELOADS it rather than refreshing it, and `when`
+        // would blank the issue while the refetch is in flight (0030 Phase 1).
+        // Selecting a different issue changes the family key, which is a new
+        // instance with no previous value — that still shows the spinner, and
+        // should.
+        skipLoadingOnReload: true,
         loading: () => const Center(child: ProgressCircle()),
         error: (err, _) => PaneError(err),
         data: (issue) => _issueDetail(

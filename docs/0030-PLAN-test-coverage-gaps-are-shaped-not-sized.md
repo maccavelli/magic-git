@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-05
 associated-madr: "0030-MADR-test-coverage-gaps-are-shaped-not-sized.md"
 ---
@@ -387,7 +387,7 @@ that finds itself wanting a live host has left its scope.
 
 | Phase | Status | Commit | Red observed | Result |
 |---|---|---|---|---|
-| 1 | not started | — | — | — |
+| 1 | executed | — | scan named `project_sections.dart:458` | 2 sites fixed, 1 recorded correct-as-is, blind spot found |
 | 2 | not started | — | — | — |
 | 3 | not started | — | — | — |
 | 4 | not started | — | — | — |
@@ -396,3 +396,43 @@ that finds itself wanting a live host has left its scope.
 | 7 | not started | — | — | — |
 | 8 | not started | — | — | — |
 | 9 | not started | — | — | — |
+
+## Execution notes
+
+### Phase 1 as executed — 2026-09-05
+
+**Required red met.** Widening the derived-set discovery from "references
+`repoSnapshotProvider`" to "awaits any `\w+Provider(...).future`" made the scan
+name a site beyond the two already fixed:
+
+```
+lib/features/forge/project_sections.dart:458  detail.when() on issueDetailProvider
+```
+
+**Three sites resolved, each with a recorded reason** — as 1b required,
+including the one deliberately left alone:
+
+| site | decision |
+|---|---|
+| `project_sections.dart:458` — `detail.when()` on `issueDetailProvider` | **fixed.** Awaits `forgeProvider(repoPath).future`, so a repo-scoped refresh reloads it and ⌘R while viewing an issue blanked the pane. Selecting a *different* issue changes the family key — a new instance with no previous value — which still shows the spinner, correctly. |
+| `forge_widgets.dart:834` — `comments.when()` | **fixed.** Fed by `issueCommentsProvider`, same `forgeProvider.future` chain. **The scan did not find this one**; it was found by reading. |
+| `dashboard_sheet.dart:232` — `value.when()` | **left alone, with a comment.** `sessionAuthStatusProvider` watches `connectionProvider`, so it recomputes when the *connection* changes. Holding the previous value would present one host's CLI auth state as the new host's — worse than a spinner. |
+
+### Deviation (a) — 2026-09-05 — the scan has a boundary blind spot
+
+**Found** during Phase 1b. The scan matches `final x = ref.watch(<derived>(…))`
+followed by `x.when(` **in the same file**. An `AsyncValue` handed across a
+widget boundary — a constructor field or a method parameter — escapes it
+entirely, and that is how `forge_widgets.dart:834` hid: its provenance is not
+visible where it is rendered.
+
+**Nine `AsyncValue`s cross a boundary in `lib/features`.** A probe over them
+found three rendered with `.when()`: two already carried the flag, and the third
+is `dashboard_sheet.dart:232`, which should *not* carry it.
+
+**Decision: record it, do not widen Phase 1 to cover it.** A stricter regex
+would over-flag, because at least one boundary-crossing site is correct as it
+stands — so closing this needs an **allowlist of reviewed sites with reasons**,
+which is exactly 0030 Phase 8's shape (0029's registry idiom) and not this
+phase's. Carried to Phase 8; the blind spot is written into the test itself so a
+reader does not mistake a green scan for full coverage.

@@ -230,6 +230,12 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
     required String fallbackLabel,
   }) {
     return value.when(
+      // DELIBERATELY no `skipLoadingOnReload` (0030 Phase 1, reviewed).
+      // `sessionAuthStatusProvider` watches `connectionProvider`, so it
+      // recomputes when the CONNECTION changes — a different host, or a phase
+      // transition. Holding the previous value there would present one host's
+      // CLI auth state as if it were the new host's, which is worse than a
+      // spinner. The spinner is the honest display here.
       loading: () => _authTargetHeaderRow(
         typography,
         fallbackLabel,

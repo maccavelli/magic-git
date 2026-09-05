@@ -832,6 +832,12 @@ class ForgeCommentsSection extends StatelessWidget {
         SizedBox(
           height: height,
           child: comments.when(
+            // Fed by `issueCommentsProvider`, which awaits
+            // `forgeProvider(repoPath).future` — same reload-not-refresh trap
+            // as the issue detail beside it (0030 Phase 1). The scan cannot see
+            // this one: the AsyncValue arrives as a field, so its provenance is
+            // not visible in this file.
+            skipLoadingOnReload: true,
             loading: () => const Center(child: ProgressCircle()),
             error: (err, _) => SectionError(err),
             data: (list) {

@@ -162,9 +162,14 @@ void main() {
         final end = i + 1 < decls.length
             ? decls[i + 1].start
             : providersSrc.length;
-        if (providersSrc
-            .substring(start, end)
-            .contains('repoSnapshotProvider(')) {
+        // ANY provider that awaits another provider's `.future`, not just the
+        // snapshot. Seven families do (0030 Phase 1), and each one turns a
+        // refresh of its dependency into a RELOAD for its dependents — the
+        // condition `when` renders as a spinner.
+        final body = providersSrc.substring(start, end);
+        if (RegExp(
+          r'ref\.watch\(\w+Provider\([^)]*\)\.future\)',
+        ).hasMatch(body)) {
           derived.add(decls[i][1]!);
         }
       }
