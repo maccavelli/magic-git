@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-05
 associated-madr: "0030-MADR-test-coverage-gaps-are-shaped-not-sized.md"
 ---
@@ -395,7 +395,7 @@ that finds itself wanting a live host has left its scope.
 | 6 | executed | — | `Found 0 widgets with text "Files Changed Since"` | 6 tests; the data-loss path covered, 2 guards proven unreachable |
 | 7 | **executed, partial** | — | best-effort sweep sabotage | 3 contract tests; the 68 lines remain uncovered, and why is recorded |
 | 8 | executed | — | `Set:['forge/forge_widgets.dart']`; fixture flagged | 2 heuristics; my own scan had 2 bugs, both found by sabotage |
-| 9 | not started | — | — | — |
+| 9 | executed | — | n/a (measurement) | 81.4% → 81.7%; the parity gap closed 40.9% → 100% |
 
 ## Execution notes
 
@@ -745,3 +745,51 @@ there would be cargo cult. The allowlist was renamed from `_deliberateSpinners`
 to `_reviewedBoundarySites` to hold both kinds of reason honestly: "the spinner
 is correct" and "the flag is unnecessary" are different answers and the list now
 says which is which.
+
+### Phase 9 — re-measurement, 2026-09-05
+
+Same commands as the baseline. **Recorded including the figures that did not
+move**, because the MADR's point was never that the percentage rises.
+
+| measure | baseline | after | |
+|---|---|---|---|
+| line coverage | 81.4 % (29,065/35,691) | **81.7 %** (29,173/35,691) | +108 lines |
+| tests | 3,508 | **3,547** | +39 |
+| `ScopedCommandExecutor` | **40.9 %** (3 test files) | **100 %** | the worst parity gap, closed |
+| `ProxyCommandExecutor` | **60.0 %** (1 test file) | **96.9 %** | every pop-out's executor |
+| `ActivityCommandExecutor` | **66.7 %** (1 test file) | **100 %** | |
+| `AppShell` | 32.7 % | **45.7 %** | undo/redo paths |
+| `LocalCommandExecutor` | 85.0 % | 86.4 % | real-process contract rows |
+| `SSHCommandExecutor` | 82.9 % | **82.9 %** | **unmoved — not driven by the harness, and said so** |
+| `RemoteWatchService` | 76.0 % | **76.0 %** | **unmoved** |
+
+**The headline number moved 0.3 points and that is the expected result.** The
+work went where a defect would be expensive: the three wrapper implementations
+of the load-bearing abstraction went from 40.9 / 60.0 / 66.7 % to 100 / 96.9 /
+100 %, and the executor seam — the shape that produced defect 4 — now has one
+contract body run against every implementation reachable in-process.
+
+**No coverage target was adopted**, per the MADR's recommendation, and no test
+in this plan was written to move a percentage.
+
+## Outcome
+
+Nine phases, all executed. Eight test artifacts landed and every negative was
+observed, with the verbatim failure in each phase's record.
+
+**Two phases are partial and say so**: Phase 6 (two guards proven unreachable
+from a widget harness) and Phase 7 (68 lines in `connect()`/`connectLocal()`
+still uncovered, with the reason and the cost of covering them written down).
+
+**The recurring lesson, quantified.** Across the plan I wrote **six** checks
+that passed while asserting nothing:
+
+* a tautology in the parity harness (`expect(streamed || true, isTrue)`);
+* three shell tests that passed with the guard they were named after deleted;
+* a scan a *comment* could satisfy;
+* a scan whose regex missed the one site that motivated it.
+
+Every one was caught the same way — break the thing, re-run, see whether the
+test notices — and none would have been caught by reading, by review, or by a
+coverage number. That is the MADR's thesis arriving in the work that was meant
+to implement it.

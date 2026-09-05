@@ -214,6 +214,22 @@ harness asserts nothing the implementations do not already share.
 The measurement above should be retaken after T2, and **recorded including any
 figure that did not move** — the point is not that 81.4 % rises.
 
+> **Confirmed 2026-09-05.** All nine phases executed. Line coverage 81.4 % →
+> **81.7 %** (+108 lines, +39 tests) — and the parity gap this record measured
+> closed where it mattered: `ScopedCommandExecutor` 40.9 % → **100 %**,
+> `ProxyCommandExecutor` 60.0 % → **96.9 %**, `ActivityCommandExecutor` 66.7 %
+> → **100 %**. `SSHCommandExecutor` and `RemoteWatchService` are recorded
+> **unmoved**.
+>
+> T1.1's harness was required to be seen failing before the phase could close;
+> it passed on its first run, the rows were pushed into `LocalCommandExecutor`
+> with real child processes, and three sabotages then bit — including one where
+> joining argv into a shell string **executed an injected command**.
+>
+> Six checks written during this plan passed while asserting nothing, and all
+> six were caught by deliberate sabotage rather than by review. The plan's
+> execution record names each.
+
 ## More Information
 
 * [`0029-MADR-host-scripts-must-be-executed-by-a-test.md`](0029-MADR-host-scripts-must-be-executed-by-a-test.md) — shape B for host scripts; the registry idiom T1.2 and T3.8 generalise.
