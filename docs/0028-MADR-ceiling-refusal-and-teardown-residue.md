@@ -178,9 +178,21 @@ rejected outright: inference is how 0027's dead sweep survived for months.
   slot frees, proven by a test that fails on today's code (where it waits for
   the recovery timer), and when the four refusal causes are distinguishable at
   the point of decision.
+
+  > **Confirmed 2026-09-04.** Red observed at
+  > `Expected: eventDriven / Actual: polling` with no time advanced, so the
+  > green cannot be the recovery timer firing. The reason guard was separately
+  > seen to fail. Commits `af8ea52`, `dd62a36`.
 * **H3** is confirmed when a deliberate abnormal channel loss under the current
   build either leaves an orphan — which reopens it with evidence — or does not,
   observed on the real host rather than reasoned from the lease's design.
+
+  > **Resolved by consequence, 2026-09-04.** An abandoned watcher self-terminated
+  > at **lease age 371 s**, inside the predicted window, with the `-t 120` wake
+  > and lease re-check visible in the samples. No remedy was needed and none was
+  > built. The first run of this experiment was invalid — it fed its own events,
+  > writing 1.78 GB — and had to be discarded; that is recorded in the plan
+  > rather than quietly replaced.
 
 Both must be seen to fail before being trusted.
 
