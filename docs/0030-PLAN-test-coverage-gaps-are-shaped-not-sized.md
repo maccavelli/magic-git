@@ -391,7 +391,7 @@ that finds itself wanting a live host has left its scope.
 | 2 | executed | — | fixture rule flagged `Seam.Beta` | live scan green; 2 seams, 3 private impls exempt |
 | 3 | executed | — | 3 sabotages, incl. a real injection | parity sound; 16 rows, wrappers + real processes |
 | 4 | executed | — | `'recorded'`→`'MISSING'`; `Set:['pipelinesProvider']` | 2 invariants; the third was absorbed by Phase 3 |
-| 5 | not started | — | — | — |
+| 5 | executed | — | bytes arrived as `'hi\x00ÿþÃ(\n'`; guard removal | 7 tests; `uploadBytes` covered end to end |
 | 6 | not started | — | — | — |
 | 7 | not started | — | — | — |
 | 8 | not started | — | — | — |
@@ -565,3 +565,33 @@ error as its error state. Adding the gate to all six would cost nothing for
 sessions without managed tokens (the future is already complete) — but it is a
 behaviour change, and this is a testing plan, so it is reported rather than
 taken.
+
+### Phase 5 as executed — 2026-09-05
+
+Seven tests over `ProxyCommandExecutor.uploadBytes`, the path a pop-out editor
+writes a file back to the host with. The assertions are about **bytes and about
+errors surfacing**, because the failure modes here are a corrupted file and a
+lost edit:
+
+* the payload crosses as `Uint8List`, byte-identical, and survives the decoder
+  the main window runs — tested with a payload carrying a NUL and invalid UTF-8;
+* a missing *and* an empty `routingRepo` are refused **before any channel call**;
+* a `PlatformException` surfaces with its message;
+* a missing plugin (main window gone) surfaces as a proxy error;
+* **a null reply is an error, not a saved file**;
+* a not-ok reply surfaces.
+
+**Two rows came from the code rather than the plan.** Writing the test revealed
+that the proxy treats a null reply as a failure — *"The main window returned no
+response for this upload"* — which is the right default and was untested. The
+null-reply and not-ok rows were added for it.
+
+**Seen to fail:**
+
+| broken | observed |
+|---|---|
+| bytes encoded as a `String` | `Expected: <Instance of 'Uint8List'> / Actual: 'hi\x00ÿþÃ(\n'` |
+| `routingRepo` guard removed | the refusal test fails; the main window is asked to write an unroutable file |
+
+The first is the trap `AGENTS.md` records — the native codec truncates strings
+at NUL — reproduced deliberately and caught.
