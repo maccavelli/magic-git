@@ -107,7 +107,34 @@ the method exists.
 
 ### Phase 2 — Split the validation, and compose the path
 
+~~**Files.** `lib/features/workspace/create_repo_sheet.dart`;
+`test/create_repo_namespace_test.dart` (new).~~
+
+> **Deviation, 2026-09-05 — the sheet harness is private.**
+>
+> *Found:* the plan's Phase 2 file list, and its acceptance criterion "no
+> existing sheet test changes", assumed a new test file could drive
+> `CreateRepositorySheet` on its own. It cannot. The whole harness —
+> `_FakeExecutor`, `_StubConnection`, `_FakeStore`, `_PrefillSettings`,
+> `_pumpConnected`, `_pumpCreate`, `_nameField`, `_next`, `_createButton` — is
+> private to `test/create_repo_sheet_test.dart` (lines 29–263 of 1539), and
+> `test/helpers/` holds no create-sheet harness. Pre-existing: that file is
+> unmodified in the working tree and the privacy is original to it, not
+> introduced by this phase.
+>
+> *Decision (maintainer, 2026-09-05):* **extract the harness** into
+> `test/helpers/create_repo_harness.dart` and have both test files import it,
+> rather than appending the new tests to the existing file or duplicating the
+> harness. Phase 3 needs the same harness, and a second copy would drift.
+>
+> *Scope added to this phase:* `test/helpers/create_repo_harness.dart` (new)
+> and `test/create_repo_sheet_test.dart` (imports and helper references only).
+> The acceptance criterion is amended to: **no existing sheet test's
+> assertions change, and all of them stay green.**
+
 **Files.** `lib/features/workspace/create_repo_sheet.dart`;
+`test/helpers/create_repo_harness.dart` (new);
+`test/create_repo_sheet_test.dart` (harness extraction only);
 `test/create_repo_namespace_test.dart` (new).
 
 The block today is one line: `_detailsValid()` calls
@@ -141,7 +168,8 @@ The block today is one line: `_detailsValid()` calls
   created. This is the regression the `--group` note above describes; assert it
   explicitly rather than trusting the composition.
 
-**Acceptance.** Tests red then green; no existing sheet test changes. **Commit.**
+**Acceptance.** Tests red then green; no existing sheet test's assertions
+change and all stay green (amended — see the deviation above). **Commit.**
 
 ---
 
@@ -242,7 +270,7 @@ unreachable — worse than the missing feature.
 | Phase | Status | Commit | Red observed | Result |
 |---|---|---|---|---|
 | 1 | **complete** | *(this commit)* | yes, verbatim below | 3554 → 3562, analyzer clean |
-| 2 | not started | — | — | — |
+| 2 | **complete** | *(this commit)* | yes, 4 sabotages | 3562 → 3568, analyzer clean |
 | 3 | not started | — | — | — |
 | 4 | **not authorized** | — | — | mutating; needs separate approval |
 
@@ -298,3 +326,51 @@ quietly fixed:**
 project has been created under a non-default namespace on a real forge. The
 nested-subgroup question the MADR raises stays open until Phase 4, which is
 mutating and unauthorised.
+
+### Phase 2 — 2026-09-05
+
+A `Namespace (optional)` field on the Details step, shown only in forge modes,
+composed into `_forgePath` and passed as the CLI's positional argument at all
+four forge call sites (`create_repo_sheet.dart:694, 701, 727, 746, 753, 776`).
+Six tests in `test/create_repo_namespace_test.dart`.
+
+The split the plan asked for: **`_name` keeps `isValidRepoDirName` in both
+modes** — it is the directory name in `newFolder` mode and the project's last
+segment on the forge, so it stays one segment either way. `_namespace` is the
+only field that may contain `/`, and an empty one means "my default namespace",
+which reproduces today's behaviour exactly.
+
+`name` (the local directory) and `forgePath` (what the forge creates and what
+origin is resolved against) are now separate locals, computed once at
+`create_repo_sheet.dart:472`, so the create and the lookup cannot drift.
+
+**Deviation executed:** the harness extraction described above.
+`test/helpers/create_repo_harness.dart` (231 lines) now holds
+`FakeCreateExecutor`, `StubConnection`, `FakeConnectionStore`, the settings
+notifiers, `pumpConnected`, `pumpCreate` and the field/button finders.
+`create_repo_sheet_test.dart` imports it. The extraction was proved
+assertion-neutral rather than assumed: reversing the 23 renames on the new
+file's `main()` and diffing against `HEAD` yields 61 diff lines, **every one of
+them `dart format` rewrapping an expression whose identifier changed length** —
+`expect(` count 126 → 126, `testWidgets(` count 28 → 28, all 28 green.
+
+**Red observed.** These tests were written after the implementation, so each
+was proved by sabotage rather than by writing it first. Four separate
+sabotages, each against a scratchpad copy of `create_repo_sheet.dart` restored
+by `cmp`-verified copy, each failing exactly the one test that covers it:
+
+| Sabotage | Test that went red | Failure |
+|---|---|---|
+| `name:` reverted to the bare name at all four call sites | composes into the positional argument; created-path/resolved-path identity | `Expected: 'team/subgroup/repo'` / `Actual: 'repo'` |
+| `isValidRepoDirName` loosened to an emptiness check | a slash in the NAME is still refused | `[E]` |
+| the namespace validator line deleted | a malformed namespace blocks Continue | `namespace "/team" should be rejected` |
+| the field's `if (_onForge)` guard forced true | the field only exists in forge modes | `[E]` |
+
+The first row is the one that matters: it is the `--group` trap reproduced
+directly, and it is why the created path is asserted to reach `gh repo view`
+as the same string rather than being trusted from the composition.
+
+**Not yet true.** The field is free text with no suggestions —
+`listCreatableNamespaces` from Phase 1 still has no caller. Nothing has created
+a project under a non-default namespace on a real forge; the nested-subgroup
+question stays open until Phase 4.

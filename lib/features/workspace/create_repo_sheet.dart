@@ -107,6 +107,7 @@ class CreateRepositorySheet extends ConsumerStatefulWidget {
 class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     with WorkspaceProvisioning<CreateRepositorySheet> {
   final _name = TextEditingController();
+  final _namespace = TextEditingController();
   final _branch = TextEditingController(text: 'main');
   final _parent = TextEditingController();
   final _host = TextEditingController(text: 'github.com');
@@ -254,11 +255,43 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     if (needName && !HostFsService.isValidRepoDirName(_name.text.trim())) {
       return false;
     }
+    // The namespace is the only field that may contain `/`. The name stays a
+    // single segment in both modes — in newFolder mode it is also the
+    // directory name, and on the forge it is the project's last segment.
+    if (_onForge && !_isValidNamespace(_namespaceText)) return false;
     // An initial commit (README or commit-all) needs a real identity —
     // git refuses `commit` without user.name / user.email, and that used
     // to leave the forge project created with nothing to push.
     if (_needsIdentity && !_identityValid) return false;
     return true;
+  }
+
+  String get _namespaceText => _namespace.text.trim();
+
+  /// The forge path a create should use: `namespace/name`, or just `name`
+  /// when no namespace was given (the account's default — today's behaviour).
+  ///
+  /// Passed as the CLI's **positional argument**, never as `--group`. Both
+  /// `glab repo create foo --group team/sub` and the positional
+  /// `team/sub/foo` create the same project, but only the positional form is
+  /// what [GlabService.resolveOriginUrl] then looks up: given a bare `foo` it
+  /// searches `<login>/foo`, misses, and reports "origin could not be
+  /// determined" for a project that was created correctly (MADR 0031).
+  String get _forgePath {
+    final ns = _namespaceText;
+    final name = _name.text.trim();
+    return ns.isEmpty ? name : '$ns/$name';
+  }
+
+  /// An empty namespace is legal and means "my default namespace".
+  static bool _isValidNamespace(String ns) {
+    if (ns.isEmpty) return true;
+    if (ns != ns.trim()) return false;
+    if (ns.startsWith('/') || ns.endsWith('/')) return false;
+    if (ns.contains(RegExp(r'\s'))) return false;
+    return ns
+        .split('/')
+        .every((seg) => seg.isNotEmpty && seg != '.' && seg != '..');
   }
 
   bool get _needsIdentity => _addReadme || _commitAll;
@@ -340,6 +373,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     resetProvisioning();
     _unregisterEscape?.call();
     _name.dispose();
+    _namespace.dispose();
     _branch.dispose();
     _parent.dispose();
     _host.dispose();
@@ -432,6 +466,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       final fs = HostFsService(executor);
       final log = ref.read(outputLogProvider.notifier);
       final name = _name.text.trim();
+      // `name` stays the local directory; `forgePath` is what the forge
+      // is asked to create and what origin is then resolved against.
+      // They differ only when a namespace was given.
+      final forgePath = _forgePath;
       final existing = _source == _SourceMode.existingFolder;
       final String? parentDir;
       final String dest;
@@ -653,14 +691,14 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
         case _RemoteMode.none:
           break;
         case _RemoteMode.github:
-          final label = 'gh repo create $name';
+          final label = 'gh repo create $forgePath';
           final gh = GhService(executor);
           SSHCommandResult? created;
           String? createFailure;
           try {
             created = await gh.createRepoInExisting(
               repoPath: dest,
-              name: name,
+              name: forgePath,
               private: _private,
               description: _description.text.trim(),
               host: host,
@@ -686,7 +724,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
             forge: Forge.github,
             lookupUrl: () => gh.resolveOriginUrl(
               repoPath: dest,
-              name: name,
+              name: forgePath,
               host: host,
               createOutput: created?.stdout,
             ),
@@ -705,14 +743,14 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
             }
           }
         case _RemoteMode.gitlab:
-          final label = 'glab repo create $name';
+          final label = 'glab repo create $forgePath';
           final glab = GlabService(executor);
           SSHCommandResult? created;
           String? createFailure;
           try {
             created = await glab.createRepoInExisting(
               repoPath: dest,
-              name: name,
+              name: forgePath,
               private: _private,
               description: _description.text.trim(),
               host: host,
@@ -735,7 +773,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
             forge: Forge.gitlab,
             lookupUrl: () => glab.resolveOriginUrl(
               repoPath: dest,
-              name: name,
+              name: forgePath,
               host: host,
               createOutput: created?.stdout,
             ),
@@ -1434,6 +1472,29 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
                       'the folder when picked with Browse/Choose.'
                 : 'Also the name of the folder created inside the parent. '
                       'Letters, digits, dot, dash and underscore.',
+          ),
+          const SizedBox(height: 10),
+        ],
+        // Only a forge has namespaces. Free text on purpose: a group the API
+        // did not return — a fresh grant, a paginated tail, an unreachable
+        // API — must stay typeable.
+        if (_onForge) ...[
+          Text('Namespace (optional)', style: typography.caption1),
+          const SizedBox(height: 4),
+          MacosTextField(
+            controller: _namespace,
+            placeholder: 'team/subgroup',
+            placeholderStyle: kAppPlaceholderStyle,
+            decoration: kAppTextFieldDecoration,
+            focusedDecoration: kAppTextFieldFocusedDecoration,
+            onChanged: (_) => setState(() {}),
+          ),
+          WizardHint(
+            _namespaceText.isEmpty
+                ? 'Leave empty to create under your own account. A group or '
+                      'subgroup path creates it there instead.'
+                : 'Creates ${_forgePath.isEmpty ? '—' : _forgePath} on the '
+                      'forge.',
           ),
           const SizedBox(height: 10),
         ],
