@@ -13,7 +13,13 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Builders proven by a test that RUNS the script and observes its effect.
-const _executed = <String>{'watcherSweepScript'};
+const _executed = <String>{
+  'watcherSweepScript',
+  'catFileBatchScript',
+  'recursiveWatchScript',
+  'boundedInotifyScript',
+  'boundedFswatchScript',
+};
 
 /// Builders that cannot be executed on the development machine.
 ///
@@ -21,23 +27,12 @@ const _executed = <String>{'watcherSweepScript'};
 /// of naming them is that "what is untested here" is answerable without an
 /// audit.
 const _exempt = <String, String>{
-  'boundedInotifyScript':
-      'needs inotifywait, which does not exist on macOS. Its lease loop is '
-      'pure shell and could be executed with a stand-in inner command '
-      '(0029 Phase 2).',
-  'boundedFswatchScript':
-      'needs fswatch, not installed by default on the development machine.',
-  'recursiveWatchScript':
-      'needs inotifywait/fswatch. This is the script that carried most of the '
-      '19 orphans found on the host, and it has no test of any kind — the '
-      'largest single gap this record names.',
-  'catFileBatchScript':
-      'not yet executed; needs only git/mktemp/base64 and SHOULD be moved to '
-      '_executed (0029 Phase 2). It carries the 0022 M10 binary-safety '
-      'fix, which is a claim about bytes that no string assertion checks.',
   'rootlessInstallScript':
-      'installs binaries; executing it in a test would mutate the developer '
-      'machine. Expected to remain exempt permanently.',
+      'Installs binaries into the developer machine. Executing it in a test '
+      'would mutate the machine running the suite, which no test may do. This '
+      'one is expected to remain exempt permanently; its composition is '
+      'checked in install_planner_test.dart, and that is all a string '
+      'assertion is allowed to claim (0029).',
 };
 
 /// Top-level Dart functions that build a shell script, found by reading the
