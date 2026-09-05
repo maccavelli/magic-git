@@ -384,6 +384,38 @@ class RemoteWatchService {
           if (!_slotReleases.isClosed) _slotReleases.add(null);
         }
 
+        final gitDir = spec?.gitDir ?? '$repoPath/.git';
+        final heartbeat = watchHeartbeatFile(gitDir, token);
+        Future<void> beat() async {
+          try {
+            await _executor.execute(
+              repoPath: repoPath,
+              gitArgs: ['sh', '-c', 'touch ${ShellEscaper.escape(heartbeat)}'],
+              lane: ExecLane.isolated,
+              timeout: const Duration(seconds: 15),
+            );
+          } catch (_) {
+            // Best-effort once the watcher is up. A missed beat costs nothing
+            // until leaseStaleAfter — but see the AWAITED first beat below,
+            // which is not optional.
+          }
+        }
+
+        // STAMP THE LEASE BEFORE ARMING, and wait for it.
+        //
+        // The watcher script's first action is `[ -f <heartbeat> ] || exit 0`.
+        // This used to be fired with `unawaited(beat())` *after* the stream was
+        // launched, so the script checked for a file the client had not created
+        // yet and exited in ~5 ms — every arm, because the heartbeat filename
+        // is tokenised per instance and can never pre-exist. Three arms died in
+        // seconds, the restart budget emptied, and the repo polled forever at
+        // 48 host processes a minute (0027 deviation (b)).
+        //
+        // It is also what a lease *means*: a live client owns this watcher, so
+        // the client's mark must precede the watcher. One round trip, on a path
+        // that already pays one.
+        await beat();
+
         final CommandStreamHandle handle;
         try {
           handle = await _executor.executeStream(
@@ -503,22 +535,8 @@ class RemoteWatchService {
         // (ssh_session.dart:74), so unread stderr is queued in the Dart heap
         // for the life of the channel — and the watcher's channel is the
         // longest-lived one in the app (0024 H3).
-        final gitDir = spec?.gitDir ?? '$repoPath/.git';
-        final heartbeat = watchHeartbeatFile(gitDir, token);
-        Future<void> beat() async {
-          try {
-            await _executor.execute(
-              repoPath: repoPath,
-              gitArgs: ['sh', '-c', 'touch ${ShellEscaper.escape(heartbeat)}'],
-              lane: ExecLane.isolated,
-              timeout: const Duration(seconds: 15),
-            );
-          } catch (_) {
-            // Best-effort. A missed beat costs nothing until leaseStaleAfter.
-          }
-        }
-
-        unawaited(beat());
+        // The lease was stamped and awaited before the arm; from here it only
+        // needs refreshing.
         heartbeatTimer?.cancel();
         heartbeatTimer = Timer.periodic(heartbeatInterval, (_) => beat());
 

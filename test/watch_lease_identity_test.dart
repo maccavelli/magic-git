@@ -31,6 +31,10 @@ class _Recording extends SSHCommandExecutor {
   _Recording() : super(SSHClientManager());
   final scripts = <String>[];
 
+  /// Ordered log of what the arm actually did on the host: `beat:<path>` when
+  /// the client stamps a lease, 'arm:<script>' when it launches the watcher.
+  final events = <String>[];
+
   @override
   Future<SSHCommandResult> execute({
     required String repoPath,
@@ -46,7 +50,9 @@ class _Recording extends SSHCommandExecutor {
     OperationEventCallback? onOperationEvent,
     CommandOutputCallback? onOutput,
   }) async {
-    scripts.add(gitArgs.join(' '));
+    final joined = gitArgs.join(' ');
+    scripts.add(joined);
+    if (joined.contains('touch ')) events.add('beat:$joined');
     return const SSHCommandResult(
       exitCode: 0,
       stdout: 'inotifywait\n',
@@ -63,7 +69,9 @@ class _Recording extends SSHCommandExecutor {
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
-    scripts.add(gitArgs.join(' '));
+    final joined = gitArgs.join(' ');
+    scripts.add(joined);
+    events.add('arm:$joined');
     return _Handle();
   }
 }
@@ -120,5 +128,46 @@ void main() {
       for (var i = 0; i < 50; i++) RemoteWatchService.newWatchToken(),
     };
     expect(tokens, hasLength(50));
+  });
+
+  test('the lease exists before the watcher is armed', () async {
+    // 0027 deviation (b). The lease loop's FIRST action is
+    // `[ -f $hb ] || exit 0`. If the client stamps the heartbeat after
+    // launching the script, the script loses the race and exits in ~5 ms —
+    // every arm, because the tokenised filename can never pre-exist. The repo
+    // then burns its restart budget and polls forever at 48 host processes a
+    // minute.
+    //
+    // Neither half of this is wrong on its own, which is why testing the
+    // halves missed it. This asserts the SEAM: the order of the two host
+    // operations, and that they name the same instance.
+    final exec = _Recording();
+    final service = RemoteWatchService(exec);
+    final sub = service.watch('/repo').listen((_) {});
+    await pumpEventQueue();
+    await sub.cancel();
+
+    final beat = exec.events.indexWhere((e) => e.startsWith('beat:'));
+    final arm = exec.events.indexWhere((e) => e.startsWith('arm:'));
+    expect(beat, isNot(-1), reason: 'the client must stamp a lease at all');
+    expect(arm, isNot(-1), reason: 'and it must arm a watcher');
+    expect(
+      beat,
+      lessThan(arm),
+      reason:
+          'the lease must exist BEFORE the script checks for it; '
+          'events were: ${exec.events.map((e) => e.split(':').first).toList()}',
+    );
+
+    // And it must be THIS instance's lease, not some other arm's.
+    final token = RegExp(
+      r'mg-watch\.(\w+)\.hb',
+    ).firstMatch(exec.events[beat])?[1];
+    expect(token, isNotNull, reason: 'the beat names a tokenised lease file');
+    expect(
+      exec.events[arm],
+      contains(token!),
+      reason: 'the armed script must check the lease the client just stamped',
+    );
   });
 }

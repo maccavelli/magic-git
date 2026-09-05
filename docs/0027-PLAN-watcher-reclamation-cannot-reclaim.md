@@ -1,5 +1,5 @@
 ---
-status: "complete"
+status: "complete (amended)"
 date: 2026-09-04
 associated-madr: "0027-MADR-watcher-reclamation-cannot-reclaim.md"
 ---
@@ -368,3 +368,67 @@ name.
 **Phase 5 is re-scoped accordingly**: verify that today's sweep spares the
 fixture (the defect, on the real host), kill the two orphans by hand, and
 confirm no live watcher was harmed.
+
+### Deviation (b) — 2026-09-04 — Phase 2 broke arming; found in production by 0026's instrument
+
+**Reported from a running build** by the degradation summary this series added
+(0026 Phase 3):
+
+```
+watcher: polling …/percona-postgres — restart budget spent (3/3);
+watchers held 1, restarts spent 3
+after: restartScheduled(source died) -> armed(arm succeeded)
+    -> restartScheduled(source died) -> armed(arm succeeded)
+```
+
+**This plan's Phase 2 caused it.** The lease loop's first action is
+`[ -f $hb ] || exit 0` (`bounded_watch.dart:177`). The client creates that
+heartbeat at `remote_watch_service.dart:521` — `unawaited(beat())`, an SSH round
+trip fired **after** `executeStream` has already launched the script. The script
+loses the race and exits.
+
+Before Phase 2 this was invisible: the heartbeat was one shared `mg-watch.hb`
+per repo, so after the first-ever arm it always existed. **Tokenising it per
+instance made the filename new on every arm, so it can never pre-exist** — and
+every arm now dies immediately.
+
+**Reproduced on the host, with a control:**
+
+```
+heartbeat exists before start?  NO
+exit=0 after 5ms   pid file written: yes      <- dies instantly
+
+control, same script WITH the heartbeat present:
+exit=124 (still running at 3s)                <- stays armed
+```
+
+The host showed **14 tokenised lease pairs and zero live watchers** — one pair
+per dead arm, the token suffix running `0,1,2,…,d` straight through the
+instance counter.
+
+**Impact.** The repo never gets an event-driven watcher: three arms die in
+seconds, the restart budget empties, and it falls to polling — permanently,
+since every three-minute recovery repeats the sequence. That is **48 git
+processes per minute**, which is precisely the finding 0025 C4 was written
+about. This plan reintroduced it.
+
+**Why the tests missed it.** Phase 2 tested file *naming* ("two watcher
+instances own distinct lease files") — true, and silent on whether either arms.
+0029's lease-loop tests create the heartbeat *before* running the script and
+assert that an absent heartbeat means exit — correct in isolation. **Neither
+covered the seam between the service and the script**, which is the same shape
+as the original defect: each half right, the join untested.
+
+**Decision (maintainer): establish the lease before arming** — `await beat()`
+before `executeStream`, so the lease provably exists when the script checks it.
+This matches what a lease means: a live client owns this watcher, so its mark
+must precede the watcher. It costs one extra round trip per arm, and arms are
+rare.
+
+Rejected: letting the script seed its own lease (a watcher whose client dies at
+once would then hold a self-made lease for the full stale window), and reverting
+the heartbeat tokenisation (that reinstates defect 3 — a live successor holding
+a dead predecessor's lease open, which is what let orphans reach 19 minutes).
+
+**The fix is covered by a test that arms through the real service and asserts
+the ordering**, not by another test of either half.
