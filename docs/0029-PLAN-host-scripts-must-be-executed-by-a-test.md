@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-04
 associated-madr: "0029-MADR-host-scripts-must-be-executed-by-a-test.md"
 ---
