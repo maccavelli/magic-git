@@ -392,7 +392,7 @@ that finds itself wanting a live host has left its scope.
 | 3 | executed | — | 3 sabotages, incl. a real injection | parity sound; 16 rows, wrappers + real processes |
 | 4 | executed | — | `'recorded'`→`'MISSING'`; `Set:['pipelinesProvider']` | 2 invariants; the third was absorbed by Phase 3 |
 | 5 | executed | — | bytes arrived as `'hi\x00ÿþÃ(\n'`; guard removal | 7 tests; `uploadBytes` covered end to end |
-| 6 | **executed, partial** | — | control crashed at `app_shell.dart:560` | 3 tests; 2 of them proven NOT to reach their guards |
+| 6 | executed | — | `Found 0 widgets with text "Files Changed Since"` | 6 tests; the data-loss path covered, 2 guards proven unreachable |
 | 7 | not started | — | — | — |
 | 8 | not started | — | — | — |
 | 9 | not started | — | — | — |
@@ -630,9 +630,45 @@ a second thing on its way: it crashed at `app_shell.dart:560` on
 a shape production never produces. The fake was corrected rather than the
 null-check blamed.
 
-**Not done, and not disguised as done:** the `UndoStatus.dirty`
-confirm-before-overwrite path, and the redo mirrors. Those need a driveable
-dialog and a focus setup this harness does not have. **69 uncovered lines over
-a repository-mutating feature remain substantially uncovered**, and the honest
-summary of this phase is that it established *why* they are hard to reach, not
-that it covered them.
+#### Resolved — 2026-09-05
+
+The phase was reopened rather than left partial. Six tests now stand, and the
+split between what is covered and what cannot be is established by experiment
+rather than by assertion.
+
+**Covered, and proven by sabotage — the data-loss path.**
+
+* `UndoStatus.dirty` **prompts before overwriting**. Removing the confirmation
+  and forcing straight through gives
+  `Found 0 widgets with text "Files Changed Since"`.
+* **Declining does not force** — `calls.forces` never contains `true`.
+* **Accepting retries with `force: true`.**
+* **⇧⌘Z redoes**, and does not undo.
+* **CONTROL**: ⌘Z with no field focused reaches the shell, so the above are
+  known to run against a live shortcut rather than a dead one.
+
+This is the part that mattered: the confirm-before-overwrite path is where an
+undo destroys work the user did after the operation, and it now has a test that
+fails when the prompt is removed.
+
+**Not reachable from this harness, established by three failed attempts.**
+
+Two early-return guards in `_undoGitOperation` are not exercised, and every
+attempt to exercise them produced a test that **passed with the guard deleted**:
+
+| guard | why it cannot be reached |
+|---|---|
+| in-field ⌘Z (`app_shell.dart:522-531`) | needs a focused text field **inside** AppShell's own `Focus` subtree. A field added beside AppShell in a `Stack` takes focus *out* of that subtree and the shortcut never fires — measured: the control asserting a plain focused node still undoes returned `Expected: <1> / Actual: <0>` |
+| `repoPath == null` | dropping the repo swaps the shell for the connection landing, unmounting the shortcuts before the guard can be consulted |
+
+Reaching the first needs the real panels mounted with their providers, which is
+a different and much larger harness. Both are defensive backstops behind a UI
+that already prevents the case, and the file says so where a reader will meet
+it.
+
+**Three vacuous tests of mine were written and deleted in the course of this.**
+Each looked correct, passed, and would have been reported as covering
+repository-mutating code. What caught all three was the same move: delete the
+guard, re-run, and see whether the test notices. It is recorded here because the
+rate — three in one phase — says more about how easily this happens than any
+argument would.

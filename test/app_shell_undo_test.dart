@@ -14,6 +14,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/undo/undo_controller.dart';
+import 'package:remote_magic_git/core/undo/undo_types.dart';
 import 'package:remote_magic_git/features/app_shell.dart';
 
 class _StubConnection extends ConnectionController {
@@ -21,6 +22,12 @@ class _StubConnection extends ConnectionController {
   final ConnectionState _state;
   @override
   ConnectionState build() => _state;
+
+  /// Lets a test drop the repo *after* the shell has mounted its shortcuts —
+  /// the only way to reach the `repoPath == null` guard, because with no repo
+  /// at build time the shell renders a tree that has no shortcuts at all.
+  void dropRepo() =>
+      state = ConnectionState(phase: _state.phase, backend: _state.backend);
 }
 
 /// Counters live OUTSIDE the fake on purpose. Both behaviours under test end
@@ -35,6 +42,16 @@ class _Calls {
 
 // ignore: library_private_types_in_public_api
 late _Calls calls;
+
+UndoRecord _record() => UndoRecord(
+  repoPath: '/srv/repo',
+  kind: UndoOpKind.commit,
+  description: 'Commit',
+  preHead: 'a' * 40,
+  preRef: 'main',
+  postHead: 'b' * 40,
+  postRef: 'main',
+);
 
 /// Records what the shell asks of the controller, and answers with a scripted
 /// attempt. The controller's own behaviour is already covered elsewhere; what
@@ -57,7 +74,7 @@ class _RecordingUndo extends UndoController {
   Future<RedoAttempt> redo(String repoPath, {bool force = false}) async {
     calls.redo++;
     calls.forces.add(force);
-    return const RedoAttempt(RedoStatus.done);
+    return const RedoAttempt(RedoStatus.nothingToRedo);
   }
 }
 
@@ -215,5 +232,82 @@ void main() {
           'the shortcut must actually be wired for the guard test to mean '
           'anything',
     );
+  });
+
+  // ---- reaching the guards for real -------------------------------------
+
+  // ---- what this harness CANNOT reach, and why -------------------------
+  //
+  // `_undoGitOperation` has two early-return guards that no test here
+  // exercises. Both were attempted, and both attempts produced tests that
+  // passed with the guard DELETED — which is the only reliable way to find
+  // out, and is why they are not in this file:
+  //
+  //  * **the in-field guard** (`app_shell.dart:522-531`). Reaching it needs a
+  //    focused text field INSIDE AppShell's own `Focus` subtree. A field added
+  //    beside AppShell in a `Stack` takes focus *out* of that subtree, so the
+  //    shortcut never fires at all — measured: the control asserting a plain
+  //    focused node still undoes came back `Expected: <1> / Actual: <0>`.
+  //    Reaching it needs the real panels mounted with their providers.
+  //
+  //  * **the `repoPath == null` guard**. Dropping the repo swaps the shell for
+  //    the connection landing, so the shortcuts are unmounted before the guard
+  //    can be consulted.
+  //
+  // Both are defensive backstops behind a UI that already prevents the case.
+  // Recorded rather than covered by a test that would only look like coverage.
+
+  testWidgets('a dirty tree prompts before overwriting, and declining does not '
+      'force', (tester) async {
+    // The data-loss path: undoing would overwrite files changed since the
+    // operation ran. The controller reports `dirty` and keeps the record; the
+    // shell must ask, and must not retry with force unless the user says so.
+    await pump(tester, attempt: UndoAttempt(UndoStatus.dirty, _record()));
+    await _pressUndo(tester);
+    // Not pumpAndSettle: the macos_window_utils visual-effect container
+    // reschedules a timer every frame, so the tree never "settles".
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(
+      find.text('Files Changed Since'),
+      findsOneWidget,
+      reason: 'the user must be asked before their changes are overwritten',
+    );
+
+    await tester.tap(find.text('Cancel'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(
+      calls.forces,
+      isNot(contains(true)),
+      reason: 'declining must not overwrite anything',
+    );
+  });
+
+  testWidgets('accepting the prompt retries with force', (tester) async {
+    await pump(tester, attempt: UndoAttempt(UndoStatus.dirty, _record()));
+    await _pressUndo(tester);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await tester.tap(find.text('Overwrite'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(
+      calls.forces,
+      contains(true),
+      reason: 'confirming must retry the undo with force: true',
+    );
+  });
+
+  testWidgets('⇧⌘Z redoes', (tester) async {
+    await pump(tester);
+    await _pressUndo(tester, shift: true);
+    await tester.pump();
+    expect(calls.redo, 1);
+    expect(calls.undo, 0, reason: 'redo must not be an undo');
   });
 }
