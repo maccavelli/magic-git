@@ -8,6 +8,7 @@ import '../../core/forge/forge_repo_summary.dart';
 import '../../core/git/host_fs_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/utils/display_error.dart';
+import '../../core/utils/posix_path.dart';
 import '../../core/workspace/clone_controller.dart';
 import '../common/async_views.dart';
 import '../common/buttons.dart';
@@ -229,7 +230,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       if (target == WorkspaceTarget.sshActive &&
           _parent.text.isEmpty &&
           conn.repoPath != null) {
-        _parent.text = _dirOf(conn.repoPath!);
+        _parent.text = dirname(conn.repoPath!);
       }
     } else {
       target = _destConnectionId == null
@@ -1059,17 +1060,6 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       }),
       child: Text(label),
     );
-  }
-
-  static String _dirOf(String path) {
-    var end = path.length;
-    while (end > 0 && path[end - 1] == '/') {
-      end--;
-    }
-    final trimmed = path.substring(0, end);
-    final slash = trimmed.lastIndexOf('/');
-    if (slash <= 0) return '/';
-    return trimmed.substring(0, slash);
   }
 
   static String? _repoNameFromUrl(String url) {

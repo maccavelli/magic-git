@@ -15,6 +15,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/ssh/ssh_command_executor.dart';
 import '../../core/utils/display_error.dart';
+import '../../core/utils/posix_path.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
@@ -398,7 +399,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       if (_target == WorkspaceTarget.sshActive &&
           _parent.text.isEmpty &&
           conn.repoPath != null) {
-        _parent.text = _dirOf(conn.repoPath!);
+        _parent.text = dirname(conn.repoPath!);
       }
     } else {
       _target = _destConnectionId == null
@@ -481,7 +482,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       final String dest;
       if (existing) {
         parentDir = null;
-        dest = _stripTrailingSlashes(
+        dest = stripTrailingSlashesKeepRoot(
           _isLocalTarget ? _pickedFolder! : _folder.text.trim(),
         );
       } else {
@@ -530,7 +531,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
           retries: 0,
         );
         if (probe.isSuccess) {
-          final top = _stripTrailingSlashes(probe.stdout.trim());
+          final top = stripTrailingSlashesKeepRoot(probe.stdout.trim());
           if (top != dest) {
             setState(
               () => _error =
@@ -1194,7 +1195,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       if (path != null) {
         setState(() {
           _pickedFolder = path;
-          _name.text = _basenameOf(path);
+          _name.text = basename(path);
         });
       }
     } catch (_) {
@@ -1219,7 +1220,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     if (picked != null && mounted) {
       setState(() {
         _folder.text = picked;
-        _name.text = _basenameOf(picked);
+        _name.text = basename(picked);
       });
     }
   }
@@ -2101,30 +2102,5 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
           ),
       ],
     );
-  }
-
-  static String _dirOf(String path) {
-    var end = path.length;
-    while (end > 0 && path[end - 1] == '/') {
-      end--;
-    }
-    final trimmed = path.substring(0, end);
-    final slash = trimmed.lastIndexOf('/');
-    if (slash <= 0) return '/';
-    return trimmed.substring(0, slash);
-  }
-
-  static String _basenameOf(String path) {
-    final trimmed = _stripTrailingSlashes(path);
-    final slash = trimmed.lastIndexOf('/');
-    return slash < 0 ? trimmed : trimmed.substring(slash + 1);
-  }
-
-  static String _stripTrailingSlashes(String path) {
-    var end = path.length;
-    while (end > 1 && path[end - 1] == '/') {
-      end--;
-    }
-    return path.substring(0, end);
   }
 }

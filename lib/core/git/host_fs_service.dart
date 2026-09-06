@@ -1,5 +1,6 @@
 import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
+import '../utils/posix_path.dart';
 
 /// A host filesystem operation failed (permission denied, missing directory,
 /// …). Carries the failing result when one exists so the UI can surface
@@ -150,7 +151,7 @@ class HostFsService {
     if (!expectedParent.startsWith('/')) {
       throw ArgumentError('refusing to delete: parent must be absolute');
     }
-    final normalizedParent = _stripTrailingSlashes(expectedParent);
+    final normalizedParent = stripTrailingSlashes(expectedParent);
     if (normalizedParent.isEmpty) {
       // expectedParent was '/' (or only slashes) — never delete at the root.
       throw ArgumentError('refusing to delete directly under /');
@@ -179,16 +180,8 @@ class HostFsService {
   /// Joins a parent directory and a child name into one path, tolerating a
   /// trailing slash on the parent.
   static String joinPath(String parent, String name) {
-    final p = _stripTrailingSlashes(parent);
+    final p = stripTrailingSlashes(parent);
     return p.isEmpty ? '/$name' : '$p/$name';
-  }
-
-  static String _stripTrailingSlashes(String path) {
-    var end = path.length;
-    while (end > 0 && path[end - 1] == '/') {
-      end--;
-    }
-    return path.substring(0, end);
   }
 
   /// Whether [name] is acceptable as a new repository directory name: a single

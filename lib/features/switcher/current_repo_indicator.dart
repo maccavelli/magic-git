@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/utils/git_porcelain_parser.dart';
+import '../../core/utils/posix_path.dart';
 
 /// A passive bottom-of-sidebar indicator showing the active repository, so the
 /// user can tell at a glance where they're working. Sits directly above the
@@ -14,11 +15,6 @@ import '../../core/utils/git_porcelain_parser.dart';
 /// [statusProvider] the repo panels watch, so it costs no extra round trip.
 class CurrentRepoIndicator extends ConsumerWidget {
   const CurrentRepoIndicator({super.key});
-
-  static String _basename(String path) {
-    final parts = path.split('/').where((s) => s.isNotEmpty).toList();
-    return parts.isEmpty ? path : parts.last;
-  }
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -55,7 +51,7 @@ class CurrentRepoIndicator extends ConsumerWidget {
                     ),
                   ),
                   Text(
-                    _basename(repoPath),
+                    basename(repoPath),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: typography.body.copyWith(

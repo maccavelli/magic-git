@@ -1,3 +1,5 @@
+import '../utils/posix_path.dart';
+
 /// A bookmarked local-filesystem repo, persisted in shared_preferences.
 /// Unlike [SavedConnection], there is no secret at all — no password, key, or
 /// token — only a picked folder path, a macOS security-scoped bookmark (so it
@@ -7,6 +9,7 @@
 /// `SavedConnection`'s `host`/`port`/`username` are required fields with no
 /// "this has no host" discriminator — this avoids any risk to the existing,
 /// well-tested SSH connection storage.
+
 class SavedLocalRepo {
   final String id;
   final String label;
@@ -132,10 +135,5 @@ class SavedLocalRepo {
 
   /// A human label falling back to the folder's basename when none was given
   /// — mirrors [SavedConnection.displayName]'s `user@host` fallback.
-  String get displayName => label.isNotEmpty ? label : _basename(repoPath);
-
-  static String _basename(String path) {
-    final parts = path.split('/').where((s) => s.isNotEmpty).toList();
-    return parts.isEmpty ? path : parts.last;
-  }
+  String get displayName => label.isNotEmpty ? label : basename(repoPath);
 }

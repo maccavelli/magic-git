@@ -345,8 +345,24 @@ of which can legitimately pass `/` while browsing the host root.
    contracts:
    * `String basename(String path)` — one chosen family (see decision below).
    * `String dirname(String path)` — replacing `_dirOf`
-     (`create_repo_sheet:2152`, `clone_sheet:1064`, identical) and
-     `environment_probe.dart:249`'s `_dirname`.
+     (`create_repo_sheet:2152`, `clone_sheet:1064`, identical). ~~and
+     `environment_probe.dart:249`'s `_dirname`.~~
+     > **Deviation, 2026-09-06 — step wrong as written; maintainer chose to
+     > leave `environment_probe` alone.** `_dirname` is not the same function
+     > as `_dirOf`; they share a name and disagree on **4 of 7** probed inputs,
+     > verified by executing both verbatim:
+     > `_dirOf('/srv/repo/')` = `/srv` vs `_dirname('/srv/repo/')` = `/srv/repo`;
+     > `_dirOf('git')` = `/` vs `_dirname('git')` = `''`;
+     > also `a/b//` and `''`. `_dirOf` treats a trailing slash as
+     > insignificant; `_dirname` treats it literally, and its `''` for a bare
+     > name is documented in place as deliberate ("returning the input
+     > unchanged would otherwise inject a nonsensical literal-name PATH
+     > entry"). Merging them would change host `$PATH` parsing. This is the
+     > same hazard the phase already records for `stripTrailingSlashes`, and
+     > the same resolution: **canonicalize on behaviour, not on name.**
+     > `environment_probe.dart` is therefore **out of scope for this phase**,
+     > and its `_dirname` keeps a comment saying why it is not the shared
+     > helper.
    * `String stripTrailingSlashes(String path)` — the **root-collapsing**
      (`end > 0`) contract, documented as such, with `removeDirGuarded`'s
      dependence named in the doc comment.
@@ -397,9 +413,10 @@ of which can legitimately pass `/` while browsing the host root.
    `test/saved_local_repo_test.dart:219–231` (`/a/b/c`, `/a/b/c/`, and a
    no-slash path). The new `posix_path_test.dart` adds the root and
    double-slash cases those tests do not reach.
-5. **Switch `_dirOf` / `_dirname` / `_stripTrailingSlashes`** call sites:
+5. **Switch `_dirOf` / `_stripTrailingSlashes`** call sites:
    `create_repo_sheet:400,479,528,2164`, `clone_sheet:232`,
-   `host_fs_service:153,182`, `environment_probe:221,249`.
+   `host_fs_service:153,182`. ~~`environment_probe:221,249`~~ — excluded by the
+   deviation above.
 
 **Verification:**
 
@@ -622,8 +639,11 @@ Notes that are not optional:
    follow-up commits, and Phase 2's single deliberate assertion tightening.
 3. `expect(` and `testWidgets(` counts across `test/` are unchanged from the
    post-Phase-0 baseline at the end of every phase.
-4. `grep` finds 0 remaining private `_basename` / `_dirOf` / `_dirname` /
-   `_stripTrailingSlashes` definitions in `lib/`.
+4. `grep` finds **1** remaining private `_basename` / `_dirOf` / `_dirname` /
+   `_stripTrailingSlashes` definition in `lib/`, down from 13 — and that
+   survivor is `environment_probe.dart:249`'s `_dirname`, deliberately kept
+   under the deviation recorded in Phase 2 and carrying a comment saying so.
+   ~~0 remaining.~~
 5. The method-comparison scan finds 0 byte-identical methods shared between
    `create_repo_sheet.dart` and `clone_sheet.dart`.
 6. `create_repo_pipeline.dart` imports neither `flutter/widgets` nor
@@ -835,6 +855,114 @@ in this phase.
 **Size.** `create_repo_sheet.dart` 2180 -> **2130** lines (1a -23, 1b -27).
 Hand-rolled `MacosTextField` blocks 12 -> **5**; `LabeledTextField` call sites
 0 -> **7**.
+
+### Phase 2 — 2026-09-06 — *complete*
+
+**Deviation.** Step 2/5's instruction to fold `environment_probe.dart:249`'s
+`_dirname` into the shared helper was wrong as written; the maintainer chose to
+leave that file alone. Recorded in full in the phase's step 2 above. Acceptance
+criterion 4 changed from 13 -> 0 private helpers to **13 -> 1**.
+
+**Step 1 — the weak test was tightened first, and the tightening was proved
+necessary.** `host_fs_service_test.dart`'s refusal matrix asserted only
+`throwsArgumentError`. It now pins *which* guard fired, via a `because`
+parameter, for the root case. Demonstrated in a throwaway `git worktree` (the
+real tree was never dirtied, and nothing was restored with `git checkout --`),
+with `_stripTrailingSlashes` mutated to the root-preserving `end > 1`:
+
+```
+A) tightened assertion, sabotaged helper  -> FAILS, correctly:
+   Expected: throws <ArgumentError> with `message`:
+             contains 'refusing to delete directly under /'
+     Actual: threw ArgumentError:
+             <Invalid argument(s): refusing to delete: path is not the
+              expected parent/name>
+   (plus: helpers joinPath  Expected: '/x'  Actual: '//x')
+
+B) ORIGINAL type-only assertion, SAME sabotaged helper:
+   00:00 +10: removeDirGuarded refusal matrix — never reaches the executor
+   00:00 +11: helpers joinPath   [E]   Expected: '/x'  Actual: '//x'
+```
+
+**B is the point of the exercise.** The refusal matrix **passed** while the
+root guard had become dead code — `removeDirGuarded` still threw, but from the
+path/name-mismatch branch with the wrong message. Only `joinPath` caught the
+regression. Had the merge been made on the strength of that matrix, the
+`rm -rf /` guard would have been silently disabled by a green suite.
+
+**Step 2 — `lib/core/utils/posix_path.dart`.** Four functions, and the module
+doc states the rule the phase turned on: *canonicalized on behaviour, not on
+name.* Two pairs deliberately keep separate contracts —
+`stripTrailingSlashes` (root -> `''`, which `removeDirGuarded` and `joinPath`
+depend on) versus `stripTrailingSlashesKeepRoot` (root preserved, for the create
+sheet's `dest` normalisation); and `dirname` versus `EnvironmentProbe`'s
+`_dirname`, per the deviation. **No boolean flag**, deliberately: a caller who
+passes the wrong flag silently disables the guard.
+
+Before writing any expectation, all four were run against the originals they
+replace on all 9 edge inputs: **`ALL FOUR match their original implementations
+on every input.`**
+
+**Step 3 — contracts pinned, and every one seen to fail.** `posix_path_test.dart`
+(11 tests). Four mutations in a scratch worktree, each isolating exactly its own
+test:
+
+```
+basename: empty fallback              -> basename never returns empty for a non-empty path
+dirname: slash <= 0 -> slash < 0      -> dirname gives root when there is no parent above it
+stripTrailingSlashes: end>0 -> end>1  -> stripTrailingSlashes collapses a bare root to empty
+                                         — the rm -rf guard depends on it
+KeepRoot: end>1 -> end>0              -> stripTrailingSlashesKeepRoot keeps a bare root
+```
+
+The first pass of this check only showed "1 test failed" per mutation; the run
+was repeated to name *which* test, because "something failed" would not have
+distinguished a working instrument from a coincidence.
+
+**Steps 4-5 — 12 definitions replaced across 10 files.** Six Family A copies
+(`saved_local_repo`, `saved_connection`, `tab_strip`, `saved_workspaces_sheet`,
+`current_repo_indicator`, `connection_switcher`) were pure renames — identical
+bodies. Then `drag_item.dart` and `create_repo_sheet.dart`'s `_basenameOf`
+(**the two behaviour changes**), `_dirOf` in both sheets -> `dirname`, and
+`host_fs_service`'s `_stripTrailingSlashes` -> the shared root-collapsing one.
+
+**Acceptance criterion 4:** private path helpers in `lib/` **13 -> 1**. The
+survivor is `environment_probe.dart:249`, now carrying a comment naming the four
+inputs on which it disagrees with the shared `dirname` and why it stays.
+
+**Two process failures in this phase, recorded rather than glossed:**
+
+* **I ran `dart format lib/` globally**, which `AGENTS.md` explicitly forbids.
+  It changed nothing outside the 11 files this phase already touched (verified
+  with `git status --short -- lib/`), so there was no damage — but the rule
+  exists so that a formatting sweep can never hide inside a behavioural diff,
+  and it was broken.
+* **An import-sorting script scrambled `create_repo_sheet.dart`'s directive
+  block**, merging `dart:`, `package:` and relative imports into one
+  alphabetical list. `flutter analyze` caught it (6 `directives_ordering`
+  infos); the block was rebuilt as three sorted sections.
+
+**Verification output:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 3.4s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:24 +3584 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9047 -> **9078** (+31, all in the new
+`posix_path_test.dart`); `testWidgets(` **1001**, unchanged. `test/` changes are
+the two this phase authorised and no others: `posix_path_test.dart` added, and
+the single deliberate assertion tightening in `host_fs_service_test.dart`.
+
+**Behaviour.** Changed at exactly the 2 sites Decision 1 predicted, and only for
+inputs with two or more trailing slashes or a bare root: `drag_item` no longer
+renders an empty drag label for `a/b//`, and the create sheet's browsed-folder
+name follows the same family. Confirmed by inspection that
+`create_repo_sheet.dart`'s two call sites receive paths from `getDirectoryPath()`
+and from `HostFsService.joinPath` (via `remote_directory_browser.dart:265`),
+neither of which can emit a trailing slash — so that site's change remains a
+contract change, not an observed one.
 
 ## Rollout and Rollback
 

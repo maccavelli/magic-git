@@ -246,6 +246,12 @@ class EnvironmentResolver {
   /// to build on).
   static const String _fallbackSystemPath = '/usr/bin:/bin:/usr/sbin:/sbin';
 
+  /// **Deliberately not `posix_path.dart`'s `dirname`** (MADR 0033 Phase 2).
+  /// That one treats a trailing slash as insignificant and never returns the
+  /// empty string; this one is a `$PATH`-entry parser and needs the opposite
+  /// on both counts. They disagree on 4 of 7 probed inputs — `'/srv/repo/'`
+  /// gives `/srv` there and `/srv/repo` here, `'git'` gives `/` there and `''`
+  /// here — so sharing a name is not a reason to share an implementation.
   static String _dirname(String p) {
     final i = p.lastIndexOf('/');
     // No slash at all (a bare name like "git") has no directory component —

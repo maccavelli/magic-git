@@ -8,6 +8,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/storage/saved_local_repo.dart';
 import '../../core/storage/saved_workspace_set.dart';
+import '../../core/utils/posix_path.dart';
 import '../common/actions.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
@@ -24,11 +25,6 @@ import '../tabs/tabs_controller.dart';
 import '../workspace/clone_sheet.dart';
 import '../workspace/create_repo_sheet.dart';
 import 'edit_entry_sheets.dart';
-
-String _basename(String path) {
-  final parts = path.split('/').where((s) => s.isNotEmpty).toList();
-  return parts.isEmpty ? path : parts.last;
-}
 
 /// Bottom-of-sidebar control: a single Connections button that opens the
 /// consolidated connections + repositories management panel.
@@ -628,9 +624,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                         : MacosColors.systemGrayColor,
                   ),
                   const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(_basename(repo), style: typography.body),
-                  ),
+                  Expanded(child: Text(basename(repo), style: typography.body)),
                 ],
               ),
             ),
@@ -659,7 +653,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '${connection.connectionLabel ?? (repo == null ? 'Current' : _basename(repo))} (unsaved)',
+              '${connection.connectionLabel ?? (repo == null ? 'Current' : basename(repo))} (unsaved)',
               style: typography.body,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,

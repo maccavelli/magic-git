@@ -161,10 +161,18 @@ void main() {
     });
 
     test('refusal matrix — never reaches the executor', () async {
+      // [because] pins WHICH guard refused, not merely that something did.
+      // Asserting the type alone is too weak to be worth much here: several
+      // of these inputs are caught by more than one check, so a guard can
+      // rot into dead code while the matrix still passes. The root case is
+      // the one that matters most — it is what stands between a caller and
+      // `rm -rf /` — and it only fires because `_stripTrailingSlashes`
+      // collapses '/' to empty.
       Future<void> refuses({
         required String path,
         required String parent,
         required String name,
+        String? because,
       }) {
         return expectLater(
           fs.removeDirGuarded(
@@ -172,14 +180,25 @@ void main() {
             expectedParent: parent,
             expectedName: name,
           ),
-          throwsArgumentError,
+          throwsA(
+            isA<ArgumentError>().having(
+              (e) => e.message,
+              'message',
+              because == null ? anything : contains(because),
+            ),
+          ),
         );
       }
 
       // Relative parent.
       await refuses(path: 'code/x', parent: 'code', name: 'x');
       // Root parent.
-      await refuses(path: '/x', parent: '/', name: 'x');
+      await refuses(
+        path: '/x',
+        parent: '/',
+        name: 'x',
+        because: 'refusing to delete directly under /',
+      );
       // Path/name mismatch.
       await refuses(path: '/srv/other', parent: '/srv', name: 'x');
       // Traversal as the name.

@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/git/git_service.dart';
+import '../../core/utils/posix_path.dart';
 import 'drag_cell.dart';
 import 'drag_state.dart';
 
@@ -62,17 +63,7 @@ class DragFiles extends DragItem {
   const DragFiles(this.paths, {this.fromStaged = false});
   @override
   String get shortLabel =>
-      paths.length == 1 ? _basename(paths.first) : '${paths.length} files';
-}
-
-/// Last path segment, for a compact drag label. Splits on '/' (POSIX repos —
-/// the only remote target) and tolerates a trailing slash.
-String _basename(String path) {
-  final trimmed = path.endsWith('/')
-      ? path.substring(0, path.length - 1)
-      : path;
-  final slash = trimmed.lastIndexOf('/');
-  return slash < 0 ? trimmed : trimmed.substring(slash + 1);
+      paths.length == 1 ? basename(paths.first) : '${paths.length} files';
 }
 
 /// Wraps [child] so it can be dragged as a [DragItem]. Drives
