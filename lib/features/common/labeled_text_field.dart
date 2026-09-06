@@ -3,7 +3,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'field_styles.dart';
 
 /// A caption-labelled [MacosTextField] — the form-row primitive shared by the
-/// connection form and the create-MR sheet.
+/// connection form, the create-MR sheet and the create-repository wizard.
 class LabeledTextField extends StatelessWidget {
   final String label;
   final TextEditingController controller;
@@ -20,6 +20,15 @@ class LabeledTextField extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
   final EdgeInsets padding;
 
+  /// Rendered directly below the field, inside the same padded column — the
+  /// wizard's explanatory `FieldHint`/`WizardHint` slot. The hint carries its
+  /// own top padding, so this composes without extra spacing.
+  final Widget? hint;
+
+  /// Swaps the normal/focused decorations for their error variants, so a
+  /// field can show inline validation without the caller rebuilding the row.
+  final bool showError;
+
   const LabeledTextField({
     super.key,
     required this.label,
@@ -30,6 +39,8 @@ class LabeledTextField extends StatelessWidget {
     this.onChanged,
     this.onSubmitted,
     this.padding = const EdgeInsets.only(bottom: 12),
+    this.hint,
+    this.showError = false,
   });
 
   @override
@@ -47,11 +58,16 @@ class LabeledTextField extends StatelessWidget {
             placeholderStyle: kAppPlaceholderStyle,
             obscureText: obscure,
             maxLines: maxLines,
-            decoration: kAppTextFieldDecoration,
-            focusedDecoration: kAppTextFieldFocusedDecoration,
+            decoration: showError
+                ? kAppTextFieldErrorDecoration
+                : kAppTextFieldDecoration,
+            focusedDecoration: showError
+                ? kAppTextFieldErrorFocusedDecoration
+                : kAppTextFieldFocusedDecoration,
             onChanged: onChanged == null ? null : (_) => onChanged!(),
             onSubmitted: maxLines == 1 ? onSubmitted : null,
           ),
+          ?hint,
         ],
       ),
     );

@@ -19,6 +19,7 @@ import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/inline_action_button.dart';
+import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'remote_directory_browser.dart';
@@ -1508,71 +1509,58 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
         // For an existing folder the name only names the forge project (it's
         // prefilled from the folder); without a forge there is nothing to
         // name, so the field is hidden.
-        if (!existing || _onForge) ...[
-          Text(
-            existing ? 'Repository name (on the forge)' : 'Repository name',
-            style: typography.caption1,
-          ),
-          const SizedBox(height: 4),
-          MacosTextField(
+        if (!existing || _onForge)
+          LabeledTextField(
+            label: existing
+                ? 'Repository name (on the forge)'
+                : 'Repository name',
             controller: _name,
             placeholder: 'my-project',
-            placeholderStyle: kAppPlaceholderStyle,
-            decoration: kAppTextFieldDecoration,
-            focusedDecoration: kAppTextFieldFocusedDecoration,
-            onChanged: (_) => setState(() {}),
+            onChanged: () => setState(() {}),
+            padding: const EdgeInsets.only(bottom: 10),
+            hint: WizardHint(
+              existing
+                  ? 'Names the project created on the forge — prefilled from '
+                        'the folder when picked with Browse/Choose.'
+                  : 'Also the name of the folder created inside the parent. '
+                        'Letters, digits, dot, dash and underscore.',
+            ),
           ),
-          WizardHint(
-            existing
-                ? 'Names the project created on the forge — prefilled from '
-                      'the folder when picked with Browse/Choose.'
-                : 'Also the name of the folder created inside the parent. '
-                      'Letters, digits, dot, dash and underscore.',
-          ),
-          const SizedBox(height: 10),
-        ],
         // Only a forge has namespaces. Free text on purpose: a group the API
         // did not return — a fresh grant, a paginated tail, an unreachable
         // API — must stay typeable.
         if (_onForge) ...[
-          Text('Namespace (optional)', style: typography.caption1),
-          const SizedBox(height: 4),
-          MacosTextField(
+          LabeledTextField(
+            label: 'Namespace (optional)',
             controller: _namespace,
             placeholder: 'team/subgroup',
-            placeholderStyle: kAppPlaceholderStyle,
-            decoration: kAppTextFieldDecoration,
-            focusedDecoration: kAppTextFieldFocusedDecoration,
-            onChanged: (_) => setState(() {}),
-          ),
-          WizardHint(
-            _namespaceText.isEmpty
-                ? 'Leave empty to create under your own account. A group or '
-                      'subgroup path creates it there instead.'
-                : 'Creates ${_forgePath.isEmpty ? '—' : _forgePath} on the '
-                      'forge.',
+            onChanged: () => setState(() {}),
+            padding: EdgeInsets.zero,
+            hint: WizardHint(
+              _namespaceText.isEmpty
+                  ? 'Leave empty to create under your own account. A group or '
+                        'subgroup path creates it there instead.'
+                  : 'Creates ${_forgePath.isEmpty ? '—' : _forgePath} on the '
+                        'forge.',
+            ),
           ),
           _namespaceSuggestions(),
           const SizedBox(height: 10),
         ],
-        Text('Initial branch', style: typography.caption1),
-        const SizedBox(height: 4),
-        MacosTextField(
+        LabeledTextField(
+          label: 'Initial branch',
           controller: _branch,
           placeholder: 'main',
-          placeholderStyle: kAppPlaceholderStyle,
-          decoration: kAppTextFieldDecoration,
-          focusedDecoration: kAppTextFieldFocusedDecoration,
-          onChanged: (_) => setState(() {}),
+          onChanged: () => setState(() {}),
+          padding: const EdgeInsets.only(bottom: 10),
+          hint: WizardHint(
+            existing
+                ? 'Used only if the folder isn\'t already a repository — an '
+                      'existing repository keeps its current branch.'
+                : 'The branch the repository starts on — "main" is the '
+                      'common default.',
+          ),
         ),
-        WizardHint(
-          existing
-              ? 'Used only if the folder isn\'t already a repository — an '
-                    'existing repository keeps its current branch.'
-              : 'The branch the repository starts on — "main" is the '
-                    'common default.',
-        ),
-        const SizedBox(height: 10),
         if (existing) ...[
           _commitAllToggle(),
           const WizardHint(
@@ -1594,19 +1582,13 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
           ),
         ],
         const SizedBox(height: 10),
-        Text('Git identity', style: typography.caption1),
-        const SizedBox(height: 4),
-        MacosTextField(
+        LabeledTextField(
+          label: 'Git identity',
           controller: _authorName,
           placeholder: 'Your name',
-          placeholderStyle: kAppPlaceholderStyle,
-          decoration: _needsIdentity && _authorNameText.isEmpty
-              ? kAppTextFieldErrorDecoration
-              : kAppTextFieldDecoration,
-          focusedDecoration: _needsIdentity && _authorNameText.isEmpty
-              ? kAppTextFieldErrorFocusedDecoration
-              : kAppTextFieldFocusedDecoration,
-          onChanged: (_) {
+          showError: _needsIdentity && _authorNameText.isEmpty,
+          padding: EdgeInsets.zero,
+          onChanged: () {
             _authorNameEdited = true;
             setState(() {});
           },
@@ -1911,20 +1893,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
         ],
         if (_remote == _RemoteMode.customUrl) ...[
           const SizedBox(height: 8),
-          Text('Existing remote to wire as origin', style: typography.caption1),
-          const SizedBox(height: 4),
-          MacosTextField(
+          LabeledTextField(
+            label: 'Existing remote to wire as origin',
             controller: _remoteUrl,
             placeholder: 'git@host:owner/repo.git or https://…',
-            placeholderStyle: kAppPlaceholderStyle,
-            decoration: kAppTextFieldDecoration,
-            focusedDecoration: kAppTextFieldFocusedDecoration,
-            onChanged: (_) => setState(() {}),
-          ),
-          const WizardHint(
-            'SSH (git@host:owner/repo.git) or HTTPS '
-            '(https://host/owner/repo.git). The remote itself is not '
-            'created — it must already exist.',
+            onChanged: () => setState(() {}),
+            padding: EdgeInsets.zero,
+            hint: const WizardHint(
+              'SSH (git@host:owner/repo.git) or HTTPS '
+              '(https://host/owner/repo.git). The remote itself is not '
+              'created — it must already exist.',
+            ),
           ),
         ],
         if (_onForge) ...[
@@ -1944,37 +1923,32 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
             ],
           ),
           const SizedBox(height: 8),
-          Text('Forge host', style: typography.caption1),
-          const SizedBox(height: 4),
-          MacosTextField(
+          LabeledTextField(
+            label: 'Forge host',
             controller: _host,
             placeholder: _defaultHost,
-            placeholderStyle: kAppPlaceholderStyle,
-            decoration: kAppTextFieldDecoration,
-            focusedDecoration: kAppTextFieldFocusedDecoration,
+            padding: EdgeInsets.zero,
             // An empty field hands control back to the prefill; anything
             // typed pins the host (see _hostEdited).
-            onChanged: (v) => setState(() => _hostEdited = v.trim().isNotEmpty),
-          ),
-          const WizardHint(
-            'Prefilled with the instance the CLI is signed in to on the '
-            'target — type a different host to publish there instead (the '
-            'CLI must be signed in there too). Clear the field to go back '
-            'to the signed-in host.',
+            onChanged: () =>
+                setState(() => _hostEdited = _host.text.trim().isNotEmpty),
+            hint: const WizardHint(
+              'Prefilled with the instance the CLI is signed in to on the '
+              'target — type a different host to publish there instead (the '
+              'CLI must be signed in there too). Clear the field to go back '
+              'to the signed-in host.',
+            ),
           ),
           const SizedBox(height: 8),
-          Text('Project description', style: typography.caption1),
-          const SizedBox(height: 4),
-          MacosTextField(
+          LabeledTextField(
+            label: 'Project description',
             controller: _description,
             placeholder: 'Description (optional)',
-            placeholderStyle: kAppPlaceholderStyle,
-            decoration: kAppTextFieldDecoration,
-            focusedDecoration: kAppTextFieldFocusedDecoration,
-          ),
-          const WizardHint(
-            'Shown on the forge project page (and used in the generated '
-            'README when one is added).',
+            padding: EdgeInsets.zero,
+            hint: const WizardHint(
+              'Shown on the forge project page (and used in the generated '
+              'README when one is added).',
+            ),
           ),
         ],
       ],
@@ -2039,49 +2013,25 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _reviewRow(typography, 'Destination', destText),
-        _reviewRow(
-          typography,
+        WizardReviewRow('Destination', destText),
+        WizardReviewRow(
           existing ? 'Existing folder' : 'New folder',
           sourceText,
         ),
-        _reviewRow(typography, 'Initial branch', _branch.text.trim()),
+        WizardReviewRow('Initial branch', _branch.text.trim()),
         if (_authorNameText.isNotEmpty || _authorEmailText.isNotEmpty)
-          _reviewRow(
-            typography,
+          WizardReviewRow(
             'Git identity',
             [
               if (_authorNameText.isNotEmpty) _authorNameText,
               if (_authorEmailText.isNotEmpty) _authorEmailText,
             ].join(' · '),
           ),
-        _reviewRow(typography, 'Remote', remoteText),
+        WizardReviewRow('Remote', remoteText),
         if (!_isLocalTarget && _remoteLabel.text.trim().isNotEmpty)
-          _reviewRow(typography, 'Label', _remoteLabel.text.trim()),
-        if (options.isNotEmpty)
-          _reviewRow(typography, 'Options', options.join('\n')),
+          WizardReviewRow('Label', _remoteLabel.text.trim()),
+        if (options.isNotEmpty) WizardReviewRow('Options', options.join('\n')),
       ],
-    );
-  }
-
-  Widget _reviewRow(MacosTypography typography, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              label,
-              style: typography.caption1.copyWith(
-                color: MacosColors.systemGrayColor,
-              ),
-            ),
-          ),
-          Expanded(child: Text(value, style: typography.body)),
-        ],
-      ),
     );
   }
 

@@ -764,6 +764,78 @@ going *up* is the intended outcome — Phase 3 removes all 102 lines in one move
 and it can only do that for methods that agree. One near-duplicate remains for
 Phase 3e: `_recomputeTarget`.
 
+### Phase 1 — 2026-09-06 — *complete*
+
+**1a — `WizardReviewRow` adopted.** The private `_reviewRow` (21 lines) is gone
+and its **7** call sites in `_reviewStep` now use the shared widget from
+`wizard.dart:127`, which this file already imported and which `clone_sheet.dart`
+was already using at 5 call sites. `_reviewStep` keeps its
+`MacosTypography` parameter because `WizardStep.body` is typed
+`Widget Function(MacosTypography)`; it is simply unused now, as it is in the
+clone sheet.
+
+**1b — `LabeledTextField` extended, then adopted at 7 of 12 sites.** Two
+additive parameters on `lib/features/common/labeled_text_field.dart`:
+
+* `Widget? hint` — rendered inside the same padded column, below the field.
+  `FieldHint` already carries its own `EdgeInsets.only(top: 4)`, so this
+  composes with no extra spacing.
+* `bool showError` — swaps in `kAppTextFieldErrorDecoration` /
+  `kAppTextFieldErrorFocusedDecoration`, which `field_styles.dart` already
+  defined but this widget could not reach.
+
+Adopted: repository name, namespace, initial branch, git-identity name (the
+`showError` case), custom remote URL, forge host, project description.
+**Left hand-rolled, as decided (Decision 4)** — 5 fields, confirmed by grep at
+`:1597` `_authorEmail` (second of a pair, no label of its own), `:1638`
+`_localLabel` and `:1663` `_remoteLabel` (same shape), `:1725` `_folder` and
+`:1808` `_parent` (inside a `Row` beside a Browse button).
+
+**A risk that had to be measured, not reasoned about.** `LabeledTextField`'s
+inner `Column` uses `CrossAxisAlignment.start`, while `_detailsStep`'s uses
+`CrossAxisAlignment.stretch` — so the adopted fields could have collapsed to
+their intrinsic width. A temporary probe test measured the rendered geometry of
+the repository-name field before and after:
+
+```
+before  PROBE name field size=Size(376.0, 29.0) topLeft=Offset(412.0, 361.0)
+after   PROBE name field size=Size(376.0, 29.0) topLeft=Offset(412.0, 361.0)
+        PROBE MacosTextField count on Details=5   (unchanged both sides)
+```
+
+Identical, so `MacosTextField` does expand under a `start` column. The probe was
+run after the first adoption (before doing the other six) and again at the end,
+then deleted; it is recorded here rather than kept, because it measured a
+one-time migration risk, not an invariant.
+
+**One analyzer miss, recorded rather than glossed.** The repo requires new code
+to be analyzer-clean on the first pass. It was not: the first version of the
+`hint` slot used `if (hint != null) hint!,` and `flutter analyze` returned
+`use_null_aware_elements` (info). Fixed to `?hint,` before proceeding.
+
+**Verification output:**
+
+```
+flutter analyze (whole project)                 No issues found! (ran in 4.2s)
+dart format --output=none --set-exit-if-changed  Formatted 2 files (0 changed)
+flutter test test/create_repo_sheet_test.dart
+     test/create_repo_namespace_test.dart       00:05 +39: All tests passed!
+flutter test (full suite)                       03:28 +3573 ~2: All tests passed!
+```
+
+The full-suite run is load-bearing here, not routine: `LabeledTextField` is also
+used by `connection_form.dart`, `add_worktree_sheet.dart`,
+`edit_entry_sheets.dart` and — through `ForgeSheetField` — all three forge
+create forms.
+
+**Neutrality.** `expect(` **9047** and `testWidgets(` **1001**, both unchanged
+from Phase 0b. `git diff --stat -- test/` is **empty** — no test file was edited
+in this phase.
+
+**Size.** `create_repo_sheet.dart` 2180 -> **2130** lines (1a -23, 1b -27).
+Hand-rolled `MacosTextField` blocks 12 -> **5**; `LabeledTextField` call sites
+0 -> **7**.
+
 ## Rollout and Rollback
 
 **Rollout.** Seven commits in order. Phases 1 and 3–5 are behaviour-neutral and
