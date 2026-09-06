@@ -1,6 +1,3 @@
-import 'dart:convert';
-import 'dart:typed_data';
-
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -22,6 +19,7 @@ import '../common/inline_action_button.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
+import 'create_repo_pipeline.dart';
 import 'wizard.dart';
 import 'workspace_destination.dart';
 import 'workspace_pickers.dart';
@@ -33,8 +31,6 @@ import 'workspace_widgets.dart';
 /// What `origin` should point at when the repo is created — a first-class,
 /// always-visible choice (not an opt-in extra), because a repo without a
 /// remote is rarely what the user wants.
-enum _RemoteMode { none, github, gitlab, customUrl }
-
 /// Where the repository's working tree comes from: a brand-new folder
 /// (name + parent), or an existing folder that gets initialized/published
 /// in place.
@@ -119,7 +115,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   final _authorName = TextEditingController();
   final _authorEmail = TextEditingController();
 
-  _RemoteMode _remote = _RemoteMode.none;
+  CreateRemoteMode _remote = CreateRemoteMode.none;
   _SourceMode _source = _SourceMode.newFolder;
   bool _private = true;
   bool _addReadme = false;
@@ -250,7 +246,8 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   }
 
   bool _remoteValid() =>
-      _remote != _RemoteMode.customUrl || _remoteUrl.text.trim().isNotEmpty;
+      _remote != CreateRemoteMode.customUrl ||
+      _remoteUrl.text.trim().isNotEmpty;
 
   bool _detailsValid() {
     if (_branch.text.trim().isEmpty) return false;
@@ -315,11 +312,6 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
 
   /// `-c user.name=… -c user.email=…` for the initial commit, so it is
   /// authored even if writing the local config failed.
-  List<String> get _identityArgs => [
-    if (_authorNameText.isNotEmpty) ...['-c', 'user.name=$_authorNameText'],
-    if (_authorEmailText.isNotEmpty) ...['-c', 'user.email=$_authorEmailText'],
-  ];
-
   void _goBack() {
     if (_stepIndex == 0 || _submitting || _finished) return;
     setState(() {
@@ -425,13 +417,13 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   }
 
   bool get _onForge =>
-      _remote == _RemoteMode.github || _remote == _RemoteMode.gitlab;
+      _remote == CreateRemoteMode.github || _remote == CreateRemoteMode.gitlab;
 
   Forge get _forge =>
-      _remote == _RemoteMode.gitlab ? Forge.gitlab : Forge.github;
+      _remote == CreateRemoteMode.gitlab ? Forge.gitlab : Forge.github;
 
   String get _defaultHost =>
-      _remote == _RemoteMode.gitlab ? 'gitlab.com' : 'github.com';
+      _remote == CreateRemoteMode.gitlab ? 'gitlab.com' : 'github.com';
 
   Future<void> _onDestChanged(String? connectionId) async {
     // Switching destination abandons any in-flight provisioning.
@@ -464,390 +456,40 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     try {
       if (!await ensureProvisioned()) return;
       if (_isLocalTarget) {
-        // Outside a local session (landing → This Mac) the local executor
-        // has never been environment-probed; without this, gh/glab in a
-        // Homebrew bin dir are invisible to the GUI app's inherited PATH.
+        // Outside a local session (landing → This Mac) the local executor has
+        // never been environment-probed; without this, gh/glab in a Homebrew
+        // bin dir are invisible to the GUI app's inherited PATH.
         await ref.read(localEnvironmentProvider).ensure();
         if (!mounted) return;
       }
 
-      final executor = _executor;
-      final fs = HostFsService(executor);
-      final log = ref.read(outputLogProvider.notifier);
-      final name = _name.text.trim();
-      // `name` stays the local directory; `forgePath` is what the forge
-      // is asked to create and what origin is then resolved against.
-      // They differ only when a namespace was given.
-      final forgePath = _forgePath;
-      final existing = _source == _SourceMode.existingFolder;
-      final String? parentDir;
-      final String dest;
-      if (existing) {
-        parentDir = null;
-        dest = stripTrailingSlashesKeepRoot(
-          _isLocalTarget ? _pickedFolder! : _folder.text.trim(),
-        );
-      } else {
-        parentDir = _isLocalTarget ? _pickedParent! : _parent.text.trim();
-        dest = HostFsService.joinPath(parentDir, name);
-      }
-      var host = _host.text.trim().isEmpty ? _defaultHost : _host.text.trim();
-
-      // For a This-Mac forge create, check the Mac's gh/glab sign-in and fail
-      // fast when it's definitively unusable (signed out, expired token) —
-      // otherwise the forge `repo create` fails with a cryptic 401 after a
-      // local repo was already created. Goes through [forgeAuthProvider]: the
-      // same strict judgment (an expired token does NOT pass) and the same
-      // cached probe the host prefill already ran, logged to the output log.
-      // An SSH target instead relies on ensureForgeHostLogin below, which
-      // pushes the connection's token before the remote CLI is queried.
-      if (_onForge && _isLocalTarget) {
-        final auth = await ref.read(forgeAuthProvider((_forge, true)).future);
-        if (!mounted) return;
-        if (!auth.authenticated && !auth.checkFailed) {
-          // Definitive: signed out, expired, or the CLI is missing. (A check
-          // that merely timed out proceeds best-effort — blocking a create on
-          // a slow probe would be worse than the failure it guards against.)
-          setState(() => _error = auth.detail);
-          return;
-        }
-        // Trust the real signed-in host over a default the user never
-        // touched; a host the user typed themselves is used verbatim — the
-        // Review step displayed it, so it must never be silently replaced.
-        if (!_hostEdited && auth.authenticated && auth.host != null) {
-          host = auth.host!;
-          _host.text = auth.host!;
-        }
-      }
-
-      // --- Pre-checks ---------------------------------------------------
-      var alreadyRepo = false;
-      if (existing) {
-        // Classify the picked folder: its own repo root (skip init), not a
-        // repo yet (init in place), or nested inside another repo (refuse —
-        // publishing a subfolder of someone's repo is never what they meant).
-        final probe = await executor.execute(
-          repoPath: dest,
-          gitArgs: ['git', 'rev-parse', '--show-toplevel'],
-          lane: ExecLane.read,
-          retries: 0,
-        );
-        if (probe.isSuccess) {
-          final top = stripTrailingSlashesKeepRoot(probe.stdout.trim());
-          if (top != dest) {
-            setState(
-              () => _error =
-                  'The folder is inside another Git repository ($top) — '
-                  "pick that repository's root instead.",
-            );
-            return;
-          }
-          alreadyRepo = true;
-        } else if (!probe.stderr.toLowerCase().contains(
-          'not a git repository',
-        )) {
-          // A plain non-repo folder is the expected miss; anything else
-          // (missing folder, permissions) is a real error.
-          setState(
-            () => _error = probe.stderr.trim().isEmpty
-                ? 'Could not inspect the folder (exit code ${probe.exitCode}).'
-                : probe.stderr.trim(),
-          );
-          return;
-        }
-      } else {
-        switch (await fs.probePath(dest)) {
-          case PathProbe.exists:
-            setState(() => _error = 'The destination already exists: $dest');
-            return;
-          case PathProbe.noParent:
-            if (!_isLocalTarget && _createParents) {
-              await fs.makeDirs(parentDir!);
-            } else {
-              setState(
-                () => _error = "The parent folder doesn't exist: $parentDir",
-              );
-              return;
-            }
-          case PathProbe.absent:
-            break;
-        }
-      }
+      final resolved = await _resolveForgeHost();
       if (!mounted) return;
+      if (resolved.error != null) {
+        setState(() => _error = resolved.error);
+        return;
+      }
+      final host = resolved.host;
 
-      // Host-explicit login before a forge create on the connected host; a
-      // This-Mac target relies on the Mac's own CLI auth (no managed token).
-      if (_onForge && !_isLocalTarget) {
-        await ref
-            .read(connectionProvider.notifier)
-            .ensureForgeHostLogin(_forge, host);
-        if (!mounted) return;
+      final outcome = await runCreateRepo(
+        executor: _executor,
+        log: _OutputLogSink(ref.read(outputLogProvider.notifier)),
+        request: _request(host),
+        deps: CreateRepoDeps(
+          ensureForgeLogin: () => ref
+              .read(connectionProvider.notifier)
+              .ensureForgeHostLogin(_forge, host),
+          isActive: () => mounted,
+        ),
+      );
+      if (!mounted || outcome.aborted) return;
+      if (outcome.error != null) {
+        setState(() => _error = outcome.error);
+        return;
       }
 
-      // --- Existing-origin guard ------------------------------------------
-      // Before any mutation: a repo that already has an origin is only
-      // rewired when the user explicitly opted into replacing it.
-      if (alreadyRepo && _remote != _RemoteMode.none) {
-        final current = await executor.execute(
-          repoPath: dest,
-          gitArgs: ['git', 'remote', 'get-url', 'origin'],
-          lane: ExecLane.read,
-          retries: 0,
-        );
-        if (current.isSuccess && current.stdout.trim().isNotEmpty) {
-          if (!_replaceOrigin) {
-            setState(
-              () => _error =
-                  'This repository already has an origin remote '
-                  '(${current.stdout.trim()}). Turn on "Replace existing '
-                  'origin remote" to overwrite it.',
-            );
-            return;
-          }
-          final removed = await executor.execute(
-            repoPath: dest,
-            gitArgs: ['git', 'remote', 'remove', 'origin'],
-            lane: ExecLane.exclusive,
-            retries: 0,
-          );
-          log.logResult('git remote remove origin', removed);
-          if (!removed.isSuccess) {
-            setState(
-              () => _error = removed.stderr.trim().isEmpty
-                  ? 'git remote remove origin exited with code '
-                        '${removed.exitCode}'
-                  : removed.stderr.trim(),
-            );
-            return;
-          }
-        }
-        if (!mounted) return;
-      }
-
-      final warnings = <String>[];
-
-      // --- Step 1: init (skipped when the folder is already a repo) --------
-      // Init-first even for GitHub, so the user's chosen initial branch is
-      // always authoritative — never a CLI fallback's `init.defaultBranch`.
-      final branch = _branch.text.trim();
-      if (!alreadyRepo) {
-        final initArgs = existing
-            ? ['git', 'init', '-b', branch]
-            : ['git', 'init', '-b', branch, '--', name];
-        final initResult = await executor.execute(
-          repoPath: existing ? dest : parentDir!,
-          gitArgs: initArgs,
-          lane: ExecLane.exclusive,
-          retries: 0,
-        );
-        log.logResult(initArgs.join(' '), initResult);
-        if (!initResult.isSuccess) {
-          setState(
-            () => _error = initResult.stderr.trim().isEmpty
-                ? 'git init exited with code ${initResult.exitCode}'
-                : initResult.stderr.trim(),
-          );
-          return;
-        }
-        if (!mounted) return;
-      }
-
-      // --- Identity: local user.name / user.email --------------------------
-      // A brand-new repo (or an in-place init) gets the identity written
-      // into its own config so later commits — including ones not made
-      // through Magic Git — have an author. An existing repo is only
-      // rewritten when the user opted into commit-all (they confirmed the
-      // fields). Failures are warnings; the commit still carries `-c`.
-      if (_identityValid && (!alreadyRepo || _commitAll)) {
-        await _writeIdentityConfig(executor, log, dest, warnings);
-        if (!mounted) return;
-      }
-
-      // --- Step 2: optional initial commit --------------------------------
-      // Before the forge publish, so GitHub's --push (and the git push below)
-      // has something to push and the branch is born on the forge too.
-      var hasCommit = false;
-      if (existing) {
-        if (_commitAll) {
-          hasCommit = await _commitAllContents(executor, log, dest, warnings);
-          if (!mounted) return;
-        }
-        if (!hasCommit) {
-          // The folder may already carry history (or a clean tree) — any
-          // resolvable HEAD is pushable.
-          final head = await executor.execute(
-            repoPath: dest,
-            gitArgs: ['git', 'rev-parse', '--verify', '--quiet', 'HEAD'],
-            lane: ExecLane.read,
-            retries: 0,
-          );
-          hasCommit = head.isSuccess;
-        }
-      } else if (_addReadme) {
-        hasCommit = await _writeReadmeAndCommit(executor, log, dest, warnings);
-        if (!mounted) return;
-      }
-      // For an existing folder push the resolved current branch (HEAD): when
-      // init was skipped, the branch field never applied to this repo.
-      final pushRef = existing ? 'HEAD' : branch;
-
-      // --- Step 3: wire origin (mode-specific) ----------------------------
-      // Every failure past this point keeps the local repo — registered
-      // below with a warning, never deleted over a remote hiccup.
-      // Forge modes: API-only create, then ALWAYS ensure origin (even when
-      // create exits non-zero — the project may already exist on the forge).
-      switch (_remote) {
-        case _RemoteMode.none:
-          break;
-        case _RemoteMode.github:
-          final label = 'gh repo create $forgePath';
-          final gh = GhService(executor);
-          SSHCommandResult? created;
-          String? createFailure;
-          try {
-            created = await gh.createRepoInExisting(
-              repoPath: dest,
-              name: forgePath,
-              private: _private,
-              description: _description.text.trim(),
-              host: host,
-            );
-            log.logResult(label, created);
-          } on GhException catch (e) {
-            log.logResult(label, e.result);
-            createFailure = e.result.stderr.trim().isEmpty
-                ? displayError(e)
-                : e.result.stderr.trim();
-          }
-          // Always attempt origin wiring — partial create success is common.
-          // The create's own output is the primary URL source (gh prints the
-          // new repo's URL); the API lookup chain is the fallback.
-          final before = warnings.length;
-          await _ensureForgeOrigin(
-            executor,
-            log,
-            dest,
-            hasCommit,
-            pushRef,
-            warnings,
-            forge: Forge.github,
-            lookupUrl: () => gh.resolveOriginUrl(
-              repoPath: dest,
-              name: forgePath,
-              host: host,
-              createOutput: created?.stdout,
-            ),
-          );
-          if (createFailure != null) {
-            // If origin was wired, the forge project exists — drop the create
-            // error so a partial-success path can still finish cleanly.
-            final originOk = await _verifyOrigin(executor, log, dest) == null;
-            if (!originOk) {
-              warnings.insert(
-                before,
-                'The repository was created locally, but publishing to '
-                'GitHub failed — you can retry from the forge later. '
-                '($createFailure)',
-              );
-            }
-          }
-        case _RemoteMode.gitlab:
-          final label = 'glab repo create $forgePath';
-          final glab = GlabService(executor);
-          SSHCommandResult? created;
-          String? createFailure;
-          try {
-            created = await glab.createRepoInExisting(
-              repoPath: dest,
-              name: forgePath,
-              private: _private,
-              description: _description.text.trim(),
-              host: host,
-            );
-            log.logResult(label, created);
-          } on GlabException catch (e) {
-            log.logResult(label, e.result);
-            createFailure = e.result.stderr.trim().isEmpty
-                ? displayError(e)
-                : e.result.stderr.trim();
-          }
-          final before = warnings.length;
-          await _ensureForgeOrigin(
-            executor,
-            log,
-            dest,
-            hasCommit,
-            pushRef,
-            warnings,
-            forge: Forge.gitlab,
-            lookupUrl: () => glab.resolveOriginUrl(
-              repoPath: dest,
-              name: forgePath,
-              host: host,
-              createOutput: created?.stdout,
-            ),
-          );
-          if (createFailure != null) {
-            final originOk = await _verifyOrigin(executor, log, dest) == null;
-            if (!originOk) {
-              warnings.insert(
-                before,
-                'The repository was created locally, but publishing to '
-                'GitLab failed — you can retry from the forge later. '
-                '($createFailure)',
-              );
-            }
-          }
-        case _RemoteMode.customUrl:
-          // Plain git, no forge CLI — for a remote that already exists.
-          final url = _remoteUrl.text.trim();
-          final label = 'git remote add origin $url';
-          final result = await executor.execute(
-            repoPath: dest,
-            gitArgs: ['git', 'remote', 'add', 'origin', url],
-            lane: ExecLane.exclusive,
-            retries: 0,
-          );
-          log.logResult(label, result);
-          if (!result.isSuccess) {
-            warnings.add(
-              'The repository was created locally, but configuring the '
-              '"origin" remote failed. '
-              '(${result.stderr.trim().isEmpty ? 'git remote add exited with code ${result.exitCode}' : result.stderr.trim()})',
-            );
-          } else if (hasCommit) {
-            await _pushInitial(executor, log, dest, pushRef, warnings);
-          }
-      }
-      if (!mounted) return;
-
-      // --- Step 4: post-create verification -------------------------------
-      // Every mode that promised an origin must show one. Forge modes already
-      // ran _ensureForgeOrigin; this catch-all covers custom-URL and any
-      // forge edge case that left origin unset without a prior warning.
-      if (_remote != _RemoteMode.none) {
-        final failure = await _verifyOrigin(executor, log, dest);
-        if (!mounted) return;
-        if (failure != null) {
-          final already = warnings.any(
-            (w) =>
-                w.contains('origin') ||
-                w.contains('"origin"') ||
-                w.contains('clone URL'),
-          );
-          if (!already) {
-            warnings.add(
-              'The repository was created, but no "origin" remote is '
-              'configured — add one manually (git remote add origin <url>). '
-              '($failure)',
-            );
-          }
-        }
-      }
-      final warning = warnings.isEmpty ? null : warnings.join('\n\n');
-
-      // --- Register + activate (shared matrix) --------------------------
-      final registered = await _register(dest);
+      // --- Register + activate (shared matrix) ------------------------------
+      final registered = await _register(outcome.dest);
       if (!mounted) return;
       if (!registered) {
         // Created on disk/forge but never became the live workspace — the
@@ -859,12 +501,13 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
         return;
       }
       provisionToken = null; // finalized (or not provisioning) — don't abort
+      final warning = outcome.warningText;
       if (warning != null) {
         setState(() => _completedWarning = warning);
         return; // stay open so the warning is seen; footer becomes Close
       }
-      // Let the finished (green) progress bar register before the sheet
-      // pops — success otherwise vanishes the very frame it happens.
+      // Let the finished (green) progress bar register before the sheet pops —
+      // success otherwise vanishes the very frame it happens.
       setState(() => _finished = true);
       await Future<void>.delayed(CreateRepositorySheet.successPopDelay);
       if (!mounted) return;
@@ -876,263 +519,64 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     }
   }
 
-  /// Writes `user.name` / `user.email` into [dest]'s local git config.
-  /// Failures append to [warnings]; the repo is kept. Caller only invokes
-  /// this when both fields are valid.
-  Future<void> _writeIdentityConfig(
-    CommandExecutor executor,
-    OutputLogNotifier log,
-    String dest,
-    List<String> warnings,
-  ) async {
-    for (final argv in [
-      ['git', 'config', '--local', 'user.name', _authorNameText],
-      ['git', 'config', '--local', 'user.email', _authorEmailText],
-    ]) {
-      final result = await executor.execute(
-        repoPath: dest,
-        gitArgs: argv,
-        lane: ExecLane.exclusive,
-        retries: 0,
-      );
-      log.logResult(argv.join(' '), result);
-      if (!result.isSuccess) {
-        warnings.add(
-          'Could not write git identity into the new repository '
-          '(${argv.join(' ')}). '
-          '(${result.stderr.trim().isEmpty ? 'exited with code ${result.exitCode}' : result.stderr.trim()})',
-        );
-        return;
-      }
+  /// The forge host to publish to, and the fail-fast auth judgment that goes
+  /// with it.
+  ///
+  /// For a This-Mac forge create, check the Mac's gh/glab sign-in and refuse
+  /// when it is definitively unusable (signed out, expired token) — otherwise
+  /// the forge `repo create` fails with a cryptic 401 after a local repo was
+  /// already created. Goes through [forgeAuthProvider]: the same strict
+  /// judgment (an expired token does NOT pass) and the same cached probe the
+  /// host prefill already ran, logged to the output log. An SSH target instead
+  /// relies on the pipeline's `ensureForgeLogin` hook, which pushes the
+  /// connection's token before the remote CLI is queried.
+  Future<({String host, String? error})> _resolveForgeHost() async {
+    var host = _host.text.trim().isEmpty ? _defaultHost : _host.text.trim();
+    if (!_onForge || !_isLocalTarget) return (host: host, error: null);
+    final auth = await ref.read(forgeAuthProvider((_forge, true)).future);
+    if (!mounted) return (host: host, error: null);
+    if (!auth.authenticated && !auth.checkFailed) {
+      // Definitive: signed out, expired, or the CLI is missing. (A check that
+      // merely timed out proceeds best-effort — blocking a create on a slow
+      // probe would be worse than the failure it guards against.)
+      return (host: host, error: auth.detail);
     }
+    // Trust the real signed-in host over a default the user never touched; a
+    // host the user typed themselves is used verbatim — the Review step
+    // displayed it, so it must never be silently replaced.
+    if (!_hostEdited && auth.authenticated && auth.host != null) {
+      host = auth.host!;
+      _host.text = auth.host!;
+    }
+    return (host: host, error: null);
   }
 
-  /// Writes a README.md into [dest] and creates the initial commit, so the
-  /// new repo (and, after the push, the forge) isn't empty and the initial
-  /// branch is actually born. Returns true when the commit exists; failures
-  /// append to [warnings] and the repo is kept.
-  Future<bool> _writeReadmeAndCommit(
-    CommandExecutor executor,
-    OutputLogNotifier log,
-    String dest,
-    List<String> warnings,
-  ) async {
-    final name = _name.text.trim();
-    final desc = _description.text.trim();
-    final content = desc.isEmpty ? '# $name\n' : '# $name\n\n$desc\n';
-    try {
-      await executor.uploadBytes(
-        HostFsService.joinPath(dest, 'README.md'),
-        Uint8List.fromList(utf8.encode(content)),
-      );
-      for (final argv in [
-        ['git', 'add', '--', 'README.md'],
-        [
-          'git',
-          ..._identityArgs,
-          'commit',
-          '--no-gpg-sign',
-          '-m',
-          'Initial commit',
-        ],
-      ]) {
-        final result = await executor.execute(
-          repoPath: dest,
-          gitArgs: argv,
-          lane: ExecLane.exclusive,
-          retries: 0,
-        );
-        log.logResult(argv.join(' '), result);
-        if (!result.isSuccess) {
-          warnings.add(
-            'The README initial commit failed — commit manually. '
-            '(${result.stderr.trim().isEmpty ? '${argv.join(' ')} exited with code ${result.exitCode}' : result.stderr.trim()})',
-          );
-          return false;
-        }
-      }
-      return true;
-    } catch (e) {
-      warnings.add('The README initial commit failed. ($e)');
-      return false;
-    }
-  }
+  /// The wizard's answers as plain values — the pipeline's whole view of this
+  /// form. Resolved here so the pipeline cannot reach back into a controller.
+  CreateRepoRequest _request(String host) => CreateRepoRequest(
+    existing: _source == _SourceMode.existingFolder,
+    name: _name.text.trim(),
+    forgePath: _forgePath,
+    parentDir: _isLocalTarget ? (_pickedParent ?? '') : _parent.text.trim(),
+    existingFolder: _isLocalTarget
+        ? (_pickedFolder ?? '')
+        : _folder.text.trim(),
+    branch: _branch.text.trim(),
+    host: host,
+    remote: _remote,
+    private: _private,
+    description: _description.text.trim(),
+    remoteUrl: _remoteUrl.text.trim(),
+    addReadme: _addReadme,
+    commitAll: _commitAll,
+    replaceOrigin: _replaceOrigin,
+    createParents: _createParents,
+    isLocalTarget: _isLocalTarget,
+    identityValid: _identityValid,
+    authorName: _authorNameText,
+    authorEmail: _authorEmailText,
+  );
 
-  /// Stages and commits everything in [dest] — the existing-folder analogue
-  /// of [_writeReadmeAndCommit]. Returns true when a commit was created. A
-  /// clean tree ("nothing to commit") is not an error — the caller falls back
-  /// to checking whether HEAD already resolves; real failures append to
-  /// [warnings] and the repo is kept.
-  Future<bool> _commitAllContents(
-    CommandExecutor executor,
-    OutputLogNotifier log,
-    String dest,
-    List<String> warnings,
-  ) async {
-    for (final argv in [
-      ['git', 'add', '--all'],
-      [
-        'git',
-        ..._identityArgs,
-        'commit',
-        '--no-gpg-sign',
-        '-m',
-        'Initial commit',
-      ],
-    ]) {
-      final result = await executor.execute(
-        repoPath: dest,
-        gitArgs: argv,
-        lane: ExecLane.exclusive,
-        retries: 0,
-      );
-      log.logResult(argv.join(' '), result);
-      if (!result.isSuccess) {
-        if ('${result.stdout}\n${result.stderr}'.contains(
-          'nothing to commit',
-        )) {
-          return false;
-        }
-        warnings.add(
-          'Committing the folder contents failed — commit manually. '
-          '(${result.stderr.trim().isEmpty ? '${argv.join(' ')} exited with code ${result.exitCode}' : result.stderr.trim()})',
-        );
-        return false;
-      }
-    }
-    return true;
-  }
-
-  /// Pushes the initial commit and sets upstream with PATH-hardened `git`.
-  /// When [forge] is GitHub/GitLab, HTTPS auth rides that CLI's credential
-  /// helper for this one command (see [forgeGitAuthConfigArgs]) — matching
-  /// the store that just created the project. Best-effort: failures append
-  /// to [warnings]; local repo + origin stay.
-  Future<void> _pushInitial(
-    CommandExecutor executor,
-    OutputLogNotifier log,
-    String dest,
-    String branch,
-    List<String> warnings, {
-    Forge forge = Forge.none,
-  }) async {
-    final auth = forgeGitAuthConfigArgs(
-      forge,
-      ghPath: executor.resolvedBinaryPath('gh'),
-      glabPath: executor.resolvedBinaryPath('glab'),
-    );
-    final label = 'git push -u origin $branch';
-    try {
-      final result = await executor.execute(
-        repoPath: dest,
-        gitArgs: ['git', ...auth, 'push', '-u', 'origin', branch],
-        lane: ExecLane.sync,
-        retries: 0,
-      );
-      log.logResult(label, result);
-      if (!result.isSuccess) {
-        warnings.add(
-          'The initial commit could not be pushed — push manually once the '
-          'remote is reachable. '
-          '(${result.stderr.trim().isEmpty ? '$label exited with code ${result.exitCode}' : result.stderr.trim()})',
-        );
-      }
-    } catch (e) {
-      warnings.add('The initial commit could not be pushed. ($e)');
-    }
-  }
-
-  /// Guarantees a usable `origin` in [dest] after a forge create attempt,
-  /// using PATH-hardened `git` only — never forge-nested git. Always owns
-  /// push when [hasCommit]. Idempotent and best-effort:
-  ///  * origin already resolves → push if needed
-  ///  * origin missing → [lookupUrl] + `git remote add origin`, then push
-  /// Returns whether origin is present after this call. A failed resolution
-  /// carries its diagnostic trail ([OriginUrlResolution.detail]) into both
-  /// the warning banner and the output log, so a live failure names its
-  /// cause instead of a bare "could not be determined".
-  Future<bool> _ensureForgeOrigin(
-    CommandExecutor executor,
-    OutputLogNotifier log,
-    String dest,
-    bool hasCommit,
-    String pushRef,
-    List<String> warnings, {
-    required Forge forge,
-    required Future<OriginUrlResolution> Function() lookupUrl,
-  }) async {
-    final existing = await executor.execute(
-      repoPath: dest,
-      gitArgs: ['git', 'remote', 'get-url', 'origin'],
-      lane: ExecLane.read,
-      retries: 0,
-    );
-    var hasOrigin = existing.isSuccess && existing.stdout.trim().isNotEmpty;
-    if (!hasOrigin) {
-      final resolved = await lookupUrl();
-      final url = resolved.url?.trim();
-      if (url == null || url.isEmpty) {
-        log.logError('origin clone-URL resolution', resolved.detail);
-        warnings.add(
-          'The repository was created on the forge, but no "origin" remote '
-          'could be configured locally — its clone URL could not be '
-          'determined. Add one manually: git remote add origin <url>. '
-          '(${resolved.detail})',
-        );
-        return false;
-      }
-      final add = await executor.execute(
-        repoPath: dest,
-        gitArgs: ['git', 'remote', 'add', 'origin', url],
-        lane: ExecLane.exclusive,
-        retries: 0,
-      );
-      log.logResult('git remote add origin $url', add);
-      if (!add.isSuccess) {
-        warnings.add(
-          'The repository was created on the forge, but wiring the "origin" '
-          'remote failed. '
-          '(${add.stderr.trim().isEmpty ? 'git remote add exited with code ${add.exitCode}' : add.stderr.trim()})',
-        );
-        return false;
-      }
-      hasOrigin = true;
-    }
-    // We own push entirely (forge create is API-only).
-    if (hasCommit && hasOrigin) {
-      await _pushInitial(executor, log, dest, pushRef, warnings, forge: forge);
-    }
-    return hasOrigin;
-  }
-
-  /// Confirms `origin` resolves inside [dest] — `git remote get-url origin`
-  /// exits 0 and prints a URL. Returns null on success, else a short
-  /// human-readable failure detail. Never throws (verification must not turn
-  /// a created repo into an error).
-  Future<String?> _verifyOrigin(
-    CommandExecutor executor,
-    OutputLogNotifier log,
-    String dest,
-  ) async {
-    const label = 'git remote get-url origin';
-    try {
-      final result = await executor.execute(
-        repoPath: dest,
-        gitArgs: ['git', 'remote', 'get-url', 'origin'],
-        lane: ExecLane.read,
-        retries: 0,
-      );
-      log.logResult(label, result);
-      if (result.isSuccess && result.stdout.trim().isNotEmpty) return null;
-      final err = result.stderr.trim();
-      return err.isEmpty ? '$label exited with code ${result.exitCode}' : err;
-    } catch (e) {
-      return displayError(e);
-    }
-  }
-
-  /// Returns whether the new repo actually became the live workspace
-  /// (0009 H19) — a silent failure must not paint the green Complete state.
   Future<bool> _register(String dest) => registerAndActivate(
     ref,
     target: _target,
@@ -1781,31 +1225,31 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
           spacing: 6,
           runSpacing: 6,
           children: [
-            _remoteButton('None', _RemoteMode.none),
-            _remoteButton('GitHub', _RemoteMode.github),
-            _remoteButton('GitLab', _RemoteMode.gitlab),
-            _remoteButton('Custom URL', _RemoteMode.customUrl),
+            _remoteButton('None', CreateRemoteMode.none),
+            _remoteButton('GitHub', CreateRemoteMode.github),
+            _remoteButton('GitLab', CreateRemoteMode.gitlab),
+            _remoteButton('Custom URL', CreateRemoteMode.customUrl),
           ],
         ),
         WizardHint(switch (_remote) {
-          _RemoteMode.none =>
+          CreateRemoteMode.none =>
             'No remote is set up — you can add one later from the command '
                 'line or by re-publishing.',
-          _RemoteMode.github =>
+          CreateRemoteMode.github =>
             'Creates the project on GitHub with the gh CLI (it must be '
                 'installed and signed in on the target machine) and wires '
                 'it as "origin".',
-          _RemoteMode.gitlab =>
+          CreateRemoteMode.gitlab =>
             'Creates the project on GitLab with the glab CLI (it must be '
                 'installed and signed in on the target machine) and wires '
                 'it as "origin".',
-          _RemoteMode.customUrl =>
+          CreateRemoteMode.customUrl =>
             'Points "origin" at a remote that already exists — created on '
                 'a web UI, a bare repo on a server, or any other Git URL. '
                 'No forge CLI needed.',
         }),
         if (_source == _SourceMode.existingFolder &&
-            _remote != _RemoteMode.none) ...[
+            _remote != CreateRemoteMode.none) ...[
           const SizedBox(height: 8),
           WorkspaceToggleRow(
             on: _replaceOrigin,
@@ -1819,7 +1263,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
             'origin is left untouched and the create stops safely.',
           ),
         ],
-        if (_remote == _RemoteMode.customUrl) ...[
+        if (_remote == CreateRemoteMode.customUrl) ...[
           const SizedBox(height: 8),
           LabeledTextField(
             label: 'Existing remote to wire as origin',
@@ -1883,7 +1327,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     );
   }
 
-  Widget _remoteButton(String label, _RemoteMode mode) {
+  Widget _remoteButton(String label, CreateRemoteMode mode) {
     final active = _remote == mode;
     return AppPushButton(
       controlSize: ControlSize.regular,
@@ -1923,15 +1367,15 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
               '${_isLocalTarget ? (_pickedParent ?? '—') : _parent.text.trim()}';
     final visibility = _private ? 'private' : 'public';
     final remoteText = switch (_remote) {
-      _RemoteMode.none => 'None — no origin remote',
-      _RemoteMode.github => 'GitHub ($host) — $visibility',
-      _RemoteMode.gitlab => 'GitLab ($host) — $visibility',
-      _RemoteMode.customUrl => _remoteUrl.text.trim(),
+      CreateRemoteMode.none => 'None — no origin remote',
+      CreateRemoteMode.github => 'GitHub ($host) — $visibility',
+      CreateRemoteMode.gitlab => 'GitLab ($host) — $visibility',
+      CreateRemoteMode.customUrl => _remoteUrl.text.trim(),
     };
     final options = <String>[
       if (!existing && _addReadme) 'Add a README (initial commit)',
       if (existing && _commitAll) 'Commit all existing contents',
-      if (existing && _replaceOrigin && _remote != _RemoteMode.none)
+      if (existing && _replaceOrigin && _remote != CreateRemoteMode.none)
         'Replace existing origin remote',
       if (!_isLocalTarget && !existing && _createParents)
         'Create parent folders if missing',
@@ -2030,4 +1474,18 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       ],
     );
   }
+}
+
+/// Adapts the app's output log to the pipeline's two-method sink, so
+/// `create_repo_pipeline.dart` needs no Riverpod import.
+class _OutputLogSink implements CreateRepoLog {
+  const _OutputLogSink(this._log);
+  final OutputLogNotifier _log;
+
+  @override
+  void logResult(String label, SSHCommandResult result) =>
+      _log.logResult(label, result);
+
+  @override
+  void logError(String label, String detail) => _log.logError(label, detail);
 }

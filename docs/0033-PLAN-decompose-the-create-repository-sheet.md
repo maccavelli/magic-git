@@ -1059,6 +1059,86 @@ lines) are the State orchestration the 3b deviation deliberately leaves.
 **Duplicated logic between the sheets is gone; duplicated delegation is what is
 left, and that is the intended end state.**
 
+### Phase 4 — 2026-09-06 — *complete (pipeline tests deferred to a follow-up commit, as planned)*
+
+**`lib/features/workspace/create_repo_pipeline.dart` (841 lines).** The eight
+banner-marked phases of `_submit()` are now functions in a file that knows
+nothing about widgets. Verified against the acceptance criteria:
+
+```
+imports: dart:convert, dart:typed_data,
+         core/{forge,git/host_fs_service,github,gitlab,ssh,utils/display_error,
+               utils/posix_path}
+  -> no flutter/widgets, no flutter_riverpod
+_submit()   424 lines -> 73 total / 59 code
+git/forge argv construction remaining in the sheet: 0 occurrences
+```
+
+**Design decisions worth recording:**
+
+* **`CreateRepoRequest` carries resolved values, never controllers** — the plan
+  called this out and it is the difference between a boundary and a second copy
+  of the form state. 19 fields plus three derived getters (`onForge`, `forge`,
+  `identityArgs`) and `dest`, so the "where does it land" rule lives in one
+  place instead of being computed by the caller.
+* **`CreateRemoteMode` moved out of the sheet.** `_RemoteMode` was private to
+  `create_repo_sheet.dart`, but the mode *is* the pipeline's contract — the
+  sheet chooses it, the pipeline acts on it — so it is public and lives with
+  the pipeline now.
+* **A two-method `CreateRepoLog` interface, not `OutputLogNotifier`.** The
+  notifier's own file imports `flutter_riverpod`; depending on it would have
+  dragged Riverpod into the pipeline transitively. The pipeline declares the
+  two methods it actually uses (`logResult`, `logError`) and the sheet supplies
+  a 10-line `_OutputLogSink` adapter. A test can now log into a list.
+* **The two genuinely widget-layer dependencies are injected**, not removed:
+  `CreateRepoDeps.ensureForgeLogin` (which needs `ref`) and
+  `CreateRepoDeps.isActive` (the host's `mounted`, checked at exactly the
+  points the original checked it, so a torn-down sheet stops the same work it
+  always did).
+* **`_resolveForgeHost()` extracted from `_submit`.** The This-Mac auth
+  fail-fast plus host correction is a distinct policy, and naming it is what
+  brought `_submit` to 59 code lines. Done because it reads better, not to hit
+  the number — the 23 comment lines that remain in `_submit` are load-bearing
+  (the H19 rule, the pop-delay reason) and were not deleted to make a count.
+
+**A defect I introduced and caught before it shipped.** The first version of
+the pipeline computed "is this already a repo?" with its own
+`git rev-parse --show-toplevel` call, because the classification and the
+pre-checks had been fused in the original. That is **an extra executor
+command** the sheet never issued — visible to the argv assertions in
+`create_repo_sheet_test.dart` and, more importantly, a real extra round trip on
+every adopted-folder create. Fixed by having `_preChecks` return
+`({CreateRepoOutcome? failure, bool alreadyRepo})` from its single probe, and
+the redundant helper was deleted. Recorded because "the tests would have caught
+it" is not a reason to leave it unremarked: the extraction is supposed to move
+work, not add it.
+
+**Verification output:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.4s)
+dart format --output=none --set-exit-if-changed   Formatted 2 files (0 changed)
+flutter test test/create_repo_sheet_test.dart
+     test/create_repo_namespace_test.dart   00:05 +39: All tests passed!
+flutter test (full suite)                  03:24 +3584 ~2: All tests passed!
+```
+
+**Neutrality.** `expect(` **9078** and `testWidgets(` **1001**, unchanged from
+Phase 3. `git status --short -- test/` **empty**. All 39 create-sheet tests —
+including the ones asserting exact argv, the existing-origin guard, the
+partial-forge-failure warning paths and the nested-repo refusal — pass against
+the extracted pipeline **without a single test edit**. That is the whole
+neutrality argument for a 554-line move.
+
+**Size.** `create_repo_sheet.dart` 2033 -> **1491** (-542); the pipeline is 841
+lines, larger than the code it took because every phase gained a doc comment
+naming what it does and why.
+
+**Deferred, as the plan requires.** `test/create_repo_pipeline_test.dart` — unit
+tests over a fake `CommandExecutor` for the eight phases — lands in a
+**separate follow-up commit**, so tests written to match the refactor cannot
+contaminate the evidence that the refactor changed nothing.
+
 ## Rollout and Rollback
 
 **Rollout.** Seven commits in order. Phases 1 and 3–5 are behaviour-neutral and
