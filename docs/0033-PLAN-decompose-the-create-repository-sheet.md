@@ -1139,6 +1139,72 @@ tests over a fake `CommandExecutor` for the eight phases — lands in a
 **separate follow-up commit**, so tests written to match the refactor cannot
 contaminate the evidence that the refactor changed nothing.
 
+### Phase 4 follow-up — 2026-09-06 — *pipeline unit tests*
+
+Deliberately a **separate commit** from the extraction, as Phase 4 required:
+tests written to match a refactor cannot also be evidence that the refactor
+changed nothing.
+
+**`test/create_repo_pipeline_test.dart` — 15 tests**, driving `runCreateRepo`
+directly over the harness's `FakeCreateExecutor` and a list-backed
+`CreateRepoLog`. No widget is pumped. Coverage follows the minimum the plan
+named, plus the two injected dependencies:
+
+* destination resolution (new folder under its parent; adopted folder is
+  itself, trailing slash normalised);
+* pre-checks — nested-repo refusal, existing destination, missing parent;
+* the existing-origin guard, both paths (**refuse** with nothing mutated, and
+  **remove-then-rewire** with the argv order asserted);
+* init — skipped for a repo, issued in the parent with the chosen branch for a
+  new folder, and a failing init reporting stderr;
+* a failed identity write producing a **warning, not an error**, with the repo
+  kept;
+* remote modes — `none` wiring and verifying nothing, `customUrl` adding origin
+  without pushing when there is no commit, and a promised origin that never
+  appears becoming a warning;
+* `CreateRepoDeps` — `ensureForgeLogin` called exactly once for a forge target,
+  and `isActive` returning false abandoning the run instead of continuing.
+
+**Every test seen to fail.** Seven mutations in a scratch worktree:
+
+```
+nested-repo refusal removed       -> pre-checks a folder nested inside another repo is refused
+replaceOrigin ignored             -> existing-origin guard refuses when Replace existing origin is off
+identity failure becomes an error -> warnings do not fail the run ...
+init never skipped                -> init is skipped when the folder is already a repository
+                                     (+ existing-origin guard removes and rewires)
+isActive ignored                  -> deps a host that goes away mid-run abandons
+ensureForgeLogin never called     -> deps a forge target logs into the host
+step-4 verification dropped       -> remote modes a promised origin that never appears
+```
+
+**A near-miss in the method, worth recording.** The first sabotage pass piped
+the results through `head -1` and reported that "init never skipped" broke the
+*origin-rewire* test — which would have read as an instrument that does not
+isolate what it claims. It does: re-run showing the full failure list, that
+mutation breaks **two** tests, the intended one among them. This is the second
+time in this plan that a truncated read of a test log nearly produced a wrong
+conclusion (Phase 2's per-mutation run was the first). **Read the whole result.**
+
+**Not covered here, and covered elsewhere.** The GitHub and GitLab branches of
+`_wireOrigin` go through `GhService`/`GlabService`, whose argv and
+partial-failure behaviour the 39 widget tests in `create_repo_sheet_test.dart`
+already exercise in depth. Duplicating that at this level would add fixtures
+without adding evidence; the forge branch reached by these tests is the
+`ensureForgeLogin` hook, which the widget tests cannot see.
+
+**Verification output:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.6s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:27 +3599 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9078 -> **9110**, `testWidgets(` **1001** unchanged (these
+are plain `test(`s, not widget tests) — the deltas are entirely this new file.
+Total tests 3584 -> **3599**.
+
 ## Rollout and Rollback
 
 **Rollout.** Seven commits in order. Phases 1 and 3–5 are behaviour-neutral and
