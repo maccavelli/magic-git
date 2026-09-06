@@ -1,0 +1,665 @@
+---
+status: "proposed"
+date: 2026-09-06
+associated-madr: "0033-MADR-decompose-the-create-repository-sheet.md"
+---
+
+# Decompose the create-repository sheet, and canonicalize what it duplicates
+
+Associated MADR: [0033-MADR-decompose-the-create-repository-sheet.md](0033-MADR-decompose-the-create-repository-sheet.md)
+
+## Goal
+
+Turn `lib/features/workspace/create_repo_sheet.dart` (2176 lines, one 2068-line
+state class, 47 methods) into a set of modules with named seams; remove the
+duplication it shares with `clone_sheet.dart` and the wider app; and fix the one
+defect that duplication has already produced — **changing observable behaviour only where a
+recorded decision calls for it**, proven by an unedited test suite.
+
+## Scope
+
+### In scope
+
+| Area | Files |
+| --- | --- |
+| The monolith | `lib/features/workspace/create_repo_sheet.dart` |
+| Its sibling | `lib/features/workspace/clone_sheet.dart` |
+| Existing shared homes | `lib/features/workspace/{wizard,workspace_widgets,workspace_registration,workspace_provisioning,workspace_targets}.dart`, `lib/features/common/labeled_text_field.dart` |
+| Path-helper call sites | `lib/core/storage/{saved_local_repo,saved_connection}.dart`, `lib/core/git/host_fs_service.dart`, `lib/features/tabs/{tab_strip,saved_workspaces_sheet}.dart`, `lib/features/switcher/{current_repo_indicator,connection_switcher}.dart`, `lib/features/dnd/drag_item.dart` |
+| New modules | `lib/core/utils/posix_path.dart`, `lib/features/workspace/workspace_pickers.dart`, `lib/features/workspace/workspace_destination.dart`, `lib/features/workspace/wizard_navigation.dart`, `lib/features/workspace/create_repo_pipeline.dart`, `lib/features/workspace/create_repo_steps/` |
+| Tests | new unit tests only; the 37 existing sheet tests are **read-only** in phases 1 and 3–5 |
+
+### Out of scope
+
+* **0032's namespace search/recency work.** This plan only prepares the landing
+  site (Phase 5). Nothing here changes what the suggestion chips show.
+* **Consolidating `ForgeSheetToggle` with `WorkspaceToggleRow`.** The MADR
+  establishes these are different affordances, not duplicates; unifying them is
+  a design decision nobody has made.
+* **Merging the two shared-widget libraries** (`features/workspace/wizard.dart`
+  and `features/forge/forge_create_sheet_widgets.dart`). They overlap only at
+  `LabeledTextField`, which the forge library already delegates to.
+* **`_recomputeTarget` and `_onDestChanged` divergences.** Raised in the MADR;
+  they need a decision before code. See *Open questions* below — Phase 3 stops
+  and prompts rather than picking.
+* Any change to `clone_sheet.dart`'s behaviour. It is edited only to consume
+  extracted modules.
+
+### Preconditions
+
+```sh
+flutter --version | head -1          # must read: Flutter 3.47.2
+flutter pub get --enforce-lockfile   # must say "Got dependencies!"
+git status --short                   # must be empty before starting a phase
+```
+
+Verified 2026-09-06: the local SDK is Flutter 3.47.2, matching `FLUTTER_VERSION`
+in `build_macos.sh:41`.
+
+### Baseline measurements (captured 2026-09-06, at `f9838d1`)
+
+These are the neutrality reference. Phases 1–5 must not move them.
+
+| Metric | Value |
+| --- | --- |
+| `expect(` across `test/` | **9043** |
+| `testWidgets(` across `test/` | **999** |
+| `test/create_repo_sheet_test.dart` | 1301 lines, **126** `expect(`, **28** `testWidgets(` |
+| `test/create_repo_namespace_test.dart` | 310 lines, **17** `expect(`, **9** `testWidgets(` |
+| `test/helpers/create_repo_harness.dart` | 258 lines |
+| `test/create_repo_wire_live_test.dart` | 593 lines, 23 `expect(` (live-forge, not run routinely) |
+
+Capture command, re-run at the start of every phase:
+
+```sh
+printf 'expect=%s testWidgets=%s\n' \
+  "$(grep -rho 'expect(' test/ | wc -l | tr -d ' ')" \
+  "$(grep -rho 'testWidgets(' test/ | wc -l | tr -d ' ')"
+```
+
+## Implementation Steps
+
+Seven commits across six phases, each independently revertible.
+
+**Phase 0 is split in two (0a, 0b) because it carries the only intentional
+behaviour changes**, and they are unrelated to each other. Phases 1 and 3–5 are
+behaviour-neutral. **Phase 2 is neutral at 6 of its 8 call sites and
+deliberately changes 2**, named there — a consequence of Decision 1 that is
+recorded rather than absorbed.
+
+Per `AGENTS.md`, every commit is made with exactly `git commit --no-edit` (the
+global `prepare-commit-msg` hook writes the message), and nothing is pushed
+unless the maintainer asks in that turn.
+
+---
+
+### Phase 0a — Fix the `_goBack` defect, alone
+
+**Why first:** it is a behaviour change. Landing it separately gives it a
+reviewable diff and a failing-first test, and lets the later phases claim
+neutrality against a correct baseline instead of preserving a bug on purpose.
+
+**Evidence.** `clone_sheet.dart` guards completion twice — `_goBack:165`
+(`if (_stepIndex == 0 || _submitting || _finished) return;`) and its footer
+`:1018` (`onPressed: _submitting || _finished ? null : _goBack`).
+`create_repo_sheet.dart` guards it in neither: `:322` reads
+`if (_stepIndex == 0 || _submitting) return;`, and its footer passes
+`onPressed: _submitting ? null : _goBack` (`:2129`). Because `_canSubmit` returns false
+once `_finished` is set (`:442`), pressing Back after a successful create lands
+the user in a step they cannot submit and cannot complete.
+
+**Edits — 2 lines in 1 file:**
+
+1. `create_repo_sheet.dart:322` → `if (_stepIndex == 0 || _submitting || _finished) return;`
+2. `create_repo_sheet.dart:2129` (the Back button in `_footer`) →
+   `onPressed: _submitting || _finished ? null : _goBack,`
+
+**Test — new, in `test/create_repo_sheet_test.dart`:** drive a create to
+completion through the existing harness, then assert the Back button is disabled
+and that tapping it does not change the visible step.
+
+**Sabotage (required before the fix is trusted):** write the test first, run it
+against unmodified `create_repo_sheet.dart`, and record the failure output in
+the execution record. A test that has only been seen passing does not
+distinguish this fix from no fix.
+
+**Verification:**
+
+```sh
+flutter test test/create_repo_sheet_test.dart
+flutter analyze lib/features/workspace/create_repo_sheet.dart
+dart format --output=none --set-exit-if-changed lib/features/workspace/create_repo_sheet.dart
+```
+
+**Acceptance:** the new test fails before the 2-line change and passes after;
+`create_repo_sheet_test.dart` is 29 `testWidgets(`; no other test file changes.
+
+---
+
+### Phase 0b — Dial eagerly on destination select
+
+**Decision 3 (2026-09-06): yes** — the create sheet should provision eagerly, as
+the clone sheet does.
+
+**Why its own commit, and why before the refactor:** this is a behaviour change,
+so it cannot live inside a phase that claims neutrality — the same reasoning
+that isolates Phase 0a. Landing it here also makes the two `_onDestChanged`
+implementations *identical*, so Phase 3 can extract them without a decision
+pending.
+
+**Evidence.** `clone_sheet.dart:269–271` calls `ensureProvisioned()` when the
+selected destination resolves to `WorkspaceTarget.sshProvision`;
+`create_repo_sheet.dart:432–439` does not. Yet the create sheet's
+`_destinationSection` renders the `provisioning` "Connecting…" spinner
+(`:1372–1386`) — a spinner for a state its own destination control never
+initiates, so today it can only appear once submit begins.
+
+**Edit — `create_repo_sheet.dart` `_onDestChanged` (`:432–439`):** append the
+clone sheet's trailing block, and its leading comment, so the two bodies match
+byte for byte:
+
+```dart
+// Switching destination abandons any in-flight provisioning.
+await resetProvisioning();
+…
+if (_target == WorkspaceTarget.sshProvision) {
+  await ensureProvisioned();
+}
+```
+
+**Test — new, in `test/create_repo_sheet_test.dart`:** select a saved SSH
+connection from the landing variant and assert the "Connecting…" indicator
+appears without submitting. **Sabotage:** run it against the unmodified sheet
+first and record the failure — the spinner is currently unreachable by this
+path, so a passing-only test would prove nothing.
+
+**Verification:**
+
+```sh
+flutter test test/create_repo_sheet_test.dart
+flutter analyze lib/features/workspace/create_repo_sheet.dart
+dart format --output=none --set-exit-if-changed lib/features/workspace/create_repo_sheet.dart
+```
+
+**Acceptance:** the new test fails before the change and passes after;
+`_onDestChanged` is byte-identical between the two sheets (confirm with the
+method-comparison scan); `create_repo_sheet_test.dart` is 30 `testWidgets(`.
+
+---
+
+### Phase 1 — Adopt the shared widgets that already exist
+
+**1a. `WizardReviewRow`.** `wizard.dart:127` defines it; `create_repo_sheet.dart`
+already imports `wizard.dart` and defines an identical private `_reviewRow` at
+`:2063`. `clone_sheet.dart` uses the shared widget at 5 call sites; the create
+sheet uses it 0 times.
+
+* Delete `_reviewRow` (`:2063–2082`).
+* Replace its call sites in `_reviewStep` (`:2000–2062`) with
+  `WizardReviewRow(label, value)`.
+* `MacosTypography` becomes unused in `_reviewStep`'s signature if nothing else
+  needs it — check before removing the parameter, since `WizardStep.body` may
+  require the signature.
+
+**1b. Extend `LabeledTextField`, then adopt it.**
+`lib/features/common/labeled_text_field.dart:7` already renders exactly the
+block the sheet hand-rolls: `caption1` label → `SizedBox(height: 4)` →
+`MacosTextField` with `kAppPlaceholderStyle`, `kAppTextFieldDecoration`,
+`kAppTextFieldFocusedDecoration`. Two additive parameters are needed:
+
+```dart
+/// Rendered below the field. The wizard's hint slot.
+final Widget? hint;
+/// Overrides the normal/focused decorations — used for inline validation.
+final bool showError;
+```
+
+`showError` selects `kAppTextFieldErrorDecoration` /
+`kAppTextFieldErrorFocusedDecoration`, both already in `field_styles.dart:28,34`.
+
+The sheet's 12 `MacosTextField` instances are **not** uniformly adoptable.
+Classified by inspection:
+
+| Lines | Shape | Adoptable in 1b? |
+| --- | --- | --- |
+| 1513, 1536, 1556, 1912, 1945, 1964 | label + 4 px gap + field (+ hint) | **yes** |
+| 1595 | same, plus error decoration | **yes**, needs `showError` |
+| 1611, 1652, 1677 | second field of a pair, no label of its own | **no** — would need a label-less variant |
+| 1739, 1822 | inside a `Row`/`Expanded` beside a Browse button | **no** — would need a trailing-widget variant |
+
+**Decision 4 (2026-09-06): leave them.** Adopt the 7; the other 5 stay
+hand-rolled and are named in the execution record. Inventing a label-less and a
+trailing-widget variant to reach 12/12 would add API surface for its own sake;
+revisit only when a third caller needs the same shape.
+
+**Verification:**
+
+```sh
+flutter test test/create_repo_sheet_test.dart test/create_repo_namespace_test.dart
+flutter test test/                                  # LabeledTextField has other consumers
+flutter analyze
+dart format --output=none --set-exit-if-changed \
+  lib/features/common/labeled_text_field.dart lib/features/workspace/create_repo_sheet.dart
+```
+
+The full-suite run is not optional here: `LabeledTextField` is used by
+`connection_form.dart`, `add_worktree_sheet.dart`, `edit_entry_sheets.dart` and
+— via `ForgeSheetField` — all three forge create forms. A change to it reaches
+all of them.
+
+**Acceptance:** all tests green with **no test file edited**; `expect(` = 9043
+and `testWidgets(` = **1001** (999 baseline + one test each from Phases 0a and
+0b — state the number the phase actually observed);
+`create_repo_sheet.dart` is shorter by roughly 20 (`_reviewRow`) + ~60 (7 blocks
+× ~8 lines saved) lines.
+
+---
+
+### Phase 2 — Canonicalize the path helpers
+
+**The most dangerous phase. It is not a rename.**
+
+`lib/` carries **13 private path-helper definitions**. `_basename` exists **8
+times in 2 behaviourally distinct families**, verified by executing all three
+distinct implementations verbatim:
+
+| Input | Family A (×6) | `drag_item:70` | `create_repo_sheet:2163` |
+| --- | --- | --- | --- |
+| `a/b//` | `b` | *(empty)* | `b` |
+| `/` | `/` | *(empty)* | *(empty)* |
+| `//` | `//` | *(empty)* | *(empty)* |
+| `/a/b`, `a//b`, `/repo/`, `repo`, `` | all agree | | |
+
+**And `stripTrailingSlashes` must NOT be unified into one function.** The two
+implementations differ by one character and *both contracts are load-bearing*:
+
+| Input | `host_fs_service.dart:186` (`end > 0`) | `create_repo_sheet.dart:2169` (`end > 1`) |
+| --- | --- | --- |
+| `/` | *(empty)* | `/` |
+| `//`, `///` | *(empty)* | `/` |
+| `/a/`, `a//`, `` | identical | identical |
+
+The `end > 0` behaviour is a **safety mechanism**, not an accident.
+`HostFsService.removeDirGuarded` (`:138–176`) reads:
+
+```dart
+final normalizedParent = _stripTrailingSlashes(expectedParent);
+if (normalizedParent.isEmpty) {
+  // expectedParent was '/' (or only slashes) — never delete at the root.
+  throw ArgumentError('refusing to delete directly under /');
+}
+```
+
+That guard is the thing standing between a caller and `rm -rf` at the
+filesystem root, and it fires **only because `/` collapses to empty**. It also
+governs `HostFsService.joinPath` (`:180–184`), used at
+`create_repo_sheet.dart:484,917`, `clone_sheet.dart:329`,
+`clone_controller.dart:170` and `remote_directory_browser.dart:265` — the last
+of which can legitimately pass `/` while browsing the host root.
+
+**Two existing tests bear on this, and they are not equally protective:**
+
+* `test/host_fs_service_test.dart:202` pins `joinPath('/', 'x') == '/x'`. Swap in
+  the `end > 1` variant and this **fails** (`'//x'`). Good.
+* `test/host_fs_service_test.dart:181` pins the root refusal as
+  `refuses(path: '/x', parent: '/', name: 'x')` — but it asserts only
+  `throwsArgumentError`. Traced by reading: under `end > 1`, `normalizedParent`
+  becomes `/`, the root guard is **skipped**, and control falls to the
+  `path != '$normalizedParent/$expectedName'` check, which throws
+  `ArgumentError` anyway — from the wrong branch, with the wrong message. **This
+  test would still pass while the dedicated root guard became dead code.**
+
+**Steps, in this order:**
+
+1. **Tighten the weak test first, before touching any helper.** Change
+   `host_fs_service_test.dart:181`'s root case to assert the *message*
+   (`'refusing to delete directly under /'`), not just the type. Then
+   **demonstrate** the claim above: apply the `end > 1` body to a scratch copy of
+   `host_fs_service.dart`, run the test, and record that the tightened
+   assertion fails where the old one passed. Per `AGENTS.md`, run this against a
+   copy in the scratchpad — never by dirtying the tree, and never cleaned up
+   with `git checkout --`.
+2. **Create `lib/core/utils/posix_path.dart`** with three functions and explicit
+   contracts:
+   * `String basename(String path)` — one chosen family (see decision below).
+   * `String dirname(String path)` — replacing `_dirOf`
+     (`create_repo_sheet:2152`, `clone_sheet:1064`, identical) and
+     `environment_probe.dart:249`'s `_dirname`.
+   * `String stripTrailingSlashes(String path)` — the **root-collapsing**
+     (`end > 0`) contract, documented as such, with `removeDirGuarded`'s
+     dependence named in the doc comment.
+   * `String stripTrailingSlashesKeepRoot(String path)` — the `end > 1`
+     contract, for the create sheet's `dest` normalisation (`:479`) and
+     `_basenameOf`. **Two functions, two names, two doc comments.** Do not add a
+     boolean flag: a caller that passes the wrong flag gets the `rm -rf` guard
+     silently disabled, which is precisely the failure this phase exists to
+     prevent.
+3. **Pin the contracts with unit tests before switching any call site** —
+   `/`, `//`, `///`, `a/b//`, `/a/b`, `a//b`, `/repo/`, `repo`, `""` for each
+   function. These are pure functions; there is no excuse for an unpinned edge.
+4. **Switch the 8 `basename` definitions**, one file per step, checking each
+   call site's input against the chosen family *before* switching it:
+
+   | File | Definition | Call sites | Input |
+   | --- | --- | --- | --- |
+   | `core/storage/saved_local_repo.dart` | 137 | 135 | `repoPath` |
+   | `core/storage/saved_connection.dart` | 112 | 109 | `path` |
+   | `features/tabs/tab_strip.dart` | 14 | 144 | `tab.repoPath!` |
+   | `features/tabs/saved_workspaces_sheet.dart` | 293 | 132, 232, 256 | `repository.repoPath`, `tab.repoPath ?? ''` |
+   | `features/switcher/current_repo_indicator.dart` | 18 | 58 | `repoPath` |
+   | `features/switcher/connection_switcher.dart` | 28 | 632, 662 | `repo` |
+   | `features/dnd/drag_item.dart` | 70 | 65 | `paths.first` |
+   | `features/workspace/create_repo_sheet.dart` | 2163 | 1192, 1217 | picked/browsed folder |
+
+   **Decision 1 (2026-09-06): Family A.** It is the majority (6 of 8) and never
+   returns empty for a non-empty input, which is the right property for a
+   display label.
+
+   **This changes behaviour at exactly 2 of the 8 sites** — `drag_item.dart:70`
+   and `create_repo_sheet.dart:2163` — and only for inputs with two or more
+   trailing slashes, or a bare root. Assessed per site rather than assumed:
+
+   * `drag_item.dart` — its own doc comment says the helper "tolerates a
+     trailing slash" (singular). Family A tolerates any number and never yields
+     an empty label, so the switch **matches the documented intent** and removes
+     the empty-drag-label case for `a/b//`.
+   * `create_repo_sheet.dart:1192,1217` — the inputs come from
+     `getDirectoryPath()` (the native picker) and `RemoteDirectoryBrowserSheet`,
+     whose paths are built by `HostFsService.joinPath`
+     (`remote_directory_browser.dart:265`), which never emits a trailing slash.
+     The change is therefore **not reachable in practice** at these call sites;
+     it is a contract change, not an observed one. Confirm this by inspection
+     during execution rather than trusting this paragraph.
+
+   Family A's contract is already partly pinned by
+   `test/saved_local_repo_test.dart:219–231` (`/a/b/c`, `/a/b/c/`, and a
+   no-slash path). The new `posix_path_test.dart` adds the root and
+   double-slash cases those tests do not reach.
+5. **Switch `_dirOf` / `_dirname` / `_stripTrailingSlashes`** call sites:
+   `create_repo_sheet:400,479,528,2164`, `clone_sheet:232`,
+   `host_fs_service:153,182`, `environment_probe:221,249`.
+
+**Verification:**
+
+```sh
+flutter test test/posix_path_test.dart          # new, must exist before step 4
+flutter test test/host_fs_service_test.dart
+flutter test                                    # full suite — 8 files across 5 features
+flutter analyze
+```
+
+**Acceptance:** `grep -rn "static String _basename\|^String _basename\|String _dirOf\|String _dirname\|_stripTrailingSlashes(String" lib/ | wc -l`
+drops from **13** to **0**; `posix_path_test.dart` pins all 9 edge inputs per
+function and each was seen to fail against a deliberately wrong body; the
+`removeDirGuarded` root-refusal test asserts the message; full suite green with
+no existing test edited **except** the deliberate `:181` tightening, which is
+recorded as such.
+
+---
+
+### Phase 3 — Extract the shared sheet code as standalone functions
+
+Form follows `workspace_registration.dart`, whose own library comment states the
+convention: shared logic lives in "standalone functions (not sheet methods) so
+there is exactly one implementation to reason about." No shared base class, no
+widened mixin — the sheets are only ~60 % alike and inheritance would re-create
+the coupling this phase removes.
+
+**3a. `lib/features/workspace/workspace_pickers.dart`** — the 29 byte-identical
+picker lines.
+
+* `_pickLocalParent` (`create:1169–1181`, `clone:401–413`) → `Future<String?>
+  pickLocalDirectory()`. Returns the path; the caller owns `setState` and the
+  `_picking` flag, so the function needs no `BuildContext`.
+* `_browseRemote` (`create:1222–1238`, `clone:415–431` — **identical, 16
+  lines**) → `Future<String?> browseRemoteDirectory(BuildContext, {String? initialPath})`.
+* The create sheet's `_pickLocalFolder` (`:1183–1200`) and `_browseRemoteFolder`
+  (`:1202–1220`) are the same two calls plus `_name.text = _basenameOf(path)`;
+  they stay in the sheet as thin callers.
+
+**3b. `lib/features/workspace/wizard_navigation.dart`** — `_goNext`
+(**identical, 9 lines**) and `_goBack` (identical after Phase 0a), plus
+`_activeSteps`. Prefer a small `WizardNavigator` value type over a mixin so it
+is directly unit-testable; the sheets keep `_stepIndex` and pass it in.
+
+**3c. `lib/features/workspace/workspace_destination.dart`** — a
+`WorkspaceDestinationSection` widget replacing `_destinationSection`
+(`create:1340–1388`, `clone:516–566`), **95.0 % identical**. The only difference
+is hint wording, so the widget takes the two hint strings (or a `verb`)
+as parameters.
+
+**3d. The `_register` dispatcher** — **31 byte-identical lines**
+(`create:1128–1158`, `clone:359–389`). Move into `workspace_registration.dart`
+beside the functions it already dispatches to, as
+`Future<bool> registerAndActivate({required WorkspaceTarget target, ...})`.
+
+**3e. `_recomputeTarget`.** **Decision 2 (2026-09-06): yes** — adopt the clone
+sheet's form as canonical. It computes into a local `final WorkspaceTarget
+target` and commits `_target` once, where the create sheet
+(`create_repo_sheet.dart:391–407`) assigns `_target` and reads it back within
+the same branch. The two are **equivalent as written today** — the MADR
+establishes this — so applying the clone sheet's form to the create sheet is
+behaviour-neutral, and the pair then extracts cleanly.
+
+**`_onDestChanged` needs no work here.** Phase 0b already made the two bodies
+byte-identical, so it extracts alongside 3a–3d with no decision outstanding.
+Verify that with the method-comparison scan before extracting; if the bodies are
+not identical, Phase 0b was not applied as specified — stop rather than
+reconciling them inside a neutral phase.
+
+**Verification:**
+
+```sh
+flutter test test/create_repo_sheet_test.dart test/create_repo_namespace_test.dart
+flutter test test/clone_sheet_test.dart
+flutter test
+flutter analyze
+```
+
+**Acceptance:** the six identical-method pairs are gone — verified by re-running
+the method-comparison scan and showing 0 byte-identical methods remaining
+between the two sheets; both sheets shrink; **no test file edited**; `expect(`
+and `testWidgets(` unchanged from the Phase 2 baseline.
+
+---
+
+### Phase 4 — Extract the create pipeline
+
+The highest-value phase: 424 lines currently reachable only by pumping a widget
+become directly unit-testable. This is the seam-shaped gap
+[0030](0030-MADR-test-coverage-gaps-are-shaped-not-sized.md) names.
+
+**The seams are already drawn.** `_submit()` (`:450–873`) carries eight banner
+comments, verified at these exact lines:
+
+| Line | Phase |
+| --- | --- |
+| 515 | `// --- Pre-checks ---` |
+| 579 | `// --- Existing-origin guard ---` |
+| 621 | `// --- Step 1: init (skipped when the folder is already a repo) ---` |
+| 647 | `// --- Identity: local user.name / user.email ---` |
+| 658 | `// --- Step 2: optional initial commit ---` |
+| 686 | `// --- Step 3: wire origin (mode-specific) ---` |
+| 816 | `// --- Step 4: post-create verification ---` |
+| 841 | `// --- Register + activate (shared matrix) ---` |
+
+**New file `lib/features/workspace/create_repo_pipeline.dart`:**
+
+* An input record. `_submit()` reads **22 distinct state members** —
+  `_addReadme`, `_branch`, `_commitAll`, `_createParents`, `_description`,
+  `_folder`, `_forge`, `_forgePath`, `_host`, `_hostEdited`, `_isLocalTarget`,
+  `_name`, `_parent`, `_pickedFolder`, `_pickedParent`, `_private`, `_remote`,
+  `_remoteUrl`, `_replaceOrigin`, `_source`, `_defaultHost`, `_onForge` — plus
+  `_executor`. The record carries **resolved values, not controllers**: pass
+  `String name`, not `TextEditingController`. A record of controllers is the
+  form state a second time, not a boundary.
+* A result type carrying `dest`, warnings, and an error, so the sheet keeps
+  ownership of `setState`, `_error`, `_completedWarning` and `_finished`.
+* The eight phases as private functions in that file, with the existing helpers
+  (`_writeIdentityConfig:874`, `_writeReadmeAndCommit:906`,
+  `_commitAllContents:958`, `_pushInitial:1003`, `_ensureForgeOrigin:1046`,
+  `_verifyOrigin:1104`) moved alongside them.
+* **No `BuildContext`, no `setState`, no `ref` inside the pipeline.**
+  `ensureProvisioned()` and `_register` stay in the sheet, on either side of the
+  pipeline call; that keeps the extraction free of Riverpod and widget
+  lifecycle.
+
+**New tests** (`test/create_repo_pipeline_test.dart`), written **after** the
+move lands, over a fake `CommandExecutor` — the pattern
+`test/helpers/create_repo_harness.dart` already establishes with
+`FakeCreateExecutor`. Minimum coverage: the existing-origin guard's refuse and
+replace paths; init skipped when the folder is already a repo; warnings that
+must not fail the run; and each of the four `_RemoteMode` branches through
+*Step 3*.
+
+**Verification:**
+
+```sh
+flutter test test/create_repo_sheet_test.dart test/create_repo_namespace_test.dart
+flutter test
+flutter analyze
+```
+
+**Acceptance:** `_submit()` in the sheet is under ~60 lines and contains no forge
+or git command construction; the pipeline file has no `flutter/widgets` or
+`riverpod` import; the 37 existing tests pass **unedited**; new pipeline tests
+land in a **separate follow-up commit**, so the neutrality evidence stays
+uncontaminated by tests written to match the refactor.
+
+---
+
+### Phase 5 — Extract the step bodies
+
+`build` + 21 widget methods span `:1240–2151` (912 lines). Move each step body
+into `lib/features/workspace/create_repo_steps/`:
+
+| New file | From |
+| --- | --- |
+| `source_step.dart` | `_sourceStep:1429`, `_sourceButton:1416` |
+| `details_step.dart` | `_detailsStep:1499`, `_namespaceSuggestions:1455`, `_localFolderPicker:1693`, `_sshFolderField:1730`, `_commitAllToggle:1766`, `_localParentPicker:1776`, `_sshParentField:1813` |
+| `remote_step.dart` | `_remoteSection:1860`, `_remoteButton:1980` |
+| `review_step.dart` | `_reviewStep:2000` |
+| `create_repo_footer.dart` | `_footer:2084` |
+
+Each takes the state it needs as constructor parameters plus callbacks; none
+reaches back into the sheet's `State`. `_sourceButton` and `_remoteButton` are
+the same segmented-selector shape parameterised differently and collapse into
+one `_segmentButton<T>` in the shared step library.
+
+**This is where 0032's namespace control lands** — as its own widget in
+`details_step.dart`'s directory, not as more lines in the sheet.
+
+**Verification:** as Phase 4, plus a visual check of all four wizard steps in a
+built app (`./build_macos.sh --unsigned --install`), since widget-tree moves can
+pass tests and still change layout.
+
+**Acceptance:** `create_repo_sheet.dart` under ~700 lines; 37 existing tests
+pass unedited; `expect(`/`testWidgets(` unchanged.
+
+## Verification
+
+Run at the end of every phase, in this order:
+
+```sh
+flutter analyze                                  # must be clean on the first pass
+dart format --output=none --set-exit-if-changed <each file the commit stages>
+flutter test                                     # full suite
+printf 'expect=%s testWidgets=%s\n' \
+  "$(grep -rho 'expect(' test/ | wc -l | tr -d ' ')" \
+  "$(grep -rho 'testWidgets(' test/ | wc -l | tr -d ' ')"
+git diff --stat -- test/                         # phases 1, 3-5: must be empty
+```
+
+Notes that are not optional:
+
+* **`dart format` must run on the files in place**, never on a copy outside the
+  package. Outside its package `dart format` cannot read `sdk: ^3.12.2` from
+  `pubspec.yaml`, falls back to a different default language version, and wraps
+  differently — this produced a false "10 pre-existing hunks" finding during
+  0031.
+* **Do not run `dart format lib/ test/` globally** (`AGENTS.md`).
+* **Never chain the format check with `&&` before `git commit`** — during 0031 a
+  `dart format … && echo OK` short-circuited only the `echo`, and an 81-column
+  line reached the commit.
+* `lib/core/providers/app_providers.dart` is classified binary by grep; use
+  `grep -a` if this plan's greps ever reach it.
+* **The `live-forge` suite is not part of routine verification.** It is mutating
+  and maintainer-run only. One explicitly-requested run after Phase 4
+  (`flutter test --run-skipped -t live-forge test/create_repo_wire_live_test.dart`)
+  is the appropriate check that the extracted pipeline still works against a real
+  forge — and it must not be run unprompted.
+
+### Acceptance criteria for the plan as a whole
+
+1. Phases 0a and 0b each add a test that fails against the unmodified sheet and
+   passes after; both failure outputs are in the execution record.
+2. Phases 1–5 leave `test/` byte-identical apart from files **added** in
+   follow-up commits, and Phase 2's single deliberate assertion tightening.
+3. `expect(` and `testWidgets(` counts across `test/` are unchanged from the
+   post-Phase-0 baseline at the end of every phase.
+4. `grep` finds 0 remaining private `_basename` / `_dirOf` / `_dirname` /
+   `_stripTrailingSlashes` definitions in `lib/`.
+5. The method-comparison scan finds 0 byte-identical methods shared between
+   `create_repo_sheet.dart` and `clone_sheet.dart`.
+6. `create_repo_pipeline.dart` imports neither `flutter/widgets` nor
+   `flutter_riverpod`.
+7. `flutter analyze` clean at every phase, first pass.
+8. Every new check has been seen to fail against a deliberately broken input,
+   run against a scratchpad copy — never by dirtying the tree, and never
+   restored with `git checkout --`.
+
+## Rollout and Rollback
+
+**Rollout.** Seven commits in order. Phases 1 and 3–5 are behaviour-neutral and
+can land in any batch; **Phases 0a and 0b must land first**, because everything
+after them asserts neutrality against a baseline that includes both. Phase 2 should
+land alone and be given a full-suite run and a manual pass over the tab strip,
+switcher and drag labels, because it is the only phase whose blast radius
+extends outside the workspace feature.
+
+**Rollback.** Each phase is a single commit touching a disjoint file set, so
+`git revert <sha>` restores the prior state without stranding a later phase —
+with two ordering constraints:
+
+* Reverting **Phase 2** after Phase 3+ have landed requires restoring the
+  private path helpers the later phases now import from `posix_path.dart`.
+  Revert Phase 2 last, or not at all.
+* Reverting **Phase 0a** re-introduces the `_goBack` defect and invalidates the
+  neutrality baseline for every later phase. Do not.
+* Reverting **Phase 0b** after Phase 3 has landed is not a clean revert: Phase 3
+  extracted the unified `_onDestChanged` on the assumption that 0b applied.
+  Revert Phase 3 first, or re-apply the divergence by hand in the extracted
+  function and say so.
+
+There is no data migration, no persisted format change, and no user-visible
+behaviour change in phases 1 and 3–5, so rollback there carries no cleanup
+beyond the revert itself. The two exceptions are the decisions: Phase 0b's eager
+dial is user-visible (a spinner that now appears on destination select), and
+Phase 2's Family A switch changes what a drag label shows for a path with two or
+more trailing slashes. Both belong in their commit message and the handoff.
+
+## Decisions — resolved 2026-09-06 by the maintainer
+
+All four questions this plan raised are answered. Recorded here with the step
+each one gates and the consequence it carries.
+
+| # | Question | Decision | Gates | Behaviour change? |
+| --- | --- | --- | --- | --- |
+| 1 | `basename` family | **Family A** (split, drop empties, take last) | Phase 2 step 4 | **Yes** — 2 of 8 sites, unreachable in practice at one of them |
+| 2 | `_recomputeTarget` canonical form | **Yes** — adopt the clone sheet's | Phase 3e | No — equivalent as written |
+| 3 | Eager dial on destination select | **Yes** — the create sheet should dial | **Phase 0b** (new) | **Yes** — makes the existing spinner reachable |
+| 4 | `LabeledTextField` variants | **Leave them** — adopt 7 of 12 | Phase 1b | No |
+
+**The consequence worth stating plainly:** decisions 1 and 3 both change
+behaviour, and this plan's whole verification argument rests on phases being
+neutral. So decision 3 is not folded into Phase 3 — it becomes **Phase 0b**, its
+own commit with its own failing-first test, landing before any extraction.
+Decision 1 cannot be isolated that way, because the behaviour change *is* the
+canonicalization; instead Phase 2 states exactly which 2 of 8 sites change and
+under which inputs, and the phase is described as neutral at 6 and deliberately
+changed at 2 rather than as neutral outright.
+
+Decision 2 was checked before being accepted as neutral: the MADR establishes
+the two forms are equivalent as written today, so adopting the clone sheet's is
+a robustness change with no observable difference — which is why it can sit
+inside a neutral phase where decisions 1 and 3 could not.
