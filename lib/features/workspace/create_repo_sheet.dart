@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -23,8 +22,9 @@ import '../common/inline_action_button.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
-import 'remote_directory_browser.dart';
 import 'wizard.dart';
+import 'workspace_destination.dart';
+import 'workspace_pickers.dart';
 import 'workspace_provisioning.dart';
 import 'workspace_registration.dart';
 import 'workspace_targets.dart';
@@ -392,20 +392,22 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
 
   void _recomputeTarget() {
     final conn = ref.read(connectionProvider);
+    final WorkspaceTarget target;
     if (!widget.landing) {
-      _target = conn.isLocal
+      target = conn.isLocal
           ? WorkspaceTarget.localMac
           : WorkspaceTarget.sshActive;
-      if (_target == WorkspaceTarget.sshActive &&
+      if (target == WorkspaceTarget.sshActive &&
           _parent.text.isEmpty &&
           conn.repoPath != null) {
         _parent.text = dirname(conn.repoPath!);
       }
     } else {
-      _target = _destConnectionId == null
+      target = _destConnectionId == null
           ? WorkspaceTarget.localMac
           : WorkspaceTarget.sshProvision;
     }
+    _target = target;
   }
 
   bool get _isLocalTarget => _target == WorkspaceTarget.localMac;
@@ -1131,37 +1133,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
 
   /// Returns whether the new repo actually became the live workspace
   /// (0009 H19) — a silent failure must not paint the green Complete state.
-  Future<bool> _register(String dest) async {
-    switch (_target) {
-      case WorkspaceTarget.localMac:
-        return registerAndActivateLocal(
-          ref,
-          dest: dest,
-          label: _localLabel.text.trim(),
-          save: _saveLocal,
-        );
-      case WorkspaceTarget.sshActive:
-        return registerAndActivateSshActive(
-          ref,
-          dest: dest,
-          fsmonitor: _fsmonitor,
-          label: _remoteLabel.text.trim(),
-        );
-      case WorkspaceTarget.sshProvision:
-        final conn = await connectionById(_destConnectionId);
-        final token = provisionToken;
-        if (conn == null || token == null) return false;
-        return ref
-            .read(connectionProvider.notifier)
-            .finalizeProvisioned(
-              token: token,
-              conn: conn,
-              repoPath: dest,
-              enableFsmonitor: _fsmonitor,
-              label: _remoteLabel.text.trim(),
-            );
-    }
-  }
+  Future<bool> _register(String dest) => registerAndActivate(
+    ref,
+    target: _target,
+    dest: dest,
+    localLabel: _localLabel.text.trim(),
+    saveLocal: _saveLocal,
+    remoteLabel: _remoteLabel.text.trim(),
+    fsmonitor: _fsmonitor,
+    connection: () => connectionById(_destConnectionId),
+    provisionToken: provisionToken,
+  );
 
   Future<void> _requestClose() async {
     // Escape / title-X while `git init` / forge publish is running must not
@@ -1176,11 +1158,9 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     if (_picking) return;
     setState(() => _picking = true);
     try {
-      final path = await getDirectoryPath(confirmButtonText: 'Choose');
+      final path = await pickLocalDirectory();
       if (!mounted) return;
       if (path != null) setState(() => _pickedParent = path);
-    } catch (_) {
-      // No native picker (e.g. under flutter test) — leave the state as is.
     } finally {
       if (mounted) setState(() => _picking = false);
     }
@@ -1190,7 +1170,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     if (_picking) return;
     setState(() => _picking = true);
     try {
-      final path = await getDirectoryPath(confirmButtonText: 'Choose');
+      final path = await pickLocalDirectory();
       if (!mounted) return;
       if (path != null) {
         setState(() {
@@ -1198,8 +1178,6 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
           _name.text = basename(path);
         });
       }
-    } catch (_) {
-      // No native picker (e.g. under flutter test) — leave the state as is.
     } finally {
       if (mounted) setState(() => _picking = false);
     }
@@ -1208,14 +1186,9 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   Future<void> _browseRemoteFolder() async {
     if (!await ensureProvisioned()) return;
     if (!mounted) return;
-    final start = _folder.text.trim();
-    final picked = await showMacosSheet<String>(
-      context: context,
-      builder: (_) => EscapeDismissible(
-        child: RemoteDirectoryBrowserSheet(
-          initialPath: start.isEmpty ? null : start,
-        ),
-      ),
+    final picked = await browseRemoteDirectory(
+      context,
+      initialPath: _folder.text,
     );
     if (picked != null && mounted) {
       setState(() {
@@ -1228,14 +1201,9 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   Future<void> _browseRemote() async {
     if (!await ensureProvisioned()) return;
     if (!mounted) return;
-    final start = _parent.text.trim();
-    final picked = await showMacosSheet<String>(
-      context: context,
-      builder: (_) => EscapeDismissible(
-        child: RemoteDirectoryBrowserSheet(
-          initialPath: start.isEmpty ? null : start,
-        ),
-      ),
+    final picked = await browseRemoteDirectory(
+      context,
+      initialPath: _parent.text,
     );
     if (picked != null && mounted) {
       setState(() => _parent.text = picked);
@@ -1344,53 +1312,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   }
 
   Widget _destinationSection(MacosTypography typography) {
-    final conns = ref.watch(savedConnectionsProvider).value ?? const [];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text('Destination', style: typography.caption1),
-        const SizedBox(height: 4),
-        MacosPopupButton<String?>(
-          value: _destConnectionId,
-          // Disabled while a host is still dialing: switching mid-dial
-          // otherwise adopts the in-flight session under the newly selected
-          // connection (0022 H4). The post-await guard in ensureProvisioned is
-          // the backstop; this removes the race at the UI level so it cannot be
-          // triggered at all.
-          onChanged: (_submitting || provisioning) ? null : _onDestChanged,
-          items: [
-            const MacosPopupMenuItem<String?>(
-              value: null,
-              child: Text('This Mac'),
-            ),
-            for (final c in conns)
-              MacosPopupMenuItem<String?>(
-                value: c.id,
-                child: Text(c.displayName),
-              ),
-          ],
-        ),
-        WizardHint(
-          _destConnectionId == null
-              ? 'The repository is created on this Mac\'s own filesystem.'
-              : 'The repository is created on the selected host over SSH.',
-        ),
-        if (provisioning)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Row(
-              children: [
-                const SizedBox(
-                  width: 12,
-                  height: 12,
-                  child: ProgressCircle(radius: 6),
-                ),
-                const SizedBox(width: 8),
-                Text('Connecting…', style: typography.caption1),
-              ],
-            ),
-          ),
-      ],
+    return WorkspaceDestinationSection(
+      selectedConnectionId: _destConnectionId,
+      onChanged: (_submitting || provisioning) ? null : _onDestChanged,
+      provisioning: provisioning,
+      localHint: 'The repository is created on this Mac\'s own filesystem.',
+      remoteHint: 'The repository is created on the selected host over SSH.',
     );
   }
 

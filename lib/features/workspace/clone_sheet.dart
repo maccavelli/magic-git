@@ -1,4 +1,3 @@
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -17,8 +16,9 @@ import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
-import 'remote_directory_browser.dart';
 import 'wizard.dart';
+import 'workspace_destination.dart';
+import 'workspace_pickers.dart';
 import 'workspace_provisioning.dart';
 import 'workspace_registration.dart';
 import 'workspace_targets.dart';
@@ -357,37 +357,17 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   /// Registers and activates the freshly-cloned repo for the current target
   /// (shared matrix — see workspace_registration.dart). Returns whether the
   /// repo actually became the live workspace (0009 H19).
-  Future<bool> _register(String dest) async {
-    switch (_target) {
-      case WorkspaceTarget.localMac:
-        return registerAndActivateLocal(
-          ref,
-          dest: dest,
-          label: _localLabel.text.trim(),
-          save: _saveLocal,
-        );
-      case WorkspaceTarget.sshActive:
-        return registerAndActivateSshActive(
-          ref,
-          dest: dest,
-          fsmonitor: _fsmonitor,
-          label: _remoteLabel.text.trim(),
-        );
-      case WorkspaceTarget.sshProvision:
-        final conn = await connectionById(_destConnectionId);
-        final token = provisionToken;
-        if (conn == null || token == null) return false;
-        return ref
-            .read(connectionProvider.notifier)
-            .finalizeProvisioned(
-              token: token,
-              conn: conn,
-              repoPath: dest,
-              enableFsmonitor: _fsmonitor,
-              label: _remoteLabel.text.trim(),
-            );
-    }
-  }
+  Future<bool> _register(String dest) => registerAndActivate(
+    ref,
+    target: _target,
+    dest: dest,
+    localLabel: _localLabel.text.trim(),
+    saveLocal: _saveLocal,
+    remoteLabel: _remoteLabel.text.trim(),
+    fsmonitor: _fsmonitor,
+    connection: () => connectionById(_destConnectionId),
+    provisionToken: provisionToken,
+  );
 
   Future<void> _requestClose() async {
     final job = ref.read(cloneJobProvider);
@@ -403,11 +383,9 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
     if (_picking) return;
     setState(() => _picking = true);
     try {
-      final path = await getDirectoryPath(confirmButtonText: 'Choose');
+      final path = await pickLocalDirectory();
       if (!mounted) return;
       if (path != null) setState(() => _pickedParent = path);
-    } catch (_) {
-      // No native picker (e.g. under flutter test) — leave the state as is.
     } finally {
       if (mounted) setState(() => _picking = false);
     }
@@ -416,14 +394,9 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   Future<void> _browseRemote() async {
     if (!await ensureProvisioned()) return;
     if (!mounted) return;
-    final start = _parent.text.trim();
-    final picked = await showMacosSheet<String>(
-      context: context,
-      builder: (_) => EscapeDismissible(
-        child: RemoteDirectoryBrowserSheet(
-          initialPath: start.isEmpty ? null : start,
-        ),
-      ),
+    final picked = await browseRemoteDirectory(
+      context,
+      initialPath: _parent.text,
     );
     if (picked != null && mounted) {
       setState(() => _parent.text = picked);
@@ -515,54 +488,14 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   }
 
   Widget _destinationSection(MacosTypography typography) {
-    final conns = ref.watch(savedConnectionsProvider).value ?? const [];
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text('Destination', style: typography.caption1),
-        const SizedBox(height: 4),
-        MacosPopupButton<String?>(
-          value: _destConnectionId,
-          // Disabled while a host is still dialing: switching mid-dial
-          // otherwise adopts the in-flight session under the newly selected
-          // connection (0022 H4). The post-await guard in ensureProvisioned is
-          // the backstop; this removes the race at the UI level so it cannot be
-          // triggered at all.
-          onChanged: (_submitting || provisioning) ? null : _onDestChanged,
-          items: [
-            const MacosPopupMenuItem<String?>(
-              value: null,
-              child: Text('This Mac'),
-            ),
-            for (final c in conns)
-              MacosPopupMenuItem<String?>(
-                value: c.id,
-                child: Text(c.displayName),
-              ),
-          ],
-        ),
-        WizardHint(
-          _destConnectionId == null
-              ? 'The repository is cloned onto this Mac\'s own filesystem.'
-              : 'The repository is cloned on the selected host over SSH — '
-                    'its own git and forge sign-ins are used.',
-        ),
-        if (provisioning)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: Row(
-              children: [
-                const SizedBox(
-                  width: 12,
-                  height: 12,
-                  child: ProgressCircle(radius: 6),
-                ),
-                const SizedBox(width: 8),
-                Text('Connecting…', style: typography.caption1),
-              ],
-            ),
-          ),
-      ],
+    return WorkspaceDestinationSection(
+      selectedConnectionId: _destConnectionId,
+      onChanged: (_submitting || provisioning) ? null : _onDestChanged,
+      provisioning: provisioning,
+      localHint: 'The repository is cloned onto this Mac\'s own filesystem.',
+      remoteHint:
+          'The repository is cloned on the selected host over SSH — '
+          'its own git and forge sign-ins are used.',
     );
   }
 

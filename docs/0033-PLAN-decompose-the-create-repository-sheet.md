@@ -456,10 +456,34 @@ picker lines.
   (`:1202–1220`) are the same two calls plus `_name.text = _basenameOf(path)`;
   they stay in the sheet as thin callers.
 
-**3b. `lib/features/workspace/wizard_navigation.dart`** — `_goNext`
+~~**3b. `lib/features/workspace/wizard_navigation.dart`** — `_goNext`
 (**identical, 9 lines**) and `_goBack` (identical after Phase 0a), plus
 `_activeSteps`. Prefer a small `WizardNavigator` value type over a mixin so it
-is directly unit-testable; the sheets keep `_stepIndex` and pass it in.
+is directly unit-testable; the sheets keep `_stepIndex` and pass it in.~~
+
+> **Deviation, 2026-09-06 — step does not pay for itself; maintainer chose to
+> skip it.** Measured rather than estimated: `_goBack` (7 lines) and `_goNext`
+> (9) are 16 duplicated lines whose only non-trivial logic is a single line,
+> `if (!active[index].valid()) return index;`. Everything else is index
+> arithmetic plus guards on `_submitting`, `_finished` and `_error` — sheet
+> state, not wizard logic. Standalone-function form costs ~20 lines of shared
+> module plus ~12 lines of call site per sheet: **44 lines where there are 32
+> today**, with the duplication merely relocated into two call sites.
+> `_stepIndex` is also read at 7-8 further places per sheet (including
+> `.clamp(...)` inside both `build` methods), so a controller owning it would
+> mean rewriting all of them for no behavioural gain.
+>
+> The same reasoning excludes `_onDestChanged` (12 lines, 5 dependencies on the
+> host `State`) and `_recomputeTarget` (19 lines — identical after 3e, but
+> reading `ref`, `widget.landing`, `_parent` and `_destConnectionId`).
+> `onProvisioningError` (4 lines) is a `WorkspaceProvisioning` requirement and
+> cannot be extracted at all.
+>
+> **51 identical lines therefore remain across those five methods, by
+> decision.** They are guards and assignments over sheet-local fields; a
+> ceremonial extraction would leave the codebase worse than the duplication
+> does. Recorded so a future reader knows this was measured and declined, not
+> missed.
 
 **3c. `lib/features/workspace/workspace_destination.dart`** — a
 `WorkspaceDestinationSection` widget replacing `_destinationSection`
@@ -644,8 +668,16 @@ Notes that are not optional:
    survivor is `environment_probe.dart:249`'s `_dirname`, deliberately kept
    under the deviation recorded in Phase 2 and carrying a comment saying so.
    ~~0 remaining.~~
-5. The method-comparison scan finds 0 byte-identical methods shared between
-   `create_repo_sheet.dart` and `clone_sheet.dart`.
+5. ~~The method-comparison scan finds 0 byte-identical methods shared between
+   `create_repo_sheet.dart` and `clone_sheet.dart`.~~
+   **Amended 2026-09-06 (3b deviation):** the scan finds **8** byte-identical
+   methods / 84 lines, and both numbers are accounted for. **Three** —
+   `_browseRemote`, `_pickLocalParent`, `_register` (33 lines) — are identical
+   *because the extraction worked*: they are thin wrappers that now delegate to
+   one shared implementation, which is what a call site to a shared function
+   looks like. The other **five** (51 lines) are the State orchestration the 3b
+   deviation deliberately leaves. Duplicated *logic* between the sheets is
+   gone.
 6. `create_repo_pipeline.dart` imports neither `flutter/widgets` nor
    `flutter_riverpod`.
 7. `flutter analyze` clean at every phase, first pass.
@@ -963,6 +995,69 @@ name follows the same family. Confirmed by inspection that
 and from `HostFsService.joinPath` (via `remote_directory_browser.dart:265`),
 neither of which can emit a trailing slash — so that site's change remains a
 contract change, not an observed one.
+
+### Phase 3 — 2026-09-06 — *complete (3b skipped by decision)*
+
+**Deviation.** Step 3b does not pay for itself; the maintainer chose to skip it.
+Full measurement in the struck-through step above, and acceptance criterion 5
+amended to match.
+
+**3a — `workspace_pickers.dart` (51 lines).** `pickLocalDirectory()` and
+`browseRemoteDirectory()` as standalone functions returning the chosen path.
+Each caller keeps its own `setState`, its `_picking` flag and what it does with
+the result, because those differ between the sheets and between the create
+sheet's two call sites. The `catch (_)` that swallowed "no native picker under
+`flutter test`" now lives once, inside `pickLocalDirectory`. Four picker methods
+in the create sheet and two in the clone sheet shrank; the extraction also made
+`file_selector` and `remote_directory_browser` dead imports in **both** sheets,
+which `flutter analyze` flagged and which were removed — a good sign the
+dependency really moved rather than being duplicated.
+
+**3c — `workspace_destination.dart` (87 lines).** `WorkspaceDestinationSection`,
+a `ConsumerWidget`, replaces 50 lines of byte-identical widget code in each
+sheet. The only difference was the hint's verb, so `localHint`/`remoteHint` are
+parameters. `onChanged` is passed already-nulled by the caller
+(`(_submitting || provisioning) ? null : _onDestChanged`) rather than the widget
+deciding: the 0022 H4 reasoning for that gate lives at the call site, and moving
+it into the widget would have separated the guard from its explanation.
+
+**3d — `registerAndActivate` moved into `workspace_registration.dart`.** The
+31-line `switch` was the largest byte-identical block between the sheets, and it
+sat next to functions whose own library comment says they exist "so there is
+exactly one implementation to reason about" — the dispatcher had been the
+exception. Each sheet's `_register` is now an 11-line delegating call.
+
+**3e — `_recomputeTarget` aligned (Decision 2).** The create sheet adopted the
+clone sheet's form: compute into a local `final WorkspaceTarget target`, assign
+`_target` once at the end, rather than assigning and reading it back within the
+same branch. Verified byte-identical afterwards. Behaviour-neutral, as
+Decision 2 recorded — the two forms are equivalent as written.
+
+**Verification output:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.1s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:22 +3584 ~2: All tests passed!
+```
+
+**Neutrality.** `expect(` **9078** and `testWidgets(` **1001**, both unchanged
+from Phase 2. `git status --short -- test/` is **empty** — no test file was
+touched in this phase.
+
+**Size.** `create_repo_sheet.dart` 2106 -> **2033**; `clone_sheet.dart`
+1132 -> **1065**; 138 lines of new shared code
+(`workspace_pickers` 51, `workspace_destination` 87) plus ~35 added to
+`workspace_registration.dart`.
+
+**Duplication.** The scan's identical-method count reads 8 / 84 lines, which is
+higher than a naive "we removed duplication" story would suggest, and the
+reason matters: 3 of those 8 (`_browseRemote`, `_pickLocalParent`, `_register`,
+33 lines) are identical *because both sheets now call the same shared function*
+— that is what a call site looks like, not duplication. The remaining 5 (51
+lines) are the State orchestration the 3b deviation deliberately leaves.
+**Duplicated logic between the sheets is gone; duplicated delegation is what is
+left, and that is the intended end state.**
 
 ## Rollout and Rollback
 
