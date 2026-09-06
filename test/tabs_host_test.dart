@@ -444,13 +444,51 @@ void main() {
     await _sendMenu(tester, 'prepareToTerminate');
     await tester.pumpAndSettle();
 
-    expect(find.text('Quit Magic Git?'), findsOneWidget);
-    expect(find.textContaining(repo), findsOneWidget);
+    expect(
+      find.text('Some repositories have active items pending'),
+      findsOneWidget,
+    );
+    expect(find.text('Are you sure you want to quit?'), findsOneWidget);
+    expect(
+      find.textContaining(repo),
+      findsNothing,
+      reason: 'the dialog names the situation, it does not list repo paths',
+    );
 
     // Cancel, so no teardown runs against the test's mock channels.
-    await tester.tap(find.text('Cancel'));
+    await tester.tap(find.text('No'));
     await tester.pumpAndSettle();
-    expect(find.text('Quit Magic Git?'), findsNothing);
+    expect(
+      find.text('Some repositories have active items pending'),
+      findsNothing,
+    );
+    await _teardownHost(tester);
+  });
+
+  testWidgets('a clean quit still asks, without the pending-items heading', (
+    tester,
+  ) async {
+    // Behaviour change (2026-09-06, maintainer request): quitting used to
+    // proceed silently when nothing was at risk. It now always confirms, and
+    // the heading that names pending work appears only when there is some.
+    final c = TabsController(containerFactory: _tabContainer);
+    addTearDown(c.dispose);
+    c.ensureInitialTab();
+    await _pumpHost(tester, c);
+
+    await _sendMenu(tester, 'prepareToTerminate');
+    await tester.pumpAndSettle();
+
+    expect(find.text('Are you sure you want to quit?'), findsOneWidget);
+    expect(
+      find.text('Some repositories have active items pending'),
+      findsNothing,
+      reason: 'nothing is at risk, so the situation line must not appear',
+    );
+
+    await tester.tap(find.text('No'));
+    await tester.pumpAndSettle();
+    expect(find.text('Are you sure you want to quit?'), findsNothing);
     await _teardownHost(tester);
   });
 

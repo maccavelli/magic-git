@@ -88,14 +88,19 @@ List<SessionAtRisk> sessionsAtRisk(
   return atRisk;
 }
 
-/// The quit / window-close summary: one line per at-risk session with its
-/// reason, so multiple dirty tabs get ONE dialog rather than a chain.
-String sessionExitSummaryMessage(List<SessionAtRisk> atRisk) {
-  final lines = [
-    for (final t in atRisk)
-      '• ${t.repoPath} — ${[if (t.dirty) 'uncommitted changes', if (t.pending != PendingOp.none) '${t.pending.name} in progress'].join(', ')}',
-  ];
-  return '${lines.join('\n')}\n\n'
-      'Nothing is deleted on the host, but these sessions will be left '
-      'as-is.';
-}
+/// The quit / window-close prompt, as a heading and the question under it.
+///
+/// Deliberately does **not** enumerate the at-risk repositories. A modal the
+/// user is reading on their way out is the wrong place for a list of paths and
+/// sequencer states: it cannot be acted on from there, and it buried the only
+/// thing the dialog is actually asking. The tab strip already marks each dirty
+/// tab, which is where that detail belongs.
+///
+/// [question] is the caller's own verb ("quit", "close this window"), so the
+/// two call sites cannot drift into asking the same question differently.
+({String title, String message}) sessionExitPrompt({
+  required bool anyAtRisk,
+  required String question,
+}) => anyAtRisk
+    ? (title: 'Some repositories have active items pending', message: question)
+    : (title: question, message: '');

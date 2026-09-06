@@ -354,10 +354,14 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     }
     final atRisk = _sessionsAtRisk();
     final guardContext = _guardContext;
-    if (atRisk.isEmpty || guardContext == null) {
+    if (guardContext == null) {
       await _disconnectAllTabs();
       return true;
     }
+    final prompt = sessionExitPrompt(
+      anyAtRisk: atRisk.isNotEmpty,
+      question: 'Are you sure you want to quit?',
+    );
     // Decline the terminate FIRST (the native side keeps a 3s backstop, so
     // a confirm dialog can never answer over this channel), then ask; on
     // confirm, finish teardown and re-enter termination via terminateNow.
@@ -365,9 +369,10 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
       if (!guardContext.mounted) return;
       final proceed = await confirmAction(
         guardContext,
-        title: 'Quit Magic Git?',
-        message: sessionExitSummaryMessage(atRisk),
-        confirmLabel: 'Quit',
+        title: prompt.title,
+        message: prompt.message,
+        confirmLabel: 'Yes',
+        cancelLabel: 'No',
         destructive: true,
       );
       if (!proceed) return;
@@ -444,11 +449,16 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     final atRisk = _sessionsAtRisk();
     final guardContext = _guardContext;
     if (atRisk.isNotEmpty && guardContext != null && guardContext.mounted) {
+      final prompt = sessionExitPrompt(
+        anyAtRisk: true,
+        question: 'Are you sure you want to close this window?',
+      );
       final proceed = await confirmAction(
         guardContext,
-        title: 'Close window?',
-        message: sessionExitSummaryMessage(atRisk),
-        confirmLabel: 'Close Window',
+        title: prompt.title,
+        message: prompt.message,
+        confirmLabel: 'Yes',
+        cancelLabel: 'No',
         destructive: true,
       );
       if (!proceed) return;

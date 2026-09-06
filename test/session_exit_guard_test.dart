@@ -388,17 +388,32 @@ void main() {
       expect(atRisk[1].pending, PendingOp.rebase);
     });
 
-    test('the summary lists one line per session with its reasons', () {
-      final message = sessionExitSummaryMessage([
-        (repoPath: '/srv/app', dirty: true, pending: PendingOp.none),
-        (repoPath: '/srv/lib', dirty: true, pending: PendingOp.merge),
-      ]);
-      expect(message, contains('• /srv/app — uncommitted changes'));
-      expect(
-        message,
-        contains('• /srv/lib — uncommitted changes, merge in progress'),
+    test('the exit prompt names the situation without listing paths', () {
+      final atRisk = sessionExitPrompt(
+        anyAtRisk: true,
+        question: 'Are you sure you want to quit?',
       );
-      expect(message, contains('left'));
+      expect(atRisk.title, 'Some repositories have active items pending');
+      expect(atRisk.message, 'Are you sure you want to quit?');
+    });
+
+    test('with nothing at risk the prompt is only the question', () {
+      final clean = sessionExitPrompt(
+        anyAtRisk: false,
+        question: 'Are you sure you want to quit?',
+      );
+      expect(clean.title, 'Are you sure you want to quit?');
+      expect(clean.message, isEmpty);
+    });
+
+    test('the caller supplies the verb, so the two exits cannot drift', () {
+      expect(
+        sessionExitPrompt(
+          anyAtRisk: true,
+          question: 'Are you sure you want to close this window?',
+        ).message,
+        'Are you sure you want to close this window?',
+      );
     });
 
     testWidgets('an explicit confirmLabel overrides the title derivation', (
