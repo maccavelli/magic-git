@@ -319,7 +319,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   ];
 
   void _goBack() {
-    if (_stepIndex == 0 || _submitting) return;
+    if (_stepIndex == 0 || _submitting || _finished) return;
     setState(() {
       _stepIndex--;
       _error = null;
@@ -2126,7 +2126,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
           AppPushButton(
             controlSize: ControlSize.large,
             secondary: true,
-            onPressed: _submitting ? null : _goBack,
+            onPressed: _submitting || _finished ? null : _goBack,
             child: const Text('Back'),
           ),
         ],

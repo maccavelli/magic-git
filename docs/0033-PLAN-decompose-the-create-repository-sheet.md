@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-06
 associated-madr: "0033-MADR-decompose-the-create-repository-sheet.md"
 ---
@@ -12,9 +12,9 @@ Associated MADR: [0033-MADR-decompose-the-create-repository-sheet.md](0033-MADR-
 
 Turn `lib/features/workspace/create_repo_sheet.dart` (2176 lines, one 2068-line
 state class, 47 methods) into a set of modules with named seams; remove the
-duplication it shares with `clone_sheet.dart` and the wider app; and fix the one
-defect that duplication has already produced — **changing observable behaviour only where a
-recorded decision calls for it**, proven by an unedited test suite.
+duplication it shares with `clone_sheet.dart` and the wider app; and resolve the
+four ways the two sheets have drifted — **changing observable behaviour only
+where a recorded decision calls for it**, proven by an unedited test suite.
 
 ## Scope
 
@@ -93,20 +93,30 @@ unless the maintainer asks in that turn.
 
 ---
 
-### Phase 0a — Fix the `_goBack` defect, alone
+### Phase 0a — Align `_goBack` with the clone sheet, and pin the invariant
 
-**Why first:** it is a behaviour change. Landing it separately gives it a
-reviewable diff and a failing-first test, and lets the later phases claim
-neutrality against a correct baseline instead of preserving a bug on purpose.
+> **Deviation, 2026-09-06 — this phase was rewritten mid-execution.** It was
+> written as "fix the `_goBack` defect, alone". Executing its own first step
+> disproved the defect: the test was written first and run against the
+> unmodified sheet, as required, and it **passed**. `_submitting` is cleared only
+> in the `finally` at `create_repo_sheet.dart:867`, which runs after the
+> `await Future.delayed(successPopDelay)` and the `Navigator.pop()`, so
+> `_submitting` covers the whole window in which `_finished` is true and both
+> existing guards already refuse. The maintainer chose **Option A**: keep the
+> change and the test, reframed as alignment plus an invariant pin. MADR 0033 is
+> amended accordingly. **No behaviour changes in this phase.**
 
-**Evidence.** `clone_sheet.dart` guards completion twice — `_goBack:165`
-(`if (_stepIndex == 0 || _submitting || _finished) return;`) and its footer
-`:1018` (`onPressed: _submitting || _finished ? null : _goBack`).
-`create_repo_sheet.dart` guards it in neither: `:322` reads
-`if (_stepIndex == 0 || _submitting) return;`, and its footer passes
-`onPressed: _submitting ? null : _goBack` (`:2129`). Because `_canSubmit` returns false
-once `_finished` is set (`:442`), pressing Back after a successful create lands
-the user in a step they cannot submit and cannot complete.
+**Why it is still worth doing, and still first.** Two reasons, neither of them a
+bug:
+
+1. **Phase 3b cannot extract `_goBack` without choosing a winner.** The two
+   bodies differ by one condition. Landing the clone sheet's version here makes
+   them byte-identical, so 3b becomes a pure move.
+2. **The create sheet's correctness rests on an implicit invariant** — that
+   `_submitting` spans the `_finished` window. Nothing enforces it, and **Phase 4
+   extracts `_submit()`**, which is precisely the change that could move
+   `_submitting = false` earlier and make Back live for real. The test converts
+   that invariant into an enforced one before the extraction that threatens it.
 
 **Edits — 2 lines in 1 file:**
 
@@ -114,14 +124,21 @@ the user in a step they cannot submit and cannot complete.
 2. `create_repo_sheet.dart:2129` (the Back button in `_footer`) →
    `onPressed: _submitting || _finished ? null : _goBack,`
 
-**Test — new, in `test/create_repo_sheet_test.dart`:** drive a create to
-completion through the existing harness, then assert the Back button is disabled
-and that tapping it does not change the visible step.
+**Test — `test/create_repo_sheet_test.dart`, "Back is inert once a create has
+finished".** Raises `successPopDelay` to 1 s locally (the file sets it to zero so
+other tests don't wait it out), drives a plain create to completion, and asserts
+inside the finished window that the repo registered, the sheet has not popped,
+and the Back button's `onPressed` is null. Restores the delay via `addTearDown`
+and settles past the timer.
 
-**Sabotage (required before the fix is trusted):** write the test first, run it
-against unmodified `create_repo_sheet.dart`, and record the failure output in
-the execution record. A test that has only been seen passing does not
-distinguish this fix from no fix.
+Two hazards this test hit, recorded because either would have been mistaken for
+a genuine failure:
+
+* the "Creating…" footer overflows the 1200×900 test surface by 22 px — drain
+  the layout exception the way `pumpCreate` does, or the test fails on rendering
+  rather than on its assertion;
+* the success-pop timer outlives the test unless it is settled past, producing
+  `A Timer is still pending`.
 
 **Verification:**
 
@@ -131,8 +148,12 @@ flutter analyze lib/features/workspace/create_repo_sheet.dart
 dart format --output=none --set-exit-if-changed lib/features/workspace/create_repo_sheet.dart
 ```
 
-**Acceptance:** the new test fails before the 2-line change and passes after;
-`create_repo_sheet_test.dart` is 29 `testWidgets(`; no other test file changes.
+**Acceptance:** the test **passes both before and after** the 2-line change —
+this is an alignment commit, and the execution record must state the
+before-result rather than claiming a failing-first run; `_goBack` is
+byte-identical between the two sheets afterwards (confirm with the
+method-comparison scan); `create_repo_sheet_test.dart` is 29 `testWidgets(`; no
+other test file changes; **no observable behaviour changes**.
 
 ---
 
@@ -152,7 +173,8 @@ selected destination resolves to `WorkspaceTarget.sshProvision`;
 `create_repo_sheet.dart:432–439` does not. Yet the create sheet's
 `_destinationSection` renders the `provisioning` "Connecting…" spinner
 (`:1372–1386`) — a spinner for a state its own destination control never
-initiates, so today it can only appear once submit begins.
+initiates — the two Browse buttons do reach it (`ensureProvisioned()` at
+`:1203` and `:1223`), but the destination control does not.
 
 **Edit — `create_repo_sheet.dart` `_onDestChanged` (`:432–439`):** append the
 clone sheet's trailing block, and its leading comment, so the two bodies match
@@ -591,8 +613,11 @@ Notes that are not optional:
 
 ### Acceptance criteria for the plan as a whole
 
-1. Phases 0a and 0b each add a test that fails against the unmodified sheet and
-   passes after; both failure outputs are in the execution record.
+1. **Phase 0b** adds a test that fails against the unmodified sheet and passes
+   after; the failure output is in the execution record. **Phase 0a** adds a
+   test that passes *both* before and after — it pins an invariant rather than
+   fixing a defect (see the deviation note on that phase), and the execution
+   record states the before-result rather than claiming a failing-first run.
 2. Phases 1–5 leave `test/` byte-identical apart from files **added** in
    follow-up commits, and Phase 2's single deliberate assertion tightening.
 3. `expect(` and `testWidgets(` counts across `test/` are unchanged from the
@@ -607,6 +632,70 @@ Notes that are not optional:
 8. Every new check has been seen to fail against a deliberately broken input,
    run against a scratchpad copy — never by dirtying the tree, and never
    restored with `git checkout --`.
+
+
+## Execution record
+
+### Phase 0a — 2026-09-06 — *complete (reframed mid-execution)*
+
+**Deviation.** The phase was written as "fix the `_goBack` defect, alone".
+Executing its own first step disproved the defect. Full account in the phase's
+deviation note above and in MADR 0033's *Amendments*; the maintainer chose
+Option A (keep the change and the test, reframed as alignment + invariant pin).
+
+**What the sabotage actually did.** Three runs, because the experiment was not
+valid until the third — recorded in full because the first two failures would
+each have been mistaken for the predicted one:
+
+```
+run 1  A RenderFlex overflowed by 22 pixels on the right.      <- rendering, not the assertion
+run 2  A Timer is still pending even after the widget tree was disposed.
+       'package:flutter_test/src/binding.dart': line 2543 '!timersPending'
+run 3  00:00 +1: All tests passed!                             <- against UNMODIFIED lib/
+```
+
+Run 3 is the result that invalidated the phase's premise.
+
+**Edits applied** — 2 lines, `lib/features/workspace/create_repo_sheet.dart`:
+
+```diff
+@@ -321,3 +321,3 @@   void _goBack() {
+-    if (_stepIndex == 0 || _submitting) return;
++    if (_stepIndex == 0 || _submitting || _finished) return;
+@@ -2128,3 +2128,3 @@             secondary: true,
+-            onPressed: _submitting ? null : _goBack,
++            onPressed: _submitting || _finished ? null : _goBack,
+```
+
+**Purpose achieved (the reason the phase survived).** `_goBack` is now
+byte-identical between the two sheets, so Phase 3b's extraction is a pure move:
+
+```
+diff <(sed -n '321,327p' create_repo_sheet.dart) <(sed -n '164,170p' clone_sheet.dart)
+  -> no output; IDENTICAL
+```
+
+The footer Back buttons now differ only by one indentation level (clone's is
+nested deeper); the logic is identical.
+
+**Verification output:**
+
+```
+flutter test test/create_repo_sheet_test.dart   00:05 +29: All tests passed!
+flutter analyze lib/features/workspace/create_repo_sheet.dart
+                                                No issues found! (ran in 3.9s)
+dart format --output=none --set-exit-if-changed  Formatted 2 files (0 changed)
+flutter test (full suite)                       03:29 +3572 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9043 -> **9046**, `testWidgets(` 999 -> **1000** — the +3
+and +1 are Phase 0a's single new test. `create_repo_sheet_test.dart` is now 29
+`testWidgets(`, as the acceptance criterion requires. No other test file was
+touched.
+
+**Behaviour.** None changed. The test passes identically before and after the
+2-line edit; that is the point of an alignment commit, and it is stated here
+rather than dressed up as a failing-first run.
 
 ## Rollout and Rollback
 
@@ -624,8 +713,9 @@ with two ordering constraints:
 * Reverting **Phase 2** after Phase 3+ have landed requires restoring the
   private path helpers the later phases now import from `posix_path.dart`.
   Revert Phase 2 last, or not at all.
-* Reverting **Phase 0a** re-introduces the `_goBack` defect and invalidates the
-  neutrality baseline for every later phase. Do not.
+* Reverting **Phase 0a** re-splits the two `_goBack` bodies, so Phase 3b's
+  extraction no longer has a single winner to move, and drops the invariant pin
+  that Phase 4 needs. Revert Phase 3 and Phase 4 first, or not at all.
 * Reverting **Phase 0b** after Phase 3 has landed is not a clean revert: Phase 3
   extracted the unified `_onDestChanged` on the assumption that 0b applied.
   Revert Phase 3 first, or re-apply the divergence by hand in the extracted

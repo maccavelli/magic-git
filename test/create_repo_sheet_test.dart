@@ -1298,4 +1298,39 @@ void main() {
     expect(stub.repoPathsSet, ['/srv/new-proj']);
     expect(find.byType(CreateRepositorySheet), findsNothing);
   });
+
+  testWidgets('Back is inert once a create has finished', (tester) async {
+    // Give the finished (green) window a real duration so it can be observed:
+    // the file-wide default is zero so the other tests don't wait it out.
+    CreateRepositorySheet.successPopDelay = const Duration(seconds: 1);
+    addTearDown(() => CreateRepositorySheet.successPopDelay = Duration.zero);
+
+    final (stub, exec, _) = await pumpConnected(tester);
+    await nextStep(tester); // Source
+    await nextStep(tester); // Remote (None)
+    await tester.enterText(nameField(), 'new-proj');
+    await tester.pumpAndSettle();
+    await nextStep(tester); // Details -> Review
+
+    exec.results.add(okResult('absent')); // probe
+    await tester.tap(createButton());
+    await tester.pump(); // runs _submit up to the success-pop delay
+    // The "Creating..." footer overflows the test surface by a few pixels;
+    // drain that non-fatal layout exception so the behavioural asserts run
+    // (same reason `pumpCreate` does it).
+    // ignore: invalid_use_of_protected_member
+    while (tester.takeException() != null) {}
+
+    // Inside the finished window: created and registered, not yet popped.
+    expect(stub.repoPathsSet, ['/srv/new-proj'], reason: 'create completed');
+    expect(find.byType(CreateRepositorySheet), findsOneWidget);
+
+    final back = tester.widget<AppPushButton>(
+      find.widgetWithText(AppPushButton, 'Back'),
+    );
+    expect(back.onPressed, isNull, reason: 'Back must be inert after finish');
+
+    // Let the success-pop timer expire so no timer outlives the test.
+    await tester.pumpAndSettle(const Duration(seconds: 2));
+  });
 }

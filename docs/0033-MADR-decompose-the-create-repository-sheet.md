@@ -22,9 +22,15 @@ directly and asks two questions:
 2. What does it duplicate elsewhere in the app that should be canonicalized?
 
 The answer to both is yes, and the second question turned up more than
-redundancy: **the duplication has already drifted, and one of the divergences is
-a live defect.** That changes the argument. Deduplication here is not a tidiness
-exercise; it is the removal of a mechanism that has demonstrably produced a bug.
+redundancy: **the duplication has already drifted**, in four methods, in ways
+that are invisible from either copy alone.
+
+> ~~**…and one of the divergences is a live defect.** That changes the argument.
+> Deduplication here is not a tidiness exercise; it is the removal of a
+> mechanism that has demonstrably produced a bug.~~
+> **Corrected 2026-09-06 by executing the plan's own sabotage step.** The
+> `_goBack` divergence is **not** a reachable defect — see *Amendments*. The
+> duplication findings stand; this sentence overstated what they cost.
 
 ### The shape of the monolith
 
@@ -87,24 +93,43 @@ condition — a fix applied to one copy does not reach the other:
 | `initState` | 9 | 13 | 5 | 72.7 % |
 | `dispose` | 20 | 15 | 9 | 62.9 % |
 
-### What the drift has already cost
+### What the drift has cost
+
+> **Amended 2026-09-06.** Item 1 below was disproven by execution; it is kept
+> struck through rather than deleted so the record shows what was claimed and
+> how it was found wrong. Items 2–4 stand.
 
 Inspecting each divergence individually rather than assuming they are all
 intentional:
 
-**1. `_goBack` — a live defect in the create sheet.** The clone sheet guards
-completion in *two* places: `_goBack` returns early on `_finished`
-(`clone_sheet.dart:165`) and the footer disables the button
+**1. `_goBack` — a divergence, but ~~a live defect~~ NOT a reachable one.**
+The clone sheet guards completion in *two* places: `_goBack` returns early on
+`_finished` (`clone_sheet.dart:165`) and the footer disables the button
 (`onPressed: _submitting || _finished ? null : _goBack`, `:1018`). The create
 sheet guards it in **neither**: `_goBack` tests only `_stepIndex == 0 ||
 _submitting` (`create_repo_sheet.dart:322`), and its footer passes
-`onPressed: _submitting ? null : _goBack`. So **after a successful create, Back
-is live**. Pressing it decrements the step, while `_canSubmit` still returns
-false because `_finished` is set (`:442`) — leaving the user in a wizard they
-can neither complete nor re-submit, escapable only by Close. The clone sheet is
-immune to the identical sequence. This is a genuine pre-existing defect,
-reported here rather than folded silently into a refactor; see
-**Decision Outcome** for why it should be fixed *before* the extraction.
+`onPressed: _submitting ? null : _goBack` (`:2129`).
+
+> ~~So **after a successful create, Back is live**. Pressing it decrements the
+> step, while `_canSubmit` still returns false because `_finished` is set
+> (`:442`) — leaving the user in a wizard they can neither complete nor
+> re-submit, escapable only by Close. The clone sheet is immune to the identical
+> sequence. This is a genuine pre-existing defect.~~
+>
+> **Disproven 2026-09-06.** `_submitting` is cleared only in the `finally` at
+> `:867`, which runs *after* the `await Future.delayed(successPopDelay)` and the
+> `Navigator.pop()`. So for the whole window in which `_finished` is true,
+> `_submitting` is true as well, and both existing guards already disable Back.
+> The clone sheet's success path (`:345–352`) is structurally identical, so its
+> `_finished` guards are defensive redundancy — not a fix that failed to
+> propagate. Established by running the test the plan specified against the
+> unmodified sheet and watching it **pass**; see *Amendments*.
+
+What remains true, and what the work still turns on: the two `_goBack` bodies
+**differ**, so Phase 3b cannot extract them without choosing a winner. The
+create sheet's correctness also rests on an **implicit** invariant — that
+`_submitting` spans the `_finished` window — which nothing enforces and which
+the Phase 4 extraction of `_submit()` could quietly break.
 
 **2. `_recomputeTarget` — a hardening that did not propagate.** The clone sheet
 computes into a local `final WorkspaceTarget target` and commits once at the
@@ -119,9 +144,12 @@ sheet eagerly calls `ensureProvisioned()` when a destination resolving to
 `sshProvision` is selected; the create sheet does not. Yet the create sheet's
 `_destinationSection` renders the `provisioning` "Connecting…" spinner
 (`:1372-1386`) — a spinner for a state its own destination control never
-initiates, so it can only appear once submit begins. Whether the eager dial is
-wanted in the create flow is a product question; that the two sheets answer it
-differently by accident is not.
+initiates. ~~so it can only appear once submit begins.~~ *(Corrected
+2026-09-06: the spinner is also reachable from the two Browse buttons, which
+call `ensureProvisioned()` at `:1203` and `:1223` — submit at `:457` is not the
+only trigger. The destination control remains the one place that does not reach
+it.)* Whether the eager dial is wanted in the create flow is a product question;
+that the two sheets answer it differently by accident is not.
 
 **4. `_destinationSection` — pure parameterisation.** All three differing lines
 are hint wording: "The repository is **created** on…" versus "The repository is
@@ -222,9 +250,12 @@ Reported for accuracy, because two candidates look like duplication and are not:
 
 ## Decision Drivers
 
-* **Deduplicate what has drifted, first.** The `_goBack` defect exists because
-  two copies were maintained independently. Ranking the work by "which
-  duplicate has already diverged" targets real risk rather than line count.
+* **Deduplicate what has drifted, first.** Four methods diverged because two
+  copies were maintained independently, and no copy shows it. Ranking the work
+  by "which duplicate has already diverged" targets real risk rather than line
+  count. *(Amended 2026-09-06: this driver originally cited the `_goBack`
+  divergence as a shipped bug. It is not one — but the divergences are still
+  real, and `_goBack`'s must be resolved before Phase 3b can extract it.)*
 * **A refactor must be provably behaviour-neutral.** 37 offline tests reach the
   sheet only through two constructors. That is the instrument; it only counts if
   the tests are not edited alongside the code they verify.
@@ -386,8 +417,11 @@ that fails before it and passes after.
 ### Confirmation
 
 * **Phase 0a:** a widget test driving a create to completion and asserting the
-  Back button is disabled and `_goBack` is inert. Seen to fail against the
-  current code before the guard is added.
+  Back button is disabled and `_goBack` is inert. ~~Seen to fail against the
+  current code before the guard is added.~~ *(Amended 2026-09-06: it **passes**
+  against the current code. It is kept as a pin on an invariant that is
+  currently implicit, not as a regression test for a fixed bug — and the
+  execution record must say so rather than claiming a failing-first run.)*
 * **Phases 1–5:** `flutter test` green with `test/create_repo_sheet_test.dart`,
   `test/create_repo_namespace_test.dart` and
   `test/helpers/create_repo_harness.dart` **unedited**, plus a diff check that
@@ -542,6 +576,50 @@ that fails before it and passes after.
 * Bad, because it is more total work than either alone.
 
 ## Amendments
+
+### 2026-09-06 — the `_goBack` "live defect" was disproven by executing the plan
+
+**How it was found.** Phase 0a of the plan required the fix's test to be written
+first and seen to fail against the unmodified sheet. It was. It **passed** —
+which is the outcome that invalidates the phase rather than confirming it.
+
+**Why the original claim was wrong.** This record reasoned from the divergence
+(the clone sheet guards `_finished` in `_goBack` and its footer; the create sheet
+guards it in neither) to a reachable defect, without checking whether something
+else already covered the same window. Something does: `_submitting` is cleared
+only in the `finally` at `create_repo_sheet.dart:867`, which runs *after* the
+`await Future.delayed(successPopDelay)` and the `Navigator.pop()`. Throughout the
+window in which `_finished` is true, `_submitting` is true too, so
+`_goBack:322` and the footer at `:2129` both already refuse. The clone sheet's
+success path (`clone_sheet.dart:345–352`) is structurally identical, so its
+`_finished` guards are belt-and-braces, not a propagated fix.
+
+**A caution the experiment itself taught.** The test failed twice before it was
+valid — first on a `RenderFlex overflowed by 22 pixels` from the "Creating…"
+footer (which `pumpCreate` drains and a raw `tap`+`pump` does not), then on
+`A Timer is still pending` from the success-pop delay. Either failure would have
+been mistaken for the predicted one and recorded as "seen to fail". **A negative
+result is only evidence once the failure has been read, not merely observed.**
+
+**What changed as a result** (decided by the maintainer, 2026-09-06 — Option A):
+
+* Phase 0a is **reframed, not dropped**. It is no longer a defect fix. It applies
+  the clone sheet's guard to the create sheet as an **alignment** change, so the
+  two `_goBack` bodies become byte-identical and Phase 3b's extraction is a pure
+  move rather than a choice between two behaviours.
+* The test is **kept**, as a pin on an invariant that is otherwise implicit:
+  nothing enforces that `_submitting` spans the `_finished` window, and Phase 4's
+  extraction of `_submit()` is exactly the kind of change that could break it
+  silently. It passes before and after, and the execution record must say so.
+* The commit must not claim a fix.
+
+**What survives unchanged.** Every duplication finding in this record was
+established by execution rather than inspection and still stands: the 83
+byte-identical lines across 6 methods, the four drifted methods and their
+percentages, the 8 `basename` copies in 2 families (verified to disagree on
+`a/b//`, `/` and `//`), and the two `stripTrailingSlashes` contracts with the
+`removeDirGuarded` root guard depending on one of them. Phase 0b and Phases 1–5
+are unaffected, as are all four decisions recorded above.
 
 ### 2026-09-06 — the four questions this record left open are answered
 
