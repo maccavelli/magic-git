@@ -15,6 +15,7 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/settings/app_settings.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/field_styles.dart';
 import 'package:remote_magic_git/features/workspace/create_repo_sheet.dart';
@@ -1333,4 +1334,56 @@ void main() {
     // Let the success-pop timer expire so no timer outlives the test.
     await tester.pumpAndSettle(const Duration(seconds: 2));
   });
+
+  testWidgets('selecting an SSH destination dials without waiting for submit', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 900));
+    final dial = Completer<int?>();
+    await tester.pumpWidget(
+      appProviderScope(
+        overrides: [
+          connectionProvider.overrideWith(
+            () => _ParkingProvisionConnection(dial),
+          ),
+          savedConnectionsProvider.overrideWith((ref) async => [testConn]),
+        ],
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: CreateRepositorySheet.landing(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // Destination is step 0 of the landing variant. Choose the saved host.
+    await tester.tap(find.byType(MacosPopupButton<String?>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Prod').last);
+    await tester.pump();
+
+    expect(
+      find.text('Connecting…'),
+      findsOneWidget,
+      reason: 'the destination control must dial, not wait for submit',
+    );
+
+    dial.complete(null);
+    await tester.pumpAndSettle();
+  });
+}
+
+/// Parks `beginProvisioning` so a test can observe the in-flight dial.
+class _ParkingProvisionConnection extends ConnectionController {
+  _ParkingProvisionConnection(this._dial);
+  final Completer<int?> _dial;
+
+  @override
+  ConnectionState build() => const ConnectionState();
+
+  @override
+  Future<int?> beginProvisioning(SavedConnection conn) => _dial.future;
+
+  @override
+  Future<void> abortProvisioning(int token) async {}
 }

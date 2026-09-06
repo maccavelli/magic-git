@@ -430,12 +430,16 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       _remote == _RemoteMode.gitlab ? 'gitlab.com' : 'github.com';
 
   Future<void> _onDestChanged(String? connectionId) async {
+    // Switching destination abandons any in-flight provisioning.
     await resetProvisioning();
     setState(() {
       _destConnectionId = connectionId;
       _error = null;
       _recomputeTarget();
     });
+    if (_target == WorkspaceTarget.sshProvision) {
+      await ensureProvisioned();
+    }
   }
 
   bool get _canSubmit {

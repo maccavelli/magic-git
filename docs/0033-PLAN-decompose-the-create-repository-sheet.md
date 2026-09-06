@@ -697,6 +697,73 @@ touched.
 2-line edit; that is the point of an alignment commit, and it is stated here
 rather than dressed up as a failing-first run.
 
+### Phase 0b — 2026-09-06 — *complete*
+
+**Edit applied** — `lib/features/workspace/create_repo_sheet.dart`
+`_onDestChanged` (`:432`), bringing it byte-for-byte in line with
+`clone_sheet.dart:261`:
+
+```diff
+   Future<void> _onDestChanged(String? connectionId) async {
++    // Switching destination abandons any in-flight provisioning.
+     await resetProvisioning();
+     setState(() { ... });
++    if (_target == WorkspaceTarget.sshProvision) {
++      await ensureProvisioned();
++    }
+   }
+```
+
+**Sabotage — seen to fail, for the right reason.** The test was written first
+and run against the unmodified sheet:
+
+```
+Expected: exactly one matching candidate
+  Actual: _TextWidgetFinder:<Found 0 widgets with text "Connecting…": []>
+   Which: means none were found but one was expected
+00:00 +0 -1: selecting an SSH destination dials without waiting for submit [E]
+```
+
+That is the assertion failing, not a rendering or timer artifact — the
+distinction Phase 0a's three-run sabotage made necessary.
+
+**Test.** `test/create_repo_sheet_test.dart`, "selecting an SSH destination
+dials without waiting for submit". Pumps `CreateRepositorySheet.landing()` with
+a `_ParkingProvisionConnection` whose `beginProvisioning` returns a `Completer`
+future, so the dial stays in flight and `provisioning` remains true; selects the
+saved host from the Destination popup and asserts "Connecting…" is on screen
+without any submit. Completes the future and settles so no timer outlives the
+test.
+
+**Verification output:**
+
+```
+flutter test test/create_repo_sheet_test.dart   00:05 +30: All tests passed!
+flutter analyze lib/features/workspace/create_repo_sheet.dart
+                                                No issues found! (ran in 2.8s)
+dart format --output=none --set-exit-if-changed  Formatted 2 files (0 changed)
+flutter test (full suite)                       03:24 +3573 ~2: All tests passed!
+```
+
+`dart format` initially reported `Changed test/create_repo_sheet_test.dart`; it
+was formatted in place and re-checked clean before the commit, rather than the
+check being skipped.
+
+**Counts.** `expect(` 9046 -> **9047**, `testWidgets(` 1000 -> **1001**;
+`create_repo_sheet_test.dart` is 30 `testWidgets(`.
+
+**Behaviour changed, as decided.** Selecting a saved SSH destination now dials
+immediately instead of waiting for submit, which makes the `provisioning`
+spinner reachable from the destination control. Decision 3.
+
+**What Phases 0a and 0b together bought.** Re-running the method-comparison
+scan: byte-identical methods between the two sheets went **6 -> 8** and
+duplicated lines **83 -> 102**, because `_goBack` (was 85.7 % alike) and
+`_onDestChanged` (was 80.0 %) are now exact matches. The duplication figure
+going *up* is the intended outcome — Phase 3 removes all 102 lines in one move,
+and it can only do that for methods that agree. One near-duplicate remains for
+Phase 3e: `_recomputeTarget`.
+
 ## Rollout and Rollback
 
 **Rollout.** Seven commits in order. Phases 1 and 3–5 are behaviour-neutral and
