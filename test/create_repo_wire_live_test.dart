@@ -282,6 +282,182 @@ void main() {
     }, timeout: const Timeout(Duration(minutes: 5)));
   });
 
+  // --------------------------------------------------------------------
+  // MADR 0031 Phase 4 — creating under a chosen namespace.
+  // --------------------------------------------------------------------
+  //
+  // The open question the MADR names: GitLab identifies groups by `full_path`,
+  // so a **nested** subgroup (`team/sub/name`, two levels) should work, but
+  // glab's own help example is single-level. Nothing but a live create settles
+  // it.
+  //
+  // The namespaces are read from `MAGIC_GIT_LIVE_NAMESPACES` (comma-separated
+  // group full paths) and are never hardcoded: a group path is an internal
+  // identifier, and internal identifiers do not go into committed content.
+  // Run it as, for example:
+  //
+  //   MAGIC_GIT_LIVE_NAMESPACES=team,team/subgroup \
+  //     flutter test --run-skipped -t live-forge \
+  //     test/create_repo_wire_live_test.dart
+  //
+  // What it proves, beyond "a project appeared": that the project landed at
+  // the path we asked for, and that origin resolves to *that* path rather than
+  // to `<login>/<name>`. Those two can disagree — passing `--group` instead of
+  // the positional path is exactly how — and the disagreement is silent.
+  group('GitLab live create under a namespace', () {
+    final namespaces = (Platform.environment['MAGIC_GIT_LIVE_NAMESPACES'] ?? '')
+        .split(',')
+        .map((n) => n.trim())
+        .where((n) => n.isNotEmpty)
+        .toList();
+
+    for (final namespace in namespaces) {
+      final depth = namespace.split('/').length;
+      test(
+        'creates in $namespace (${depth == 1 ? 'top-level' : 'nested, '
+                  '$depth levels'}) and resolves origin there',
+        () async {
+          if (!await _cliReady('glab')) {
+            markTestSkipped('glab not installed/authenticated');
+            return;
+          }
+          final host = await _glabHost() ?? 'gitlab.com';
+          final name =
+              'magicgit-nstest-${DateTime.now().millisecondsSinceEpoch}';
+          final fullPath = '$namespace/$name';
+          final dest = await initLocalRepo(name);
+          final glab = GlabService(executor);
+          var created = false;
+
+          try {
+            // The sheet passes the composed path POSITIONALLY. Never --group:
+            // that creates the project correctly and then leaves
+            // resolveOriginUrl looking up `<login>/<name>`.
+            final createResult = await glab.createRepoInExisting(
+              repoPath: dest,
+              name: fullPath,
+              private: true,
+              host: host,
+            );
+            created = true;
+
+            // 1. It landed where we asked. Asked of the API, not inferred from
+            //    the create output — the output is what a --group create would
+            //    also print.
+            final encoded = fullPath
+                .split('/')
+                .map(Uri.encodeComponent)
+                .join('%2F');
+            final project = await executor.execute(
+              repoPath: dest,
+              gitArgs: ['glab', 'api', 'projects/$encoded'],
+              extraEnv: GlabService.hostEnv(host),
+              retries: 0,
+            );
+            expect(
+              project.isSuccess,
+              isTrue,
+              reason: 'the project must exist at $fullPath: ${project.stderr}',
+            );
+            final decoded = jsonDecode(project.stdout) as Map<String, dynamic>;
+            expect(
+              decoded['path_with_namespace'],
+              fullPath,
+              reason: 'created somewhere other than the requested namespace',
+            );
+
+            // 2. Origin resolves to THAT project, not to `<login>/<name>`.
+            final resolved = await glab.resolveOriginUrl(
+              repoPath: dest,
+              name: fullPath,
+              host: host,
+              createOutput: createResult.stdout,
+            );
+            final url = resolved.url;
+            expect(
+              url,
+              isNotNull,
+              reason:
+                  'origin must resolve after a namespaced create '
+                  '(${resolved.detail})',
+            );
+            expect(
+              url,
+              contains(fullPath),
+              reason:
+                  'origin points at a different path than was created — '
+                  'this is the --group trap (${resolved.detail})',
+            );
+
+            // 3. And it is a real, pushable remote.
+            final add = await executor.execute(
+              repoPath: dest,
+              gitArgs: ['git', 'remote', 'add', 'origin', url!],
+              retries: 0,
+            );
+            expect(add.isSuccess, isTrue, reason: 'remote add: ${add.stderr}');
+            final push = await executor.execute(
+              repoPath: dest,
+              gitArgs: [
+                'git',
+                ...forgeGitAuthConfigArgs(Forge.gitlab),
+                'push',
+                '-u',
+                'origin',
+                'main',
+              ],
+              timeout: const Duration(minutes: 2),
+              retries: 0,
+            );
+            expect(
+              push.isSuccess,
+              isTrue,
+              reason: 'push: ${push.stderr}\n${push.stdout}',
+            );
+            final lsRemote = await executor.execute(
+              repoPath: dest,
+              gitArgs: [
+                'git',
+                ...forgeGitAuthConfigArgs(Forge.gitlab),
+                'ls-remote',
+                '--heads',
+                'origin',
+              ],
+              timeout: const Duration(minutes: 2),
+              retries: 0,
+            );
+            expect(lsRemote.isSuccess, isTrue);
+            expect(
+              lsRemote.stdout,
+              contains('refs/heads/main'),
+              reason: 'the pushed branch must exist under $fullPath',
+            );
+          } finally {
+            // Always delete, even when an expect above failed.
+            if (created) {
+              final encoded = fullPath
+                  .split('/')
+                  .map(Uri.encodeComponent)
+                  .join('%2F');
+              final del = await executor.execute(
+                repoPath: dest,
+                gitArgs: ['glab', 'api', 'projects/$encoded', '-X', 'DELETE'],
+                extraEnv: GlabService.hostEnv(host),
+                retries: 0,
+              );
+              if (!del.isSuccess) {
+                // Loud, not fatal: a leaked project must never be silent.
+                // ignore: avoid_print
+                print('WARNING: could not delete $fullPath: ${del.stderr}');
+              }
+            }
+          }
+        },
+        timeout: const Timeout(Duration(minutes: 5)),
+      );
+    }
+  });
+
   group('GitHub live wire (non-mutating half)', () {
     test(
       'cloneUrl resolves an existing bare-name repo; protocol probe works',
