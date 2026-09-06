@@ -15,11 +15,13 @@ import '../../core/utils/posix_path.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
-import '../common/inline_action_button.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'create_repo_pipeline.dart';
+import 'create_repo_steps/folder_fields.dart';
+import 'create_repo_steps/namespace_suggestions.dart';
+import 'create_repo_steps/segmented_choice.dart';
 import 'wizard.dart';
 import 'workspace_destination.dart';
 import 'workspace_pickers.dart';
@@ -790,18 +792,15 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     );
   }
 
-  Widget _sourceButton(String label, _SourceMode mode) {
-    final active = _source == mode;
-    return AppPushButton(
-      controlSize: ControlSize.regular,
-      secondary: !active,
-      onPressed: () => setState(() {
-        _source = mode;
-        _error = null;
-      }),
-      child: Text(label),
-    );
-  }
+  Widget _sourceButton(String label, _SourceMode mode) => SegmentedChoice(
+    label: label,
+    value: mode,
+    selected: _source,
+    onSelected: (m) => setState(() {
+      _source = m;
+      _error = null;
+    }),
+  );
 
   Widget _sourceStep(MacosTypography typography) {
     final existing = _source == _SourceMode.existingFolder;
@@ -829,49 +828,19 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   /// must cost the user nothing: while the fetch is in flight, and forever
   /// after it fails, this renders as empty space. Rendering this `AsyncValue`
   /// through `.when()` would put a spinner where the form is (0030 Phase 1).
-  Widget _namespaceSuggestions() {
-    final host = _host.text.trim().isEmpty ? _defaultHost : _host.text.trim();
-    final namespaces =
-        ref
-            .watch(forgeNamespacesProvider((_forge, host, _isLocalTarget)))
-            .asData
-            ?.value ??
-        const <String>[];
-    final offered = namespaces
-        .where((String ns) => ns != _namespaceText)
-        .take(8)
-        .toList();
-    if (offered.isEmpty) return const SizedBox.shrink();
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Wrap(
-        spacing: 6,
-        runSpacing: 4,
-        children: [
-          for (final ns in offered)
-            InlineActionButton(
-              label: ns,
-              icon: CupertinoIcons.folder,
-              tooltip: 'Create under $ns',
-              onPressed: () {
-                _namespace.text = ns;
-                setState(() {});
-              },
-            ),
-          if (_namespaceText.isNotEmpty)
-            InlineActionButton(
-              label: 'Clear',
-              icon: CupertinoIcons.clear,
-              tooltip: 'Create under your own account',
-              onPressed: () {
-                _namespace.clear();
-                setState(() {});
-              },
-            ),
-        ],
-      ),
-    );
-  }
+  Widget _namespaceSuggestions() => NamespaceSuggestions(
+    forge: _forge,
+    host: _host.text.trim().isEmpty ? _defaultHost : _host.text.trim(),
+    isLocalTarget: _isLocalTarget,
+    current: _namespaceText,
+    onSelected: (ns) => setState(() {
+      if (ns == null) {
+        _namespace.clear();
+      } else {
+        _namespace.text = ns;
+      }
+    }),
+  );
 
   Widget _detailsStep(MacosTypography typography) {
     final existing = _source == _SourceMode.existingFolder;
@@ -1048,157 +1017,53 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     );
   }
 
-  Widget _localFolderPicker(MacosTypography typography) {
-    return Column(
+  Widget _localFolderPicker(MacosTypography typography) => LocalFolderRow(
+    label: 'Folder on this Mac',
+    path: _pickedFolder,
+    onChoose: _picking ? null : _pickLocalFolder,
+    hint:
+        'If this folder is not yet a Git repository it is initialized in '
+        'place; a folder nested in another repository is refused.',
+  );
+
+  Widget _sshFolderField(MacosTypography typography) => RemotePathRow(
+    label: 'Folder on the host',
+    controller: _folder,
+    placeholder: '/srv/app',
+    onBrowse: _browseRemoteFolder,
+    onChanged: () => setState(() {}),
+    hint:
+        'Absolute path on the host. If the folder is not yet a Git '
+        'repository it is initialized in place; a folder nested in '
+        'another repository is refused.',
+  );
+
+  Widget _commitAllToggle() => CommitAllToggle(
+    on: _commitAll,
+    onTap: () => setState(() => _commitAll = !_commitAll),
+  );
+
+  Widget _localParentPicker(MacosTypography typography) => LocalFolderRow(
+    label: 'Parent folder on this Mac',
+    path: _pickedParent,
+    onChoose: _picking ? null : _pickLocalParent,
+    hint:
+        'The new repository folder (named on the Details step) is '
+        'created inside this folder.',
+  );
+
+  Widget _sshParentField(MacosTypography typography) => RemotePathRow(
+    label: 'Parent folder on the host',
+    controller: _parent,
+    placeholder: '/srv/git',
+    onBrowse: _browseRemote,
+    onChanged: () => setState(() {}),
+    hint:
+        'Absolute path on the host (e.g. /srv/git). The new repository '
+        'folder is created inside it.',
+    trailing: Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Folder on this Mac', style: typography.caption1),
-        const SizedBox(height: 4),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                _pickedFolder ?? 'No folder chosen',
-                style: typography.body.copyWith(
-                  color: _pickedFolder == null
-                      ? MacosColors.systemGrayColor
-                      : null,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 8),
-            AppPushButton(
-              controlSize: ControlSize.regular,
-              secondary: true,
-              onPressed: _picking ? null : _pickLocalFolder,
-              child: const Text('Choose…'),
-            ),
-          ],
-        ),
-        const WizardHint(
-          'If this folder is not yet a Git repository it is initialized in '
-          'place; a folder nested in another repository is refused.',
-        ),
-      ],
-    );
-  }
-
-  Widget _sshFolderField(MacosTypography typography) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text('Folder on the host', style: typography.caption1),
-        const SizedBox(height: 4),
-        Row(
-          children: [
-            Expanded(
-              child: MacosTextField(
-                controller: _folder,
-                placeholder: '/srv/app',
-                placeholderStyle: kAppPlaceholderStyle,
-                decoration: kAppTextFieldDecoration,
-                focusedDecoration: kAppTextFieldFocusedDecoration,
-                onChanged: (_) => setState(() {}),
-              ),
-            ),
-            const SizedBox(width: 8),
-            AppPushButton(
-              controlSize: ControlSize.regular,
-              secondary: true,
-              onPressed: _browseRemoteFolder,
-              child: const Text('Browse…'),
-            ),
-          ],
-        ),
-        const WizardHint(
-          'Absolute path on the host. If the folder is not yet a Git '
-          'repository it is initialized in place; a folder nested in '
-          'another repository is refused.',
-        ),
-      ],
-    );
-  }
-
-  Widget _commitAllToggle() {
-    return WorkspaceToggleRow(
-      on: _commitAll,
-      onTap: () => setState(() => _commitAll = !_commitAll),
-      onIcon: CupertinoIcons.doc_on_doc_fill,
-      offIcon: CupertinoIcons.doc_on_doc,
-      label: 'Commit all existing contents (initial commit)',
-    );
-  }
-
-  Widget _localParentPicker(MacosTypography typography) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text('Parent folder on this Mac', style: typography.caption1),
-        const SizedBox(height: 4),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                _pickedParent ?? 'No folder chosen',
-                style: typography.body.copyWith(
-                  color: _pickedParent == null
-                      ? MacosColors.systemGrayColor
-                      : null,
-                ),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            const SizedBox(width: 8),
-            AppPushButton(
-              controlSize: ControlSize.regular,
-              secondary: true,
-              onPressed: _picking ? null : _pickLocalParent,
-              child: const Text('Choose…'),
-            ),
-          ],
-        ),
-        const WizardHint(
-          'The new repository folder (named on the Details step) is '
-          'created inside this folder.',
-        ),
-      ],
-    );
-  }
-
-  Widget _sshParentField(MacosTypography typography) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text('Parent folder on the host', style: typography.caption1),
-        const SizedBox(height: 4),
-        Row(
-          children: [
-            Expanded(
-              child: MacosTextField(
-                controller: _parent,
-                placeholder: '/srv/git',
-                placeholderStyle: kAppPlaceholderStyle,
-                decoration: kAppTextFieldDecoration,
-                focusedDecoration: kAppTextFieldFocusedDecoration,
-                onChanged: (_) => setState(() {}),
-              ),
-            ),
-            const SizedBox(width: 8),
-            AppPushButton(
-              controlSize: ControlSize.regular,
-              secondary: true,
-              onPressed: _browseRemote,
-              child: const Text('Browse…'),
-            ),
-          ],
-        ),
-        const WizardHint(
-          'Absolute path on the host (e.g. /srv/git). The new repository '
-          'folder is created inside it.',
-        ),
         const SizedBox(height: 10),
         WorkspaceToggleRow(
           on: _createParents,
@@ -1212,8 +1077,8 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
           'being silently created.',
         ),
       ],
-    );
-  }
+    ),
+  );
 
   Widget _remoteSection(MacosTypography typography) {
     return Column(
@@ -1327,23 +1192,20 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     );
   }
 
-  Widget _remoteButton(String label, CreateRemoteMode mode) {
-    final active = _remote == mode;
-    return AppPushButton(
-      controlSize: ControlSize.regular,
-      secondary: !active,
-      onPressed: () => setState(() {
-        _remote = mode;
-        // Switching forges resets an untouched host to the new forge's
-        // default (the prefill listener then fills in the signed-in host);
-        // a user-typed host is kept.
-        if (!_hostEdited) {
-          _host.text = _defaultHost;
-        }
-      }),
-      child: Text(label),
-    );
-  }
+  Widget _remoteButton(String label, CreateRemoteMode mode) => SegmentedChoice(
+    label: label,
+    value: mode,
+    selected: _remote,
+    onSelected: (m) => setState(() {
+      _remote = m;
+      // Switching forges resets an untouched host to the new forge's
+      // default (the prefill listener then fills in the signed-in host);
+      // a user-typed host is kept.
+      if (!_hostEdited) {
+        _host.text = _defaultHost;
+      }
+    }),
+  );
 
   /// Everything the wizard collected, as label/value rows — what Create will
   /// actually do, derived live from the same state the steps edited.

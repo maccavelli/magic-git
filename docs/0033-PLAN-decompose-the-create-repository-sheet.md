@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-06
 associated-madr: "0033-MADR-decompose-the-create-repository-sheet.md"
 ---
@@ -609,6 +609,34 @@ reaches back into the sheet's `State`. `_sourceButton` and `_remoteButton` are
 the same segmented-selector shape parameterised differently and collapse into
 one `_segmentButton<T>` in the shared step library.
 
+> **Deviation, 2026-09-06 — the table above splits in two on measurement;
+> maintainer chose leaf widgets only.** Counting each method's distinct
+> `State`-member references:
+>
+> | extracts cleanly | lines / members | does **not** | lines / members |
+> | --- | --- | --- | --- |
+> | `_commitAllToggle` | 10 / 1 | `_detailsStep` | 175 / **23** |
+> | `_sourceButton` | 13 / 2 | `_reviewStep` | 60 / **24** |
+> | `_sshFolderField` | 36 / 2 | `build` | 135 / 20 |
+> | `_localFolderPicker` | 37 / 3 | `_remoteSection` | 112 / 11 |
+> | `_localParentPicker` | 37 / 3 | `_footer` | 83 / 12 |
+> | `_sshParentField` | 47 / 3 | | |
+> | `_remoteButton` | 20 / 4 | | |
+> | `_namespaceSuggestions` | 44 / 6 | | |
+>
+> A widget with 23 constructor parameters is a pass-through, not a boundary,
+> and every future field would have to be threaded through it by hand. The
+> **left column only** is extracted — 244 lines, 1-6 parameters each. The step
+> containers and `build` stay in the sheet.
+>
+> This still meets the phase's stated purpose: `_namespaceSuggestions` — the
+> exact widget MADR 0032's namespace search replaces — becomes its own file
+> with 6 parameters, so that work lands in a step widget rather than at the
+> bottom of the sheet. Extracting the containers properly would mean first
+> lifting the ~25 controllers and flags into a form-state object, which is a
+> larger architectural change than MADR 0033 describes and would need the MADR
+> amended before any code.
+
 **This is where 0032's namespace control lands** — as its own widget in
 `details_step.dart`'s directory, not as more lines in the sheet.
 
@@ -616,8 +644,12 @@ one `_segmentButton<T>` in the shared step library.
 built app (`./build_macos.sh --unsigned --install`), since widget-tree moves can
 pass tests and still change layout.
 
-**Acceptance:** `create_repo_sheet.dart` under ~700 lines; 37 existing tests
-pass unedited; `expect(`/`testWidgets(` unchanged.
+**Acceptance:** ~~`create_repo_sheet.dart` under ~700 lines;~~ **amended by the
+deviation above** — with the step containers staying, the target is the leaf
+extraction landing (8 widgets, ~244 lines out of the sheet) and the sheet
+dropping to roughly **1300** lines, from 2176 at the start of this plan. The
+39 existing create-sheet tests pass unedited; `expect(`/`testWidgets(`
+unchanged.
 
 ## Verification
 
@@ -1204,6 +1236,69 @@ flutter test (full suite)         03:27 +3599 ~2: All tests passed!
 **Counts.** `expect(` 9078 -> **9110**, `testWidgets(` **1001** unchanged (these
 are plain `test(`s, not widget tests) — the deltas are entirely this new file.
 Total tests 3584 -> **3599**.
+
+### Phase 5 — 2026-09-06 — *complete (leaf widgets only, by decision)*
+
+**Deviation.** The step containers were measured and excluded; only the eight
+loosely-coupled leaf widgets were extracted. Full coupling table in the
+struck-through step above.
+
+**`create_repo_steps/` — 271 lines across 3 files:**
+
+* `segmented_choice.dart` (43) — `SegmentedChoice<T>`, replacing
+  `_sourceButton` and `_remoteButton`, which were the same shape parameterised
+  differently. Generic over the choice type so one widget serves both.
+* `folder_fields.dart` (149) — `LocalFolderRow` (replacing
+  `_localFolderPicker` **and** `_localParentPicker`), `RemotePathRow`
+  (replacing `_sshFolderField` **and** `_sshParentField`, with a `trailing`
+  slot for the create-parents toggle only the parent variant shows), and
+  `CommitAllToggle`. **Four methods collapsed to two widgets**: the local pair
+  and the remote pair differed only in their label, placeholder, hint and
+  callback.
+* `namespace_suggestions.dart` (79) — `NamespaceSuggestions`, a
+  `ConsumerWidget` with 5 parameters. The `asData?.value` reasoning (never a
+  spinner over the form — MADR 0030 Phase 1) moved with it as the class doc,
+  because that is the widget the comment is about.
+
+**Layout proved unchanged, not assumed.** Widget-tree moves can pass every test
+and still shift pixels, so the same probe was run against `HEAD` in a scratch
+worktree and against the rewired tree:
+
+```
+BEFORE (HEAD)   source: textFields=0
+                remote: textFields=5
+                details: name=Size(376.0, 27.0) at Offset(412.0, 361.0) textFields=5
+                review: texts=21
+AFTER           source: textFields=0
+                remote: textFields=5
+                details: name=Size(376.0, 27.0) at Offset(412.0, 361.0) textFields=5
+                review: texts=21
+```
+
+Identical on every step. The probe was temporary and deleted.
+
+**Verification output:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.0s)
+dart format --output=none --set-exit-if-changed   Formatted 4 files (0 changed)
+flutter test test/create_repo_sheet_test.dart
+     test/create_repo_namespace_test.dart   00:05 +39: All tests passed!
+flutter test (full suite)                  03:30 +3599 ~2: All tests passed!
+```
+
+**Neutrality.** `expect(` **9110** and `testWidgets(` **1001**, unchanged.
+`git status --short -- test/` **empty**.
+
+**Size.** `create_repo_sheet.dart` 1491 -> **1353**.
+
+**Still outstanding: the human visual pass.** This phase's verification called
+for looking at all four wizard steps in a built app. The geometry probe above
+covers the mechanical half — sizes, offsets and widget counts are provably
+unchanged — but it cannot see colour, focus rings or anything the probe did not
+think to measure. `./build_macos.sh --unsigned --install` and a look at the
+wizard remains **for the maintainer to do**, and is recorded here as not done
+rather than quietly folded into "verified".
 
 ## Rollout and Rollback
 
