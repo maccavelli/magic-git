@@ -272,7 +272,7 @@ unreachable — worse than the missing feature.
 | 1 | **complete** | *(this commit)* | yes, verbatim below | 3554 → 3562, analyzer clean |
 | 2 | **complete** | *(this commit)* | yes, 4 sabotages | 3562 → 3568, analyzer clean |
 | 3 | **complete** | *(this commit)* | yes, 3 sabotages | 3568 → 3571, analyzer clean |
-| 4 | **not authorized** | — | — | mutating; needs separate approval. See *Residual* below. |
+| 4 | **complete** | *(this commit)* | n/a — live | 2/2 passed against a real GitLab instance, 30 s |
 
 ### Phase 1 — 2026-09-05
 
@@ -413,7 +413,10 @@ the create still composes*, rather than asserting anything about the list.
 `assertion_strength_scan_test` and `refresh_no_flash_test` are both green; no
 new boundary `.when()` site was introduced, because there is no `.when()`.
 
-## Residual — the plan is complete only in its offline scope
+## ~~Residual — the plan is complete only in its offline scope~~
+
+> **Resolved 2026-09-05 by the Phase 4 run recorded below.** Kept as written
+> so the record shows what was unproven at the time, and for how long.
 
 Phases 1–3 shipped. **Phase 4 has not run and was not authorised**, so the
 claim *"creates under the chosen namespace"* is **verified against fakes only**.
@@ -430,3 +433,47 @@ Running Phase 4 creates and deletes real projects on a real forge. It needs
 explicit approval per `AGENTS.md`, and is invoked as
 `flutter test --run-skipped -t live-forge test/create_repo_wire_live_test.dart`.
 Until then this feature is shipped but unproven against the thing it targets.
+
+### Phase 4 — 2026-09-05 *(live, maintainer-run)*
+
+Run by the maintainer against a real GitLab instance, both cases green:
+
+```
+00:00 +0: GitLab live create under a namespace creates in <group> (top-level) …
+00:22 +1: GitLab live create under a namespace creates in <group>/<subgroup> (nested, 2 levels) …
+00:30 +2: All tests passed!
+```
+
+**The MADR's open question is answered: a nested subgroup works.** GitLab
+identifies groups by `full_path`, and `glab repo create <group>/<subgroup>/<name>`
+creates the project there even though glab's own help example is single-level.
+Top-level and two-level namespaces both succeeded.
+
+Each case asserted, in order:
+
+1. the project exists at the requested path — asked of
+   `glab api projects/<encoded>` and compared against `path_with_namespace`,
+   **not** inferred from the create output, which a `--group` create would print
+   identically;
+2. `resolveOriginUrl` returns a URL containing that same full path, so the
+   created project and the wired origin cannot silently disagree — the
+   `--group` trap, checked end to end on a real forge for the first time;
+3. `git remote add` + `push -u origin main` succeeds and `ls-remote` shows
+   `refs/heads/main` under that namespace.
+
+Both projects were deleted by the `finally` block; the suite finished clean, so
+no cleanup warning fired.
+
+**Everything MADR 0031 claimed is now verified against the thing it targets.**
+The one part of Phase 4's original scope not exercised is the GitHub org case
+(`gh repo create org/name`) — the signed-in GitHub token has no `delete_repo`
+scope, which is why this file's GitHub coverage has always been the
+non-mutating half. GitHub is unchanged by 0031 and shares the composition path
+with GitLab, but that specific create has not been run live.
+
+### Known leak in this test's output
+
+The test name interpolates the namespace (`'creates in $namespace …'`), so a
+run prints the real group path to stdout and into any log or CI report kept
+from it. The committed file holds no identifier — the value arrives from
+`MAGIC_GIT_LIVE_NAMESPACES` — but the *output* does. Not yet fixed.
