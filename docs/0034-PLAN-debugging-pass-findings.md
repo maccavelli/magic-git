@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-07
 associated-madr: "0034-MADR-debugging-pass-findings.md"
 ---
@@ -196,6 +196,77 @@ list**, not the first line.
 4. `user/orgs` walks pages; proven by a fake returning two.
 5. Every new test seen to fail against a deliberate break.
 6. `flutter analyze` clean and full suite green at every phase.
+
+## Execution record
+
+### Phase 1 — 2026-09-07 — *complete*
+
+**Delivered.** `lib/core/providers/provider_failure_observer.dart` —
+`ProviderFailureObserver`, wired at both scopes the finding named:
+`main.dart` and `tabs_controller.dart`'s `_defaultContainerFactory`. Failures
+go to the app's own output log via `context.container` (riverpod 3.3.2,
+`provider_container.dart:1334`), deferred onto a microtask because
+`providerDidFail` runs *during* a provider lifecycle event.
+
+**Open question 1 resolved by proceeding.** The plan asked whether the output
+log is the right destination or whether this should be a debug-only sink. No
+answer was given, so it went to the output log as the plan's stated assumption —
+the surface that already exists and the one a user can be asked to read. The
+plan noted this is wrong cheaply if wrong: only the observer body changes.
+
+**Five tests, each seen to fail.** The two wiring points, the naming, the
+family argument, and the containment:
+
+```
+main.dart scope: observer removed   -> every production provider scope attaches a failure observer
+tab container: observer removed     -> every production provider scope …
+                                       the tab container factory attaches the observer
+observer logs nothing               -> a failed provider is logged, naming the provider and the error
+                                       a family failure names its argument …
+                                       the tab container factory attaches the observer
+family argument dropped             -> a family failure names its argument …
+containment removed                 -> the observer contains a failure in its own write
+```
+
+**`main.dart`'s scope is enforced by a source scan, not a unit test** — its
+`ProviderScope` is inside `runApp` and unreachable from a test. The scan
+mirrors `provider_retry_policy_test.dart`'s "every production provider scope
+uses the policy", which is this codebase's established way of pinning a scope's
+configuration.
+
+**The containment test was vacuous three times before it was real.** Recorded
+because each version *passed*, and a passing test that proves nothing is worse
+than none:
+
+1. First version disposed the container after `await expectLater(...)`. The
+   `await` **drains the observer's microtask while the container is still
+   alive**, so the disposed path never ran. It passed against an observer with
+   its `catch` deleted.
+2. Second version added `runZonedGuarded` to catch the escaping async error —
+   but still awaited first, so still never reached the path.
+3. Third version disposed before any `await`, but asserted
+   `throwsStateError` on the read. `read` rethrows a **wrapped, riverpod-
+   internal** type, so the matcher failed inside the zone, the zone swallowed
+   the `TestFailure`, and the test **hung for 30 seconds** instead of failing.
+
+The working version disposes before any await and does not pin the throw's type
+at all — `ProviderException` is not exported, and the assertion that matters is
+that nothing escaped the zone. Verified: deleting the observer's `catch` now
+fails exactly this test.
+
+Reading a disposed container **does** throw — measured directly with a
+throwaway probe — so the `catch` is load-bearing, not defensive decoration.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.2s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:23 +3617 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9134 -> **9140**; `testWidgets(` **1012** unchanged (these
+are plain `test()`s). Suite 3612 -> **3617**.
 
 ## Rollout and Rollback
 
