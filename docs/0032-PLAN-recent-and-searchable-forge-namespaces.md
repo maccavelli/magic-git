@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-07
 associated-madr: "0032-MADR-recent-and-searchable-forge-namespaces.md"
 ---
@@ -242,6 +242,49 @@ interpolate a real namespace into a test name** — 0031 records that leak.
    down, proven by a test with a failing provider.
 6. `palette_models_test.dart` unedited through Phase 1.
 7. Every new test seen to fail; analyze clean; suite green each phase.
+
+## Execution record
+
+### Phase 1 — 2026-09-07 — *complete*
+
+**Delivered.** `lib/core/utils/match_tier.dart` — `matchTier(Iterable<String>,
+String)` and `subsequenceMatch`. `palette_models.dart`'s `_matchTier` is now a
+one-line wrapper delegating to it, so the ranking below reads exactly as it did.
+
+**Neutrality proven the way the phase required:** `palette_models_test.dart`,
+`command_palette_test.dart` and `workspace_performance_baseline_test.dart` pass
+**unedited** — `git diff --stat -- test/` shows no changed files, only the added
+`match_tier_test.dart`.
+
+**A small surprise worth noting:** `palette_models.dart` had **zero imports** —
+it is a pure model library — so this extraction added its first one. Nothing
+wrong with that, but it is the kind of thing a scripted edit assumes away, and
+the assumption failed loudly rather than silently.
+
+**Sabotage — four contracts, each seen to fail:**
+
+```
+prefix and substring tiers swapped -> ranks exact above prefix above substring…
+                                      matches a nested path by any segment
+empty query no longer matches      -> an empty query matches everything at tier 0
+                                      caps each kind at 50 and the combined list at 100
+case sensitivity reintroduced      -> is case-insensitive in both directions
+subsequence order not enforced     -> rejects out-of-order characters
+```
+
+The second mutation is the interesting one: it breaks a **palette** test as well
+as a matcher test, which is the evidence that the extracted function is genuinely
+the one the palette runs — not a copy that happens to agree.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 3.6s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:36 +3634 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9152 -> **9174**; suite 3623 -> **3634**.
 
 ## Rollout and Rollback
 

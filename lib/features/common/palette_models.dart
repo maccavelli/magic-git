@@ -1,3 +1,5 @@
+import '../../core/utils/match_tier.dart';
+
 /// Stable kinds understood by the Go to / Do palette.
 enum PaletteEntryKind {
   action,
@@ -270,24 +272,11 @@ final class PipelinePaletteEntry extends PaletteEntry {
        );
 }
 
-bool _subsequence(String query, String target) {
-  var queryIndex = 0;
-  for (var i = 0; i < target.length && queryIndex < query.length; i++) {
-    if (target.codeUnitAt(i) == query.codeUnitAt(queryIndex)) queryIndex++;
-  }
-  return queryIndex == query.length;
-}
-
-int? _matchTier(PaletteEntry entry, String text) {
-  if (text.isEmpty) return 0;
-  final query = text.toLowerCase();
-  final values = entry.searchable.map((value) => value.toLowerCase());
-  if (values.any((value) => value == query)) return 0;
-  if (values.any((value) => value.startsWith(query))) return 1;
-  if (values.any((value) => value.contains(query))) return 2;
-  if (values.any((value) => _subsequence(query, value))) return 3;
-  return null;
-}
+/// The palette's view of the shared matcher — see `core/utils/match_tier.dart`
+/// for the tiers. Kept as a named wrapper so the ranking below reads exactly as
+/// it did before the extraction (MADR 0032 Phase 1).
+int? _matchTier(PaletteEntry entry, String text) =>
+    matchTier(entry.searchable, text);
 
 bool _scopeAllows(PaletteQueryScope scope, PaletteEntry entry) =>
     switch (scope) {
