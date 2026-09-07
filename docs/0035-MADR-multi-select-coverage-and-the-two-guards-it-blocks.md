@@ -107,8 +107,17 @@ the selection *model* — `replace`, `toggle`, `rangeTo`, `preserveAfterRefresh`
 — and nothing else.
 
 So the batch bar's four actions — **Pin, Unpin, Hide, Delete if merged…** —
-have **no widget coverage at all**. Two of them are destructive. The model tests
-pass whatever the panel does with them.
+have no coverage *through the batch path*. Stated precisely, because the first
+draft of this record overstated it: the **pieces** are covered —
+`branch_bulk_delete_sheet_test.dart` drives the delete sheet in isolation (5
+widget tests), `pinned_branches_test.dart` covers single-branch pin (3), and
+`branch_workspace_prefs_test.dart` / `branch_hidden_display_test.dart` cover the
+prefs and hidden-display models (17 unit tests between them).
+
+What is uncovered is the **wiring**: nothing anywhere reaches `_batchHide`,
+`_batchPin` or `_bulkDeleteSelected` — verified by searching the whole suite for
+those names, which returns nothing. Every component works in isolation and no
+test proves the batch bar connects them to a selection.
 
 That is why F4 took minutes and F2/F3 could not be done: F4 sat behind a
 dropdown the existing tests already drive.
@@ -133,8 +142,9 @@ Both from 0034, unchanged and still unreproduced:
 * **A guard added without a reproduction is a guess.** 0034 says so, and F4
   proved the point: the reproduction turned a "traced by reading" finding into
   an observed `setState() called after dispose()` in both sheet States.
-* **The gap is worth more than the two fixes.** Four batch actions, two of them
-  destructive, currently rest on model-level tests only.
+* **The gap is worth more than the two fixes.** The four batch actions are
+  wired to their (well-tested) components by three handlers that no test
+  reaches — and both defects live in exactly that unreached wiring.
 * **The technique is one line.** `tap(find.text('Review'))`. The cost of this
   work is almost entirely in *knowing* that, which this record now captures.
 * **Don't let a discovery stay tacit.** The Review-mode gate is correct design
@@ -185,7 +195,9 @@ the reason to choose A over C.
 * Good, because it meets the standard 0034 set instead of quietly lowering it.
 * Good, because the Review-mode gate stops being tacit knowledge; the helper's
   doc comment is where the four wrong hypotheses get their answer.
-* Good, because two destructive actions gain their first widget coverage.
+* Good, because the batch handlers gain their first coverage — the components
+  they drive are already tested, so this closes the wiring, which is where F2
+  and F3 both live.
 * Bad, because it is materially more work than "add two `mounted` checks", for
   two defects that are real but narrow (both need the panel disposed inside a
   specific await).
