@@ -278,7 +278,7 @@ three `WorkspaceTarget`s have no `SavedConnection` to hang metadata on:
 `SavedLocalRepo` has no parallel-map analogue either (it carries `label`,
 `bookmarkData`, `fsmonitorEnabled`, `gitDir` — no maps).
 
-Three ways out, none of which this plan picks alone:
+**Decision 2a (2026-09-07): option B.** Three ways were considered:
 
 * **A.** Persist only for saved SSH connections; This Mac and ad-hoc keep
   session-only history. Simplest, and leaves the most common local case with no
@@ -290,7 +290,25 @@ Three ways out, none of which this plan picks alone:
   `SavedConnection` entirely — which is a new prefs key, i.e. the option
   decision 2 declined.
 
-**Recommendation: B**, on the grounds that the forge account genuinely differs
-between a This-Mac create and an SSH host, so one store cannot be keyed
-correctly for both — but this is a real fork and belongs to the maintainer.
-Phases 1, 2, 3a, 4 and 5 do not depend on it; only 3b does.
+**Chosen: B.** The forge account genuinely differs between a This-Mac create
+(the Mac's own `gh`/`glab` login) and an SSH host (the connection's), so one
+store cannot be keyed correctly for both. Two homes for one concept is a real
+cost — the split MADR 0033 spent five phases undoing — so Phase 3b must keep it
+honest:
+
+* **One reader.** A single function answers "recent namespaces for this
+  (forge, host)" and decides internally which store to consult from the active
+  `WorkspaceTarget`. Callers never branch on the target, and there is exactly
+  one place to reason about.
+* **One writer.** Likewise for recording a use. Nothing outside that pair knows
+  there are two stores.
+* **The seam is the target, not the caller.** `localMac` reads the app-level
+  store; `sshActive`/`sshProvision` read the connection's metadata. A saved
+  connection that is later removed takes its history with it, which is correct —
+  the namespaces belonged to that account.
+* The doc comment on both stores names the other, so neither is discovered
+  alone.
+
+Ad-hoc SSH sessions keep session-only history: there is no record to persist
+into, and inventing one would mean persisting under a connection the user chose
+not to save.
