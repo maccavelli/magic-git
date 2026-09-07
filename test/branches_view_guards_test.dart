@@ -26,6 +26,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import 'package:remote_magic_git/core/forge/branch_forge_status.dart';
+import 'package:remote_magic_git/core/git/branch_comparison.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -346,12 +347,24 @@ Future<RepositoryUiIdentity> _pumpBatch(
 Future<void> _selectTwoInReview(WidgetTester tester) async {
   await tester.tap(find.text('Review'));
   await tester.pumpAndSettle();
-  await tester.tap(find.text('main'));
+  // Anchor on `feature`, not `main`: once a comparison base is configured the
+  // header also renders "main" ("Compared with main"), and `find.text('main')`
+  // then matches two widgets and `tap` refuses. `feature` names only its row.
+  await tester.tap(find.text('feature'));
   await tester.pumpAndSettle();
   await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-  await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+  await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
   await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
   await tester.pumpAndSettle();
+  // The helper checks its own postcondition: a silent fall-through to single
+  // selection is exactly the failure mode this file exists to prevent, and it
+  // would otherwise surface as a confusing assertion in the caller.
+  expect(_batchBarLabels(), [
+    'Pin',
+    'Unpin',
+    'Hide',
+    'Delete if merged…',
+  ], reason: 'two rows must be selected and the batch bar showing');
 }
 
 /// The batch bar's action labels, in render order.
@@ -359,6 +372,48 @@ List<String> _batchBarLabels() => [
   for (final e in find.byType(InlineActionButton).evaluate())
     (e.widget as InlineActionButton).label,
 ];
+
+/// The overrides that give the panel a comparison base and a review batch.
+///
+/// Without these the "Delete if merged…" button is **disabled** —
+/// `busy || base == null` (`branches_view.dart:682`) — which is why MADR 0035's
+/// probe could not exercise it: tapping a disabled button is a silent no-op
+/// that looks like a passing test.
+///
+/// Note the interaction with [_batchHide]: with `main` as the base it is
+/// skipped for TWO reasons, HEAD *and* comparison base
+/// (`branches_view.dart:727,741`), so a Hide assertion under this fixture is
+/// not evidence about the HEAD rule on its own.
+List<Override> _withBase() => [
+  branchBaseProvider.overrideWith(
+    (ref, key) async => const BranchBaseResolution(
+      base: BranchBase(
+        refName: 'refs/heads/main',
+        displayName: 'main',
+        oid: _mainOid,
+        source: BranchBaseSource.localMain,
+        isFallback: false,
+      ),
+    ),
+  ),
+  branchReviewProvider.overrideWith(
+    (ref, key) async => const BranchReviewBatchResult(
+      summariesByRefName: {
+        'refs/heads/feature': BranchReviewSummary(
+          refName: 'refs/heads/feature',
+          shortName: 'feature',
+          branchOid: _featOid,
+          baseOid: _mainOid,
+          aheadOfBase: 0,
+          behindBase: 0,
+        ),
+      },
+    ),
+  ),
+];
+
+const _mainOid = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const _featOid = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
 void main() {
   testWidgets('creating a branch via the prompt never checks out the '
@@ -703,6 +758,43 @@ void main() {
       find.textContaining('current branch'),
       findsOneWidget,
       reason: 'the skipped branch and its reason must be surfaced',
+    );
+  });
+
+  testWidgets('"Delete if merged…" is disabled until a base exists', (
+    tester,
+  ) async {
+    // The gate MADR 0035's probe hit: no base, no bulk delete. Pinned so a
+    // future change cannot silently offer to delete against nothing.
+    await _pumpBatch(tester);
+    await _selectTwoInReview(tester);
+
+    final button = tester.widget<InlineActionButton>(
+      find.widgetWithText(InlineActionButton, 'Delete if merged…'),
+    );
+    expect(button.onPressed, isNull);
+  });
+
+  testWidgets('with a base, "Delete if merged…" opens the bulk-delete sheet', (
+    tester,
+  ) async {
+    // Covers the WIRING only — the sheet's own behaviour is
+    // branch_bulk_delete_sheet_test.dart's job (5 widget tests there).
+    await _pumpBatch(tester, extraOverrides: _withBase());
+    await _selectTwoInReview(tester);
+
+    final button = tester.widget<InlineActionButton>(
+      find.widgetWithText(InlineActionButton, 'Delete if merged…'),
+    );
+    expect(button.onPressed, isNotNull, reason: 'a base is available now');
+
+    await tester.tap(find.text('Delete if merged…'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byType(MacosSheet),
+      findsOneWidget,
+      reason: 'the batch bar must reach the bulk-delete sheet',
     );
   });
 }

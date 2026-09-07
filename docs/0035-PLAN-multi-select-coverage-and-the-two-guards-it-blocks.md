@@ -413,6 +413,60 @@ git diff --stat -- lib/           (empty)
 **Counts.** `expect(` 9121 -> **9125**, `testWidgets(` 1005 -> **1008**; the
 file at **14**, as the phase's acceptance requires.
 
+### Phase 3 — 2026-09-07 — *complete*
+
+**The unverified action is now driven.** `_withBase()` supplies
+`branchBaseProvider` + `branchReviewProvider`, and two tests cover the wiring:
+the button is **disabled** with no base (the gate MADR 0035's probe silently hit
+— tapping a disabled button is a no-op that reads as a pass), and **with** a
+base it opens the bulk-delete sheet. The sheet's own behaviour stays with
+`branch_bulk_delete_sheet_test.dart`; this is the wiring only, as the plan said.
+
+**A helper defect found by using it.** Adding the base fixture broke
+`_selectTwoInReview`: the header renders "Compared with **main**", so
+`find.text('main')` matched two widgets and `tap` refused. Two fixes, both
+worth keeping:
+
+* the helper now anchors on **`feature`** — which names only its row — and
+  shift-extends *upward*;
+* it **asserts its own postcondition** (the four batch labels) before
+  returning. A silent fall-through to single selection is the exact failure this
+  file exists to catch, and it would otherwise surface as a baffling assertion
+  in whichever test happened to call it.
+
+**Sabotage — both seen to fail, after two invalid attempts.** The first pair of
+mutations did not compile, and the compile error was informative rather than a
+nuisance: removing `base == null` breaks the **type promotion** that lets
+`base` be passed as non-nullable, so the gate cannot simply be deleted. The
+mutations that do compile:
+
+```
+disabled-gate defeated (null -> no-op callback)
+        -> "Delete if merged…" is disabled until a base exists
+button no longer reaches the sheet
+        -> with a base, "Delete if merged…" opens the bulk-delete sheet
+```
+
+Each isolates exactly its own test.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 3.4s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:23 +3610 ~2: All tests passed!
+git diff --stat -- lib/           (empty)
+```
+
+**Counts.** `expect(` 9125 -> **9129**, `testWidgets(` 1008 -> **1010**; the
+file at **16**, meeting the phase's acceptance (17 was the plan's figure, which
+assumed three delete tests; the third — "with no base the button is disabled" —
+turned out to be the same assertion as the first, so it was written once rather
+than twice).
+
+**All four batch actions now have committed coverage.** That was this plan's
+first-priority goal; F2 and F3 follow.
+
 ## Rollout and Rollback
 
 **Rollout.** Five commits in order. Phases 1–3 are test-only and carry no
