@@ -292,7 +292,10 @@ String watcherSweepScript(
   required Duration staleAfter,
 }) {
   // Both shapes: the tokenised per-instance form, and the pre-0027 single pair
-  // that hosts running an earlier build still carry. `${f%.pid}.hb` derives the
+  // that hosts running an earlier build still carry. These two literals are the
+  // ONLY definition of the legacy names — `RemoteWatchService` used to declare
+  // them as well, unused, and the duplicate was removed (MADR 0034 F6) rather
+  // than imported, because that file already imports this one. `${f%.pid}.hb` derives the
   // right heartbeat for either — `mg-watch.<tok>.pid` -> `mg-watch.<tok>.hb`,
   // and `mg-watch.pid` -> `mg-watch.hb`. Without the legacy glob the orphans
   // that motivated this work would never be reclaimed (0027 Phase 4).

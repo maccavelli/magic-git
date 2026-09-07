@@ -511,7 +511,21 @@ class GlabService {
     // "body" (JSON parse fails) and a 4xx/5xx on page 2+ goes undetected. For
     // paginated calls we therefore omit `-i` and rely on `glab api --paginate`'s
     // own non-zero exit on an HTTP error (surfaced as a [GlabException] by
-    // [_runJson]); the merged pages then come back as one clean JSON document.
+    // [_runJson]).
+    //
+    // **`paginate: true` does not currently work, and nothing uses it.**
+    // This comment used to end by claiming the merged pages "come back as one
+    // clean JSON document". They do not: `glab api --paginate` emits ONE JSON
+    // ARRAY PER PAGE, concatenated. Measured 2026-09-06 — a 171-group fetch
+    // produced two documents separated by a `][` seam, and a single-document
+    // parse fails with `Extra data`. Since [_runJson] hands the whole body to
+    // one `jsonDecode`, any multi-page call raises
+    // `GlabException: … returned non-JSON output` (MADR 0034 F8).
+    //
+    // Harmless today only because `grep -rn "paginate: true" lib/` finds no
+    // call sites. To page an endpoint, hand-walk it with `per_page`/`page` and
+    // stop on a short page — the shape [mergeRequests], [jobs] and [pipelines]
+    // already use, and `GhService.listCreatableNamespaces` too.
     if (!paginate) {
       args.add('-i');
     }

@@ -32,8 +32,13 @@ left for a later plan.
 ### Out of scope
 
 * **Tranche 2** (F2/F3/F4) — done.
-* **Tranche 3** (F5 orphaned CI enum, F6 duplicated legacy watcher filenames,
-  F8 the false `--paginate` comment).
+* ~~**Tranche 3** (F5 orphaned CI enum, F6 duplicated legacy watcher filenames,
+  F8 the false `--paginate` comment).~~
+  > **Amended 2026-09-07 — brought into scope on request.** One plan per MADR
+  > number is this repo's convention (`AGENTS.md`), so tranche 3 is added here
+  > as Phases 4-6 rather than given a second plan document. Its content was
+  > already decided by the accepted MADR's Decision Outcome; these phases only
+  > make it deterministic.
 * The **49 `.value ?? const []`** sites. 0034 is explicit that the fix is the
   missing observer, not 49 call sites: collapsing a *loading* store to an empty
   list is usually right, and the defect is that nothing notices the *error*
@@ -167,6 +172,73 @@ trip). Sabotage: drop the walk; the first test must fail.
 
 **Acceptance:** an account with >100 orgs sees them all; call count unchanged
 for the common single-page case.
+
+---
+
+### Phase 4 — F5: delete the orphaned CI enum and colour function
+
+**The finding.** `app_theme.dart:18` declares `enum WorkspaceCiState` and
+`:166` `static Color ciColor(WorkspaceCiState)`. A repo-wide search returns
+**only those declarations and the switch arms inside `ciColor`** — nothing
+constructs the enum or calls the function, in `lib/` or `test/`. A closed loop.
+
+CI status *is* coloured, elsewhere and correctly, by
+`features/gitlab/status_color.dart:9` and `features/github/status_color.dart:10`.
+0034 is explicit that **those two are not duplicates** — different enums,
+different state sets, both exhaustive with no `default` by design — so they are
+not touched.
+
+**Steps:** delete both declarations. Re-run the search first: if anything now
+references them, stop — the finding has changed.
+
+**Acceptance:** `grep -rn "WorkspaceCiState\|ciColor" lib/ test/` returns
+nothing; suite green. **No test is added** — there is nothing to assert about
+deleted code, and the compiler is the check.
+
+---
+
+### Phase 5 — F6: one definition of the legacy watcher filenames
+
+**The finding.** `remote_watch_service.dart:182-184` declares
+`legacyWatchPidFile` and `legacyWatchHeartbeatFile`, documented as the pre-0027
+scheme that "Phase 4 reclaims". **Neither is called.** The reclamation does
+happen — `bounded_watch.dart:303,313` builds the same two paths from
+**hardcoded literals**. Two definitions; the documented one is the dead one.
+
+**Decision (from 0034's Decision Outcome): point `bounded_watch.dart` at the
+named helpers**, rather than deleting them. The helpers carry the explanation
+of *why* these filenames still matter, and that explanation belongs with the
+definition, not in a shell-string builder.
+
+**Steps:** import `RemoteWatchService` into `bounded_watch.dart` (check for a
+cycle first — if `remote_watch_service.dart` imports `bounded_watch.dart`, the
+direction is wrong and the resolution flips to deleting the helpers instead;
+**stop and say so** rather than forcing it).
+
+**Acceptance:** `grep -c "mg-watch.pid'" lib/` shows the literal only inside
+`remote_watch_service.dart`; the existing `watcher_sweep_exec_test.dart` (which
+already covers the legacy sweep) stays green **unedited** — it is the proof the
+behaviour is unchanged.
+
+---
+
+### Phase 6 — F8: correct the `--paginate` comment
+
+**The finding.** `glab_service.dart:511-514` asserts that with `--paginate`
+"the merged pages then come back as one clean JSON document". **Verified false
+on 2026-09-06**: a 171-group fetch produced two JSON documents with a `][` seam,
+and `json.load` fails with `Extra data`. Harmless today only because
+`grep -rn "paginate: true" lib/` finds no call sites.
+
+**Steps:** rewrite the final clause to say what actually happens and what to do
+instead (hand-walk with `per_page`/`page`, as `mergeRequests`, `jobs` and
+`pipelines` already do, and as Phase 3 just did for `user/orgs`). Cite the
+measurement.
+
+**Acceptance:** the comment no longer claims a single merged document; nothing
+else changes. **No test** — this is a comment, and 0034's Confirmation section
+already says so: "correcting a comment needs no test; the behaviour it describes
+was already demonstrated".
 
 ## Verification
 
@@ -376,6 +448,70 @@ flutter test (full suite)         03:28 +3623 ~2: All tests passed!
 
 Suite 3612 -> **3623**. **Tranche 3 (F5, F6, F8) remains**, and is the last of
 0034.
+
+### Phases 4-6 (tranche 3) — 2026-09-07 — *complete*
+
+Three hygiene findings, no behaviour change, and — as the plan specified — **no
+new tests**: there is nothing to assert about deleted code, the compiler is the
+check, and a corrected comment is not testable. Suite unchanged at **3623**.
+
+**Phase 4 (F5) — the orphaned CI pair is gone.** `enum WorkspaceCiState` and
+`AppTheme.ciColor` deleted; `grep -rn "WorkspaceCiState\|ciColor" lib/ test/`
+now returns **0**. The two live per-forge colour functions
+(`features/{gitlab,github}/status_color.dart`) were **not** touched: 0034
+establishes they only look like duplicates and are exhaustive over different
+enums by design.
+
+**Phase 5 (F6) — the plan's contingency fired, and the outcome was better than
+either branch of it.** The plan preferred pointing `bounded_watch.dart` at the
+named helpers, with a stop-and-flip if the import direction was wrong. It was:
+`remote_watch_service.dart:7` **already imports** `bounded_watch.dart`, so the
+reverse import would have closed a cycle. Flipped to deleting the helpers, as
+the plan instructed.
+
+The premise behind preferring the import turned out to be half wrong, and that
+is worth recording: the reasoning was that "the documentation lives with the
+dead definition". It does not — `bounded_watch.dart:294-298` already explains
+the pre-0027 scheme, and explains it *better*, at the point where the sweep
+actually needs it. Nothing was lost by deleting; a line was added naming those
+literals as the sole definition so the next reader does not re-create the
+duplicate.
+
+`watcher_sweep_exec_test.dart` and `bounded_watch_test.dart` pass **unedited** —
+that is the proof the sweep still reclaims the legacy files.
+
+**Phase 6 (F8) — the comment now says what glab actually does.** It previously
+ended by claiming `--paginate`'s "merged pages then come back as one clean JSON
+document". The replacement states the measurement (a 171-group fetch produced
+two documents with a `][` seam; a single-document parse fails with `Extra
+data`), names the consequence (`GlabException: … returned non-JSON output` for
+any multi-page call), notes it is harmless only because there are no call sites,
+and points at the hand-walk shape to use instead.
+
+**One acceptance check is weaker than it looks, stated rather than glossed:**
+`grep -c 'come back as one clean JSON document'` returns 0 — but partly because
+the phrase is now line-wrapped inside a sentence that *refutes* it. The real
+check is reading the comment, which was done.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 3.4s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:32 +3623 ~2: All tests passed!
+```
+
+### MADR 0034 fully executed
+
+All nine findings resolved across three tranches:
+
+| Tranche | Findings | Where |
+| --- | --- | --- |
+| 1 — the silence class | F1, F9, F7 | this plan, Phases 1-3 |
+| 2 — the crash trio | F2, F3, F4 | MADR 0035 and commit `44169ac` |
+| 3 — hygiene | F5, F6, F8 | this plan, Phases 4-6 |
+
+Suite 3571 at the start of the debugging pass -> **3623**.
 
 ## Rollout and Rollback
 

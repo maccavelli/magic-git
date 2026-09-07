@@ -177,12 +177,6 @@ class RemoteWatchService {
   static String watchHeartbeatFile(String gitDir, String token) =>
       '$gitDir/mg-watch.$token.hb';
 
-  /// The pre-0027 single-file scheme, still present on hosts that ran an
-  /// earlier build. Phase 4 reclaims what it left; nothing writes these.
-  static String legacyWatchPidFile(String gitDir) => '$gitDir/mg-watch.pid';
-  static String legacyWatchHeartbeatFile(String gitDir) =>
-      '$gitDir/mg-watch.hb';
-
   static int _tokenSeq = 0;
 
   /// A token unique among *live* watchers. Time plus a sequence: it must not

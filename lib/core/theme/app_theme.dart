@@ -15,8 +15,6 @@ enum WorkspaceSurfaceRole {
 
 enum WorkspaceTypeRole { title, heading, body, metadata, code, status }
 
-enum WorkspaceCiState { idle, queued, running, passed, failed, canceled }
-
 class WorkspaceSpacing {
   static const double xxs = 4;
   static const double xs = 8;
@@ -162,15 +160,6 @@ class AppTheme {
       ),
     );
   }
-
-  static Color ciColor(WorkspaceCiState state) => switch (state) {
-    WorkspaceCiState.idle => MacosColors.systemGrayColor,
-    WorkspaceCiState.queued => MacosColors.systemYellowColor,
-    WorkspaceCiState.running => MacosColors.systemBlueColor,
-    WorkspaceCiState.passed => MacosColors.systemGreenColor,
-    WorkspaceCiState.failed => MacosColors.systemRedColor,
-    WorkspaceCiState.canceled => MacosColors.systemGrayColor,
-  };
 
   static MacosThemeData get darkTheme {
     return MacosThemeData.dark().copyWith(
