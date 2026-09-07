@@ -13,6 +13,8 @@
 //    delete, skipping the unmerged-commits guard.
 //  * A repo switch clears the selection — Enter must never act on a
 //    same-named branch in the new repo.
+//  * The Review-mode batch bar (Pin/Unpin/Hide/Delete if merged…) — see
+//    [_selectTwoInReview] for why Review mode is load-bearing here.
 
 import 'dart:async';
 
@@ -28,11 +30,14 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/storage/repository_ui_identity.dart';
 import 'package:remote_magic_git/core/theme/app_theme.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
 import 'package:remote_magic_git/features/common/inline_action_button.dart';
 import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
+import 'package:riverpod/misc.dart' show Override;
+import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> _rightClick(WidgetTester tester, Finder f) =>
     tester.tap(f, buttons: kSecondaryButton, warnIfMissed: false);
@@ -240,6 +245,7 @@ Future<_SpyGit> _pump(
   List<GitRef> refsB = _refs,
   Map<String, String>? remoteTags,
   String repoPath = _repo,
+  List<Override> extraOverrides = const [],
 }) async {
   final git = _SpyGit();
   final container = ProviderContainer(
@@ -263,6 +269,8 @@ Future<_SpyGit> _pump(
         (ref) async =>
             GitStatus(branch: const GitBranchInfo(), files: const []),
       ),
+      // Last, so a caller can replace any default above.
+      ...extraOverrides,
     ],
   );
   addTearDown(container.dispose);
@@ -296,6 +304,60 @@ Future<void> _openMoreMenu(WidgetTester tester) async {
     await tester.pumpAndSettle();
   }
 }
+
+/// The identity the batch fixture writes prefs under. `ssh` is durable, which
+/// is what makes `loadBranchWorkspacePrefs` actually see the write — an ad-hoc
+/// identity short-circuits (`branch_workspace_prefs.dart:174`).
+RepositoryUiIdentity _batchIdentity() =>
+    RepositoryUiIdentity.ssh(connectionId: 'c1', gitCommonDir: '/repo/.git');
+
+/// [_pump] plus everything a *persisting* batch action needs: a mocked
+/// SharedPreferences and a durable UI identity. Returns the identity so a test
+/// can read the prefs back.
+Future<RepositoryUiIdentity> _pumpBatch(
+  WidgetTester tester, {
+  List<Override> extraOverrides = const [],
+}) async {
+  SharedPreferences.setMockInitialValues({});
+  final identity = _batchIdentity();
+  await _pump(
+    tester,
+    extraOverrides: [
+      repositoryUiIdentityProvider(_repo).overrideWith((ref) async => identity),
+      ...extraOverrides,
+    ],
+  );
+  return identity;
+}
+
+/// Puts the panel in Review mode and shift-extends the selection to two rows,
+/// leaving the batch bar on screen.
+///
+/// **Review mode is not optional here.** `branch_navigator.dart:450` gates
+/// multi-selection on `mode == BranchWorkspaceMode.review`; in `browse` — the
+/// default whenever `workspacePrefs.lastMode` is unset, which is every fixture
+/// — `onMultiSelect` is never called and both shift-arrow and command-click
+/// fall through to ordinary single selection, silently. That is the documented
+/// design (MADR 0003, "Review rows and multi-selection"), not a bug, and it is
+/// invisible from the test side: the symptoms look like broken modifier
+/// synthesis or a focus problem, and both of those were measured working before
+/// the real cause was found (MADR 0035).
+Future<void> _selectTwoInReview(WidgetTester tester) async {
+  await tester.tap(find.text('Review'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('main'));
+  await tester.pumpAndSettle();
+  await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+  await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+  await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+  await tester.pumpAndSettle();
+}
+
+/// The batch bar's action labels, in render order.
+List<String> _batchBarLabels() => [
+  for (final e in find.byType(InlineActionButton).evaluate())
+    (e.widget as InlineActionButton).label,
+];
 
 void main() {
   testWidgets('creating a branch via the prompt never checks out the '
@@ -569,5 +631,20 @@ void main() {
       findsNothing,
       reason: 'a selection must never survive into another repo',
     );
+  });
+
+  testWidgets('Review mode + shift-extend puts the batch bar on screen', (
+    tester,
+  ) async {
+    // Guards every other batch test in this file: if this stops selecting two
+    // rows, the rest would pass against a bar that never rendered.
+    await _pumpBatch(tester);
+    await _selectTwoInReview(tester);
+    expect(_batchBarLabels(), [
+      'Pin',
+      'Unpin',
+      'Hide',
+      'Delete if merged…',
+    ], reason: 'the four batch actions, in order');
   });
 }

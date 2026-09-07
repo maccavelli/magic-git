@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-07
 associated-madr: "0035-MADR-multi-select-coverage-and-the-two-guards-it-blocks.md"
 ---
@@ -325,6 +325,52 @@ Standing rules that apply here:
    `if (!mounted) return;`.
 5. `flutter analyze` clean at every phase; full suite green.
 6. The 10 pre-existing tests in `branches_view_guards_test.dart` are unedited.
+
+## Execution record
+
+### Phase 1 — 2026-09-07 — *complete*
+
+**Delivered.** `_pump` gained `extraOverrides` (spread last, so a caller can
+replace any default); `_pumpBatch` adds a mocked `SharedPreferences` and a
+durable `RepositoryUiIdentity.ssh` and returns it; `_selectTwoInReview` performs
+the Review-mode + shift-extend sequence; `_batchBarLabels()` reads the bar.
+
+**The doc comment is the point.** `_selectTwoInReview` carries the Review-mode
+fact, cites `branch_navigator.dart:450` and MADR 0003, and states that the
+symptoms look like broken modifier synthesis or a focus problem — **both of
+which were measured working** before the real cause was found. That is the
+paragraph that saves the next person four wrong hypotheses.
+
+**Sabotage — seen to fail.** Dropping the `tap(find.text('Review'))` from the
+helper, in a scratch worktree:
+
+```
+Expected: ['Pin', 'Unpin', 'Hide', 'Delete if merged…']
+  Actual: ['Check out', 'Publish Branch']
+```
+
+Exactly the browse-mode behaviour the MADR describes: selection stays single and
+the detail pane shows the single-branch actions.
+
+**A mistake made and corrected inside the phase.** Rebuilding the import block
+programmatically **deleted the file's 14-line header comment** — the summary of
+what every guard test in the file covers. Caught by reading `git diff` for
+removed lines rather than trusting the analyzer (which was clean either way,
+since a comment is not code). Restored, and extended with a line for the new
+batch coverage. The final diff removes **0 lines**.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 3.5s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:24 +3605 ~2: All tests passed!
+git diff --stat -- lib/           (empty)
+```
+
+**Counts.** `expect(` 9120 -> **9121**, `testWidgets(` 1004 -> **1005**;
+`branches_view_guards_test.dart` at **11** `testWidgets`, as the phase's
+acceptance requires. The 10 pre-existing tests are unedited.
 
 ## Rollout and Rollback
 
