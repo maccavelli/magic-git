@@ -251,15 +251,46 @@ complete list) even if 3–5 never land. Phase 5 is the only user-visible change
 **Rollback.** `git revert` per phase, reverting 5 → 1. Phase 5 depends on 4,
 4 on 3, and 3–5 all use Phase 1's extracted matcher; Phase 2 is independent.
 
-## Open questions
+## Decisions — resolved 2026-09-07 by the maintainer
 
-1. **How long is "recently active"?** The plan assumes 7 days, the window the
-   MADR measured. A month would collapse fewer projects into more namespaces.
-   Cheap to change — one constant.
-2. **Where does local history live?** A new SharedPreferences key, or the
-   existing per-connection metadata? The latter scopes it to the host the
-   namespaces belong to, which is more correct and more work.
-3. **Does the recency list mix forges?** A GitLab namespace is meaningless on a
-   GitHub create. The plan assumes the list is keyed by forge + host, matching
-   `forgeNamespacesProvider`'s existing key — worth confirming that is what is
-   wanted before Phase 4.
+| # | Question | Decision |
+| --- | --- | --- |
+| 1 | How long is "recently active"? | **7 days** — the window the MADR measured |
+| 2 | Where does local history live? | **Per-connection metadata**, not a new prefs key |
+| 3 | Is the list keyed by forge + host? | **Yes** — the assumption was right |
+
+**Decision 2's shape.** `SavedConnection` already has the parallel-map idiom for
+exactly this — `repoLabels` (`:25`), `scopedGitDirs` (`:34`) and
+`fsmonitorPaths` (`:18`), each written through a `withX` helper and persisted by
+`connectionStore.updateMetadata`. Namespace history follows it:
+`withNamespaceUse(host, namespace)`, keyed by forge + host per decision 3.
+
+**A gap decision 2 leaves, which needs an answer before Phase 3b.** Two of the
+three `WorkspaceTarget`s have no `SavedConnection` to hang metadata on:
+
+* **`localMac`** — a This-Mac create has no connection at all, and its forge
+  account is the *Mac's own* `gh`/`glab` login. A namespace used from This Mac
+  is genuinely not connection-scoped, so per-connection storage does not merely
+  lack a home here — it is the wrong shape.
+* **`sshProvision` / ad-hoc sessions** — a connection that was never saved has
+  no metadata record to update.
+
+`SavedLocalRepo` has no parallel-map analogue either (it carries `label`,
+`bookmarkData`, `fsmonitorEnabled`, `gitDir` — no maps).
+
+Three ways out, none of which this plan picks alone:
+
+* **A.** Persist only for saved SSH connections; This Mac and ad-hoc keep
+  session-only history. Simplest, and leaves the most common local case with no
+  memory between launches.
+* **B.** Add a small app-level store keyed by forge + host for This Mac, with
+  `SavedConnection` still owning the SSH case. Correct, but two homes for one
+  concept — the kind of split MADR 0033 spent five phases undoing.
+* **C.** Key everything by forge + host in one app-level store and skip
+  `SavedConnection` entirely — which is a new prefs key, i.e. the option
+  decision 2 declined.
+
+**Recommendation: B**, on the grounds that the forge account genuinely differs
+between a This-Mac create and an SSH host, so one store cannot be keyed
+correctly for both — but this is a real fork and belongs to the maintainer.
+Phases 1, 2, 3a, 4 and 5 do not depend on it; only 3b does.
